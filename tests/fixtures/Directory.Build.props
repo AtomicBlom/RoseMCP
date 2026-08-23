@@ -1,0 +1,9 @@
+<Project>
+
+  <!-- Deliberately empty apart from this. Fixtures must not inherit the repo's build settings:
+       they stand in for arbitrary user solutions, down to targeting different frameworks. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>

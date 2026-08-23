@@ -153,6 +153,7 @@ public sealed class StalenessTests
 
 		var loader = new SolutionLoader(
 			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
+			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
 			NullLogger<SolutionLoader>.Instance);
 
 		var options = new WorkerOptions { SolutionPath = fixture.SolutionPath };

@@ -51,7 +51,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		ILogger<SolutionWatcher> watcherLogger)
 	{
 		_workspace = load.Workspace;
-		_current = load.Workspace.CurrentSolution;
+		_current = load.Solution;
 		_loader = loader;
 		_options = options;
 		_logger = logger;
@@ -259,7 +259,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		var load = await _loader.LoadAsync(_options, cancellationToken);
 
 		_workspace = load.Workspace;
-		_current = load.Workspace.CurrentSolution;
+		_current = load.Solution;
 		_synchronizer.Reset(_current, _options.SolutionPath);
 		Interlocked.Increment(ref _revision);
 

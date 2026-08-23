@@ -43,6 +43,10 @@ reclaim memory or pick up a rebuilt generator.
 - **Reads never observe a snapshot older than disk.** If you add a read path, it goes through the
   `WorkspaceSession` barrier. No exceptions.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.
+- **Analyzer assemblies are never loaded from where they live.** They are shadow-copied first. A
+  loaded assembly is held open for the life of the process, and this process lives for hours, so
+  loading them in place means the user cannot rebuild their own generator -- `dotnet build` fails
+  with MSB3021. There is a regression test for this; do not "simplify" it away.
 - **Workers die with the broker.** A worker exits when its stdin closes. Orphaned Roslyn hosts
   holding a solution in memory are invisible until the machine is out of RAM.
 

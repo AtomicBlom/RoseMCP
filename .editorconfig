@@ -169,6 +169,14 @@ dotnet_naming_rule.constants_are_pascal_case.style = pascal_case
 dotnet_naming_symbols.constant_symbols.applicable_kinds = field
 dotnet_naming_symbols.constant_symbols.required_modifiers = const
 
+# Ordered before the instance-field rule below: naming rules are evaluated top-down and the first
+# match wins, so static readonly fields keep the conventional PascalCase rather than an _ prefix.
+dotnet_naming_rule.static_readonly_fields_are_pascal_case.severity = error
+dotnet_naming_rule.static_readonly_fields_are_pascal_case.symbols = static_readonly_field_symbols
+dotnet_naming_rule.static_readonly_fields_are_pascal_case.style = pascal_case
+dotnet_naming_symbols.static_readonly_field_symbols.applicable_kinds = field
+dotnet_naming_symbols.static_readonly_field_symbols.required_modifiers = static,readonly
+
 dotnet_naming_rule.private_fields_are_underscore_camel.severity = error
 dotnet_naming_rule.private_fields_are_underscore_camel.symbols = private_field_symbols
 dotnet_naming_rule.private_fields_are_underscore_camel.style = underscore_camel

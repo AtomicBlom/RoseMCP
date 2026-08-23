@@ -27,6 +27,10 @@ internal static class Program
 		builder.Logging.AddConsole(console => console.LogToStandardErrorThreshold = LogLevel.Trace);
 
 		builder.Services.AddSingleton(options);
+		builder.Services.AddSingleton<RestoreRunner>();
+		builder.Services.AddSingleton<SolutionLoader>();
+		builder.Services.AddSingleton<WorkspaceHost>();
+		builder.Services.AddHostedService(services => services.GetRequiredService<WorkspaceHost>());
 		builder.Services
 			.AddMcpServer(server => server.ServerInfo = new() { Name = "roslyn-mcp-worker", Version = ThisAssembly.Version })
 			.WithStdioServerTransport()

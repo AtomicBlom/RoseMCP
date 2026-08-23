@@ -115,6 +115,32 @@ public sealed class BrokerTests
 		Assert.Empty(manager.Workers);
 	}
 
+	/// <summary>
+	/// Memory is sampled from the process table, not self-reported, so the tray keeps showing real
+	/// numbers for a worker that has stopped answering.
+	/// </summary>
+	[Fact]
+	public async Task Reports_process_and_memory_for_each_workspace()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		await manager.GetOrStartAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		var summary = Assert.Single(manager.Describe());
+
+		Assert.Equal("Simple", summary.DisplayName);
+		Assert.True(summary.Alive);
+		Assert.Equal("Running", summary.ExitReason);
+		Assert.NotNull(summary.ProcessId);
+		Assert.NotEqual(Environment.ProcessId, summary.ProcessId);
+
+		// A Roslyn host is never this small; a zero here would mean we sampled the wrong thing.
+		Assert.True(summary.WorkingSetBytes > 1_000_000, $"working set was {summary.WorkingSetBytes}");
+		Assert.True(summary.ManagedHeapBytes > 0);
+		Assert.True(summary.Uptime > TimeSpan.Zero);
+	}
+
 	private static WorkspaceManager CreateManager() => new(
 		Options.Create(new BrokerOptions()),
 		NullLoggerFactory.Instance,

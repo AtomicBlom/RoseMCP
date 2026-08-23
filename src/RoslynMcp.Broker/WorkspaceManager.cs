@@ -32,6 +32,12 @@ public sealed class WorkspaceManager(
 	}
 
 	/// <summary>
+	/// One row per open workspace, memory included. The same model backs the tray window and
+	/// GET /admin/workspaces, so the UI can never show something the API disagrees with.
+	/// </summary>
+	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => worker.Describe())];
+
+	/// <summary>
 	/// The worker for <paramref name="path"/>, starting one if needed.
 	/// <para>
 	/// A dead worker is replaced rather than reported. Workers die for ordinary reasons -- the

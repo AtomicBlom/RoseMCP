@@ -61,15 +61,8 @@ internal static class Program
 
 		application.MapMcp();
 
-		// The same model the tray window renders, exposed so the state is scriptable too.
-		application.MapGet("/admin/workspaces", (WorkspaceManager workspaces) => Results.Json(
-			workspaces.Workers.Select(worker => new
-			{
-				solutionPath = worker.SolutionPath,
-				alive = worker.IsAlive,
-				exitReason = worker.ExitReason.ToString(),
-				startedUtc = worker.StartedUtc,
-			})));
+		// Exactly what the tray window renders, so the two cannot disagree.
+		application.MapGet("/admin/workspaces", (WorkspaceManager workspaces) => Results.Json(workspaces.Describe()));
 
 		await application.RunAsync();
 		return 0;

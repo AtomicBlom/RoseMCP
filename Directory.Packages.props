@@ -19,6 +19,12 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
   </ItemGroup>
 
+  <ItemGroup Label="Tray (Windows only)">
+    <PackageVersion Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageVersion Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
+    <PackageVersion Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+  </ItemGroup>
+
   <ItemGroup Label="Testing">
     <PackageVersion Include="xunit.v3" Version="4.0.0" />
   </ItemGroup>

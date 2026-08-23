@@ -18,4 +18,10 @@ public static class ToolNames
 	public const string ListGeneratedDocuments = "roslyn_list_generated_documents";
 	public const string ReadGeneratedDocument = "roslyn_read_generated_document";
 	public const string RenameSymbol = "roslyn_rename_symbol";
+
+	/// <summary>
+	/// Worker-only. The broker calls this on connect to learn the process id, so it can sample
+	/// memory from the outside and still get real numbers when the worker stops responding.
+	/// </summary>
+	public const string WorkerInfo = "roslyn_worker_info";
 }

@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 
+using RoslynMcp.Contracts;
+
 namespace RoslynMcp.Broker;
 
 /// <summary>Why a worker is no longer serving requests.</summary>
@@ -54,6 +56,15 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 	public DateTime StartedUtc { get; }
 
+	/// <summary>
+	/// The worker's process id, learned on connect. Held so memory can be sampled from outside
+	/// the process, which keeps working when the worker itself has stopped answering.
+	/// </summary>
+	public int? ProcessId { get; private set; }
+
+	/// <summary>Last managed heap size the worker reported while it was still responding.</summary>
+	public long? ManagedHeapBytes { get; private set; }
+
 	public WorkerExitReason ExitReason { get; private set; } = WorkerExitReason.Running;
 
 	public bool IsAlive => ExitReason == WorkerExitReason.Running;
@@ -87,7 +98,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 		var client = await McpClient.CreateAsync(transport, loggerFactory: loggerFactory, cancellationToken: cancellationToken);
 
-		return new WorkspaceWorker(solutionPath, client, logger);
+		var worker = new WorkspaceWorker(solutionPath, client, logger);
+		await worker.RefreshProcessInfoAsync(cancellationToken);
+
+		return worker;
 	}
 
 	/// <summary>
@@ -138,6 +152,65 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	}
 
 	public void MarkStopped(WorkerExitReason reason) => ExitReason = reason;
+
+	/// <summary>
+	/// Asks the worker who it is. Cheap by design -- it loads nothing -- so it is safe to call on
+	/// connect before the solution has been opened.
+	/// </summary>
+	public async Task RefreshProcessInfoAsync(CancellationToken cancellationToken)
+	{
+		try
+		{
+			var info = await CallAsync<WorkerInfo>(ToolNames.WorkerInfo, EmptyArguments, cancellationToken);
+			ProcessId = info.ProcessId;
+			ManagedHeapBytes = info.ManagedHeapBytes;
+		}
+		catch (Exception exception)
+		{
+			// Memory reporting is a nicety. Losing it must not stop the workspace from opening.
+			_logger.LogDebug(exception, "Could not read worker info for {SolutionPath}.", SolutionPath);
+		}
+	}
+
+	/// <summary>
+	/// Samples memory from the process table rather than asking the worker, so the numbers stay
+	/// truthful for a worker that is wedged -- which is exactly when someone is looking at them.
+	/// </summary>
+	public WorkspaceSummary Describe()
+	{
+		long? workingSet = null;
+		long? privateMemory = null;
+
+		if (ProcessId is { } id)
+		{
+			try
+			{
+				using var process = System.Diagnostics.Process.GetProcessById(id);
+				workingSet = process.WorkingSet64;
+				privateMemory = process.PrivateMemorySize64;
+			}
+			catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+			{
+				// The process is gone. Reporting no numbers is more honest than reporting stale ones.
+			}
+		}
+
+		return new WorkspaceSummary
+		{
+			SolutionPath = SolutionPath,
+			DisplayName = Path.GetFileNameWithoutExtension(SolutionPath),
+			Alive = IsAlive,
+			ExitReason = ExitReason.ToString(),
+			StartedUtc = StartedUtc,
+			Uptime = DateTime.UtcNow - StartedUtc,
+			ProcessId = ProcessId,
+			WorkingSetBytes = workingSet,
+			PrivateMemoryBytes = privateMemory,
+			ManagedHeapBytes = ManagedHeapBytes,
+		};
+	}
+
+	private static readonly Dictionary<string, object?> EmptyArguments = [];
 
 	/// <summary>
 	/// Whether a failure means the worker is gone rather than the request being bad. A tool that

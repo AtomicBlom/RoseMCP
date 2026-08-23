@@ -141,8 +141,49 @@ public sealed class BrokerTests
 		Assert.True(summary.Uptime > TimeSpan.Zero);
 	}
 
-	private static WorkspaceManager CreateManager() => new(
-		Options.Create(new BrokerOptions()),
+	/// <summary>
+	/// A tool that needs a setup call before it answers anything is a tool that gets skipped in
+	/// favour of grep, so the zero-argument path has to find the solution on its own.
+	/// </summary>
+	[Fact]
+	public async Task Finds_a_solution_from_the_working_directory_with_no_arguments()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager(Path.GetDirectoryName(fixture.SolutionPath)!);
+
+		// No open call, no path.
+		var worker = await manager.GetOrStartAsync(null, TestContext.Current.CancellationToken);
+
+		Assert.Equal(fixture.SolutionPath, worker.SolutionPath, ignoreCase: true);
+	}
+
+	[Fact]
+	public async Task Says_where_it_looked_when_there_is_no_solution_to_find()
+	{
+		var empty = Path.Combine(Path.GetTempPath(), $"empty-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(empty);
+
+		try
+		{
+			await using var manager = CreateManager(empty);
+
+			var error = await Assert.ThrowsAsync<ArgumentException>(
+				() => manager.GetOrStartAsync(null, TestContext.Current.CancellationToken));
+
+			Assert.Contains(empty, error.Message, StringComparison.OrdinalIgnoreCase);
+		}
+		finally
+		{
+			Directory.Delete(empty, recursive: true);
+		}
+	}
+
+	private static WorkspaceManager CreateManager(string? defaultRoot = null) => new(
+		Options.Create(new BrokerOptions
+		{
+			// Somewhere with no solution, unless a test is specifically exercising discovery.
+			DefaultWorkspaceRoot = defaultRoot ?? Path.GetTempPath(),
+		}),
 		NullLoggerFactory.Instance,
 		NullLogger<WorkspaceManager>.Instance);
 }

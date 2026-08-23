@@ -82,6 +82,34 @@ the broker in the way:
 dotnet run --project src/RoslynMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.sln
 ```
 
+## Getting it actually used
+
+An agent's default reflex for C# is grep plus manual editing, and a semantic tool only wins if
+reaching for it is cheaper than that reflex. Three things carry that, in descending order of effect:
+
+1. **Server instructions** (`ServiceCollectionExtensions.Instructions`). Sent during `initialize`,
+   so the model reads them before choosing an approach -- unlike tool descriptions, which are only
+   read once a tool is already under consideration. Keep them short and framed around what goes
+   wrong with the default approach, not around what the tools do.
+2. **No setup call.** Every tool finds its own solution, from a supplied path or from the working
+   directory. A tool that needs `workspace_open` first loses to grep before it is ever tried.
+3. **Registration in the consuming repo.** Add to that project's `CLAUDE.md`:
+
+   ```markdown
+   ## C# navigation and refactoring
+
+   Use the `roslyn_*` MCP tools rather than grep or find-and-replace for C# in this repo:
+   `roslyn_find_references` for usages, `roslyn_rename_symbol` for renames,
+   `roslyn_diagnostics` to check code compiles. Source-generated code is only readable via
+   `roslyn_list_generated_documents` / `roslyn_read_generated_document`.
+   ```
+
+Register the server with:
+
+```
+claude mcp add roslyn -- <path>/RoslynMcp.Server.exe
+```
+
 ## Conventions
 
 Enforced by `.editorconfig` where the analyzer can express them, by review where it cannot.

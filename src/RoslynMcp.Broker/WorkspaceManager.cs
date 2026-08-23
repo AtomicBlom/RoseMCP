@@ -152,6 +152,14 @@ public sealed class WorkspaceManager(
 	/// Works out which workspace a call means. With exactly one open and no path given, the answer
 	/// is unambiguous -- demanding the path anyway would be pedantry.
 	/// </summary>
+	/// <summary>
+	/// Works out which workspace a call means.
+	/// <para>
+	/// Falls back to discovering a solution from the working directory rather than demanding an
+	/// explicit open first. A tool that needs a setup call before it answers anything is a tool that
+	/// gets skipped in favour of grep, so the zero-argument path has to work.
+	/// </para>
+	/// </summary>
 	private string ResolveOrInfer(string? path)
 	{
 		if (!string.IsNullOrWhiteSpace(path)) return SolutionResolver.Resolve(path);
@@ -160,10 +168,25 @@ public sealed class WorkspaceManager(
 		{
 			if (_workers.Count == 1) return _workers.Keys.First();
 
-			throw new ArgumentException(_workers.Count == 0
-				? "No workspace is open. Call roslyn_workspace_open with a path to a solution, project, or any file inside one."
-				: $"{_workers.Count} workspaces are open, so the workspace argument is required. Open: "
-					+ string.Join(", ", _workers.Keys));
+			if (_workers.Count > 1)
+			{
+				throw new ArgumentException(
+					$"{_workers.Count} workspaces are open, so the workspace argument is required. Open: "
+						+ string.Join(", ", _workers.Keys));
+			}
+		}
+
+		try
+		{
+			return SolutionResolver.Resolve(_options.DefaultWorkspaceRoot);
+		}
+		catch (ArgumentException exception)
+		{
+			throw new ArgumentException(
+				"No workspace is open and no solution was found near "
+					+ $"{_options.DefaultWorkspaceRoot}. Pass a path to a solution, project, or any file "
+					+ "inside one.",
+				exception);
 		}
 	}
 

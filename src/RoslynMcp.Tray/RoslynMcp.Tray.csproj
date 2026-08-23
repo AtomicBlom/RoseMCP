@@ -14,7 +14,6 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- XAML code generation produces warnings we do not control. -->
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>

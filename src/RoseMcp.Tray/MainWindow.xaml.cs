@@ -1,20 +1,34 @@
+using System.Collections.ObjectModel;
 using System.Windows.Input;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using RoseMcp.Broker;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Tray;
 
-/// <summary>Lists what is loaded and what it costs.</summary>
+/// <summary>Lists what is loaded, what it is doing, and what it costs.</summary>
 public sealed partial class MainWindow : Window
 {
 	/// <summary>
-	/// Slow enough not to be busywork, quick enough that memory visibly moves while a solution
-	/// loads -- which is when someone is most likely to be watching.
+	/// Quick enough that a progress bar moves and elapsed times tick over, which is the whole
+	/// point of watching a load. Only used while something is actually in flight.
 	/// </summary>
-	private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(2);
+	private static readonly TimeSpan ActiveInterval = TimeSpan.FromMilliseconds(400);
+
+	/// <summary>
+	/// Slow enough not to be busywork. An idle broker has nothing to say beyond memory, and memory
+	/// does not move on its own.
+	/// </summary>
+	private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(2);
+
+	/// <summary>
+	/// Rows live here and are updated in place, so the list is only ever added to or removed from.
+	/// Rebuilding it each refresh would restart every progress bar and close any open expander.
+	/// </summary>
+	private readonly ObservableCollection<WorkspaceRow> _rows = [];
 
 	private readonly DispatcherQueueTimer _timer;
 	private readonly App _app = (App)Application.Current;
@@ -24,13 +38,14 @@ public sealed partial class MainWindow : Window
 		InitializeComponent();
 
 		Endpoint.Text = $"http://{_app.Options.Host}:{_app.Options.Port}";
+		WorkspaceList.ItemsSource = _rows;
 
 		ApplyIcon();
 
 		ShowCommand = new ShowWindowCommand(this);
 
 		_timer = DispatcherQueue.CreateTimer();
-		_timer.Interval = RefreshInterval;
+		_timer.Interval = IdleInterval;
 		_timer.Tick += (_, _) => Refresh();
 		_timer.Start();
 
@@ -74,13 +89,71 @@ public sealed partial class MainWindow : Window
 	{
 		var summaries = Manager.Describe();
 
-		WorkspaceList.ItemsSource = summaries.Select(summary => new WorkspaceRow(summary)).ToArray();
+		MergeRows(summaries);
 
-		var totalBytes = summaries.Sum(summary => summary.WorkingSetBytes ?? 0);
-		Summary.Text = summaries.Count == 0
-			? "No solutions loaded. Point an MCP client at the endpoint above."
-			: $"{summaries.Count} solution(s), {totalBytes / (1024.0 * 1024.0):F0} MB total working set.";
+		var running = summaries.Sum(summary => summary.Running.Count);
+		Summary.Text = Describe(summaries, running);
+		Tray.ToolTipText = DescribeTooltip(summaries.Count, running);
+
+		// Poll harder only while there is something to watch. Setting the interval restarts the
+		// timer, so only do it when it actually changed.
+		var interval = running > 0 ? ActiveInterval : IdleInterval;
+		if (_timer.Interval != interval) _timer.Interval = interval;
 	}
+
+	/// <summary>Adds rows for new workspaces, updates the rest, and drops the ones that closed.</summary>
+	private void MergeRows(IReadOnlyList<WorkspaceSummary> summaries)
+	{
+		for (var index = _rows.Count - 1; index >= 0; index--)
+		{
+			var stillOpen = summaries.Any(summary => Same(summary.SolutionPath, _rows[index].SolutionPath));
+			if (!stillOpen) _rows.RemoveAt(index);
+		}
+
+		foreach (var summary in summaries)
+		{
+			var existing = _rows.FirstOrDefault(row => Same(row.SolutionPath, summary.SolutionPath));
+
+			if (existing is null)
+			{
+				_rows.Add(new WorkspaceRow(summary));
+				continue;
+			}
+
+			existing.Update(summary);
+		}
+	}
+
+	public static string Describe(IReadOnlyList<WorkspaceSummary> summaries, int running)
+	{
+		if (summaries.Count == 0) return "No solutions loaded. Point an MCP client at the endpoint above.";
+
+		var megabytes = summaries.Sum(summary => summary.WorkingSetBytes ?? 0) / (1024.0 * 1024.0);
+		var work = running switch
+		{
+			0 => "idle",
+			1 => "1 operation running",
+			_ => $"{running} operations running",
+		};
+
+		return $"{summaries.Count} solution(s), {megabytes:F0} MB total working set - {work}";
+	}
+
+	/// <summary>
+	/// Kept to a few words: this is read hovering over a 16-pixel icon, and it is the only view of
+	/// the broker available without opening the window.
+	/// </summary>
+	public static string DescribeTooltip(int workspaces, int running)
+	{
+		if (workspaces == 0) return "Roslyn MCP - nothing loaded";
+
+		var solutions = workspaces == 1 ? "1 solution" : $"{workspaces} solutions";
+
+		return running == 0 ? $"Roslyn MCP - {solutions}, idle" : $"Roslyn MCP - {solutions}, {running} running";
+	}
+
+	private static bool Same(string left, string right) =>
+		string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
 	private async void OnReload(object sender, RoutedEventArgs e)
 	{

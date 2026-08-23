@@ -99,8 +99,11 @@ are already warm. It binds `127.0.0.1` by default and refuses a non-loopback bin
 `ROSEMCP_TOKEN` is set — this server reads and rewrites source anywhere it can reach.
 
 The tray app (Windows only) hosts the same broker in-process and shows one row per workspace:
-state, project and generated-document counts, worker PID, and memory sampled from outside the
-worker so a hung one still reports real numbers.
+state, worker PID, and memory sampled from outside the worker so a hung one still reports real
+numbers. Under each row is what that worker is doing right now — the tool being served, what it
+is aimed at, how long it has been going, and how far through it is — plus the last few operations
+to finish. A warm Roslyn host otherwise looks identical whether it is idle or two minutes into a
+design-time build. The same rows come back from `GET /admin/workspaces`.
 
 ## Building from source
 

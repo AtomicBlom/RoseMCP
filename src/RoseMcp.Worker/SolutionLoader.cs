@@ -179,6 +179,8 @@ public sealed class SolutionLoader(
 	{
 		private readonly HashSet<string> _resolved = new(StringComparer.OrdinalIgnoreCase);
 
+		private double? _reachedPercent;
+
 		public void Report(ProjectLoadProgress value)
 		{
 			if (progress is null) return;
@@ -187,9 +189,13 @@ public sealed class SolutionLoader(
 
 			if (value.Operation != ProjectLoadOperation.Resolve)
 			{
-				// Names what is happening now without moving the number, so a project that takes
-				// twenty seconds to build is attributable rather than just slow.
-				if (value.Operation == ProjectLoadOperation.Build) progress.Report($"Design-time build: {name}");
+				// Names what is happening now, carrying the last percentage rather than none, so a
+				// project that takes twenty seconds to build is attributable without the bar going
+				// blank while it does.
+				if (value.Operation == ProjectLoadOperation.Build)
+				{
+					progress.Report($"Design-time build: {name}", _reachedPercent ?? from);
+				}
 
 				return;
 			}
@@ -202,7 +208,9 @@ public sealed class SolutionLoader(
 			}
 
 			var share = projectCount <= 0 ? 1 : Math.Min(1, (double)done / projectCount);
-			progress.Report($"Loaded {name} ({done}/{Math.Max(projectCount, done)})", from + ((to - from) * share));
+			_reachedPercent = from + ((to - from) * share);
+
+			progress.Report($"Loaded {name} ({done}/{Math.Max(projectCount, done)})", _reachedPercent);
 		}
 	}
 }

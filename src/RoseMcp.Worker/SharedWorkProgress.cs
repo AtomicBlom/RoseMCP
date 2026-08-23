@@ -16,11 +16,15 @@ public sealed class SharedWorkProgress : IWorkProgress
 	private readonly object _gate = new();
 	private readonly List<IWorkProgress> _listeners = [];
 
+	private Phase? _current;
+
 	public void Report(string message, double? percentComplete = null)
 	{
 		IWorkProgress[] listeners;
 		lock (_gate)
 		{
+			_current = new Phase(message, percentComplete);
+
 			if (_listeners.Count == 0) return;
 
 			listeners = [.. _listeners];
@@ -35,17 +39,38 @@ public sealed class SharedWorkProgress : IWorkProgress
 	}
 
 	/// <summary>
+	/// Marks a shared operation as under way until the returned handle is disposed.
+	/// <para>
+	/// This is what makes a load visible from its first second. The client that will carry the
+	/// reports has not connected yet when loading starts, so early reports would otherwise go
+	/// nowhere; and a tool call arriving halfway through a load would show nothing until the next
+	/// project happened to finish, which on a slow project is a long time to look idle.
+	/// </para>
+	/// </summary>
+	public IDisposable Begin(string message)
+	{
+		Report(message);
+
+		return new Operation(this);
+	}
+
+	/// <summary>
 	/// Passes shared-work reports to <paramref name="listener"/> until the returned handle is
-	/// disposed. A null listener is a caller with nobody to tell, and costs nothing.
+	/// disposed, starting with whatever is going on right now. A null listener is a caller with
+	/// nobody to tell, and costs nothing.
 	/// </summary>
 	public IDisposable Follow(IWorkProgress? listener)
 	{
 		if (listener is null) return NotFollowing.Instance;
 
+		Phase? current;
 		lock (_gate)
 		{
 			_listeners.Add(listener);
+			current = _current;
 		}
+
+		if (current is { } phase) listener.Report(phase.Message, phase.PercentComplete);
 
 		return new Subscription(this, listener);
 	}
@@ -56,6 +81,25 @@ public sealed class SharedWorkProgress : IWorkProgress
 		{
 			_listeners.Remove(listener);
 		}
+	}
+
+	/// <summary>
+	/// Nothing shared is happening any more, so there is nothing to catch a newcomer up on. Without
+	/// this a call arriving an hour later would be told about the load it missed.
+	/// </summary>
+	private void End()
+	{
+		lock (_gate)
+		{
+			_current = null;
+		}
+	}
+
+	private sealed record Phase(string Message, double? PercentComplete);
+
+	private sealed class Operation(SharedWorkProgress shared) : IDisposable
+	{
+		public void Dispose() => shared.End();
 	}
 
 	private sealed class Subscription(SharedWorkProgress shared, IWorkProgress listener) : IDisposable

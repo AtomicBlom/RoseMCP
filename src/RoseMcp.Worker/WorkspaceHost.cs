@@ -84,6 +84,8 @@ public sealed class WorkspaceHost(
 
 	private async Task<WorkspaceSession> StartSessionAsync()
 	{
+		using var loading = sharedWork.Begin($"Loading {Path.GetFileName(options.SolutionPath)}");
+
 		var load = await loader.LoadAsync(options, _shutdown.Token, sharedWork);
 		return WorkspaceSession.Create(
 			load,

@@ -37,7 +37,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	private readonly ILogger<WorkspaceSession> _logger;
 
 	/// <summary>Where a reload announces itself, since every waiting caller is waiting on it.</summary>
-	private readonly IWorkProgress? _sharedWork;
+	private readonly SharedWorkProgress? _sharedWork;
 	private readonly Task _pump;
 
 	private MSBuildWorkspace _workspace;
@@ -52,7 +52,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		WorkerOptions options,
 		ILogger<WorkspaceSession> logger,
 		ILogger<SolutionWatcher> watcherLogger,
-		IWorkProgress? sharedWork)
+		SharedWorkProgress? sharedWork)
 	{
 		_workspace = load.Workspace;
 		_current = load.Solution;
@@ -83,7 +83,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		WorkerOptions options,
 		ILogger<WorkspaceSession> logger,
 		ILogger<SolutionWatcher> watcherLogger,
-		IWorkProgress? sharedWork = null) => new(load, loader, options, logger, watcherLogger, sharedWork);
+		SharedWorkProgress? sharedWork = null) => new(load, loader, options, logger, watcherLogger, sharedWork);
 
 	/// <summary>
 	/// Tells the watcher a write is about to be ours, so it is absorbed silently instead of
@@ -262,6 +262,8 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	private async Task ReloadAsync(CancellationToken cancellationToken)
 	{
 		_logger.LogInformation("Reloading {SolutionPath}.", _options.SolutionPath);
+
+		using var reloading = _sharedWork?.Begin("Reloading the solution");
 
 		var previous = _workspace;
 		var load = await _loader.LoadAsync(_options, cancellationToken, _sharedWork);

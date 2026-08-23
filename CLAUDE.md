@@ -25,8 +25,8 @@ client --stdio or http--> RoseMcp.Server (broker, no Roslyn refs)
 ```
 
 - **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
-- **`RoseMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, and
-  `AddRoseMcpBroker()`. One registration path, used by both hosts below.
+- **`RoseMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, the
+  activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts below.
 - **`RoseMcp.Server`** -- console host. `--transport stdio` (default) or `--transport http`.
 - **`RoseMcp.Worker`** -- owns exactly one `MSBuildWorkspace`. All Roslyn work happens here.
 - **`RoseMcp.Tray`** -- WinUI 3 tray app for http mode. Hosts the broker in-process, so its
@@ -47,6 +47,17 @@ reclaim memory or pick up a rebuilt generator.
   loaded assembly is held open for the life of the process, and this process lives for hours, so
   loading them in place means the user cannot rebuild their own generator -- `dotnet build` fails
   with MSB3021. There is a regression test for this; do not "simplify" it away.
+- **Every slow path says where it has got to.** Workers report progress on the operations that take
+  real time, the broker records every call it forwards in an `ActivityLog`, and `WorkspaceSummary`
+  carries both the running and the recently finished ones. The tray window and
+  `GET /admin/workspaces` read that same model, so they cannot disagree. A percentage is per
+  operation and only ever rises; no percentage means "cannot say", which shows as an indeterminate
+  bar rather than one frozen at a number that has stopped meaning anything.
+- **A worker is asked for status the moment it connects.** Progress notifications only exist inside
+  a request, but a worker starts loading when the process does. With no call in flight the first
+  half-minute of a large solution is invisible -- which is exactly what a reload from the tray
+  produces, since no client is waiting on it. The priming call pays for nothing the first real call
+  would not have.
 - **Workers die with the broker.** A worker exits when its stdin closes. Orphaned Roslyn hosts
   holding a solution in memory are invisible until the machine is out of RAM.
 

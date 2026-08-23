@@ -4,15 +4,15 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:RoseMcp.Tray"
     xmlns:tb="using:H.NotifyIcon"
-    Title="RoseMCP">
+    Title="Roslyn MCP">
 
     <Grid RowDefinitions="Auto,*,Auto" Padding="16" RowSpacing="12">
 
-        <!-- The icon is applied in code from Assets/rose-mcp.ico: the tray needs a 32px frame
-             and the window an HICON, and neither is expressible here. -->
+        <!-- GeneratedIconSource draws the icon at runtime, which avoids shipping an .ico purely to
+             have something in the notification area. -->
         <tb:TaskbarIcon
             x:Name="Tray"
-            ToolTipText="RoseMCP"
+            ToolTipText="Roslyn MCP"
             NoLeftClickDelay="True"
             LeftClickCommand="{x:Bind ShowCommand}">
             <tb:TaskbarIcon.ContextFlyout>
@@ -26,29 +26,84 @@
         </tb:TaskbarIcon>
 
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="RoseMCP" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock Text="Roslyn MCP" Style="{StaticResource TitleTextBlockStyle}" />
             <TextBlock x:Name="Endpoint" Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}" />
         </StackPanel>
 
-        <ListView Grid.Row="1" x:Name="WorkspaceList" SelectionMode="None">
+        <ListView Grid.Row="1" x:Name="WorkspaceList" SelectionMode="None"
+                  HorizontalContentAlignment="Stretch">
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="local:WorkspaceRow">
-                    <Grid ColumnDefinitions="*,Auto" Padding="0,10" ColumnSpacing="16">
-                        <StackPanel Grid.Column="0" Spacing="2">
-                            <TextBlock Text="{x:Bind DisplayName}" FontWeight="SemiBold" />
-                            <TextBlock Text="{x:Bind SolutionPath}" Opacity="0.6"
-                                       TextTrimming="CharacterEllipsis"
-                                       Style="{StaticResource CaptionTextBlockStyle}" />
-                            <TextBlock Text="{x:Bind Detail}" Opacity="0.8"
-                                       Style="{StaticResource CaptionTextBlockStyle}" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
-                                    VerticalAlignment="Center">
-                            <TextBlock Text="{x:Bind Memory}" VerticalAlignment="Center" />
-                            <Button Content="Reload" Click="OnReload" Tag="{x:Bind SolutionPath}" />
-                            <Button Content="Close" Click="OnClose" Tag="{x:Bind SolutionPath}" />
-                        </StackPanel>
-                    </Grid>
+                    <StackPanel Padding="0,10" Spacing="6">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="{x:Bind DisplayName}" FontWeight="SemiBold" />
+                                <TextBlock Text="{x:Bind SolutionPath}" Opacity="0.6"
+                                           TextTrimming="CharacterEllipsis"
+                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                <TextBlock Text="{x:Bind Detail, Mode=OneWay}" Opacity="0.8"
+                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                        VerticalAlignment="Center">
+                                <TextBlock Text="{x:Bind Memory, Mode=OneWay}" VerticalAlignment="Center" />
+                                <Button Content="Reload" Click="OnReload" Tag="{x:Bind SolutionPath}" />
+                                <Button Content="Close" Click="OnClose" Tag="{x:Bind SolutionPath}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- What this worker is doing right now: one row per call, with the worker's
+                             own last word on it underneath. -->
+                        <ItemsControl ItemsSource="{x:Bind Running}"
+                                      Visibility="{x:Bind RunningVisibility, Mode=OneWay}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="local:ActivityRow">
+                                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto"
+                                          ColumnSpacing="8" Margin="0,4">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="{x:Bind Title}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1"
+                                                   Text="{x:Bind Elapsed, Mode=OneWay}" Opacity="0.7"
+                                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                                     Margin="0,4"
+                                                     Value="{x:Bind Percent, Mode=OneWay}"
+                                                     IsIndeterminate="{x:Bind IsIndeterminate, Mode=OneWay}"
+                                                     Visibility="{x:Bind BarVisibility, Mode=OneWay}" />
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                                   Text="{x:Bind Status, Mode=OneWay}" Opacity="0.7"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Collapsed by default: history answers "what did that agent just do to my
+                             solution", which is a question asked after the fact. -->
+                        <Expander Visibility="{x:Bind RecentVisibility, Mode=OneWay}"
+                                  Header="{x:Bind RecentHeader, Mode=OneWay}"
+                                  HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                            <ItemsControl ItemsSource="{x:Bind Recent}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="local:ActivityRow">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12" Margin="0,2">
+                                            <TextBlock Grid.Column="0" Text="{x:Bind Title}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Status, Mode=OneWay}"
+                                                       Opacity="0.7" TextTrimming="CharacterEllipsis"
+                                                       Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Grid.Column="2" Text="{x:Bind Elapsed, Mode=OneWay}"
+                                                       Opacity="0.7"
+                                                       Style="{StaticResource CaptionTextBlockStyle}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Expander>
+                    </StackPanel>
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>

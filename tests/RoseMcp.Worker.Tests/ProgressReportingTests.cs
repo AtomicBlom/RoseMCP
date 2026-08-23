@@ -130,28 +130,4 @@ public sealed class ProgressReportingTests
 
 		throw new TimeoutException($"Nothing showed up within {timeout.TotalSeconds:F0}s.");
 	}
-
-	private sealed class CapturingProgress : IWorkProgress
-	{
-		private readonly List<(string Message, double? Percent)> _reports = [];
-
-		public IReadOnlyList<(string Message, double? Percent)> Reports
-		{
-			get
-			{
-				lock (_reports)
-				{
-					return [.. _reports];
-				}
-			}
-		}
-
-		public void Report(string message, double? percentComplete = null)
-		{
-			lock (_reports)
-			{
-				_reports.Add((message, percentComplete));
-			}
-		}
-	}
 }

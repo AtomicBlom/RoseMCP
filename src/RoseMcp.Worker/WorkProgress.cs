@@ -24,6 +24,12 @@ public interface IWorkProgress
 public static class WorkProgress
 {
 	/// <summary>
+	/// The most of a call's scale the wait for a workspace may consume, leaving the rest for the
+	/// work the caller actually asked for.
+	/// </summary>
+	private const double WaitingCap = 50;
+
+	/// <summary>
 	/// Reports to an MCP client as progress notifications against the call in flight. Sending them
 	/// requires a request to attach to, which is why shared work goes through
 	/// <see cref="SharedWorkProgress"/> instead of straight here.
@@ -33,17 +39,17 @@ public static class WorkProgress
 	/// <summary>
 	/// Splits one call's scale into the wait for a workspace snapshot and the work done with it.
 	/// <para>
-	/// Every tool has these two phases, and waiting for a load or a reload is frequently the larger
-	/// of them. Giving each phase half the scale is what stops a bar from starting over when the
-	/// wait ends -- and a call that arrives to find the workspace already warm simply begins at the
-	/// halfway mark, which is a fair account of what it skipped.
+	/// Every tool has these two phases, and on a cold start the wait is much the larger. The work
+	/// phase picks up wherever the wait left off rather than at a fixed mark, so a call that found
+	/// the workspace already warm gets the whole bar for its own work, and one that waited through
+	/// a load carries on from there instead of jumping.
 	/// </para>
 	/// </summary>
 	public static (IWorkProgress Waiting, IWorkProgress Working) Split(IProgress<ProgressNotificationValue> sink)
 	{
-		var work = For(sink);
+		var call = new PhasedCall(For(sink));
 
-		return (new SlicedWorkProgress(work, 0, 50), new SlicedWorkProgress(work, 50, 100));
+		return (call.Waiting, call.Working);
 	}
 
 	/// <summary>
@@ -80,5 +86,44 @@ public static class WorkProgress
 		public void Report(string message, double? percentComplete) => inner.Report(
 			message,
 			percentComplete is { } percent ? from + ((to - from) * Math.Clamp(percent, 0, 100) / 100) : null);
+	}
+
+	/// <summary>
+	/// One call's two phases over a single scale, where the second starts from the high-water mark
+	/// of the first.
+	/// </summary>
+	private sealed class PhasedCall(IWorkProgress inner)
+	{
+		private double _waitedTo;
+
+		public IWorkProgress Waiting => new Phase(this, waiting: true);
+
+		public IWorkProgress Working => new Phase(this, waiting: false);
+
+		private void Report(bool waiting, string message, double? percentComplete)
+		{
+			if (percentComplete is not { } percent)
+			{
+				inner.Report(message);
+				return;
+			}
+
+			var clamped = Math.Clamp(percent, 0, 100);
+
+			if (waiting)
+			{
+				_waitedTo = clamped * WaitingCap / 100;
+				inner.Report(message, _waitedTo);
+				return;
+			}
+
+			inner.Report(message, _waitedTo + ((100 - _waitedTo) * clamped / 100));
+		}
+
+		private sealed class Phase(PhasedCall call, bool waiting) : IWorkProgress
+		{
+			public void Report(string message, double? percentComplete) =>
+				call.Report(waiting, message, percentComplete);
+		}
 	}
 }

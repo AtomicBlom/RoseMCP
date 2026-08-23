@@ -25,6 +25,8 @@ public sealed partial class MainWindow : Window
 
 		Endpoint.Text = $"http://{_app.Options.Host}:{_app.Options.Port}";
 
+		ApplyIcon();
+
 		ShowCommand = new ShowWindowCommand(this);
 
 		_timer = DispatcherQueue.CreateTimer();
@@ -37,6 +39,34 @@ public sealed partial class MainWindow : Window
 
 	/// <summary>Bound to the tray icon's left click, which is the usual way back to the window.</summary>
 	public ICommand ShowCommand { get; }
+
+	/// <summary>
+	/// Puts the same icon on the tray and the window.
+	/// <para>
+	/// Loaded from a real .ico rather than generated from text. The generated version depended on
+	/// a font-size-to-canvas ratio that could not be checked without looking at the taskbar, and it
+	/// went from a four-pixel smudge to nothing at all across one change. A file has pixels that can
+	/// be verified before shipping.
+	/// </para>
+	/// </summary>
+	private void ApplyIcon()
+	{
+		var path = Path.Combine(AppContext.BaseDirectory, "Assets", "roslyn-mcp.ico");
+		if (!File.Exists(path)) return;
+
+		try
+		{
+			// 32 rather than 16: the file has a purpose-drawn frame at each size, and asking for the
+			// larger one means Windows only ever scales down, which is far kinder than scaling up on a
+			// high-DPI taskbar.
+			Tray.Icon = new System.Drawing.Icon(path, 32, 32);
+			AppWindow.SetIcon(path);
+		}
+		catch (Exception exception) when (exception is IOException or ArgumentException)
+		{
+			System.Diagnostics.Debug.WriteLine($"Could not apply the icon: {exception.Message}");
+		}
+	}
 
 	private WorkspaceManager Manager => _app.Services.GetRequiredService<WorkspaceManager>();
 

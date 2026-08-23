@@ -15,19 +15,6 @@
             ToolTipText="Roslyn MCP"
             NoLeftClickDelay="True"
             LeftClickCommand="{x:Bind ShowCommand}">
-            <tb:TaskbarIcon.IconSource>
-                <!-- Size defaults to 128, so FontSize has to be most of that. At 36 the glyph was
-                     about 28% of the canvas and downscaled to roughly 4px in a 16px tray slot.
-                     Colour rather than white because the taskbar may be light or dark, and the
-                     background is left unset: BackgroundType defaults to 0 and it is not clear
-                     whether that fills or not, so the glyph carries the legibility on its own. -->
-                <tb:GeneratedIconSource
-                    Text="R"
-                    Size="128"
-                    FontSize="104"
-                    FontWeight="Bold"
-                    Foreground="#FF29B6F6" />
-            </tb:TaskbarIcon.IconSource>
             <tb:TaskbarIcon.ContextFlyout>
                 <MenuFlyout>
                     <MenuFlyoutItem Text="Show workspaces" Click="OnShow" />

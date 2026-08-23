@@ -100,7 +100,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 				// Task Manager's Details tab shows this, which is how a human works out which of
 				// several identical worker processes belongs to which solution.
-				Name = $"roslyn-worker {Path.GetFileNameWithoutExtension(solutionPath)}",
+				Name = $"rose-worker {Path.GetFileNameWithoutExtension(solutionPath)}",
 				WorkingDirectory = Path.GetDirectoryName(solutionPath),
 			},
 			loggerFactory);

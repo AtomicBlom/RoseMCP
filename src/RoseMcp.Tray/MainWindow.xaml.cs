@@ -145,11 +145,11 @@ public sealed partial class MainWindow : Window
 	/// </summary>
 	public static string DescribeTooltip(int workspaces, int running)
 	{
-		if (workspaces == 0) return "Roslyn MCP - nothing loaded";
+		if (workspaces == 0) return "RoseMCP - nothing loaded";
 
 		var solutions = workspaces == 1 ? "1 solution" : $"{workspaces} solutions";
 
-		return running == 0 ? $"Roslyn MCP - {solutions}, idle" : $"Roslyn MCP - {solutions}, {running} running";
+		return running == 0 ? $"RoseMCP - {solutions}, idle" : $"RoseMCP - {solutions}, {running} running";
 	}
 
 	private static bool Same(string left, string right) =>

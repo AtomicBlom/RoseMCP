@@ -23,5 +23,6 @@ public sealed class WorkspaceTools(WorkspaceHost host)
         workspace is degraded. Check this first when diagnostics or generated code look wrong -- a
         degraded workspace returns plausible but incomplete results rather than errors.
         """)]
-	public Task<WorkspaceStatusReport> StatusAsync() => host.GetStatusAsync();
+	public Task<WorkspaceStatusReport> StatusAsync(CancellationToken cancellationToken) =>
+		host.GetStatusAsync(cancellationToken);
 }

@@ -1,4 +1,3 @@
-using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -11,56 +10,55 @@ namespace RoslynMcp.Worker;
 /// <para>
 /// Loading starts as soon as the host does rather than on first use, so the expensive design-time
 /// build overlaps with the client finishing its handshake. Callers await the same load task, which
-/// means concurrent first calls cost one load, not several.
+/// means concurrent first calls cost one load rather than several.
 /// </para>
 /// </summary>
 public sealed class WorkspaceHost(
 	WorkerOptions options,
 	SolutionLoader loader,
-	ILogger<WorkspaceHost> logger) : IHostedService, IDisposable
+	ILoggerFactory loggerFactory,
+	ILogger<WorkspaceHost> logger) : IHostedService, IAsyncDisposable
 {
 	private readonly CancellationTokenSource _shutdown = new();
-	private Task<LoadResult>? _load;
+	private Task<WorkspaceSession>? _start;
 	private volatile WorkspaceStatusReport? _faulted;
 
 	public Task StartAsync(CancellationToken cancellationToken)
 	{
-		_load = Task.Run(() => loader.LoadAsync(options, _shutdown.Token), CancellationToken.None);
+		_start = Task.Run(StartSessionAsync, CancellationToken.None);
 		return Task.CompletedTask;
 	}
 
-	public async Task StopAsync(CancellationToken cancellationToken)
-	{
-		await _shutdown.CancelAsync();
-
-		if (_load is null)
-			return;
-
-		try
-		{
-			(await _load).Workspace.Dispose();
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Workspace was not disposed cleanly during shutdown.");
-		}
-	}
+	public Task StopAsync(CancellationToken cancellationToken) => DisposeAsync().AsTask();
 
 	/// <summary>
-	/// The current status. Never throws: a load failure becomes a
-	/// <see cref="WorkspaceState.Faulted"/> report carrying the reason, because a caller asking
-	/// what state the workspace is in deserves an answer rather than an exception.
+	/// Current status, reconciled with disk first so the counts describe the solution as it is now
+	/// rather than as it was at load. Never throws: a load failure becomes a
+	/// <see cref="WorkspaceState.Faulted"/> report, because a caller asking what state the
+	/// workspace is in deserves an answer rather than an exception.
 	/// </summary>
-	public async Task<WorkspaceStatusReport> GetStatusAsync()
+	public async Task<WorkspaceStatusReport> GetStatusAsync(CancellationToken cancellationToken)
 	{
 		if (_faulted is not null)
 			return _faulted;
 
 		try
 		{
-			return (await Loaded()).Report;
+			var session = await StartedAsync();
+			var snapshot = await session.ReadAsync(cancellationToken);
+
+			var report = await WorkspaceStatusReporter.DescribeAsync(
+				snapshot.Solution,
+				options.SolutionPath,
+				[],
+				restore: null,
+				snapshot.Revision,
+				loadSeconds: 0,
+				cancellationToken);
+
+			return report with { DegradedReasons = [.. report.DegradedReasons, .. snapshot.Notices] };
 		}
-		catch (Exception exception)
+		catch (Exception exception) when (exception is not OperationCanceledException)
 		{
 			logger.LogError(exception, "Loading {SolutionPath} failed.", options.SolutionPath);
 			return _faulted = Fault(exception);
@@ -68,13 +66,23 @@ public sealed class WorkspaceHost(
 	}
 
 	/// <summary>
-	/// The loaded solution snapshot. Unlike <see cref="GetStatusAsync"/> this does throw, because a
-	/// caller wanting to analyse code cannot do anything useful with a failed load.
+	/// A snapshot to analyse, already ordered behind every pending mutation and reconciled with
+	/// disk. Unlike <see cref="GetStatusAsync"/> this throws, because a caller wanting to read code
+	/// can do nothing useful with a failed load.
 	/// </summary>
-	public async Task<Solution> GetSolutionAsync() => (await Loaded()).Workspace.CurrentSolution;
+	public async Task<WorkspaceSnapshot> ReadAsync(CancellationToken cancellationToken) =>
+		await (await StartedAsync()).ReadAsync(cancellationToken);
 
-	private Task<LoadResult> Loaded() =>
-		_load ?? throw new InvalidOperationException("The workspace host has not been started.");
+	public async Task<WorkspaceSession> SessionAsync() => await StartedAsync();
+
+	private async Task<WorkspaceSession> StartSessionAsync()
+	{
+		var load = await loader.LoadAsync(options, _shutdown.Token);
+		return WorkspaceSession.Create(load, loader, options, loggerFactory.CreateLogger<WorkspaceSession>());
+	}
+
+	private Task<WorkspaceSession> StartedAsync() =>
+		_start ?? throw new InvalidOperationException("The workspace host has not been started.");
 
 	private WorkspaceStatusReport Fault(Exception exception) => new()
 	{
@@ -86,5 +94,22 @@ public sealed class WorkspaceHost(
 		DegradedReasons = [$"Loading the solution failed: {exception.Message}"],
 	};
 
-	public void Dispose() => _shutdown.Dispose();
+	public async ValueTask DisposeAsync()
+	{
+		await _shutdown.CancelAsync();
+
+		if (_start is not null)
+		{
+			try
+			{
+				await (await _start).DisposeAsync();
+			}
+			catch (Exception exception)
+			{
+				logger.LogDebug(exception, "The workspace session did not shut down cleanly.");
+			}
+		}
+
+		_shutdown.Dispose();
+	}
 }

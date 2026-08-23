@@ -80,6 +80,12 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		ILogger<SolutionWatcher> watcherLogger) => new(load, loader, options, logger, watcherLogger);
 
 	/// <summary>
+	/// Tells the watcher a write is about to be ours, so it is absorbed silently instead of
+	/// bouncing back on the next barrier as an external edit.
+	/// </summary>
+	public void NoteSelfWrite(string path) => _watcher.NoteSelfWrite(path);
+
+	/// <summary>
 	/// Drains pending mutations, reconciles with disk, and returns the resulting snapshot. This is
 	/// the only way to obtain a solution to read from.
 	/// </summary>

@@ -58,6 +58,7 @@ to check code compiles. Source-generated code is only readable via
 | `rose_symbol_info` | Resolved signature, accessibility, containing type, XML documentation. |
 | `rose_search_symbols` | Pattern search across source declarations. |
 | `rose_rename_symbol` | Solution-wide rename with conflict detection; returns a unified diff. `apply: false` previews. |
+| `rose_move_type_to_file` | Moves one type out of a file that declares several, into a file named after it. Carries the doc comments across and fixes the usings in both halves. |
 | `rose_list_generated_documents` | What the generators actually produced, per project. |
 | `rose_read_generated_document` | The generated source itself. Nothing on disk to read — this is the only way to see it. |
 | `rose_workspace_open` / `_status` / `_reload` / `_close` | Load state, per-project health, degraded-load detection. |

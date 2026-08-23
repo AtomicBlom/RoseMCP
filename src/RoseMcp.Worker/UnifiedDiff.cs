@@ -51,6 +51,31 @@ public static class UnifiedDiff
 		return output.ToString();
 	}
 
+	/// <summary>
+	/// A whole file as an addition. Diffing it against an empty string almost works, but that
+	/// claims the file used to have a line in it, and reads as a change rather than a creation.
+	/// </summary>
+	public static string RenderNewFile(string path, string text)
+	{
+		var lines = SplitLines(text);
+
+		// A file ending in a newline splits with a trailing empty element, which is not a line.
+		var count = lines.Length > 0 && lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
+		if (count == 0) return string.Empty;
+
+		var output = new StringBuilder();
+		output.Append("--- /dev/null\n");
+		output.Append("+++ ").Append(path).Append('\n');
+		output.Append("@@ -0,0 +1,").Append(count).Append(" @@\n");
+
+		for (var index = 0; index < count; index++)
+		{
+			output.Append('+').Append(lines[index]).Append('\n');
+		}
+
+		return output.ToString();
+	}
+
 	private static string[] SplitLines(string text) => text.Replace("\r\n", "\n").Split('\n');
 
 	/// <summary>

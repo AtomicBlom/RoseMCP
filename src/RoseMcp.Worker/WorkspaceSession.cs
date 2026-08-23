@@ -115,6 +115,10 @@ public sealed class WorkspaceSession : IAsyncDisposable
 			{
 				_current = result.Solution;
 				Interlocked.Increment(ref _revision);
+
+				// A mutation is the only thing that can add a document, and an untracked document is
+				// one whose later edits nobody would notice.
+				_synchronizer.TrackNew(_current);
 			}
 
 			return result.Value;

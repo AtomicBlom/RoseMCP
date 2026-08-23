@@ -35,6 +35,30 @@ public static class SolutionWriter
 
 		foreach (var projectChange in after.GetChanges(before).GetProjectChanges())
 		{
+			// Added documents come first: a split writes the new file before the old one shrinks, so
+			// a reader that catches the pair mid-write sees the type twice rather than not at all.
+			foreach (var documentId in projectChange.GetAddedDocuments())
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+
+				var added = after.GetDocument(documentId);
+				if (added?.FilePath is not { Length: > 0 } path) continue;
+
+				var text = (await added.GetTextAsync(cancellationToken)).ToString();
+
+				changed.Add(path);
+				diff.Append(UnifiedDiff.RenderNewFile(path, text));
+
+				if (!write) continue;
+
+				noteSelfWrite?.Invoke(path);
+
+				var directory = Path.GetDirectoryName(path);
+				if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+				await File.WriteAllTextAsync(path, text, cancellationToken);
+			}
+
 			foreach (var documentId in projectChange.GetChangedDocuments())
 			{
 				cancellationToken.ThrowIfCancellationRequested();

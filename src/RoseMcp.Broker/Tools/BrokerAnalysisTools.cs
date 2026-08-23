@@ -209,6 +209,39 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
+	[McpServerTool(
+		Name = ToolNames.MoveTypeToFile,
+		Title = "Move a type to its own file",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        Moves one top-level type out of a file that declares several, into a file named after it.
+        The declaration goes across with its doc comments and attributes, formatted exactly as it
+        was, and using directives the split makes unnecessary are dropped from both files. Returns a
+        unified diff of both files; pass apply=false to preview. Use this rather than reading a file
+        and writing two, which loses formatting and leaves usings behind that fail a build.
+        """)]
+	public Task<MoveTypeResult> MoveTypeToFileAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Path to the file to split.")] string filePath,
+		[Description("Name of the type to move out, without type parameters.")] string typeName,
+		[Description("Where to put it. Defaults to <typeName>.cs beside the source file.")] string? targetPath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MoveTypeResult>(workspace ?? filePath, ToolNames.MoveTypeToFile, new()
+		{
+			["filePath"] = filePath,
+			["typeName"] = typeName,
+			["targetPath"] = targetPath,
+			["apply"] = apply,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
 	private Task<T> ForwardAsync<T>(
 		string? workspace,
 		string tool,

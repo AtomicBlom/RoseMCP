@@ -64,4 +64,49 @@ public sealed class RefactoringTools(WorkspaceHost host, SharedWorkProgress shar
 			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
+
+	[McpServerTool(
+		Name = ToolNames.MoveTypeToFile,
+		Title = "Move a type to its own file",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        Moves one top-level type out of a file that declares several, into a file named after it.
+        The declaration goes across with its doc comments and attributes, indented and spaced
+        exactly as it was, and using directives that the split makes unnecessary are dropped from
+        both files -- which is what stops the result from failing a build that treats unused usings
+        as errors. Returns a unified diff of both files. Pass apply=false to preview.
+        Declines rather than guessing when the type is the only one in its file, when the target
+        already exists, or when preprocessor directives are involved.
+        """)]
+	public async Task<MoveTypeResult> MoveTypeToFileAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Absolute or solution-relative path to the file to split.")] string filePath,
+		[Description("Name of the type to move out, without type parameters.")] string typeName,
+		[Description("Where to put it. Defaults to <typeName>.cs beside the source file.")] string? targetPath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new MoveTypeRequest
+		{
+			FilePath = filePath,
+			TypeName = typeName,
+			TargetPath = targetPath,
+			Apply = apply,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => MoveTypeService.MoveAsync(snapshot, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
 }

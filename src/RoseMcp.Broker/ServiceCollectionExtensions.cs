@@ -29,6 +29,9 @@ public static class ServiceCollectionExtensions
 		- Renaming: rose_rename_symbol, not find-and-replace. It moves overrides, interface
 		  implementations, partial declarations and cref references together, reports conflicts,
 		  and returns a diff.
+		- Splitting a file that declares several types: rose_move_type_to_file, not a read followed
+		  by two writes. It carries the declaration across untouched and fixes the using directives
+		  in both files, which hand-splitting gets wrong in a way that fails the build.
 		- Checking code is valid: rose_diagnostics, not a build. It answers from a warm
 		  compilation in milliseconds and needs no build.
 		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility and

@@ -81,6 +81,32 @@ public sealed class DiskSynchronizer
 	}
 
 	/// <summary>
+	/// Starts tracking documents that have appeared in the snapshot since the last sweep -- which
+	/// means the ones this worker added itself, since anything else arrives through a reload.
+	/// <para>
+	/// Without this a file the worker created is in the snapshot but not in the tracking table, so
+	/// the next edit anyone makes to it would be invisible until something forced a reload. That is
+	/// precisely the staleness this class exists to prevent.
+	/// </para>
+	/// </summary>
+	public void TrackNew(Solution solution)
+	{
+		var known = _documents.Values.Select(document => document.Id).ToHashSet();
+
+		foreach (var project in solution.Projects)
+		{
+			foreach (var document in project.Documents)
+			{
+				if (known.Contains(document.Id)) continue;
+				if (document.FilePath is not { Length: > 0 } path) continue;
+
+				_documents[document.Id] = new TrackedDocument(
+					document.Id, path, TrackedDocumentKind.Source, FileStamp.For(path));
+			}
+		}
+	}
+
+	/// <summary>
 	/// Restamps a file after this worker wrote it, so the next sweep sees it as already current.
 	/// </summary>
 	public void AcceptSelfWrite(DocumentId id, string path)

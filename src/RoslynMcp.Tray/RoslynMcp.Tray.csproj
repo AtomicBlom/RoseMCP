@@ -5,8 +5,13 @@
     <!-- Overrides the repo-wide net10.0. WinUI needs a Windows target framework. -->
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <Platforms>x64</Platforms>
+    <!-- Both architectures ship. A framework-dependent publish without a RID still produces an
+         apphost for the build machine, so an x64 build would drag the whole app into emulation on
+         an ARM64 box, and Roslyn's design-time build is exactly the CPU-heavy part that punishes.
+         RuntimeIdentifier keeps a default so a plain solution build still works. -->
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier Condition=" '$(RuntimeIdentifier)' == '' ">win-x64</RuntimeIdentifier>
+    <Platforms>x64;ARM64</Platforms>
     <UseWinUI>true</UseWinUI>
     <!-- Unpackaged, so the tray app is xcopy-runnable with no MSIX in the way. -->
     <WindowsPackageType>None</WindowsPackageType>

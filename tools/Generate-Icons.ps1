@@ -20,7 +20,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $IcoPath = "$PSScriptRoot/../src/RoslynMcp.Tray/Assets/roslyn-mcp.ico",
+    [string] $IcoPath = "$PSScriptRoot/../src/RoseMcp.Tray/Assets/rose-mcp.ico",
     [string] $PreviewPath = "$PSScriptRoot/../artifacts/icon-final.png"
 )
 

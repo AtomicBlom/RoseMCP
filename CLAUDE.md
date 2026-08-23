@@ -1,4 +1,4 @@
-# RoslynHost
+# RoseMCP
 
 An MCP server that gives coding agents real Roslyn semantics over a loaded C# solution:
 diagnostics, navigation, source-generated code, and refactorings.
@@ -18,18 +18,18 @@ It exists to fix three things that other Roslyn MCP servers get wrong:
 ## Architecture
 
 ```
-client --stdio or http--> RoslynMcp.Server (broker, no Roslyn refs)
-   or RoslynMcp.Tray  -->    |  one child per solution, MCP over stdio
-   (hosts it in-process)     +--> RoslynMcp.Worker --solution D:\a\A.sln
-                             +--> RoslynMcp.Worker --solution D:\b\B.slnx
+client --stdio or http--> RoseMcp.Server (broker, no Roslyn refs)
+   or RoseMcp.Tray    -->    |  one child per solution, MCP over stdio
+   (hosts it in-process)     +--> RoseMcp.Worker --solution D:\a\A.sln
+                             +--> RoseMcp.Worker --solution D:\b\B.slnx
 ```
 
-- **`RoslynMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
-- **`RoslynMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, and
-  `AddRoslynMcpBroker()`. One registration path, used by both hosts below.
-- **`RoslynMcp.Server`** -- console host. `--transport stdio` (default) or `--transport http`.
-- **`RoslynMcp.Worker`** -- owns exactly one `MSBuildWorkspace`. All Roslyn work happens here.
-- **`RoslynMcp.Tray`** -- WinUI 3 tray app for http mode. Hosts the broker in-process, so its
+- **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
+- **`RoseMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, and
+  `AddRoseMcpBroker()`. One registration path, used by both hosts below.
+- **`RoseMcp.Server`** -- console host. `--transport stdio` (default) or `--transport http`.
+- **`RoseMcp.Worker`** -- owns exactly one `MSBuildWorkspace`. All Roslyn work happens here.
+- **`RoseMcp.Tray`** -- WinUI 3 tray app for http mode. Hosts the broker in-process, so its
   window reads the live `WorkspaceManager` directly rather than through an API.
 
 The worker is a separate process because analyzer and generator assemblies cannot be unloaded
@@ -53,7 +53,7 @@ reclaim memory or pick up a rebuilt generator.
 ## Commands
 
 ```
-dotnet build RoslynHost.slnx
+dotnet build RoseMcp.slnx
 dotnet test
 dotnet format                      # run before every commit
 dotnet format --verify-no-changes  # what CI checks
@@ -62,14 +62,14 @@ dotnet format --verify-no-changes  # what CI checks
 Run it:
 
 ```
-dotnet run --project src/RoslynMcp.Server                                  # stdio (default)
-dotnet run --project src/RoslynMcp.Server -- --transport http --port 5077  # http + /admin/workspaces
-dotnet run --project src/RoslynMcp.Tray                                    # tray UI, hosts the broker
+dotnet run --project src/RoseMcp.Server                                  # stdio (default)
+dotnet run --project src/RoseMcp.Server -- --transport http --port 5077  # http + /admin/workspaces
+dotnet run --project src/RoseMcp.Tray                                    # tray UI, hosts the broker
 ```
 
-The broker finds the worker binary next to itself, then via `ROSLYNMCP_WORKER`, then in the sibling
+The broker finds the worker binary next to itself, then via `ROSEMCP_WORKER`, then in the sibling
 project output, so running from source works without publishing first. Non-loopback http binds are
-refused unless `ROSLYNMCP_TOKEN` is set.
+refused unless `ROSEMCP_TOKEN` is set.
 
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.
@@ -79,7 +79,7 @@ Run a worker standalone against a fixture -- the fastest way to debug Roslyn beh
 the broker in the way:
 
 ```
-dotnet run --project src/RoslynMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.sln
+dotnet run --project src/RoseMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.sln
 ```
 
 ## Getting it actually used
@@ -98,16 +98,16 @@ reaching for it is cheaper than that reflex. Three things carry that, in descend
    ```markdown
    ## C# navigation and refactoring
 
-   Use the `roslyn_*` MCP tools rather than grep or find-and-replace for C# in this repo:
-   `roslyn_find_references` for usages, `roslyn_rename_symbol` for renames,
-   `roslyn_diagnostics` to check code compiles. Source-generated code is only readable via
-   `roslyn_list_generated_documents` / `roslyn_read_generated_document`.
+   Use the Roslyn-backed `rose_*` MCP tools rather than grep or find-and-replace for C# in
+   this repo: `rose_find_references` for usages, `rose_rename_symbol` for renames,
+   `rose_diagnostics` to check code compiles. Source-generated code is only readable via
+   `rose_list_generated_documents` / `rose_read_generated_document`.
    ```
 
 Register the server with:
 
 ```
-claude mcp add roslyn -- <path>/RoslynMcp.Server.exe
+claude mcp add rose -- <path>/RoseMcp.Server.exe
 ```
 
 ## Conventions

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Publishes RoslynHost, either over the running instance or into release zips.
+    Publishes RoseMCP, either over the running instance or into release zips.
 
 .DESCRIPTION
     Two jobs that share all their plumbing:
@@ -30,7 +30,7 @@ param(
     [ValidateSet('win-x64', 'win-arm64')]
     [string[]] $Runtime,
 
-    [string] $Destination = 'D:/Tools/RoslynHost',
+    [string] $Destination = 'D:/Tools/RoseMcp',
 
     [int] $Port = 5077,
 
@@ -68,7 +68,7 @@ function Publish-Tree
 
     # Worker and broker land flat together so the broker finds the worker beside itself, which is
     # its first lookup and the one that needs no configuration.
-    foreach ($project in 'RoslynMcp.Worker', 'RoslynMcp.Server')
+    foreach ($project in 'RoseMcp.Worker', 'RoseMcp.Server')
     {
         Invoke-Dotnet @('publish', "$repo/src/$project", '-c', 'Release', '-r', $Rid,
             '--self-contained', 'false', '-o', $Into) "$project ($Rid)"
@@ -76,27 +76,27 @@ function Publish-Tree
 
     # The tray goes in a subfolder: WinUI drags in a lot, and mixing it with the server risks one
     # overwriting shared assemblies with windows-targeted variants of a different version.
-    Invoke-Dotnet @('publish', "$repo/src/RoslynMcp.Tray", '-c', 'Release', '-r', $Rid,
-        '--self-contained', 'false', '-o', "$Into/tray") "RoslynMcp.Tray ($Rid)"
+    Invoke-Dotnet @('publish', "$repo/src/RoseMcp.Tray", '-c', 'Release', '-r', $Rid,
+        '--self-contained', 'false', '-o', "$Into/tray") "RoseMcp.Tray ($Rid)"
 }
 
 function Stop-Tray
 {
-    $running = @(Get-Process -Name 'RoslynMcp.Tray' -ErrorAction SilentlyContinue)
+    $running = @(Get-Process -Name 'RoseMcp.Tray' -ErrorAction SilentlyContinue)
     if ($running.Count -eq 0) { return $false }
 
     Write-Host "  stopping tray (pid $($running.Id -join ', '))"
     $running | Stop-Process -Force
 
     # Workers exit when their broker closes their stdin. Publishing while one is still up fails,
-    # because it holds RoslynMcp.Worker.exe open.
+    # because it holds RoseMcp.Worker.exe open.
     for ($i = 0; $i -lt 60; $i++)
     {
-        if (-not (Get-Process -Name 'RoslynMcp.Worker' -ErrorAction SilentlyContinue)) { break }
+        if (-not (Get-Process -Name 'RoseMcp.Worker' -ErrorAction SilentlyContinue)) { break }
         Start-Sleep -Milliseconds 250
     }
 
-    $stragglers = @(Get-Process -Name 'RoslynMcp.Worker' -ErrorAction SilentlyContinue)
+    $stragglers = @(Get-Process -Name 'RoseMcp.Worker' -ErrorAction SilentlyContinue)
     if ($stragglers.Count -gt 0) { throw "workers did not exit: $($stragglers.Id -join ', ')" }
 
     return $true
@@ -104,11 +104,11 @@ function Stop-Tray
 
 function Start-Tray
 {
-    $exe = "$Destination/tray/RoslynMcp.Tray.exe"
+    $exe = "$Destination/tray/RoseMcp.Tray.exe"
     if (-not (Test-Path $exe)) { throw "no tray at $exe" }
 
     $process = Start-Process -FilePath $exe -PassThru -WorkingDirectory $WorkspaceRoot `
-        -ArgumentList '--port', $Port, '--worker', "$Destination/RoslynMcp.Worker.exe"
+        -ArgumentList '--port', $Port, '--worker', "$Destination/RoseMcp.Worker.exe"
 
     Write-Host "  started tray pid $($process.Id) (workspace root $WorkspaceRoot)"
 
@@ -140,7 +140,7 @@ if ($Mode -eq 'promote')
     if (-not $SkipTests)
     {
         Write-Host 'running tests before touching the live instance'
-        Invoke-Dotnet @('test', "$repo/RoslynHost.slnx", '-c', 'Release') 'tests'
+        Invoke-Dotnet @('test', "$repo/RoseMcp.slnx", '-c', 'Release') 'tests'
     }
 
     $wasRunning = Stop-Tray

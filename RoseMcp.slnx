@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RoseMcp.Broker/RoseMcp.Broker.csproj" />
+    <Project Path="src/RoseMcp.Contracts/RoseMcp.Contracts.csproj" />
+    <Project Path="src/RoseMcp.Server/RoseMcp.Server.csproj" />
+    <Project Path="src/RoseMcp.Tray/RoseMcp.Tray.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/RoseMcp.Worker/RoseMcp.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RoseMcp.Worker.Tests/RoseMcp.Worker.Tests.csproj" />
+  </Folder>
+</Solution>

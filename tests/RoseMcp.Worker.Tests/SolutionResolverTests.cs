@@ -40,7 +40,7 @@ public sealed class SolutionResolverTests
 	[Fact]
 	public void Falls_back_to_a_bare_project_when_no_solution_encloses_it()
 	{
-		var root = Path.Combine(Path.GetTempPath(), "roslynmcp-tests", $"bare-{Guid.NewGuid():N}");
+		var root = Path.Combine(Path.GetTempPath(), "rosemcp-tests", $"bare-{Guid.NewGuid():N}");
 		var projectDirectory = Path.Combine(root, "Lonely");
 		Directory.CreateDirectory(projectDirectory);
 
@@ -62,7 +62,7 @@ public sealed class SolutionResolverTests
 	[Fact]
 	public void Says_what_to_pass_when_nothing_can_be_resolved()
 	{
-		var empty = Path.Combine(Path.GetTempPath(), "roslynmcp-tests", $"empty-{Guid.NewGuid():N}");
+		var empty = Path.Combine(Path.GetTempPath(), "rosemcp-tests", $"empty-{Guid.NewGuid():N}");
 		Directory.CreateDirectory(empty);
 
 		try

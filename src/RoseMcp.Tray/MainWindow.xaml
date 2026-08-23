@@ -4,15 +4,15 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:RoseMcp.Tray"
     xmlns:tb="using:H.NotifyIcon"
-    Title="Roslyn MCP">
+    Title="RoseMCP">
 
     <Grid RowDefinitions="Auto,*,Auto" Padding="16" RowSpacing="12">
 
-        <!-- GeneratedIconSource draws the icon at runtime, which avoids shipping an .ico purely to
-             have something in the notification area. -->
+        <!-- The icon is applied in code from Assets/rose-mcp.ico: the tray needs a 32px frame
+             and the window an HICON, and neither is expressible here. -->
         <tb:TaskbarIcon
             x:Name="Tray"
-            ToolTipText="Roslyn MCP"
+            ToolTipText="RoseMCP"
             NoLeftClickDelay="True"
             LeftClickCommand="{x:Bind ShowCommand}">
             <tb:TaskbarIcon.ContextFlyout>
@@ -26,7 +26,7 @@
         </tb:TaskbarIcon>
 
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="Roslyn MCP" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock Text="RoseMCP" Style="{StaticResource TitleTextBlockStyle}" />
             <TextBlock x:Name="Endpoint" Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}" />
         </StackPanel>
 

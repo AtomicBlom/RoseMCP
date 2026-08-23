@@ -34,7 +34,7 @@ public sealed class FixtureSolution : IDisposable
 	{
 		var source = FixtureRoot();
 		var root = System.IO.Path.Combine(
-			System.IO.Path.GetTempPath(), "roslynmcp-tests", $"{fixtureName}-{Guid.NewGuid():N}");
+			System.IO.Path.GetTempPath(), "rosemcp-tests", $"{fixtureName}-{Guid.NewGuid():N}");
 
 		Directory.CreateDirectory(root);
 

@@ -115,7 +115,8 @@ claude mcp add rose -- <path>/RoseMcp.Server.exe
 Enforced by `.editorconfig` where the analyzer can express them, by review where it cannot.
 
 - **Tabs**, not spaces.
-- **File-scoped namespaces.**
+- **File-scoped namespaces**, matching the folder they live in (IDE0130). A directory rename is
+  otherwise invisible to the compiler.
 - **Braces on their own line** -- Allman, everywhere.
 - **Conditionals get braces**, with one exception: a simple control-flow body kept on the same
   line may go unbraced.

@@ -30,6 +30,11 @@ dotnet_diagnostic.IDE0055.severity = warning
 csharp_style_namespace_declarations = file_scoped:error
 dotnet_diagnostic.IDE0161.severity = error
 
+# Namespace must match folder structure. Off by default, and without it a directory rename is
+# invisible to the compiler -- folders and namespaces drift apart silently and indefinitely.
+dotnet_style_namespace_match_folder = true:warning
+dotnet_diagnostic.IDE0130.severity = warning
+
 #### Braces: Allman, everywhere ####
 csharp_new_line_before_open_brace = all
 csharp_new_line_before_else = true

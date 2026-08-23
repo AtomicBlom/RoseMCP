@@ -187,6 +187,15 @@ dotnet_naming_symbols.private_field_symbols.applicable_accessibilities = private
 dotnet_naming_style.underscore_camel.required_prefix = _
 dotnet_naming_style.underscore_camel.capitalization = camel_case
 
+# Local constants follow the same PascalCase convention as class constants. Without this they fall
+# through to the locals rule below and a local const would have to be spelled differently to an
+# identical class-level one.
+dotnet_naming_rule.local_constants_are_pascal_case.severity = error
+dotnet_naming_rule.local_constants_are_pascal_case.symbols = local_constant_symbols
+dotnet_naming_rule.local_constants_are_pascal_case.style = pascal_case
+dotnet_naming_symbols.local_constant_symbols.applicable_kinds = local
+dotnet_naming_symbols.local_constant_symbols.required_modifiers = const
+
 dotnet_naming_rule.parameters_are_camel_case.severity = error
 dotnet_naming_rule.parameters_are_camel_case.symbols = parameter_symbols
 dotnet_naming_rule.parameters_are_camel_case.style = camel_case

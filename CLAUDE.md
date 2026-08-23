@@ -19,9 +19,9 @@ It exists to fix three things that other Roslyn MCP servers get wrong:
 
 ```
 client --stdio or http--> RoslynMcp.Server (broker, no Roslyn refs)
-                              |  one child per solution, MCP over stdio
-                              +--> RoslynMcp.Worker --solution D:\a\A.sln
-                              +--> RoslynMcp.Worker --solution D:\b\B.slnx
+   or RoslynMcp.Tray  -->    |  one child per solution, MCP over stdio
+   (hosts it in-process)     +--> RoslynMcp.Worker --solution D:\a\A.sln
+                             +--> RoslynMcp.Worker --solution D:\b\B.slnx
 ```
 
 - **`RoslynMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
@@ -54,6 +54,18 @@ dotnet test
 dotnet format                      # run before every commit
 dotnet format --verify-no-changes  # what CI checks
 ```
+
+Run it:
+
+```
+dotnet run --project src/RoslynMcp.Server                                  # stdio (default)
+dotnet run --project src/RoslynMcp.Server -- --transport http --port 5077  # http + /admin/workspaces
+dotnet run --project src/RoslynMcp.Tray                                    # tray UI, hosts the broker
+```
+
+The broker finds the worker binary next to itself, then via `ROSLYNMCP_WORKER`, then in the sibling
+project output, so running from source works without publishing first. Non-loopback http binds are
+refused unless `ROSLYNMCP_TOKEN` is set.
 
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.

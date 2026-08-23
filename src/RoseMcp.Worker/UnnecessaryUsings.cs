@@ -5,15 +5,6 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace RoseMcp.Worker;
 
-/// <summary>What was removed, and the solution with it gone.</summary>
-public sealed record UsingCleanup
-{
-	public required Solution Solution { get; init; }
-
-	/// <summary>The directives dropped, as written, for reporting.</summary>
-	public required IReadOnlyList<string> Removed { get; init; }
-}
-
 /// <summary>
 /// Drops using directives that nothing in a file needs any more.
 /// <para>
@@ -57,7 +48,7 @@ public static class UnnecessaryUsings
 				text = text.Replace(LineSpanOf(text, directive), string.Empty);
 			}
 
-			solution = solution.WithDocumentText(documentId, text);
+			solution = solution.WithDocumentText(documentId, TidyHeader(text));
 		}
 
 		return new UsingCleanup
@@ -65,6 +56,69 @@ public static class UnnecessaryUsings
 			Solution = solution,
 			Removed = removed,
 		};
+	}
+
+	/// <summary>
+	/// Closes the gaps the removals left.
+	/// <para>
+	/// Using directives come in groups separated by blank lines, so deleting a whole group leaves
+	/// its separators behind -- at the very top of the file, where they are most obvious and where
+	/// an analyzer set to enforce formatting will fail the build over them.
+	/// </para>
+	/// </summary>
+	private static SourceText TidyHeader(SourceText text)
+	{
+		var doomed = new List<TextSpan>();
+
+		// Starting as though the previous line were blank is what drops the leading ones, which is
+		// the case a file left with no usings at all ends up in.
+		var previousWasBlank = true;
+
+		foreach (var line in text.Lines.Take(HeaderLength(text)))
+		{
+			var blank = line.ToString().Trim().Length == 0;
+
+			if (blank && previousWasBlank)
+			{
+				doomed.Add(line.SpanIncludingLineBreak);
+				continue;
+			}
+
+			previousWasBlank = blank;
+		}
+
+		foreach (var span in doomed.OrderByDescending(span => span.Start))
+		{
+			text = text.Replace(span, string.Empty);
+		}
+
+		return text;
+	}
+
+	/// <summary>
+	/// How many lines of preamble the file has: directives, comments and the blank lines between
+	/// them. Stops at the first line of anything else, so nothing below is touched.
+	/// </summary>
+	private static int HeaderLength(SourceText text)
+	{
+		var length = 0;
+
+		foreach (var line in text.Lines)
+		{
+			var trimmed = line.ToString().TrimStart();
+
+			var isPreamble = trimmed.Length == 0
+				|| trimmed.StartsWith("//", StringComparison.Ordinal)
+				|| trimmed.StartsWith("using ", StringComparison.Ordinal)
+				|| trimmed.StartsWith("global using ", StringComparison.Ordinal)
+				|| trimmed.StartsWith("extern alias ", StringComparison.Ordinal);
+
+			if (!isPreamble) break;
+
+			length++;
+		}
+
+		return length;
 	}
 
 	private static async Task<IReadOnlyList<UsingDirectiveSyntax>> FindUnnecessaryAsync(

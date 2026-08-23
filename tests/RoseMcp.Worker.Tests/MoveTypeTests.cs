@@ -202,6 +202,33 @@ public sealed class MoveTypeTests
 		Assert.Contains("ShapeKind", error.Message, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// The blank lines that separated a using go with it. Otherwise the file left behind starts
+	/// with the gap where the import used to be, and the file the type moved into starts with the
+	/// gaps where somebody else's imports were -- which here is a build error, not an untidiness.
+	/// </summary>
+	[Fact]
+	public async Task Closes_the_gap_a_removed_using_leaves()
+	{
+		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await MoveAsync(session, fixture, "Circle");
+
+		var moved = await File.ReadAllTextAsync(
+			fixture.Path("MultiType", "Shapes", "Circle.cs"), TestContext.Current.CancellationToken);
+		var remaining = await File.ReadAllTextAsync(
+			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current.CancellationToken);
+
+		// The type that needed the import took it, and kept it at the top where it belongs.
+		Assert.StartsWith("using System.Globalization;\r\n\r\nnamespace Shapes;", moved, StringComparison.Ordinal);
+
+		// The file it left had only that one, so it now opens on its namespace rather than on the
+		// hole the using left.
+		Assert.StartsWith("namespace Shapes;", remaining, StringComparison.Ordinal);
+		Assert.DoesNotContain("\r\n\r\n\r\n", remaining, StringComparison.Ordinal);
+	}
+
 	private static Task<MoveTypeResult> MoveAsync(
 		WorkspaceSession session,
 		FixtureSolution fixture,

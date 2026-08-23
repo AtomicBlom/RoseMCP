@@ -29,6 +29,7 @@ internal static class Program
 		builder.Services.AddSingleton(options);
 		builder.Services.AddSingleton<RestoreRunner>();
 		builder.Services.AddSingleton<SolutionLoader>();
+		builder.Services.AddSingleton<DiagnosticsService>();
 		builder.Services.AddSingleton<WorkspaceHost>();
 		builder.Services.AddHostedService(services => services.GetRequiredService<WorkspaceHost>());
 		builder.Services

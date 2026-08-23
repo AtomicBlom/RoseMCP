@@ -1,7 +1,5 @@
 using System.Diagnostics;
 
-using Microsoft.Extensions.Logging.Abstractions;
-
 namespace RoslynMcp.Worker.Tests;
 
 /// <summary>
@@ -35,7 +33,7 @@ public sealed class ResilienceTests
 		Git(fixture.Root, "commit", "-qam", "other");
 		Git(fixture.Root, "checkout", "-q", "main");
 
-		await using var session = await OpenAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
 
 		var onMain = await SourceOfAsync(session, "Calculator.cs");
 		Assert.Contains("Multiply", onMain, StringComparison.Ordinal);
@@ -81,7 +79,7 @@ public sealed class ResilienceTests
 		Git(fixture.Root, "commit", "-q", "-m", "extra");
 		Git(fixture.Root, "checkout", "-q", "main");
 
-		await using var session = await OpenAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
 
 		var before = await session.ReadAsync(TestContext.Current.CancellationToken);
 		Assert.DoesNotContain(before.Solution.Projects, project => project.Name == "Extra");
@@ -101,7 +99,7 @@ public sealed class ResilienceTests
 	public async Task Serves_a_stale_snapshot_while_the_solution_is_briefly_missing()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await OpenAsync(fixture, TimeSpan.FromSeconds(30));
+		await using var session = await TestSession.OpenAsync(fixture, TimeSpan.FromSeconds(30));
 
 		await session.ReadAsync(TestContext.Current.CancellationToken);
 
@@ -130,7 +128,7 @@ public sealed class ResilienceTests
 	public async Task Unloads_once_the_solution_stays_missing_past_the_grace_period()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var session = await OpenAsync(fixture, TimeSpan.FromMilliseconds(200));
+		await using var session = await TestSession.OpenAsync(fixture, TimeSpan.FromMilliseconds(200));
 
 		await session.ReadAsync(TestContext.Current.CancellationToken);
 
@@ -159,28 +157,6 @@ public sealed class ResilienceTests
 			.Single(candidate => candidate.Name == documentName);
 
 		return (await document.GetTextAsync(TestContext.Current.CancellationToken)).ToString();
-	}
-
-	private static async Task<WorkspaceSession> OpenAsync(FixtureSolution fixture, TimeSpan? grace = null)
-	{
-		var loader = new SolutionLoader(
-			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
-			NullLogger<SolutionLoader>.Instance);
-
-		var options = new WorkerOptions
-		{
-			SolutionPath = fixture.SolutionPath,
-			UnloadGracePeriod = grace ?? TimeSpan.FromSeconds(30),
-		};
-
-		var load = await loader.LoadAsync(options, TestContext.Current.CancellationToken);
-
-		return WorkspaceSession.Create(
-			load,
-			loader,
-			options,
-			NullLogger<WorkspaceSession>.Instance,
-			NullLogger<SolutionWatcher>.Instance);
 	}
 
 	private static void Git(string workingDirectory, params string[] arguments) =>

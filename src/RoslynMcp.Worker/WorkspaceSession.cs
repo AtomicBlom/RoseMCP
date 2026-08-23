@@ -41,6 +41,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	private Solution _current;
 	private long _revision;
 	private DateTime? _missingSince;
+	private int _disposed;
 
 	private WorkspaceSession(
 		LoadResult load,
@@ -304,6 +305,8 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 	public async ValueTask DisposeAsync()
 	{
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
 		_queue.Writer.TryComplete();
 		await _shutdown.CancelAsync();
 

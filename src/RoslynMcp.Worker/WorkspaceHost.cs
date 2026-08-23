@@ -23,6 +23,7 @@ public sealed class WorkspaceHost(
 	private readonly CancellationTokenSource _shutdown = new();
 	private Task<WorkspaceSession>? _start;
 	private volatile WorkspaceStatusReport? _faulted;
+	private int _disposed;
 
 	public Task StartAsync(CancellationToken cancellationToken)
 	{
@@ -126,6 +127,12 @@ public sealed class WorkspaceHost(
 
 	public async ValueTask DisposeAsync()
 	{
+		// Registered as both a singleton and a hosted service, so this runs twice: once via
+		// StopAsync and again when the container disposes the singleton. Without this guard the
+		// second pass throws on the disposed CancellationTokenSource and the worker exits
+		// non-zero, which the broker would read as a crash.
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
 		await _shutdown.CancelAsync();
 
 		if (_start is not null)

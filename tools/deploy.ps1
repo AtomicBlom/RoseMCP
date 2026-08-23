@@ -14,13 +14,21 @@
 
     Paths use forward slashes throughout; PowerShell accepts them on Windows.
 
+    promote installs to -Destination, or $env:ROSEMCP_DEPLOY_ROOT, or %LOCALAPPDATA%/RoseMcp.
+    Nothing here assumes a particular drive; where a given machine keeps its install is that
+    machine's business, not the repository's.
+
 .EXAMPLE
     ./tools/deploy.ps1
     Promote the current architecture over the running instance.
 
 .EXAMPLE
     ./tools/deploy.ps1 -Mode package
-    Build roslynhost-win-x64.zip and roslynhost-win-arm64.zip under artifacts/.
+    Build rosemcp-win-x64.zip and rosemcp-win-arm64.zip under artifacts/.
+
+.EXAMPLE
+    ./tools/deploy.ps1 -Destination C:/Tools/RoseMcp
+    Promote to a specific install root, overriding $env:ROSEMCP_DEPLOY_ROOT.
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +38,8 @@ param(
     [ValidateSet('win-x64', 'win-arm64')]
     [string[]] $Runtime,
 
-    [string] $Destination = 'D:/Tools/RoseMcp',
+    # Install root for promote. Falls back to $env:ROSEMCP_DEPLOY_ROOT, then %LOCALAPPDATA%/RoseMcp.
+    [string] $Destination,
 
     [int] $Port = 5077,
 
@@ -45,6 +54,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 if (-not $WorkspaceRoot) { $WorkspaceRoot = $repo }
+
+if (-not $Destination)
+{
+    $configured = $env:ROSEMCP_DEPLOY_ROOT
+    $Destination = if ($configured) { $configured } else { Join-Path $env:LOCALAPPDATA 'RoseMcp' }
+}
+
+$Destination = $Destination.Replace('\', '/')
 
 function Get-HostRuntime
 {
@@ -165,7 +182,7 @@ foreach ($rid in $Runtime)
 
     Publish-Tree -Rid $rid -Into $stage
 
-    $zip = "$artifacts/roslynhost-$rid.zip"
+    $zip = "$artifacts/rosemcp-$rid.zip"
     if (Test-Path $zip) { Remove-Item $zip -Force }
 
     Compress-Archive -Path "$stage/*" -DestinationPath $zip

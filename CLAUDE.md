@@ -71,6 +71,16 @@ The broker finds the worker binary next to itself, then via `ROSEMCP_WORKER`, th
 project output, so running from source works without publishing first. Non-loopback http binds are
 refused unless `ROSEMCP_TOKEN` is set.
 
+Deploy over the running instance, or build release zips:
+
+```
+./tools/deploy.ps1                          # test, stop tray, publish, restart
+./tools/deploy.ps1 -Mode package            # artifacts/rosemcp-win-{x64,arm64}.zip
+```
+
+`promote` installs to `-Destination`, else `ROSEMCP_DEPLOY_ROOT`, else `%LOCALAPPDATA%/RoseMcp`.
+Where a machine keeps its install is that machine's business, so no path is committed here.
+
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.
 Individual test projects are also executables, so running one directly works too.
@@ -142,8 +152,3 @@ Enforced by `.editorconfig` where the analyzer can express them, by review where
 
 Commit at every milestone boundary and whenever a self-contained piece works. Run `dotnet format`
 first so formatting never shows up as diff noise.
-
-## Plan
-
-The full design, including the v2 code-action engine and the reasoning behind each decision, is at
-`C:\Users\SteveBlom\.claude\plans\i-want-to-use-quirky-parrot.md`.

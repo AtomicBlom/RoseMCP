@@ -2,6 +2,7 @@ using System.ComponentModel;
 
 using Microsoft.CodeAnalysis;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Contracts;
@@ -10,7 +11,7 @@ namespace RoseMcp.Worker.Tools;
 
 /// <summary>Reading the solution: diagnostics and the generated code no file tool can reach.</summary>
 [McpServerToolType]
-public sealed class AnalysisTools(WorkspaceHost host, DiagnosticsService diagnostics)
+public sealed class AnalysisTools(WorkspaceHost host, DiagnosticsService diagnostics, SharedWorkProgress sharedWork)
 {
 	[McpServerTool(
 		Name = ToolNames.Diagnostics,
@@ -27,6 +28,7 @@ public sealed class AnalysisTools(WorkspaceHost host, DiagnosticsService diagnos
         via rose_read_generated_document.
         """)]
 	public async Task<DiagnosticsResult> DiagnosticsAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("document, project, or solution. Defaults to solution.")] string? scope = null,
 		[Description("File path for document scope, or project name for project scope.")] string? target = null,
 		[Description("Lowest severity to report: hidden, info, warning, or error. Defaults to warning.")] string? minimumSeverity = null,
@@ -34,6 +36,9 @@ public sealed class AnalysisTools(WorkspaceHost host, DiagnosticsService diagnos
 		[Description("Maximum diagnostics to return. Defaults to 200.")] int maxResults = 200,
 		CancellationToken cancellationToken = default)
 	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
 		var snapshot = await host.ReadAsync(cancellationToken);
 
 		var request = new DiagnosticsRequest
@@ -45,7 +50,8 @@ public sealed class AnalysisTools(WorkspaceHost host, DiagnosticsService diagnos
 			MaxResults = maxResults <= 0 ? 200 : maxResults,
 		};
 
-		return await diagnostics.AnalyseAsync(snapshot, request, cancellationToken);
+		return await diagnostics.AnalyseAsync(
+			snapshot, request, cancellationToken, working);
 	}
 
 	[McpServerTool(
@@ -62,11 +68,17 @@ public sealed class AnalysisTools(WorkspaceHost host, DiagnosticsService diagnos
         has generators that are failing to load.
         """)]
 	public async Task<GeneratedDocumentList> ListGeneratedAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
 		CancellationToken cancellationToken = default)
 	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
 		var snapshot = await host.ReadAsync(cancellationToken);
-		return await GeneratedDocumentService.ListAsync(snapshot, project, cancellationToken);
+
+		return await GeneratedDocumentService.ListAsync(
+			snapshot, project, cancellationToken, working);
 	}
 
 	[McpServerTool(
@@ -82,10 +94,14 @@ public sealed class AnalysisTools(WorkspaceHost host, DiagnosticsService diagnos
         a diagnostic points at a file that does not exist on disk.
         """)]
 	public async Task<GeneratedDocumentContent> ReadGeneratedAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Hint name of the generated document, for example Widget.Greeting.g.cs.")] string hintName,
 		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
 		CancellationToken cancellationToken = default)
 	{
+		// Reading one document is cheap; the only wait worth reporting is the workspace itself.
+		using var following = sharedWork.Follow(WorkProgress.For(progress));
+
 		var snapshot = await host.ReadAsync(cancellationToken);
 		return await GeneratedDocumentService.ReadAsync(snapshot, hintName, project, cancellationToken);
 	}

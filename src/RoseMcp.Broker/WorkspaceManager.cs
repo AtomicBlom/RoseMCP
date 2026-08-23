@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using ModelContextProtocol;
+
 namespace RoseMcp.Broker;
 
 /// <summary>
@@ -19,6 +21,12 @@ public sealed class WorkspaceManager(
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 
+	/// <summary>
+	/// What every worker is doing. Owned here rather than injected because the manager is the only
+	/// thing that starts, stops, and calls workers, so it is the only thing that could fill it in.
+	/// </summary>
+	public ActivityLog Activities { get; } = new();
+
 	/// <summary>Open workspaces, for status reporting and the tray UI.</summary>
 	public IReadOnlyList<WorkspaceWorker> Workers
 	{
@@ -32,8 +40,9 @@ public sealed class WorkspaceManager(
 	}
 
 	/// <summary>
-	/// One row per open workspace, memory included. The same model backs the tray window and
-	/// GET /admin/workspaces, so the UI can never show something the API disagrees with.
+	/// One row per open workspace, memory and in-flight work included. The same model backs the
+	/// tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
+	/// with.
 	/// </summary>
 	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => worker.Describe())];
 
@@ -63,6 +72,7 @@ public sealed class WorkspaceManager(
 
 				await existing.DisposeAsync();
 				_workers.Remove(solutionPath);
+				Activities.Forget(solutionPath);
 			}
 
 			if (!File.Exists(solutionPath))
@@ -70,12 +80,7 @@ public sealed class WorkspaceManager(
 				throw new InvalidOperationException($"The solution no longer exists at {solutionPath}.");
 			}
 
-			var worker = await WorkspaceWorker.StartAsync(
-				solutionPath,
-				WorkerLauncher.ResolveWorkerPath(_options),
-				_options,
-				loggerFactory,
-				cancellationToken);
+			var worker = await StartAsync(solutionPath, cancellationToken);
 
 			_workers[solutionPath] = worker;
 			return worker;
@@ -83,6 +88,32 @@ public sealed class WorkspaceManager(
 		finally
 		{
 			_gate.Release();
+		}
+	}
+
+	/// <summary>
+	/// Spawns a worker, tracked so the wait is visible. Process launch and the MCP handshake are
+	/// only a second or so, but reporting them separately is what distinguishes a worker that is
+	/// slow to start from a solution that is slow to load.
+	/// </summary>
+	private async Task<WorkspaceWorker> StartAsync(string solutionPath, CancellationToken cancellationToken)
+	{
+		using var activity = Activities.Begin(solutionPath, "start worker");
+
+		try
+		{
+			return await WorkspaceWorker.StartAsync(
+				solutionPath,
+				WorkerLauncher.ResolveWorkerPath(_options),
+				_options,
+				Activities,
+				loggerFactory,
+				cancellationToken);
+		}
+		catch (Exception exception)
+		{
+			activity.Complete(Contracts.ActivityOutcome.Failed, exception.Message);
+			throw;
 		}
 	}
 
@@ -99,20 +130,21 @@ public sealed class WorkspaceManager(
 		string tool,
 		IReadOnlyDictionary<string, object?> arguments,
 		bool retryIfWorkerDied,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IProgress<ProgressNotificationValue>? progress = null)
 	{
 		var worker = await GetOrStartAsync(workspace, cancellationToken);
 
 		try
 		{
-			return await worker.CallAsync<T>(tool, arguments, cancellationToken);
+			return await worker.CallAsync<T>(tool, arguments, cancellationToken, progress);
 		}
 		catch (WorkerUnavailableException) when (retryIfWorkerDied)
 		{
 			logger.LogInformation("Restarting the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
 
 			var replacement = await RestartAsync(worker.SolutionPath, cancellationToken);
-			return await replacement.CallAsync<T>(tool, arguments, cancellationToken);
+			return await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress);
 		}
 	}
 
@@ -127,6 +159,10 @@ public sealed class WorkspaceManager(
 			if (!_workers.Remove(solutionPath, out var worker)) return false;
 
 			await worker.DisposeAsync();
+
+			// The history belonged to that process. Keeping it would attribute the old worker's
+			// work to whatever starts next.
+			Activities.Forget(solutionPath);
 			return true;
 		}
 		finally
@@ -148,10 +184,6 @@ public sealed class WorkspaceManager(
 		return await GetOrStartAsync(solutionPath, cancellationToken);
 	}
 
-	/// <summary>
-	/// Works out which workspace a call means. With exactly one open and no path given, the answer
-	/// is unambiguous -- demanding the path anyway would be pedantry.
-	/// </summary>
 	/// <summary>
 	/// Works out which workspace a call means.
 	/// <para>

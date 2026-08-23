@@ -57,16 +57,24 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 	public async Task<DiagnosticsResult> AnalyseAsync(
 		WorkspaceSnapshot snapshot,
 		DiagnosticsRequest request,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IWorkProgress? progress = null)
 	{
 		var notices = new List<string>(snapshot.Notices);
 		var projects = SelectProjects(snapshot.Solution, request, notices);
 
 		var collected = new List<DiagnosticEntry>();
+		var analysed = 0;
 
 		foreach (var project in projects)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
+
+			// A whole-solution pass with analyzers on is the slowest thing this server does, and it
+			// is worth being able to see which project it is stuck in.
+			progress?.Report(
+				$"Analysing {project.Name} ({analysed + 1}/{projects.Count})",
+				100.0 * analysed / projects.Count);
 
 			var diagnostics = await ForProjectAsync(project, request.IncludeAnalyzers, notices, cancellationToken);
 			var generatedNames = await GeneratedPathsAsync(project, diagnostics, cancellationToken);
@@ -78,6 +86,8 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 
 				collected.Add(ToEntry(diagnostic, project.Name, generatedNames));
 			}
+
+			analysed++;
 		}
 
 		var ordered = collected

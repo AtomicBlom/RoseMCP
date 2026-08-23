@@ -16,6 +16,7 @@ namespace RoseMcp.Worker;
 public sealed class WorkspaceHost(
 	WorkerOptions options,
 	SolutionLoader loader,
+	SharedWorkProgress sharedWork,
 	ILoggerFactory loggerFactory,
 	IHostApplicationLifetime lifetime,
 	ILogger<WorkspaceHost> logger) : IHostedService, IAsyncDisposable
@@ -39,7 +40,7 @@ public sealed class WorkspaceHost(
 	/// <see cref="WorkspaceState.Faulted"/> report, because a caller asking what state the
 	/// workspace is in deserves an answer rather than an exception.
 	/// </summary>
-	public async Task<WorkspaceStatusReport> GetStatusAsync(CancellationToken cancellationToken)
+	public async Task<WorkspaceStatusReport> GetStatusAsync(CancellationToken cancellationToken, IWorkProgress? progress = null)
 	{
 		if (_faulted is not null) return _faulted;
 
@@ -55,7 +56,8 @@ public sealed class WorkspaceHost(
 				restore: null,
 				snapshot.Revision,
 				loadSeconds: 0,
-				cancellationToken);
+				cancellationToken,
+				progress);
 
 			return report with { DegradedReasons = [.. report.DegradedReasons, .. snapshot.Notices] };
 		}
@@ -82,13 +84,14 @@ public sealed class WorkspaceHost(
 
 	private async Task<WorkspaceSession> StartSessionAsync()
 	{
-		var load = await loader.LoadAsync(options, _shutdown.Token);
+		var load = await loader.LoadAsync(options, _shutdown.Token, sharedWork);
 		return WorkspaceSession.Create(
 			load,
 			loader,
 			options,
 			loggerFactory.CreateLogger<WorkspaceSession>(),
-			loggerFactory.CreateLogger<SolutionWatcher>());
+			loggerFactory.CreateLogger<SolutionWatcher>(),
+			sharedWork);
 	}
 
 	private Task<WorkspaceSession> StartedAsync() =>

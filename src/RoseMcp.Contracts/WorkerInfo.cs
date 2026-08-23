@@ -38,4 +38,13 @@ public sealed record WorkspaceSummary
 
 	/// <summary>Last value the worker reported for its managed heap, when it was still answering.</summary>
 	public long? ManagedHeapBytes { get; init; }
+
+	/// <summary>What this worker is doing right now, oldest first.</summary>
+	public IReadOnlyList<WorkerActivity> Running { get; init; } = [];
+
+	/// <summary>
+	/// The last few operations to finish, newest first. Kept because the interesting question is
+	/// usually "what did the agent just ask for", and by the time anyone looks the call is over.
+	/// </summary>
+	public IReadOnlyList<WorkerActivity> Recent { get; init; } = [];
 }

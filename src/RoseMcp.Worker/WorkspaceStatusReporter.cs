@@ -22,14 +22,15 @@ public static class WorkspaceStatusReporter
 		RestoreReport? restore,
 		long revision,
 		double loadSeconds,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IWorkProgress? progress = null)
 	{
 		var failureMessages = workspaceDiagnostics
 			.Where(diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
 			.Select(diagnostic => diagnostic.Message)
 			.ToArray();
 
-		var projects = await DescribeProjectsAsync(solution, failureMessages, cancellationToken);
+		var projects = await DescribeProjectsAsync(solution, failureMessages, cancellationToken, progress);
 		var degradedReasons = CollectDegradedReasons(workspaceDiagnostics, projects, restore);
 
 		return new WorkspaceStatusReport
@@ -48,13 +49,21 @@ public static class WorkspaceStatusReporter
 	private static async Task<IReadOnlyList<ProjectStatus>> DescribeProjectsAsync(
 		Solution solution,
 		IReadOnlyList<string> failureMessages,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IWorkProgress? progress)
 	{
 		var statuses = new List<ProjectStatus>(solution.ProjectIds.Count);
+		var total = solution.ProjectIds.Count;
 
 		foreach (var project in solution.Projects)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
+
+			// Reported before the work rather than after, because running a project's generators is
+			// the slow part and naming it afterwards would credit it to the next project along.
+			progress?.Report(
+				$"Checking generated code: {project.Name} ({statuses.Count + 1}/{total})",
+				total == 0 ? 100 : 100.0 * statuses.Count / total);
 
 			var generators = project.AnalyzerReferences
 				.SelectMany(reference => SafeGetGenerators(reference, project.Language))

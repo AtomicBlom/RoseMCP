@@ -25,7 +25,8 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		string solutionPath,
 		IReadOnlyList<string> projectPaths,
 		bool skip,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IWorkProgress? progress = null)
 	{
 		if (skip) return new RestoreReport { Ran = false, Reason = "Skipped: --no-restore was passed." };
 
@@ -38,6 +39,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		var reason = $"{stale.Length} of {projectPaths.Count} project(s) had missing or stale restore output, "
 			+ $"starting with '{Path.GetFileName(stale[0])}'.";
 		logger.LogInformation("Running dotnet restore. {Reason}", reason);
+		progress?.Report("Running dotnet restore");
 
 		var (exitCode, output) = await RunAsync(solutionPath, cancellationToken);
 		var succeeded = exitCode == 0;

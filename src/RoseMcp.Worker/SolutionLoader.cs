@@ -14,15 +14,29 @@ public sealed class SolutionLoader(
 	ShadowCopyAnalyzerAssemblyLoader analyzerLoader,
 	ILogger<SolutionLoader> logger)
 {
-	public async Task<LoadResult> LoadAsync(WorkerOptions options, CancellationToken cancellationToken)
+	/// <summary>
+	/// How the load's own 0-to-100 is divided up. Restore is bounded only by NuGet, and the
+	/// design-time build is the part that takes minutes on a large solution, so it gets the bulk.
+	/// The shares are guesses, but they are stable guesses: a bar that reaches 70% and then crawls
+	/// is more use than one that reaches 99% and stops.
+	/// </summary>
+	private const double RestoreDone = 10;
+	private const double BuildDone = 70;
+	private const double AnalyzersDone = 75;
+
+	public async Task<LoadResult> LoadAsync(
+		WorkerOptions options,
+		CancellationToken cancellationToken,
+		IWorkProgress? progress = null)
 	{
 		var stopwatch = Stopwatch.StartNew();
 
 		var projectPaths = SolutionFileReader.ReadProjectPaths(options.SolutionPath);
 		logger.LogInformation("Opening {SolutionPath} with {ProjectCount} project(s).", options.SolutionPath, projectPaths.Count);
 
-		var restore = await restoreRunner.EnsureRestoredAsync(
-			options.SolutionPath, projectPaths, options.NoRestore, cancellationToken);
+		progress?.Report($"Opening {Path.GetFileName(options.SolutionPath)}, {projectPaths.Count} project(s)", 0);
+
+		var restore = await RestoreAsync(options, projectPaths, progress, cancellationToken);
 
 		var workspace = MSBuildWorkspace.Create();
 		workspace.SkipUnrecognizedProjects = true;
@@ -30,7 +44,11 @@ public sealed class SolutionLoader(
 
 		try
 		{
-			await OpenAsync(workspace, options.SolutionPath, cancellationToken);
+			await OpenAsync(
+				workspace,
+				options.SolutionPath,
+				new ProjectLoadReporter(progress, projectPaths.Count, RestoreDone, BuildDone),
+				cancellationToken);
 		}
 		catch
 		{
@@ -38,6 +56,7 @@ public sealed class SolutionLoader(
 			throw;
 		}
 
+		progress?.Report("Redirecting analyzers to shadow copies", BuildDone);
 		var solution = UseShadowCopiedAnalyzers(workspace.CurrentSolution);
 
 		stopwatch.Stop();
@@ -49,7 +68,8 @@ public sealed class SolutionLoader(
 			restore,
 			revision: 1,
 			Math.Round(stopwatch.Elapsed.TotalSeconds, 2),
-			cancellationToken);
+			cancellationToken,
+			progress.Slice(AnalyzersDone, 100));
 
 		logger.LogInformation(
 			"Loaded {SolutionPath} in {Seconds}s: {State}, {ProjectCount} project(s), {GeneratedCount} generated document(s).",
@@ -60,6 +80,30 @@ public sealed class SolutionLoader(
 			report.Projects.Sum(project => project.GeneratedDocumentCount));
 
 		return new LoadResult(workspace, solution, report);
+	}
+
+	/// <summary>
+	/// Restores if it is needed, saying so first. Restore is the one part of a load that reaches
+	/// the network, so it is worth naming rather than leaving a bar sitting at nothing.
+	/// </summary>
+	private async Task<RestoreReport> RestoreAsync(
+		WorkerOptions options,
+		IReadOnlyList<string> projectPaths,
+		IWorkProgress? progress,
+		CancellationToken cancellationToken)
+	{
+		progress?.Report("Checking restore output", 1);
+
+		var restore = await restoreRunner.EnsureRestoredAsync(
+			options.SolutionPath,
+			projectPaths,
+			options.NoRestore,
+			cancellationToken,
+			progress.Slice(1, RestoreDone));
+
+		progress?.Report(restore.Ran ? "Restore finished" : "Restore not needed", RestoreDone);
+
+		return restore;
 	}
 
 	/// <summary>
@@ -105,17 +149,61 @@ public sealed class SolutionLoader(
 		return reference;
 	}
 
-	private static async Task OpenAsync(MSBuildWorkspace workspace, string path, CancellationToken cancellationToken)
+	private static async Task OpenAsync(
+		MSBuildWorkspace workspace,
+		string path,
+		IProgress<ProjectLoadProgress> progress,
+		CancellationToken cancellationToken)
 	{
 		var isProject = Path.GetExtension(path) is ".csproj" or ".vbproj" or ".fsproj";
 
 		if (isProject)
 		{
-			await workspace.OpenProjectAsync(path, cancellationToken: cancellationToken);
+			await workspace.OpenProjectAsync(path, progress, cancellationToken);
 			return;
 		}
 
-		await workspace.OpenSolutionAsync(path, cancellationToken: cancellationToken);
+		await workspace.OpenSolutionAsync(path, progress, cancellationToken);
+	}
+
+	/// <summary>
+	/// Turns Roslyn's per-project load events into one number that only goes up.
+	/// <para>
+	/// Every project reports evaluate, build and resolve, and a multi-targeted one reports them per
+	/// framework, so the only countable milestone is a project file reaching resolve. Counting the
+	/// events themselves would run the total past the end on any solution that multi-targets.
+	/// </para>
+	/// </summary>
+	private sealed class ProjectLoadReporter(IWorkProgress? progress, int projectCount, double from, double to)
+		: IProgress<ProjectLoadProgress>
+	{
+		private readonly HashSet<string> _resolved = new(StringComparer.OrdinalIgnoreCase);
+
+		public void Report(ProjectLoadProgress value)
+		{
+			if (progress is null) return;
+
+			var name = Path.GetFileNameWithoutExtension(value.FilePath);
+
+			if (value.Operation != ProjectLoadOperation.Resolve)
+			{
+				// Names what is happening now without moving the number, so a project that takes
+				// twenty seconds to build is attributable rather than just slow.
+				if (value.Operation == ProjectLoadOperation.Build) progress.Report($"Design-time build: {name}");
+
+				return;
+			}
+
+			int done;
+			lock (_resolved)
+			{
+				_resolved.Add(value.FilePath);
+				done = _resolved.Count;
+			}
+
+			var share = projectCount <= 0 ? 1 : Math.Min(1, (double)done / projectCount);
+			progress.Report($"Loaded {name} ({done}/{Math.Max(projectCount, done)})", from + ((to - from) * share));
+		}
 	}
 }
 

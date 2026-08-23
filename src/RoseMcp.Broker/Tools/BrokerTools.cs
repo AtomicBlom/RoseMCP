@@ -1,5 +1,6 @@
 using System.ComponentModel;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Contracts;
@@ -31,11 +32,13 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
         assembly has not been built, which otherwise produces no generated code and no error.
         """)]
 	public async Task<WorkspaceStatusReport> OpenAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Path to a solution, project, directory, or any file inside one.")] string path,
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.GetOrStartAsync(path, cancellationToken);
-		return await worker.CallAsync<WorkspaceStatusReport>(ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken);
+		return await worker.CallAsync<WorkspaceStatusReport>(
+			ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken, progress);
 	}
 
 	[McpServerTool(
@@ -52,11 +55,13 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
         plausible but incomplete results rather than errors.
         """)]
 	public async Task<WorkspaceStatusReport> StatusAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.GetOrStartAsync(workspace, cancellationToken);
-		return await worker.CallAsync<WorkspaceStatusReport>(ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken);
+		return await worker.CallAsync<WorkspaceStatusReport>(
+			ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken, progress);
 	}
 
 	[McpServerTool(
@@ -73,11 +78,13 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
         has loaded the old build can never see the new one.
         """)]
 	public async Task<WorkspaceStatusReport> ReloadAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.RestartAsync(workspace, cancellationToken);
-		return await worker.CallAsync<WorkspaceStatusReport>(ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken);
+		return await worker.CallAsync<WorkspaceStatusReport>(
+			ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken, progress);
 	}
 
 	[McpServerTool(

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Contracts;
@@ -8,7 +9,7 @@ namespace RoseMcp.Worker.Tools;
 
 /// <summary>Changes to the solution. Everything here writes, so everything here reports a diff.</summary>
 [McpServerToolType]
-public sealed class RefactoringTools(WorkspaceHost host)
+public sealed class RefactoringTools(WorkspaceHost host, SharedWorkProgress sharedWork)
 {
 	[McpServerTool(
 		Name = ToolNames.RenameSymbol,
@@ -26,6 +27,7 @@ public sealed class RefactoringTools(WorkspaceHost host)
         silently applied. Pass apply=false to preview without writing.
         """)]
 	public async Task<RenameResult> RenameSymbolAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Absolute or solution-relative path to the file.")] string filePath,
 		[Description("One-based line number.")] int line,
 		[Description("One-based column, pointing at the identifier itself.")] int column,
@@ -37,6 +39,12 @@ public sealed class RefactoringTools(WorkspaceHost host)
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
+		// A rename is the longest thing a client can ask for and the only one that writes, so it is
+		// the call most worth watching. The wait covers the queue behind other mutations as well as
+		// the workspace itself: a rename is ordered behind every request already in flight.
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
 		var session = await host.SessionAsync();
 
 		var request = new RenameRequest
@@ -53,7 +61,7 @@ public sealed class RefactoringTools(WorkspaceHost host)
 		};
 
 		return await session.MutateAsync(
-			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
+			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
 }

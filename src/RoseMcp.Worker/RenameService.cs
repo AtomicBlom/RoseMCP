@@ -43,7 +43,8 @@ public static class RenameService
 		WorkspaceSnapshot snapshot,
 		RenameRequest request,
 		Action<string>? noteSelfWrite,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IWorkProgress? progress = null)
 	{
 		if (request.ExpectedRevision is { } expected && expected != snapshot.Revision)
 		{
@@ -51,6 +52,8 @@ public static class RenameService
 				$"The workspace is at revision {snapshot.Revision}, not the expected {expected}. "
 					+ "Something changed underneath this request; re-read and try again.");
 		}
+
+		progress?.Report("Resolving the symbol", 0);
 
 		var (symbol, _) = await SymbolLocator.ResolveAsync(
 			snapshot.Solution, request.FilePath, request.Line, request.Column, cancellationToken);
@@ -72,10 +75,16 @@ public static class RenameService
 			RenameFile = false,
 		};
 
+		// Roslyn's renamer offers no progress of its own, so the most that can be said is which
+		// rename is under way. On a large solution this is where the time goes.
+		progress?.Report($"Renaming {symbol.Name} to {request.NewName} across the solution", 10);
+
 		var renamed = await Renamer.RenameSymbolAsync(
 			snapshot.Solution, symbol, options, request.NewName, cancellationToken);
 
-		var conflicts = await FindConflictsAsync(renamed, cancellationToken);
+		var conflicts = await FindConflictsAsync(renamed, cancellationToken, progress.Slice(70, 95));
+
+		progress?.Report(request.Apply ? "Writing the changed files" : "Building the diff", 95);
 
 		var outcome = await SolutionWriter.ApplyAsync(
 			snapshot.Solution, renamed, request.Apply, noteSelfWrite, cancellationToken);
@@ -106,12 +115,23 @@ public static class RenameService
 	/// marks these with a conflict annotation rather than refusing, so they have to be surfaced
 	/// deliberately -- applying them silently is how a rename quietly changes behaviour.
 	/// </summary>
-	private static async Task<IReadOnlyList<string>> FindConflictsAsync(Solution solution, CancellationToken cancellationToken)
+	private static async Task<IReadOnlyList<string>> FindConflictsAsync(
+		Solution solution,
+		CancellationToken cancellationToken,
+		IWorkProgress? progress)
 	{
 		var conflicts = new List<string>();
+		var inspected = 0;
+		var total = solution.ProjectIds.Count;
 
 		foreach (var project in solution.Projects)
 		{
+			progress?.Report(
+				$"Checking {project.Name} for conflicts ({inspected + 1}/{total})",
+				total == 0 ? 100 : 100.0 * inspected / total);
+
+			inspected++;
+
 			foreach (var document in project.Documents)
 			{
 				var root = await document.GetSyntaxRootAsync(cancellationToken);

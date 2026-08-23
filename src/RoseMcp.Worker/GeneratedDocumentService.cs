@@ -19,15 +19,25 @@ public static class GeneratedDocumentService
 	public static async Task<GeneratedDocumentList> ListAsync(
 		WorkspaceSnapshot snapshot,
 		string? projectName,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IWorkProgress? progress = null)
 	{
 		var notices = new List<string>(snapshot.Notices);
 		var projects = Select(snapshot.Solution, projectName, notices);
 		var summaries = new List<GeneratedDocumentSummary>();
+		var listed = 0;
 
 		foreach (var project in projects)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
+
+			// The first call to this on a project is what actually runs its generators, so on a
+			// cold solution this loop is slow in a way the name of the tool does not suggest.
+			progress?.Report(
+				$"Running generators: {project.Name} ({listed + 1}/{projects.Count})",
+				projects.Count == 0 ? 100 : 100.0 * listed / projects.Count);
+
+			listed++;
 
 			var generators = project.AnalyzerReferences
 				.SelectMany(reference => SafeGetGenerators(reference, project.Language))

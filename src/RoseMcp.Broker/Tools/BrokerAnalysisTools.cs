@@ -1,5 +1,6 @@
 using System.ComponentModel;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Contracts;
@@ -27,6 +28,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
         included and tagged with the hint name that reads that code back.
         """)]
 	public Task<DiagnosticsResult> DiagnosticsAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("document, project, or solution. Defaults to solution.")] string? scope = null,
 		[Description("File path for document scope, or project name for project scope.")] string? target = null,
 		[Description("Lowest severity: hidden, info, warning, or error. Defaults to warning.")] string? minimumSeverity = null,
@@ -41,7 +43,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["minimumSeverity"] = minimumSeverity,
 			["includeAnalyzers"] = includeAnalyzers,
 			["maxResults"] = maxResults,
-		}, cancellationToken);
+		}, cancellationToken, progress);
 
 	[McpServerTool(
 		Name = ToolNames.SymbolInfo,
@@ -56,6 +58,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
         a declaration. isFromSource being false means it lives in metadata and cannot be renamed.
         """)]
 	public Task<SymbolInfoResult> SymbolInfoAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Path to the file.")] string filePath,
 		[Description("One-based line number.")] int line,
 		[Description("One-based column, pointing at the identifier itself.")] int column,
@@ -66,7 +69,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
-		}, cancellationToken);
+		}, cancellationToken, progress);
 
 	[McpServerTool(
 		Name = ToolNames.FindReferences,
@@ -81,6 +84,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
         aliases, and will not match unrelated identifiers that share a name.
         """)]
 	public Task<ReferencesResult> FindReferencesAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Path to the file.")] string filePath,
 		[Description("One-based line number.")] int line,
 		[Description("One-based column, pointing at the identifier itself.")] int column,
@@ -93,7 +97,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["line"] = line,
 			["column"] = column,
 			["maxResults"] = maxResults,
-		}, cancellationToken);
+		}, cancellationToken, progress);
 
 	[McpServerTool(
 		Name = ToolNames.SearchSymbols,
@@ -108,6 +112,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
         asking for its references or renaming it.
         """)]
 	public Task<SymbolSearchResult> SearchSymbolsAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Name or abbreviation to search for.")] string query,
 		[Description("Maximum matches to return. Defaults to 50.")] int maxResults = 50,
 		[Description(WorkspaceHelp)] string? workspace = null,
@@ -116,7 +121,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		{
 			["query"] = query,
 			["maxResults"] = maxResults,
-		}, cancellationToken);
+		}, cancellationToken, progress);
 
 	[McpServerTool(
 		Name = ToolNames.ListGeneratedDocuments,
@@ -131,13 +136,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
         comes with a notice saying whether there are no generators or the generators failed to load.
         """)]
 	public Task<GeneratedDocumentList> ListGeneratedAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<GeneratedDocumentList>(workspace, ToolNames.ListGeneratedDocuments, new()
 		{
 			["project"] = project,
-		}, cancellationToken);
+		}, cancellationToken, progress);
 
 	[McpServerTool(
 		Name = ToolNames.ReadGeneratedDocument,
@@ -152,6 +158,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
         a diagnostic points at a file that does not exist on disk.
         """)]
 	public Task<GeneratedDocumentContent> ReadGeneratedAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Hint name, for example Widget.Greeting.g.cs.")] string hintName,
 		[Description("Limit to one project by name.")] string? project = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
@@ -160,7 +167,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		{
 			["hintName"] = hintName,
 			["project"] = project,
-		}, cancellationToken);
+		}, cancellationToken, progress);
 
 	[McpServerTool(
 		Name = ToolNames.RenameSymbol,
@@ -177,6 +184,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
         silently applied. Pass apply=false to preview without writing.
         """)]
 	public Task<RenameResult> RenameSymbolAsync(
+		IProgress<ProgressNotificationValue> progress,
 		[Description("Path to the file.")] string filePath,
 		[Description("One-based line number.")] int line,
 		[Description("One-based column, pointing at the identifier itself.")] int column,
@@ -199,13 +207,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["renameInComments"] = renameInComments,
 			["renameInStrings"] = renameInStrings,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, retryIfWorkerDied: false);
+		}, cancellationToken, progress, retryIfWorkerDied: false);
 
 	private Task<T> ForwardAsync<T>(
 		string? workspace,
 		string tool,
 		Dictionary<string, object?> arguments,
 		CancellationToken cancellationToken,
+		IProgress<ProgressNotificationValue> progress,
 		bool retryIfWorkerDied = true)
 	{
 		// A null means "not supplied". Forwarding it would override the worker's own default.
@@ -213,6 +222,6 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			.Where(pair => pair.Value is not null)
 			.ToDictionary(pair => pair.Key, pair => pair.Value);
 
-		return workspaces.CallAsync<T>(workspace, tool, supplied, retryIfWorkerDied, cancellationToken);
+		return workspaces.CallAsync<T>(workspace, tool, supplied, retryIfWorkerDied, cancellationToken, progress);
 	}
 }

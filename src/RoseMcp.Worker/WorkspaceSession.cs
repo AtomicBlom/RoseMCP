@@ -35,6 +35,9 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	private readonly SolutionLoader _loader;
 	private readonly WorkerOptions _options;
 	private readonly ILogger<WorkspaceSession> _logger;
+
+	/// <summary>Where a reload announces itself, since every waiting caller is waiting on it.</summary>
+	private readonly IWorkProgress? _sharedWork;
 	private readonly Task _pump;
 
 	private MSBuildWorkspace _workspace;
@@ -48,13 +51,15 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		SolutionLoader loader,
 		WorkerOptions options,
 		ILogger<WorkspaceSession> logger,
-		ILogger<SolutionWatcher> watcherLogger)
+		ILogger<SolutionWatcher> watcherLogger,
+		IWorkProgress? sharedWork)
 	{
 		_workspace = load.Workspace;
 		_current = load.Solution;
 		_loader = loader;
 		_options = options;
 		_logger = logger;
+		_sharedWork = sharedWork;
 		_revision = 1;
 
 		_watcher = new SolutionWatcher(options.SolutionPath, watcherLogger);
@@ -77,7 +82,8 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		SolutionLoader loader,
 		WorkerOptions options,
 		ILogger<WorkspaceSession> logger,
-		ILogger<SolutionWatcher> watcherLogger) => new(load, loader, options, logger, watcherLogger);
+		ILogger<SolutionWatcher> watcherLogger,
+		IWorkProgress? sharedWork = null) => new(load, loader, options, logger, watcherLogger, sharedWork);
 
 	/// <summary>
 	/// Tells the watcher a write is about to be ours, so it is absorbed silently instead of
@@ -238,6 +244,8 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	/// <summary>Waits for git to release its lock, so reconciliation sees a settled tree.</summary>
 	private async Task WaitForGitAsync(CancellationToken cancellationToken)
 	{
+		_sharedWork?.Report("Waiting for git to finish");
+
 		var deadline = DateTime.UtcNow + _options.GitSettleTimeout;
 
 		while (DateTime.UtcNow < deadline)
@@ -256,7 +264,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		_logger.LogInformation("Reloading {SolutionPath}.", _options.SolutionPath);
 
 		var previous = _workspace;
-		var load = await _loader.LoadAsync(_options, cancellationToken);
+		var load = await _loader.LoadAsync(_options, cancellationToken, _sharedWork);
 
 		_workspace = load.Workspace;
 		_current = load.Solution;

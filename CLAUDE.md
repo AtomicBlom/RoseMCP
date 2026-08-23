@@ -55,6 +55,10 @@ dotnet format                      # run before every commit
 dotnet format --verify-no-changes  # what CI checks
 ```
 
+`dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
+Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.
+Individual test projects are also executables, so running one directly works too.
+
 Run a worker standalone against a fixture -- the fastest way to debug Roslyn behaviour without
 the broker in the way:
 

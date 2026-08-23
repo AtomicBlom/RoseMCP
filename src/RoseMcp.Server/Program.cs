@@ -1,4 +1,5 @@
 using RoseMcp.Broker;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Server;
 
@@ -62,7 +63,9 @@ internal static class Program
 		application.MapMcp();
 
 		// Exactly what the tray window renders, so the two cannot disagree.
-		application.MapGet("/admin/workspaces", (WorkspaceManager workspaces) => Results.Json(workspaces.Describe()));
+		application.MapGet(
+			"/admin/workspaces",
+			(WorkspaceManager workspaces) => Results.Json(workspaces.Describe(), ContractJson.Options));
 
 		await application.RunAsync();
 		return 0;

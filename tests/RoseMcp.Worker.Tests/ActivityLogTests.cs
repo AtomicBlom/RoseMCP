@@ -133,6 +133,33 @@ public sealed class ActivityLogTests
 		Assert.Empty(log.Running(Solution));
 	}
 
+	/// <summary>
+	/// GET /admin/workspaces is meant to return exactly what the tray window renders. It cannot do
+	/// that while an outcome goes over the wire as "1", which is what the framework default gives.
+	/// </summary>
+	[Fact]
+	public void Serialises_an_outcome_as_a_word_rather_than_a_number()
+	{
+		var log = new ActivityLog();
+		log.Begin(Solution, "rose_diagnostics", "solution").Dispose();
+
+		var json = System.Text.Json.JsonSerializer.Serialize(
+			new WorkspaceSummary
+			{
+				SolutionPath = Solution,
+				DisplayName = "Thing",
+				Alive = true,
+				ExitReason = "Running",
+				StartedUtc = DateTime.UtcNow,
+				Uptime = TimeSpan.FromMinutes(3),
+				Recent = log.Recent(Solution),
+			},
+			ContractJson.Options);
+
+		Assert.Contains("\"outcome\":\"Succeeded\"", json, StringComparison.Ordinal);
+		Assert.Contains("\"operation\":\"rose_diagnostics\"", json, StringComparison.Ordinal);
+	}
+
 	private sealed class RecordingProgress : IProgress<ProgressNotificationValue>
 	{
 		private readonly List<ProgressNotificationValue> _values = [];

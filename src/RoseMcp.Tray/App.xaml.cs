@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 
 using RoseMcp.Broker;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Tray;
 
@@ -45,7 +46,9 @@ public partial class App : Application
 
 		_broker = builder.Build();
 		_broker.MapMcp();
-		_broker.MapGet("/admin/workspaces", (WorkspaceManager workspaces) => Results.Json(workspaces.Describe()));
+		_broker.MapGet(
+			"/admin/workspaces",
+			(WorkspaceManager workspaces) => Results.Json(workspaces.Describe(), ContractJson.Options));
 
 		await _broker.StartAsync();
 

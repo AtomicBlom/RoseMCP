@@ -214,6 +214,3 @@ public sealed class SolutionLoader(
 		}
 	}
 }
-
-/// <summary>The opened workspace and the report describing how it went. The caller owns the workspace.</summary>
-public sealed record LoadResult(MSBuildWorkspace Workspace, Solution Solution, WorkspaceStatusReport Report);

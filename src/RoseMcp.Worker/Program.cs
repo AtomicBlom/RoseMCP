@@ -43,8 +43,3 @@ internal static class Program
 		return 0;
 	}
 }
-
-internal static class ThisAssembly
-{
-	public const string Version = "0.1.0";
-}

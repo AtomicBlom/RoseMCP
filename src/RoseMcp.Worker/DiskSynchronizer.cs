@@ -5,45 +5,6 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace RoseMcp.Worker;
 
-/// <summary>How a tracked file participates in the solution, which decides how it is updated.</summary>
-public enum TrackedDocumentKind
-{
-	Source,
-	Additional,
-	AnalyzerConfig,
-}
-
-/// <summary>What the last sweep saw for a file, cheap enough to compare on every read.</summary>
-public readonly record struct FileStamp(DateTime LastWriteUtc, long Length)
-{
-	public static FileStamp? For(string path)
-	{
-		var info = new FileInfo(path);
-		return info.Exists ? new FileStamp(info.LastWriteTimeUtc, info.Length) : null;
-	}
-}
-
-/// <summary>Outcome of one reconciliation sweep.</summary>
-public sealed record DiskSyncResult
-{
-	public required Solution Solution { get; init; }
-
-	public required int ChangedCount { get; init; }
-
-	public required int RemovedCount { get; init; }
-
-	/// <summary>
-	/// A project file, props file, or the solution itself changed. Text patching cannot represent
-	/// that, so the caller has to reload rather than carry on with a patched snapshot.
-	/// </summary>
-	public required bool StructuralChange { get; init; }
-
-	/// <summary>Files that could not be read this sweep, usually because a write was in progress.</summary>
-	public required IReadOnlyList<string> Deferred { get; init; }
-
-	public bool AnythingChanged => ChangedCount > 0 || RemovedCount > 0 || StructuralChange;
-}
-
 /// <summary>
 /// Keeps a solution snapshot honest against what is actually on disk.
 /// <para>
@@ -261,6 +222,3 @@ public sealed class DiskSynchronizer
 		}
 	}
 }
-
-/// <summary>One file the synchronizer watches, and what it looked like last time.</summary>
-internal readonly record struct TrackedDocument(DocumentId Id, string Path, TrackedDocumentKind Kind, FileStamp? Stamp);

@@ -346,16 +346,3 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 	private sealed record WorkItem(Func<CancellationToken, Task> RunAsync, Action Cancel);
 }
-
-/// <summary>
-/// What a mutation produced: the value to return, and the new solution when the mutation actually
-/// changed something. A null solution means the mutation was a no-op and the revision holds.
-/// </summary>
-public readonly record struct MutationResult<T>(T Value, Solution? Solution);
-
-/// <summary>Thrown once the solution file is confirmed gone and the worker is shutting down.</summary>
-public sealed class SolutionUnloadedException(string solutionPath)
-	: InvalidOperationException($"The solution no longer exists at {solutionPath}.")
-{
-	public string SolutionPath { get; } = solutionPath;
-}

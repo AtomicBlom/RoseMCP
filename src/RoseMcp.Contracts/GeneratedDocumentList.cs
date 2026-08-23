@@ -14,30 +14,3 @@ public sealed record GeneratedDocumentList
 	/// </summary>
 	public required IReadOnlyList<string> Notices { get; init; }
 }
-
-public sealed record GeneratedDocumentSummary
-{
-	public required string Project { get; init; }
-
-	/// <summary>The generator's own name for the file, and the handle used to read it back.</summary>
-	public required string HintName { get; init; }
-
-	/// <summary>Synthetic path Roslyn assigns the generated tree. Nothing exists there on disk.</summary>
-	public required string FilePath { get; init; }
-
-	public required int LineCount { get; init; }
-
-	public required int CharacterCount { get; init; }
-}
-
-/// <summary>The text of one generated document.</summary>
-public sealed record GeneratedDocumentContent
-{
-	public required long Revision { get; init; }
-
-	public required string Project { get; init; }
-
-	public required string HintName { get; init; }
-
-	public required string Text { get; init; }
-}

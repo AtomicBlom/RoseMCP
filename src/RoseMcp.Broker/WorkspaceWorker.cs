@@ -9,21 +9,6 @@ using RoseMcp.Contracts;
 
 namespace RoseMcp.Broker;
 
-/// <summary>Why a worker is no longer serving requests.</summary>
-public enum WorkerExitReason
-{
-	Running,
-
-	/// <summary>The solution went away and the worker shut itself down. Expected, not a failure.</summary>
-	SolutionUnloaded,
-
-	/// <summary>The process died on its own.</summary>
-	Crashed,
-
-	/// <summary>The broker stopped it, usually for a hard reload.</summary>
-	StoppedByBroker,
-}
-
 /// <summary>
 /// One worker process and the MCP client talking to it.
 /// <para>
@@ -337,14 +322,4 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			_logger.LogDebug(exception, "The worker for {SolutionPath} did not shut down cleanly.", SolutionPath);
 		}
 	}
-}
-
-/// <summary>
-/// The worker for a workspace died. Distinct from a tool failing, because the workspace can be
-/// brought back by starting a fresh worker whereas a bad request cannot.
-/// </summary>
-public sealed class WorkerUnavailableException(string solutionPath, Exception inner)
-	: InvalidOperationException($"The worker for {solutionPath} is no longer running.", inner)
-{
-	public string SolutionPath { get; } = solutionPath;
 }

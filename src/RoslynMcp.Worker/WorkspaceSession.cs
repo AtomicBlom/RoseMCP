@@ -30,6 +30,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		new UnboundedChannelOptions { SingleReader = true });
 
 	private readonly DiskSynchronizer _synchronizer = new();
+	private readonly SolutionWatcher _watcher;
 	private readonly CancellationTokenSource _shutdown = new();
 	private readonly SolutionLoader _loader;
 	private readonly WorkerOptions _options;
@@ -39,12 +40,14 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	private MSBuildWorkspace _workspace;
 	private Solution _current;
 	private long _revision;
+	private DateTime? _missingSince;
 
 	private WorkspaceSession(
 		LoadResult load,
 		SolutionLoader loader,
 		WorkerOptions options,
-		ILogger<WorkspaceSession> logger)
+		ILogger<WorkspaceSession> logger,
+		ILogger<SolutionWatcher> watcherLogger)
 	{
 		_workspace = load.Workspace;
 		_current = load.Workspace.CurrentSolution;
@@ -53,9 +56,17 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		_logger = logger;
 		_revision = 1;
 
+		_watcher = new SolutionWatcher(options.SolutionPath, watcherLogger);
+
 		_synchronizer.Reset(_current, options.SolutionPath);
 		_pump = Task.Run(PumpAsync);
 	}
+
+	/// <summary>
+	/// True once the solution has gone for good. The worker is finished at that point; every
+	/// further call fails fast rather than pretending to serve a solution that is not there.
+	/// </summary>
+	public bool Unloaded { get; private set; }
 
 	/// <summary>The revision as of the last completed operation.</summary>
 	public long Revision => Interlocked.Read(ref _revision);
@@ -64,7 +75,8 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		LoadResult load,
 		SolutionLoader loader,
 		WorkerOptions options,
-		ILogger<WorkspaceSession> logger) => new(load, loader, options, logger);
+		ILogger<WorkspaceSession> logger,
+		ILogger<SolutionWatcher> watcherLogger) => new(load, loader, options, logger, watcherLogger);
 
 	/// <summary>
 	/// Drains pending mutations, reconciles with disk, and returns the resulting snapshot. This is
@@ -107,12 +119,50 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	/// </summary>
 	private async Task<WorkspaceSnapshot> ReconcileAsync(CancellationToken cancellationToken)
 	{
-		var sync = await _synchronizer.SyncAsync(_current, cancellationToken);
 		var notices = new List<string>();
+		var signal = _watcher.Drain();
 
-		if (sync.StructuralChange)
+		// Never reconcile mid-checkout. Half the tree is the old branch and half is the new, and
+		// ingesting that produces a snapshot that never existed in any commit.
+		if (signal.HasFlag(WatchSignal.GitOperationInFlight))
 		{
-			notices.Add("Project or solution files changed on disk; the solution was reloaded.");
+			await WaitForGitAsync(cancellationToken);
+			signal |= WatchSignal.FullResyncRequired;
+		}
+
+		if (signal.HasFlag(WatchSignal.SolutionMissing))
+		{
+			var stale = HandleMissingSolution(notices);
+			if (stale)
+			{
+				return new WorkspaceSnapshot
+				{
+					Solution = _current,
+					Revision = Revision,
+					Stale = true,
+					Notices = notices,
+				};
+			}
+
+			signal |= WatchSignal.FullResyncRequired;
+		}
+		else
+		{
+			_missingSince = null;
+		}
+
+		var sync = await _synchronizer.SyncAsync(_current, cancellationToken);
+
+		// A full resync means the event stream had holes in it, so a project may have been added or
+		// removed without any tracked file changing. Only a reload can represent that.
+		var mustReload = sync.StructuralChange || signal.HasFlag(WatchSignal.FullResyncRequired);
+
+		if (mustReload)
+		{
+			notices.Add(sync.StructuralChange
+				? "Project or solution files changed on disk; the solution was reloaded."
+				: "Bulk changes on disk outran incremental tracking; the solution was reloaded.");
+
 			await ReloadAsync(cancellationToken);
 		}
 		else if (sync.AnythingChanged)
@@ -120,10 +170,8 @@ public sealed class WorkspaceSession : IAsyncDisposable
 			_current = sync.Solution;
 			Interlocked.Increment(ref _revision);
 
-			if (sync.ChangedCount > 0)
-				notices.Add($"Absorbed {sync.ChangedCount} external file change(s).");
-			if (sync.RemovedCount > 0)
-				notices.Add($"{sync.RemovedCount} tracked document(s) no longer exist on disk.");
+			if (sync.ChangedCount > 0) notices.Add($"Absorbed {sync.ChangedCount} external file change(s).");
+			if (sync.RemovedCount > 0) notices.Add($"{sync.RemovedCount} tracked document(s) no longer exist on disk.");
 		}
 
 		if (sync.Deferred.Count > 0)
@@ -138,6 +186,61 @@ public sealed class WorkspaceSession : IAsyncDisposable
 			Revision = Revision,
 			Notices = notices,
 		};
+	}
+
+	/// <summary>
+	/// Handles the solution file being absent. Returns true when the caller should be served the
+	/// last good snapshot marked stale.
+	/// <para>
+	/// The absence is deliberately not trusted straight away. Editors save atomically by deleting
+	/// and renaming, and checking out a branch that lacks the file removes and restores it inside
+	/// one operation. Unloading on the first sighting would tear down a live workspace over a
+	/// millisecond-long gap.
+	/// </para>
+	/// </summary>
+	private bool HandleMissingSolution(List<string> notices)
+	{
+		_missingSince ??= DateTime.UtcNow;
+
+		var missingFor = DateTime.UtcNow - _missingSince.Value;
+		if (missingFor < _options.UnloadGracePeriod)
+		{
+			notices.Add($"The solution file is missing; waiting {(_options.UnloadGracePeriod - missingFor).TotalSeconds:F0}s "
+				+ "before unloading in case this is an atomic save or a branch switch. Results are from the last good snapshot.");
+
+			return true;
+		}
+
+		// Grace expired. One last look before tearing anything down.
+		if (File.Exists(_options.SolutionPath))
+		{
+			_missingSince = null;
+			return false;
+		}
+
+		_logger.LogWarning(
+			"{SolutionPath} has been missing for {Seconds}s; unloading.",
+			_options.SolutionPath,
+			missingFor.TotalSeconds);
+
+		Unloaded = true;
+
+		throw new SolutionUnloadedException(_options.SolutionPath);
+	}
+
+	/// <summary>Waits for git to release its lock, so reconciliation sees a settled tree.</summary>
+	private async Task WaitForGitAsync(CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + _options.GitSettleTimeout;
+
+		while (DateTime.UtcNow < deadline)
+		{
+			await Task.Delay(_options.GitSettleInterval, cancellationToken);
+			if (!_watcher.IsGitOperationInFlight()) return;
+		}
+
+		_logger.LogWarning("A git operation is still in flight after {Seconds}s; reconciling anyway.",
+			_options.GitSettleTimeout.TotalSeconds);
 	}
 
 	/// <summary>Reopens the solution from scratch, replacing the workspace and the tracking table.</summary>
@@ -213,6 +316,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 			// Expected during shutdown.
 		}
 
+		_watcher.Dispose();
 		_workspace.Dispose();
 		_shutdown.Dispose();
 	}
@@ -225,3 +329,10 @@ public sealed class WorkspaceSession : IAsyncDisposable
 /// changed something. A null solution means the mutation was a no-op and the revision holds.
 /// </summary>
 public readonly record struct MutationResult<T>(T Value, Solution? Solution);
+
+/// <summary>Thrown once the solution file is confirmed gone and the worker is shutting down.</summary>
+public sealed class SolutionUnloadedException(string solutionPath)
+	: InvalidOperationException($"The solution no longer exists at {solutionPath}.")
+{
+	public string SolutionPath { get; } = solutionPath;
+}

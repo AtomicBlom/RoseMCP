@@ -17,6 +17,7 @@ public sealed class WorkspaceHost(
 	WorkerOptions options,
 	SolutionLoader loader,
 	ILoggerFactory loggerFactory,
+	IHostApplicationLifetime lifetime,
 	ILogger<WorkspaceHost> logger) : IHostedService, IAsyncDisposable
 {
 	private readonly CancellationTokenSource _shutdown = new();
@@ -39,8 +40,7 @@ public sealed class WorkspaceHost(
 	/// </summary>
 	public async Task<WorkspaceStatusReport> GetStatusAsync(CancellationToken cancellationToken)
 	{
-		if (_faulted is not null)
-			return _faulted;
+		if (_faulted is not null) return _faulted;
 
 		try
 		{
@@ -57,6 +57,10 @@ public sealed class WorkspaceHost(
 				cancellationToken);
 
 			return report with { DegradedReasons = [.. report.DegradedReasons, .. snapshot.Notices] };
+		}
+		catch (SolutionUnloadedException exception)
+		{
+			return _faulted = Unload(exception);
 		}
 		catch (Exception exception) when (exception is not OperationCanceledException)
 		{
@@ -78,11 +82,37 @@ public sealed class WorkspaceHost(
 	private async Task<WorkspaceSession> StartSessionAsync()
 	{
 		var load = await loader.LoadAsync(options, _shutdown.Token);
-		return WorkspaceSession.Create(load, loader, options, loggerFactory.CreateLogger<WorkspaceSession>());
+		return WorkspaceSession.Create(
+			load,
+			loader,
+			options,
+			loggerFactory.CreateLogger<WorkspaceSession>(),
+			loggerFactory.CreateLogger<SolutionWatcher>());
 	}
 
 	private Task<WorkspaceSession> StartedAsync() =>
 		_start ?? throw new InvalidOperationException("The workspace host has not been started.");
+
+	/// <summary>
+	/// The solution is gone for good. Reporting it is only half the job: a worker holding a
+	/// solution that no longer exists is dead weight, so the process comes down with it. The
+	/// broker sees the exit and deregisters the workspace.
+	/// </summary>
+	private WorkspaceStatusReport Unload(SolutionUnloadedException exception)
+	{
+		logger.LogWarning("{Message} Shutting this worker down.", exception.Message);
+		lifetime.StopApplication();
+
+		return new WorkspaceStatusReport
+		{
+			SolutionPath = options.SolutionPath,
+			State = WorkspaceState.Unloaded,
+			Revision = 0,
+			Projects = [],
+			LoadDiagnostics = [],
+			DegradedReasons = [exception.Message],
+		};
+	}
 
 	private WorkspaceStatusReport Fault(Exception exception) => new()
 	{

@@ -24,8 +24,7 @@ public static class AnalyzerProjectReferences
 	public static IReadOnlyDictionary<string, string> ReadAnalyzerProjects(string projectPath)
 	{
 		var document = TryLoad(projectPath);
-		if (document is null)
-			return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		if (document is null) return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
 		var directory = Path.GetDirectoryName(Path.GetFullPath(projectPath)) ?? ".";
 		var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -35,12 +34,10 @@ public static class AnalyzerProjectReferences
 			var outputItemType = (string?)reference.Attribute("OutputItemType")
 				?? reference.Elements().FirstOrDefault(child => child.Name.LocalName == "OutputItemType")?.Value;
 
-			if (!string.Equals(outputItemType?.Trim(), "Analyzer", StringComparison.OrdinalIgnoreCase))
-				continue;
+			if (!string.Equals(outputItemType?.Trim(), "Analyzer", StringComparison.OrdinalIgnoreCase)) continue;
 
 			var include = (string?)reference.Attribute("Include");
-			if (string.IsNullOrWhiteSpace(include))
-				continue;
+			if (string.IsNullOrWhiteSpace(include)) continue;
 
 			var normalised = include.Replace(ProjectFileSeparator, Path.DirectorySeparatorChar);
 			var referenced = Path.GetFullPath(Path.Combine(directory, normalised));

@@ -160,7 +160,12 @@ public sealed class StalenessTests
 
 		return new SessionScope(
 			fixture,
-			WorkspaceSession.Create(load, loader, options, NullLogger<WorkspaceSession>.Instance));
+			WorkspaceSession.Create(
+				load,
+				loader,
+				options,
+				NullLogger<WorkspaceSession>.Instance,
+				NullLogger<SolutionWatcher>.Instance));
 	}
 
 	/// <summary>Keeps the session and the temp fixture alive together, and tears both down in order.</summary>

@@ -66,8 +66,7 @@ public sealed class FixtureSolution : IDisposable
 		var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
 		process.WaitForExit();
 
-		if (process.ExitCode != 0)
-			throw new InvalidOperationException($"Building {project} failed:{Environment.NewLine}{output}");
+		if (process.ExitCode != 0) throw new InvalidOperationException($"Building {project} failed:{Environment.NewLine}{output}");
 	}
 
 	/// <summary>Walks up from the test binary to the repository root, identified by its solution file.</summary>
@@ -79,8 +78,7 @@ public sealed class FixtureSolution : IDisposable
 			directory = directory.Parent;
 		}
 
-		if (directory is null)
-			throw new InvalidOperationException("Could not locate the repository root from the test binary.");
+		if (directory is null) throw new InvalidOperationException("Could not locate the repository root from the test binary.");
 
 		return System.IO.Path.Combine(directory.FullName, "tests", "fixtures");
 	}
@@ -97,8 +95,7 @@ public sealed class FixtureSolution : IDisposable
 		foreach (var directory in Directory.GetDirectories(source))
 		{
 			var name = System.IO.Path.GetFileName(directory);
-			if (name is "bin" or "obj" or ".git")
-				continue;
+			if (name is "bin" or "obj" or ".git") continue;
 
 			CopyTree(directory, System.IO.Path.Combine(destination, name));
 		}

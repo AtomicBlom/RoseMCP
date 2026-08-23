@@ -27,8 +27,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		bool skip,
 		CancellationToken cancellationToken)
 	{
-		if (skip)
-			return new RestoreReport { Ran = false, Reason = "Skipped: --no-restore was passed." };
+		if (skip) return new RestoreReport { Ran = false, Reason = "Skipped: --no-restore was passed." };
 
 		var stale = projectPaths.Where(NeedsRestore).ToArray();
 		if (stale.Length == 0)
@@ -63,8 +62,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 	private static bool NeedsRestore(string projectPath)
 	{
 		var assets = Path.Combine(Path.GetDirectoryName(projectPath) ?? ".", "obj", "project.assets.json");
-		if (!File.Exists(assets))
-			return true;
+		if (!File.Exists(assets)) return true;
 
 		var assetsWrittenAt = File.GetLastWriteTimeUtc(assets);
 		return RestoreInputs(projectPath).Any(input => File.GetLastWriteTimeUtc(input) > assetsWrittenAt);

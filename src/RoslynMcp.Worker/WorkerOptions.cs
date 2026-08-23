@@ -13,6 +13,19 @@ public sealed class WorkerOptions
 	/// </summary>
 	public bool NoRestore { get; init; }
 
+	/// <summary>
+	/// How long the solution file may be missing before the worker unloads. Absence is routine:
+	/// editors save atomically by delete-then-rename, and checking out a branch without the file
+	/// removes and restores it in one operation.
+	/// </summary>
+	public TimeSpan UnloadGracePeriod { get; init; } = TimeSpan.FromSeconds(10);
+
+	/// <summary>How long to wait for a git operation to release its lock before giving up on it.</summary>
+	public TimeSpan GitSettleTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+	/// <summary>Poll interval while waiting for git to settle.</summary>
+	public TimeSpan GitSettleInterval { get; init; } = TimeSpan.FromMilliseconds(100);
+
 	public static WorkerOptions Parse(string[] args)
 	{
 		string? solutionPath = null;
@@ -23,8 +36,7 @@ public sealed class WorkerOptions
 			switch (args[i])
 			{
 				case "--solution" or "-s":
-					if (i + 1 >= args.Length)
-						throw new ArgumentException("--solution requires a path.");
+					if (i + 1 >= args.Length) throw new ArgumentException("--solution requires a path.");
 					solutionPath = args[++i];
 					break;
 
@@ -37,8 +49,7 @@ public sealed class WorkerOptions
 			}
 		}
 
-		if (string.IsNullOrWhiteSpace(solutionPath))
-			throw new ArgumentException("--solution is required.");
+		if (string.IsNullOrWhiteSpace(solutionPath)) throw new ArgumentException("--solution is required.");
 
 		return new WorkerOptions
 		{

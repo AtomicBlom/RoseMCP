@@ -110,8 +110,7 @@ public static class WorkspaceStatusReporter
 		var blamed = project.FilePath is { Length: > 0 } path
 			&& failureMessages.Any(message => message.Contains(path, StringComparison.OrdinalIgnoreCase));
 
-		if (blamed)
-			return false;
+		if (blamed) return false;
 
 		return project.MetadataReferences.Count > 0;
 	}
@@ -121,8 +120,7 @@ public static class WorkspaceStatusReporter
 		// Roslyn appends the TFM to the project name when a project multi-targets: Core (net10.0).
 		var open = project.Name.LastIndexOf('(');
 		var close = project.Name.LastIndexOf(')');
-		if (open < 0 || close < open)
-			return null;
+		if (open < 0 || close < open) return null;
 
 		return project.Name[(open + 1)..close];
 	}

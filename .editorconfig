@@ -76,7 +76,9 @@ csharp_space_after_semicolon_in_for_statement = true
 csharp_space_before_semicolon_in_for_statement = false
 
 #### Wrapping ####
-csharp_preserve_single_line_statements = false
+# Keep `if (x) return;` on one line. Splitting it is what the formatter does by default, and
+# it directly contradicts the brace rule above.
+csharp_preserve_single_line_statements = true
 csharp_preserve_single_line_blocks = true
 
 #### Modifiers ####

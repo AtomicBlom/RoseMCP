@@ -114,8 +114,7 @@ public sealed class DiskSynchronizer
 				continue;
 			}
 
-			if (stamp == tracked.Stamp)
-				continue;
+			if (stamp == tracked.Stamp) continue;
 
 			var text = await TryReadAsync(tracked.Path, cancellationToken);
 			if (text is null)
@@ -156,8 +155,7 @@ public sealed class DiskSynchronizer
 		foreach (var (path, previous) in _structuralFiles.ToArray())
 		{
 			var current = FileStamp.For(path);
-			if (current == previous)
-				continue;
+			if (current == previous) continue;
 
 			_structuralFiles[path] = current;
 			changed = true;
@@ -203,8 +201,7 @@ public sealed class DiskSynchronizer
 	{
 		foreach (var document in documents)
 		{
-			if (document.FilePath is not { Length: > 0 } path)
-				continue;
+			if (document.FilePath is not { Length: > 0 } path) continue;
 
 			_documents[document.Id] = new TrackedDocument(document.Id, path, kind, FileStamp.For(path));
 		}

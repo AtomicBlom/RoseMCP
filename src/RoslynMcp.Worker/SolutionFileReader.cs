@@ -22,8 +22,7 @@ public static partial class SolutionFileReader
 	public static IReadOnlyList<string> ReadProjectPaths(string solutionPath)
 	{
 		var extension = Path.GetExtension(solutionPath);
-		if (ProjectExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
-			return [Path.GetFullPath(solutionPath)];
+		if (ProjectExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase)) return [Path.GetFullPath(solutionPath)];
 
 		var directory = Path.GetDirectoryName(Path.GetFullPath(solutionPath)) ?? ".";
 

@@ -26,7 +26,8 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		IReadOnlyList<string> projectPaths,
 		bool skip,
 		CancellationToken cancellationToken,
-		IWorkProgress? progress = null)
+		IWorkProgress? progress = null,
+		BuildProperties? build = null)
 	{
 		if (skip) return new RestoreReport { Ran = false, Reason = "Skipped: --no-restore was passed." };
 
@@ -41,7 +42,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		logger.LogInformation("Running dotnet restore. {Reason}", reason);
 		progress?.Report("Running dotnet restore");
 
-		var (exitCode, output) = await RunAsync(solutionPath, cancellationToken);
+		var (exitCode, output) = await RunAsync(solutionPath, build, cancellationToken);
 		var succeeded = exitCode == 0;
 
 		if (!succeeded)
@@ -63,11 +64,38 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 	/// </summary>
 	private static bool NeedsRestore(string projectPath)
 	{
-		var assets = Path.Combine(Path.GetDirectoryName(projectPath) ?? ".", "obj", "project.assets.json");
-		if (!File.Exists(assets)) return true;
+		if (AssetsFiles(projectPath) is not { Length: > 0 } assets) return true;
 
-		var assetsWrittenAt = File.GetLastWriteTimeUtc(assets);
+		// The newest of them, because a project restored under several sets of properties keeps one
+		// assets file per set and only the newest describes what a load will find.
+		var assetsWrittenAt = assets.Max(File.GetLastWriteTimeUtc);
+
 		return RestoreInputs(projectPath).Any(input => File.GetLastWriteTimeUtc(input) > assetsWrittenAt);
+	}
+
+	/// <summary>
+	/// Every project.assets.json this project might have, which is not always the one in <c>obj/</c>.
+	/// <para>
+	/// A repository that builds one source tree against several SDK versions moves
+	/// BaseIntermediateOutputPath so their restores stay apart -- <c>obj/2027/</c> for a Revit add-in
+	/// built against four Revit APIs -- because otherwise each restore overwrites the last. Looking
+	/// only in obj/ reports such a project as unrestored on every load, and then runs a restore that
+	/// cannot help.
+	/// </para>
+	/// </summary>
+	private static string[] AssetsFiles(string projectPath)
+	{
+		var obj = Path.Combine(Path.GetDirectoryName(projectPath) ?? ".", "obj");
+		if (!Directory.Exists(obj)) return [];
+
+		var here = Path.Combine(obj, "project.assets.json");
+		if (File.Exists(here)) return [here];
+
+		// One level down and no further: below that are the per-configuration build intermediates,
+		// which never hold an assets file, and walking them is a directory tree per project per load.
+		return [.. Directory.EnumerateDirectories(obj)
+			.Select(directory => Path.Combine(directory, "project.assets.json"))
+			.Where(File.Exists)];
 	}
 
 	private static IEnumerable<string> RestoreInputs(string projectPath)
@@ -88,7 +116,10 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		}
 	}
 
-	private static async Task<(int ExitCode, string Output)> RunAsync(string solutionPath, CancellationToken cancellationToken)
+	private static async Task<(int ExitCode, string Output)> RunAsync(
+		string solutionPath,
+		BuildProperties? build,
+		CancellationToken cancellationToken)
 	{
 		var startInfo = new ProcessStartInfo("dotnet")
 		{
@@ -100,6 +131,14 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		};
 		startInfo.ArgumentList.Add("restore");
 		startInfo.ArgumentList.Add(solutionPath);
+
+		// The same properties the load will use. A repository that derives its target framework from
+		// the configuration also derives where restore writes project.assets.json, so restoring under
+		// different properties leaves the assets file somewhere the design-time build will not look.
+		foreach (var argument in build?.AsRestoreArguments() ?? [])
+		{
+			startInfo.ArgumentList.Add(argument);
+		}
 
 		using var process = Process.Start(startInfo)
 			?? throw new InvalidOperationException("Could not start 'dotnet restore'.");

@@ -59,7 +59,8 @@ public sealed class WorkspaceHost(
 				loadSeconds: 0,
 				cancellationToken,
 				progress,
-				stubReports);
+				stubReports,
+				session.Build);
 
 			return report with { DegradedReasons = [.. report.DegradedReasons, .. snapshot.Notices] };
 		}

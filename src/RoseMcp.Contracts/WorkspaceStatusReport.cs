@@ -29,6 +29,30 @@ public sealed record WorkspaceStatusReport
 	/// </summary>
 	public required IReadOnlyList<string> DegradedReasons { get; init; }
 
+	/// <summary>
+	/// The MSBuild configuration, platform and any pinned properties this workspace was loaded
+	/// under, as <c>Configuration|Platform (Name=Value)</c>.
+	/// <para>
+	/// Worth reporting even when it is the default, because it decides what every project's target
+	/// framework resolves to. A solution loaded under a configuration it does not declare produces a
+	/// project with no framework and no references, and the diagnostics that follow describe
+	/// everything except the cause.
+	/// </para>
+	/// </summary>
+	public string? BuildConfiguration { get; init; }
+
+	/// <summary>
+	/// Configurations the solution declares, when it declares any. Present so a caller that does not
+	/// like the one in use can name another without going to read the solution file.
+	/// </summary>
+	public IReadOnlyList<string> AvailableConfigurations { get; init; } = [];
+
+	/// <summary>
+	/// Things worth knowing that are not failures -- chiefly a configuration nobody asked for having
+	/// been chosen. Not degraded reasons: the load is trustworthy, it just made a decision.
+	/// </summary>
+	public IReadOnlyList<string> Notices { get; init; } = [];
+
 	public RestoreReport? Restore { get; init; }
 
 	public double LoadSeconds { get; init; }

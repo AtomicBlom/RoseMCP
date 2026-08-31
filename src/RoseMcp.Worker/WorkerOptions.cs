@@ -21,6 +21,23 @@ public sealed class WorkerOptions
 	public bool NoXamlStubs { get; init; }
 
 	/// <summary>
+	/// MSBuild configuration to load under. Null lets <see cref="BuildProperties"/> decide, which
+	/// leaves MSBuild's own default alone unless the solution demonstrably does not declare it.
+	/// </summary>
+	public string? Configuration { get; init; }
+
+	/// <summary>MSBuild platform to load under, on the same terms as <see cref="Configuration"/>.</summary>
+	public string? Platform { get; init; }
+
+	/// <summary>
+	/// Any other MSBuild global properties to load under. Needed where neither configuration nor
+	/// platform is what selects the target framework -- a Revit add-in built as Release for four API
+	/// versions distinguishes them by a RevitVersion property and nothing else.
+	/// </summary>
+	public IReadOnlyDictionary<string, string> Properties { get; init; } =
+		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>
 	/// How long the solution file may be missing before the worker unloads. Absence is routine:
 	/// editors save atomically by delete-then-rename, and checking out a branch without the file
 	/// removes and restores it in one operation.
@@ -36,6 +53,9 @@ public sealed class WorkerOptions
 	public static WorkerOptions Parse(string[] args)
 	{
 		string? solutionPath = null;
+		string? configuration = null;
+		string? platform = null;
+		var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		var noRestore = false;
 		var noXamlStubs = false;
 
@@ -46,6 +66,21 @@ public sealed class WorkerOptions
 				case "--solution" or "-s":
 					if (i + 1 >= args.Length) throw new ArgumentException("--solution requires a path.");
 					solutionPath = args[++i];
+					break;
+
+				case "--configuration" or "-c":
+					if (i + 1 >= args.Length) throw new ArgumentException("--configuration requires a name.");
+					configuration = args[++i];
+					break;
+
+				case "--platform":
+					if (i + 1 >= args.Length) throw new ArgumentException("--platform requires a name.");
+					platform = args[++i];
+					break;
+
+				case "--property" or "-p":
+					if (i + 1 >= args.Length) throw new ArgumentException("--property requires Name=Value.");
+					Add(properties, args[++i]);
 					break;
 
 				case "--no-restore":
@@ -66,8 +101,19 @@ public sealed class WorkerOptions
 		return new WorkerOptions
 		{
 			SolutionPath = Path.GetFullPath(solutionPath),
+			Configuration = configuration,
+			Platform = platform,
+			Properties = properties,
 			NoRestore = noRestore,
 			NoXamlStubs = noXamlStubs,
 		};
+	}
+
+	private static void Add(Dictionary<string, string> properties, string assignment)
+	{
+		var separator = assignment.IndexOf('=', StringComparison.Ordinal);
+		if (separator <= 0) throw new ArgumentException($"--property expects Name=Value, got '{assignment}'.");
+
+		properties[assignment[..separator].Trim()] = assignment[(separator + 1)..].Trim();
 	}
 }

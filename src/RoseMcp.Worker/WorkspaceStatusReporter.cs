@@ -25,7 +25,8 @@ public static class WorkspaceStatusReporter
 		double loadSeconds,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null,
-		XamlStubReports? xamlReports = null)
+		XamlStubReports? xamlReports = null,
+		BuildProperties? build = null)
 	{
 		var failureMessages = workspaceDiagnostics
 			.Where(diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
@@ -46,6 +47,9 @@ public static class WorkspaceStatusReporter
 			Projects = projects,
 			LoadDiagnostics = workspaceDiagnostics.Select(diagnostic => $"[{diagnostic.Kind}] {diagnostic.Message}").ToArray(),
 			DegradedReasons = degradedReasons,
+			BuildConfiguration = build?.Describe(),
+			AvailableConfigurations = build?.Available.Configurations ?? [],
+			Notices = build?.Notice is { } notice ? [notice] : [],
 			Restore = restore,
 			LoadSeconds = loadSeconds,
 		};

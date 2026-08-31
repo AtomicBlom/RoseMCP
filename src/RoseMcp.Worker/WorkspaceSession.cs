@@ -56,6 +56,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	{
 		_workspace = load.Workspace;
 		_current = load.Solution;
+		Build = load.Build;
 		_loader = loader;
 		_options = options;
 		_logger = logger;
@@ -76,6 +77,9 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 	/// <summary>The revision as of the last completed operation.</summary>
 	public long Revision => Interlocked.Read(ref _revision);
+
+	/// <summary>The MSBuild properties the current solution was loaded under.</summary>
+	public BuildProperties Build { get; private set; }
 
 	public static WorkspaceSession Create(
 		LoadResult load,
@@ -274,6 +278,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 		_workspace = load.Workspace;
 		_current = load.Solution;
+		Build = load.Build;
 		_synchronizer.Reset(_current, _options.SolutionPath);
 		Interlocked.Increment(ref _revision);
 

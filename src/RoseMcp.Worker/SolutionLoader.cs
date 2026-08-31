@@ -35,13 +35,24 @@ public sealed class SolutionLoader(
 		var stopwatch = Stopwatch.StartNew();
 
 		var projectPaths = SolutionFileReader.ReadProjectPaths(options.SolutionPath);
-		logger.LogInformation("Opening {SolutionPath} with {ProjectCount} project(s).", options.SolutionPath, projectPaths.Count);
+		var build = BuildProperties.Select(options, SolutionFileReader.ReadConfigurations(options.SolutionPath));
 
-		progress?.Report($"Opening {Path.GetFileName(options.SolutionPath)}, {projectPaths.Count} project(s)", 0);
+		logger.LogInformation(
+			"Opening {SolutionPath} with {ProjectCount} project(s) as {Build}.",
+			options.SolutionPath,
+			projectPaths.Count,
+			build.Describe());
 
-		var restore = await RestoreAsync(options, projectPaths, progress, cancellationToken);
+		if (build.Notice is { } notice) logger.LogWarning("{Notice}", notice);
 
-		var workspace = MSBuildWorkspace.Create();
+		progress?.Report(
+			$"Opening {Path.GetFileName(options.SolutionPath)} as {build.Describe()}, {projectPaths.Count} project(s)", 0);
+
+		var restore = await RestoreAsync(options, build, projectPaths, progress, cancellationToken);
+
+		// The design-time build is a build, so it obeys these exactly as a real one would.
+		var workspace = MSBuildWorkspace.Create(
+			build.AsGlobalProperties().ToDictionary(property => property.Key, property => property.Value));
 		workspace.SkipUnrecognizedProjects = true;
 		workspace.LoadMetadataForReferencedProjects = true;
 
@@ -78,7 +89,8 @@ public sealed class SolutionLoader(
 			Math.Round(stopwatch.Elapsed.TotalSeconds, 2),
 			cancellationToken,
 			progress.Slice(XamlDone, 100),
-			stubReports);
+			stubReports,
+			build);
 
 		logger.LogInformation(
 			"Loaded {SolutionPath} in {Seconds}s: {State}, {ProjectCount} project(s), {GeneratedCount} generated document(s).",
@@ -88,7 +100,7 @@ public sealed class SolutionLoader(
 			report.Projects.Count,
 			report.Projects.Sum(project => project.GeneratedDocumentCount));
 
-		return new LoadResult(workspace, solution, report);
+		return new LoadResult(workspace, solution, report, build);
 	}
 
 	/// <summary>
@@ -97,6 +109,7 @@ public sealed class SolutionLoader(
 	/// </summary>
 	private async Task<RestoreReport> RestoreAsync(
 		WorkerOptions options,
+		BuildProperties build,
 		IReadOnlyList<string> projectPaths,
 		IWorkProgress? progress,
 		CancellationToken cancellationToken)
@@ -108,7 +121,8 @@ public sealed class SolutionLoader(
 			projectPaths,
 			options.NoRestore,
 			cancellationToken,
-			progress.Slice(1, RestoreDone));
+			progress.Slice(1, RestoreDone),
+			build);
 
 		progress?.Report(restore.Ran ? "Restore finished" : "Restore not needed", RestoreDone);
 

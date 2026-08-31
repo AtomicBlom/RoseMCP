@@ -48,12 +48,20 @@ public sealed record BuildProperties
 	/// did before.
 	/// </para>
 	/// </summary>
-	public static BuildProperties Select(WorkerOptions options, SolutionConfigurations available)
+	public static BuildProperties Select(
+		WorkerOptions options,
+		SolutionConfigurations available,
+		WorkspaceConfigFile? pinned = null)
 	{
 		var notices = new List<string>();
 
+		if (pinned is not null)
+		{
+			notices.Add($"Properties pinned by {pinned.Path}.");
+		}
+
 		var configuration = Choose(
-			options.Configuration,
+			options.Configuration ?? pinned?.Configuration,
 			available.Configurations,
 			msbuildDefault: "Debug",
 			preferPrefix: "Debug",
@@ -61,7 +69,7 @@ public sealed record BuildProperties
 			notices);
 
 		var platform = Choose(
-			options.Platform,
+			options.Platform ?? pinned?.Platform,
 			available.Platforms,
 			msbuildDefault: "AnyCPU",
 			preferPrefix: null,
@@ -72,7 +80,7 @@ public sealed record BuildProperties
 		{
 			Configuration = configuration,
 			Platform = platform,
-			Extra = options.Properties,
+			Extra = Merge(pinned?.Properties, options.Properties),
 			Available = available,
 			Notice = notices.Count == 0 ? null : string.Join(" ", notices),
 		};
@@ -104,6 +112,26 @@ public sealed record BuildProperties
 		if (Extra.Count == 0) return head;
 
 		return $"{head} ({string.Join(", ", Extra.Select(property => $"{property.Key}={property.Value}"))})";
+	}
+
+	/// <summary>
+	/// The file's properties, then the caller's over the top: what was asked for this time wins over
+	/// what the repository pinned, the same way it does for configuration and platform.
+	/// </summary>
+	private static IReadOnlyDictionary<string, string> Merge(
+		IReadOnlyDictionary<string, string>? pinned,
+		IReadOnlyDictionary<string, string> requested)
+	{
+		if (pinned is null or { Count: 0 }) return requested;
+
+		var merged = new Dictionary<string, string>(pinned, StringComparer.OrdinalIgnoreCase);
+
+		foreach (var property in requested)
+		{
+			merged[property.Key] = property.Value;
+		}
+
+		return merged;
 	}
 
 	private static string? Choose(

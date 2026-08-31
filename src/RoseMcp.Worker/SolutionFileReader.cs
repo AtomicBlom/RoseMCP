@@ -106,7 +106,7 @@ public static partial class SolutionFileReader
 		return new SolutionConfigurations
 		{
 			Configurations = Names(declarations, "BuildType"),
-			Platforms = Names(declarations, "Platform"),
+			Platforms = [.. Names(declarations, "Platform").Select(Platform)],
 		};
 	}
 
@@ -147,7 +147,7 @@ public static partial class SolutionFileReader
 			if (separator <= 0) continue;
 
 			Add(configurations, name[..separator]);
-			Add(platforms, name[(separator + 1)..]);
+			Add(platforms, Platform(name[(separator + 1)..]));
 		}
 
 		return new SolutionConfigurations { Configurations = configurations, Platforms = platforms };
@@ -165,7 +165,7 @@ public static partial class SolutionFileReader
 		return new SolutionConfigurations
 		{
 			Configurations = List(properties, "Configurations"),
-			Platforms = List(properties, "Platforms"),
+			Platforms = [.. List(properties, "Platforms").Select(Platform)],
 		};
 	}
 
@@ -174,6 +174,14 @@ public static partial class SolutionFileReader
 			.Where(element => element.Name.LocalName == propertyName)
 			.SelectMany(element => element.Value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
 			.Distinct(StringComparer.OrdinalIgnoreCase)];
+
+	/// <summary>
+	/// A platform as MSBuild spells it. Solution files write "Any CPU" with a space and the property
+	/// is <c>AnyCPU</c> without one -- a solution build maps between them, and passing the solution's
+	/// spelling to a project as a global property instead moves every output path to bin\Any CPU\.
+	/// </summary>
+	private static string Platform(string name) =>
+		name.Trim().Equals("Any CPU", StringComparison.OrdinalIgnoreCase) ? "AnyCPU" : name.Trim();
 
 	private static void Add(List<string> names, string candidate)
 	{

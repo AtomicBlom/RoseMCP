@@ -102,6 +102,28 @@ public sealed class SolutionLoaderTests
 		Assert.Equal(2, consumer.GeneratedDocumentCount);
 	}
 
+	/// <summary>
+	/// The whole point of the config file is that no call has to be made first, so the load has to
+	/// find it by itself. Release rather than a Revit-shaped name because the fixture has to build:
+	/// what is under test is that the file was read and obeyed, not what it said.
+	/// </summary>
+	[Fact]
+	public async Task Loads_under_the_properties_a_config_file_pins()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		await File.WriteAllTextAsync(
+			Path.Combine(fixture.Root, WorkspaceConfigFile.FileName),
+			"{ \"configuration\": \"Release\" }",
+			TestContext.Current.CancellationToken);
+
+		using var load = await LoadAsync(fixture);
+
+		Assert.Equal("Release", load.Result.Build.Configuration);
+		Assert.Equal("Release|AnyCPU", load.Result.Report.BuildConfiguration);
+		Assert.Contains(WorkspaceConfigFile.FileName, load.Result.Report.Notices.Single());
+	}
+
 	private static async Task<LoadScope> LoadAsync(FixtureSolution fixture)
 	{
 		var loader = new SolutionLoader(

@@ -35,7 +35,10 @@ public sealed class SolutionLoader(
 		var stopwatch = Stopwatch.StartNew();
 
 		var projectPaths = SolutionFileReader.ReadProjectPaths(options.SolutionPath);
-		var build = BuildProperties.Select(options, SolutionFileReader.ReadConfigurations(options.SolutionPath));
+		var build = BuildProperties.Select(
+			options,
+			SolutionFileReader.ReadConfigurations(options.SolutionPath),
+			WorkspaceConfigFile.Find(options.SolutionPath));
 
 		logger.LogInformation(
 			"Opening {SolutionPath} with {ProjectCount} project(s) as {Build}.",

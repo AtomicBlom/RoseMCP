@@ -52,7 +52,8 @@ reclaim memory or pick up a rebuilt generator.
   add-in derives it from `Debug-2024` through `Debug-2027` -- the wrong configuration yields projects
   with no framework and no references, and thousands of diagnostics about `System.Object` being
   undefined. `BuildProperties` chooses: the caller wins, else the solution's declared list, else
-  MSBuild's default untouched. Restore gets the same properties, because a repository that moves
+  MSBuild's default untouched, and a `rosemcp.json` beside the solution pins it durably so no setup
+  call is needed. Restore gets the same properties, because a repository that moves
   `BaseIntermediateOutputPath` per configuration moves its assets file with it.
 - **A XAML project's generated half is synthesised, and says so.** The markup compiler runs only in a
   real build, so `MSBuildWorkspace` hands us code-behind missing its base type, its `x:Name` fields

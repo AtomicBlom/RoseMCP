@@ -62,6 +62,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 			Global
 				GlobalSection(SolutionConfigurationPlatforms) = preSolution
 					Debug|x64 = Debug|x64
+					Debug|Any CPU = Debug|Any CPU
 					Release|x64 = Release|x64
 				EndGlobalSection
 				GlobalSection(ProjectConfigurationPlatforms) = postSolution
@@ -73,7 +74,10 @@ public sealed class SolutionFileReaderTests : IDisposable
 		var configurations = SolutionFileReader.ReadConfigurations(path);
 
 		Assert.Equal(["Debug", "Release"], configurations.Configurations);
-		Assert.Equal(["x64"], configurations.Platforms);
+
+		// Spelled as MSBuild spells the property, not as the solution file spells it. Passing a
+		// project "Any CPU" with the space moves its output to bin\Any CPU\.
+		Assert.Equal(["x64", "AnyCPU"], configurations.Platforms);
 	}
 
 	[Fact]

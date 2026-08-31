@@ -141,6 +141,19 @@ RoseMcp.Worker.exe --solution A.slnx --configuration Debug-2027 --platform x64
 RoseMcp.Worker.exe --solution A.slnx --configuration Release --property RevitVersion=2027
 ```
 
+A repository whose answer is always the same can commit it, in a `rosemcp.json` beside the solution
+or anywhere above it. That is the durable form of the same mechanism, and the reason to prefer it is
+the rule that no tool needs a setup call first: an agent that has to reload before its first useful
+answer has already lost to grep.
+
+```json
+{
+  "configuration": "Debug-2027",
+  "platform": "x64",
+  "properties": { "RevitVersion": "2027" }
+}
+```
+
 Arbitrary properties are supported because the derivation is sometimes from neither configuration
 nor platform. Restore gets the same properties as the load: a repository that moves
 `BaseIntermediateOutputPath` per configuration also moves where restore writes

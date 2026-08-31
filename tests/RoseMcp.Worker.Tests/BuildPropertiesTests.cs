@@ -82,5 +82,94 @@ public sealed class BuildPropertiesTests
 		Assert.Contains("RevitVersion=2027", build.Describe());
 	}
 
+	[Fact]
+	public void Takes_what_a_config_file_pins()
+	{
+		var pinned = new WorkspaceConfigFile
+		{
+			Path = "/repo/rosemcp.json",
+			Configuration = "Debug-2027",
+			Properties = new Dictionary<string, string> { ["RevitVersion"] = "2027" },
+		};
+
+		var declared = new SolutionConfigurations { Configurations = ["Debug-2024", "Debug-2027"], Platforms = ["x64"] };
+
+		var build = BuildProperties.Select(Options(), declared, pinned);
+
+		Assert.Equal("Debug-2027", build.Configuration);
+		Assert.Equal("2027", build.AsGlobalProperties()["RevitVersion"]);
+
+		// Which file did it, because a caller told what it was loaded under has to be able to find
+		// the thing that decided.
+		Assert.Contains("rosemcp.json", build.Notice);
+	}
+
+	[Fact]
+	public void Prefers_what_was_asked_for_over_what_a_config_file_pins()
+	{
+		var pinned = new WorkspaceConfigFile
+		{
+			Path = "/repo/rosemcp.json",
+			Configuration = "Debug-2024",
+			Platform = "x64",
+			Properties = new Dictionary<string, string> { ["RevitVersion"] = "2024", ["Extra"] = "kept" },
+		};
+
+		var options = new WorkerOptions
+		{
+			SolutionPath = "S.slnx",
+			Configuration = "Debug-2027",
+			Properties = new Dictionary<string, string> { ["RevitVersion"] = "2027" },
+		};
+
+		var build = BuildProperties.Select(options, SolutionConfigurations.None, pinned);
+
+		Assert.Equal("Debug-2027", build.Configuration);
+		Assert.Equal("2027", build.AsGlobalProperties()["RevitVersion"]);
+
+		// Merged rather than replaced: overriding one property does not discard the rest.
+		Assert.Equal("kept", build.AsGlobalProperties()["Extra"]);
+		Assert.Equal("x64", build.Platform);
+	}
+
+	[Fact]
+	public void Finds_a_config_file_above_the_solution()
+	{
+		var root = Directory.CreateTempSubdirectory("rosemcp-config-");
+		try
+		{
+			File.WriteAllText(
+				Path.Combine(root.FullName, WorkspaceConfigFile.FileName),
+				"{ \"configuration\": \"Debug-2027\", \"properties\": { \"RevitVersion\": \"2027\" } }");
+
+			var nested = Directory.CreateDirectory(Path.Combine(root.FullName, "src", "app"));
+			var found = WorkspaceConfigFile.Find(Path.Combine(nested.FullName, "App.slnx"));
+
+			Assert.NotNull(found);
+			Assert.Equal("Debug-2027", found.Configuration);
+			Assert.Equal("2027", found.Properties["RevitVersion"]);
+		}
+		finally
+		{
+			root.Delete(recursive: true);
+		}
+	}
+
+	[Fact]
+	public void Treats_an_unreadable_config_file_as_absent()
+	{
+		var root = Directory.CreateTempSubdirectory("rosemcp-config-");
+		try
+		{
+			File.WriteAllText(Path.Combine(root.FullName, WorkspaceConfigFile.FileName), "{ not json");
+
+			Assert.Null(WorkspaceConfigFile.Find(Path.Combine(root.FullName, "App.slnx")));
+		}
+		finally
+		{
+			root.Delete(recursive: true);
+		}
+	}
+
 	private static WorkerOptions Options() => new() { SolutionPath = "S.slnx" };
 }

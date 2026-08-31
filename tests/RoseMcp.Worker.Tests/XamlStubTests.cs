@@ -235,7 +235,7 @@ public sealed class XamlStubTests
 		Assert.NotNull(document);
 		Assert.Null(document.ClassName);
 
-		var emission = XamlStubEmitter.Emit(Compile(FakeFramework), new UwpXamlDialect(), document);
+		var emission = XamlStubEmitter.Emit(Compile(FakeFramework), WindowsXamlDialect.Uwp, document);
 
 		Assert.Contains("no x:Class", emission.SkipReason!, StringComparison.Ordinal);
 	}
@@ -372,7 +372,7 @@ public sealed class XamlStubTests
 		Assert.NotNull(document);
 
 		return XamlStubEmitter.Emit(
-			Compile(outputKind, FakeFramework, codeBehind), new UwpXamlDialect(), document);
+			Compile(outputKind, FakeFramework, codeBehind), WindowsXamlDialect.Uwp, document);
 	}
 
 	/// <summary>

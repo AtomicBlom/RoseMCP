@@ -19,7 +19,7 @@ namespace RoseMcp.Worker.Xaml;
 /// </summary>
 public static class XamlDialectSelector
 {
-	public static IReadOnlyList<IXamlDialect> All { get; } = [new UwpXamlDialect()];
+	public static IReadOnlyList<IXamlDialect> All { get; } = [WindowsXamlDialect.WinUi, WindowsXamlDialect.Uwp];
 
 	public static XamlDialectChoice Select(Compilation compilation, IReadOnlyList<XamlDocument> documents)
 	{

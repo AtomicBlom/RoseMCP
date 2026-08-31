@@ -137,6 +137,62 @@ public sealed class XamlWorkspaceTests
 		}
 	}
 
+	/// <summary>
+	/// Through the host, which is the path the status tool takes -- and which had its own call to the
+	/// reporter, so it went on returning zeroes after the loader's call was fixed. Found by asking
+	/// the deployed server about a real solution, and worth a test rather than another deploy.
+	/// </summary>
+	[Fact]
+	public async Task The_status_tool_reports_what_was_stubbed()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+
+		var reports = new XamlStubReports();
+		var options = new WorkerOptions { SolutionPath = fixture.SolutionPath };
+		var loader = new SolutionLoader(
+			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
+			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
+			reports,
+			NullLogger<SolutionLoader>.Instance);
+
+		await using var host = new WorkspaceHost(
+			options,
+			loader,
+			new SharedWorkProgress(),
+			reports,
+			NullLoggerFactory.Instance,
+			new NeverStops(),
+			NullLogger<WorkspaceHost>.Instance);
+
+		await host.StartAsync(TestContext.Current.CancellationToken);
+
+		var status = await host.GetStatusAsync(TestContext.Current.CancellationToken);
+		var project = Assert.Single(status.Projects);
+
+		Assert.Equal(1, project.XamlMarkupCount);
+		Assert.Equal(1, project.XamlStubbedCount);
+		Assert.Equal("UWP", project.XamlDialect);
+		Assert.Empty(project.UnresolvedXamlTypes);
+
+		// Stubbing successfully is not a reason to call the workspace degraded.
+		Assert.Empty(status.DegradedReasons);
+		Assert.Equal(WorkspaceState.Loaded, status.State);
+	}
+
+	/// <summary>The host stops the process when a solution vanishes; a test has nothing to stop.</summary>
+	private sealed class NeverStops : Microsoft.Extensions.Hosting.IHostApplicationLifetime
+	{
+		public CancellationToken ApplicationStarted => CancellationToken.None;
+
+		public CancellationToken ApplicationStopping => CancellationToken.None;
+
+		public CancellationToken ApplicationStopped => CancellationToken.None;
+
+		public void StopApplication()
+		{
+		}
+	}
+
 	private static async Task<DiagnosticsResult> DiagnoseAsync(WorkspaceSession session)
 	{
 		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);

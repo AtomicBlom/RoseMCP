@@ -87,6 +87,32 @@ Analyzer assemblies are shadow-copied before loading. A loaded assembly is held 
 of the process, and this process lives for hours — load them in place and your own next
 `dotnet build` fails with MSB3021.
 
+### XAML projects
+
+WPF, UWP and WinUI code-behind is only half a class: the base type, the `x:Name` fields and
+`InitializeComponent` come from a partial the markup compiler generates. That compiler runs only in
+a real build — a design-time build reports no XAML items at all — so without help every code-behind
+file in the solution reports errors that are not real. Measured on a 50-project UWP app mid-migration
+to .NET 10: 2030 of them in one project.
+
+So the markup is parsed and that partial is synthesised: base type, named fields with the
+accessibility `x:FieldModifier` asked for, `InitializeComponent`, and the odds and ends real
+generated code declares that hand-written code refers to. Element types are resolved out of the
+Roslyn type universe, so third-party and in-house controls work like built-in ones; anything that
+does not resolve is reported rather than guessed at. Nothing runnable is generated and nothing
+reaches disk — the stubs are source-generated documents, readable with
+`rose_read_generated_document` like any other.
+
+Which flavour of XAML a project is written in is decided from what it references, since all three
+use the same markup namespace: UWP is implemented today, and WPF and WinUI differ only in where
+their types live and what the generated half declares.
+
+It closed 2030 errors to 19, all of them a genuinely unreferenced assembly. Against the files a real
+build had left in `obj`, all 450 synthesised classes agreed on the base type and on every field name
+and type. `workspace_status` reports per project which dialect was chosen and on what evidence, how
+many classes were stubbed, and any element type that could not be resolved. Pass `--no-xaml-stubs`
+to a worker to see the workspace without them.
+
 ### Transports
 
 ```

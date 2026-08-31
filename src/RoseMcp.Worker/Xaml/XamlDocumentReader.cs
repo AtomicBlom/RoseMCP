@@ -55,6 +55,7 @@ public static class XamlDocumentReader
 				Name = rootName,
 				Type = new XamlTypeName(root.Name.NamespaceName, root.Name.LocalName),
 				Modifier = ModifierOf(root),
+				IsRoot = true,
 			});
 		}
 
@@ -109,9 +110,10 @@ public static class XamlDocumentReader
 
 	/// <summary>
 	/// x:FieldModifier, restricted to the accessibilities C# will accept in this position so odd
-	/// markup cannot produce a file that will not parse.
+	/// markup cannot produce a file that will not parse. Null when the markup does not say, which
+	/// leaves the choice to the dialect rather than assuming one framework's default for all of them.
 	/// </summary>
-	private static string ModifierOf(XElement element)
+	private static string? ModifierOf(XElement element)
 	{
 		var declared = (string?)element.Attribute(XName.Get("FieldModifier", XamlTypeName.LanguageNamespace));
 
@@ -119,9 +121,10 @@ public static class XamlDocumentReader
 		{
 			"public" => "public",
 			"internal" => "internal",
+			"private" => "private",
 			"protected" => "protected",
 			"protected internal" => "protected internal",
-			_ => "private",
+			_ => null,
 		};
 	}
 

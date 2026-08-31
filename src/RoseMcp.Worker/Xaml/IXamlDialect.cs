@@ -27,11 +27,31 @@ public interface IXamlDialect
 	string UsingNamespaceRoot { get; }
 
 	/// <summary>
+	/// Accessibility a named field gets when the markup does not say. WPF generates internal fields
+	/// and the Windows frameworks generate private ones, and the difference is load-bearing: too
+	/// narrow and a reference from another class becomes CS0122 rather than merely missing.
+	/// </summary>
+	string DefaultFieldModifier { get; }
+
+	/// <summary>
 	/// Namespaces searched in order for an element written in the presentation namespace. Order is
 	/// the tie-break between framework types sharing a name, mirroring what the real compiler does
 	/// with its own precedence.
 	/// </summary>
 	IReadOnlyList<string> FrameworkNamespaces { get; }
+
+	/// <summary>
+	/// Whether a field for the named root element is typed as the generated class rather than as the
+	/// element the markup writes.
+	/// <para>
+	/// The two answers were read off real generated files, and the frameworks disagree. WPF writes
+	/// <c>internal ProjectSelectionView ProjectSelectionRoot</c> for a root named in markup; UWP
+	/// writes <c>private Page CanvasWorkspace</c> for the same shape. Getting WPF's wrong is not
+	/// cosmetic: the class is a subtype of the element, so typing the field as the element makes
+	/// every member of the view itself unreachable through it.
+	/// </para>
+	/// </summary>
+	bool RootFieldIsTheClass { get; }
 
 	/// <summary>
 	/// Members the real generator emits beyond the base type and the named fields, as source. Kept

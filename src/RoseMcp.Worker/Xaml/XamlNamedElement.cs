@@ -8,8 +8,14 @@ public sealed record XamlNamedElement
 	public required XamlTypeName Type { get; init; }
 
 	/// <summary>
-	/// From x:FieldModifier, defaulting to private as the frameworks do. Markup sets it when another
-	/// class needs the field, and ignoring it makes that access inaccessible rather than missing.
+	/// True for the root element, whose field the dialects type differently from every other one.
 	/// </summary>
-	public string Modifier { get; init; } = "private";
+	public bool IsRoot { get; init; }
+
+	/// <summary>
+	/// From x:FieldModifier, or null when the markup does not say and the dialect's default applies.
+	/// Markup sets it when another class needs the field, and ignoring it makes that access
+	/// inaccessible rather than missing.
+	/// </summary>
+	public string? Modifier { get; init; }
 }

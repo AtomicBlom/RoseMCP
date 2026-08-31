@@ -104,14 +104,48 @@ reaches disk — the stubs are source-generated documents, readable with
 `rose_read_generated_document` like any other.
 
 Which flavour of XAML a project is written in is decided from what it references, since all three
-use the same markup namespace: UWP is implemented today, and WPF and WinUI differ only in where
-their types live and what the generated half declares.
+use the same markup namespace. UWP, WinUI and WPF are all recognised, and the differences between
+them are more than cosmetic: WPF's named fields default to `internal` where the Windows frameworks'
+default to `private`, and WPF types a field for a named root element as the class it generates where
+UWP types it as the element the markup writes. Both were read off real generated files rather than
+reasoned about.
+
+How much a project needs is a separate question from which dialect it is. WinUI's markup compiler
+takes part in design-time builds, and WPF's runs its first pass in one, so those projects usually
+need nothing — of 26 markup files in a real WPF project, 25 already had their generated half and one
+did not, because it is the one that needs WPF's second pass. Recognising the dialect still matters
+there: without it such a project is reported as having no XAML framework, which is false and more
+misleading than silence.
 
 It closed 2030 errors to 19, all of them a genuinely unreferenced assembly. Against the files a real
-build had left in `obj`, all 450 synthesised classes agreed on the base type and on every field name
-and type. `workspace_status` reports per project which dialect was chosen and on what evidence, how
+UWP build had left in `obj`, all 450 synthesised classes agreed on the base type and on every field
+name and type. `workspace_status` reports per project which dialect was chosen and on what evidence, how
 many classes were stubbed, and any element type that could not be resolved. Pass `--no-xaml-stubs`
 to a worker to see the workspace without them.
+
+### Configurations and platforms
+
+A design-time build is a build, so it obeys MSBuild properties. Most repositories declare
+`Debug|AnyCPU` and never think about it, but a solution is free to declare neither — an add-in built
+against four versions of a host API can name its configurations `Debug-2024` through `Debug-2027`,
+`x64` only, and derive `TargetFramework` from the configuration name. Loading such a solution as
+`Debug|AnyCPU` produces projects with no target framework and no references at all, and the
+thousands of diagnostics that follow name everything except the cause.
+
+So the configuration is chosen rather than assumed. What you ask for wins; otherwise the solution's
+own declared list decides, and MSBuild's default is left alone unless the solution demonstrably does
+not offer it. The choice, the alternatives and the reason are all reported by `workspace_status`.
+
+```
+RoseMcp.Worker.exe --solution A.slnx --configuration Debug-2027 --platform x64
+RoseMcp.Worker.exe --solution A.slnx --configuration Release --property RevitVersion=2027
+```
+
+Arbitrary properties are supported because the derivation is sometimes from neither configuration
+nor platform. Restore gets the same properties as the load: a repository that moves
+`BaseIntermediateOutputPath` per configuration also moves where restore writes
+`project.assets.json`, and the two disagreeing leaves the assets file somewhere the load will not
+look.
 
 ### Transports
 

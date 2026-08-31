@@ -47,6 +47,13 @@ reclaim memory or pick up a rebuilt generator.
   loaded assembly is held open for the life of the process, and this process lives for hours, so
   loading them in place means the user cannot rebuild their own generator -- `dotnet build` fails
   with MSB3021. There is a regression test for this; do not "simplify" it away.
+- **A solution is loaded under properties it declares.** MSBuild's `Debug|AnyCPU` default is not
+  universal. Where `TargetFramework` is derived from the configuration name -- Drawboard's Revit
+  add-in derives it from `Debug-2024` through `Debug-2027` -- the wrong configuration yields projects
+  with no framework and no references, and thousands of diagnostics about `System.Object` being
+  undefined. `BuildProperties` chooses: the caller wins, else the solution's declared list, else
+  MSBuild's default untouched. Restore gets the same properties, because a repository that moves
+  `BaseIntermediateOutputPath` per configuration moves its assets file with it.
 - **A XAML project's generated half is synthesised, and says so.** The markup compiler runs only in a
   real build, so `MSBuildWorkspace` hands us code-behind missing its base type, its `x:Name` fields
   and `InitializeComponent` -- 2030 phantom errors in one project of Drawboard's UWP app. The worker
@@ -109,6 +116,14 @@ the broker in the way:
 
 ```
 dotnet run --project src/RoseMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.sln
+```
+
+A solution whose configurations are not `Debug`/`Release` needs to be told which one, and anything
+whose target framework is chosen by some other property needs that property:
+
+```
+dotnet run --project src/RoseMcp.Worker -- --solution D:/repo/A.slnx --configuration Debug-2027
+dotnet run --project src/RoseMcp.Worker -- --solution D:/repo/A.slnx -c Release -p RevitVersion=2027
 ```
 
 ## Getting it actually used

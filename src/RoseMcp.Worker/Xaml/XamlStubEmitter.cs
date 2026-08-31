@@ -46,13 +46,19 @@ public static class XamlStubEmitter
 			// rather than a fix.
 			if (symbol.GetMembers(element.Name).Length > 0) continue;
 
-			if (Resolve(compilation, dialect, element.Type) is not { } type)
+			// A named root can be typed as the class itself, which needs no resolution: the class was
+			// found above, and it is by construction a subtype of whatever the markup names.
+			var declared = element.IsRoot && dialect.RootFieldIsTheClass
+				? symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+				: Resolve(compilation, dialect, element.Type);
+
+			if (declared is not { } type)
 			{
 				unresolved.Add($"{element.Name}: {Describe(element.Type)}");
 				continue;
 			}
 
-			fields.Add($"{element.Modifier} {type} {element.Name};");
+			fields.Add($"{element.Modifier ?? dialect.DefaultFieldModifier} {type} {element.Name};");
 		}
 
 		// Only when no other part declares one: two partials naming different base classes is

@@ -34,6 +34,11 @@ public sealed class WindowsXamlDialect : IXamlDialect
 
 	public string UsingNamespaceRoot => _root;
 
+	public string DefaultFieldModifier => "private";
+
+	/// <summary>False: a named root is typed as the element, which is what the real files show.</summary>
+	public bool RootFieldIsTheClass => false;
+
 	/// <summary>
 	/// Controls first because most elements are controls, then primitives, then the root namespace
 	/// which holds VisualState, VisualStateGroup and the element base types. The order and the list

@@ -63,6 +63,13 @@ public static class XamlItemReader
 				}
 			}
 
+			// A conditioned Remove is not honoured, because whether it applies depends on properties
+			// nothing here evaluates. WPF projects really do this: an App.xaml removed from
+			// ApplicationDefinition in Release only, so honouring it unconditionally loses the entry
+			// point in Debug. Keeping a file we should have dropped costs a stub nobody uses; dropping
+			// one we should have kept costs the errors this feature exists to remove.
+			if (IsConditional(element)) continue;
+
 			foreach (var path in Split((string?)element.Attribute("Remove")))
 			{
 				if (path.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase)) removed.Add(Resolve(directory, path));
@@ -91,6 +98,10 @@ public static class XamlItemReader
 		return relative.StartsWith("obj" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
 			|| relative.StartsWith("bin" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 	}
+
+	/// <summary>Whether this item or any group above it carries a Condition.</summary>
+	private static bool IsConditional(XElement element) =>
+		element.AncestorsAndSelf().Any(ancestor => ancestor.Attribute("Condition") is not null);
 
 	private static IEnumerable<string> Split(string? value) => value is null or ""
 		? []

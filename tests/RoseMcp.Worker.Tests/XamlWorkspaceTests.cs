@@ -1,0 +1,147 @@
+using Microsoft.Extensions.Logging.Abstractions;
+
+using RoseMcp.Contracts;
+using RoseMcp.Worker.Xaml;
+
+namespace RoseMcp.Worker.Tests;
+
+/// <summary>
+/// The whole pipeline over a real solution: find the markup, add it as additional documents, run the
+/// generator, and have the code-behind bind. The fixture declares its own Windows.UI.Xaml types, so
+/// this needs no Windows SDK and no UWP tooling -- only the shape of the problem, not its scale.
+/// </summary>
+public sealed class XamlWorkspaceTests
+{
+	[Fact]
+	public async Task A_xaml_project_compiles_without_its_markup_compiler_ever_running()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+		var reports = new XamlStubReports();
+		await using var session = await TestSession.OpenAsync(fixture, stubReports: reports);
+
+		var diagnostics = await DiagnoseAsync(session);
+
+		// Without the stub, this project has an unresolved InitializeComponent and an unknown Save.
+		Assert.Empty(diagnostics.Diagnostics);
+	}
+
+	/// <summary>
+	/// The stub has to be a source-generated document, not a file: readable through the generated
+	/// document tools, and never written to disk beside the user's code.
+	/// </summary>
+	[Fact]
+	public async Task The_stub_is_generated_code_and_stays_out_of_the_tree()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var generated = await GeneratedDocumentService.ListAsync(
+			snapshot, null, TestContext.Current.CancellationToken);
+
+		var stub = Assert.Single(generated.Documents, document =>
+			document.HintName.Contains("xamlstub", StringComparison.OrdinalIgnoreCase));
+
+		Assert.Contains("Widget", stub.HintName, StringComparison.Ordinal);
+		Assert.False(File.Exists(fixture.Path("XamlStub", "Ui", "Widget.xamlstub.g.cs")));
+
+		var content = await GeneratedDocumentService.ReadAsync(
+			snapshot, stub.HintName, null, TestContext.Current.CancellationToken);
+
+		Assert.Contains("partial class Widget : global::Windows.UI.Xaml.Controls.UserControl", content.Text, StringComparison.Ordinal);
+		Assert.Contains("private global::Windows.UI.Xaml.Controls.Button Save;", content.Text, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task Reports_which_dialect_it_chose_and_on_what_evidence()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+		var reports = new XamlStubReports();
+		await using var session = await TestSession.OpenAsync(fixture, stubReports: reports);
+
+		// Generators are lazy; asking for the compilation is what runs them.
+		await DiagnoseAsync(session);
+
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var project = snapshot.Solution.Projects.Single(candidate => candidate.Name.StartsWith("Ui", StringComparison.Ordinal));
+		var report = reports.For(project.Id);
+
+		Assert.NotNull(report);
+		Assert.Equal("UWP", report.Dialect);
+		Assert.False(report.DialectAmbiguous);
+		Assert.Contains("Windows.UI.Xaml.Controls.Control", report.DialectReason, StringComparison.Ordinal);
+		Assert.Equal(1, report.MarkupFileCount);
+		Assert.Equal(1, report.StubbedClassCount);
+		Assert.Empty(report.UnresolvedTypes);
+	}
+
+	/// <summary>
+	/// Markup is tracked like any other file, so editing a .xaml behind the workspace's back changes
+	/// the generated partial on the next read -- no reload, no refresh call.
+	/// </summary>
+	[Fact]
+	public async Task Picks_up_a_new_named_element_when_the_markup_changes_on_disk()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var markupPath = fixture.Path("XamlStub", "Ui", "Widget.xaml");
+		var markup = await File.ReadAllTextAsync(markupPath, TestContext.Current.CancellationToken);
+
+		await File.WriteAllTextAsync(
+			markupPath,
+			markup.Replace(
+				"<Button x:Name=\"Save\" Label=\"Save\" />",
+				"<Button x:Name=\"Save\" Label=\"Save\" />\r\n\t\t<Button x:Name=\"Cancel\" />",
+				StringComparison.Ordinal),
+			TestContext.Current.CancellationToken);
+
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var generated = await GeneratedDocumentService.ListAsync(
+			snapshot, null, TestContext.Current.CancellationToken);
+
+		var stub = Assert.Single(generated.Documents, document =>
+			document.HintName.Contains("xamlstub", StringComparison.OrdinalIgnoreCase));
+
+		var content = await GeneratedDocumentService.ReadAsync(
+			snapshot, stub.HintName, null, TestContext.Current.CancellationToken);
+
+		Assert.Contains("Button Cancel;", content.Text, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task Leaves_the_workspace_alone_when_stubs_are_turned_off()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+
+		var loader = new SolutionLoader(
+			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
+			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
+			new XamlStubReports(),
+			NullLogger<SolutionLoader>.Instance);
+
+		var load = await loader.LoadAsync(
+			new WorkerOptions { SolutionPath = fixture.SolutionPath, NoXamlStubs = true },
+			TestContext.Current.CancellationToken);
+
+		try
+		{
+			var project = load.Solution.Projects.Single();
+
+			Assert.Empty(project.AdditionalDocuments);
+			Assert.Empty(await project.GetSourceGeneratedDocumentsAsync(TestContext.Current.CancellationToken));
+		}
+		finally
+		{
+			load.Workspace.Dispose();
+		}
+	}
+
+	private static async Task<DiagnosticsResult> DiagnoseAsync(WorkspaceSession session)
+	{
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		return await new DiagnosticsService(NullLogger<DiagnosticsService>.Instance).AnalyseAsync(
+			snapshot, new DiagnosticsRequest(), TestContext.Current.CancellationToken);
+	}
+}

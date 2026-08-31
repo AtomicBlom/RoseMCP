@@ -52,7 +52,7 @@ public static class XamlStubEmitter
 				continue;
 			}
 
-			fields.Add($"private {type} {element.Name};");
+			fields.Add($"{element.Modifier} {type} {element.Name};");
 		}
 
 		// Only when no other part declares one: two partials naming different base classes is
@@ -64,13 +64,14 @@ public static class XamlStubEmitter
 		return new XamlStubEmission
 		{
 			HintName = $"{document.ClassName}.xamlstub.g.cs",
-			Source = Compose(document, dialect, baseType, fields),
+			Source = Compose(compilation, document, dialect, baseType, fields),
 			SkipReason = null,
 			UnresolvedTypes = unresolved,
 		};
 	}
 
 	private static string Compose(
+		Compilation compilation,
 		XamlDocument document,
 		IXamlDialect dialect,
 		string? baseType,
@@ -87,6 +88,13 @@ public static class XamlStubEmitter
 
 		// Public because the frameworks generate it public, and code outside the class calls it.
 		body.Append("\tpublic void InitializeComponent()\n\t{\n\t}\n");
+
+		// An exe whose entry point the markup compiler would have generated is CS5001 without it.
+		// Guarded on there being none already, so a hand-written Main always wins.
+		if (document.IsApplicationDefinition && NeedsEntryPoint(compilation))
+		{
+			body.Append("\n\tpublic static void Main(string[] args)\n\t{\n\t}\n");
+		}
 
 		foreach (var member in dialect.ExtraMembers(document))
 		{
@@ -162,6 +170,23 @@ public static class XamlStubEmitter
 	private static INamedTypeSymbol? Lookup(Compilation compilation, string metadataName) =>
 		compilation.GetTypeByMetadataName(metadataName)
 			?? compilation.GetTypesByMetadataName(metadataName).FirstOrDefault();
+
+	/// <summary>
+	/// Whether this project is an executable with no Main of its own. Asked by declaration lookup
+	/// rather than through GetEntryPoint, which would bind the entry point from inside the generator
+	/// that is still producing source for it.
+	/// </summary>
+	private static bool NeedsEntryPoint(Compilation compilation)
+	{
+		if (compilation.Options.OutputKind is not (OutputKind.ConsoleApplication or OutputKind.WindowsApplication))
+		{
+			return false;
+		}
+
+		return !compilation.GetSymbolsWithName("Main", SymbolFilter.Member)
+			.OfType<IMethodSymbol>()
+			.Any(method => method.IsStatic);
+	}
 
 	private static string Describe(XamlTypeName type) =>
 		type.IsFrameworkType ? type.LocalName : $"{type.NamespaceUri}:{type.LocalName}";

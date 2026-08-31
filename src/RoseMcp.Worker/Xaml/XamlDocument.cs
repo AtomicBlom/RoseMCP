@@ -26,6 +26,12 @@ public sealed record XamlDocument
 	/// </summary>
 	public required bool UsesCompiledBindings { get; init; }
 
+	/// <summary>
+	/// True when this is the App -- the root element being Application is what makes a file the
+	/// application definition, and what makes the generated half responsible for the entry point.
+	/// </summary>
+	public bool IsApplicationDefinition => RootType.LocalName == "Application";
+
 	/// <summary>The namespace half of <see cref="ClassName"/>, empty for a class in the global namespace.</summary>
 	public string Namespace
 	{

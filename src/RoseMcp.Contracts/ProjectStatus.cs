@@ -29,4 +29,23 @@ public sealed record ProjectStatus
 	/// analyzer list -- almost always because they have not been built yet.
 	/// </summary>
 	public required IReadOnlyList<string> MissingAnalyzerOutputs { get; init; }
+
+	/// <summary>XAML files found for this project. Zero for the great majority of projects.</summary>
+	public int XamlMarkupCount { get; init; }
+
+	/// <summary>
+	/// Classes given a synthesised partial because the markup compiler only runs in a real build.
+	/// Non-zero means some of this project's semantics are stand-ins, which is worth knowing before
+	/// trusting an answer about it.
+	/// </summary>
+	public int XamlStubbedCount { get; init; }
+
+	/// <summary>Which XAML flavour those stubs were written against; null when none were.</summary>
+	public string? XamlDialect { get; init; }
+
+	/// <summary>
+	/// Named elements whose type this project cannot see, so they have no field and will not bind.
+	/// Reported rather than papered over with a fabricated type.
+	/// </summary>
+	public IReadOnlyList<string> UnresolvedXamlTypes { get; init; } = [];
 }

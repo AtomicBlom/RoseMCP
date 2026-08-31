@@ -30,6 +30,7 @@ internal static class Program
 		builder.Services.AddSingleton<ShadowCopyAnalyzerAssemblyLoader>();
 		builder.Services.AddSingleton<RestoreRunner>();
 		builder.Services.AddSingleton<SharedWorkProgress>();
+		builder.Services.AddSingleton<Xaml.XamlStubReports>();
 		builder.Services.AddSingleton<SolutionLoader>();
 		builder.Services.AddSingleton<DiagnosticsService>();
 		builder.Services.AddSingleton<WorkspaceHost>();

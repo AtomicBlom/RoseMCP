@@ -45,7 +45,20 @@ public static class XamlDocumentReader
 		if (document.Root is not { } root) return null;
 
 		var named = new List<XamlNamedElement>();
-		Collect(root, named, isRoot: true);
+
+		// The root is the class, and also a field when the markup names it -- which the real
+		// generator does emit, and which reading the real output is how we found out.
+		if (NameOf(root) is { Length: > 0 } rootName)
+		{
+			named.Add(new XamlNamedElement
+			{
+				Name = rootName,
+				Type = new XamlTypeName(root.Name.NamespaceName, root.Name.LocalName),
+				Modifier = ModifierOf(root),
+			});
+		}
+
+		Collect(root, named);
 
 		return new XamlDocument
 		{
@@ -60,18 +73,20 @@ public static class XamlDocumentReader
 		};
 	}
 
-	private static void Collect(XElement element, List<XamlNamedElement> named, bool isRoot = false)
+	private static void Collect(XElement element, List<XamlNamedElement> named)
 	{
 		foreach (var child in element.Elements())
 		{
 			var localName = child.Name.LocalName;
 
-			// A property element -- Grid.RowDefinitions, VisualStateManager.VisualStateGroups -- is
-			// not a type and cannot be named, but the elements under it can be. Resources are the
-			// exception: those are keyed, not named, and produce no fields.
+			// A property element -- Grid.RowDefinitions, VisualStateManager.VisualStateGroups,
+			// Page.Resources -- is not a type and cannot be named, but the elements under it can be.
+			// Resources included: a keyed resource contributes nothing because it has no name, while
+			// a named one gets a field exactly like any other element. Storyboards are usually
+			// declared this way, and they were most of what an earlier version of this missed.
 			if (localName.Contains('.', StringComparison.Ordinal))
 			{
-				if (!localName.EndsWith(".Resources", StringComparison.Ordinal)) Collect(child, named);
+				Collect(child, named);
 
 				continue;
 			}
@@ -84,14 +99,30 @@ public static class XamlDocumentReader
 				{
 					Name = name,
 					Type = new XamlTypeName(child.Name.NamespaceName, localName),
+					Modifier = ModifierOf(child),
 				});
 			}
 
 			Collect(child, named);
 		}
+	}
 
-		// The root's own name is the class, not a field, so it is never collected.
-		_ = isRoot;
+	/// <summary>
+	/// x:FieldModifier, restricted to the accessibilities C# will accept in this position so odd
+	/// markup cannot produce a file that will not parse.
+	/// </summary>
+	private static string ModifierOf(XElement element)
+	{
+		var declared = (string?)element.Attribute(XName.Get("FieldModifier", XamlTypeName.LanguageNamespace));
+
+		return declared?.Trim().ToLowerInvariant() switch
+		{
+			"public" => "public",
+			"internal" => "internal",
+			"protected" => "protected",
+			"protected internal" => "protected internal",
+			_ => "private",
+		};
 	}
 
 	/// <summary>

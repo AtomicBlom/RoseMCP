@@ -14,6 +14,13 @@ public sealed class WorkerOptions
 	public bool NoRestore { get; init; }
 
 	/// <summary>
+	/// Stop synthesising stand-in partials for XAML files. The markup compiler only runs in a real
+	/// build, so without them a XAML project reports thousands of errors that are not there -- but a
+	/// stub is an approximation, and there has to be a way to look at the workspace without one.
+	/// </summary>
+	public bool NoXamlStubs { get; init; }
+
+	/// <summary>
 	/// How long the solution file may be missing before the worker unloads. Absence is routine:
 	/// editors save atomically by delete-then-rename, and checking out a branch without the file
 	/// removes and restores it in one operation.
@@ -30,6 +37,7 @@ public sealed class WorkerOptions
 	{
 		string? solutionPath = null;
 		var noRestore = false;
+		var noXamlStubs = false;
 
 		for (var i = 0; i < args.Length; i++)
 		{
@@ -44,6 +52,10 @@ public sealed class WorkerOptions
 					noRestore = true;
 					break;
 
+				case "--no-xaml-stubs":
+					noXamlStubs = true;
+					break;
+
 				default:
 					throw new ArgumentException($"Unrecognised argument '{args[i]}'.");
 			}
@@ -55,6 +67,7 @@ public sealed class WorkerOptions
 		{
 			SolutionPath = Path.GetFullPath(solutionPath),
 			NoRestore = noRestore,
+			NoXamlStubs = noXamlStubs,
 		};
 	}
 }

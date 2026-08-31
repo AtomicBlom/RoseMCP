@@ -2,6 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 
 using RoseMcp.Contracts;
+using RoseMcp.Worker.Xaml;
 
 namespace RoseMcp.Worker;
 
@@ -23,15 +24,19 @@ public static class WorkspaceStatusReporter
 		long revision,
 		double loadSeconds,
 		CancellationToken cancellationToken,
-		IWorkProgress? progress = null)
+		IWorkProgress? progress = null,
+		XamlStubReports? xamlReports = null)
 	{
 		var failureMessages = workspaceDiagnostics
 			.Where(diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
 			.Select(diagnostic => diagnostic.Message)
 			.ToArray();
 
-		var projects = await DescribeProjectsAsync(solution, failureMessages, cancellationToken, progress);
-		var degradedReasons = CollectDegradedReasons(workspaceDiagnostics, projects, restore);
+		var (projects, xamlReasons) = await DescribeProjectsAsync(
+			solution, failureMessages, cancellationToken, progress, xamlReports);
+
+		var degradedReasons = (IReadOnlyList<string>)
+			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore), .. xamlReasons];
 
 		return new WorkspaceStatusReport
 		{
@@ -46,13 +51,15 @@ public static class WorkspaceStatusReporter
 		};
 	}
 
-	private static async Task<IReadOnlyList<ProjectStatus>> DescribeProjectsAsync(
+	private static async Task<(IReadOnlyList<ProjectStatus> Statuses, IReadOnlyList<string> XamlReasons)> DescribeProjectsAsync(
 		Solution solution,
 		IReadOnlyList<string> failureMessages,
 		CancellationToken cancellationToken,
-		IWorkProgress? progress)
+		IWorkProgress? progress,
+		XamlStubReports? xamlReports)
 	{
 		var statuses = new List<ProjectStatus>(solution.ProjectIds.Count);
+		var xamlReasons = new List<string>();
 		var total = solution.ProjectIds.Count;
 
 		foreach (var project in solution.Projects)
@@ -74,6 +81,10 @@ public static class WorkspaceStatusReporter
 				? 0
 				: (await project.GetSourceGeneratedDocumentsAsync(cancellationToken)).Count();
 
+			// Read after the generators have run, because that call is what populates the report.
+			var xaml = xamlReports?.For(project.Id);
+			if (xaml is not null) xamlReasons.AddRange(XamlConcerns(project.Name, xaml));
+
 			statuses.Add(new ProjectStatus
 			{
 				Name = project.Name,
@@ -86,10 +97,44 @@ public static class WorkspaceStatusReporter
 				GeneratorCount = generators.Length,
 				GeneratedDocumentCount = generatedCount,
 				MissingAnalyzerOutputs = FindMissingAnalyzerOutputs(project),
+				XamlMarkupCount = xaml?.MarkupFileCount ?? 0,
+				XamlStubbedCount = xaml?.StubbedClassCount ?? 0,
+				XamlDialect = xaml?.Dialect,
+				UnresolvedXamlTypes = xaml?.UnresolvedTypes ?? [],
 			});
 		}
 
-		return statuses;
+		return (statuses, xamlReasons);
+	}
+
+	/// <summary>
+	/// What is wrong with a project's XAML stubs, if anything. Successful stubbing is reported in the
+	/// per-project counts rather than here: it is a caveat worth seeing, not a reason to call the
+	/// whole workspace degraded, and marking every XAML solution degraded would empty that word of
+	/// meaning. Being unable to stub, or having had to guess, is a different matter.
+	/// </summary>
+	private static IEnumerable<string> XamlConcerns(string projectName, XamlStubReport xaml)
+	{
+		if (xaml.Dialect is null && xaml.MarkupFileCount > 0)
+		{
+			yield return $"Project {projectName} has {xaml.MarkupFileCount} XAML file(s) but {xaml.DialectReason}, "
+				+ "so nothing could stand in for the markup compiler and its code-behind will report errors "
+				+ "that are not real.";
+		}
+
+		if (xaml.DialectAmbiguous)
+		{
+			yield return $"Project {projectName} references more than one XAML framework; stubs were written "
+				+ $"as {xaml.Dialect} because {xaml.DialectReason}.";
+		}
+
+		if (xaml.UnresolvedTypes.Count == 0) yield break;
+
+		var examples = string.Join(", ", xaml.UnresolvedTypes.Take(3));
+		var rest = xaml.UnresolvedTypes.Count > 3 ? $", and {xaml.UnresolvedTypes.Count - 3} more" : string.Empty;
+
+		yield return $"Project {projectName} has {xaml.UnresolvedTypes.Count} named XAML element(s) whose type it "
+			+ $"cannot see, so they have no field and will not bind: {examples}{rest}.";
 	}
 
 	/// <summary>

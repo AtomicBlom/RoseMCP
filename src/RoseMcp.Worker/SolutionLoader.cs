@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
+using RoseMcp.Worker.Xaml;
 
 namespace RoseMcp.Worker;
 
@@ -12,6 +13,7 @@ namespace RoseMcp.Worker;
 public sealed class SolutionLoader(
 	RestoreRunner restoreRunner,
 	ShadowCopyAnalyzerAssemblyLoader analyzerLoader,
+	XamlStubReports stubReports,
 	ILogger<SolutionLoader> logger)
 {
 	/// <summary>
@@ -23,6 +25,7 @@ public sealed class SolutionLoader(
 	private const double RestoreDone = 10;
 	private const double BuildDone = 70;
 	private const double AnalyzersDone = 75;
+	private const double XamlDone = 80;
 
 	public async Task<LoadResult> LoadAsync(
 		WorkerOptions options,
@@ -59,6 +62,11 @@ public sealed class SolutionLoader(
 		progress?.Report("Redirecting analyzers to shadow copies", BuildDone);
 		var solution = UseShadowCopiedAnalyzers(workspace.CurrentSolution);
 
+		if (!options.NoXamlStubs)
+		{
+			solution = await WithXamlStubsAsync(solution, progress, cancellationToken);
+		}
+
 		stopwatch.Stop();
 
 		var report = await WorkspaceStatusReporter.DescribeAsync(
@@ -69,7 +77,8 @@ public sealed class SolutionLoader(
 			revision: 1,
 			Math.Round(stopwatch.Elapsed.TotalSeconds, 2),
 			cancellationToken,
-			progress.Slice(AnalyzersDone, 100));
+			progress.Slice(XamlDone, 100),
+			stubReports);
 
 		logger.LogInformation(
 			"Loaded {SolutionPath} in {Seconds}s: {State}, {ProjectCount} project(s), {GeneratedCount} generated document(s).",
@@ -106,6 +115,85 @@ public sealed class SolutionLoader(
 		return restore;
 	}
 
+	/// <summary>
+	/// Gives every XAML project the stand-in partials its markup compiler would have written.
+	/// <para>
+	/// The design-time build reports no XAML items and no additional files, so the markup is found
+	/// on disk, added as additional documents -- which the disk synchroniser then watches like any
+	/// other tracked file -- and a generator is attached to turn them into source. Skipped entirely
+	/// for projects with no XAML, which is most of them.
+	/// </para>
+	/// </summary>
+	private async Task<Solution> WithXamlStubsAsync(
+		Solution solution,
+		IWorkProgress? progress,
+		CancellationToken cancellationToken)
+	{
+		var projects = solution.ProjectIds.ToArray();
+		var stubbed = 0;
+
+		for (var index = 0; index < projects.Length; index++)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			var project = solution.GetProject(projects[index])!;
+			if (project.FilePath is not { Length: > 0 } projectFile) continue;
+
+			var markup = XamlItemReader.Read(projectFile);
+			if (markup.Count == 0) continue;
+
+			progress?.Report(
+				$"Reading XAML: {project.Name} ({markup.Count} file(s))",
+				AnalyzersDone + ((XamlDone - AnalyzersDone) * (index + 1) / projects.Length));
+
+			var known = project.AdditionalDocuments
+				.Select(document => document.FilePath)
+				.Where(path => path is { Length: > 0 })
+				.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+			foreach (var path in markup.Where(path => !known.Contains(path)))
+			{
+				var text = await ReadTextAsync(path, cancellationToken);
+				if (text is null) continue;
+
+				solution = solution.AddAdditionalDocument(
+					DocumentId.CreateNewId(project.Id, Path.GetFileName(path)),
+					Path.GetFileName(path),
+					text,
+					filePath: path);
+			}
+
+			var projectId = project.Id;
+			var generator = new XamlStubGenerator(report => stubReports.Record(projectId, report));
+
+			solution = solution.AddAnalyzerReference(projectId, new XamlStubReference(generator.AsSourceGenerator()));
+			stubbed++;
+		}
+
+		if (stubbed > 0) logger.LogInformation("Attached XAML stub generation to {ProjectCount} project(s).", stubbed);
+
+		return solution;
+	}
+
+	/// <summary>
+	/// A file that cannot be read is skipped rather than fatal. Markup being written while we look
+	/// is ordinary, and the next read barrier picks it up.
+	/// </summary>
+	private async Task<Microsoft.CodeAnalysis.Text.SourceText?> ReadTextAsync(
+		string path,
+		CancellationToken cancellationToken)
+	{
+		try
+		{
+			return Microsoft.CodeAnalysis.Text.SourceText.From(
+				await File.ReadAllTextAsync(path, cancellationToken));
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			logger.LogDebug(exception, "Could not read {Path} while looking for XAML.", path);
+			return null;
+		}
+	}
 	/// <summary>
 	/// Rebuilds every project's analyzer references so they load from throwaway copies.
 	/// <para>

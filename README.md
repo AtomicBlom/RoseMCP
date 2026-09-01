@@ -55,13 +55,17 @@ to check code compiles. Source-generated code is only readable via
 |---|---|
 | `rose_diagnostics` | Compiler and (opt-in) analyzer diagnostics, from a warm compilation. No build required. |
 | `rose_find_references` | Real references — overrides, interface implementations, aliases and `cref`s included. |
-| `rose_symbol_info` | Resolved signature, accessibility, containing type, XML documentation. |
+| `rose_symbol_info` | Resolved signature, accessibility, containing type, XML documentation, declaration sites, and what the member overrides or implements. |
+| `rose_find_implementations` | What implements, overrides, or derives from a symbol. Grep cannot answer this at all. |
 | `rose_search_symbols` | Pattern search across source declarations. |
-| `rose_rename_symbol` | Solution-wide rename with conflict detection; returns a unified diff. `apply: false` previews. |
+| `rose_rename_symbol` | Solution-wide rename with conflict detection; returns a unified diff, and reports XAML that still names the old identifier. `apply: false` previews. |
 | `rose_move_type_to_file` | Moves one type out of a file that declares several, into a file named after it. Carries the doc comments across and fixes the usings in both halves. |
+| `rose_format` | Applies the repository's own `.editorconfig`: indentation, braces, line endings, trailing whitespace, final newline. |
+| `rose_list_code_fixes` | What the solution's own analyzers offer to fix in a file. |
+| `rose_apply_code_fix` | Applies one, to a file, a project, or the whole solution, through Roslyn's fix-all. |
 | `rose_list_generated_documents` | What the generators actually produced, per project. |
 | `rose_read_generated_document` | The generated source itself. Nothing on disk to read — this is the only way to see it. |
-| `rose_workspace_open` / `_status` / `_reload` / `_close` | Load state, per-project health, degraded-load detection. |
+| `rose_workspace_open` / `_status` / `_reload` / `_close` | Load state, per-project health, degraded-load detection, and the MSBuild properties in use. `_reload` can change them. |
 
 Every result carries a `revision`, so a caller can tell whether two answers describe the same
 world.

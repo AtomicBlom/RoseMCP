@@ -19,6 +19,7 @@ public static class ToolNames
 	public const string ReadGeneratedDocument = "rose_read_generated_document";
 	public const string RenameSymbol = "rose_rename_symbol";
 	public const string MoveTypeToFile = "rose_move_type_to_file";
+	public const string FormatDocuments = "rose_format";
 
 	/// <summary>
 	/// Worker-only. The broker calls this on connect to learn the process id, so it can sample

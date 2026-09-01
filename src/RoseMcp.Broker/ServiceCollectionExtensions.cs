@@ -32,6 +32,10 @@ public static class ServiceCollectionExtensions
 		- Splitting a file that declares several types: rose_move_type_to_file, not a read followed
 		  by two writes. It carries the declaration across untouched and fixes the using directives
 		  in both files, which hand-splitting gets wrong in a way that fails the build.
+		- After writing or editing any C# file yourself: rose_format. Hand-written C# lands with
+		  the wrong indentation and the wrong line endings, and where IDE0055 is an error that is a
+		  failed build. This applies the repository's own .editorconfig, so it is not a matter of
+		  taste, and it leaves multi-line string literals alone.
 		- Checking code is valid: rose_diagnostics, not a build. It answers from a warm
 		  compilation in milliseconds and needs no build.
 		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility and

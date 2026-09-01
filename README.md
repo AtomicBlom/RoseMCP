@@ -66,6 +66,28 @@ to check code compiles. Source-generated code is only readable via
 Every result carries a `revision`, so a caller can tell whether two answers describe the same
 world.
 
+## Formatting what you wrote
+
+`rose_format` applies the repository's own `.editorconfig` to files you name: indentation, brace
+placement, line endings, trailing whitespace and the final newline. Call it after writing C# by any
+other means.
+
+It exists because writing C# and getting its whitespace right are separate skills, and a caller good
+at the first routinely fails the second — spaces where the repository wants tabs, LF where it wants
+CRLF. Where IDE0055 is escalated to an error, each of those is a failed build rather than a tidiness
+question, and the correct answer is not a judgement call: it is written down in a file the compiler
+already reads.
+
+Two passes, because one is not enough. Roslyn's formatter handles syntax and does honour
+`.editorconfig` — measured — but it only rewrites the trivia it has reason to touch, so a
+four-space, LF-terminated file comes out with tabs and CRLF on the lines it reindented and the
+original endings everywhere else. The second pass fixes every line. Multi-line verbatim and raw
+string literals are left exactly as they are, since a newline in one is part of the value and a raw
+literal's indentation decides how much is stripped from it.
+
+`apply=false` returns the diff without writing, which makes it a formatting check for a named set of
+files.
+
 ## How it works
 
 ```

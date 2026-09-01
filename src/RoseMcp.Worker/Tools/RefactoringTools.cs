@@ -66,6 +66,49 @@ public sealed class RefactoringTools(WorkspaceHost host, SharedWorkProgress shar
 	}
 
 	[McpServerTool(
+		Name = ToolNames.FormatDocuments,
+		Title = "Format files the way the repository asks",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        Formats C# files to their own repository's .editorconfig: indentation, brace placement, line
+        endings, trailing whitespace and the final newline. Call this after writing or editing a C#
+        file by any other means. Hand-written C# routinely lands with spaces where the repository
+        wants tabs and LF where it wants CRLF, and in a repository that treats IDE0055 as an error
+        that is a failed build rather than untidiness. Returns a unified diff; pass apply=false to
+        check formatting without writing. Multi-line string literals are left alone, since a newline
+        inside one is content rather than layout.
+        """)]
+	public async Task<FormatResult> FormatAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Absolute or solution-relative paths of the files to format.")] string[] filePaths,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Also drop using directives the file does not need. Off by default.")] bool removeUnusedUsings = false,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new FormatRequest
+		{
+			FilePaths = filePaths,
+			Apply = apply,
+			RemoveUnusedUsings = removeUnusedUsings,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => FormatService.FormatAsync(snapshot, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
 		Name = ToolNames.MoveTypeToFile,
 		Title = "Move a type to its own file",
 		ReadOnly = false,

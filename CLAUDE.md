@@ -47,6 +47,11 @@ reclaim memory or pick up a rebuilt generator.
   loaded assembly is held open for the life of the process, and this process lives for hours, so
   loading them in place means the user cannot rebuild their own generator -- `dotnet build` fails
   with MSB3021. There is a regression test for this; do not "simplify" it away.
+- **Whatever writes C# has to end formatted.** Roslyn's formatter honours `.editorconfig` but only
+  rewrites the trivia it has reason to touch, so a file it reindents comes out with mixed line
+  endings -- which IDE0055 then fails the build over. `Whitespace` is the second pass that fixes
+  every line, and it leaves multi-line verbatim and raw literals alone, because a newline in one is
+  content and a raw literal's indentation decides how much is stripped from it.
 - **A solution is loaded under properties it declares.** MSBuild's `Debug|AnyCPU` default is not
   universal. Where `TargetFramework` is derived from the configuration name -- Drawboard's Revit
   add-in derives it from `Debug-2024` through `Debug-2027` -- the wrong configuration yields projects

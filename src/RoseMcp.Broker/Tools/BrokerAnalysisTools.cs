@@ -210,6 +210,37 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
 	[McpServerTool(
+		Name = ToolNames.FormatDocuments,
+		Title = "Format files the way the repository asks",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        Formats C# files to their own repository's .editorconfig: indentation, brace placement, line
+        endings, trailing whitespace and the final newline. Call this after writing or editing a C#
+        file by any other means -- hand-written C# routinely lands with spaces where the repository
+        wants tabs and LF where it wants CRLF, and where IDE0055 is an error that is a failed build
+        rather than untidiness. Returns a unified diff; pass apply=false to check without writing.
+        """)]
+	public Task<FormatResult> FormatAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Paths of the files to format.")] string[] filePaths,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Also drop using directives the file does not need. Off by default.")] bool removeUnusedUsings = false,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<FormatResult>(workspace ?? filePaths.FirstOrDefault(), ToolNames.FormatDocuments, new()
+		{
+			["filePaths"] = filePaths,
+			["apply"] = apply,
+			["removeUnusedUsings"] = removeUnusedUsings,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
 		Name = ToolNames.MoveTypeToFile,
 		Title = "Move a type to its own file",
 		ReadOnly = false,

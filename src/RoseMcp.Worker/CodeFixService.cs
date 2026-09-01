@@ -166,8 +166,8 @@ public static class CodeFixService
 				Severity = diagnostic.Severity.ToString(),
 				FilePath = document.FilePath ?? filePath,
 				Line = diagnostic.Location.GetLineSpan().StartLinePosition.Line + 1,
-				FixTitles = [.. actions.Select(action => action.Title).Distinct(StringComparer.Ordinal)],
-				SupportsFixAll = providers.Any(provider => provider.GetFixAllProvider() is not null),
+				FixTitles = [.. actions.Select(static action => action.Title).Distinct(StringComparer.Ordinal)],
+				SupportsFixAll = providers.Any(static provider => provider.GetFixAllProvider() is not null),
 			});
 		}
 
@@ -331,7 +331,7 @@ public static class CodeFixService
 
 		return operations
 			.OfType<ApplyChangesOperation>()
-			.Select(operation => operation.ChangedSolution)
+			.Select(static operation => operation.ChangedSolution)
 			.LastOrDefault();
 	}
 

@@ -33,6 +33,7 @@ internal static class Program
 		builder.Services.AddSingleton<Xaml.XamlStubReports>();
 		builder.Services.AddSingleton<SolutionLoader>();
 		builder.Services.AddSingleton<DiagnosticsService>();
+		builder.Services.AddSingleton<CodeFixCatalog>();
 		builder.Services.AddSingleton<WorkspaceHost>();
 		builder.Services.AddHostedService(services => services.GetRequiredService<WorkspaceHost>());
 		builder.Services

@@ -210,6 +210,64 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
 	[McpServerTool(
+		Name = ToolNames.ListCodeFixes,
+		Title = "Code fixes available in a file",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        What the solution's own analyzers offer to fix in one file: the diagnostic, the titles of the
+        fixes available for it, and whether it can be fixed across a whole project or solution at
+        once. Diagnostic ids nothing can fix are listed separately, so an empty answer is not mistaken
+        for clean code.
+        """)]
+	public Task<CodeFixList> ListCodeFixesAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Path to the file.")] string filePath,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<CodeFixList>(workspace ?? filePath, ToolNames.ListCodeFixes, new()
+		{
+			["filePath"] = filePath,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
+		Name = ToolNames.ApplyCodeFix,
+		Title = "Apply a code fix",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        Applies the fix an analyzer ships for one diagnostic id, to a file, a project, or the whole
+        solution at once, through Roslyn's own fix-all. Use this rather than editing each occurrence
+        by hand: the same rule across fifty files is where hand-fixing and find-and-replace go wrong.
+        Only the analyzers that report the requested id are run, so fixing one rule costs a fraction
+        of a full analyzer pass. Returns a unified diff; pass apply=false to preview.
+        """)]
+	public Task<CodeFixResult> ApplyCodeFixAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The diagnostic id to fix, for example CA1822.")] string diagnosticId,
+		[Description("A file in the scope to fix.")] string filePath,
+		[Description("document, project, or solution. Defaults to document.")] string scope = "document",
+		[Description("Which fix, when the diagnostic offers several. Matched against the fix titles.")] string? fixTitle = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<CodeFixResult>(workspace ?? filePath, ToolNames.ApplyCodeFix, new()
+		{
+			["diagnosticId"] = diagnosticId,
+			["filePath"] = filePath,
+			["scope"] = scope,
+			["fixTitle"] = fixTitle,
+			["apply"] = apply,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
 		Name = ToolNames.FormatDocuments,
 		Title = "Format files the way the repository asks",
 		ReadOnly = false,

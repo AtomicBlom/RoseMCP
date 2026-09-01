@@ -66,6 +66,26 @@ to check code compiles. Source-generated code is only readable via
 Every result carries a `revision`, so a caller can tell whether two answers describe the same
 world.
 
+## Fixing what the analyzers report
+
+`rose_list_code_fixes` says what can be fixed in a file; `rose_apply_code_fix` applies it to that
+file, its project, or the whole solution through Roslyn's own fix-all.
+
+No dependency was added for this. Analyzers ship their fixers in the same assemblies, so a solution
+that reports a diagnostic already carries the code that repairs it — measured at **206 fix providers
+over 186 diagnostic ids** for this repository and **143 over 120** for a Revit add-in, entirely from
+packages those solutions already referenced. Roslyn exposes the analyzers through `AnalyzerReference`
+but not the fixers, so those are found by reflecting over the same assembly — loaded through the
+shadow-copy loader, never from `AnalyzerReference.FullPath`, which is deliberately still the original
+file.
+
+Only the analyzers that report the requested id are run. A full analyzer pass over a large project is
+seconds to minutes; fixing one rule is a fraction of that, for the same answer.
+
+Fixes from the IDE catalogue — the `IDE####` rules, and refactorings like extract method — are *not*
+here: they live in `Microsoft.CodeAnalysis.CSharp.Features`, which this does not reference. Measured
+across both solutions above: zero `IDE*` ids among the fixers on disk.
+
 ## Formatting what you wrote
 
 `rose_format` applies the repository's own `.editorconfig` to files you name: indentation, brace

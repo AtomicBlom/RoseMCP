@@ -20,6 +20,8 @@ public static class ToolNames
 	public const string RenameSymbol = "rose_rename_symbol";
 	public const string MoveTypeToFile = "rose_move_type_to_file";
 	public const string FormatDocuments = "rose_format";
+	public const string ListCodeFixes = "rose_list_code_fixes";
+	public const string ApplyCodeFix = "rose_apply_code_fix";
 
 	/// <summary>
 	/// Worker-only. The broker calls this on connect to learn the process id, so it can sample

@@ -11,8 +11,38 @@ namespace RoseMcp.Worker.Tools;
 
 /// <summary>Reading the solution: diagnostics and the generated code no file tool can reach.</summary>
 [McpServerToolType]
-public sealed class AnalysisTools(WorkspaceHost host, DiagnosticsService diagnostics, SharedWorkProgress sharedWork)
+public sealed class AnalysisTools(
+	WorkspaceHost host,
+	DiagnosticsService diagnostics,
+	CodeFixCatalog codeFixes,
+	SharedWorkProgress sharedWork)
 {
+	[McpServerTool(
+		Name = ToolNames.ListCodeFixes,
+		Title = "Code fixes available in a file",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        What the solution's own analyzers offer to fix in one file: the diagnostic, the titles of the
+        fixes available for it, and whether that fix can be applied to a whole project or solution at
+        once. Diagnostic ids nothing can fix are listed separately, so an empty answer is not mistaken
+        for clean code. Apply one with rose_apply_code_fix rather than editing by hand.
+        """)]
+	public async Task<CodeFixList> ListCodeFixesAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Absolute or solution-relative path to the file.")] string filePath,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var snapshot = await host.ReadAsync(cancellationToken);
+
+		return await CodeFixService.ListAsync(snapshot, codeFixes, filePath, cancellationToken, working);
+	}
+
 	[McpServerTool(
 		Name = ToolNames.Diagnostics,
 		Title = "Roslyn diagnostics",

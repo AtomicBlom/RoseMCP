@@ -9,8 +9,55 @@ namespace RoseMcp.Worker.Tools;
 
 /// <summary>Changes to the solution. Everything here writes, so everything here reports a diff.</summary>
 [McpServerToolType]
-public sealed class RefactoringTools(WorkspaceHost host, SharedWorkProgress sharedWork)
+public sealed class RefactoringTools(WorkspaceHost host, CodeFixCatalog codeFixes, SharedWorkProgress sharedWork)
 {
+	[McpServerTool(
+		Name = ToolNames.ApplyCodeFix,
+		Title = "Apply a code fix",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        Applies the fix an analyzer ships for one diagnostic id, to a file, a project, or the whole
+        solution at once, through Roslyn's own fix-all. Use this rather than editing each occurrence
+        by hand: the same rule across fifty files is where hand-fixing and find-and-replace go wrong.
+        Only the analyzers that report the requested id are run, so fixing one rule costs a fraction
+        of a full analyzer pass. Returns a unified diff; pass apply=false to preview. Ask
+        rose_list_code_fixes what is available first.
+        """)]
+	public async Task<CodeFixResult> ApplyCodeFixAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The diagnostic id to fix, for example CA1822.")] string diagnosticId,
+		[Description("A file in the scope to fix; the fix has to start somewhere.")] string filePath,
+		[Description("document, project, or solution. Defaults to document.")] string scope = "document",
+		[Description("Which fix, when the diagnostic offers several. Matched against the fix titles.")] string? fixTitle = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new CodeFixRequest
+		{
+			DiagnosticId = diagnosticId,
+			FilePath = filePath,
+			Scope = scope,
+			FixTitle = fixTitle,
+			Apply = apply,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => CodeFixService.ApplyAsync(
+				snapshot, codeFixes, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
 	[McpServerTool(
 		Name = ToolNames.RenameSymbol,
 		Title = "Rename a symbol",

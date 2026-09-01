@@ -36,6 +36,10 @@ public static class ServiceCollectionExtensions
 		  the wrong indentation and the wrong line endings, and where IDE0055 is an error that is a
 		  failed build. This applies the repository's own .editorconfig, so it is not a matter of
 		  taste, and it leaves multi-line string literals alone.
+		- Fixing a diagnostic: rose_apply_code_fix, not editing each occurrence. The analyzers a
+		  solution already has ship the fixes for their own rules, and Roslyn applies one across a
+		  whole project or solution correctly where find-and-replace does not.
+		  rose_list_code_fixes says what is available in a file.
 		- Checking code is valid: rose_diagnostics, not a build. It answers from a warm
 		  compilation in milliseconds and needs no build.
 		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility and

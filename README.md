@@ -53,7 +53,7 @@ to check code compiles. Source-generated code is only readable via
 
 | Tool | What it does |
 |---|---|
-| `rose_diagnostics` | Compiler and (opt-in) analyzer diagnostics, from a warm compilation. No build required. |
+| `rose_diagnostics` | Compiler and (opt-in) analyzer diagnostics, from a warm compilation, in milliseconds. The edit loop, not a substitute for a build. |
 | `rose_find_references` | Real references — overrides, interface implementations, aliases and `cref`s included. |
 | `rose_symbol_info` | Resolved signature, accessibility, containing type, XML documentation, declaration sites, and what the member overrides or implements. |
 | `rose_find_implementations` | What implements, overrides, or derives from a symbol. Grep cannot answer this at all. |

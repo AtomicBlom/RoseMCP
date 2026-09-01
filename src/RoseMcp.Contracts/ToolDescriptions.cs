@@ -53,12 +53,15 @@ public static class ToolDescriptions
         """;
 
 	public const string Diagnostics = """
-        Compiler (and optionally analyzer) diagnostics from a live Roslyn compilation. Prefer this to
-        running a build: it answers from a warm compilation in milliseconds, needs no build output,
-        and is always computed against the current state of disk -- edits made by other tools are
-        absorbed before the analysis runs, so results are never stale. Diagnostics inside
+        Compiler (and optionally analyzer) diagnostics from a live Roslyn compilation, in
+        milliseconds, always computed against the current state of disk -- edits made by other tools
+        are absorbed before the analysis runs, so results are never stale. Diagnostics inside
         source-generated code are included and tagged with the hint name that reads that code back.
-        To repair what it reports, ask rose_list_code_fixes rather than editing by hand.
+        Use it as the edit loop, in place of building after every change; it is not a substitute for
+        a build. It compiles but does not emit, and runs no MSBuild targets, so it cannot see
+        emit-time errors, anything a build step generates or repacks, or a failure in a project
+        reference's own build. Analyzers are opt-in here and can be build errors there. Build before
+        concluding the work is done. To repair what it reports, ask rose_list_code_fixes.
         """;
 
 	public const string SymbolInfo = """

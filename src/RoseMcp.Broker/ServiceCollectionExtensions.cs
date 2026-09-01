@@ -44,8 +44,9 @@ public static class ServiceCollectionExtensions
 		  solution already has ship the fixes for their own rules, and Roslyn applies one across a
 		  whole project or solution correctly where find-and-replace does not.
 		  rose_list_code_fixes says what is available in a file.
-		- Checking code is valid: rose_diagnostics, not a build. It answers from a warm
-		  compilation in milliseconds and needs no build.
+		- Checking an edit compiles: rose_diagnostics, in place of building after every change. It
+		  answers from a warm compilation in milliseconds. It is not a substitute for a build --
+		  it emits nothing and runs no MSBuild targets -- so build before concluding you are done.
 		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility,
 		  documentation and declaration sites rather than whatever the declaration text looks like,
 		  and says what the member overrides or implements.

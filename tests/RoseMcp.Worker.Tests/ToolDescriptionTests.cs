@@ -62,7 +62,7 @@ public sealed class ToolDescriptionTests
 	[InlineData(ToolNames.MoveTypeToFile, "rather than reading a file and writing two")]
 	[InlineData(ToolNames.FormatDocuments, "by any other means")]
 	[InlineData(ToolNames.ApplyCodeFix, "rather than editing each occurrence")]
-	[InlineData(ToolNames.Diagnostics, "Prefer this to")]
+	[InlineData(ToolNames.Diagnostics, "in place of building after every change")]
 	[InlineData(ToolNames.ListGeneratedDocuments, "no file search")]
 	[InlineData(ToolNames.ReadGeneratedDocument, "no other way")]
 	public void Says_what_the_caller_would_otherwise_have_done(string tool, string expected)

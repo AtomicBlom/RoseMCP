@@ -99,8 +99,14 @@ public sealed class ProgressReportingTests
 
 		// A message at all means a progress notification crossed the process boundary and was
 		// matched to the right activity.
+		//
+		// Not the percentage, though it is tempting. The activity is completed by the call's
+		// response, while progress arrives on a separate notification path, so which report is the
+		// last one processed before the snapshot is a race between the two -- and a report carrying
+		// no percentage deliberately clears it, since a sender that has stopped knowing must not
+		// leave a bar frozen. On a fixture this small the load can finish with only such a report
+		// seen. Percentages are covered where they can be observed in order, by the tests above.
 		Assert.False(string.IsNullOrWhiteSpace(load.Message), "the load reported no progress");
-		Assert.NotNull(load.PercentComplete);
 	}
 
 	private static void AssertNeverGoesBackwards(IReadOnlyList<(string Message, double? Percent)> reports)

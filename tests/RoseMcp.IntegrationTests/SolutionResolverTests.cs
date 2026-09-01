@@ -1,4 +1,5 @@
 using RoseMcp.Broker;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -62,17 +63,8 @@ public sealed class SolutionResolverTests
 	[Fact]
 	public void Says_what_to_pass_when_nothing_can_be_resolved()
 	{
-		var empty = Path.Combine(Path.GetTempPath(), "rosemcp-tests", $"empty-{Guid.NewGuid():N}");
-		Directory.CreateDirectory(empty);
+		var error = Assert.Throws<ArgumentException>(() => SolutionResolver.Resolve(NowhereDirectory.Path()));
 
-		try
-		{
-			var error = Assert.Throws<ArgumentException>(() => SolutionResolver.Resolve(empty));
-			Assert.Contains(".sln", error.Message, StringComparison.Ordinal);
-		}
-		finally
-		{
-			Directory.Delete(empty, recursive: true);
-		}
+		Assert.Contains(".sln", error.Message, StringComparison.Ordinal);
 	}
 }

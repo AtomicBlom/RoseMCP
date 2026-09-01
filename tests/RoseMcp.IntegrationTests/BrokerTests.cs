@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -183,22 +184,13 @@ public sealed class BrokerTests
 	[Fact]
 	public async Task Says_where_it_looked_when_there_is_no_solution_to_find()
 	{
-		var empty = Path.Combine(Path.GetTempPath(), $"empty-{Guid.NewGuid():N}");
-		Directory.CreateDirectory(empty);
+		var nowhere = NowhereDirectory.Path();
+		await using var manager = CreateManager(nowhere);
 
-		try
-		{
-			await using var manager = CreateManager(empty);
+		var error = await Assert.ThrowsAsync<ArgumentException>(
+			() => manager.GetOrStartAsync(null, TestContext.Current.CancellationToken));
 
-			var error = await Assert.ThrowsAsync<ArgumentException>(
-				() => manager.GetOrStartAsync(null, TestContext.Current.CancellationToken));
-
-			Assert.Contains(empty, error.Message, StringComparison.OrdinalIgnoreCase);
-		}
-		finally
-		{
-			Directory.Delete(empty, recursive: true);
-		}
+		Assert.Contains(nowhere, error.Message, StringComparison.OrdinalIgnoreCase);
 	}
 
 	private static WorkspaceManager CreateManager(string? defaultRoot = null) => new(

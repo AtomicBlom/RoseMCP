@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
+using ModelContextProtocol;
+
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.TestSupport;
@@ -88,11 +90,21 @@ public sealed class BrokerTests
 
 		Assert.Equal(2, manager.Workers.Count);
 
-		// With more than one open, an unqualified call cannot be guessed at.
-		var error = await Assert.ThrowsAsync<ArgumentException>(
+		// With more than one open, an unqualified call cannot be guessed at. Http mode makes that
+		// ordinary rather than exotic: one broker serves every repository on the machine, so a
+		// second solution loading in another session is enough to make every zero-argument call
+		// ambiguous.
+		//
+		// McpException, not ArgumentException, and that is not a detail. The SDK renders an
+		// exception it does not recognise as "An error occurred invoking 'rose_diagnostics'." and
+		// throws the message away, leaving a caller that could have corrected the call itself with
+		// nothing to go on. This one names both open solutions, because picking one is the fix.
+		var error = await Assert.ThrowsAsync<McpException>(
 			() => manager.GetOrStartAsync(null, TestContext.Current.CancellationToken));
 
 		Assert.Contains("workspace argument is required", error.Message, StringComparison.Ordinal);
+		Assert.Contains(simple.SolutionPath, error.Message, StringComparison.OrdinalIgnoreCase);
+		Assert.Contains(generator.SolutionPath, error.Message, StringComparison.OrdinalIgnoreCase);
 	}
 
 	[Fact]
@@ -180,14 +192,18 @@ public sealed class BrokerTests
 
 		Assert.Equal(fixture.SolutionPath, worker.SolutionPath, ignoreCase: true);
 	}
-
+	/// <summary>
+	/// McpException, not ArgumentException, and that is not a detail. The SDK renders an exception
+	/// it does not recognise as "An error occurred invoking 'rose_workspace_status'." and throws the
+	/// message away, so a caller that could have corrected the call itself learns nothing.
+	/// </summary>
 	[Fact]
 	public async Task Says_where_it_looked_when_there_is_no_solution_to_find()
 	{
 		var nowhere = NowhereDirectory.Path();
 		await using var manager = CreateManager(nowhere);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
+		var error = await Assert.ThrowsAsync<McpException>(
 			() => manager.GetOrStartAsync(null, TestContext.Current.CancellationToken));
 
 		Assert.Contains(nowhere, error.Message, StringComparison.OrdinalIgnoreCase);

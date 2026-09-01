@@ -207,6 +207,12 @@ public sealed class WorkspaceManager(
 	/// explicit open first. A tool that needs a setup call before it answers anything is a tool that
 	/// gets skipped in favour of grep, so the zero-argument path has to work.
 	/// </para>
+	/// <para>
+	/// The two failures here throw McpException rather than ArgumentException, and the difference is
+	/// the whole point: the SDK turns an unrecognised exception into "An error occurred invoking
+	/// 'rose_diagnostics'." and drops the message, so a caller that could have fixed the call itself
+	/// is told nothing. Both of these know exactly what the caller should do next, and both say so.
+	/// </para>
 	/// </summary>
 	private string ResolveOrInfer(string? path)
 	{
@@ -218,7 +224,7 @@ public sealed class WorkspaceManager(
 
 			if (_workers.Count > 1)
 			{
-				throw new ArgumentException(
+				throw new McpException(
 					$"{_workers.Count} workspaces are open, so the workspace argument is required. Open: "
 						+ string.Join(", ", _workers.Keys));
 			}
@@ -230,7 +236,7 @@ public sealed class WorkspaceManager(
 		}
 		catch (ArgumentException exception)
 		{
-			throw new ArgumentException(
+			throw new McpException(
 				"No workspace is open and no solution was found near "
 					+ $"{_options.DefaultWorkspaceRoot}. Pass a path to a solution, project, or any file "
 					+ "inside one.",

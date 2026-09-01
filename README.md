@@ -254,6 +254,16 @@ HTTP mode outlives any one client session, so a reconnecting agent reattaches to
 are already warm. It binds `127.0.0.1` by default and refuses a non-loopback bind unless
 `ROSEMCP_TOKEN` is set — this server reads and rewrites source anywhere it can reach.
 
+Register it as stdio and the two stop being alternatives. With a tray already running, a stdio
+server starts no workers of its own: it relays to the tray, which owns them. That is the
+arrangement worth having, because each half supplies what the other cannot. A stdio process knows
+the directory its client started it in, so a call naming no workspace resolves to the right
+solution; an http broker serves every repository on the machine at once and, with two solutions
+open, genuinely cannot tell which one a bare call means. Relaying gives both at the same time —
+one warm worker per solution shared by every session, and a correct answer per session — and the
+tray still sees every workspace, because it is still the one holding them. With no tray running,
+the same stdio server starts its own workers and behaves exactly as it did before.
+
 The tray app (Windows only) hosts the same broker in-process and shows one row per workspace:
 state, worker PID, and memory sampled from outside the worker so a hung one still reports real
 numbers. Under each row is what that worker is doing right now — the tool being served, what it
@@ -277,6 +287,26 @@ broker in the way:
 ```
 dotnet run --project src/RoseMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.sln
 ```
+
+### Dogfooding
+
+Work on this repository with this server running against it. Register it globally rather than per
+project:
+
+```
+claude mcp add rose -s user -- <path>/RoseMcp.Server.exe
+```
+
+There is deliberately no `.mcp.json` here. Committing one would either pin every contributor to one
+machine's install path or point at a build output that may not exist yet; a user-scope registration
+covers this repository along with every other.
+
+This is not ceremony. Two of the sharper bugs in this codebase were found by using it on itself and
+not by its tests: a custom `AnalyzerReference` that made `find_references` and `rename` throw on any
+member in a solution containing XAML, and a resolution failure whose message the MCP layer replaced
+with "An error occurred". Both were invisible to a green suite and obvious within a minute of real
+use. After a `tools/deploy.ps1` run the tray restarts, so the first call afterwards reloads the
+solution and is slow; that is expected rather than a fault.
 
 ## Status
 

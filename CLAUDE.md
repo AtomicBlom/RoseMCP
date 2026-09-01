@@ -22,6 +22,9 @@ client --stdio or http--> RoseMcp.Server (broker, no Roslyn refs)
    or RoseMcp.Tray    -->    |  one child per solution, MCP over stdio
    (hosts it in-process)     +--> RoseMcp.Worker --solution D:\a\A.sln
                              +--> RoseMcp.Worker --solution D:\b\B.slnx
+
+client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
+                  (TrayRelay, no workers of its own)
 ```
 
 - **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
@@ -53,6 +56,29 @@ reclaim memory or pick up a rebuilt generator.
   solution name. Twenty sessions are kept per component, pruned at startup -- Serilog's own
   retention cannot do it, since it only prunes within one rolling base name and every session
   here has its own.
+- **A stdio session relays to a tray when one is running.** `TrayRelay` forwards both listing and
+  calling, declaring no tools of its own, so the surface cannot drift from the tray's. It fills in
+  the `workspace` argument any call omits, from the directory its client started it in -- which is
+  the point. An http broker serves every repository on the machine and, with two solutions open,
+  cannot know which one a bare call means; a stdio process cannot not know. Relaying buys both that
+  and one warm worker per solution shared across sessions, and it keeps the tray's window reading a
+  live `WorkspaceManager` rather than a pushed copy that could drift. With no tray, the same
+  process owns its workers as before.
+- **A cancelled call is cancelled all the way down, and the order is the trick.**
+  `McpClient.CallToolAsync` honours a token by giving up locally and never telling the far side, so
+  a cancelled analyzer run kept its worker busy five seconds longer -- which, because reads are
+  ordered behind one another, is the delay before the caller's next question can start.
+  `CancellableToolCall` builds the request itself, since the id it needs is one `CallToolAsync`
+  never reveals. Send the cancellation *before* abandoning the wait: over http the request is a
+  streaming POST, and tearing it down three milliseconds early was enough for the far side to treat
+  the request as merely gone, never cancel its own token, and finish the work anyway.
+- **Progress can arrive out of order over http, and no queue here can fix it.** The SDK dispatches
+  notification handlers concurrently on an SSE transport, so a four-project status was seen
+  arriving 50, 75, 0, 25 -- already unordered before any of our code sees it, and MCP progress
+  carries no sequence to sort on. Do not "fix" it by clamping to the highest value seen:
+  `SharedWorkProgress` deliberately fans a reload's own scale into calls already in flight, so
+  resets are legitimate and a clamp pins those bars at whatever the last operation reached. The
+  stdio hop is ordered, being one reader.
 - **Reads never observe a snapshot older than disk.** If you add a read path, it goes through the
   `WorkspaceSession` barrier. No exceptions.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.

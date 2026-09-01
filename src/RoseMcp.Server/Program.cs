@@ -1,7 +1,3 @@
-using ModelContextProtocol;
-using ModelContextProtocol.Protocol;
-using ModelContextProtocol.Server;
-
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
@@ -41,10 +37,12 @@ internal static class Program
 	/// </summary>
 	private static async Task<int> RunStdioAsync(ServerOptions options)
 	{
-		using var startup = LoggerFactory.Create(ConfigureLogging);
-
-		var relay = await TrayRelay.TryConnectAsync(options, startup, CancellationToken.None);
-		if (relay is not null) return await RunRelayAsync(options, relay);
+		// Asked before anything is built, because the answer decides what to build.
+		if (await TrayRelay.IsListeningAsync(options, CancellationToken.None))
+		{
+			var relayed = await RunRelayAsync(options);
+			if (relayed is { } code) return code;
+		}
 
 		var builder = Host.CreateApplicationBuilder();
 		ConfigureLogging(builder.Logging);
@@ -61,26 +59,36 @@ internal static class Program
 	/// Stdio in front, the tray's broker behind. Nothing is declared here: both listing and calling
 	/// are forwarded, so this cannot drift out of step with the tools the tray actually has.
 	/// </summary>
-	private static async Task<int> RunRelayAsync(ServerOptions options, TrayRelay relay)
+	private static async Task<int?> RunRelayAsync(ServerOptions options)
 	{
+		// One factory, shared with the host below, so a relayed session writes one log rather than
+		// two. Registered as an instance, which the container does not dispose, so the using here
+		// stays the only owner.
+		using var logging = LoggerFactory.Create(ConfigureLogging);
+
+		var relay = await TrayRelay.TryConnectAsync(options, logging, CancellationToken.None);
+
+		// The tray answered the probe and then went away. Rare, and the honest response is to fall
+		// back to owning workers rather than to fail the session.
+		if (relay is null) return null;
+
 		await using (relay)
 		{
 			var builder = Host.CreateApplicationBuilder();
-			ConfigureLogging(builder.Logging);
+			builder.Logging.ClearProviders();
+			builder.Services.AddSingleton<ILoggerFactory>(logging);
 
 			builder.Services
 				.AddMcpServer(server => server.ServerInfo = new() { Name = "rose-mcp", Version = "0.1.0" })
 				.WithStdioServerTransport()
 				.WithListToolsHandler((_, token) => relay.ListToolsAsync(token))
-				.WithCallToolHandler((context, token) =>
-					relay.CallToolAsync(context.Params!, ProgressFor(context), token));
+				.WithCallToolHandler((context, token) => relay.CallToolAsync(context.Params!, context.Server, token));
 
 			await builder.Build().RunAsync();
 		}
 
 		return 0;
 	}
-
 
 	/// <summary>
 	/// Long-lived and shared. Because the broker outlives any single client session, a reconnecting
@@ -122,21 +130,6 @@ internal static class Program
 
 		await next(context);
 	};
-
-	/// <summary>
-	/// Bridges progress across the relay: notifications the tray sends us are re-sent to our own
-	/// client under the token it asked for. Without this a load looks like a hang, because the calls
-	/// that take real time are exactly the ones whose progress would be dropped in the middle.
-	/// </summary>
-	private static IProgress<ProgressNotificationValue>? ProgressFor(RequestContext<CallToolRequestParams> context) =>
-		context.Params?.ProgressToken is { } token ? new RelayProgress(context.Server, token) : null;
-
-	private sealed class RelayProgress(McpServer endpoint, ProgressToken token)
-		: IProgress<ProgressNotificationValue>
-	{
-		public void Report(ProgressNotificationValue value) =>
-			_ = endpoint.NotifyProgressAsync(token, value);
-	}
 
 	/// <summary>
 	/// Every log goes to stderr. In stdio mode stdout carries protocol frames and nothing else; a

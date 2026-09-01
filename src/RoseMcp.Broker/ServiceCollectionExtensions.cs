@@ -23,6 +23,9 @@ public static class ServiceCollectionExtensions
 		Real C# semantics from a live Roslyn compilation of the user's solution, kept in sync with
 		disk. For C# work, prefer these over text search and hand editing.
 
+		- Locating something by name: rose_search_symbols, not a filename guess or a grep for the
+		  declaration. It matches the abbreviations people type, and returns the position the other
+		  tools want.
 		- Finding usages: rose_find_references, not grep. Grep matches comments, strings and
 		  unrelated identifiers that share a name, and misses overrides, interface implementations
 		  and aliases.
@@ -63,6 +66,11 @@ public static class ServiceCollectionExtensions
 
 		If answers look wrong or generated code seems missing, call rose_workspace_status. A
 		degraded workspace returns plausible but incomplete results rather than errors.
+
+		If a whole solution looks broken -- thousands of errors, System.Object undefined, nothing
+		resolving -- it is almost certainly loaded under the wrong MSBuild configuration rather than
+		actually broken. rose_workspace_status reports the one in use and the ones the solution
+		declares; rose_workspace_reload takes a different one.
 		""";
 
 	public static IMcpServerBuilder AddRoseMcpBroker(

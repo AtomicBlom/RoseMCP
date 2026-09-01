@@ -18,12 +18,7 @@ public sealed class WorkspaceTools(WorkspaceHost host, SharedWorkProgress shared
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Reports what this worker has loaded and whether its answers can be trusted: per-project load
-        state, document and source-generated document counts, what restore did, and any reason the
-        workspace is degraded. Check this first when diagnostics or generated code look wrong -- a
-        degraded workspace returns plausible but incomplete results rather than errors.
-        """)]
+	[Description(ToolDescriptions.WorkspaceStatus)]
 	public async Task<WorkspaceStatusReport> StatusAsync(
 		IProgress<ProgressNotificationValue> progress,
 		CancellationToken cancellationToken)

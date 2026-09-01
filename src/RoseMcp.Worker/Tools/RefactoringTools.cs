@@ -19,14 +19,7 @@ public sealed class RefactoringTools(WorkspaceHost host, CodeFixCatalog codeFixe
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Applies the fix an analyzer ships for one diagnostic id, to a file, a project, or the whole
-        solution at once, through Roslyn's own fix-all. Use this rather than editing each occurrence
-        by hand: the same rule across fifty files is where hand-fixing and find-and-replace go wrong.
-        Only the analyzers that report the requested id are run, so fixing one rule costs a fraction
-        of a full analyzer pass. Returns a unified diff; pass apply=false to preview. Ask
-        rose_list_code_fixes what is available first.
-        """)]
+	[Description(ToolDescriptions.ApplyCodeFix)]
 	public async Task<CodeFixResult> ApplyCodeFixAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("The diagnostic id to fix, for example CA1822.")] string diagnosticId,
@@ -66,13 +59,7 @@ public sealed class RefactoringTools(WorkspaceHost host, CodeFixCatalog codeFixe
 		Idempotent = false,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Renames the symbol at a file position everywhere it is used, using Roslyn's renamer, so
-        overrides, interface implementations, partial declarations and cref references all move
-        together. Returns a unified diff of every file it changed. Conflicts -- where the new name
-        would bind to something else or shadow an existing member -- are reported rather than
-        silently applied. Pass apply=false to preview without writing.
-        """)]
+	[Description(ToolDescriptions.RenameSymbol)]
 	public async Task<RenameResult> RenameSymbolAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Absolute or solution-relative path to the file.")] string filePath,
@@ -120,15 +107,7 @@ public sealed class RefactoringTools(WorkspaceHost host, CodeFixCatalog codeFixe
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Formats C# files to their own repository's .editorconfig: indentation, brace placement, line
-        endings, trailing whitespace and the final newline. Call this after writing or editing a C#
-        file by any other means. Hand-written C# routinely lands with spaces where the repository
-        wants tabs and LF where it wants CRLF, and in a repository that treats IDE0055 as an error
-        that is a failed build rather than untidiness. Returns a unified diff; pass apply=false to
-        check formatting without writing. Multi-line string literals are left alone, since a newline
-        inside one is content rather than layout.
-        """)]
+	[Description(ToolDescriptions.FormatDocuments)]
 	public async Task<FormatResult> FormatAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Absolute or solution-relative paths of the files to format.")] string[] filePaths,
@@ -163,15 +142,7 @@ public sealed class RefactoringTools(WorkspaceHost host, CodeFixCatalog codeFixe
 		Idempotent = false,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Moves one top-level type out of a file that declares several, into a file named after it.
-        The declaration goes across with its doc comments and attributes, indented and spaced
-        exactly as it was, and using directives that the split makes unnecessary are dropped from
-        both files -- which is what stops the result from failing a build that treats unused usings
-        as errors. Returns a unified diff of both files. Pass apply=false to preview.
-        Declines rather than guessing when the type is the only one in its file, when the target
-        already exists, or when preprocessor directives are involved.
-        """)]
+	[Description(ToolDescriptions.MoveTypeToFile)]
 	public async Task<MoveTypeResult> MoveTypeToFileAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Absolute or solution-relative path to the file to split.")] string filePath,

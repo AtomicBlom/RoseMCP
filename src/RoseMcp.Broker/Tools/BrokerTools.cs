@@ -25,12 +25,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		ReadOnly = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Loads a solution into a warm Roslyn host and keeps it loaded, so later calls cost nothing to
-        set up. Restores first when restore output is missing. Returns per-project load state and,
-        importantly, any reason the workspace is degraded -- most often a source generator whose
-        assembly has not been built, which otherwise produces no generated code and no error.
-        """)]
+	[Description(ToolDescriptions.WorkspaceOpen)]
 	public async Task<WorkspaceStatusReport> OpenAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Path to a solution, project, directory, or any file inside one.")] string path,
@@ -48,12 +43,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Reports what is loaded and whether its answers can be trusted: per-project load state,
-        document and source-generated document counts, and any degraded-load reason. Check this
-        first when diagnostics or generated code look wrong, because a degraded workspace returns
-        plausible but incomplete results rather than errors.
-        """)]
+	[Description(ToolDescriptions.WorkspaceStatus)]
 	public async Task<WorkspaceStatusReport> StatusAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(WorkspaceHelp)] string? workspace = null,
@@ -71,15 +61,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Restarts the worker process for a workspace. Ordinary edits are picked up automatically and
-        need no reload; this exists for the two cases that cannot be handled any other way. One is
-        rebuilding an analyzer or source generator, since assembly loading is one-way and a process
-        that loaded the old build can never see the new one. The other is loading under different
-        MSBuild properties -- a configuration or platform is fixed when the workspace opens, so
-        changing it is a restart. workspace_status reports which ones are in use and what else the
-        solution declares.
-        """)]
+	[Description(ToolDescriptions.WorkspaceReload)]
 	public async Task<WorkspaceStatusReport> ReloadAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(WorkspaceHelp)] string? workspace = null,
@@ -102,7 +84,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		ReadOnly = false,
 		Idempotent = true,
 		OpenWorld = false)]
-	[Description("Stops the worker for a workspace and releases the memory its solution was holding.")]
+	[Description(ToolDescriptions.WorkspaceClose)]
 	public async Task<string> CloseAsync(
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default)

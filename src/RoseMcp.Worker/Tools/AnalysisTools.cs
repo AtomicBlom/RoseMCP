@@ -24,12 +24,7 @@ public sealed class AnalysisTools(
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        What the solution's own analyzers offer to fix in one file: the diagnostic, the titles of the
-        fixes available for it, and whether that fix can be applied to a whole project or solution at
-        once. Diagnostic ids nothing can fix are listed separately, so an empty answer is not mistaken
-        for clean code. Apply one with rose_apply_code_fix rather than editing by hand.
-        """)]
+	[Description(ToolDescriptions.ListCodeFixes)]
 	public async Task<CodeFixList> ListCodeFixesAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Absolute or solution-relative path to the file.")] string filePath,
@@ -50,13 +45,7 @@ public sealed class AnalysisTools(
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Compiler (and optionally analyzer) diagnostics from a live Roslyn compilation, always
-        computed against the current state of disk -- external edits made by other tools are picked
-        up before the analysis runs, so results are never stale. Diagnostics originating in
-        source-generated code are included and tagged with the hint name needed to read that code
-        via rose_read_generated_document.
-        """)]
+	[Description(ToolDescriptions.Diagnostics)]
 	public async Task<DiagnosticsResult> DiagnosticsAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("document, project, or solution. Defaults to solution.")] string? scope = null,
@@ -91,12 +80,7 @@ public sealed class AnalysisTools(
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Lists the documents this solution's source generators produce. These files exist only inside
-        the compilation and are not written to disk, so no file search or directory listing will
-        find them. If the list is empty the notices explain whether the project has no generators or
-        has generators that are failing to load.
-        """)]
+	[Description(ToolDescriptions.ListGeneratedDocuments)]
 	public async Task<GeneratedDocumentList> ListGeneratedAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
@@ -118,11 +102,7 @@ public sealed class AnalysisTools(
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Returns the full text of one source-generated document, identified by the hint name from
-        rose_list_generated_documents or from a diagnostic's generatedHintName. Use this whenever
-        a diagnostic points at a file that does not exist on disk.
-        """)]
+	[Description(ToolDescriptions.ReadGeneratedDocument)]
 	public async Task<GeneratedDocumentContent> ReadGeneratedAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Hint name of the generated document, for example Widget.Greeting.g.cs.")] string hintName,

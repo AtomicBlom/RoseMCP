@@ -18,13 +18,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        What implements, overrides, or derives from the symbol at a file position -- derived types
-        for a class, implementing types for an interface, overriding members for a virtual or
-        abstract one. Grep cannot answer this at all: an implementation need not mention the
-        interface's name anywhere near the member. The answer says which of those questions was
-        actually answered, since that depends on what the symbol turns out to be.
-        """)]
+	[Description(ToolDescriptions.FindImplementations)]
 	public async Task<ImplementationsResult> FindImplementationsAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Absolute or solution-relative path to the file.")] string filePath,
@@ -49,12 +43,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        What the symbol at a file position actually is: full signature, kind, accessibility,
-        containing type, XML documentation, and every declaration site. Works from a use site as
-        well as a declaration. isFromSource being false means the symbol lives in metadata and
-        cannot be renamed or edited.
-        """)]
+	[Description(ToolDescriptions.SymbolInfo)]
 	public async Task<SymbolInfoResult> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Absolute or solution-relative path to the file.")] string filePath,
@@ -77,11 +66,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Every reference to the symbol at a file position, resolved semantically across the whole
-        solution. Unlike a text search this follows overrides, interface implementations and
-        aliases, and will not match unrelated identifiers that happen to share a name.
-        """)]
+	[Description(ToolDescriptions.FindReferences)]
 	public async Task<ReferencesResult> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Absolute or solution-relative path to the file.")] string filePath,
@@ -111,11 +96,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("""
-        Finds declarations across the solution by name pattern. Understands the abbreviations people
-        actually type, so SLoader matches SolutionLoader. Use this to locate a type or member before
-        asking for its references or renaming it.
-        """)]
+	[Description(ToolDescriptions.SearchSymbols)]
 	public async Task<SymbolSearchResult> SearchSymbolsAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("Name or abbreviation to search for.")] string query,

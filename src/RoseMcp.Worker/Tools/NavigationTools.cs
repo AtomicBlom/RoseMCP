@@ -12,6 +12,37 @@ namespace RoseMcp.Worker.Tools;
 public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress sharedWork)
 {
 	[McpServerTool(
+		Name = ToolNames.FindImplementations,
+		Title = "Find implementations, overrides and derived types",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        What implements, overrides, or derives from the symbol at a file position -- derived types
+        for a class, implementing types for an interface, overriding members for a virtual or
+        abstract one. Grep cannot answer this at all: an implementation need not mention the
+        interface's name anywhere near the member. The answer says which of those questions was
+        actually answered, since that depends on what the symbol turns out to be.
+        """)]
+	public async Task<ImplementationsResult> FindImplementationsAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Absolute or solution-relative path to the file.")] string filePath,
+		[Description("One-based line number.")] int line,
+		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description("Maximum matches to return. Defaults to 200.")] int maxResults = 200,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, _) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var snapshot = await host.ReadAsync(cancellationToken);
+
+		return await NavigationService.FindImplementationsAsync(
+			snapshot, filePath, line, column, maxResults <= 0 ? 200 : maxResults, cancellationToken);
+	}
+
+	[McpServerTool(
 		Name = ToolNames.SymbolInfo,
 		Title = "Describe the symbol at a position",
 		ReadOnly = true,

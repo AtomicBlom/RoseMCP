@@ -210,6 +210,35 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
 	[McpServerTool(
+		Name = ToolNames.FindImplementations,
+		Title = "Find implementations, overrides and derived types",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("""
+        What implements, overrides, or derives from the symbol at a file position -- derived types
+        for a class, implementing types for an interface, overriding members for a virtual or
+        abstract one. Grep cannot answer this at all: an implementation need not mention the
+        interface's name anywhere near the member.
+        """)]
+	public Task<ImplementationsResult> FindImplementationsAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Path to the file.")] string filePath,
+		[Description("One-based line number.")] int line,
+		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description("Maximum matches to return. Defaults to 200.")] int maxResults = 200,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<ImplementationsResult>(workspace ?? filePath, ToolNames.FindImplementations, new()
+		{
+			["filePath"] = filePath,
+			["line"] = line,
+			["column"] = column,
+			["maxResults"] = maxResults,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
 		Name = ToolNames.ListCodeFixes,
 		Title = "Code fixes available in a file",
 		ReadOnly = true,

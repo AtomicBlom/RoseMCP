@@ -42,8 +42,11 @@ public static class ServiceCollectionExtensions
 		  rose_list_code_fixes says what is available in a file.
 		- Checking code is valid: rose_diagnostics, not a build. It answers from a warm
 		  compilation in milliseconds and needs no build.
-		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility and
-		  documentation rather than whatever the declaration text looks like.
+		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility,
+		  documentation and declaration sites rather than whatever the declaration text looks like,
+		  and says what the member overrides or implements.
+		- Who implements or overrides something: rose_find_implementations. Grep cannot answer this
+		  at all, since an implementation need not mention the interface anywhere near the member.
 
 		Source-generated code exists only inside the compilation. The compiler does not write it to
 		disk, so no file read or search will ever find it. If a diagnostic names a file you cannot

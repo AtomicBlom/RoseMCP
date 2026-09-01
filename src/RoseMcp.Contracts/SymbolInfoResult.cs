@@ -27,6 +27,13 @@ public sealed record SymbolInfoResult
 	/// </summary>
 	public required IReadOnlyList<SourceLocation> Declarations { get; init; }
 
+	/// <summary>
+	/// What this member overrides or implements, walking up the hierarchy. The other direction from
+	/// rose_find_implementations, and the one that answers "where does this actually come from" for
+	/// an override whose base declares the documentation.
+	/// </summary>
+	public IReadOnlyList<SymbolMatch> BaseDefinitions { get; init; } = [];
+
 	/// <summary>False for metadata symbols, which cannot be edited.</summary>
 	public required bool IsFromSource { get; init; }
 }

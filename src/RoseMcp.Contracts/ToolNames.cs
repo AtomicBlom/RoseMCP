@@ -15,6 +15,7 @@ public static class ToolNames
 	public const string FindReferences = "rose_find_references";
 	public const string SymbolInfo = "rose_symbol_info";
 	public const string SearchSymbols = "rose_search_symbols";
+	public const string FindImplementations = "rose_find_implementations";
 	public const string ListGeneratedDocuments = "rose_list_generated_documents";
 	public const string ReadGeneratedDocument = "rose_read_generated_document";
 	public const string RenameSymbol = "rose_rename_symbol";

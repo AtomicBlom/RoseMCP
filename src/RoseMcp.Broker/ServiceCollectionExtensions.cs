@@ -28,7 +28,8 @@ public static class ServiceCollectionExtensions
 		  and aliases.
 		- Renaming: rose_rename_symbol, not find-and-replace. It moves overrides, interface
 		  implementations, partial declarations and cref references together, reports conflicts,
-		  and returns a diff.
+		  and returns a diff. It also reports XAML that still names the old identifier, which it
+		  does not change: markup is text to the compiler, so a broken binding builds and runs.
 		- Splitting a file that declares several types: rose_move_type_to_file, not a read followed
 		  by two writes. It carries the declaration across untouched and fixes the using directives
 		  in both files, which hand-splitting gets wrong in a way that fails the build.

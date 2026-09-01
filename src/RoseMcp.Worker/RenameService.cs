@@ -62,9 +62,21 @@ public static class RenameService
 		var outcome = await SolutionWriter.ApplyAsync(
 			snapshot.Solution, renamed, request.Apply, noteSelfWrite, cancellationToken);
 
+		// Against the old name, and before the caller can act on the result: markup is not part of the
+		// compilation, so nothing else in this operation would ever have mentioned it.
+		var xamlMentions = await Xaml.XamlReferenceScanner.FindAsync(
+			snapshot.Solution, symbol.Name, cancellationToken);
+
 		var notices = new List<string>(snapshot.Notices);
 		if (!request.Apply) notices.Add("Preview only; nothing was written to disk.");
 		if (outcome.ChangedFiles.Count == 0) notices.Add("The rename produced no changes.");
+
+		if (xamlMentions.Count > 0)
+		{
+			notices.Add($"{xamlMentions.Count} markup mention(s) of '{symbol.Name}' were left alone. "
+				+ "XAML is text to the compiler, so a binding or handler that no longer resolves will "
+				+ "build and run and do nothing. Check them.");
+		}
 
 		var result = new RenameResult
 		{
@@ -75,6 +87,7 @@ public static class RenameService
 			FilesChanged = outcome.ChangedFiles.Count,
 			Diff = outcome.Diff,
 			Conflicts = conflicts,
+			XamlMentions = xamlMentions,
 			Notices = notices,
 		};
 

@@ -23,5 +23,12 @@ public sealed record RenameResult
 	/// </summary>
 	public required IReadOnlyList<string> Conflicts { get; init; }
 
+	/// <summary>
+	/// Places in markup that name the old identifier. Not changed -- markup is text to the compiler,
+	/// so a binding that no longer resolves builds and runs and shows nothing. Reported so the one
+	/// breakage no C# tool can see is at least visible.
+	/// </summary>
+	public IReadOnlyList<XamlMention> XamlMentions { get; init; } = [];
+
 	public required IReadOnlyList<string> Notices { get; init; }
 }

@@ -164,6 +164,13 @@ Verified on net48 and net10 alike, which is worth doing rather than assuming —
 Framework project defaults to C# 7.3, where the `#nullable disable` a stub carries is itself three
 errors. The language version is asked, not inferred from the framework.
 
+Renaming knows about markup too, as far as anything can. `rose_rename_symbol` reports every place
+XAML still names the old identifier — bindings, `x:Name`, event handlers, element names, `x:Class` —
+and changes none of them. A binding path resolves at runtime against a DataContext only the running
+application knows, so nothing can prove the mention refers to the symbol renamed; but a rename that
+breaks forty bindings and says nothing is the worst outcome available, because the compiler will not
+catch it either.
+
 It closed 2030 errors to 19, all of them a genuinely unreferenced assembly. Against the files a real
 UWP build had left in `obj`, all 450 synthesised classes agreed on the base type and on every field
 name and type. `workspace_status` reports per project which dialect was chosen and on what evidence, how

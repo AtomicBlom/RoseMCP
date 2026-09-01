@@ -3,5 +3,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Which is what puts the SDK's code-style analyzers, and the IDE fixes beside them, into the
+         analyzer references. A project without this has the CA rules and no IDE ones. -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
 </Project>

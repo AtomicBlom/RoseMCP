@@ -72,13 +72,28 @@ public sealed class CodeFixCatalog(ShadowCopyAnalyzerAssemblyLoader loader, ILog
 
 	private ImmutableArray<CodeFixProvider> Discover(string path)
 	{
-		Type[] types;
+		IReadOnlyList<Type> types;
 		try
 		{
 			types = loader.LoadFromPath(path).GetTypes();
 		}
+		catch (ReflectionTypeLoadException exception)
+		{
+			// Salvage rather than discard: this exception carries the types that did load, and it is
+			// thrown when any one type in the assembly cannot be. Discarding all of them was hiding
+			// the entire IDE catalogue -- the SDK's CodeStyle.Fixes assembly has one dependency it
+			// cannot resolve here, and 830 of its 831 types load fine, including all 140 fixers.
+			types = [.. exception.Types.OfType<Type>()];
+
+			logger.LogDebug(
+				"{Loaded} of {Total} types loaded from {Path}: {Message}",
+				types.Count,
+				exception.Types.Length,
+				path,
+				exception.Message);
+		}
 		catch (Exception exception) when (exception is BadImageFormatException or FileLoadException
-			or FileNotFoundException or ReflectionTypeLoadException or NotSupportedException)
+			or FileNotFoundException or NotSupportedException)
 		{
 			logger.LogDebug("No code fixes read from {Path}: {Message}", path, exception.Message);
 

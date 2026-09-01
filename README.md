@@ -86,9 +86,17 @@ file.
 Only the analyzers that report the requested id are run. A full analyzer pass over a large project is
 seconds to minutes; fixing one rule is a fraction of that, for the same answer.
 
-Fixes from the IDE catalogue — the `IDE####` rules, and refactorings like extract method — are *not*
-here: they live in `Microsoft.CodeAnalysis.CSharp.Features`, which this does not reference. Measured
-across both solutions above: zero `IDE*` ids among the fixers on disk.
+The IDE catalogue is included, and needed no package either. The SDK ships
+`Microsoft.CodeAnalysis.CSharp.CodeStyle.Fixes.dll` beside its code-style analyzers and passes both
+to the build, so a project that sets `EnforceCodeStyleInBuild` already has all 140 of those fixers on
+disk. Reaching them takes one thing: when `GetTypes` throws because a single type in an assembly will
+not load, salvage the ones that did rather than discarding the assembly. That turned **186 fixable
+ids into 433** for this repository — 112 `IDE*`, and 119 compiler `CS*` fixes, which are the "add the
+missing using" and "remove the unreachable code" an editor offers on a red squiggle.
+
+A project that does not turn code style on in the build has the `CA` rules and no `IDE` ones, because
+the fixers follow the analyzers. That is visible rather than silent: `rose_list_code_fixes` reports
+the ids it found no fix for.
 
 ## Formatting what you wrote
 

@@ -127,6 +127,29 @@ public sealed class CodeFixTests
 		using var stream = new FileStream(generatorAssembly, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 	}
 
+	/// <summary>
+	/// The IDE catalogue is reachable without adding a package, but only by salvaging a partial type
+	/// load: the SDK's CodeStyle.Fixes assembly has one dependency that will not resolve in this
+	/// process, so GetTypes throws -- and 830 of its 831 types, including all 140 fixers, are in the
+	/// exception. Discarding that was hiding 112 IDE ids and 119 compiler ones.
+	/// </summary>
+	[Fact]
+	public async Task Reaches_the_ide_fixes_that_ship_beside_the_code_style_analyzers()
+	{
+		using var fixture = Prepare(out _);
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var project = snapshot.Solution.Projects.First(candidate => candidate.Name == "Core");
+		var ids = Catalog().FixableIds(project);
+
+		Assert.Contains(ids, id => id.StartsWith("IDE", StringComparison.Ordinal));
+
+		// And the compiler's own fixes, which arrive in the same assembly: "add a using", "remove
+		// the unreachable code", and the rest of what an editor offers on a red squiggle.
+		Assert.Contains(ids, id => id.StartsWith("CS", StringComparison.Ordinal));
+	}
+
 	private static FixtureSolution Prepare(out string fixablePath)
 	{
 		var fixture = FixtureSolution.Copy("Simple", "Simple.sln");

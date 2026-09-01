@@ -14,6 +14,29 @@ namespace RoseMcp.Worker.Tests;
 public sealed class BrokerTests
 {
 	/// <summary>
+	/// MSBuild properties are fixed when a workspace opens, so asking for different ones is a
+	/// restart -- and the restart has to actually carry them to the new process.
+	/// </summary>
+	[Fact]
+	public async Task Reloads_under_the_properties_asked_for()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		await manager.GetOrStartAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		var restarted = await manager.RestartAsync(
+			fixture.SolutionPath,
+			TestContext.Current.CancellationToken,
+			WorkspaceBuildOverrides.From("Release", null, null));
+
+		var status = await restarted.CallAsync<WorkspaceStatusReport>(
+			ToolNames.WorkspaceStatus, new Dictionary<string, object?>(), TestContext.Current.CancellationToken);
+
+		Assert.Equal("Release|AnyCPU", status.BuildConfiguration);
+	}
+
+	/// <summary>
 	/// The whole point of the broker. If a second call reloads the solution, everything else it
 	/// does is wasted effort.
 	/// </summary>

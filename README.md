@@ -201,6 +201,11 @@ reload before its first useful answer has already lost to grep.
 }
 ```
 
+`rose_workspace_reload` takes the same three, for changing them without editing a file — it restarts
+the worker, because MSBuild global properties are fixed when a workspace opens. They are remembered
+per solution, so a worker replaced later comes back under the same ones rather than silently
+reverting.
+
 Scoped to one solution, and deliberately not found by walking up the tree. Configurations belong to a
 solution and not to a repository: one real directory holds a Revit add-in solution declaring
 Debug-2024 through Debug-2027 beside an installer solution declaring no build types at all, so a file

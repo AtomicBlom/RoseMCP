@@ -18,6 +18,13 @@ public sealed class WorkspaceManager(
 	ILogger<WorkspaceManager> logger) : IAsyncDisposable
 {
 	private readonly Dictionary<string, WorkspaceWorker> _workers = new(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// MSBuild properties asked for at reload, per solution. Kept because they belong to the worker's
+	/// command line, and a worker replaced after a crash would otherwise lose them.
+	/// </summary>
+	private readonly Dictionary<string, WorkspaceBuildOverrides> _buildOverrides =
+		new(StringComparer.OrdinalIgnoreCase);
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 
@@ -108,7 +115,8 @@ public sealed class WorkspaceManager(
 				_options,
 				Activities,
 				loggerFactory,
-				cancellationToken);
+				cancellationToken,
+				_buildOverrides.GetValueOrDefault(solutionPath));
 		}
 		catch (Exception exception)
 		{
@@ -176,9 +184,17 @@ public sealed class WorkspaceManager(
 	/// generator: assembly loading is one-way, so a process that has loaded the old one can never
 	/// see the new one.
 	/// </summary>
-	public async Task<WorkspaceWorker> RestartAsync(string? path, CancellationToken cancellationToken)
+	public async Task<WorkspaceWorker> RestartAsync(
+		string? path,
+		CancellationToken cancellationToken,
+		WorkspaceBuildOverrides? build = null)
 	{
 		var solutionPath = ResolveOrInfer(path);
+
+		// Remembered rather than applied once, so a worker that dies and is replaced later comes back
+		// under the properties that were asked for rather than silently reverting.
+		if (build is not null) _buildOverrides[solutionPath] = build;
+
 		await CloseAsync(solutionPath, cancellationToken);
 
 		return await GetOrStartAsync(solutionPath, cancellationToken);

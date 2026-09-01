@@ -70,12 +70,33 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		BrokerOptions options,
 		ActivityLog activities,
 		ILoggerFactory loggerFactory,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		WorkspaceBuildOverrides? build = null)
 	{
 		var logger = loggerFactory.CreateLogger<WorkspaceWorker>();
 
 		var arguments = new List<string> { "--solution", solutionPath };
 		if (options.NoRestore) arguments.Add("--no-restore");
+
+		// MSBuild properties are per process, so this is the only place they can be applied: a
+		// worker cannot change the configuration it loaded under without being restarted.
+		if (build?.Configuration is { Length: > 0 } configuration)
+		{
+			arguments.Add("--configuration");
+			arguments.Add(configuration);
+		}
+
+		if (build?.Platform is { Length: > 0 } platform)
+		{
+			arguments.Add("--platform");
+			arguments.Add(platform);
+		}
+
+		foreach (var property in build?.Properties ?? [])
+		{
+			arguments.Add("--property");
+			arguments.Add(property);
+		}
 
 		var transport = new StdioClientTransport(
 			new StdioClientTransportOptions

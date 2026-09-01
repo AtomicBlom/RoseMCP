@@ -73,16 +73,25 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		UseStructuredContent = true)]
 	[Description("""
         Restarts the worker process for a workspace. Ordinary edits are picked up automatically and
-        need no reload; this exists for the case that cannot be handled any other way, which is
-        rebuilding an analyzer or source generator. Assembly loading is one-way, so a process that
-        has loaded the old build can never see the new one.
+        need no reload; this exists for the two cases that cannot be handled any other way. One is
+        rebuilding an analyzer or source generator, since assembly loading is one-way and a process
+        that loaded the old build can never see the new one. The other is loading under different
+        MSBuild properties -- a configuration or platform is fixed when the workspace opens, so
+        changing it is a restart. workspace_status reports which ones are in use and what else the
+        solution declares.
         """)]
 	public async Task<WorkspaceStatusReport> ReloadAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(WorkspaceHelp)] string? workspace = null,
+		[Description("MSBuild configuration to load under, for example Debug-2027.")] string? configuration = null,
+		[Description("MSBuild platform to load under, for example x64.")] string? platform = null,
+		[Description("Further MSBuild properties, each as Name=Value.")] string[]? properties = null,
 		CancellationToken cancellationToken = default)
 	{
-		var worker = await workspaces.RestartAsync(workspace, cancellationToken);
+		var worker = await workspaces.RestartAsync(
+			workspace,
+			cancellationToken,
+			WorkspaceBuildOverrides.From(configuration, platform, properties));
 		return await worker.CallAsync<WorkspaceStatusReport>(
 			ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken, progress);
 	}

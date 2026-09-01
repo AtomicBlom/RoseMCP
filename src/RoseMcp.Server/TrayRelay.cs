@@ -139,7 +139,7 @@ public sealed class TrayRelay : IAsyncDisposable
 		await using var progress = OrderedProgress.For(client, request.ProgressToken);
 
 		return await InvokeAsync(
-			async (tray, token) => await tray.CallToolAsync(request.Name, arguments, progress, cancellationToken: token),
+			(tray, token) => CancellableToolCall.InvokeAsync(tray, request.Name, arguments, progress, token),
 			cancellationToken);
 	}
 
@@ -165,9 +165,17 @@ public sealed class TrayRelay : IAsyncDisposable
 	{
 		var tray = _tray;
 
+		using var cancelling = cancellationToken.Register(
+			() => _logger.LogDebug("The client cancelled this call."));
+
 		try
 		{
 			return await call(tray, cancellationToken);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			_logger.LogDebug("The call ended because the client cancelled it.");
+			throw;
 		}
 		catch (Exception exception) when (IsTransportFailure(exception) && !cancellationToken.IsCancellationRequested)
 		{

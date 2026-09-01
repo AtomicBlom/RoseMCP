@@ -261,7 +261,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		ModelContextProtocol.Protocol.CallToolResult result;
 		try
 		{
-			result = await _client.CallToolAsync(tool, arguments, progress, cancellationToken: cancellationToken);
+			// Not CallToolAsync: it abandons the wait without telling the worker, which then finishes
+			// the whole operation. Reads on a workspace are ordered, so that abandoned work is the
+			// delay before the next call on it can start.
+			result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress, cancellationToken);
 		}
 		catch (Exception exception) when (IsTransportFailure(exception))
 		{

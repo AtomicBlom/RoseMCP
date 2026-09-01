@@ -139,9 +139,22 @@ Deploy over the running instance, or build release zips:
 `promote` installs to `-Destination`, else `ROSEMCP_DEPLOY_ROOT`, else `%LOCALAPPDATA%/RoseMcp`.
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
+Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
+process -- 81 tests in under a second, so it is worth running on every change.
+`RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
+builds and starts real workers, and takes about eighty. `RoseMcp.TestSupport` holds the doubles
+both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
+`TestSession` is an integration test however small it looks.
+
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.
-Individual test projects are also executables, so running one directly works too.
+Individual test projects are also executables, so running one directly works too -- and that is
+how you run just the fast half:
+
+```
+./tests/RoseMcp.UnitTests/bin/Debug/net10.0/RoseMcp.UnitTests.exe
+./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe -class '*RenameTests'
+```
 
 Run a worker standalone against a fixture -- the fastest way to debug Roslyn behaviour without
 the broker in the way:

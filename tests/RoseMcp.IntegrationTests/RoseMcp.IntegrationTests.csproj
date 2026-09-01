@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- xunit.v3 runs on Microsoft.Testing.Platform. The .NET 10 SDK dropped the VSTest bridge for
+         MTP projects, so dotnet test needs this opt-in. -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RoseMcp.Broker\RoseMcp.Broker.csproj" />
+    <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
+    <ProjectReference Include="..\RoseMcp.TestSupport\RoseMcp.TestSupport.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <!-- These used to sit in the RoseMcp.Worker.Tests namespace, nested inside RoseMcp.Worker, so
+         every worker type resolved without a using. The projects are named for what they test now,
+         which costs that; a global using is the same reach without 28 files of noise. -->
+    <Using Include="RoseMcp.Worker" />
+  </ItemGroup>
+
+</Project>

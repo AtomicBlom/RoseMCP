@@ -243,6 +243,54 @@ public sealed class WpfXamlStubTests
 		Assert.Empty(complete.GetDiagnostics(TestContext.Current.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
 	}
 
+	/// <summary>
+	/// An SDK-style .NET Framework project defaults to C# 7.3, and WPF projects are the ones most
+	/// likely to still be on it. Found by loading a real net48 WPF project, where the stub's own
+	/// #nullable disable was three CS8370 errors in a file whose whole purpose is removing errors.
+	/// </summary>
+	[Fact]
+	public void Emits_nothing_a_pre_nullable_language_version_cannot_parse()
+	{
+		var markup = """
+			<Window x:Class="App.ShellView"
+				xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+				xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+				<ContentControl x:Name="ActiveItem" />
+			</Window>
+			""";
+
+		var behind = """
+			namespace App
+			{
+				partial class ShellView
+				{
+					public ShellView()
+					{
+						InitializeComponent();
+					}
+
+					public object Current { get { return ActiveItem; } }
+				}
+			}
+			""";
+
+		var document = XamlDocumentReader.Read("ShellView.xaml", markup);
+		Assert.NotNull(document);
+
+		var emission = XamlStubEmitter.Emit(
+			Compile(LanguageVersion.CSharp7_3, FakeFramework, behind), WpfXamlDialect.Instance, document);
+
+		Assert.NotNull(emission.Source);
+		Assert.DoesNotContain("#nullable", emission.Source, StringComparison.Ordinal);
+
+		// And it still has to compile, which is the assertion that would have caught this.
+		var complete = Compile(LanguageVersion.CSharp7_3, FakeFramework, behind, emission.Source);
+
+		Assert.Empty(complete
+			.GetDiagnostics(TestContext.Current.CancellationToken)
+			.Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
+	}
+
 	[Fact]
 	public void Recognises_a_wpf_project_by_the_types_it_references()
 	{
@@ -271,6 +319,18 @@ public sealed class WpfXamlStubTests
 		return XamlStubEmitter.Emit(
 			Compile(outputKind, FakeFramework, codeBehind), WpfXamlDialect.Instance, document);
 	}
+
+	/// <summary>
+	/// Nullable cannot be switched on below C# 8, so this pins the version and leaves the rest at the
+	/// same warnings-as-errors strictness as the other tests.
+	/// </summary>
+	private static Compilation Compile(LanguageVersion language, params string[] sources) => CSharpCompilation.Create(
+		"WpfXamlStubTests",
+		sources.Select(source => CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(language))),
+		[MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+		new CSharpCompilationOptions(
+			OutputKind.DynamicallyLinkedLibrary,
+			generalDiagnosticOption: ReportDiagnostic.Error));
 
 	private static Compilation Compile(OutputKind outputKind, params string[] sources) => CSharpCompilation.Create(
 		"WpfXamlStubTests",

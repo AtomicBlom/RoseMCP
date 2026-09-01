@@ -111,11 +111,16 @@ UWP types it as the element the markup writes. Both were read off real generated
 reasoned about.
 
 How much a project needs is a separate question from which dialect it is. WinUI's markup compiler
-takes part in design-time builds, and WPF's runs its first pass in one, so those projects usually
-need nothing — of 26 markup files in a real WPF project, 25 already had their generated half and one
-did not, because it is the one that needs WPF's second pass. Recognising the dialect still matters
-there: without it such a project is reported as having no XAML framework, which is false and more
-misleading than silence.
+takes part in design-time builds, and WPF's runs its first pass in one, so a WPF project needs a stub
+only for the files that pass cannot do: pass 1 resolves element types out of *assemblies on disk*,
+and a design-time build compiles nothing, so any file whose markup names a type from a project
+reference fails and gets no generated half. In a real WPF project that was 1 file of 26. Recognising
+the dialect still matters for the other 25: without it the project is reported as having no XAML
+framework, which is false and more misleading than silence.
+
+Verified on net48 and net10 alike, which is worth doing rather than assuming — an SDK-style .NET
+Framework project defaults to C# 7.3, where the `#nullable disable` a stub carries is itself three
+errors. The language version is asked, not inferred from the framework.
 
 It closed 2030 errors to 19, all of them a genuinely unreferenced assembly. Against the files a real
 UWP build had left in `obj`, all 450 synthesised classes agreed on the base type and on every field
@@ -141,10 +146,10 @@ RoseMcp.Worker.exe --solution A.slnx --configuration Debug-2027 --platform x64
 RoseMcp.Worker.exe --solution A.slnx --configuration Release --property RevitVersion=2027
 ```
 
-A repository whose answer is always the same can commit it, in a `rosemcp.json` beside the solution
-or anywhere above it. That is the durable form of the same mechanism, and the reason to prefer it is
-the rule that no tool needs a setup call first: an agent that has to reload before its first useful
-answer has already lost to grep.
+A solution whose answer is always the same can commit it, in a `rosemcp.json` beside the solution or
+an `A.slnx.rosemcp.json` naming that one solution. That is the durable form of the same mechanism,
+and the reason to prefer it is the rule that no tool needs a setup call first: an agent that has to
+reload before its first useful answer has already lost to grep.
 
 ```json
 {
@@ -153,6 +158,17 @@ answer has already lost to grep.
   "properties": { "RevitVersion": "2027" }
 }
 ```
+
+Scoped to one solution, and deliberately not found by walking up the tree. Configurations belong to a
+solution and not to a repository: one real directory holds a Revit add-in solution declaring
+Debug-2024 through Debug-2027 beside an installer solution declaring no build types at all, so a file
+above them would be wrong for one of the two. The solution-specific name is what a `.DotSettings`
+file next to them already does.
+
+Where nothing is pinned and MSBuild's default is not on offer, the platform chosen is this machine's
+own architecture if the solution declares it, and the first declared otherwise -- a solution build
+takes the first configuration with the first platform, which is how a solution listing ARM64 first
+comes to build ARM64 on an x64 machine.
 
 Arbitrary properties are supported because the derivation is sometimes from neither configuration
 nor platform. Restore gets the same properties as the load: a repository that moves

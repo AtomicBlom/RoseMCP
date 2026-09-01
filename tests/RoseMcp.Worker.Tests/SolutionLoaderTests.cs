@@ -113,7 +113,7 @@ public sealed class SolutionLoaderTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 
 		await File.WriteAllTextAsync(
-			Path.Combine(fixture.Root, WorkspaceConfigFile.FileName),
+			Path.Combine(Path.GetDirectoryName(fixture.SolutionPath)!, WorkspaceConfigFile.FileName),
 			"{ \"configuration\": \"Release\" }",
 			TestContext.Current.CancellationToken);
 

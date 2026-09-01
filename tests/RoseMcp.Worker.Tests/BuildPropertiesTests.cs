@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace RoseMcp.Worker.Tests;
 
 public sealed class BuildPropertiesTests
@@ -49,6 +51,40 @@ public sealed class BuildPropertiesTests
 		Assert.Contains("Debug-2024", build.Notice);
 		Assert.Contains("Debug-2025", build.Notice);
 		Assert.Contains("x64", build.Notice);
+	}
+
+	/// <summary>
+	/// A solution build takes the first configuration with the first platform, which is how a solution
+	/// listing ARM64 first comes to build ARM64 on an x64 machine. Nothing is executed during a load,
+	/// so the wrong platform is survivable -- but it changes conditional compilation, and matching the
+	/// machine is what a person expects.
+	/// </summary>
+	[Fact]
+	public void Prefers_this_machines_architecture_over_whatever_is_declared_first()
+	{
+		var host = RuntimeInformation.OSArchitecture.ToString();
+		var declared = new SolutionConfigurations
+		{
+			Configurations = ["Debug"],
+			Platforms = ["ARM64", "x86", "x64"],
+		};
+
+		var build = BuildProperties.Select(Options(), declared);
+
+		// Whichever architecture this test is running on, that is the one that should be chosen --
+		// and it is deliberately not the first in the list.
+		Assert.Equal(host, build.Platform, ignoreCase: true);
+		Assert.NotEqual("ARM64", build.Platform, StringComparer.OrdinalIgnoreCase);
+	}
+
+	[Fact]
+	public void Falls_back_to_the_first_declared_platform_when_the_machines_is_not_offered()
+	{
+		var declared = new SolutionConfigurations { Configurations = ["Debug"], Platforms = ["Itanium", "MIPS"] };
+
+		var build = BuildProperties.Select(Options(), declared);
+
+		Assert.Equal("Itanium", build.Platform);
 	}
 
 	[Fact]
@@ -133,21 +169,71 @@ public sealed class BuildPropertiesTests
 	}
 
 	[Fact]
-	public void Finds_a_config_file_above_the_solution()
+	public void Finds_a_config_file_beside_the_solution()
 	{
 		var root = Directory.CreateTempSubdirectory("rosemcp-config-");
 		try
 		{
-			File.WriteAllText(
-				Path.Combine(root.FullName, WorkspaceConfigFile.FileName),
-				"{ \"configuration\": \"Debug-2027\", \"properties\": { \"RevitVersion\": \"2027\" } }");
+			File.WriteAllText(Path.Combine(root.FullName, WorkspaceConfigFile.FileName), "{ \"configuration\": \"Debug-2027\", \"properties\": { \"RevitVersion\": \"2027\" } }");
 
-			var nested = Directory.CreateDirectory(Path.Combine(root.FullName, "src", "app"));
-			var found = WorkspaceConfigFile.Find(Path.Combine(nested.FullName, "App.slnx"));
+			var found = WorkspaceConfigFile.Find(Path.Combine(root.FullName, "App.slnx"));
 
 			Assert.NotNull(found);
 			Assert.Equal("Debug-2027", found.Configuration);
 			Assert.Equal("2027", found.Properties["RevitVersion"]);
+		}
+		finally
+		{
+			root.Delete(recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Two solutions in one directory can want different things, which is the ordinary case and not a
+	/// corner: a Revit add-in solution declaring Debug-2024 through Debug-2027 sits beside an
+	/// installer solution declaring no build types at all. A file named after one of them must not
+	/// speak for the other.
+	/// </summary>
+	[Fact]
+	public void Prefers_the_file_named_after_this_solution()
+	{
+		var root = Directory.CreateTempSubdirectory("rosemcp-config-");
+		try
+		{
+			File.WriteAllText(Path.Combine(root.FullName, WorkspaceConfigFile.FileName), "{ \"configuration\": \"Debug-2027\", \"properties\": { \"RevitVersion\": \"2027\" } }");
+			File.WriteAllText(
+				Path.Combine(root.FullName, WorkspaceConfigFile.NameFor("Installer.slnx")),
+				"{ \"configuration\": \"Debug-2024\" }");
+
+			Assert.Equal(
+				"Debug-2024",
+				WorkspaceConfigFile.Find(Path.Combine(root.FullName, "Installer.slnx"))?.Configuration);
+
+			Assert.Equal(
+				"Debug-2027",
+				WorkspaceConfigFile.Find(Path.Combine(root.FullName, "App.slnx"))?.Configuration);
+		}
+		finally
+		{
+			root.Delete(recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Not found by walking up, unlike MSBuild's and NuGet's own files. Configurations belong to a
+	/// solution rather than to a tree, so a file at a repository root would be a guess applied to
+	/// every solution beneath it.
+	/// </summary>
+	[Fact]
+	public void Ignores_a_config_file_above_the_solution()
+	{
+		var root = Directory.CreateTempSubdirectory("rosemcp-config-");
+		try
+		{
+			File.WriteAllText(Path.Combine(root.FullName, WorkspaceConfigFile.FileName), "{ \"configuration\": \"Debug-2027\", \"properties\": { \"RevitVersion\": \"2027\" } }");
+			var nested = Directory.CreateDirectory(Path.Combine(root.FullName, "src", "app"));
+
+			Assert.Null(WorkspaceConfigFile.Find(Path.Combine(nested.FullName, "App.slnx")));
 		}
 		finally
 		{

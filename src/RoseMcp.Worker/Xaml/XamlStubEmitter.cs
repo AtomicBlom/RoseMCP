@@ -1,6 +1,7 @@
 using System.Text;
 
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace RoseMcp.Worker.Xaml;
 
@@ -19,7 +20,15 @@ public static class XamlStubEmitter
 	/// missing documentation and hiding an inherited member are frequently errors -- and a stub that
 	/// trades 2000 errors for 200 different ones has not helped anybody.
 	/// </summary>
-	private const string Pragmas = "#pragma warning disable 0108, 0109, 0114, 0169, 0649, 1591, 8618, 8625";
+	private const string Pragmas = "#pragma warning disable 0108, 0109, 0114, 0169, 0649, 1591";
+
+	/// <summary>
+	/// The nullable half, separate because it cannot go into a project older than C# 8. An SDK-style
+	/// .NET Framework project defaults to C# 7.3, where <c>#nullable disable</c> is CS8370 -- three
+	/// errors of our own making in a file that was meant to remove them. Found by loading a net48 WPF
+	/// project, which is why the language version is asked rather than assumed from the framework.
+	/// </summary>
+	private const string NullablePragmas = "#pragma warning disable 8618, 8625";
 
 	public static XamlStubEmission Emit(Compilation compilation, IXamlDialect dialect, XamlDocument document)
 	{
@@ -116,8 +125,15 @@ public static class XamlStubEmitter
 		source.Append("// Synthesised by RoseMCP from ").Append(document.Path).Append('\n');
 		source.Append("// The markup compiler runs only in a real build, so this stands in for what it\n");
 		source.Append("// would have generated. It declares; it does not do anything.\n");
-		source.Append("#nullable disable\n");
-		source.Append(Pragmas).Append('\n').Append('\n');
+		source.Append(Pragmas).Append('\n');
+
+		if (SupportsNullable(compilation))
+		{
+			source.Append("#nullable disable\n");
+			source.Append(NullablePragmas).Append('\n');
+		}
+
+		source.Append('\n');
 
 		if (document.Namespace.Length == 0)
 		{
@@ -193,6 +209,14 @@ public static class XamlStubEmitter
 			.OfType<IMethodSymbol>()
 			.Any(method => method.IsStatic);
 	}
+
+	/// <summary>
+	/// Whether this project's language version understands the nullable directives. Taken from the
+	/// compilation rather than from the target framework, because the two are independent: a net48
+	/// project that sets LangVersion is as common as one that leaves it at the default.
+	/// </summary>
+	private static bool SupportsNullable(Compilation compilation) =>
+		compilation is not CSharpCompilation csharp || csharp.LanguageVersion >= LanguageVersion.CSharp8;
 
 	private static string Describe(XamlTypeName type) =>
 		type.IsFrameworkType ? type.LocalName : $"{type.NamespaceUri}:{type.LocalName}";

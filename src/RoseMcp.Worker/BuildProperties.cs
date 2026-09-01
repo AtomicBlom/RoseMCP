@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace RoseMcp.Worker;
 
 /// <summary>
@@ -64,7 +66,7 @@ public sealed record BuildProperties
 			options.Configuration ?? pinned?.Configuration,
 			available.Configurations,
 			msbuildDefault: "Debug",
-			preferPrefix: "Debug",
+			prefer: name => name.StartsWith("Debug", StringComparison.OrdinalIgnoreCase),
 			label: "Configuration",
 			notices);
 
@@ -72,7 +74,7 @@ public sealed record BuildProperties
 			options.Platform ?? pinned?.Platform,
 			available.Platforms,
 			msbuildDefault: "AnyCPU",
-			preferPrefix: null,
+			prefer: HostPlatform,
 			label: "Platform",
 			notices);
 
@@ -134,11 +136,25 @@ public sealed record BuildProperties
 		return merged;
 	}
 
+	/// <summary>
+	/// Whether a declared platform is this machine's own architecture.
+	/// <para>
+	/// Preferred over first-declared because a solution build takes the first configuration with the
+	/// first platform, which is how an ARM64-first solution ends up building ARM64 on an x64 machine.
+	/// Nothing is executed during a load, so the wrong platform is survivable rather than fatal --
+	/// but it changes conditional compilation and output paths, and matching the machine is the answer
+	/// a person would expect.
+	/// </para>
+	/// </summary>
+	private static bool HostPlatform(string declared) =>
+		declared.Replace(" ", string.Empty, StringComparison.Ordinal)
+			.Equals(RuntimeInformation.OSArchitecture.ToString(), StringComparison.OrdinalIgnoreCase);
+
 	private static string? Choose(
 		string? requested,
 		IReadOnlyList<string> declared,
 		string msbuildDefault,
-		string? preferPrefix,
+		Func<string, bool> prefer,
 		string label,
 		List<string> notices)
 	{
@@ -155,9 +171,8 @@ public sealed record BuildProperties
 
 		if (SolutionConfigurations.Declares(declared, msbuildDefault)) return null;
 
-		var chosen = declared.FirstOrDefault(name =>
-			preferPrefix is not null && name.StartsWith(preferPrefix, StringComparison.OrdinalIgnoreCase))
-			?? declared[0];
+		// First declared is the fallback because that is what a solution build itself would take.
+		var chosen = declared.FirstOrDefault(prefer) ?? declared[0];
 
 		notices.Add($"This solution declares no '{msbuildDefault}' {label.ToLowerInvariant()}, so "
 			+ $"'{chosen}' was chosen from {string.Join(", ", declared)}. "

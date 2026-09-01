@@ -1,3 +1,7 @@
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
@@ -29,9 +33,19 @@ internal static class Program
 	/// <summary>
 	/// One client, one process, lifetime tied to it. This is how Claude Code launches an MCP server
 	/// by default.
+	/// <para>
+	/// If a tray is already running, this process relays to it rather than starting workers of its
+	/// own, so every session on the machine shares one warm worker per solution while each keeps the
+	/// one thing only a stdio process has: the directory its client started it in.
+	/// </para>
 	/// </summary>
 	private static async Task<int> RunStdioAsync(ServerOptions options)
 	{
+		using var startup = LoggerFactory.Create(ConfigureLogging);
+
+		var relay = await TrayRelay.TryConnectAsync(options, startup, CancellationToken.None);
+		if (relay is not null) return await RunRelayAsync(options, relay);
+
 		var builder = Host.CreateApplicationBuilder();
 		ConfigureLogging(builder.Logging);
 
@@ -42,6 +56,31 @@ internal static class Program
 		await builder.Build().RunAsync();
 		return 0;
 	}
+
+	/// <summary>
+	/// Stdio in front, the tray's broker behind. Nothing is declared here: both listing and calling
+	/// are forwarded, so this cannot drift out of step with the tools the tray actually has.
+	/// </summary>
+	private static async Task<int> RunRelayAsync(ServerOptions options, TrayRelay relay)
+	{
+		await using (relay)
+		{
+			var builder = Host.CreateApplicationBuilder();
+			ConfigureLogging(builder.Logging);
+
+			builder.Services
+				.AddMcpServer(server => server.ServerInfo = new() { Name = "rose-mcp", Version = "0.1.0" })
+				.WithStdioServerTransport()
+				.WithListToolsHandler((_, token) => relay.ListToolsAsync(token))
+				.WithCallToolHandler((context, token) =>
+					relay.CallToolAsync(context.Params!, ProgressFor(context), token));
+
+			await builder.Build().RunAsync();
+		}
+
+		return 0;
+	}
+
 
 	/// <summary>
 	/// Long-lived and shared. Because the broker outlives any single client session, a reconnecting
@@ -83,6 +122,21 @@ internal static class Program
 
 		await next(context);
 	};
+
+	/// <summary>
+	/// Bridges progress across the relay: notifications the tray sends us are re-sent to our own
+	/// client under the token it asked for. Without this a load looks like a hang, because the calls
+	/// that take real time are exactly the ones whose progress would be dropped in the middle.
+	/// </summary>
+	private static IProgress<ProgressNotificationValue>? ProgressFor(RequestContext<CallToolRequestParams> context) =>
+		context.Params?.ProgressToken is { } token ? new RelayProgress(context.Server, token) : null;
+
+	private sealed class RelayProgress(McpServer endpoint, ProgressToken token)
+		: IProgress<ProgressNotificationValue>
+	{
+		public void Report(ProgressNotificationValue value) =>
+			_ = endpoint.NotifyProgressAsync(token, value);
+	}
 
 	/// <summary>
 	/// Every log goes to stderr. In stdio mode stdout carries protocol frames and nothing else; a

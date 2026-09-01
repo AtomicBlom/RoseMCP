@@ -25,7 +25,6 @@ public static class WorkspaceStatusReporter
 		double loadSeconds,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null,
-		XamlStubReports? xamlReports = null,
 		BuildProperties? build = null)
 	{
 		var failureMessages = workspaceDiagnostics
@@ -34,7 +33,7 @@ public static class WorkspaceStatusReporter
 			.ToArray();
 
 		var (projects, xamlReasons) = await DescribeProjectsAsync(
-			solution, failureMessages, cancellationToken, progress, xamlReports);
+			solution, failureMessages, cancellationToken, progress);
 
 		var degradedReasons = (IReadOnlyList<string>)
 			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore), .. xamlReasons];
@@ -59,8 +58,7 @@ public static class WorkspaceStatusReporter
 		Solution solution,
 		IReadOnlyList<string> failureMessages,
 		CancellationToken cancellationToken,
-		IWorkProgress? progress,
-		XamlStubReports? xamlReports)
+		IWorkProgress? progress)
 	{
 		var statuses = new List<ProjectStatus>(solution.ProjectIds.Count);
 		var xamlReasons = new List<string>();
@@ -81,13 +79,16 @@ public static class WorkspaceStatusReporter
 				.ToArray();
 
 			// Only pay for generator execution when there is a generator to run.
-			var generatedCount = generators.Length == 0
-				? 0
-				: (await project.GetSourceGeneratedDocumentsAsync(cancellationToken)).Count();
+			var generated = generators.Length == 0
+				? []
+				: (await project.GetSourceGeneratedDocumentsAsync(cancellationToken)).ToArray();
 
-			// Read after the generators have run, because that call is what populates the report.
-			var xaml = xamlReports?.For(project.Id);
+			var xaml = await XamlStubReportReader.ReadAsync(generated, cancellationToken);
 			if (xaml is not null) xamlReasons.AddRange(XamlConcerns(project.Name, xaml));
+
+			// The report is our own plumbing rather than something the project generates, so it is
+			// not counted and, in GeneratedDocumentService, not listed either.
+			var generatedCount = generated.Length - (xaml is null ? 0 : 1);
 
 			statuses.Add(new ProjectStatus
 			{

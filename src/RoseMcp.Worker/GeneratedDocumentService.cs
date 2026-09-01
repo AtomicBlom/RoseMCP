@@ -2,6 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 
 using RoseMcp.Contracts;
+using RoseMcp.XamlStubs;
 
 namespace RoseMcp.Worker;
 
@@ -43,7 +44,13 @@ public static class GeneratedDocumentService
 				.SelectMany(reference => SafeGetGenerators(reference, project.Language))
 				.Count();
 
-			var documents = (await project.GetSourceGeneratedDocumentsAsync(cancellationToken)).ToArray();
+			// The XAML stub report is how the generator talks to the worker, not code the project
+			// produced. Listing it would put our own plumbing in front of an agent asking what its
+			// solution generates.
+			var documents = (await project.GetSourceGeneratedDocumentsAsync(cancellationToken))
+				.Where(document => !string.Equals(
+					document.HintName, XamlStubReportChannel.HintName, StringComparison.Ordinal))
+				.ToArray();
 
 			// An empty list means two very different things, and the caller cannot tell them apart.
 			if (documents.Length == 0)

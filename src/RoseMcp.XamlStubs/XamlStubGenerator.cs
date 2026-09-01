@@ -2,23 +2,27 @@ using System.Collections.Immutable;
 
 using Microsoft.CodeAnalysis;
 
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>
 /// Turns a project's XAML into stub partials, as a source generator.
 /// <para>
 /// A generator rather than documents injected by hand, so the output is a source-generated document
 /// like any other: readable through rose_read_generated_document, never written to disk, and
-/// re-run through the ordinary barrier when a .xaml file changes. Because it is our own code rather
-/// than a loaded analyzer assembly, it also needs no shadow copying and cannot pin a file the user
-/// wants to rebuild.
+/// re-run through the ordinary barrier when a .xaml file changes.
+/// </para>
+/// <para>
+/// It lives in its own assembly, loaded through the worker's shadow-copying loader as an ordinary
+/// AnalyzerFileReference, because Roslyn's serializer switches on the concrete type of every
+/// analyzer reference when it checksums a project -- which member-level find-references and rename
+/// both reach through FindDerivedClasses -- and throws on any type it does not recognise. A custom
+/// AnalyzerReference subclass, which is what this used to be, made those two tools fail on every
+/// solution containing XAML. Shadow copying means holding this open still does not stop anyone
+/// rebuilding it.
 /// </para>
 /// </summary>
-/// <param name="record">
-/// Where to leave the account of what happened. A generator has no other way to report to us --
-/// only generated source and diagnostics, neither of which belongs in a status report.
-/// </param>
-public sealed class XamlStubGenerator(Action<XamlStubReport>? record = null) : IIncrementalGenerator
+[Generator(LanguageNames.CSharp)]
+public sealed class XamlStubGenerator : IIncrementalGenerator
 {
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
@@ -34,7 +38,7 @@ public sealed class XamlStubGenerator(Action<XamlStubReport>? record = null) : I
 		context.RegisterSourceOutput(markup.Combine(context.CompilationProvider), Emit);
 	}
 
-	private void Emit(
+	private static void Emit(
 		SourceProductionContext context,
 		(ImmutableArray<XamlDocument?> Markup, Compilation Compilation) input)
 	{
@@ -44,7 +48,7 @@ public sealed class XamlStubGenerator(Action<XamlStubReport>? record = null) : I
 
 		if (choice.Dialect is null)
 		{
-			Report(choice, documents.Length + unreadable, 0, [], Unreadable(unreadable));
+			Report(context, choice, documents.Length + unreadable, 0, [], Unreadable(unreadable));
 			return;
 		}
 
@@ -78,28 +82,29 @@ public sealed class XamlStubGenerator(Action<XamlStubReport>? record = null) : I
 			stubbed++;
 		}
 
-		Report(choice, documents.Length + unreadable, stubbed, unresolved, skipped);
+		Report(context, choice, documents.Length + unreadable, stubbed, unresolved, skipped);
 	}
 
 	private static List<string> Unreadable(int count) =>
 		count == 0 ? [] : [$"{count} file(s) could not be parsed as XAML"];
 
-	private void Report(
+	private static void Report(
+		SourceProductionContext context,
 		XamlDialectChoice choice,
 		int markupFiles,
 		int stubbed,
 		IReadOnlyList<string> unresolved,
-		IReadOnlyList<string> skipped)
-	{
-		record?.Invoke(new XamlStubReport
-		{
-			Dialect = choice.Dialect?.Name,
-			DialectReason = choice.Reason,
-			DialectAmbiguous = choice.WasAmbiguous,
-			MarkupFileCount = markupFiles,
-			StubbedClassCount = stubbed,
-			UnresolvedTypes = [.. unresolved.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
-			Skipped = skipped,
-		});
-	}
+		IReadOnlyList<string> skipped) =>
+		context.AddSource(
+			XamlStubReportChannel.HintName,
+			XamlStubReportChannel.Render(new XamlStubReportPayload
+			{
+				Dialect = choice.Dialect?.Name,
+				DialectReason = choice.Reason,
+				DialectAmbiguous = choice.WasAmbiguous,
+				MarkupFileCount = markupFiles,
+				StubbedClassCount = stubbed,
+				UnresolvedTypes = [.. unresolved.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
+				Skipped = skipped,
+			}));
 }

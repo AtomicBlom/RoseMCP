@@ -1,7 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
-using RoseMcp.Worker.Xaml;
+using RoseMcp.XamlStubs;
 
 namespace RoseMcp.Worker.Tests;
 

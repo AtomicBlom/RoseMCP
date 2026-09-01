@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <!-- RS1041 wants a compiler extension on netstandard2.0, so that one binary can load into both
+         Visual Studio's .NET Framework host and the command-line compiler. This one is loaded by
+         exactly one host, RoseMcp.Worker, which is net10.0 and pins the same Roslyn this builds
+         against; targeting netstandard2.0 would describe a portability it never needs and does not
+         have. Every other extended analyzer rule is left on. -->
+    <NoWarn>$(NoWarn);RS1041</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+
+</Project>

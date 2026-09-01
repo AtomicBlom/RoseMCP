@@ -1,4 +1,4 @@
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>
 /// Which dialect a project turned out to be, and on what evidence. The reason is carried so an

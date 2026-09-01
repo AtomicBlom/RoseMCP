@@ -16,8 +16,7 @@ public sealed class XamlWorkspaceTests
 	public async Task A_xaml_project_compiles_without_its_markup_compiler_ever_running()
 	{
 		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
-		var reports = new XamlStubReports();
-		await using var session = await TestSession.OpenAsync(fixture, stubReports: reports);
+		await using var session = await TestSession.OpenAsync(fixture);
 
 		var diagnostics = await DiagnoseAsync(session);
 
@@ -56,15 +55,14 @@ public sealed class XamlWorkspaceTests
 	public async Task Reports_which_dialect_it_chose_and_on_what_evidence()
 	{
 		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
-		var reports = new XamlStubReports();
-		await using var session = await TestSession.OpenAsync(fixture, stubReports: reports);
+		await using var session = await TestSession.OpenAsync(fixture);
 
 		// Generators are lazy; asking for the compilation is what runs them.
 		await DiagnoseAsync(session);
 
 		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
 		var project = snapshot.Solution.Projects.Single(candidate => candidate.Name.StartsWith("Ui", StringComparison.Ordinal));
-		var report = reports.For(project.Id);
+		var report = await XamlStubReportReader.ReadAsync(project, TestContext.Current.CancellationToken);
 
 		Assert.NotNull(report);
 		Assert.Equal("UWP", report.Dialect);
@@ -117,7 +115,6 @@ public sealed class XamlWorkspaceTests
 		var loader = new SolutionLoader(
 			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
 			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
-			new XamlStubReports(),
 			NullLogger<SolutionLoader>.Instance);
 
 		var load = await loader.LoadAsync(
@@ -147,19 +144,16 @@ public sealed class XamlWorkspaceTests
 	{
 		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
 
-		var reports = new XamlStubReports();
 		var options = new WorkerOptions { SolutionPath = fixture.SolutionPath };
 		var loader = new SolutionLoader(
 			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
 			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
-			reports,
 			NullLogger<SolutionLoader>.Instance);
 
 		await using var host = new WorkspaceHost(
 			options,
 			loader,
 			new SharedWorkProgress(),
-			reports,
 			NullLoggerFactory.Instance,
 			new NeverStops(),
 			NullLogger<WorkspaceHost>.Instance);
@@ -191,6 +185,56 @@ public sealed class XamlWorkspaceTests
 		public void StopApplication()
 		{
 		}
+	}
+
+	/// <summary>
+	/// A member-level find-references in a project that has stub generation attached.
+	/// <para>
+	/// This is the shape that a custom AnalyzerReference broke, and it broke silently in tests
+	/// because nothing here asked for it. Roslyn walks up from a member to the interface members it
+	/// implements, which needs the per-project index behind FindDerivedClasses, which checksums
+	/// every analyzer reference the project has -- and its serializer throws on any reference type
+	/// it does not recognise. Type-level searches never build that index, so they went on working
+	/// and hid it. Greeter exists in the fixture only to force the walk: an interface to go up to,
+	/// and an unsealed class so going down again is not skipped.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Finds_references_to_a_member_of_a_project_carrying_stub_generation()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var references = await NavigationService.FindReferencesAsync(
+			snapshot,
+			fixture.Path("XamlStub", "Ui", "Greeter.cs"),
+			16,
+			24,
+			200,
+			TestContext.Current.CancellationToken);
+
+		Assert.Contains("Greeter.Greet", references.Symbol, StringComparison.Ordinal);
+		Assert.Contains(references.References, reference => reference.Line == 21);
+	}
+
+	/// <summary>The other tool that reaches the same index, by the same route.</summary>
+	[Fact]
+	public async Task Finds_implementations_of_a_member_of_a_project_carrying_stub_generation()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var implementations = await NavigationService.FindImplementationsAsync(
+			snapshot,
+			fixture.Path("XamlStub", "Ui", "Greeter.cs"),
+			11,
+			9,
+			200,
+			TestContext.Current.CancellationToken);
+
+		Assert.Contains(implementations.Matches, match => match.Signature.Contains("Greeter.Greet", StringComparison.Ordinal));
 	}
 
 	private static async Task<DiagnosticsResult> DiagnoseAsync(WorkspaceSession session)

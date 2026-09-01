@@ -1,4 +1,4 @@
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>An element the markup gave a name to, which the generated partial turns into a field.</summary>
 public sealed record XamlNamedElement

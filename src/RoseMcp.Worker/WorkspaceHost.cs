@@ -17,7 +17,7 @@ public sealed class WorkspaceHost(
 	WorkerOptions options,
 	SolutionLoader loader,
 	SharedWorkProgress sharedWork,
-	Xaml.XamlStubReports stubReports,
+
 	ILoggerFactory loggerFactory,
 	IHostApplicationLifetime lifetime,
 	ILogger<WorkspaceHost> logger) : IHostedService, IAsyncDisposable
@@ -59,7 +59,7 @@ public sealed class WorkspaceHost(
 				loadSeconds: 0,
 				cancellationToken,
 				progress,
-				stubReports,
+
 				session.Build);
 
 			return report with { DegradedReasons = [.. report.DegradedReasons, .. snapshot.Notices] };

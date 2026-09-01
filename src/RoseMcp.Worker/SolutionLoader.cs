@@ -13,7 +13,6 @@ namespace RoseMcp.Worker;
 public sealed class SolutionLoader(
 	RestoreRunner restoreRunner,
 	ShadowCopyAnalyzerAssemblyLoader analyzerLoader,
-	XamlStubReports stubReports,
 	ILogger<SolutionLoader> logger)
 {
 	/// <summary>
@@ -26,6 +25,8 @@ public sealed class SolutionLoader(
 	private const double BuildDone = 70;
 	private const double AnalyzersDone = 75;
 	private const double XamlDone = 80;
+
+	private AnalyzerFileReference? _xamlStubs;
 
 	public async Task<LoadResult> LoadAsync(
 		WorkerOptions options,
@@ -92,7 +93,6 @@ public sealed class SolutionLoader(
 			Math.Round(stopwatch.Elapsed.TotalSeconds, 2),
 			cancellationToken,
 			progress.Slice(XamlDone, 100),
-			stubReports,
 			build);
 
 		logger.LogInformation(
@@ -141,6 +141,25 @@ public sealed class SolutionLoader(
 	/// for projects with no XAML, which is most of them.
 	/// </para>
 	/// </summary>
+
+	/// <summary>
+	/// The stub generator's assembly, beside this one. Null, with a warning, when it is missing:
+	/// XAML stubbing is an enhancement, and a deployment that dropped one file should degrade to a
+	/// workspace without stubs rather than refuse to load the solution at all.
+	/// </summary>
+	private AnalyzerFileReference? ResolveXamlStubs()
+	{
+		if (_xamlStubs is not null) return _xamlStubs;
+
+		var path = Path.Combine(AppContext.BaseDirectory, "RoseMcp.XamlStubs.dll");
+		if (!File.Exists(path))
+		{
+			logger.LogWarning("XAML stub generation is unavailable: {Path} is missing.", path);
+			return null;
+		}
+
+		return _xamlStubs = new AnalyzerFileReference(path, analyzerLoader);
+	}
 	private async Task<Solution> WithXamlStubsAsync(
 		Solution solution,
 		IWorkProgress? progress,
@@ -148,6 +167,11 @@ public sealed class SolutionLoader(
 	{
 		var projects = solution.ProjectIds.ToArray();
 		var stubbed = 0;
+
+		// One reference for every XAML project. AnalyzerFileReference is identified by its path, so
+		// sharing the instance is what makes the loader shadow-copy the assembly once.
+		var reference = ResolveXamlStubs();
+		if (reference is null) return solution;
 
 		for (var index = 0; index < projects.Length; index++)
 		{
@@ -180,10 +204,7 @@ public sealed class SolutionLoader(
 					filePath: path);
 			}
 
-			var projectId = project.Id;
-			var generator = new XamlStubGenerator(report => stubReports.Record(projectId, report));
-
-			solution = solution.AddAnalyzerReference(projectId, new XamlStubReference(generator.AsSourceGenerator()));
+			solution = solution.AddAnalyzerReference(project.Id, reference);
 			stubbed++;
 		}
 

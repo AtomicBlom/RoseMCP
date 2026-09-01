@@ -154,7 +154,6 @@ public sealed class StalenessTests
 		var loader = new SolutionLoader(
 			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
 			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
-			new RoseMcp.Worker.Xaml.XamlStubReports(),
 			NullLogger<SolutionLoader>.Instance);
 
 		var options = new WorkerOptions { SolutionPath = fixture.SolutionPath };

@@ -1,7 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>
 /// Works out which XAML flavour a project is written in.

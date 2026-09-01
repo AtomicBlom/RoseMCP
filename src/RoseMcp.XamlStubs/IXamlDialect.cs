@@ -1,4 +1,4 @@
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>
 /// One XAML flavour: where its framework types live, and what its generated partial carries beyond

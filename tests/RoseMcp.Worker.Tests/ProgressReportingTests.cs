@@ -22,7 +22,6 @@ public sealed class ProgressReportingTests
 		var loader = new SolutionLoader(
 			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
 			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
-			new RoseMcp.Worker.Xaml.XamlStubReports(),
 			NullLogger<SolutionLoader>.Instance);
 
 		var load = await loader.LoadAsync(

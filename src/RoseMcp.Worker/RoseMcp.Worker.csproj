@@ -14,6 +14,10 @@
   <ItemGroup>
     <ProjectReference Include="..\RoseMcp.Contracts\RoseMcp.Contracts.csproj" />
     <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />
+    <!-- Not used as a library: this is the generator assembly, loaded at runtime as an
+         AnalyzerFileReference from beside the worker. The reference is here so it builds first and
+         lands in the output; only its const strings are compiled in. -->
+    <ProjectReference Include="..\RoseMcp.XamlStubs\RoseMcp.XamlStubs.csproj" />
   </ItemGroup>
 
 </Project>

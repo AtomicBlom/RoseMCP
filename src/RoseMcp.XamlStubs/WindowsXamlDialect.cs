@@ -1,4 +1,4 @@
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>
 /// UWP and WinUI XAML, which generate the same shape and differ only in where their types live.

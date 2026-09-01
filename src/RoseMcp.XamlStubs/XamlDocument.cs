@@ -1,4 +1,4 @@
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>
 /// The parts of a XAML file that decide what its generated partial looks like. Everything else in

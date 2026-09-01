@@ -1,4 +1,4 @@
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>
 /// WPF XAML, on .NET Framework and on modern .NET alike -- both run the same PresentationBuildTasks

@@ -1,4 +1,4 @@
-namespace RoseMcp.Worker.Xaml;
+namespace RoseMcp.XamlStubs;
 
 /// <summary>What the emitter made of one XAML file, including the reasons it did less than asked.</summary>
 public sealed record XamlStubEmission

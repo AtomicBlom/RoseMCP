@@ -1,5 +1,6 @@
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
 
 namespace RoseMcp.Server;
 
@@ -91,6 +92,10 @@ internal static class Program
 	{
 		logging.ClearProviders();
 		logging.AddConsole(console => console.LogToStandardErrorThreshold = LogLevel.Trace);
+
+		// And to disk, because in stdio mode stderr belongs to whichever client launched us and is
+		// not somewhere a person can go back and read.
+		logging.AddRoseFileLogging("Server");
 	}
 
 	private static void Apply(ServerOptions options, BrokerOptions broker)

@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/RoseMcp.Broker/RoseMcp.Broker.csproj" />
     <Project Path="src/RoseMcp.Contracts/RoseMcp.Contracts.csproj" />
+    <Project Path="src/RoseMcp.Logging/RoseMcp.Logging.csproj" />
     <Project Path="src/RoseMcp.Server/RoseMcp.Server.csproj" />
     <Project Path="src/RoseMcp.Tray/RoseMcp.Tray.csproj">
       <Platform Project="x64" />

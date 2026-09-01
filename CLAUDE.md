@@ -25,6 +25,8 @@ client --stdio or http--> RoseMcp.Server (broker, no Roslyn refs)
 ```
 
 - **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
+- **`RoseMcp.Logging`** -- library. The file sink, referenced only by the three launchable hosts
+  so Serilog stays off the DTO assembly and the tests.
 - **`RoseMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, the
   activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts below.
 - **`RoseMcp.Server`** -- console host. `--transport stdio` (default) or `--transport http`.
@@ -38,8 +40,17 @@ reclaim memory or pick up a rebuilt generator.
 
 ### Invariants worth protecting
 
-- **Nothing writes to stdout in stdio mode** except protocol frames. All logging goes to stderr.
-  A stray `Console.WriteLine` corrupts the stream, and the failure looks like a protocol bug.
+- **Nothing writes to stdout in stdio mode** except protocol frames. All logging goes to stderr,
+  and to a file. A stray `Console.WriteLine` corrupts the stream, and the failure looks like a
+  protocol bug. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
+  `Microsoft.Extensions.Logging` call sites, never a console sink, and there is a regression test
+  asserting the pipeline writes nothing to stdout at all. Logs land in
+  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/{Server,Worker,Tray}/[{solution}-]{yyyyMMdd-HHmmss}.log`,
+  UTC in the name and UTC in every line so the two cannot disagree. A worker's file names the
+  solution it owns, hashed as well as spelled, because two worktrees of one repository share a
+  solution name. Twenty sessions are kept per component, pruned at startup -- Serilog's own
+  retention cannot do it, since it only prunes within one rolling base name and every session
+  here has its own.
 - **Reads never observe a snapshot older than disk.** If you add a read path, it goes through the
   `WorkspaceSession` barrier. No exceptions.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.

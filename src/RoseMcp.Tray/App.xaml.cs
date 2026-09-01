@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
 
 namespace RoseMcp.Tray;
 
@@ -38,6 +39,10 @@ public partial class App : Application
 		var builder = WebApplication.CreateBuilder();
 		builder.Logging.ClearProviders();
 		builder.Logging.AddDebug();
+
+		// AddDebug alone writes nowhere unless a debugger is attached, which is never true of the
+		// tray a user actually runs -- so until now this process kept no record of itself at all.
+		builder.Logging.AddRoseFileLogging("Tray");
 		builder.WebHost.UseUrls($"http://{Options.Host}:{Options.Port}");
 
 		builder.Services

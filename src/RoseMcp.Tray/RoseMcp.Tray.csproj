@@ -39,6 +39,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RoseMcp.Broker\RoseMcp.Broker.csproj" />
+    <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />
   </ItemGroup>
 
 </Project>

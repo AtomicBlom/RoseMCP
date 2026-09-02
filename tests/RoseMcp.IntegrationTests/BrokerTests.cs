@@ -298,6 +298,24 @@ public sealed class BrokerTests
 	}
 
 	/// <summary>
+	/// The lifecycle tools hold their worker before they ask it anything, so they do not route
+	/// through CallAsync and were left unattributed -- status of all tools answering "which
+	/// workspace is this?" without naming it.
+	/// </summary>
+	[Fact]
+	public async Task Workspace_status_names_its_workspace_too()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var worker = await manager.GetOrStartAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+		var status = await manager.StatusOfAsync(worker, TestContext.Current.CancellationToken);
+
+		Assert.Equal(fixture.SolutionPath, status.Workspace, ignoreCase: true);
+		Assert.Equal(worker.Key, status.WorkspaceKey);
+	}
+
+	/// <summary>
 	/// The key has to outlive the process it names, or a caller holding one across a reload -- which
 	/// happens for ordinary reasons -- would be told its workspace no longer exists.
 	/// </summary>

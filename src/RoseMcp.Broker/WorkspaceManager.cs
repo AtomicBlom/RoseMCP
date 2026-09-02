@@ -30,6 +30,8 @@ public sealed class WorkspaceManager(
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 
+	private static readonly Dictionary<string, object?> NoArguments = [];
+
 	/// <summary>
 	/// What every worker is doing. Owned here rather than injected because the manager is the only
 	/// thing that starts, stops, and calls workers, so it is the only thing that could fill it in.
@@ -218,6 +220,25 @@ public sealed class WorkspaceManager(
 			})];
 		}
 	}
+
+	/// <summary>
+	/// Status for a worker already in hand, attributed like every other result.
+	/// <para>
+	/// The lifecycle tools have their worker before they ask it anything -- opening and reloading are
+	/// about a particular process, not about routing a call -- so they cannot go through
+	/// <see cref="CallAsync{T}"/>. This is the same attribution step, so they cannot drift from it:
+	/// answering "which workspace is this?" without naming the workspace would be an odd thing for
+	/// status of all tools to do.
+	/// </para>
+	/// </summary>
+	public async Task<Contracts.WorkspaceStatusReport> StatusOfAsync(
+		WorkspaceWorker worker,
+		CancellationToken cancellationToken,
+		IProgress<ProgressNotificationValue>? progress = null) =>
+		Attribute(
+			await worker.CallAsync<Contracts.WorkspaceStatusReport>(
+				Contracts.ToolNames.WorkspaceStatus, NoArguments, cancellationToken, progress),
+			worker);
 
 	/// <summary>Stops a worker and forgets it. Reopening starts a fresh process.</summary>
 	public async Task<bool> CloseAsync(string? path, CancellationToken cancellationToken)

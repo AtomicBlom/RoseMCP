@@ -19,8 +19,6 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 			+ "other arguments, or from the working directory. Needed only where a directory holds "
 			+ "several solutions and none of them is pinned, which is reported when it happens.";
 
-	private static readonly Dictionary<string, object?> EmptyArguments = [];
-
 	[McpServerTool(
 		Name = ToolNames.WorkspaceOpen,
 		Title = "Open a solution",
@@ -35,8 +33,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.GetOrStartAsync(path, cancellationToken);
-		return await worker.CallAsync<WorkspaceStatusReport>(
-			ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken, progress);
+		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
 	}
 
 	[McpServerTool(
@@ -53,8 +50,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.GetOrStartAsync(workspace, cancellationToken);
-		return await worker.CallAsync<WorkspaceStatusReport>(
-			ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken, progress);
+		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
 	}
 
 	[McpServerTool(
@@ -78,8 +74,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 			workspace,
 			cancellationToken,
 			WorkspaceBuildOverrides.From(configuration, platform, properties));
-		return await worker.CallAsync<WorkspaceStatusReport>(
-			ToolNames.WorkspaceStatus, EmptyArguments, cancellationToken, progress);
+		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
 	}
 
 	[McpServerTool(

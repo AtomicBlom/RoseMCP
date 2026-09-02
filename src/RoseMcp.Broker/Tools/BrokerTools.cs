@@ -23,6 +23,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		Name = ToolNames.WorkspaceOpen,
 		Title = "Open a solution",
 		ReadOnly = true,
+		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.WorkspaceOpen)]
@@ -58,6 +59,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		Name = ToolNames.WorkspaceReload,
 		Title = "Reload a workspace",
 		ReadOnly = false,
+		Destructive = false,
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
@@ -82,6 +84,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		Name = ToolNames.WorkspaceClose,
 		Title = "Close a workspace",
 		ReadOnly = false,
+		Destructive = false,
 		Idempotent = true,
 		OpenWorld = false)]
 	[Description(ToolDescriptions.WorkspaceClose)]

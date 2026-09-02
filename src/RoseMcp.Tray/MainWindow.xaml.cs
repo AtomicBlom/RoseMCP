@@ -277,6 +277,46 @@ public sealed partial class MainWindow : Window
 		OpenInExplorer($"\"{root}\"");
 	}
 
+	/// <summary>
+	/// Both menus carry the same toggle, and Windows owns the answer -- the key can be changed by
+	/// anything, including a second copy of this app -- so it is read when the menu opens rather than
+	/// cached.
+	/// </summary>
+	private void OnMenuOpening(object sender, object e)
+	{
+		var enabled = StartupRegistration.IsEnabled;
+		var elsewhere = StartupRegistration.PointsElsewhere;
+
+		foreach (var item in (ToggleMenuFlyoutItem?[])[TrayStartWithWindows, WindowStartWithWindows])
+		{
+			if (item is null) continue;
+
+			item.IsChecked = enabled;
+
+			// An install that has moved: Windows still starts the old copy, so saying "off" would be
+			// a lie and saying "on" would point at the wrong exe.
+			item.Text = elsewhere ? "Start with Windows (registered elsewhere)" : "Start with Windows";
+		}
+	}
+
+	private void OnToggleStartWithWindows(object sender, RoutedEventArgs e)
+	{
+		// Off means off even when the registration belongs to another copy: the checkbox was showing
+		// unchecked, so the click asks for on, and on means this executable.
+		var wanted = !StartupRegistration.IsEnabled;
+
+		if (StartupRegistration.Set(wanted)) return;
+
+		// A toggle that silently does nothing is worse than one that is not offered, and the menu is
+		// the only surface certain to be visible here -- this is reachable from the tray with the
+		// window hidden -- so the menu carries the news. Reset when the menu next opens.
+		if (sender is ToggleMenuFlyoutItem item)
+		{
+			item.IsChecked = StartupRegistration.IsEnabled;
+			item.Text = "Start with Windows (Windows refused)";
+		}
+	}
+
 	private void OnCopyEndpoint(object sender, RoutedEventArgs e) => Copy(_endpoint, EndpointCopyGlyph);
 
 	private void OnCopyRegistration(object sender, RoutedEventArgs e) => Copy(RegistrationText.Text, RegistrationCopyGlyph);

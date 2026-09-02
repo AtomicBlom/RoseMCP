@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>Source-generated documents in one project.</summary>
-public sealed record GeneratedDocumentList
+public sealed record GeneratedDocumentList : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

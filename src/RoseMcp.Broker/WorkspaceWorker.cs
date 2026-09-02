@@ -40,6 +40,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	private readonly ILogger _logger;
 	private int _refreshingHeap;
 	private string? _loadFailure;
+	private string? _key;
 
 	private WorkspaceWorker(string solutionPath, McpClient client, ActivityLog activities, ILogger logger)
 	{
@@ -51,6 +52,12 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	}
 
 	public string SolutionPath { get; }
+
+	/// <summary>
+	/// Short stable name for this workspace, computed once. Derived from the path, so a caller
+	/// holding one from before this worker was replaced can still use it.
+	/// </summary>
+	public string Key => _key ??= Solutions.WorkspaceKey.For(SolutionPath);
 
 	public DateTime StartedUtc { get; }
 
@@ -276,6 +283,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		return new WorkspaceSummary
 		{
 			SolutionPath = SolutionPath,
+			Key = Key,
 			DisplayName = Path.GetFileNameWithoutExtension(SolutionPath),
 			Alive = IsAlive,
 			ExitReason = ExitReason.ToString(),

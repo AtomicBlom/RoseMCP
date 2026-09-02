@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>Every reference to a symbol across the solution.</summary>
-public sealed record ReferencesResult
+public sealed record ReferencesResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

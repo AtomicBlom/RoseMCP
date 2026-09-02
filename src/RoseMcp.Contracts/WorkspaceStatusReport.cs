@@ -6,7 +6,7 @@ namespace RoseMcp.Contracts;
 /// confidently wrong results, so those causes are reported rather than left to be inferred from
 /// suspiciously empty output.
 /// </summary>
-public sealed record WorkspaceStatusReport
+public sealed record WorkspaceStatusReport : WorkspaceScopedResult
 {
 	public required string SolutionPath { get; init; }
 

@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>Outcome of a rename, including exactly what changed on disk.</summary>
-public sealed record RenameResult
+public sealed record RenameResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

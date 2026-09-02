@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>What implements, overrides, or derives from a symbol.</summary>
-public sealed record ImplementationsResult
+public sealed record ImplementationsResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

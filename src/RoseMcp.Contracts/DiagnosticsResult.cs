@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>Diagnostics for one snapshot, with the revision they describe.</summary>
-public sealed record DiagnosticsResult
+public sealed record DiagnosticsResult : WorkspaceScopedResult
 {
 	/// <summary>The snapshot these diagnostics were computed against.</summary>
 	public required long Revision { get; init; }

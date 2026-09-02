@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>What applying a code fix did.</summary>
-public sealed record CodeFixResult
+public sealed record CodeFixResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

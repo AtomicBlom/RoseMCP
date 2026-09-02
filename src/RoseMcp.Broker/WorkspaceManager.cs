@@ -3,6 +3,8 @@ using Microsoft.Extensions.Options;
 
 using ModelContextProtocol;
 
+using RoseMcp.Contracts;
+
 namespace RoseMcp.Broker;
 
 /// <summary>
@@ -145,16 +147,31 @@ public sealed class WorkspaceManager(
 
 		try
 		{
-			return await worker.CallAsync<T>(tool, arguments, cancellationToken, progress);
+			return Attribute(await worker.CallAsync<T>(tool, arguments, cancellationToken, progress), worker);
 		}
 		catch (WorkerUnavailableException) when (retryIfWorkerDied)
 		{
 			logger.LogInformation("Restarting the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
 
 			var replacement = await RestartAsync(worker.SolutionPath, cancellationToken);
-			return await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress);
+
+			return Attribute(
+				await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
 		}
 	}
+
+	/// <summary>
+	/// Stamps a result with the workspace that produced it.
+	/// <para>
+	/// Here rather than in the worker because the worker was told which solution to own and never
+	/// chose it -- the choice is the thing worth reporting, and this is where it was made. One place
+	/// also means a tool added later is attributed without anyone remembering to do it.
+	/// </para>
+	/// </summary>
+	private static T Attribute<T>(T result, WorkspaceWorker worker) =>
+		result is WorkspaceScopedResult scoped
+			? (T)(object)(scoped with { Workspace = worker.SolutionPath, WorkspaceKey = worker.Key })
+			: result;
 
 	/// <summary>Stops a worker and forgets it. Reopening starts a fresh process.</summary>
 	public async Task<bool> CloseAsync(string? path, CancellationToken cancellationToken)

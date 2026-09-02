@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>What formatting did, and to which files.</summary>
-public sealed record FormatResult
+public sealed record FormatResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

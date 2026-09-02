@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>What a symbol is, in the terms an agent needs before changing it.</summary>
-public sealed record SymbolInfoResult
+public sealed record SymbolInfoResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

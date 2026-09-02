@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>The fixable diagnostics found in one file.</summary>
-public sealed record CodeFixList
+public sealed record CodeFixList : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>Outcome of moving a type to its own file, including exactly what changed on disk.</summary>
-public sealed record MoveTypeResult
+public sealed record MoveTypeResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

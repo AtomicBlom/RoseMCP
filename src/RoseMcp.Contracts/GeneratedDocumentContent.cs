@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>The text of one generated document.</summary>
-public sealed record GeneratedDocumentContent
+public sealed record GeneratedDocumentContent : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

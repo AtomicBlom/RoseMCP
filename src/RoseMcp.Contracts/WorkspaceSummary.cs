@@ -5,6 +5,12 @@ public sealed record WorkspaceSummary
 {
 	public required string SolutionPath { get; init; }
 
+	/// <summary>
+	/// The short name callers pass as <c>workspace</c>. Shown here so the key a result carries can
+	/// be matched against a row without anyone having to work out how it is derived.
+	/// </summary>
+	public string Key { get; init; } = string.Empty;
+
 	public required string DisplayName { get; init; }
 
 	public required bool Alive { get; init; }

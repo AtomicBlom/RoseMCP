@@ -251,6 +251,47 @@ public sealed class BrokerTests
 		throw new TimeoutException($"Nothing showed up within {timeout.TotalSeconds:F0}s.");
 	}
 
+	/// <summary>
+	/// A result that does not name its workspace cannot be checked: nothing found in the wrong
+	/// solution is indistinguishable from nothing to find in the right one. The broker fills this
+	/// in for every result type, so it is asserted through the same path the tools use.
+	/// </summary>
+	[Fact]
+	public async Task Every_result_says_which_workspace_answered()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var result = await manager.CallAsync<SymbolSearchResult>(
+			fixture.SolutionPath,
+			ToolNames.SearchSymbols,
+			new Dictionary<string, object?> { ["query"] = "Calculator" },
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		Assert.Equal(fixture.SolutionPath, result.Workspace, ignoreCase: true);
+		Assert.StartsWith("Simple-", result.WorkspaceKey, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The key has to outlive the process it names, or a caller holding one across a reload -- which
+	/// happens for ordinary reasons -- would be told its workspace no longer exists.
+	/// </summary>
+	[Fact]
+	public async Task The_workspace_key_survives_the_worker_being_replaced()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var before = await manager.GetOrStartAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+		var key = before.Key;
+
+		var after = await manager.RestartAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		Assert.NotEqual(before.ProcessId, after.ProcessId);
+		Assert.Equal(key, after.Key);
+	}
+
 	private static WorkspaceManager CreateManager(string? defaultRoot = null) => new(
 		Options.Create(new BrokerOptions
 		{

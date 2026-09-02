@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>Symbols matching a search.</summary>
-public sealed record SymbolSearchResult
+public sealed record SymbolSearchResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 

@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>Outcome of a rename, including exactly what changed on disk.</summary>
-public sealed record RenameResult : WorkspaceScopedResult
+public sealed record RenameResult : WorkspaceMutationResult
 {
 	public required long Revision { get; init; }
 
@@ -29,6 +29,4 @@ public sealed record RenameResult : WorkspaceScopedResult
 	/// breakage no C# tool can see is at least visible.
 	/// </summary>
 	public IReadOnlyList<XamlMention> XamlMentions { get; init; } = [];
-
-	public required IReadOnlyList<string> Notices { get; init; }
 }

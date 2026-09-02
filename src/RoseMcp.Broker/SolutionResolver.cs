@@ -96,6 +96,44 @@ public static class SolutionResolver
 	}
 
 	/// <summary>
+	/// Other solutions beside <paramref name="solutionPath"/> that also compile some of
+	/// <paramref name="files"/>.
+	/// <para>
+	/// A change is only ever computed against one solution, and Roslyn renames within one
+	/// <c>Solution</c>. Where a repository holds several over a shared set of projects, a rename of
+	/// shared code rewrites the declaration and every reference the loaded solution can see, then
+	/// writes to disk -- where the other solutions pick the new text up immediately and keep calling
+	/// the old name from projects this one never had. The result is not a stale sibling but a broken
+	/// one, so the least this can do is say which.
+	/// </para>
+	/// <para>
+	/// Only the solution's own directory is searched. That is where a sibling sharing projects
+	/// actually lives, and walking up would drag in every unrelated solution in the checkout.
+	/// </para>
+	/// </summary>
+	public static IReadOnlyList<SolutionOverlap> SiblingsSharing(string solutionPath, IReadOnlyList<string> files)
+	{
+		if (files.Count == 0) return [];
+
+		var full = Path.GetFullPath(solutionPath);
+		var directory = Path.GetDirectoryName(full);
+		if (string.IsNullOrEmpty(directory)) return [];
+
+		var wanted = files.Select(Path.GetFullPath).ToArray();
+		var overlaps = new List<SolutionOverlap>();
+
+		foreach (var sibling in SolutionsIn(new DirectoryInfo(directory)))
+		{
+			if (sibling.Equals(full, StringComparison.OrdinalIgnoreCase)) continue;
+
+			var shared = wanted.Count(file => Contains(sibling, file));
+			if (shared > 0) overlaps.Add(new SolutionOverlap { SolutionPath = sibling, SharedFileCount = shared });
+		}
+
+		return overlaps;
+	}
+
+	/// <summary>
 	/// Chooses between the solutions sharing one directory.
 	/// <para>
 	/// Containment first, because it is the only criterion that is actually about the question asked:

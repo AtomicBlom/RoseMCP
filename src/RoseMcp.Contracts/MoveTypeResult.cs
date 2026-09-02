@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>Outcome of moving a type to its own file, including exactly what changed on disk.</summary>
-public sealed record MoveTypeResult : WorkspaceScopedResult
+public sealed record MoveTypeResult : WorkspaceMutationResult
 {
 	public required long Revision { get; init; }
 
@@ -23,6 +23,4 @@ public sealed record MoveTypeResult : WorkspaceScopedResult
 
 	/// <summary>Unified diff of both files, so the caller can see the edit rather than trust it.</summary>
 	public required string Diff { get; init; }
-
-	public required IReadOnlyList<string> Notices { get; init; }
 }

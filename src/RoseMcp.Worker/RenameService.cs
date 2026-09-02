@@ -85,6 +85,7 @@ public static class RenameService
 			NewName = request.NewName,
 			Applied = request.Apply && outcome.ChangedFiles.Count > 0,
 			FilesChanged = outcome.ChangedFiles.Count,
+			ChangedFiles = outcome.ChangedFiles,
 			Diff = outcome.Diff,
 			Conflicts = conflicts,
 			XamlMentions = xamlMentions,

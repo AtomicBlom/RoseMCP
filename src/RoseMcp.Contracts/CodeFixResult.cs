@@ -1,7 +1,7 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>What applying a code fix did.</summary>
-public sealed record CodeFixResult : WorkspaceScopedResult
+public sealed record CodeFixResult : WorkspaceMutationResult
 {
 	public required long Revision { get; init; }
 
@@ -18,12 +18,9 @@ public sealed record CodeFixResult : WorkspaceScopedResult
 	/// <summary>How many occurrences of the diagnostic were found in that scope.</summary>
 	public required int Occurrences { get; init; }
 
-	public required IReadOnlyList<string> ChangedFiles { get; init; }
 
 	/// <summary>False when this was a preview; nothing was written.</summary>
 	public required bool Applied { get; init; }
 
 	public required string Diff { get; init; }
-
-	public required IReadOnlyList<string> Notices { get; init; }
 }

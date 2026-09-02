@@ -168,10 +168,56 @@ public sealed class WorkspaceManager(
 	/// also means a tool added later is attributed without anyone remembering to do it.
 	/// </para>
 	/// </summary>
-	private static T Attribute<T>(T result, WorkspaceWorker worker) =>
-		result is WorkspaceScopedResult scoped
-			? (T)(object)(scoped with { Workspace = worker.SolutionPath, WorkspaceKey = worker.Key })
-			: result;
+	private T Attribute<T>(T result, WorkspaceWorker worker)
+	{
+		if (result is not WorkspaceScopedResult scoped) return result;
+
+		var attributed = scoped with { Workspace = worker.SolutionPath, WorkspaceKey = worker.Key };
+
+		return (T)(object)(attributed is WorkspaceMutationResult mutation
+			? mutation with { Notices = [.. mutation.Notices, .. SharedFileNotices(mutation, worker)] }
+			: attributed);
+	}
+
+	/// <summary>
+	/// Warns when a change touched files another solution beside this one also compiles.
+	/// <para>
+	/// Reported rather than acted on. Making the change complete across solutions means loading them
+	/// all and merging the edits, which is a much larger thing than a warning and not always even
+	/// well defined -- two solutions can build the same project under configurations that have no
+	/// setting in common. Saying which sibling is affected costs a file read per candidate and turns
+	/// a silent half-change into one the caller can finish deliberately.
+	/// </para>
+	/// </summary>
+	private IReadOnlyList<string> SharedFileNotices(WorkspaceMutationResult mutation, WorkspaceWorker worker)
+	{
+		IReadOnlyList<SolutionOverlap> overlaps;
+		try
+		{
+			overlaps = SolutionResolver.SiblingsSharing(worker.SolutionPath, mutation.ChangedFiles);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			// A caveat that cannot be computed must not fail the change that has already happened.
+			logger.LogDebug(exception, "Could not check for solutions sharing {SolutionPath}.", worker.SolutionPath);
+			return [];
+		}
+
+		if (overlaps.Count == 0) return [];
+
+		lock (_workers)
+		{
+			return [.. overlaps.Select(overlap =>
+			{
+				var open = _workers.ContainsKey(overlap.SolutionPath) ? "open" : "not open";
+
+				return $"{Path.GetFileName(overlap.SolutionPath)} also compiles {overlap.SharedFileCount} of the "
+					+ $"file(s) this changed, and is {open}. This ran against "
+					+ $"{Path.GetFileName(worker.SolutionPath)} alone, so anything referencing those files from "
+					+ "projects only the other solution contains was not updated.";
+			})];
+		}
+	}
 
 	/// <summary>Stops a worker and forgets it. Reopening starts a fresh process.</summary>
 	public async Task<bool> CloseAsync(string? path, CancellationToken cancellationToken)

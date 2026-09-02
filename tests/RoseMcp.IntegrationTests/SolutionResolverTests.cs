@@ -143,6 +143,33 @@ public sealed class SolutionResolverTests
 		Assert.Contains("compiles", choice.Reason, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// A change is computed against one solution and written to disk, where a sibling sharing the
+	/// project picks the new text up while still calling the old name from projects this solution
+	/// never had. The sibling is not stale afterwards; it is broken.
+	/// </summary>
+	[Fact]
+	public void Finds_the_sibling_solution_that_shares_a_changed_file()
+	{
+		using var repository = new TwoSolutionRepository();
+		var changed = Path.Combine(repository.Root, "Gather", "Gather.cs");
+
+		var overlaps = SolutionResolver.SiblingsSharing(repository.Main, [changed]);
+
+		var overlap = Assert.Single(overlaps);
+		Assert.Equal(repository.Installer, overlap.SolutionPath, ignoreCase: true);
+		Assert.Equal(1, overlap.SharedFileCount);
+	}
+
+	[Fact]
+	public void Says_nothing_when_no_sibling_shares_the_change()
+	{
+		using var repository = new TwoSolutionRepository();
+		var changed = Path.Combine(repository.Root, "Wizard", "Thing.cs");
+
+		Assert.Empty(SolutionResolver.SiblingsSharing(repository.Main, [changed]));
+	}
+
 	[Fact]
 	public void An_uncontested_choice_says_so()
 	{

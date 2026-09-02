@@ -92,6 +92,7 @@ public static class MoveTypeService
 			TargetPath = targetPath,
 			Applied = request.Apply,
 			RemovedUsings = cleanup.Removed,
+			ChangedFiles = outcome.ChangedFiles,
 			Diff = outcome.Diff,
 			Notices = Notices(snapshot, request, moving, sourcePath, targetPath),
 		};

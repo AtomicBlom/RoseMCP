@@ -175,17 +175,19 @@ public static class WorkspaceStatusReporter
 	/// <summary>
 	/// The framework a project was actually loaded for.
 	/// <para>
-	/// Asked of the build first, and only then of the project name. The name carries a TFM solely
-	/// when a project multi-targets -- Roslyn disambiguates <c>Core (net10.0)</c> from
-	/// <c>Core (net481)</c> -- so reading the name alone reported null for every single-targeted
-	/// project in every solution, which is most of them.
+	/// Null is meant to mean something here: a project that resolved no framework is the signature of
+	/// a solution loaded under a configuration it does not declare, the failure that yields thousands
+	/// of diagnostics about System.Object being undefined. Anything that makes null common empties
+	/// that signal, so this asks three sources before giving up.
 	/// </para>
 	/// <para>
-	/// Null is meant to mean something here. A project with no framework is the signature of a
-	/// solution loaded under a configuration it does not declare, which is the failure that yields
-	/// thousands of diagnostics about System.Object being undefined. A null that only ever meant
-	/// "did not multi-target" was a permanent false alarm sitting on exactly the signal worth
-	/// trusting.
+	/// The build's own value first, which is exact and carries the platform:
+	/// <c>net10.0-windows10.0.26100.0</c>. It only reaches the analyzer config when something asked
+	/// for it though, so eleven healthy netstandard2.0 projects in Drawboard's Revit monorepo have
+	/// none. Then the preprocessor symbols, which the SDK defines unconditionally and which no
+	/// generator has to request. The project name last, and only when it looks like a framework:
+	/// Roslyn appends a TFM there solely to tell the targets of a multi-targeted project apart, so a
+	/// project merely called <c>Foo (Legacy)</c> would otherwise answer with "Legacy".
 	/// </para>
 	/// </summary>
 	private static string? ReadTargetFramework(Project project)
@@ -197,13 +199,15 @@ public static class WorkspaceStatusReporter
 			return framework;
 		}
 
-		// Older project formats put nothing in the analyzer config. A multi-targeted one still says
-		// so in its name, and a single-targeted one genuinely has nothing left to ask.
+		if (TargetFrameworkSymbols.Infer(project.ParseOptions?.PreprocessorSymbolNames) is { } inferred) return inferred;
+
 		var open = project.Name.LastIndexOf('(');
 		var close = project.Name.LastIndexOf(')');
 		if (open < 0 || close < open) return null;
 
-		return project.Name[(open + 1)..close];
+		var named = project.Name[(open + 1)..close];
+
+		return named.StartsWith("net", StringComparison.OrdinalIgnoreCase) ? named : null;
 	}
 
 	/// <summary>

@@ -52,15 +52,65 @@ public sealed class LiveAppSessionTests
 			Assert.NotNull(summary.HostProcessId);
 			Assert.Single(manager.Describe());
 
-			var marker = await WaitForMarkerAsync(session, cancellationToken);
+			var marker = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
+				cancellationToken);
 			Assert.NotNull(marker);
-			Assert.Equal(LiveDebugEventKind.ExceptionFirstChance, marker!.Kind);
-			Assert.Contains("RoseDebugProbeException", marker.ExceptionType);
+			Assert.Contains("RoseDebugProbeException", marker!.ExceptionType);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 			Assert.Empty(manager.Sessions);
 
 			// Detach leaves the target running; the debugger did not take it down.
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A tracepoint (issue #17): set at a method by name, it binds to the already-loaded module,
+	/// records each hit in the event stream with its message, never pauses the target, and can be
+	/// removed. This is the low-friction, non-freezing default for a turn-based agent.
+	/// </summary>
+	[Fact]
+	public async Task Tracepoint_binds_logs_hits_and_can_be_removed()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "probe target",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var tracepoint = await session.AddTracepointAsync(
+				"DebugProbeTarget.Program.Beat", "beat", logEveryNthHit: null, cancellationToken);
+			Assert.True(tracepoint.Bound, $"tracepoint should bind against the loaded module; detail: {tracepoint.Detail}");
+
+			var hit = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit,
+				cancellationToken);
+			Assert.NotNull(hit);
+			Assert.Contains("beat", hit!.Message);
+
+			var remaining = await session.RemoveTracepointAsync(tracepoint.Id, cancellationToken);
+			Assert.Empty(remaining);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 			Assert.False(child.HasExited);
 		}
 		finally
@@ -89,7 +139,10 @@ public sealed class LiveAppSessionTests
 		Assert.Equal(LiveAppSessionState.Faulted, session.Describe().State);
 	}
 
-	private static async Task<LiveDebugEvent?> WaitForMarkerAsync(LiveAppSession session, CancellationToken cancellationToken)
+	private static async Task<LiveDebugEvent?> WaitForEventAsync(
+		LiveAppSession session,
+		Func<LiveDebugEvent, bool> match,
+		CancellationToken cancellationToken)
 	{
 		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
 		var cursor = 0L;
@@ -97,11 +150,8 @@ public sealed class LiveAppSessionTests
 		while (DateTime.UtcNow < deadline)
 		{
 			var page = await session.ReadEventsAsync(cursor, cancellationToken);
-			var marker = page.Events.FirstOrDefault(entry =>
-				entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-				&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false));
-
-			if (marker is not null) return marker;
+			var found = page.Events.FirstOrDefault(match);
+			if (found is not null) return found;
 
 			cursor = page.NextCursor;
 			await Task.Delay(200, cancellationToken);

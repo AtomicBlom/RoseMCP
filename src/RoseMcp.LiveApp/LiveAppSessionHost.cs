@@ -48,6 +48,33 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		}
 	}
 
+	/// <summary>Adds a tracepoint to the attached target.</summary>
+	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit)
+		=> RequireSession().AddTracepoint(location, logMessage, logEveryNthHit);
+
+	public LiveTracepointList ListTracepoints()
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		return new LiveTracepointList { Tracepoints = session?.ListTracepoints() ?? [] };
+	}
+
+	public LiveTracepointList RemoveTracepoint(string id)
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		session?.RemoveTracepoint(id);
+		return new LiveTracepointList { Tracepoints = session?.ListTracepoints() ?? [] };
+	}
+
 	/// <summary>A page of buffered debug events after the given cursor, with the session's state.</summary>
 	public LiveDebugEventPage ReadEvents(long after)
 	{
@@ -178,6 +205,17 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	{
 		if (_state == LiveAppSessionState.Ready && _session?.HasExited == true) return LiveAppSessionState.Ended;
 		return _state;
+	}
+
+	private CorDebugSession RequireSession()
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		return session ?? throw new InvalidOperationException("This session is not attached to a target.");
 	}
 
 	private void Fault(string detail)

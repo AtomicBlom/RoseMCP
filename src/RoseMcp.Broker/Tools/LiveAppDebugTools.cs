@@ -111,6 +111,75 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "rose_debug_attach, or to see what is currently attached before starting another session.")]
 	public IReadOnlyList<LiveAppSessionSummary> List() => sessions.Describe();
 
+	[McpServerTool(
+		Name = ToolNames.DebugAddTracepoint,
+		Title = "Add a tracepoint",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Add a tracepoint at a method by name: a breakpoint that logs and immediately continues, so it "
+			+ "never freezes the target the way a stopping breakpoint would -- the right default for a "
+			+ "turn-based agent. Each hit appears in rose_debug_events. Prefer this over adding logging "
+			+ "statements and rebuilding, which needs a source edit and a restart to see anything. It binds "
+			+ "when the method's module is loaded, so an as-yet-unloaded module reads back as not bound.")]
+	public async Task<LiveTracepoint> AddTracepointAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("Method to trace, as [Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.")]
+		string location,
+		[Description("Optional message logged on each hit (literal text; expression interpolation comes later).")]
+		string? logMessage = null,
+		[Description("Optional: log only every Nth hit to thin a hot path; every hit is still counted.")]
+		int? logEveryNthHit = null,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.AddTracepointAsync(location, logMessage, logEveryNthHit, cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.DebugListTracepoints,
+		Title = "List tracepoints",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"List a session's tracepoints, each with its id, location, hit count, and whether it is bound "
+			+ "yet. Use it to confirm a tracepoint bound to a real method, since one whose module has not "
+			+ "loaded, or whose method name did not resolve, stays unbound and reports why rather than "
+			+ "failing loudly.")]
+	public async Task<IReadOnlyList<LiveTracepoint>> ListTracepointsAsync(
+		[Description(SessionHelp)] string sessionId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.ListTracepointsAsync(cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.DebugRemoveTracepoint,
+		Title = "Remove a tracepoint",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Remove a tracepoint by id and return the remaining set. Use it to stop a tracepoint once you "
+			+ "have seen what you needed, rather than leaving a hot-path log running for the life of the "
+			+ "session; removing an id that is already gone is harmless and simply returns the current set.")]
+	public async Task<IReadOnlyList<LiveTracepoint>> RemoveTracepointAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("The tracepoint id returned by rose_debug_add_tracepoint.")] string tracepointId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.RemoveTracepointAsync(tracepointId, cancellationToken);
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

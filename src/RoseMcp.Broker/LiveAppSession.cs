@@ -165,6 +165,21 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["after"] = after },
 			cancellationToken);
 
+	public Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, CancellationToken cancellationToken)
+		=> SendAsync<LiveTracepoint>(
+			ToolNames.LiveAppAddTracepoint,
+			new Dictionary<string, object?> { ["location"] = location, ["logMessage"] = logMessage, ["logEveryNthHit"] = logEveryNthHit },
+			cancellationToken);
+
+	public async Task<IReadOnlyList<LiveTracepoint>> ListTracepointsAsync(CancellationToken cancellationToken)
+		=> (await SendAsync<LiveTracepointList>(ToolNames.LiveAppListTracepoints, cancellationToken)).Tracepoints;
+
+	public async Task<IReadOnlyList<LiveTracepoint>> RemoveTracepointAsync(string id, CancellationToken cancellationToken)
+		=> (await SendAsync<LiveTracepointList>(
+			ToolNames.LiveAppRemoveTracepoint,
+			new Dictionary<string, object?> { ["id"] = id },
+			cancellationToken)).Tracepoints;
+
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);
 

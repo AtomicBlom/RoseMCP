@@ -48,6 +48,15 @@ public static class ToolNames
 	/// </summary>
 	public const string LiveAppDetach = "rose_live_app_detach";
 
+	/// <summary>Live-app-host-only. The broker forwards this to add a tracepoint.</summary>
+	public const string LiveAppAddTracepoint = "rose_live_app_add_tracepoint";
+
+	/// <summary>Live-app-host-only. The broker forwards this to list tracepoints.</summary>
+	public const string LiveAppListTracepoints = "rose_live_app_list_tracepoints";
+
+	/// <summary>Live-app-host-only. The broker forwards this to remove a tracepoint.</summary>
+	public const string LiveAppRemoveTracepoint = "rose_live_app_remove_tracepoint";
+
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 
@@ -59,4 +68,13 @@ public static class ToolNames
 
 	/// <summary>List the live-app debug sessions the broker is supervising.</summary>
 	public const string DebugList = "rose_debug_list";
+
+	/// <summary>Add a tracepoint: a breakpoint that logs and auto-continues without pausing.</summary>
+	public const string DebugAddTracepoint = "rose_debug_add_tracepoint";
+
+	/// <summary>List a session's tracepoints and whether each is bound.</summary>
+	public const string DebugListTracepoints = "rose_debug_list_tracepoints";
+
+	/// <summary>Remove a tracepoint by id.</summary>
+	public const string DebugRemoveTracepoint = "rose_debug_remove_tracepoint";
 }

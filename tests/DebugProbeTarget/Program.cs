@@ -11,8 +11,11 @@ internal static class Program
 	private static void Main()
 	{
 		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(120);
+		var iteration = 0;
 		while (DateTime.UtcNow < deadline)
 		{
+			Beat(iteration++);
+
 			try
 			{
 				throw new RoseDebugProbeException();
@@ -24,6 +27,17 @@ internal static class Program
 
 			Thread.Sleep(200);
 		}
+	}
+
+	/// <summary>
+	/// Called once per loop so an attached debugger can bind a tracepoint to it and see it hit. Not
+	/// inlined -- a tracepoint binds to a method, and an inlined method has no standalone entry.
+	/// </summary>
+	[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+	private static void Beat(int iteration)
+	{
+		// The parameter keeps the call from being optimised away and gives the JIT a real body.
+		_ = iteration;
 	}
 }
 

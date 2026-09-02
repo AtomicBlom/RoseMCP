@@ -80,6 +80,22 @@ public static class ServiceCollectionExtensions
 		resolving -- it is almost certainly loaded under the wrong MSBuild configuration rather than
 		actually broken. rose_workspace_status reports the one in use and the ones the solution
 		declares; rose_workspace_reload takes a different one.
+
+		Debugging a running .NET process is done with the rose_debug_* tools, which attach a debugger
+		without Visual Studio and without loading the solution a second time, so they cost far less
+		memory than an external debugger. Prefer them over adding Console.WriteLine and rebuilding,
+		which needs a source edit and a restart to observe anything.
+		- rose_debug_attach takes a running process by pid; rose_debug_launch starts one under the
+		  debugger so its earliest events are caught. Local, same-user processes only.
+		- rose_debug_events reads what has happened since a cursor -- exceptions with stack traces,
+		  Debugger.Log output, module loads, breakpoint hits -- so you read it between turns rather
+		  than waiting on the process.
+		- rose_debug_add_tracepoint logs a method's hits and keeps running: the low-friction default,
+		  since it never freezes the app. rose_debug_set_breakpoint instead holds the target and
+		  records its stack and the top frame's locals and arguments; rose_debug_continue or
+		  rose_debug_step (in/over/out) resumes it, and it auto-continues after a timeout so an
+		  unattended stop cannot wedge the app. Both take a cheap condition like count >= 100.
+		- rose_debug_detach ends a session and leaves the target running.
 		""";
 
 	public static IMcpServerBuilder AddRoseMcpBroker(

@@ -55,3 +55,12 @@ stopped thread, re-enters the callback via EvalComplete, can corrupt debuggee st
 started, so there is nothing to stash; it is left for an explicit decision. Everything that would
 build on it (interpolated tracepoint messages, expression conditions, object value rendering) is
 scoped around its absence for now.
+
+### D7 — Tool surface kept coherent, not renamed; #13 done as instructions + snippet
+The `rose_debug_*` surface reads coherently as shipped (attach / launch / events / detach / list, plus
+tracepoint and breakpoint verbs), so #13's cohesion pass did not rename anything. The high-leverage
+part of #13 was delivered: a debugging section in the server instructions (read before the model picks
+an approach) and a consuming-repo CLAUDE.md snippet in docs/debug/using-the-debug-tools.md. The one
+cosmetic wrinkle -- tracepoints use "add_" while breakpoints use "set_" -- is left as is; not worth a
+rename. RoseMCP's own CLAUDE.md registration section was left untouched to avoid conflicting with the
+main branch, which another session owns.

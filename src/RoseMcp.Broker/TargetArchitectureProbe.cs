@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 
@@ -59,6 +60,13 @@ public static class TargetArchitectureProbe
 	{
 		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return TargetArchitecture.Unknown;
 
+		// The most reliable signal is the target's own executable image. IsWow64Process2 is not a
+		// dependable discriminator for x64-on-ARM64: a genuinely-x64 process there can report
+		// processMachine=UNKNOWN, which would misread as the native (ARM64) architecture and pick the
+		// wrong host. Reading the image's PE machine says what it actually is.
+		var fromImage = ArchitectureFromImage(processId);
+		if (fromImage != TargetArchitecture.Unknown) return fromImage;
+
 		var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
 		if (handle == IntPtr.Zero) return TargetArchitecture.Unknown;
 
@@ -84,6 +92,21 @@ public static class TargetArchitectureProbe
 		finally
 		{
 			CloseHandle(handle);
+		}
+	}
+
+	/// <summary>The architecture of a running process, read from its main module's PE header.</summary>
+	private static TargetArchitecture ArchitectureFromImage(int processId)
+	{
+		try
+		{
+			using var process = Process.GetProcessById(processId);
+			var path = process.MainModule?.FileName;
+			return path is null ? TargetArchitecture.Unknown : ForExecutable(path);
+		}
+		catch (Exception)
+		{
+			return TargetArchitecture.Unknown;
 		}
 	}
 

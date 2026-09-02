@@ -64,3 +64,20 @@ an approach) and a consuming-repo CLAUDE.md snippet in docs/debug/using-the-debu
 cosmetic wrinkle -- tracepoints use "add_" while breakpoints use "set_" -- is left as is; not worth a
 rename. RoseMCP's own CLAUDE.md registration section was left untouched to avoid conflicting with the
 main branch, which another session owns.
+
+### D8 — Process architecture is read from the image, not IsWow64Process2
+Validating the compatibility shim (attach a matching-arch host) with a plain x64 target on this ARM64
+box exposed that `IsWow64Process2` reports a genuinely-x64 process as native-ARM64 (processMachine=
+UNKNOWN) for x64-on-ARM64 emulation -- so the broker picked an ARM64 host and it BadImageFormat'd
+loading x64 mscordbi. Fixed: `TargetArchitectureProbe.ForProcess` now reads the target's main-module
+PE machine first (the reliable signal), falling back to IsWow64Process2. With that, an ARM64 broker
+launches an x64 host that attaches to an x64 target end to end -- the exact classic-UWP case -- proven
+by an integration test (skipped where the x64 .NET runtime is absent).
+
+### D9 — #1 cross-arch is proven; the deploy-layout wiring is documented, not scripted
+The cross-arch host resolution works from the dev build (the launcher prefers a RID-matching build
+output) and is validated by the test above. The production layout the launcher also supports is a
+per-RID publish under `live-app/<rid>` beside the broker. Wiring that into tools/deploy.ps1 (a publish
+of RoseMcp.LiveApp for win-x64 and win-arm64 into that layout) is left to the user: the deploy script
+has machine side effects that cannot be verified here, and it may be owned by the main branch. This is
+the one remaining step for #1 in a deployed install.

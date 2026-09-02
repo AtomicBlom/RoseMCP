@@ -180,6 +180,60 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// The architecture shim (issue #1): a target running as a different architecture than the broker
+	/// is attached to by a host launched to match it. On this Windows-on-ARM box the target is x64 under
+	/// emulation while the broker is ARM64, which is the exact case classic UWP needs; on an x64 machine
+	/// it is a same-architecture x64 attach. Skips where the x64 .NET runtime is unavailable.
+	/// </summary>
+	[Fact]
+	public async Task Attaches_to_a_target_of_a_different_architecture()
+	{
+		EnsureX64HostBuilt();
+		var x64Target = EnsureX64ProbeTargetBuilt();
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProcess(x64Target);
+		try
+		{
+			await Task.Delay(1500, cancellationToken);
+			if (child.HasExited)
+			{
+				Assert.Skip($"The x64 probe target exited (code {child.ExitCode}); the x64 .NET runtime is not available here.");
+			}
+
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "x64 probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			var summary = session.Describe();
+			Assert.True(
+				summary.State == LiveAppSessionState.Ready,
+				$"expected Ready, got {summary.State}: {summary.Detail} (host arch {summary.Architecture}, host pid {summary.HostProcessId})");
+			Assert.Equal(TargetArchitecture.X64, summary.Architecture);
+
+			var marker = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(marker);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
 	[Fact]
 	public async Task Reports_a_missing_target_as_faulted()
@@ -396,9 +450,10 @@ public sealed class LiveAppSessionTests
 		return null;
 	}
 
-	private static Process StartProbeTarget()
+	private static Process StartProbeTarget() => StartProcess(ProbeTargetPath());
+
+	private static Process StartProcess(string path)
 	{
-		var path = ProbeTargetPath();
 		var start = new ProcessStartInfo(path)
 		{
 			UseShellExecute = false,
@@ -410,24 +465,64 @@ public sealed class LiveAppSessionTests
 
 	private static string ProbeTargetPath()
 	{
+		var exe = Path.Combine(RepositoryRoot(), "tests", "DebugProbeTarget", "bin", Configuration(), "net10.0", "DebugProbeTarget.exe");
+		if (!File.Exists(exe)) throw new FileNotFoundException("The debug probe target was not built.", exe);
+
+		return exe;
+	}
+
+	// The x64 host and target are built on demand for the architecture-shim test, since a normal build
+	// produces only the broker's own RID. On an x64 machine this is a same-arch build; on ARM it is the
+	// emulated-x64 case classic UWP needs.
+	private static void EnsureX64HostBuilt() => EnsureX64Build("src", "RoseMcp.LiveApp", "RoseMcp.LiveApp.exe");
+
+	private static string EnsureX64ProbeTargetBuilt() => EnsureX64Build("tests", "DebugProbeTarget", "DebugProbeTarget.exe");
+
+	private static string EnsureX64Build(string area, string project, string exeName)
+	{
+		var root = RepositoryRoot();
+		var configuration = Configuration();
+		var exe = Path.Combine(root, area, project, "bin", configuration, "net10.0", "win-x64", exeName);
+		if (File.Exists(exe)) return exe;
+
+		var csproj = Path.Combine(root, area, project, $"{project}.csproj");
+		RunDotnet($"build \"{csproj}\" -r win-x64 -c {configuration} --nologo");
+
+		if (!File.Exists(exe)) throw new FileNotFoundException($"The win-x64 build did not produce {exeName}.", exe);
+		return exe;
+	}
+
+	private static void RunDotnet(string arguments)
+	{
+		var start = new ProcessStartInfo("dotnet", arguments)
+		{
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+			UseShellExecute = false,
+		};
+
+		using var process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start.");
+		var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+		process.WaitForExit();
+
+		if (process.ExitCode != 0) throw new InvalidOperationException($"dotnet {arguments} failed:{Environment.NewLine}{output}");
+	}
+
+	private static string RepositoryRoot()
+	{
 		var directory = new DirectoryInfo(AppContext.BaseDirectory);
 		while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
 		{
 			directory = directory.Parent;
 		}
 
-		if (directory is null) throw new InvalidOperationException("Could not locate the repository root from the test binary.");
+		return directory?.FullName ?? throw new InvalidOperationException("Could not locate the repository root from the test binary.");
+	}
 
-		var configuration = AppContext.BaseDirectory.Contains(
-			$"{Path.DirectorySeparatorChar}Release{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
+	private static string Configuration()
+		=> AppContext.BaseDirectory.Contains($"{Path.DirectorySeparatorChar}Release{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
 			? "Release"
 			: "Debug";
-
-		var exe = Path.Combine(directory.FullName, "tests", "DebugProbeTarget", "bin", configuration, "net10.0", "DebugProbeTarget.exe");
-		if (!File.Exists(exe)) throw new FileNotFoundException("The debug probe target was not built.", exe);
-
-		return exe;
-	}
 
 	private static TargetArchitecture ExpectedArchitecture => RuntimeInformation.ProcessArchitecture switch
 	{

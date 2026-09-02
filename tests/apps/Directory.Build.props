@@ -1,0 +1,12 @@
+<Project>
+  <!--
+    Integration-test target apps live here. They are foreign project types with their own frameworks
+    and toolchains (classic UWP on uap10.0, MSBuild-only, today; WinUI 3, WPF, and modern UWP later),
+    so this shadows the repository-root Directory.Build.props and its central package management, which
+    assume net10.0 SDK-style projects. Each app declares the framework and packages it needs; the
+    repository conventions (warnings-as-errors, enforced code style) are not imposed on these targets.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

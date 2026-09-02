@@ -1,0 +1,9 @@
+<!--
+  Runtime directives for the .NET Native toolchain (used by Release / ARM64). The Debug|x64 build
+  this app is debugged in uses CoreCLR and does not need them, but the UWP targets expect the file.
+-->
+<Directives xmlns="http://schemas.microsoft.com/netfx/2013/01/metadata">
+  <Application>
+    <Assembly Name="*Application*" Dynamic="Required All" />
+  </Application>
+</Directives>

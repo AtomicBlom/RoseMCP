@@ -1,0 +1,6 @@
+<Project>
+  <!--
+    Empty on purpose: this shadows the repository-root central package management so the foreign test
+    apps under this folder manage their own package versions inline, as their project types expect.
+  -->
+</Project>

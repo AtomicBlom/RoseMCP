@@ -81,3 +81,18 @@ per-RID publish under `live-app/<rid>` beside the broker. Wiring that into tools
 of RoseMcp.LiveApp for win-x64 and win-arm64 into that layout) is left to the user: the deploy script
 has machine side effects that cannot be verified here, and it may be owned by the main branch. This is
 the one remaining step for #1 in a deployed install.
+
+### D10 — Repo-owned test apps under tests/apps, isolated from the repo build
+The XAML/UWP track needs a live target to test against; depending on a machine-specific external app
+is fragile, so the repo now carries its own. First is a minimal classic UWP app (`tests/apps/
+uwp-classic`, `Rose.ProbeApp.UwpClassic`) with named inspectable elements and a `Tick` method that
+throws a marker exception, mirroring the console probe. Structure anticipates siblings (WinUI, WPF,
+modern UWP) per stack, since each exposes its tree/diagnostics differently.
+
+These are foreign project types: `tests/apps/Directory.Build.props` and `Directory.Packages.props`
+shadow the repo-root ones so the apps are not forced into net10.0 / warnings-as-errors / central
+package management, and the classic UWP project is kept out of RoseMcp.slnx because it is an old-style
+MSBuild project that `dotnet build` cannot build. The tests build it on demand with full MSBuild and
+skip where that toolchain is absent, so the suite stays green without it. Verified end to end: it
+restores, builds Debug|x64 (CoreCLR, debuggable) with 0 warnings, registers as a loose package, and
+resolves to a real AUMID.

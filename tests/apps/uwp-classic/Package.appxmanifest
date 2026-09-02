@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  IgnorableNamespaces="uap mp">
+
+  <Identity Name="RoseMcp.ProbeApp.UwpClassic" Publisher="CN=RoseMcp" Version="1.0.0.0" />
+
+  <mp:PhoneIdentity PhoneProductId="6d3e9a1b-2c4f-4e7a-9b21-8f5c3d6a1e90" PhonePublisherId="00000000-0000-0000-0000-000000000000" />
+
+  <Properties>
+    <DisplayName>Rose UWP Probe</DisplayName>
+    <PublisherDisplayName>RoseMcp</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.18362.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="Rose.ProbeApp.UwpClassic.App">
+      <uap:VisualElements
+        DisplayName="Rose UWP Probe"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        Description="A minimal classic UWP app for RoseMCP live-app integration tests."
+        BackgroundColor="transparent">
+        <uap:DefaultTile />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+</Package>

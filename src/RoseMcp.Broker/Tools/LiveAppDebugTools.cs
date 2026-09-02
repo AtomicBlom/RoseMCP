@@ -133,10 +133,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		string? logMessage = null,
 		[Description("Optional: log only every Nth hit to thin a hot path; every hit is still counted.")]
 		int? logEveryNthHit = null,
+		[Description("Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, e.g. count >= 100. Only simple value compares; expressions need eval.")]
+		string? condition = null,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.AddTracepointAsync(location, logMessage, logEveryNthHit, cancellationToken);
+		return await session.AddTracepointAsync(location, logMessage, logEveryNthHit, condition, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -200,10 +202,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		string location,
 		[Description("Seconds a hit is held before the target auto-continues on its own; default 30.")]
 		int? autoContinueSeconds = null,
+		[Description("Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, e.g. id == 42. Only simple value compares; expressions need eval.")]
+		string? condition = null,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.SetBreakpointAsync(location, autoContinueSeconds, cancellationToken);
+		return await session.SetBreakpointAsync(location, autoContinueSeconds, condition, cancellationToken);
 	}
 
 	[McpServerTool(

@@ -112,11 +112,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// Adds a tracepoint: a breakpoint that logs and auto-continues, never pausing the target. It binds
 	/// immediately if its module is already loaded and otherwise when the module loads.
 	/// </summary>
-	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit)
+	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit, string? condition)
 	{
 		if (logEveryNthHit is < 1) throw new ArgumentException("logEveryNthHit must be at least 1.");
 
-		var binding = AddBinding(location, stopOnHit: false, logMessage, logEveryNthHit, autoContinueSeconds: null);
+		var binding = AddBinding(location, stopOnHit: false, logMessage, logEveryNthHit, autoContinueSeconds: null, condition);
 		lock (_gate)
 		{
 			return DescribeTracepoint(binding);
@@ -128,11 +128,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// auto-continues after <paramref name="autoContinueSeconds"/> (default 30) so an unattended stop
 	/// cannot wedge the app. Call <see cref="Continue"/> to resume sooner.
 	/// </summary>
-	public LiveBreakpoint AddBreakpoint(string location, int? autoContinueSeconds)
+	public LiveBreakpoint AddBreakpoint(string location, int? autoContinueSeconds, string? condition)
 	{
 		if (autoContinueSeconds is < 1) throw new ArgumentException("autoContinueSeconds must be at least 1.");
 
-		var binding = AddBinding(location, stopOnHit: true, logMessage: null, logEveryNthHit: null, autoContinueSeconds);
+		var binding = AddBinding(location, stopOnHit: true, logMessage: null, logEveryNthHit: null, autoContinueSeconds, condition);
 		lock (_gate)
 		{
 			return DescribeBreakpoint(binding);
@@ -232,9 +232,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	private BreakpointBinding AddBinding(string location, bool stopOnHit, string? logMessage, int? logEveryNthHit, int? autoContinueSeconds)
+	private BreakpointBinding AddBinding(string location, bool stopOnHit, string? logMessage, int? logEveryNthHit, int? autoContinueSeconds, string? condition)
 	{
 		var parsed = SymbolLocation.Parse(location);
+		var parsedCondition = BreakpointCondition.Parse(condition);
 
 		BreakpointBinding binding;
 		lock (_gate)
@@ -248,6 +249,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				LogMessage = logMessage,
 				LogEveryNthHit = logEveryNthHit,
 				AutoContinueSeconds = autoContinueSeconds,
+				ConditionText = string.IsNullOrWhiteSpace(condition) ? null : condition.Trim(),
+				Condition = parsedCondition,
 				Detail = "module not loaded yet",
 			};
 			_bindings.Add(binding);
@@ -540,6 +543,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			// With one binding bound, an unidentified hit is unambiguously it.
 			binding ??= _bindings.Count(entry => entry.Bound) == 1 ? _bindings.First(entry => entry.Bound) : null;
 			ordinal = binding is null ? 0 : ++binding.HitCount;
+		}
+
+		// A condition is a cheap read-and-compare on the stopped frame; if it fails, act as if unhit.
+		if (binding?.Condition is { } condition && !condition.Evaluate(ReadTopFrameVariables(hit.Thread)))
+		{
+			return true;
 		}
 
 		if (binding is { StopOnHit: true })
@@ -876,6 +885,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		HitCount = binding.HitCount,
 		LogMessage = binding.LogMessage,
 		LogEveryNthHit = binding.LogEveryNthHit,
+		Condition = binding.ConditionText,
 		Detail = binding.Bound ? null : binding.Detail,
 	};
 
@@ -887,6 +897,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		Bound = binding.Bound,
 		HitCount = binding.HitCount,
 		AutoContinueSeconds = binding.AutoContinueSeconds ?? DefaultAutoContinueSeconds,
+		Condition = binding.ConditionText,
 		Detail = binding.Bound ? null : binding.Detail,
 	};
 
@@ -945,6 +956,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		public int? LogEveryNthHit { get; init; }
 
 		public int? AutoContinueSeconds { get; init; }
+
+		/// <summary>The condition as the caller wrote it, for reporting; null when there is none.</summary>
+		public string? ConditionText { get; init; }
+
+		/// <summary>The parsed condition evaluated on each hit; null when there is none.</summary>
+		public BreakpointCondition? Condition { get; init; }
 
 		public long HitCount { get; set; }
 

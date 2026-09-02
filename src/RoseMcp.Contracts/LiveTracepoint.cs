@@ -26,6 +26,9 @@ public sealed record LiveTracepoint
 	/// <summary>When set, only every Nth hit is logged; every hit is still counted.</summary>
 	public int? LogEveryNthHit { get; init; }
 
+	/// <summary>A cheap value-compare condition (<c>name OP literal</c>) that gates each hit, if any.</summary>
+	public string? Condition { get; init; }
+
 	/// <summary>Why it is not bound yet, when it is not (module not loaded, method not found).</summary>
 	public string? Detail { get; init; }
 }

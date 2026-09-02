@@ -165,10 +165,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["after"] = after },
 			cancellationToken);
 
-	public Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, CancellationToken cancellationToken)
+	public Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, string? condition, CancellationToken cancellationToken)
 		=> SendAsync<LiveTracepoint>(
 			ToolNames.LiveAppAddTracepoint,
-			new Dictionary<string, object?> { ["location"] = location, ["logMessage"] = logMessage, ["logEveryNthHit"] = logEveryNthHit },
+			new Dictionary<string, object?> { ["location"] = location, ["logMessage"] = logMessage, ["logEveryNthHit"] = logEveryNthHit, ["condition"] = condition },
 			cancellationToken);
 
 	public async Task<IReadOnlyList<LiveTracepoint>> ListTracepointsAsync(CancellationToken cancellationToken)
@@ -180,10 +180,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["id"] = id },
 			cancellationToken)).Tracepoints;
 
-	public Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, CancellationToken cancellationToken)
+	public Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
 		=> SendAsync<LiveBreakpoint>(
 			ToolNames.LiveAppSetBreakpoint,
-			new Dictionary<string, object?> { ["location"] = location, ["autoContinueSeconds"] = autoContinueSeconds },
+			new Dictionary<string, object?> { ["location"] = location, ["autoContinueSeconds"] = autoContinueSeconds, ["condition"] = condition },
 			cancellationToken);
 
 	public async Task<IReadOnlyList<LiveBreakpoint>> ListBreakpointsAsync(CancellationToken cancellationToken)

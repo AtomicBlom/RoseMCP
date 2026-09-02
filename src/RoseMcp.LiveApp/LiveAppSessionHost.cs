@@ -49,8 +49,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>Adds a tracepoint to the attached target.</summary>
-	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit)
-		=> RequireSession().AddTracepoint(location, logMessage, logEveryNthHit);
+	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit, string? condition)
+		=> RequireSession().AddTracepoint(location, logMessage, logEveryNthHit, condition);
 
 	public LiveTracepointList ListTracepoints()
 	{
@@ -76,8 +76,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>Sets a stopping breakpoint on the attached target.</summary>
-	public LiveBreakpoint SetBreakpoint(string location, int? autoContinueSeconds)
-		=> RequireSession().AddBreakpoint(location, autoContinueSeconds);
+	public LiveBreakpoint SetBreakpoint(string location, int? autoContinueSeconds, string? condition)
+		=> RequireSession().AddBreakpoint(location, autoContinueSeconds, condition);
 
 	public LiveBreakpointList ListBreakpoints()
 	{

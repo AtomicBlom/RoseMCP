@@ -39,3 +39,19 @@ it is per-breakpoint configurable. Revisit the default once there is real usage.
 Reading the top frame's variables happens in the stop callback (target definitely frozen) and rides
 the stop event. This avoids a race against the auto-continue window and suits a turn-based reader.
 An on-demand "inspect an arbitrary frame while stopped" tool can be added later if wanted.
+
+### D5 — Conditional breakpoints use a cheap value-compare, not expression eval
+A condition is `name OP literal` (OP one of == != < <= > >=), evaluated on each hit against the top
+frame's already-readable arguments and locals: numeric when both sides parse as numbers, boolean for
+true/false, else string equality. This is the plan's "cheap read-and-compare" for simple cases and
+needs no func-eval. Full expression conditions (method calls, property chains, `this.X`) wait for
+eval (D6). A condition whose variable is not in the top frame simply does not fire.
+
+### D6 — Full expression evaluation (ICorDebugEval) is PARKED, needs a decision
+`ICorDebugEval` (arbitrary expressions, calling an object's ToString, property chains) is the plan's
+own open question — "how much of the debugger to build before it earns its place vs. leaning on an
+external debugger for heavy inspection." It is also the riskiest ICorDebug surface (must run on the
+stopped thread, re-enters the callback via EvalComplete, can corrupt debuggee state). It is not
+started, so there is nothing to stash; it is left for an explicit decision. Everything that would
+build on it (interpolated tracepoint messages, expression conditions, object value rendering) is
+scoped around its absence for now.

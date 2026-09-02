@@ -25,6 +25,9 @@ public sealed record LiveBreakpoint
 	/// <summary>Seconds a hit is held before the target auto-continues if nothing resumes it sooner.</summary>
 	public required int AutoContinueSeconds { get; init; }
 
+	/// <summary>A cheap value-compare condition (<c>name OP literal</c>) that gates each hit, if any.</summary>
+	public string? Condition { get; init; }
+
 	/// <summary>Why it is not bound yet, when it is not (module not loaded, method not found).</summary>
 	public string? Detail { get; init; }
 }

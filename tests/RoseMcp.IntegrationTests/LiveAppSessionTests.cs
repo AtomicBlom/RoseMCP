@@ -101,7 +101,7 @@ public sealed class LiveAppSessionTests
 			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
 
 			var tracepoint = await session.AddTracepointAsync(
-				"DebugProbeTarget.Program.Beat", "beat", logEveryNthHit: null, cancellationToken);
+				"DebugProbeTarget.Program.Beat", "beat", logEveryNthHit: null, condition: null, cancellationToken);
 			Assert.True(tracepoint.Bound, $"tracepoint should bind against the loaded module; detail: {tracepoint.Detail}");
 
 			var hit = await WaitForEventAsync(
@@ -167,7 +167,7 @@ public sealed class LiveAppSessionTests
 			var session = await manager.StartAsync(target, cancellationToken);
 			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
 
-			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, cancellationToken);
+			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: null, cancellationToken);
 			Assert.True(breakpoint.Bound, $"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
 
 			// The hit holds the target and records the stop with a stack that names the method.
@@ -211,6 +211,57 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// A conditional breakpoint (issue #17): a cheap value-compare gates each hit, so the target is only
+	/// held once the condition holds. The probe increments its argument each loop, so a condition on a
+	/// value well beyond the count reached by attach time proves the earlier hits were skipped.
+	/// </summary>
+	[Fact]
+	public async Task Conditional_breakpoint_stops_only_when_the_condition_holds()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "probe target",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// The probe reaches iteration 30 well after attach, so hits before it are gated out.
+			var breakpoint = await session.SetBreakpointAsync(
+				"DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: "iteration == 30", cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+			Assert.Equal("iteration == 30", breakpoint.Condition);
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(stop);
+
+			// It stopped at exactly the conditioned value, having skipped every earlier hit.
+			var iteration = stop!.Variables!.First(variable => variable.Name == "iteration");
+			Assert.Equal("30", iteration.Value);
+
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			await session.ContinueAsync(cancellationToken);
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// Stepping (issue #6): once held at a breakpoint, a step resumes the target briefly and holds it
 	/// again at the next location, which arrives as a StepComplete event with a fresh stack.
 	/// </summary>
@@ -233,7 +284,7 @@ public sealed class LiveAppSessionTests
 			var session = await manager.StartAsync(target, cancellationToken);
 			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
 
-			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, cancellationToken);
+			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: null, cancellationToken);
 			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
 
 			var stop = await WaitForEventAsync(

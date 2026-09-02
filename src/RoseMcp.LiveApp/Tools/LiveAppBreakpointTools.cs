@@ -21,8 +21,9 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 	[Description("Set a stopping breakpoint at a method by name; it holds the target on hit until continued.")]
 	public LiveBreakpoint Set(
 		[Description("[Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.")] string location,
-		[Description("Seconds to hold before auto-continuing; default 30.")] int? autoContinueSeconds = null)
-		=> host.SetBreakpoint(location, autoContinueSeconds);
+		[Description("Seconds to hold before auto-continuing; default 30.")] int? autoContinueSeconds = null,
+		[Description("Optional condition (name OP literal) gating each hit.")] string? condition = null)
+		=> host.SetBreakpoint(location, autoContinueSeconds, condition);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppListBreakpoints,

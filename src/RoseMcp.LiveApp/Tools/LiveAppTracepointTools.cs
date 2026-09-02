@@ -22,8 +22,9 @@ public sealed class LiveAppTracepointTools(LiveAppSessionHost host)
 	public LiveTracepoint Add(
 		[Description("[Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.")] string location,
 		[Description("Optional message logged on each hit.")] string? logMessage = null,
-		[Description("Optional: log only every Nth hit; all hits are still counted.")] int? logEveryNthHit = null)
-		=> host.AddTracepoint(location, logMessage, logEveryNthHit);
+		[Description("Optional: log only every Nth hit; all hits are still counted.")] int? logEveryNthHit = null,
+		[Description("Optional condition (name OP literal) gating each hit.")] string? condition = null)
+		=> host.AddTracepoint(location, logMessage, logEveryNthHit, condition);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppListTracepoints,

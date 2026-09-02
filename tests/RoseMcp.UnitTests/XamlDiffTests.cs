@@ -1,0 +1,118 @@
+using RoseMcp.XamlDiff;
+
+namespace RoseMcp.UnitTests;
+
+/// <summary>
+/// The XAML diff engine is pure -- two markup strings in, a minimal edit list out -- so it is a unit
+/// test. These lock in what the live-apply side will consume: property changes on named and unnamed
+/// elements, attached properties, clears, and structural add/remove.
+/// </summary>
+public sealed class XamlDiffTests
+{
+	private const string Ns =
+		"xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" "
+			+ "xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"";
+
+	[Fact]
+	public void A_changed_property_on_a_named_element_is_one_set_addressed_by_name()
+	{
+		var edits = Compute(
+			$"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF000000\" /></Grid>",
+			$"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF0000FF\" /></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.SetProperty, edit.Kind);
+		Assert.Equal("#pane", edit.Target);
+		Assert.Equal("Background", edit.Property);
+		Assert.Equal("#FF0000FF", edit.Value);
+		Assert.Equal("Windows.UI.Xaml.Media.SolidColorBrush", edit.ValueType);
+	}
+
+	[Fact]
+	public void An_unchanged_tree_produces_no_edits()
+	{
+		var xaml = $"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF000000\" Opacity=\"1\" /></Grid>";
+		Assert.Empty(Compute(xaml, xaml));
+	}
+
+	[Fact]
+	public void A_changed_property_on_an_unnamed_element_is_addressed_by_path()
+	{
+		var edits = Compute(
+			$"<Grid {Ns}><Border Width=\"10\" /></Grid>",
+			$"<Grid {Ns}><Border Width=\"20\" /></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.SetProperty, edit.Kind);
+		Assert.Equal("Grid[0]/Border[0]", edit.Target);
+		Assert.Equal("Width", edit.Property);
+		Assert.Equal("20", edit.Value);
+		Assert.Equal("Windows.Foundation.Double", edit.ValueType);
+	}
+
+	[Fact]
+	public void An_unnamed_element_under_a_named_ancestor_is_anchored_at_the_name()
+	{
+		var edits = Compute(
+			$"<Grid {Ns}><StackPanel x:Name=\"panel\"><Border Opacity=\"1\" /></StackPanel></Grid>",
+			$"<Grid {Ns}><StackPanel x:Name=\"panel\"><Border Opacity=\"0.5\" /></StackPanel></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal("#panel/Border[0]", edit.Target);
+	}
+
+	[Fact]
+	public void A_removed_attribute_is_a_clear()
+	{
+		var edits = Compute(
+			$"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF000000\" /></Grid>",
+			$"<Grid {Ns}><Border x:Name=\"pane\" /></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.ClearProperty, edit.Kind);
+		Assert.Equal("#pane", edit.Target);
+		Assert.Equal("Background", edit.Property);
+	}
+
+	[Fact]
+	public void An_attached_property_change_is_a_set_keeping_its_dotted_name()
+	{
+		var edits = Compute(
+			$"<Grid {Ns}><Border x:Name=\"pane\" Grid.Row=\"0\" /></Grid>",
+			$"<Grid {Ns}><Border x:Name=\"pane\" Grid.Row=\"2\" /></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.SetProperty, edit.Kind);
+		Assert.Equal("Grid.Row", edit.Property);
+		Assert.Equal("2", edit.Value);
+	}
+
+	[Fact]
+	public void An_added_child_is_a_structural_edit_carrying_its_markup()
+	{
+		var edits = Compute(
+			$"<StackPanel {Ns}><Border x:Name=\"a\" /></StackPanel>",
+			$"<StackPanel {Ns}><Border x:Name=\"a\" /><Button x:Name=\"b\" Content=\"Go\" /></StackPanel>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.AddChild, edit.Kind);
+		Assert.Equal(1, edit.Index);
+		Assert.Contains("Button", edit.Payload);
+		Assert.Contains("Go", edit.Payload);
+	}
+
+	[Fact]
+	public void A_removed_child_is_a_structural_edit()
+	{
+		var edits = Compute(
+			$"<StackPanel {Ns}><Border x:Name=\"a\" /><Button x:Name=\"b\" /></StackPanel>",
+			$"<StackPanel {Ns}><Border x:Name=\"a\" /></StackPanel>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.RemoveChild, edit.Kind);
+		Assert.Equal("#b", edit.Target);
+	}
+
+	private static IReadOnlyList<XamlEdit> Compute(string oldXaml, string newXaml)
+		=> XamlDiff.XamlDiff.Compute(oldXaml, newXaml).Edits;
+}

@@ -17,6 +17,7 @@
     <ProjectReference Include="..\..\src\RoseMcp.Broker\RoseMcp.Broker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlStubs\RoseMcp.XamlStubs.csproj" />
+    <ProjectReference Include="..\..\src\RoseMcp.XamlDiff\RoseMcp.XamlDiff.csproj" />
     <ProjectReference Include="..\RoseMcp.TestSupport\RoseMcp.TestSupport.csproj" />
   </ItemGroup>
 

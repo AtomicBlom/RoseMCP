@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- A pure, dependency-free XAML diff library: parse two markup versions, emit the minimal edits
+         between them. The live-apply side (an injected provider) consumes these edits; this half needs
+         no running app, so it stands and tests on its own. -->
+  </PropertyGroup>
+
+</Project>

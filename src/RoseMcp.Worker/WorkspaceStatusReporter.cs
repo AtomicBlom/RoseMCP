@@ -27,13 +27,8 @@ public static class WorkspaceStatusReporter
 		IWorkProgress? progress = null,
 		BuildProperties? build = null)
 	{
-		var failureMessages = workspaceDiagnostics
-			.Where(diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
-			.Select(diagnostic => diagnostic.Message)
-			.ToArray();
-
 		var (projects, xamlReasons) = await DescribeProjectsAsync(
-			solution, failureMessages, cancellationToken, progress);
+			solution, cancellationToken, progress);
 
 		var degradedReasons = (IReadOnlyList<string>)
 			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore), .. xamlReasons];
@@ -56,7 +51,6 @@ public static class WorkspaceStatusReporter
 
 	private static async Task<(IReadOnlyList<ProjectStatus> Statuses, IReadOnlyList<string> XamlReasons)> DescribeProjectsAsync(
 		Solution solution,
-		IReadOnlyList<string> failureMessages,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress)
 	{
@@ -95,7 +89,7 @@ public static class WorkspaceStatusReporter
 				Name = project.Name,
 				FilePath = project.FilePath ?? string.Empty,
 				TargetFramework = ReadTargetFramework(project),
-				LoadedSuccessfully = LoadedSuccessfully(project, failureMessages),
+				LoadedSuccessfully = LoadedSuccessfully(project),
 				DocumentCount = project.DocumentIds.Count,
 				AdditionalDocumentCount = project.AdditionalDocumentIds.Count,
 				AnalyzerReferenceCount = project.AnalyzerReferences.Count,
@@ -159,24 +153,52 @@ public static class WorkspaceStatusReporter
 	}
 
 	/// <summary>
-	/// Whether this project's design-time build worked. Roslyn keeps the real answer to itself --
-	/// Project.HasSuccessfullyLoadedAsync is internal -- so infer it from what is public. MSBuild
-	/// names the offending file in its failure diagnostics, and a project whose build fell over
-	/// resolves no metadata references at all, not even the framework.
+	/// Whether this project's semantic results can be trusted. Roslyn keeps the real answer to itself
+	/// -- Project.HasSuccessfullyLoadedAsync is internal -- so it is inferred from what is public: a
+	/// project whose design-time build fell over resolves no metadata references at all, not even the
+	/// framework.
+	/// <para>
+	/// Asked of the compilation, and deliberately not of what MSBuild said about it. MSBuild raises a
+	/// <see cref="WorkspaceDiagnosticKind.Failure"/> when NuGet's vulnerability audit cannot reach its
+	/// feed, which names every project it could not audit while saying nothing about whether any of
+	/// them compiled -- on a machine without that feed, it names all of them. Blaming a project for
+	/// appearing in one marked 27 of the 37 projects in Shared.slnx as failed when every one of them
+	/// had resolved its references and loaded its documents.
+	/// </para>
+	/// <para>
+	/// A project that resolved no references resolved nothing, and that is the condition worth
+	/// reporting. The complaints themselves are not lost: they are in <c>loadDiagnostics</c>.
+	/// </para>
 	/// </summary>
-	private static bool LoadedSuccessfully(Project project, IReadOnlyList<string> failureMessages)
-	{
-		var blamed = project.FilePath is { Length: > 0 } path
-			&& failureMessages.Any(message => message.Contains(path, StringComparison.OrdinalIgnoreCase));
+	private static bool LoadedSuccessfully(Project project) => project.MetadataReferences.Count > 0;
 
-		if (blamed) return false;
-
-		return project.MetadataReferences.Count > 0;
-	}
-
+	/// <summary>
+	/// The framework a project was actually loaded for.
+	/// <para>
+	/// Asked of the build first, and only then of the project name. The name carries a TFM solely
+	/// when a project multi-targets -- Roslyn disambiguates <c>Core (net10.0)</c> from
+	/// <c>Core (net481)</c> -- so reading the name alone reported null for every single-targeted
+	/// project in every solution, which is most of them.
+	/// </para>
+	/// <para>
+	/// Null is meant to mean something here. A project with no framework is the signature of a
+	/// solution loaded under a configuration it does not declare, which is the failure that yields
+	/// thousands of diagnostics about System.Object being undefined. A null that only ever meant
+	/// "did not multi-target" was a permanent false alarm sitting on exactly the signal worth
+	/// trusting.
+	/// </para>
+	/// </summary>
 	private static string? ReadTargetFramework(Project project)
 	{
-		// Roslyn appends the TFM to the project name when a project multi-targets: Core (net10.0).
+		var declared = project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GlobalOptions;
+		if (declared.TryGetValue("build_property.TargetFramework", out var framework)
+			&& !string.IsNullOrWhiteSpace(framework))
+		{
+			return framework;
+		}
+
+		// Older project formats put nothing in the analyzer config. A multi-targeted one still says
+		// so in its name, and a single-targeted one genuinely has nothing left to ask.
 		var open = project.Name.LastIndexOf('(');
 		var close = project.Name.LastIndexOf(')');
 		if (open < 0 || close < open) return null;
@@ -240,8 +262,13 @@ public static class WorkspaceStatusReporter
 			}
 		}
 
+		// Counted, but only degrading when something actually came back impaired. MSBuild's Failure
+		// kind covers complaints that have no bearing on whether a project compiled, and a status
+		// that reads Degraded on every solution on the machine tells a caller nothing it can act on.
 		var failures = workspaceDiagnostics.Count(diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure);
-		if (failures > 0)
+		var anyImpaired = projects.Any(project => !project.LoadedSuccessfully);
+
+		if (failures > 0 && anyImpaired)
 			reasons.Add($"MSBuild reported {failures} load failure(s); see loadDiagnostics.");
 
 		return reasons;

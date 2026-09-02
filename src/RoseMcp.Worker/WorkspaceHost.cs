@@ -53,10 +53,10 @@ public sealed class WorkspaceHost(
 			var report = await WorkspaceStatusReporter.DescribeAsync(
 				snapshot.Solution,
 				options.SolutionPath,
-				[],
-				restore: null,
+				session.Load.Diagnostics,
+				session.Load.Restore,
 				snapshot.Revision,
-				loadSeconds: 0,
+				session.Load.Seconds,
 				cancellationToken,
 				progress,
 

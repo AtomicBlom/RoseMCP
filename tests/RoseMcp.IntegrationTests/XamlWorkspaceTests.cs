@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 using RoseMcp.Worker.Xaml;
 
 namespace RoseMcp.IntegrationTests;
@@ -171,20 +172,6 @@ public sealed class XamlWorkspaceTests
 		// Stubbing successfully is not a reason to call the workspace degraded.
 		Assert.Empty(status.DegradedReasons);
 		Assert.Equal(WorkspaceState.Loaded, status.State);
-	}
-
-	/// <summary>The host stops the process when a solution vanishes; a test has nothing to stop.</summary>
-	private sealed class NeverStops : Microsoft.Extensions.Hosting.IHostApplicationLifetime
-	{
-		public CancellationToken ApplicationStarted => CancellationToken.None;
-
-		public CancellationToken ApplicationStopping => CancellationToken.None;
-
-		public CancellationToken ApplicationStopped => CancellationToken.None;
-
-		public void StopApplication()
-		{
-		}
 	}
 
 	/// <summary>

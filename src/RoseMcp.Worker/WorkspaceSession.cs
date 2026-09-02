@@ -57,6 +57,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		_workspace = load.Workspace;
 		_current = load.Solution;
 		Build = load.Build;
+		Load = LoadOutcome.From(load);
 		_loader = loader;
 		_options = options;
 		_logger = logger;
@@ -80,6 +81,12 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 	/// <summary>The MSBuild properties the current solution was loaded under.</summary>
 	public BuildProperties Build { get; private set; }
+
+	/// <summary>
+	/// What the load that produced the current solution cost and how it went. Replaced on reload, so
+	/// status describes the load it is actually looking at rather than the first one of the process.
+	/// </summary>
+	public LoadOutcome Load { get; private set; }
 
 	public static WorkspaceSession Create(
 		LoadResult load,
@@ -279,6 +286,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		_workspace = load.Workspace;
 		_current = load.Solution;
 		Build = load.Build;
+		Load = LoadOutcome.From(load);
 		_synchronizer.Reset(_current, _options.SolutionPath);
 		Interlocked.Increment(ref _revision);
 

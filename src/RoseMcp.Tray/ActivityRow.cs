@@ -1,29 +1,35 @@
-using Microsoft.UI.Xaml;
-
 using RoseMcp.Contracts;
 
 namespace RoseMcp.Tray;
 
 /// <summary>
-/// One operation as the window shows it: what was asked for, how long it has been going, and how
-/// far it has got. Formatting lives here rather than in XAML converters so it can be read without
-/// standing up a UI.
+/// One operation as the window shows it: what was asked for, how long it has been going, how far
+/// it has got, and -- once it is over -- how it ended. Formatting lives here rather than in XAML
+/// converters so it can be read without standing up a UI.
 /// </summary>
 public sealed class ActivityRow : Observable
 {
 	/// <summary>An error long enough to reflow the window is not worth showing in full.</summary>
-	private const int ErrorLimit = 120;
+	private const int ErrorLimit = 240;
 
 	private string _status = string.Empty;
 	private string _elapsed = string.Empty;
 	private double _percent;
 	private bool _isIndeterminate;
-	private Visibility _barVisibility = Visibility.Collapsed;
+	private bool _isRunning;
+	private bool _succeeded;
+	private bool _failed;
+	private bool _cancelled;
+	private string _error = string.Empty;
+	private bool _hasError;
 
 	public ActivityRow(WorkerActivity activity)
 	{
 		Id = activity.Id;
-		Title = Describe(activity);
+		Operation = activity.Operation;
+		Label = Format.Humanise(activity.Operation);
+		Target = activity.Target ?? string.Empty;
+		HasTarget = Target.Length > 0;
 
 		Update(activity);
 	}
@@ -31,9 +37,18 @@ public sealed class ActivityRow : Observable
 	/// <summary>The broker's id for the operation. Rows are matched on it, so they survive a refresh.</summary>
 	public long Id { get; }
 
-	/// <summary>Fixed for the life of the row: what was asked for does not change mid-call.</summary>
-	public string Title { get; }
+	/// <summary>The tool name exactly as the client sent it, for the tooltip.</summary>
+	public string Operation { get; }
 
+	/// <summary>Fixed for the life of the row: what was asked for does not change mid-call.</summary>
+	public string Label { get; }
+
+	/// <summary>What the operation is aimed at. Empty for the whole solution.</summary>
+	public string Target { get; }
+
+	public bool HasTarget { get; }
+
+	/// <summary>The worker's last word on what it is doing, while it is doing it.</summary>
 	public string Status
 	{
 		get => _status;
@@ -62,47 +77,65 @@ public sealed class ActivityRow : Observable
 		private set => Set(ref _isIndeterminate, value);
 	}
 
-	/// <summary>Hidden once the operation is over, since a full bar says nothing a time does not.</summary>
-	public Visibility BarVisibility
+	public bool IsRunning
 	{
-		get => _barVisibility;
-		private set => Set(ref _barVisibility, value);
+		get => _isRunning;
+		private set => Set(ref _isRunning, value);
+	}
+
+	public bool Succeeded
+	{
+		get => _succeeded;
+		private set => Set(ref _succeeded, value);
+	}
+
+	public bool Failed
+	{
+		get => _failed;
+		private set => Set(ref _failed, value);
+	}
+
+	public bool Cancelled
+	{
+		get => _cancelled;
+		private set => Set(ref _cancelled, value);
+	}
+
+	/// <summary>Why it failed, which is the whole reason failures are kept around at all.</summary>
+	public string Error
+	{
+		get => _error;
+		private set => Set(ref _error, value);
+	}
+
+	public bool HasError
+	{
+		get => _hasError;
+		private set => Set(ref _hasError, value);
 	}
 
 	public void Update(WorkerActivity activity)
 	{
-		var running = activity.Outcome == ActivityOutcome.Running;
+		IsRunning = activity.Outcome == ActivityOutcome.Running;
+		Succeeded = activity.Outcome == ActivityOutcome.Succeeded;
+		Failed = activity.Outcome == ActivityOutcome.Failed;
+		Cancelled = activity.Outcome == ActivityOutcome.Cancelled;
 
 		Status = Summarise(activity);
-		Elapsed = FormatDuration(activity.Elapsed);
+		Elapsed = Format.Duration(activity.Elapsed);
 		Percent = activity.PercentComplete ?? 0;
-		IsIndeterminate = running && activity.PercentComplete is null;
-		BarVisibility = running ? Visibility.Visible : Visibility.Collapsed;
+		IsIndeterminate = IsRunning && activity.PercentComplete is null;
+		Error = Failed ? Shorten(activity.Error ?? "no reason given") : string.Empty;
+		HasError = Error.Length > 0;
 	}
 
-	public static string Describe(WorkerActivity activity) =>
-		activity.Target is { Length: > 0 } target ? $"{activity.Operation} - {target}" : activity.Operation;
-
-	/// <summary>
-	/// What the operation has to say for itself. While it runs that is the worker's own last word;
-	/// afterwards, whether it worked -- and if not, why not, which is the whole reason failures are
-	/// kept around at all.
-	/// </summary>
 	public static string Summarise(WorkerActivity activity) => activity.Outcome switch
 	{
 		ActivityOutcome.Running => activity.Message is { Length: > 0 } message ? message : "working",
 		ActivityOutcome.Succeeded => "done",
 		ActivityOutcome.Cancelled => "cancelled",
-		_ => $"failed: {Shorten(activity.Error ?? "no reason given")}",
+		_ => "failed",
 	};
-
-	/// <summary>
-	/// Sub-second precision below a minute, because the interesting comparison for a warm call is
-	/// against the tens of milliseconds it should have taken.
-	/// </summary>
-	public static string FormatDuration(TimeSpan elapsed) => elapsed.TotalMinutes >= 1
-		? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:00}s"
-		: $"{elapsed.TotalSeconds:0.0}s";
 
 	private static string Shorten(string error)
 	{

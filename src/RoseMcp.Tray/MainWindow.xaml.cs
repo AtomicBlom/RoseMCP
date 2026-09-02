@@ -1,15 +1,26 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows.Input;
+
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Imaging;
+
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
+using RoseMcp.Logging;
+
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Graphics;
 
 namespace RoseMcp.Tray;
 
-/// <summary>Lists what is loaded, what it is doing, and what it costs.</summary>
+/// <summary>Shows what is loaded, what state it is in, what it is doing, and what it costs.</summary>
 public sealed partial class MainWindow : Window
 {
 	/// <summary>
@@ -24,6 +35,19 @@ public sealed partial class MainWindow : Window
 	/// </summary>
 	private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(2);
 
+	/// <summary>Long enough to be seen; short enough that the button is itself again before the next click.</summary>
+	private static readonly TimeSpan CopiedFor = TimeSpan.FromSeconds(1.5);
+
+	private const string CopyGlyph = "\uE8C8";
+	private const string CopiedGlyph = "\uE73E";
+
+	// Logical pixels, scaled to the monitor before use. Room for two or three cards with an
+	// operation running in each; the minimum keeps the header's two halves from colliding.
+	private const int InitialWidth = 780;
+	private const int InitialHeight = 620;
+	private const int MinimumWidth = 560;
+	private const int MinimumHeight = 400;
+
 	/// <summary>
 	/// Rows live here and are updated in place, so the list is only ever added to or removed from.
 	/// Rebuilding it each refresh would restart every progress bar and close any open expander.
@@ -32,15 +56,24 @@ public sealed partial class MainWindow : Window
 
 	private readonly DispatcherQueueTimer _timer;
 	private readonly App _app = (App)Application.Current;
+	private readonly string _endpoint;
+	private bool _exiting;
 
 	public MainWindow()
 	{
 		InitializeComponent();
 
-		Endpoint.Text = $"http://{_app.Options.Host}:{_app.Options.Port}";
-		WorkspaceList.ItemsSource = _rows;
+		_endpoint = $"http://{_app.Options.Host}:{_app.Options.Port}";
+		EndpointText.Text = _endpoint;
+		RegistrationText.Text = RegistrationCommand(_endpoint);
+		Workspaces.ItemsSource = _rows;
 
+		ExtendsContentIntoTitleBar = true;
+		SetTitleBar(TitleBarArea);
 		ApplyIcon();
+		ApplySize();
+
+		AppWindow.Closing += OnClosing;
 
 		ShowCommand = new ShowWindowCommand(this);
 
@@ -55,35 +88,66 @@ public sealed partial class MainWindow : Window
 	/// <summary>Bound to the tray icon's left click, which is the usual way back to the window.</summary>
 	public ICommand ShowCommand { get; }
 
+	private WorkspaceManager Manager => _app.Services.GetRequiredService<WorkspaceManager>();
+
 	/// <summary>
-	/// Puts the same icon on the tray and the window.
+	/// Puts the same icon on the tray, the window and the header.
 	/// <para>
 	/// Loaded from a real .ico rather than generated from text. The generated version depended on
 	/// a font-size-to-canvas ratio that could not be checked without looking at the taskbar, and it
 	/// went from a four-pixel smudge to nothing at all across one change. A file has pixels that can
-	/// be verified before shipping.
+	/// be verified before shipping. The marks inside the window come from a PNG of the same art,
+	/// because an image decoder handed a multi-frame .ico picks its own frame.
 	/// </para>
 	/// </summary>
 	private void ApplyIcon()
 	{
-		var path = Path.Combine(AppContext.BaseDirectory, "Assets", "rose-mcp.ico");
-		if (!File.Exists(path)) return;
+		var assets = Path.Combine(AppContext.BaseDirectory, "Assets");
+		var icon = Path.Combine(assets, "rose-mcp.ico");
+		var mark = Path.Combine(assets, "rose-mcp.png");
 
 		try
 		{
-			// 32 rather than 16: the file has a purpose-drawn frame at each size, and asking for the
-			// larger one means Windows only ever scales down, which is far kinder than scaling up on a
-			// high-DPI taskbar.
-			Tray.Icon = new System.Drawing.Icon(path, 32, 32);
-			AppWindow.SetIcon(path);
+			if (File.Exists(icon))
+			{
+				// 32 rather than 16: the file has a purpose-drawn frame at each size, and asking for
+				// the larger one means Windows only ever scales down, which is far kinder than scaling
+				// up on a high-DPI taskbar.
+				Tray.Icon = new System.Drawing.Icon(icon, 32, 32);
+				AppWindow.SetIcon(icon);
+			}
+
+			if (File.Exists(mark))
+			{
+				var image = new BitmapImage(new Uri(mark));
+				TitleMark.Source = image;
+				EmptyMark.Source = image;
+			}
 		}
 		catch (Exception exception) when (exception is IOException or ArgumentException)
 		{
-			System.Diagnostics.Debug.WriteLine($"Could not apply the icon: {exception.Message}");
+			Debug.WriteLine($"Could not apply the icon: {exception.Message}");
 		}
 	}
 
-	private WorkspaceManager Manager => _app.Services.GetRequiredService<WorkspaceManager>();
+	/// <summary>
+	/// WinUI's default window is sized for an application; this is a status panel. Sizes are in
+	/// logical pixels and scaled here, because AppWindow works in physical ones.
+	/// </summary>
+	private void ApplySize()
+	{
+		var scale = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
+
+		AppWindow.Resize(new SizeInt32(Scale(InitialWidth), Scale(InitialHeight)));
+
+		if (AppWindow.Presenter is OverlappedPresenter presenter)
+		{
+			presenter.PreferredMinimumWidth = Scale(MinimumWidth);
+			presenter.PreferredMinimumHeight = Scale(MinimumHeight);
+		}
+
+		int Scale(int logical) => (int)Math.Round(logical * scale);
+	}
 
 	private void Refresh()
 	{
@@ -92,8 +156,13 @@ public sealed partial class MainWindow : Window
 		MergeRows(summaries);
 
 		var running = summaries.Sum(summary => summary.Running.Count);
-		Summary.Text = Describe(summaries, running);
+		Headline.Text = DescribeHeadline(summaries);
+		Subtitle.Text = DescribeSubtitle(summaries, running);
 		Tray.ToolTipText = DescribeTooltip(summaries.Count, running);
+
+		var empty = summaries.Count == 0;
+		EmptyState.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+		WorkspaceScroller.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
 
 		// Poll harder only while there is something to watch. Setting the interval restarts the
 		// timer, so only do it when it actually changed.
@@ -124,19 +193,33 @@ public sealed partial class MainWindow : Window
 		}
 	}
 
-	public static string Describe(IReadOnlyList<WorkspaceSummary> summaries, int running)
+	/// <summary>The one line to read: how many, and whether they are up yet.</summary>
+	public static string DescribeHeadline(IReadOnlyList<WorkspaceSummary> summaries)
 	{
-		if (summaries.Count == 0) return "No solutions loaded. Point an MCP client at the endpoint above.";
+		if (summaries.Count == 0) return "Nothing loaded";
 
-		var megabytes = summaries.Sum(summary => summary.WorkingSetBytes ?? 0) / (1024.0 * 1024.0);
-		var work = running switch
+		var solutions = Format.Count(summaries.Count, "solution");
+		var allLoading = summaries.All(summary => summary.State == WorkspaceState.Loading);
+
+		return allLoading ? $"Loading {solutions}" : $"{solutions} loaded";
+	}
+
+	/// <summary>What it costs, whether it is busy, and whether anything below needs a look.</summary>
+	public static string DescribeSubtitle(IReadOnlyList<WorkspaceSummary> summaries, int running)
+	{
+		if (summaries.Count == 0) return "Waiting for a client to ask about one.";
+
+		var workingSet = summaries.Sum(summary => summary.WorkingSetBytes ?? 0);
+		var parts = new List<string>
 		{
-			0 => "idle",
-			1 => "1 operation running",
-			_ => $"{running} operations running",
+			$"{Format.Bytes(workingSet)} working set",
+			running == 0 ? "idle" : $"{Format.Count(running, "operation")} running",
 		};
 
-		return $"{summaries.Count} solution(s), {megabytes:F0} MB total working set - {work}";
+		var troubled = summaries.Count(summary => summary.State is WorkspaceState.Degraded or WorkspaceState.Faulted);
+		if (troubled > 0) parts.Add(troubled == 1 ? "1 needs attention" : $"{troubled} need attention");
+
+		return string.Join(WorkspaceRow.Separator, parts);
 	}
 
 	/// <summary>
@@ -147,17 +230,20 @@ public sealed partial class MainWindow : Window
 	{
 		if (workspaces == 0) return "RoseMCP - nothing loaded";
 
-		var solutions = workspaces == 1 ? "1 solution" : $"{workspaces} solutions";
+		var solutions = Format.Count(workspaces, "solution");
 
 		return running == 0 ? $"RoseMCP - {solutions}, idle" : $"RoseMCP - {solutions}, {running} running";
 	}
+
+	/// <summary>How a Claude Code user points their agent at this broker over http.</summary>
+	public static string RegistrationCommand(string endpoint) => $"claude mcp add --transport http rose {endpoint}";
 
 	private static bool Same(string left, string right) =>
 		string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
 	private async void OnReload(object sender, RoutedEventArgs e)
 	{
-		if (sender is not Button { Tag: string solutionPath }) return;
+		if (sender is not FrameworkElement { Tag: string solutionPath }) return;
 
 		await Manager.RestartAsync(solutionPath, CancellationToken.None);
 		Refresh();
@@ -165,11 +251,35 @@ public sealed partial class MainWindow : Window
 
 	private async void OnClose(object sender, RoutedEventArgs e)
 	{
-		if (sender is not Button { Tag: string solutionPath }) return;
+		if (sender is not FrameworkElement { Tag: string solutionPath }) return;
 
 		await Manager.CloseAsync(solutionPath, CancellationToken.None);
 		Refresh();
 	}
+
+	private void OnOpenFolder(object sender, RoutedEventArgs e)
+	{
+		if (sender is not FrameworkElement { Tag: string solutionPath }) return;
+
+		OpenInExplorer($"/select,\"{solutionPath}\"");
+	}
+
+	/// <summary>
+	/// The folder above this component's: Server, Worker and Tray sit side by side under it, and
+	/// the question that brings someone here is usually which of them has the answer.
+	/// </summary>
+	private void OnOpenLogs(object sender, RoutedEventArgs e)
+	{
+		var own = RoseLogFile.DirectoryFor("Tray");
+		var root = Path.GetDirectoryName(own) ?? own;
+
+		Directory.CreateDirectory(root);
+		OpenInExplorer($"\"{root}\"");
+	}
+
+	private void OnCopyEndpoint(object sender, RoutedEventArgs e) => Copy(_endpoint, EndpointCopyGlyph);
+
+	private void OnCopyRegistration(object sender, RoutedEventArgs e) => Copy(RegistrationText.Text, RegistrationCopyGlyph);
 
 	private void OnShow(object sender, RoutedEventArgs e) => Show();
 
@@ -185,19 +295,63 @@ public sealed partial class MainWindow : Window
 
 	private async void OnExit(object sender, RoutedEventArgs e)
 	{
+		_exiting = true;
 		Tray.Dispose();
 		await _app.ShutdownAsync();
 	}
 
 	/// <summary>
-	/// Closing the window hides it rather than exiting. A tray app that quits when you close its
-	/// window is not really a tray app, and quitting here would take every loaded solution with it.
+	/// Closing the window hides it. A tray app that quits when its window closes is not a tray app,
+	/// and quitting here would take every loaded solution with it; Exit in the menu is the
+	/// deliberate way out, and the only one.
 	/// </summary>
+	private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
+	{
+		if (_exiting) return;
+
+		args.Cancel = true;
+		sender.Hide();
+	}
+
 	internal void Show()
 	{
 		AppWindow.Show();
 		Activate();
 	}
+
+	/// <summary>
+	/// Copies, and says so by turning the button's glyph into a tick for a moment. A clipboard has
+	/// no other visible effect, and a button that does nothing visible reads as broken.
+	/// </summary>
+	private void Copy(string text, FontIcon glyph)
+	{
+		var package = new DataPackage();
+		package.SetText(text);
+		Clipboard.SetContent(package);
+
+		glyph.Glyph = CopiedGlyph;
+
+		var revert = DispatcherQueue.CreateTimer();
+		revert.Interval = CopiedFor;
+		revert.IsRepeating = false;
+		revert.Tick += (_, _) => glyph.Glyph = CopyGlyph;
+		revert.Start();
+	}
+
+	private static void OpenInExplorer(string arguments)
+	{
+		try
+		{
+			Process.Start(new ProcessStartInfo("explorer.exe", arguments) { UseShellExecute = true });
+		}
+		catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+		{
+			Debug.WriteLine($"Could not open Explorer: {exception.Message}");
+		}
+	}
+
+	[DllImport("user32.dll")]
+	private static extern uint GetDpiForWindow(nint hwnd);
 
 	private sealed class ShowWindowCommand(MainWindow window) : ICommand
 	{

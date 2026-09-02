@@ -264,12 +264,16 @@ one warm worker per solution shared by every session, and a correct answer per s
 tray still sees every workspace, because it is still the one holding them. With no tray running,
 the same stdio server starts its own workers and behaves exactly as it did before.
 
-The tray app (Windows only) hosts the same broker in-process and shows one row per workspace:
-state, worker PID, and memory sampled from outside the worker so a hung one still reports real
-numbers. Under each row is what that worker is doing right now — the tool being served, what it
-is aimed at, how long it has been going, and how far through it is — plus the last few operations
-to finish. A warm Roslyn host otherwise looks identical whether it is idle or two minutes into a
-design-time build. The same rows come back from `GET /admin/workspaces`.
+The tray app (Windows only) hosts the same broker in-process and shows one card per workspace:
+whether it is loading, loaded, degraded or faulted; the MSBuild configuration it was loaded under,
+its project count and how long the load took; the worker's PID and uptime; and memory sampled
+from outside the worker so a hung one still reports real numbers. A degraded or faulted workspace
+says why, with the fix. Under that is what the worker is doing right now — the tool being served,
+what it is aimed at, how long it has been going, and how far through it is — plus the last few
+operations to finish, failures called out with their reason. A warm Roslyn host otherwise looks
+identical whether it is idle or two minutes into a design-time build. The same data comes back
+from `GET /admin/workspaces`. Closing the window hides it; the tray icon brings it back, and Exit
+in its menu is what stops the broker and, with it, every worker.
 
 ## Building from source
 

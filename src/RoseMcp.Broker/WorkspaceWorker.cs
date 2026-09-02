@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 
 using Microsoft.Extensions.Logging;
@@ -37,6 +38,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	private readonly McpClient _client;
 	private readonly ActivityLog _activities;
 	private readonly ILogger _logger;
+	private int _refreshingHeap;
+	private string? _loadFailure;
 
 	private WorkspaceWorker(string solutionPath, McpClient client, ActivityLog activities, ILogger logger)
 	{
@@ -60,9 +63,41 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary>Last managed heap size the worker reported while it was still responding.</summary>
 	public long? ManagedHeapBytes { get; private set; }
 
+	/// <summary>
+	/// The last status report to pass through, whoever asked for it. The broker asks on connect, so
+	/// one arrives the moment the load finishes; every rose_workspace_status a client makes after
+	/// that replaces it. Kept because the configuration, the project count and the reasons a
+	/// workspace is degraded are otherwise a round trip away, and the tray window, which wants them
+	/// every two seconds, has no business making that trip.
+	/// </summary>
+	public WorkspaceStatusReport? LastStatus { get; private set; }
+
+	/// <summary>How long the initial load took, once it has finished.</summary>
+	public TimeSpan? LoadDuration { get; private set; }
+
 	public WorkerExitReason ExitReason { get; private set; } = WorkerExitReason.Running;
 
 	public bool IsAlive => ExitReason == WorkerExitReason.Running;
+
+	/// <summary>
+	/// Where the workspace is in its life. The process answers for a dead worker and the last status
+	/// report for a live one; a live worker that has not reported yet is loading -- unless its load
+	/// already failed, which the broker saw even though no client did.
+	/// </summary>
+	public WorkspaceState State
+	{
+		get
+		{
+			if (!IsAlive)
+			{
+				return ExitReason == WorkerExitReason.Crashed ? WorkspaceState.Faulted : WorkspaceState.Unloaded;
+			}
+
+			if (LastStatus is { } status) return status.State;
+
+			return _loadFailure is null ? WorkspaceState.Loading : WorkspaceState.Faulted;
+		}
+	}
 
 	public static async Task<WorkspaceWorker> StartAsync(
 		string solutionPath,
@@ -146,7 +181,14 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 		try
 		{
-			return await SendAsync<T>(tool, arguments, activity, cancellationToken);
+			var result = await SendAsync<T>(tool, arguments, activity, cancellationToken);
+
+			// Whoever asked, the answer describes this worker, and it is the freshest one there is.
+			if (result is WorkspaceStatusReport status) LastStatus = status;
+
+			RefreshHeapSoon();
+
+			return result;
 		}
 		catch (OperationCanceledException)
 		{
@@ -183,6 +225,29 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	}
 
 	/// <summary>
+	/// Re-reads the managed heap once the work that changes it has finished. It is first read on
+	/// connect, before anything has loaded, and without this the window would show that first
+	/// reading -- a few dozen megabytes -- for the life of the process. Coalesced, so a burst of
+	/// calls costs one round trip, and skipped for a worker on its way out.
+	/// </summary>
+	private void RefreshHeapSoon()
+	{
+		if (!IsAlive || Interlocked.CompareExchange(ref _refreshingHeap, 1, 0) != 0) return;
+
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				await RefreshProcessInfoAsync(CancellationToken.None);
+			}
+			finally
+			{
+				Volatile.Write(ref _refreshingHeap, 0);
+			}
+		});
+	}
+
+	/// <summary>
 	/// Samples memory from the process table rather than asking the worker, so the numbers stay
 	/// truthful for a worker that is wedged -- which is exactly when someone is looking at them.
 	/// </summary>
@@ -195,7 +260,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		{
 			try
 			{
-				using var process = System.Diagnostics.Process.GetProcessById(id);
+				using var process = Process.GetProcessById(id);
 				workingSet = process.WorkingSet64;
 				privateMemory = process.PrivateMemorySize64;
 			}
@@ -205,18 +270,30 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			}
 		}
 
+		// Read once: a client's status call can replace it between one property and the next.
+		var status = LastStatus;
+
 		return new WorkspaceSummary
 		{
 			SolutionPath = SolutionPath,
 			DisplayName = Path.GetFileNameWithoutExtension(SolutionPath),
 			Alive = IsAlive,
 			ExitReason = ExitReason.ToString(),
+			State = State,
 			StartedUtc = StartedUtc,
 			Uptime = DateTime.UtcNow - StartedUtc,
 			ProcessId = ProcessId,
 			WorkingSetBytes = workingSet,
 			PrivateMemoryBytes = privateMemory,
 			ManagedHeapBytes = ManagedHeapBytes,
+			BuildConfiguration = status?.BuildConfiguration,
+			ProjectCount = status?.Projects.Count,
+			FailedProjects = status is null
+				? []
+				: [.. status.Projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name)],
+			DegradedReasons = status?.DegradedReasons ?? (_loadFailure is null ? [] : [_loadFailure]),
+			Notices = status?.Notices ?? [],
+			LoadSeconds = LoadDuration?.TotalSeconds,
 			Running = _activities.Running(SolutionPath),
 			Recent = _activities.Recent(SolutionPath),
 		};
@@ -236,6 +313,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 	private async Task FollowLoadAsync()
 	{
+		var load = Stopwatch.StartNew();
+
 		try
 		{
 			await CallAsync<WorkspaceStatusReport>(
@@ -243,11 +322,15 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				EmptyArguments,
 				CancellationToken.None,
 				operation: LoadOperation);
+
+			LoadDuration = load.Elapsed;
 		}
 		catch (Exception exception)
 		{
 			// Nothing is waiting on this result. A load failure is reported to whoever calls next,
-			// and the activity itself already records that it failed.
+			// and the activity already records that it failed -- but it is remembered here too, so
+			// the tray can say so about a worker no client has spoken to yet.
+			_loadFailure = $"Loading the solution failed: {exception.Message}";
 			_logger.LogDebug(exception, "Following the load of {SolutionPath} ended early.", SolutionPath);
 		}
 	}
@@ -270,8 +353,14 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		{
 			// The real call is the honest liveness test. Pinging first would add a round trip to
 			// every request and still answer for a moment that has already passed.
-			ExitReason = WorkerExitReason.Crashed;
-			_logger.LogWarning(exception, "The worker for {SolutionPath} died during {Tool}.", SolutionPath, tool);
+			//
+			// Unless the worker was already stopped on purpose: a call in flight when the broker
+			// closes a worker fails the same way, and calling that a crash would be a lie.
+			if (IsAlive)
+			{
+				ExitReason = WorkerExitReason.Crashed;
+				_logger.LogWarning(exception, "The worker for {SolutionPath} died during {Tool}.", SolutionPath, tool);
+			}
 
 			throw new WorkerUnavailableException(SolutionPath, exception);
 		}

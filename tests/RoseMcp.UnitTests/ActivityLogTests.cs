@@ -150,6 +150,7 @@ public sealed class ActivityLogTests
 				DisplayName = "Thing",
 				Alive = true,
 				ExitReason = "Running",
+				State = WorkspaceState.Loaded,
 				StartedUtc = DateTime.UtcNow,
 				Uptime = TimeSpan.FromMinutes(3),
 				Recent = log.Recent(Solution),

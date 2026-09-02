@@ -209,6 +209,48 @@ public sealed class BrokerTests
 		Assert.Contains(nowhere, error.Message, StringComparison.OrdinalIgnoreCase);
 	}
 
+	/// <summary>
+	/// The window's state, configuration and project count come from here, and none of them needs
+	/// a client to have called anything: the status the broker asks for on connect is kept, and it
+	/// is the same call a client would have made.
+	/// </summary>
+	[Fact]
+	public async Task Describes_the_load_it_followed_without_being_asked()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		await manager.GetOrStartAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		// The load time is the last thing recorded, so once it is there the rest is too.
+		var loaded = await WaitForAsync(
+			() => manager.Describe().Single() is { LoadSeconds: not null } summary ? summary : null,
+			TimeSpan.FromMinutes(2));
+
+		Assert.Equal(WorkspaceState.Loaded, loaded.State);
+		Assert.Equal("Debug|AnyCPU", loaded.BuildConfiguration);
+		Assert.Equal(2, loaded.ProjectCount);
+		Assert.Empty(loaded.FailedProjects);
+		Assert.Empty(loaded.DegradedReasons);
+		Assert.True(loaded.LoadSeconds > 0);
+	}
+
+	/// <summary>Waits for something to show up, since the load is followed on another thread.</summary>
+	private static async Task<T> WaitForAsync<T>(Func<T?> probe, TimeSpan timeout)
+		where T : class
+	{
+		var deadline = DateTime.UtcNow + timeout;
+
+		while (DateTime.UtcNow < deadline)
+		{
+			if (probe() is { } found) return found;
+
+			await Task.Delay(100, TestContext.Current.CancellationToken);
+		}
+
+		throw new TimeoutException($"Nothing showed up within {timeout.TotalSeconds:F0}s.");
+	}
+
 	private static WorkspaceManager CreateManager(string? defaultRoot = null) => new(
 		Options.Create(new BrokerOptions
 		{

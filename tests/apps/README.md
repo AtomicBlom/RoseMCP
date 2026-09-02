@@ -38,15 +38,26 @@ are not — which is why, on Windows-on-ARM, the app is debugged x64-emulated.
 "<VS>\MSBuild\Current\Bin\MSBuild.exe" uwp-classic\Rose.ProbeApp.UwpClassic.csproj -t:Build -p:Configuration=Debug -p:Platform=x64
 ```
 
-The build output under `bin\x64\Debug\` is a loose package layout (it contains `AppxManifest.xml`).
-Register it without a certificate, then activate it under the debugger:
+Do **not** register `bin\x64\Debug\AppxManifest.xml` directly. A `Debug|x64` build produces two
+executables — the managed app assembly in `bin\x64\Debug\`, and a native CoreCLR apphost in
+`bin\x64\Debug\Core\` — and the build folder is not a runnable layout. Registering the root manifest
+makes Windows host the managed exe under the desktop .NET Framework CLR, which cannot load CoreCLR's
+`System.Private.CoreLib`, so the app dies at host init with a `BadImageFormatException` before any of
+its code runs.
+
+The runnable layout is the one Visual Studio's deploy stages from the build's `*.build.appxrecipe`
+(into `bin\x64\Debug\AppX`): the native apphost becomes the package executable, the managed assembly
+moves under `entrypoint\`, and the CoreCLR `System.Runtime.dll` (not the desktop-framework copy also
+in the build folder) sits beside them. Register that staged layout without a certificate, then
+activate it under the debugger:
 
 ```
-Add-AppxPackage -Register bin\x64\Debug\AppxManifest.xml
+Add-AppxPackage -Register bin\x64\Debug\AppX\AppxManifest.xml
 ```
 
-The integration tests do this on demand and **skip** when the MSBuild/UWP toolchain is not present, so
-the rest of the suite stays green on a machine without it.
+The integration tests stage that layout from the recipe on demand (`StageUwpProbeLayout`) and **skip**
+when the MSBuild/UWP toolchain is not present, so the rest of the suite stays green on a machine
+without it.
 
 ## What the apps contain
 

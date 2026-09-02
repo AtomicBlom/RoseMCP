@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Xml.Linq;
 
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -245,14 +246,6 @@ public sealed class LiveAppSessionTests
 	{
 		var msbuild = FindUwpMsBuild();
 		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-
-		// PARKED: the classic-UWP probe app crashes at CoreCLR host init on this toolchain, before any
-		// of its own code runs, so the debugger-through-UWP path cannot be exercised end to end yet.
-		// The path itself (EnableDebugging + ActivateApplication + attach through the x64 host) is
-		// implemented; the cross-architecture attach it relies on is already proven by
-		// Attaches_to_a_target_of_a_different_architecture. Remove this skip once the app starts. See
-		// docs/debug/autonomous-decisions.md (D12) for the diagnosis so far.
-		Assert.Skip("Classic-UWP probe app startup is an open issue (parked); see docs/debug/autonomous-decisions.md.");
 
 		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
 		EnsureX64HostBuilt();
@@ -600,7 +593,10 @@ public sealed class LiveAppSessionTests
 	private static string UwpProbeAppDirectory()
 		=> Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic");
 
-	/// <summary>Builds the classic UWP probe app Debug|x64 and returns its loose package layout.</summary>
+	/// <summary>
+	/// Builds the classic UWP probe app Debug|x64 and returns the deployable AppX layout, staged the
+	/// way Visual Studio's deploy stages it.
+	/// </summary>
 	private static string BuildUwpProbeApp(string msbuild)
 	{
 		var csproj = Path.Combine(UwpProbeAppDirectory(), "Rose.ProbeApp.UwpClassic.csproj");
@@ -611,7 +607,51 @@ public sealed class LiveAppSessionTests
 		var build = RunProcess(msbuild, $"\"{csproj}\" -t:Build -p:Configuration=Debug -p:Platform=x64 -v:minimal -nologo");
 		if (build.ExitCode != 0) throw new InvalidOperationException($"UWP build failed:{Environment.NewLine}{build.Output}");
 
-		return Path.Combine(UwpProbeAppDirectory(), "bin", "x64", "Debug");
+		var buildOutput = Path.Combine(UwpProbeAppDirectory(), "bin", "x64", "Debug");
+		return StageUwpProbeLayout(buildOutput);
+	}
+
+	/// <summary>
+	/// Stages the deployable AppX layout the way Visual Studio's deploy does, from the
+	/// .build.appxrecipe MSBuild emits -- because a straight register of the build folder does not
+	/// produce a runnable app. A classic-UWP CoreCLR debug build makes two executables: the managed
+	/// app assembly, and a native CoreCLR apphost under Core\. Only the recipe's layout wires them
+	/// correctly -- the native apphost becomes the package executable, the managed assembly moves under
+	/// entrypoint\, and the CoreCLR System.Runtime.dll (not the desktop-framework one that also sits in
+	/// the build folder) is placed beside them. Register the root manifest instead and Windows hosts
+	/// the managed exe under the desktop .NET Framework CLR, which cannot load CoreCLR's
+	/// System.Private.CoreLib and dies with a BadImageFormatException at host init, before any app code
+	/// runs. MSBuild's Build target emits the recipe but does not stage the layout (these old-style
+	/// projects have no Deploy target), so the staging is done here.
+	/// </summary>
+	private static string StageUwpProbeLayout(string buildOutputDirectory)
+	{
+		var recipePath = Path.Combine(buildOutputDirectory, "Rose.ProbeApp.UwpClassic.build.appxrecipe");
+		if (!File.Exists(recipePath)) throw new InvalidOperationException($"No appxrecipe at {recipePath}; the UWP build did not complete.");
+
+		XNamespace ns = "http://schemas.microsoft.com/developer/msbuild/2003";
+		var recipe = XDocument.Load(recipePath);
+
+		var layoutText = recipe.Descendants(ns + "LayoutDir").FirstOrDefault()?.Value
+			?? throw new InvalidOperationException("The appxrecipe declares no LayoutDir.");
+		var layoutDirectory = Uri.UnescapeDataString(layoutText);
+
+		if (Directory.Exists(layoutDirectory)) Directory.Delete(layoutDirectory, recursive: true);
+		Directory.CreateDirectory(layoutDirectory);
+
+		// Both the manifest and every packaged file carry an Include (the source on disk, MSBuild-escaped)
+		// and a PackagePath (where it lands in the layout).
+		var entries = recipe.Descendants(ns + "AppXManifest").Concat(recipe.Descendants(ns + "AppxPackagedFile"));
+		foreach (var entry in entries)
+		{
+			var source = Uri.UnescapeDataString(entry.Attribute("Include")!.Value);
+			var packagePath = Uri.UnescapeDataString(entry.Element(ns + "PackagePath")!.Value);
+			var destination = Path.Combine(layoutDirectory, packagePath);
+			Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+			File.Copy(source, destination, overwrite: true);
+		}
+
+		return layoutDirectory;
 	}
 
 	private const string UwpProbePackageName = "RoseMcp.ProbeApp.UwpClassic";

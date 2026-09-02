@@ -109,21 +109,34 @@ Windows-gated by the host's availability, and the tray is already Windows-only. 
 reference to the host is build-only (ReferenceOutputAssembly=false, SkipGetTargetFrameworkProperties)
 so a net10.0 test project can still trigger its build.
 
-### D12 — Classic UWP launch/attach is built; the app's own startup crash is parked
+### D12 — Classic UWP launch/attach is built and the app now debugs end to end (RESOLVED)
 The full UWP debugger path is implemented: host `EstablishUwp` (IPackageDebugSettings.EnableDebugging
 + IApplicationActivationManager.ActivateApplication + attach, with debug-mode teardown on detach),
 `Uwp.cs` COM interop, per-target x64 host selection, and the `rose_debug_launch_uwp` tool. The
 cross-architecture attach it relies on (ARM64 broker -> x64 host -> x64 target) is proven by
-`Attaches_to_a_target_of_a_different_architecture`.
+`Attaches_to_a_target_of_a_different_architecture`, and the whole path end to end by
+`Launches_and_debugs_the_classic_uwp_probe_app` (no longer skipped).
 
-What is parked: the classic UWP probe app, though it builds, registers, and resolves to a real AUMID,
-**crashes at CoreCLR host init when activated** (WER MoAppCrash, managed exception 0xe0434352),
-before any of its own code runs. Diagnosis so far: it is not the debugger path (activation itself
-fails); the missing `Microsoft.NET.CoreFramework.Debug.2.2` x64 framework was installed (no change);
-`EnableTypeInfoReflection=false` matched to the known-good gallery (no change); a custom `Main`
-wrapping `Application.Start` plus `LocalFolder` step-logging produced no log at all, so the throw is at
-or before framework startup. Getting the managed exception needs one of: admin (WER LocalDumps are
-denied here), a from-birth UWP debugger (issue #5, the resume-stub / debugger-command-line path), or
-knowledge of this machine's x64-emulated UWP CoreCLR setup. The integration test
-`Launches_and_debugs_the_classic_uwp_probe_app` is wired and **skips** with this reason; remove the
-skip once the app starts. This likely wants the user's input, since they build classic UWP here in VS.
+What was parked, and the root cause: the probe app **crashed at CoreCLR host init when activated**
+(WER MoAppCrash, managed exception 0xe0434352), before any of its own code ran. It was never the app,
+the frameworks, `EnableTypeInfoReflection`, or the debugger. A WER crash dump (obtained via
+`C:\UserModeDumps`, read with an **x64** `dotnet-dump` running under emulation — ARM64 SOS cannot read
+an x64 dump) showed a `System.BadImageFormatException` on `System.Private.CoreLib` with the
+.NET Framework desktop GAC (`mscorlib.dll`, `System.Runtime.WindowsRuntime.dll`) loaded. The process
+was being hosted by the **desktop .NET Framework CLR**, which cannot load CoreCLR's CoreLib.
+
+Why: a classic-UWP CoreCLR *Debug|x64* build emits two executables -- the **managed** app assembly in
+`bin\x64\Debug\`, and a **native CoreCLR apphost** in `bin\x64\Debug\Core\`. Visual Studio's deploy
+does not register either build folder directly; it stages the layout its `*.build.appxrecipe`
+describes (into `bin\x64\Debug\AppX`), where the native apphost becomes the package executable, the
+managed assembly moves under `entrypoint\`, and the CoreCLR `System.Runtime.dll` (from the UWP
+CoreCLR runtime NuGet package, not the desktop-framework `System.Runtime.dll` also present in the
+build folder) sits beside them, plus `WinMetadata\Windows.winmd`, the `.xbf`, and `resources.pri`.
+The test had been registering the **root** `AppxManifest.xml`, whose `Executable` is the managed exe,
+so Windows hosted it under the desktop CLR and it died at host init.
+
+The fix (all in the test harness -- `StageUwpProbeLayout`): parse the `*.build.appxrecipe`, copy each
+`AppXManifest`/`AppxPackagedFile` from its MSBuild-escaped `Include` to its `PackagePath` under the
+recipe's `LayoutDir`, and register that staged `AppX` layout. No change to the app, the host, or the
+debugger. MSBuild's `Build` target emits the recipe but never stages the layout (these old-style
+projects have no `Deploy` target), which is why the staging is done in the test.

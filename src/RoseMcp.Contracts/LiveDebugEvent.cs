@@ -25,4 +25,11 @@ public sealed record LiveDebugEvent
 
 	/// <summary>The exception's type name, for an exception event, where it could be decoded.</summary>
 	public string? ExceptionType { get; init; }
+
+	/// <summary>
+	/// The managed call stack, innermost first, for an event captured while a thread was stopped (an
+	/// exception, for now). Each entry is a resolved <c>Namespace.Type.Method</c>; frames that could
+	/// not be resolved are left out. Null when no stack was captured.
+	/// </summary>
+	public IReadOnlyList<string>? Frames { get; init; }
 }

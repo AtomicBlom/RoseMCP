@@ -24,6 +24,7 @@ namespace RoseMcp.LiveApp.Debugging;
 internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
 {
 	private static readonly TimeSpan RuntimeReadyTimeout = TimeSpan.FromSeconds(5);
+	private const int MaxStackFrames = 20;
 
 	private readonly Lock _gate = new();
 	private readonly List<Tracepoint> _tracepoints = [];
@@ -356,11 +357,57 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var kind = unhandled ? LiveDebugEventKind.ExceptionUnhandled : LiveDebugEventKind.ExceptionFirstChance;
 		var typeName = DescribeExceptionType(exception.Thread);
 
+		// The thread is stopped in this callback, so this is the moment its stack can be walked.
+		var frames = WalkStack(exception.Thread, MaxStackFrames);
+
 		buffer.Append(
 			kind,
 			$"{(unhandled ? "Unhandled" : "First-chance")} {typeName} on thread {TryThreadId(exception.Thread)?.ToString() ?? "?"}",
 			threadId: TryThreadId(exception.Thread),
-			exceptionType: typeName);
+			exceptionType: typeName,
+			frames: frames.Count > 0 ? frames : null);
+	}
+
+	/// <summary>
+	/// The managed frames of a stopped thread, innermost first, resolved to method names. Only valid
+	/// while the thread is stopped -- which, for an exception, is the callback it is reported on.
+	/// Frames whose function cannot be resolved (native, internal, dynamic) are skipped.
+	/// </summary>
+	private IReadOnlyList<string> WalkStack(CorDebugThread thread, int maxFrames)
+	{
+		var frames = new List<string>();
+		try
+		{
+			foreach (var chain in thread.EnumerateChains())
+			{
+				foreach (var frame in chain.EnumerateFrames())
+				{
+					if (frames.Count >= maxFrames) return frames;
+
+					var described = DescribeFrame(frame);
+					if (described is not null) frames.Add(described);
+				}
+			}
+		}
+		catch (Exception exception)
+		{
+			logger.LogDebug(exception, "Walking a thread's stack failed.");
+		}
+
+		return frames;
+	}
+
+	private static string? DescribeFrame(CorDebugFrame frame)
+	{
+		try
+		{
+			var function = frame.Function;
+			return MethodTokens.MethodFullName(function.Module.Name, (int)function.Token);
+		}
+		catch (Exception)
+		{
+			return null; // Native, internal, or otherwise unresolvable frame.
+		}
 	}
 
 	private void RecordBreakpointHit(BreakpointCorDebugManagedCallbackEventArgs hit)

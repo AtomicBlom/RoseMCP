@@ -51,6 +51,25 @@ internal static class MethodTokens
 		}
 	}
 
+	/// <summary>The declaring type's full name plus the method name, for a method-def token.</summary>
+	public static string? MethodFullName(string modulePath, int methodToken)
+	{
+		try
+		{
+			using var stream = File.OpenRead(modulePath);
+			using var pe = new PEReader(stream);
+			var metadata = pe.GetMetadataReader();
+			var handle = (MethodDefinitionHandle)MetadataTokens.EntityHandle(methodToken);
+			var method = metadata.GetMethodDefinition(handle);
+			var typeName = FullName(metadata, metadata.GetTypeDefinition(method.GetDeclaringType()));
+			return $"{typeName}.{metadata.GetString(method.Name)}";
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
 	private static string FullName(MetadataReader metadata, TypeDefinition type)
 	{
 		var name = metadata.GetString(type.Name);

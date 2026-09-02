@@ -60,6 +60,10 @@ public sealed class LiveAppSessionTests
 			Assert.NotNull(marker);
 			Assert.Contains("RoseDebugProbeException", marker!.ExceptionType);
 
+			// The exception carries a stack, and the throwing method is on it (#7, stack walk).
+			Assert.NotNull(marker.Frames);
+			Assert.Contains(marker.Frames!, frame => frame.Contains("DebugProbeTarget.Program"));
+
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 			Assert.Empty(manager.Sessions);
 

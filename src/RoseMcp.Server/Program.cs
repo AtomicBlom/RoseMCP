@@ -115,6 +115,11 @@ internal static class Program
 			"/admin/workspaces",
 			(WorkspaceManager workspaces) => Results.Json(workspaces.Describe(), ContractJson.Options));
 
+		// The live-app sessions alongside the workspaces, from the same shared manager.
+		application.MapGet(
+			"/admin/sessions",
+			(LiveAppSessionManager sessions) => Results.Json(sessions.Describe(), ContractJson.Options));
+
 		await application.RunAsync();
 		return 0;
 	}

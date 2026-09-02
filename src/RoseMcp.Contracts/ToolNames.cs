@@ -29,4 +29,10 @@ public static class ToolNames
 	/// memory from the outside and still get real numbers when the worker stops responding.
 	/// </summary>
 	public const string WorkerInfo = "rose_worker_info";
+
+	/// <summary>
+	/// Live-app-host-only. The broker calls this on connect to learn the host's process id, the
+	/// architecture it launched as, and whether it established its target.
+	/// </summary>
+	public const string LiveAppInfo = "rose_live_app_info";
 }

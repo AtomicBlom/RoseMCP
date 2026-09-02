@@ -16,6 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\RoseMcp.Broker\RoseMcp.Broker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
+    <!-- Referenced so the host is built for the live-app session tests to launch; not used as a library. -->
+    <ProjectReference Include="..\..\src\RoseMcp.LiveApp\RoseMcp.LiveApp.csproj" />
     <ProjectReference Include="..\RoseMcp.TestSupport\RoseMcp.TestSupport.csproj" />
   </ItemGroup>
 

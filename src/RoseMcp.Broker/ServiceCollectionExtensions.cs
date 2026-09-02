@@ -92,6 +92,10 @@ public static class ServiceCollectionExtensions
 		// reconnecting client reattach to an already-loaded solution rather than reload it.
 		services.AddSingleton<WorkspaceManager>();
 
+		// Live-app sessions are per running target, separate from the per-solution workers, but shared
+		// across connections the same way and supervised the same way.
+		services.AddSingleton<LiveAppSessionManager>();
+
 		return services
 			.AddMcpServer(server =>
 			{

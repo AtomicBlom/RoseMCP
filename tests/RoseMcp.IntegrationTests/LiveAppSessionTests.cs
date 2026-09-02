@@ -123,6 +123,63 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// Launching a process under the debugger (issue #4): the target is under debug from birth, so its
+	/// earliest events -- the process-created notice and the first exceptions -- are captured, which
+	/// attaching after the fact cannot see. Detaching leaves the launched process running.
+	/// </summary>
+	[Fact]
+	public async Task Launches_a_dotnet_process_under_the_debugger_and_captures_startup()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		var target = new LiveAppTarget
+		{
+			Kind = LiveAppTargetKind.LaunchExecutable,
+			ExecutablePath = ProbeTargetPath(),
+			Description = "launched probe",
+		};
+
+		var session = await manager.StartAsync(target, cancellationToken);
+		int? launchedPid = null;
+		try
+		{
+			var summary = session.Describe();
+			Assert.Equal(LiveAppSessionState.Ready, summary.State);
+			Assert.Equal(ExpectedArchitecture, summary.Architecture);
+			Assert.NotNull(summary.TargetProcessId);
+			launchedPid = summary.TargetProcessId;
+
+			var created = await WaitForEventAsync(session, entry => entry.Kind == LiveDebugEventKind.ProcessCreated, cancellationToken);
+			Assert.NotNull(created);
+
+			var marker = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(marker);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (launchedPid is { } pid)
+			{
+				try
+				{
+					using var process = Process.GetProcessById(pid);
+					if (!process.HasExited) process.Kill(entireProcessTree: true);
+				}
+				catch (Exception)
+				{
+					// Already gone; nothing to reclaim.
+				}
+			}
+		}
+	}
+
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
 	[Fact]
 	public async Task Reports_a_missing_target_as_faulted()

@@ -1,3 +1,4 @@
+using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 
 using RoseMcp.Contracts;
@@ -20,6 +21,39 @@ public static class TargetArchitectureProbe
 	private const ushort MachineArmNt = 0x01c4;
 	private const ushort MachineAmd64 = 0x8664;
 	private const ushort MachineArm64 = 0xAA64;
+
+	/// <summary>
+	/// The architecture an executable will run as, from its PE header, so a launch host is spawned to
+	/// match. A native apphost names its architecture directly; an AnyCPU IL assembly runs as the host's
+	/// own architecture, which is reported as Unknown so the launcher falls back to the broker's.
+	/// </summary>
+	public static TargetArchitecture ForExecutable(string path)
+	{
+		try
+		{
+			using var stream = File.OpenRead(path);
+			using var pe = new PEReader(stream);
+			var headers = pe.PEHeaders;
+
+			var cor = headers.CorHeader;
+			var isAnyCpuIl = cor is not null
+				&& (cor.Flags & CorFlags.ILOnly) != 0
+				&& (cor.Flags & CorFlags.Requires32Bit) == 0;
+			if (isAnyCpuIl) return TargetArchitecture.Unknown;
+
+			return headers.CoffHeader.Machine switch
+			{
+				Machine.I386 => TargetArchitecture.X86,
+				Machine.Amd64 => TargetArchitecture.X64,
+				Machine.Arm64 => TargetArchitecture.Arm64,
+				_ => TargetArchitecture.Unknown,
+			};
+		}
+		catch (Exception)
+		{
+			return TargetArchitecture.Unknown;
+		}
+	}
 
 	public static TargetArchitecture ForProcess(int processId)
 	{

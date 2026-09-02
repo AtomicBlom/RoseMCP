@@ -58,6 +58,48 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	}
 
 	[McpServerTool(
+		Name = ToolNames.DebugLaunch,
+		Title = "Launch a process under the debugger",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = true,
+		UseStructuredContent = true)]
+	[Description(
+		"Launch a local .NET executable under the debugger and start a session over it from startup, so "
+			+ "its earliest module loads and exceptions are captured -- which attaching after the fact "
+			+ "cannot see. The program runs as the current user, the same as launching it yourself. Set "
+			+ "breakpoints once it is running the way you would after an attach. Returns the session id for "
+			+ "rose_debug_events and rose_debug_detach. Detaching leaves it running.")]
+	public async Task<LiveAppSessionSummary> LaunchAsync(
+		[Description("Path to a local .NET executable (.exe).")] string executablePath,
+		[Description("Optional command-line arguments.")] string? arguments = null,
+		CancellationToken cancellationToken = default)
+	{
+		if (!File.Exists(executablePath)) throw new McpException($"No executable at {executablePath}.");
+
+		var fullPath = Path.GetFullPath(executablePath);
+		var target = new LiveAppTarget
+		{
+			Kind = LiveAppTargetKind.LaunchExecutable,
+			ExecutablePath = fullPath,
+			Arguments = arguments,
+			Description = $"{Path.GetFileName(fullPath)} (launched)",
+		};
+
+		var session = await sessions.StartAsync(target, cancellationToken);
+		var summary = session.Describe();
+
+		if (summary.State == LiveAppSessionState.Faulted)
+		{
+			await sessions.CloseAsync(session.SessionId, cancellationToken);
+			throw new McpException(summary.Detail ?? $"Could not launch {fullPath}.");
+		}
+
+		return summary;
+	}
+
+	[McpServerTool(
 		Name = ToolNames.DebugEvents,
 		Title = "Read debug events",
 		ReadOnly = true,

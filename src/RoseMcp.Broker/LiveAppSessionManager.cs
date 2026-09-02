@@ -100,13 +100,14 @@ public sealed class LiveAppSessionManager(
 	}
 
 	/// <summary>
-	/// Which architecture to launch the host as. For an attach it is the target process's own; a
-	/// classic UWP app is x64 (there is no ARM64 UWP runtime); a launched executable is the broker's
-	/// own architecture until a launch path is built.
+	/// Which architecture to launch the host as. For an attach it is the target process's own; for a
+	/// launched executable it is read from the executable's PE header; a classic UWP app is x64 (there
+	/// is no ARM64 UWP runtime). Unknown falls back to the broker's own architecture in the launcher.
 	/// </summary>
 	private TargetArchitecture DetectArchitecture(LiveAppTarget target) => target switch
 	{
 		{ Kind: LiveAppTargetKind.AttachProcess, ProcessId: { } pid } => TargetArchitectureProbe.ForProcess(pid),
+		{ Kind: LiveAppTargetKind.LaunchExecutable, ExecutablePath: { } path } => TargetArchitectureProbe.ForExecutable(path),
 		{ Kind: LiveAppTargetKind.LaunchUwp } => TargetArchitecture.X64,
 		_ => TargetArchitecture.Unknown,
 	};

@@ -196,7 +196,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				EstablishAttach(options.Target.ProcessId);
 				break;
 
-			// Launching is a later slice of issue #4; for now the shell reports honestly.
+			case LiveAppTargetKind.LaunchExecutable:
+				EstablishLaunch(options.Target.ExecutablePath, options.Target.Arguments);
+				break;
+
+			// LaunchUwp is a later slice of issue #4; for now the shell reports honestly.
 			default:
 				Fault($"{options.Target.Kind} is not implemented in this build.");
 				break;
@@ -250,6 +254,44 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		}
 
 		logger.LogInformation("Live-app session established against pid {Pid} as {Architecture}.", pid, Architecture);
+	}
+
+	private void EstablishLaunch(string? executablePath, string? arguments)
+	{
+		if (string.IsNullOrWhiteSpace(executablePath))
+		{
+			Fault("A launch target needs an executable path.");
+			return;
+		}
+
+		if (!File.Exists(executablePath))
+		{
+			Fault($"No executable at {executablePath}.");
+			return;
+		}
+
+		var session = new CorDebugSession(_events, logger);
+		try
+		{
+			session.Launch(executablePath, arguments);
+		}
+		catch (Exception exception)
+		{
+			session.Dispose();
+			_events.Append(LiveDebugEventKind.SessionNotice, $"Launch failed: {exception.Message}");
+			Fault(exception.Message);
+			return;
+		}
+
+		lock (_gate)
+		{
+			_session = session;
+			_targetProcessId = session.TargetProcessId;
+			_state = LiveAppSessionState.Ready;
+			_detail = null;
+		}
+
+		logger.LogInformation("Live-app session launched {Path} as pid {Pid} ({Architecture}).", executablePath, session.TargetProcessId, Architecture);
 	}
 
 	private LiveAppSessionState EffectiveState()

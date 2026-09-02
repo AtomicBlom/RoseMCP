@@ -75,6 +75,9 @@ public static class ToolNames
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 
+	/// <summary>Launch a .NET executable under the debugger and start a session over it from startup.</summary>
+	public const string DebugLaunch = "rose_debug_launch";
+
 	/// <summary>Read new debug events (exceptions, log messages, module loads) from a session.</summary>
 	public const string DebugEvents = "rose_debug_events";
 

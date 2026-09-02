@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using ClrDebug;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Win32.SafeHandles;
 
 using RoseMcp.Contracts;
 
@@ -25,6 +26,7 @@ namespace RoseMcp.LiveApp.Debugging;
 internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
 {
 	private static readonly TimeSpan RuntimeReadyTimeout = TimeSpan.FromSeconds(5);
+	private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
 	private const int MaxStackFrames = 20;
 	private const int MaxVariables = 64;
 	private const int DefaultAutoContinueSeconds = 30;
@@ -79,6 +81,53 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		{
 			// The enumeration's handles are the runtimes' continue events; attach does not need them.
 			shim.CloseCLREnumeration(runtime.Enumeration);
+		}
+	}
+
+	/// <summary>
+	/// Launches an executable under the debugger and attaches at runtime startup, so the target is
+	/// under debug from birth and its early events are captured. The runtime is created suspended,
+	/// resumed to the point it signals startup, attached to, then released.
+	/// </summary>
+	public void Launch(string executablePath, string? arguments)
+	{
+		var shim = LoadDbgShim();
+		var commandLine = string.IsNullOrWhiteSpace(arguments) ? $"\"{executablePath}\"" : $"\"{executablePath}\" {arguments}";
+		var workingDirectory = Path.GetDirectoryName(executablePath);
+		var launched = shim.CreateProcessForLaunch(commandLine, bSuspendProcess: true, IntPtr.Zero, workingDirectory);
+		try
+		{
+			using var startup = WrapEvent(shim.GetStartupNotificationEvent(launched.ProcessId), ownsHandle: true);
+			shim.ResumeProcess(launched.ResumeHandle);
+			buffer.Append(LiveDebugEventKind.SessionNotice, $"Launched pid {launched.ProcessId}; waiting for its runtime.");
+
+			if (!startup.WaitOne(StartupTimeout))
+			{
+				throw new TimeoutException("The launched process never signalled runtime startup. Is it a .NET (Core) app?");
+			}
+
+			var runtime = FindRuntimeWithRetry(shim, launched.ProcessId);
+			try
+			{
+				_corDebug = CreateCorDebug(shim, launched.ProcessId, runtime.Path);
+				_process = _corDebug.DebugActiveProcess(launched.ProcessId, win32Attach: false);
+				TargetProcessId = launched.ProcessId;
+
+				// The runtime is parked on this event until the debugger says go.
+				using var continueStartup = WrapEvent(runtime.Handle, ownsHandle: false);
+				continueStartup.Set();
+
+				buffer.Append(LiveDebugEventKind.SessionNotice, $"Attached to launched pid {launched.ProcessId} at startup.");
+				logger.LogInformation("Launched and attached pid {Pid} ({Runtime}).", launched.ProcessId, runtime.Path);
+			}
+			finally
+			{
+				shim.CloseCLREnumeration(runtime.Enumeration);
+			}
+		}
+		finally
+		{
+			shim.CloseResumeHandle(launched.ResumeHandle);
 		}
 	}
 
@@ -875,6 +924,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		_autoContinueTimer?.Dispose();
 		_autoContinueTimer = null;
+	}
+
+	/// <summary>Wraps a native event handle so it can be waited on or set through the BCL.</summary>
+	private static EventWaitHandle WrapEvent(IntPtr handle, bool ownsHandle)
+	{
+		var wrapped = new EventWaitHandle(false, EventResetMode.AutoReset);
+		wrapped.SafeWaitHandle.Dispose();
+		wrapped.SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle);
+		return wrapped;
 	}
 
 	private static LiveTracepoint DescribeTracepoint(BreakpointBinding binding) => new()

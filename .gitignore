@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# The live-app debugging docs live here; do not let the [Dd]ebug/ rule above hide them.
+!docs/debug/

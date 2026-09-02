@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -48,6 +49,37 @@ internal static class MethodTokens
 		catch (Exception)
 		{
 			return null;
+		}
+	}
+
+	/// <summary>
+	/// A method's parameter names in order and whether it is static, for naming a stopped frame's
+	/// arguments. An instance method's argument 0 is <c>this</c>, which these names do not include.
+	/// </summary>
+	public static (bool IsStatic, IReadOnlyList<string> Names) ParameterNames(string modulePath, int methodToken)
+	{
+		try
+		{
+			using var stream = File.OpenRead(modulePath);
+			using var pe = new PEReader(stream);
+			var metadata = pe.GetMetadataReader();
+			var handle = (MethodDefinitionHandle)MetadataTokens.EntityHandle(methodToken);
+			var method = metadata.GetMethodDefinition(handle);
+			var isStatic = (method.Attributes & MethodAttributes.Static) != 0;
+
+			var names = new List<string>();
+			foreach (var parameterHandle in method.GetParameters())
+			{
+				var parameter = metadata.GetParameter(parameterHandle);
+				if (parameter.SequenceNumber == 0) continue; // The return parameter, not an argument.
+				names.Add(metadata.GetString(parameter.Name));
+			}
+
+			return (isStatic, names);
+		}
+		catch (Exception)
+		{
+			return (true, []);
 		}
 	}
 

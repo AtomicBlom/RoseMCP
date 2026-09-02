@@ -25,7 +25,8 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 		int? threadId = null,
 		string? moduleName = null,
 		string? exceptionType = null,
-		IReadOnlyList<string>? frames = null)
+		IReadOnlyList<string>? frames = null,
+		IReadOnlyList<LiveVariable>? variables = null)
 	{
 		lock (_gate)
 		{
@@ -40,6 +41,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 				ModuleName = moduleName,
 				ExceptionType = exceptionType,
 				Frames = frames,
+				Variables = variables,
 			});
 
 			while (_events.Count > capacity)

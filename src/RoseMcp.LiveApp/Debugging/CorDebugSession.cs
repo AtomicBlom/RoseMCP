@@ -26,6 +26,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 {
 	private static readonly TimeSpan RuntimeReadyTimeout = TimeSpan.FromSeconds(5);
 	private const int MaxStackFrames = 20;
+	private const int MaxVariables = 64;
 	private const int DefaultAutoContinueSeconds = 30;
 
 	private readonly Lock _gate = new();
@@ -504,7 +505,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private bool HoldAtBreakpoint(BreakpointBinding binding, CorDebugThread thread, long ordinal, int? threadId)
 	{
+		// The thread is stopped, so this is the moment to walk it and read its top frame.
 		var frames = WalkStack(thread, MaxStackFrames);
+		var variables = ReadTopFrameVariables(thread);
 
 		lock (_gate)
 		{
@@ -519,10 +522,104 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				LiveDebugEventKind.BreakpointHit,
 				$"Breakpoint {binding.Raw} hit #{ordinal} on thread {threadId?.ToString() ?? "?"} -- stopped; continue to resume (auto-continues in {seconds}s).",
 				threadId: threadId,
-				frames: frames.Count > 0 ? frames : null);
+				frames: frames.Count > 0 ? frames : null,
+				variables: variables.Count > 0 ? variables : null);
 		}
 
 		return false;
+	}
+
+	/// <summary>
+	/// The top managed frame's arguments and locals, read while the thread is stopped. Argument names
+	/// come from metadata (an instance method's argument 0 is <c>this</c>); local names need a PDB and
+	/// are indexed when one is not available. Reading is defensive per variable, so one unreadable
+	/// value does not lose the rest of the frame.
+	/// </summary>
+	private IReadOnlyList<LiveVariable> ReadTopFrameVariables(CorDebugThread thread)
+	{
+		var variables = new List<LiveVariable>();
+		try
+		{
+			var frame = FindTopILFrame(thread);
+			if (frame is null) return variables;
+
+			var function = frame.Function;
+			var moduleName = TryModuleName(function);
+			var methodToken = TryFunctionToken(function);
+
+			var (isStatic, parameterNames) = methodToken is { } token && moduleName is not null
+				? MethodTokens.ParameterNames(moduleName, token)
+				: (true, (IReadOnlyList<string>)[]);
+
+			var arguments = frame.EnumerateArguments().ToList();
+			for (var i = 0; i < arguments.Count && variables.Count < MaxVariables; i++)
+			{
+				var (typeName, value) = ValueReader.Read(arguments[i]);
+				variables.Add(new LiveVariable { Name = ArgumentName(i, isStatic, parameterNames), Kind = "argument", TypeName = typeName, Value = value });
+			}
+
+			var locals = frame.EnumerateLocalVariables().ToList();
+			for (var i = 0; i < locals.Count && variables.Count < MaxVariables; i++)
+			{
+				var (typeName, value) = ValueReader.Read(locals[i]);
+				variables.Add(new LiveVariable { Name = $"local_{i}", Kind = "local", TypeName = typeName, Value = value });
+			}
+		}
+		catch (Exception exception)
+		{
+			logger.LogDebug(exception, "Reading the stopped frame's variables failed.");
+		}
+
+		return variables;
+	}
+
+	private static CorDebugILFrame? FindTopILFrame(CorDebugThread thread)
+	{
+		foreach (var chain in thread.EnumerateChains())
+		{
+			foreach (var frame in chain.EnumerateFrames())
+			{
+				if (frame is CorDebugILFrame ilFrame) return ilFrame;
+			}
+		}
+
+		return null;
+	}
+
+	private static string ArgumentName(int index, bool isStatic, IReadOnlyList<string> parameterNames)
+	{
+		if (!isStatic)
+		{
+			if (index == 0) return "this";
+			var parameter = index - 1;
+			return parameter < parameterNames.Count ? parameterNames[parameter] : $"arg_{index}";
+		}
+
+		return index < parameterNames.Count ? parameterNames[index] : $"arg_{index}";
+	}
+
+	private static string? TryModuleName(CorDebugFunction function)
+	{
+		try
+		{
+			return function.Module.Name;
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
+	private static int? TryFunctionToken(CorDebugFunction function)
+	{
+		try
+		{
+			return (int)function.Token;
+		}
+		catch (Exception)
+		{
+			return null;
+		}
 	}
 
 	/// <summary>

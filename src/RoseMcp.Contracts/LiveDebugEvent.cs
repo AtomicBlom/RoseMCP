@@ -28,8 +28,14 @@ public sealed record LiveDebugEvent
 
 	/// <summary>
 	/// The managed call stack, innermost first, for an event captured while a thread was stopped (an
-	/// exception, for now). Each entry is a resolved <c>Namespace.Type.Method</c>; frames that could
-	/// not be resolved are left out. Null when no stack was captured.
+	/// exception or a stopping breakpoint). Each entry is a resolved <c>Namespace.Type.Method</c>;
+	/// frames that could not be resolved are left out. Null when no stack was captured.
 	/// </summary>
 	public IReadOnlyList<string>? Frames { get; init; }
+
+	/// <summary>
+	/// The top frame's arguments and locals, captured at a stopping breakpoint. Null for events where
+	/// no frame was inspected (exceptions, tracepoints, session notices).
+	/// </summary>
+	public IReadOnlyList<LiveVariable>? Variables { get; init; }
 }

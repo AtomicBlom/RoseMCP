@@ -179,6 +179,14 @@ public sealed class LiveAppSessionTests
 			Assert.NotNull(stop!.Frames);
 			Assert.Contains(stop.Frames!, frame => frame.Contains("DebugProbeTarget.Program.Beat"));
 
+			// The stop captured the top frame's arguments (#7): Beat(int iteration).
+			Assert.NotNull(stop.Variables);
+			var iteration = stop.Variables!.FirstOrDefault(variable => variable.Name == "iteration");
+			Assert.NotNull(iteration);
+			Assert.Equal("argument", iteration!.Kind);
+			Assert.Equal("int", iteration.TypeName);
+			Assert.True(int.TryParse(iteration.Value, out _), $"expected an int value, got '{iteration.Value}'");
+
 			// Remove the breakpoint so continuing does not immediately re-stop, then resume.
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
 			Assert.True(await session.ContinueAsync(cancellationToken));

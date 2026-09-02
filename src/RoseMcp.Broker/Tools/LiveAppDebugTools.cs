@@ -180,6 +180,93 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		return await session.RemoveTracepointAsync(tracepointId, cancellationToken);
 	}
 
+	[McpServerTool(
+		Name = ToolNames.DebugSetBreakpoint,
+		Title = "Set a stopping breakpoint",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Set a stopping breakpoint at a method by name: on hit it pauses the target and records the "
+			+ "stop with its call stack in rose_debug_events, so you can see how execution got there. The "
+			+ "target stays frozen until rose_debug_continue, or until an auto-continue safety timeout "
+			+ "(default 30s) fires so an unattended stop cannot wedge the app -- so read the events and "
+			+ "continue promptly. For non-invasive logging that never pauses, prefer rose_debug_add_tracepoint.")]
+	public async Task<LiveBreakpoint> SetBreakpointAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("Method to break on, as [Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.")]
+		string location,
+		[Description("Seconds a hit is held before the target auto-continues on its own; default 30.")]
+		int? autoContinueSeconds = null,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.SetBreakpointAsync(location, autoContinueSeconds, cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.DebugListBreakpoints,
+		Title = "List stopping breakpoints",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"List a session's stopping breakpoints, each with its id, location, hit count, auto-continue "
+			+ "timeout, and whether it is bound yet. Use it to confirm a breakpoint bound to a real method, "
+			+ "since one whose module has not loaded, or whose method name did not resolve, stays unbound "
+			+ "and reports why rather than failing loudly.")]
+	public async Task<IReadOnlyList<LiveBreakpoint>> ListBreakpointsAsync(
+		[Description(SessionHelp)] string sessionId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.ListBreakpointsAsync(cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.DebugRemoveBreakpoint,
+		Title = "Remove a stopping breakpoint",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Remove a stopping breakpoint by id and return the remaining set. Use it once you have seen what "
+			+ "you needed so execution stops passing through that method; removing one the target is "
+			+ "currently held at does not itself resume -- call rose_debug_continue for that.")]
+	public async Task<IReadOnlyList<LiveBreakpoint>> RemoveBreakpointAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("The breakpoint id returned by rose_debug_set_breakpoint.")] string breakpointId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.RemoveBreakpointAsync(breakpointId, cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.DebugContinue,
+		Title = "Continue from a breakpoint",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false)]
+	[Description(
+		"Resume a target that is held at a stopping breakpoint, so it keeps running. Call this after you "
+			+ "have read the stop and its stack from rose_debug_events; it is a no-op if nothing is "
+			+ "currently stopped, which is safe to call speculatively.")]
+	public async Task<string> ContinueAsync(
+		[Description(SessionHelp)] string sessionId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		var continued = await session.ContinueAsync(cancellationToken);
+		return continued ? "Continued; the target is running again." : "Nothing was stopped at a breakpoint.";
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

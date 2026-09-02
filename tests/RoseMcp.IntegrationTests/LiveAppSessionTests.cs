@@ -143,13 +143,73 @@ public sealed class LiveAppSessionTests
 		Assert.Equal(LiveAppSessionState.Faulted, session.Describe().State);
 	}
 
+	/// <summary>
+	/// A stopping breakpoint (issue #6): set at a method by name, it holds the target on hit and
+	/// records the stop with its stack; continuing resumes it, and detach leaves it running. This is
+	/// the interactive counterpart to a tracepoint.
+	/// </summary>
+	[Fact]
+	public async Task Stopping_breakpoint_holds_the_target_and_continue_resumes_it()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "probe target",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+
+			// The hit holds the target and records the stop with a stack that names the method.
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(stop);
+			Assert.NotNull(stop!.Frames);
+			Assert.Contains(stop.Frames!, frame => frame.Contains("DebugProbeTarget.Program.Beat"));
+
+			// Remove the breakpoint so continuing does not immediately re-stop, then resume.
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			Assert.True(await session.ContinueAsync(cancellationToken));
+
+			// Resumed: the loop runs past the (now removed) breakpoint and throws again, after the stop.
+			var afterResume = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false)
+					&& entry.Sequence > stop.Sequence,
+				cancellationToken,
+				startCursor: stop.Sequence);
+			Assert.NotNull(afterResume);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
 	private static async Task<LiveDebugEvent?> WaitForEventAsync(
 		LiveAppSession session,
 		Func<LiveDebugEvent, bool> match,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		long startCursor = 0)
 	{
 		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
-		var cursor = 0L;
+		var cursor = startCursor;
 
 		while (DateTime.UtcNow < deadline)
 		{

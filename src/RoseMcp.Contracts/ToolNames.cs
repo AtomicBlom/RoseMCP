@@ -57,6 +57,18 @@ public static class ToolNames
 	/// <summary>Live-app-host-only. The broker forwards this to remove a tracepoint.</summary>
 	public const string LiveAppRemoveTracepoint = "rose_live_app_remove_tracepoint";
 
+	/// <summary>Live-app-host-only. The broker forwards this to set a stopping breakpoint.</summary>
+	public const string LiveAppSetBreakpoint = "rose_live_app_set_breakpoint";
+
+	/// <summary>Live-app-host-only. The broker forwards this to list stopping breakpoints.</summary>
+	public const string LiveAppListBreakpoints = "rose_live_app_list_breakpoints";
+
+	/// <summary>Live-app-host-only. The broker forwards this to remove a stopping breakpoint.</summary>
+	public const string LiveAppRemoveBreakpoint = "rose_live_app_remove_breakpoint";
+
+	/// <summary>Live-app-host-only. The broker forwards this to resume a target held at a breakpoint.</summary>
+	public const string LiveAppContinue = "rose_live_app_continue";
+
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 
@@ -77,4 +89,16 @@ public static class ToolNames
 
 	/// <summary>Remove a tracepoint by id.</summary>
 	public const string DebugRemoveTracepoint = "rose_debug_remove_tracepoint";
+
+	/// <summary>Set a stopping breakpoint that holds the target on hit, with an auto-continue timeout.</summary>
+	public const string DebugSetBreakpoint = "rose_debug_set_breakpoint";
+
+	/// <summary>List a session's stopping breakpoints and whether each is bound.</summary>
+	public const string DebugListBreakpoints = "rose_debug_list_breakpoints";
+
+	/// <summary>Remove a stopping breakpoint by id.</summary>
+	public const string DebugRemoveBreakpoint = "rose_debug_remove_breakpoint";
+
+	/// <summary>Resume a target that is held at a stopping breakpoint.</summary>
+	public const string DebugContinue = "rose_debug_continue";
 }

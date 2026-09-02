@@ -10,25 +10,27 @@ namespace RoseMcp.LiveApp.Debugging;
 
 /// <summary>
 /// One ICorDebug session against one already-running process. Callbacks arrive on mscordbi's own
-/// thread with the debuggee stopped, and nothing in it runs again until <c>Continue</c> is called,
-/// so every handler ends by recording the event and continuing -- except ExitProcess, after which
-/// there is nothing left to continue.
+/// thread with the debuggee stopped, and nothing in it runs again until <c>Continue</c> is called, so
+/// every handler ends by recording the event and continuing -- except ExitProcess, after which there
+/// is nothing left to continue, and a stopping breakpoint, which deliberately holds.
 /// <para>
 /// This is the attach half of issue #4: it never launches a process, so a running .NET target can be
-/// attached to and watched with nothing injected into it. It also supports tracepoints (issue #17) --
-/// breakpoints that log and auto-continue, never pausing the target. Events are captured into a
-/// <see cref="DebugEventBuffer"/> rather than printed, because the reader is a turn-based agent that
-/// looks between its turns.
+/// attached to and watched with nothing injected into it. It supports both tracepoints (#17) --
+/// breakpoints that log and auto-continue, never pausing -- and stopping breakpoints (#6), which hold
+/// the target and notify, with a safety timeout so an unattended stop cannot wedge the app. Events
+/// are captured into a <see cref="DebugEventBuffer"/> rather than printed, because the reader is a
+/// turn-based agent that looks between its turns.
 /// </para>
 /// </summary>
 internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
 {
 	private static readonly TimeSpan RuntimeReadyTimeout = TimeSpan.FromSeconds(5);
 	private const int MaxStackFrames = 20;
+	private const int DefaultAutoContinueSeconds = 30;
 
 	private readonly Lock _gate = new();
-	private readonly List<Tracepoint> _tracepoints = [];
-	private int _nextTracepointId = 1;
+	private readonly List<BreakpointBinding> _bindings = [];
+	private int _nextBindingId = 1;
 
 	private DbgShim? _shim;
 	private CorDebug? _corDebug;
@@ -36,9 +38,24 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private bool _detached;
 	private volatile bool _exited;
 
+	private bool _stoppedAtBreakpoint;
+	private string? _stoppedBindingId;
+	private Timer? _autoContinueTimer;
+
 	public int? TargetProcessId { get; private set; }
 
 	public bool HasExited => _exited;
+
+	public bool IsStoppedAtBreakpoint
+	{
+		get
+		{
+			lock (_gate)
+			{
+				return _stoppedAtBreakpoint;
+			}
+		}
+	}
 
 	/// <summary>
 	/// Attaches to a running process, waiting briefly for its runtime if it has only just started.
@@ -69,6 +86,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		{
 			if (_process is null || _detached || _exited) return;
 
+			DisposeTimer();
+
 			try
 			{
 				// Detach needs a stopped process; stopping and detaching leaves the target running.
@@ -86,34 +105,33 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// Adds a tracepoint, binding it immediately if its module is already loaded and otherwise when
-	/// the module loads. A tracepoint never pauses the target: each hit is logged and continued.
+	/// Adds a tracepoint: a breakpoint that logs and auto-continues, never pausing the target. It binds
+	/// immediately if its module is already loaded and otherwise when the module loads.
 	/// </summary>
 	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit)
 	{
-		var parsed = SymbolLocation.Parse(location);
 		if (logEveryNthHit is < 1) throw new ArgumentException("logEveryNthHit must be at least 1.");
 
-		Tracepoint tracepoint;
+		var binding = AddBinding(location, stopOnHit: false, logMessage, logEveryNthHit, autoContinueSeconds: null);
 		lock (_gate)
 		{
-			tracepoint = new Tracepoint
-			{
-				Id = $"tp-{_nextTracepointId++}",
-				Location = parsed,
-				Raw = location,
-				LogMessage = logMessage,
-				LogEveryNthHit = logEveryNthHit,
-				Detail = "module not loaded yet",
-			};
-			_tracepoints.Add(tracepoint);
+			return DescribeTracepoint(binding);
 		}
+	}
 
-		BindAgainstLoadedModules();
+	/// <summary>
+	/// Adds a stopping breakpoint: on hit it holds the target and records the stop with its stack, then
+	/// auto-continues after <paramref name="autoContinueSeconds"/> (default 30) so an unattended stop
+	/// cannot wedge the app. Call <see cref="Continue"/> to resume sooner.
+	/// </summary>
+	public LiveBreakpoint AddBreakpoint(string location, int? autoContinueSeconds)
+	{
+		if (autoContinueSeconds is < 1) throw new ArgumentException("autoContinueSeconds must be at least 1.");
 
+		var binding = AddBinding(location, stopOnHit: true, logMessage: null, logEveryNthHit: null, autoContinueSeconds);
 		lock (_gate)
 		{
-			return Describe(tracepoint);
+			return DescribeBreakpoint(binding);
 		}
 	}
 
@@ -121,30 +139,27 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			return [.. _tracepoints.Select(Describe)];
+			return [.. _bindings.Where(binding => !binding.StopOnHit).Select(DescribeTracepoint)];
 		}
 	}
 
-	public bool RemoveTracepoint(string id)
+	public IReadOnlyList<LiveBreakpoint> ListBreakpoints()
 	{
 		lock (_gate)
 		{
-			var tracepoint = _tracepoints.FirstOrDefault(entry => entry.Id == id);
-			if (tracepoint is null) return false;
-
-			try
-			{
-				tracepoint.Breakpoint?.Activate(false);
-			}
-			catch (Exception exception)
-			{
-				logger.LogDebug(exception, "Deactivating tracepoint {Id} failed.", id);
-			}
-
-			_tracepoints.Remove(tracepoint);
-			return true;
+			return [.. _bindings.Where(binding => binding.StopOnHit).Select(DescribeBreakpoint)];
 		}
 	}
+
+	public bool RemoveTracepoint(string id) => RemoveBinding(id);
+
+	public bool RemoveBreakpoint(string id) => RemoveBinding(id);
+
+	/// <summary>
+	/// Resumes a target held at a stopping breakpoint. Returns false when nothing was stopped. The
+	/// safety timer calls the same path, so whichever comes first resumes and the other is a no-op.
+	/// </summary>
+	public bool Continue() => ContinueInternal(auto: false);
 
 	public void Dispose()
 	{
@@ -157,6 +172,80 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		catch (Exception exception)
 		{
 			logger.LogDebug(exception, "Terminating the ICorDebug interface failed.");
+		}
+	}
+
+	private BreakpointBinding AddBinding(string location, bool stopOnHit, string? logMessage, int? logEveryNthHit, int? autoContinueSeconds)
+	{
+		var parsed = SymbolLocation.Parse(location);
+
+		BreakpointBinding binding;
+		lock (_gate)
+		{
+			binding = new BreakpointBinding
+			{
+				Id = $"{(stopOnHit ? "bp" : "tp")}-{_nextBindingId++}",
+				Location = parsed,
+				Raw = location,
+				StopOnHit = stopOnHit,
+				LogMessage = logMessage,
+				LogEveryNthHit = logEveryNthHit,
+				AutoContinueSeconds = autoContinueSeconds,
+				Detail = "module not loaded yet",
+			};
+			_bindings.Add(binding);
+		}
+
+		BindAgainstLoadedModules();
+		return binding;
+	}
+
+	private bool RemoveBinding(string id)
+	{
+		lock (_gate)
+		{
+			var binding = _bindings.FirstOrDefault(entry => entry.Id == id);
+			if (binding is null) return false;
+
+			try
+			{
+				binding.Breakpoint?.Activate(false);
+			}
+			catch (Exception exception)
+			{
+				logger.LogDebug(exception, "Deactivating binding {Id} failed.", id);
+			}
+
+			_bindings.Remove(binding);
+			return true;
+		}
+	}
+
+	private bool ContinueInternal(bool auto)
+	{
+		lock (_gate)
+		{
+			if (!_stoppedAtBreakpoint || _process is null || _detached || _exited) return false;
+
+			_stoppedAtBreakpoint = false;
+			var id = _stoppedBindingId;
+			_stoppedBindingId = null;
+			DisposeTimer();
+
+			try
+			{
+				_process.Continue(fIsOutOfBand: false);
+			}
+			catch (Exception exception)
+			{
+				logger.LogWarning(exception, "Continuing from breakpoint {Id} failed.", id);
+				return false;
+			}
+
+			buffer.Append(
+				LiveDebugEventKind.SessionNotice,
+				auto ? $"Auto-continued from breakpoint {id} after the safety timeout." : $"Continued from breakpoint {id}.");
+			return true;
 		}
 	}
 
@@ -277,9 +366,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	private void OnEvent(object? sender, CorDebugManagedCallbackEventArgs e)
 	{
+		var shouldContinue = true;
 		try
 		{
-			Record(e);
+			shouldContinue = Record(e);
 		}
 		catch (Exception exception)
 		{
@@ -291,6 +381,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			_exited = true;
 			return;
 		}
+
+		// A stopping breakpoint holds the target; Continue resumes it later.
+		if (!shouldContinue) return;
 
 		lock (_gate)
 		{
@@ -307,7 +400,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	private void Record(CorDebugManagedCallbackEventArgs e)
+	/// <summary>Records an event; returns whether the caller should continue the target afterwards.</summary>
+	private bool Record(CorDebugManagedCallbackEventArgs e)
 	{
 		switch (e)
 		{
@@ -315,36 +409,34 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				// Debugger.Log in the debuggee only produces LogMessage events once this is on.
 				created.Process.EnableLogMessages(true);
 				buffer.Append(LiveDebugEventKind.ProcessCreated, $"Process {created.Process.Id} reported to the debugger.");
-				break;
+				return true;
 
 			case LoadModuleCorDebugManagedCallbackEventArgs loaded:
 				buffer.Append(LiveDebugEventKind.ModuleLoaded, $"Loaded {loaded.Module.Name}", moduleName: loaded.Module.Name);
 				BindModule(loaded.Module);
-				break;
+				return true;
 
 			case LogMessageCorDebugManagedCallbackEventArgs log:
 				buffer.Append(
 					LiveDebugEventKind.LogMessage,
 					$"[{log.LogSwitchName}] {log.Message.TrimEnd()}",
 					threadId: TryThreadId(log.Thread));
-				break;
+				return true;
 
 			case BreakpointCorDebugManagedCallbackEventArgs hit:
-				RecordBreakpointHit(hit);
-				break;
+				return RecordBreakpointHit(hit);
 
 			case Exception2CorDebugManagedCallbackEventArgs exception:
 				RecordException(exception);
-				break;
+				return true;
 
 			case ExitProcessCorDebugManagedCallbackEventArgs:
 				buffer.Append(LiveDebugEventKind.ProcessExited, "The target process exited.");
-				break;
+				return true;
 
-			// Thread churn and the rest are continued but not buffered: high volume, low signal for
-			// the first dogfood, which is exceptions and log output.
+			// Thread churn and the rest are continued but not buffered: high volume, low signal.
 			default:
-				break;
+				return true;
 		}
 	}
 
@@ -368,10 +460,76 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			frames: frames.Count > 0 ? frames : null);
 	}
 
+	private bool RecordBreakpointHit(BreakpointCorDebugManagedCallbackEventArgs hit)
+	{
+		var threadId = TryThreadId(hit.Thread);
+		var (token, moduleName) = TryFunctionIdentity(hit.Breakpoint as CorDebugFunctionBreakpoint);
+
+		BreakpointBinding? binding;
+		long ordinal;
+		lock (_gate)
+		{
+			binding = _bindings.FirstOrDefault(entry =>
+				entry.Bound
+				&& entry.Token == token
+				&& (moduleName is null
+					|| string.Equals(Path.GetFileNameWithoutExtension(moduleName), entry.Location.ModuleSimpleName, StringComparison.OrdinalIgnoreCase)));
+
+			// With one binding bound, an unidentified hit is unambiguously it.
+			binding ??= _bindings.Count(entry => entry.Bound) == 1 ? _bindings.First(entry => entry.Bound) : null;
+			ordinal = binding is null ? 0 : ++binding.HitCount;
+		}
+
+		if (binding is { StopOnHit: true })
+		{
+			return HoldAtBreakpoint(binding, hit.Thread, ordinal, threadId);
+		}
+
+		// Tracepoint: a hit-count filter still counts every hit; it only thins what is logged.
+		if (binding?.LogEveryNthHit is { } nth && ordinal % nth != 0) return true;
+
+		var location = binding?.Raw ?? "unknown location";
+		var suffix = binding?.LogMessage is { Length: > 0 } message ? $": {message}" : string.Empty;
+		buffer.Append(
+			LiveDebugEventKind.BreakpointHit,
+			$"Tracepoint {location} hit #{ordinal} on thread {threadId?.ToString() ?? "?"}{suffix}",
+			threadId: threadId);
+		return true;
+	}
+
+	/// <summary>
+	/// Holds the target at a stopping breakpoint: records the stop with its stack and arms the
+	/// auto-continue safety timer. Returns false so the caller does not continue -- the target stays
+	/// stopped until <see cref="Continue"/> or the timer fires.
+	/// </summary>
+	private bool HoldAtBreakpoint(BreakpointBinding binding, CorDebugThread thread, long ordinal, int? threadId)
+	{
+		var frames = WalkStack(thread, MaxStackFrames);
+
+		lock (_gate)
+		{
+			_stoppedAtBreakpoint = true;
+			_stoppedBindingId = binding.Id;
+
+			var seconds = binding.AutoContinueSeconds ?? DefaultAutoContinueSeconds;
+			DisposeTimer();
+			_autoContinueTimer = new Timer(_ => ContinueInternal(auto: true), null, TimeSpan.FromSeconds(seconds), Timeout.InfiniteTimeSpan);
+
+			buffer.Append(
+				LiveDebugEventKind.BreakpointHit,
+				$"Breakpoint {binding.Raw} hit #{ordinal} on thread {threadId?.ToString() ?? "?"} -- stopped; continue to resume (auto-continues in {seconds}s).",
+				threadId: threadId,
+				frames: frames.Count > 0 ? frames : null);
+		}
+
+		return false;
+	}
+
 	/// <summary>
 	/// The managed frames of a stopped thread, innermost first, resolved to method names. Only valid
-	/// while the thread is stopped -- which, for an exception, is the callback it is reported on.
-	/// Frames whose function cannot be resolved (native, internal, dynamic) are skipped.
+	/// while the thread is stopped -- which, for an exception or a stopping breakpoint, is the callback
+	/// it is reported on. Frames whose function cannot be resolved (native, internal, dynamic) are
+	/// skipped.
 	/// </summary>
 	private IReadOnlyList<string> WalkStack(CorDebugThread thread, int maxFrames)
 	{
@@ -410,48 +568,17 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	private void RecordBreakpointHit(BreakpointCorDebugManagedCallbackEventArgs hit)
-	{
-		var threadId = TryThreadId(hit.Thread);
-		var (token, moduleName) = TryFunctionIdentity(hit.Breakpoint as CorDebugFunctionBreakpoint);
-
-		Tracepoint? tracepoint;
-		long ordinal;
-		lock (_gate)
-		{
-			tracepoint = _tracepoints.FirstOrDefault(entry =>
-				entry.Bound
-				&& entry.Token == token
-				&& (moduleName is null
-					|| string.Equals(Path.GetFileNameWithoutExtension(moduleName), entry.Location.ModuleSimpleName, StringComparison.OrdinalIgnoreCase)));
-
-			// With one tracepoint bound, an unidentified hit is unambiguously it.
-			tracepoint ??= _tracepoints.Count(entry => entry.Bound) == 1 ? _tracepoints.First(entry => entry.Bound) : null;
-			ordinal = tracepoint is null ? 0 : ++tracepoint.HitCount;
-		}
-
-		// A hit-count filter still counts every hit; it only thins what is logged.
-		if (tracepoint?.LogEveryNthHit is { } nth && ordinal % nth != 0) return;
-
-		var location = tracepoint?.Raw ?? "unknown location";
-		var suffix = tracepoint?.LogMessage is { Length: > 0 } message ? $": {message}" : string.Empty;
-		buffer.Append(
-			LiveDebugEventKind.BreakpointHit,
-			$"Tracepoint {location} hit #{ordinal} on thread {threadId?.ToString() ?? "?"}{suffix}",
-			threadId: threadId);
-	}
-
 	/// <summary>
-	/// Binds any unbound tracepoints against modules already loaded when the tracepoint was added. It
+	/// Binds any unbound bindings against modules already loaded when the binding was added. It
 	/// async-breaks the target to a synchronized state to enumerate its modules, then resumes it; a
-	/// tracepoint whose module has not loaded yet stays unbound and binds later on the load callback.
+	/// binding whose module has not loaded yet stays unbound and binds later on the load callback.
 	/// </summary>
 	private void BindAgainstLoadedModules()
 	{
 		lock (_gate)
 		{
 			if (_process is null || _detached || _exited) return;
-			if (_tracepoints.TrueForAll(tracepoint => tracepoint.Bound)) return;
+			if (_bindings.TrueForAll(binding => binding.Bound)) return;
 
 			var stopped = false;
 			try
@@ -461,15 +588,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 				foreach (var module in EnumerateModules(_process))
 				{
-					foreach (var tracepoint in _tracepoints)
+					foreach (var binding in _bindings)
 					{
-						if (!tracepoint.Bound) TryBind(tracepoint, module);
+						if (!binding.Bound) TryBind(binding, module);
 					}
 				}
 			}
 			catch (Exception exception)
 			{
-				logger.LogDebug(exception, "Binding tracepoints against loaded modules failed.");
+				logger.LogDebug(exception, "Binding against loaded modules failed.");
 			}
 			finally
 			{
@@ -481,30 +608,30 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 					}
 					catch (Exception exception)
 					{
-						logger.LogDebug(exception, "Continue after tracepoint bind failed.");
+						logger.LogDebug(exception, "Continue after bind failed.");
 					}
 				}
 			}
 		}
 	}
 
-	/// <summary>Binds unbound tracepoints against a module as it loads; called from a stopped callback.</summary>
+	/// <summary>Binds unbound bindings against a module as it loads; called from a stopped callback.</summary>
 	private void BindModule(CorDebugModule module)
 	{
 		lock (_gate)
 		{
-			if (_tracepoints.TrueForAll(tracepoint => tracepoint.Bound)) return;
+			if (_bindings.TrueForAll(binding => binding.Bound)) return;
 
-			foreach (var tracepoint in _tracepoints)
+			foreach (var binding in _bindings)
 			{
-				if (!tracepoint.Bound) TryBind(tracepoint, module);
+				if (!binding.Bound) TryBind(binding, module);
 			}
 		}
 	}
 
-	private void TryBind(Tracepoint tracepoint, CorDebugModule module)
+	private void TryBind(BreakpointBinding binding, CorDebugModule module)
 	{
-		if (tracepoint.Bound) return;
+		if (binding.Bound) return;
 
 		try
 		{
@@ -516,12 +643,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 
 		var simpleName = Path.GetFileNameWithoutExtension(module.Name);
-		if (!string.Equals(simpleName, tracepoint.Location.ModuleSimpleName, StringComparison.OrdinalIgnoreCase)) return;
+		if (!string.Equals(simpleName, binding.Location.ModuleSimpleName, StringComparison.OrdinalIgnoreCase)) return;
 
-		var token = MethodTokens.Find(module.Name, tracepoint.Location.TypeName, tracepoint.Location.MethodName);
+		var token = MethodTokens.Find(module.Name, binding.Location.TypeName, binding.Location.MethodName);
 		if (token is null)
 		{
-			tracepoint.Detail = $"no method {tracepoint.Location.TypeName}.{tracepoint.Location.MethodName} in {Path.GetFileName(module.Name)}";
+			binding.Detail = $"no method {binding.Location.TypeName}.{binding.Location.MethodName} in {Path.GetFileName(module.Name)}";
 			return;
 		}
 
@@ -531,16 +658,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			var breakpoint = function.CreateBreakpoint();
 			breakpoint.Activate(true);
 
-			tracepoint.Breakpoint = breakpoint;
-			tracepoint.Token = token.Value;
-			tracepoint.Detail = null;
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"Tracepoint {tracepoint.Id} bound at {tracepoint.Raw}.");
-			logger.LogInformation("Tracepoint {Id} bound at {Location} (token 0x{Token:x8}).", tracepoint.Id, tracepoint.Raw, token.Value);
+			binding.Breakpoint = breakpoint;
+			binding.Token = token.Value;
+			binding.Detail = null;
+			buffer.Append(LiveDebugEventKind.SessionNotice, $"{binding.Id} bound at {binding.Raw}.");
+			logger.LogInformation("Binding {Id} bound at {Location} (token 0x{Token:x8}).", binding.Id, binding.Raw, token.Value);
 		}
 		catch (Exception exception)
 		{
-			tracepoint.Detail = $"bind failed: {exception.Message}";
-			logger.LogDebug(exception, "Binding tracepoint {Id} at {Location} failed.", tracepoint.Id, tracepoint.Raw);
+			binding.Detail = $"bind failed: {exception.Message}";
+			logger.LogDebug(exception, "Binding {Id} at {Location} failed.", binding.Id, binding.Raw);
 		}
 	}
 
@@ -574,15 +701,32 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	private static LiveTracepoint Describe(Tracepoint tracepoint) => new()
+	private void DisposeTimer()
 	{
-		Id = tracepoint.Id,
-		Location = tracepoint.Raw,
-		Bound = tracepoint.Bound,
-		HitCount = tracepoint.HitCount,
-		LogMessage = tracepoint.LogMessage,
-		LogEveryNthHit = tracepoint.LogEveryNthHit,
-		Detail = tracepoint.Bound ? null : tracepoint.Detail,
+		_autoContinueTimer?.Dispose();
+		_autoContinueTimer = null;
+	}
+
+	private static LiveTracepoint DescribeTracepoint(BreakpointBinding binding) => new()
+	{
+		Id = binding.Id,
+		Location = binding.Raw,
+		Bound = binding.Bound,
+		HitCount = binding.HitCount,
+		LogMessage = binding.LogMessage,
+		LogEveryNthHit = binding.LogEveryNthHit,
+		Detail = binding.Bound ? null : binding.Detail,
+	};
+
+	private static LiveBreakpoint DescribeBreakpoint(BreakpointBinding binding) => new()
+	{
+		Id = binding.Id,
+		Location = binding.Raw,
+		StopOnHit = binding.StopOnHit,
+		Bound = binding.Bound,
+		HitCount = binding.HitCount,
+		AutoContinueSeconds = binding.AutoContinueSeconds ?? DefaultAutoContinueSeconds,
+		Detail = binding.Bound ? null : binding.Detail,
 	};
 
 	private static string DescribeExceptionType(CorDebugThread thread)
@@ -623,7 +767,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	private sealed record RuntimeInProcess(string Path, IntPtr Handle, EnumerateCLRsResult Enumeration);
 
-	private sealed class Tracepoint
+	private sealed class BreakpointBinding
 	{
 		public required string Id { get; init; }
 
@@ -632,13 +776,18 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		/// <summary>The location as the caller wrote it, for reporting.</summary>
 		public required string Raw { get; init; }
 
+		/// <summary>True for a stopping breakpoint; false for a tracepoint (log and continue).</summary>
+		public required bool StopOnHit { get; init; }
+
 		public string? LogMessage { get; init; }
 
 		public int? LogEveryNthHit { get; init; }
 
+		public int? AutoContinueSeconds { get; init; }
+
 		public long HitCount { get; set; }
 
-		/// <summary>The bound method's metadata token, used to match a hit back to this tracepoint.</summary>
+		/// <summary>The bound method's metadata token, used to match a hit back to this binding.</summary>
 		public int? Token { get; set; }
 
 		public CorDebugFunctionBreakpoint? Breakpoint { get; set; }

@@ -75,6 +75,45 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return new LiveTracepointList { Tracepoints = session?.ListTracepoints() ?? [] };
 	}
 
+	/// <summary>Sets a stopping breakpoint on the attached target.</summary>
+	public LiveBreakpoint SetBreakpoint(string location, int? autoContinueSeconds)
+		=> RequireSession().AddBreakpoint(location, autoContinueSeconds);
+
+	public LiveBreakpointList ListBreakpoints()
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		return new LiveBreakpointList { Breakpoints = session?.ListBreakpoints() ?? [] };
+	}
+
+	public LiveBreakpointList RemoveBreakpoint(string id)
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		session?.RemoveBreakpoint(id);
+		return new LiveBreakpointList { Breakpoints = session?.ListBreakpoints() ?? [] };
+	}
+
+	/// <summary>Resumes a target held at a stopping breakpoint; false when nothing was stopped.</summary>
+	public LiveContinueResult Continue()
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		return new LiveContinueResult { Continued = session?.Continue() == true };
+	}
+
 	/// <summary>A page of buffered debug events after the given cursor, with the session's state.</summary>
 	public LiveDebugEventPage ReadEvents(long after)
 	{

@@ -180,6 +180,24 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["id"] = id },
 			cancellationToken)).Tracepoints;
 
+	public Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, CancellationToken cancellationToken)
+		=> SendAsync<LiveBreakpoint>(
+			ToolNames.LiveAppSetBreakpoint,
+			new Dictionary<string, object?> { ["location"] = location, ["autoContinueSeconds"] = autoContinueSeconds },
+			cancellationToken);
+
+	public async Task<IReadOnlyList<LiveBreakpoint>> ListBreakpointsAsync(CancellationToken cancellationToken)
+		=> (await SendAsync<LiveBreakpointList>(ToolNames.LiveAppListBreakpoints, cancellationToken)).Breakpoints;
+
+	public async Task<IReadOnlyList<LiveBreakpoint>> RemoveBreakpointAsync(string id, CancellationToken cancellationToken)
+		=> (await SendAsync<LiveBreakpointList>(
+			ToolNames.LiveAppRemoveBreakpoint,
+			new Dictionary<string, object?> { ["id"] = id },
+			cancellationToken)).Breakpoints;
+
+	public async Task<bool> ContinueAsync(CancellationToken cancellationToken)
+		=> (await SendAsync<LiveContinueResult>(ToolNames.LiveAppContinue, cancellationToken)).Continued;
+
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);
 

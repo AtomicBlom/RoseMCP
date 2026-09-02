@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RoseMcp.Contracts\RoseMcp.Contracts.csproj" />
+    <ProjectReference Include="..\RoseMcp.Solutions\RoseMcp.Solutions.csproj" />
   </ItemGroup>
 
 </Project>

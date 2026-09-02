@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
+using RoseMcp.Solutions;
 
 namespace RoseMcp.IntegrationTests;
 

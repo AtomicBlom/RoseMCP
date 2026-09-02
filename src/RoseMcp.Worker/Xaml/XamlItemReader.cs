@@ -1,5 +1,7 @@
 using System.Xml.Linq;
 
+using RoseMcp.Solutions;
+
 namespace RoseMcp.Worker.Xaml;
 
 /// <summary>

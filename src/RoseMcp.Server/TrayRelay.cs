@@ -286,6 +286,13 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// with none at all, is better served by the tray's own inference than by an argument naming a
 	/// directory that means nothing.
 	/// </para>
+	/// <para>
+	/// A directory holding several solutions is the one case that is not filled in and not passed on
+	/// either: <see cref="AmbiguousSolutionException"/> travels out of here to the caller. Falling
+	/// through would be worse than throwing, because the tray then infers from what it has open --
+	/// and with exactly one workspace open it would answer from that one, however unrelated the
+	/// repository it belongs to.
+	/// </para>
 	/// </summary>
 	private IReadOnlyDictionary<string, object?> WithWorkspace(IDictionary<string, JsonElement>? arguments)
 	{
@@ -298,18 +305,31 @@ public sealed class TrayRelay : IAsyncDisposable
 
 		if (alreadyThere) return supplied;
 
-		string resolved;
+		SolutionChoice choice;
 		try
 		{
-			resolved = SolutionResolver.Resolve(_workingDirectory);
+			choice = SolutionResolver.Choose(_workingDirectory);
 		}
 		catch (ArgumentException)
 		{
 			return supplied;
 		}
 
-		supplied[WorkspaceArgument] = resolved;
-		_logger.LogDebug("Filled in workspace {Workspace} from the working directory.", resolved);
+		supplied[WorkspaceArgument] = choice.SolutionPath;
+
+		if (choice.WasContested)
+		{
+			_logger.LogDebug(
+				"Filled in workspace {Workspace} from the working directory, {Reason}, from: {Candidates}.",
+				choice.SolutionPath,
+				choice.Reason,
+				string.Join(", ", choice.Candidates));
+		}
+		else
+		{
+			_logger.LogDebug(
+				"Filled in workspace {Workspace} from the working directory.", choice.SolutionPath);
+		}
 
 		return supplied;
 	}

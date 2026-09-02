@@ -12,7 +12,9 @@ namespace RoseMcp.Broker.Tools;
 public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 {
 	private const string WorkspaceHelp =
-		"Path to a solution, project, or any file inside one. Optional when exactly one workspace is open.";
+		"Path to a solution, project, or any file inside one. Usually omitted: it is inferred from the "
+			+ "other arguments, or from the working directory. Needed only where a directory holds "
+			+ "several solutions and none of them is pinned, which is reported when it happens.";
 
 	[McpServerTool(
 		Name = ToolNames.Diagnostics,

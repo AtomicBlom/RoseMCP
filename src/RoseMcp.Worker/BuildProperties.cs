@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 
+using RoseMcp.Solutions;
+
 namespace RoseMcp.Worker;
 
 /// <summary>

@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
+using RoseMcp.Solutions;
 using RoseMcp.Worker.Xaml;
 
 namespace RoseMcp.Worker;

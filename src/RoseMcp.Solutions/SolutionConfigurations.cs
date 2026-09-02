@@ -1,4 +1,4 @@
-namespace RoseMcp.Worker;
+namespace RoseMcp.Solutions;
 
 /// <summary>
 /// The configuration and platform names a solution declares.

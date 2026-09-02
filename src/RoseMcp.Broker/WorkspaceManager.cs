@@ -216,7 +216,7 @@ public sealed class WorkspaceManager(
 	/// </summary>
 	private string ResolveOrInfer(string? path)
 	{
-		if (!string.IsNullOrWhiteSpace(path)) return SolutionResolver.Resolve(path);
+		if (!string.IsNullOrWhiteSpace(path)) return Resolved(path);
 
 		lock (_workers)
 		{
@@ -232,7 +232,7 @@ public sealed class WorkspaceManager(
 
 		try
 		{
-			return SolutionResolver.Resolve(_options.DefaultWorkspaceRoot);
+			return Resolved(_options.DefaultWorkspaceRoot);
 		}
 		catch (ArgumentException exception)
 		{
@@ -242,6 +242,32 @@ public sealed class WorkspaceManager(
 					+ "inside one.",
 				exception);
 		}
+	}
+
+	/// <summary>
+	/// Resolves a path, recording what it chose between when there was a choice.
+	/// <para>
+	/// Only the contested case is logged, and it is logged whether or not it went on to succeed. A
+	/// wrong choice here is close to undiagnosable from the answer -- searching the wrong solution
+	/// returns nothing, which reads exactly like searching the right one and finding nothing -- so
+	/// the candidates have to be in the log before anyone knows to look for them.
+	/// </para>
+	/// </summary>
+	private string Resolved(string path)
+	{
+		var choice = SolutionResolver.Choose(path);
+
+		if (choice.WasContested)
+		{
+			logger.LogDebug(
+				"Resolved {Path} to {SolutionPath}, {Reason}, from: {Candidates}.",
+				path,
+				choice.SolutionPath,
+				choice.Reason,
+				string.Join(", ", choice.Candidates));
+		}
+
+		return choice.SolutionPath;
 	}
 
 	public async ValueTask DisposeAsync()

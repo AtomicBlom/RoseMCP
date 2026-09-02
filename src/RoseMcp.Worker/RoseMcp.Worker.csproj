@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RoseMcp.Contracts\RoseMcp.Contracts.csproj" />
+    <ProjectReference Include="..\RoseMcp.Solutions\RoseMcp.Solutions.csproj" />
     <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />
     <!-- Not used as a library: this is the generator assembly, loaded at runtime as an
          AnalyzerFileReference from beside the worker. The reference is here so it builds first and

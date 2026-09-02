@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace RoseMcp.Worker;
+namespace RoseMcp.Solutions;
 
 /// <summary>
 /// A file beside one solution, pinning the MSBuild properties that solution wants to be loaded
@@ -45,6 +45,18 @@ public sealed record WorkspaceConfigFile
 	public string? Platform { get; init; }
 
 	/// <summary>
+	/// Which solution in this directory a call means when it names no workspace of its own, given as
+	/// a file name beside this file.
+	/// <para>
+	/// Read only from the directory-level file, never from the per-solution one: a file named after
+	/// a solution has already answered the question of which solution, so a pin there could only
+	/// contradict its own name. It is the one setting here that belongs to a directory rather than
+	/// to a solution, because it is the only one whose subject is the choice between them.
+	/// </para>
+	/// </summary>
+	public string? Solution { get; init; }
+
+	/// <summary>
 	/// Any other MSBuild global properties. Needed where the target framework is chosen by neither
 	/// configuration nor platform.
 	/// </summary>
@@ -72,6 +84,17 @@ public sealed record WorkspaceConfigFile
 		}
 
 		return null;
+	}
+
+	/// <summary>
+	/// The plain <c>rosemcp.json</c> in a directory, if there is one. Used where there is no solution
+	/// to name yet -- deciding which of several a bare path meant is the question that comes first.
+	/// </summary>
+	public static WorkspaceConfigFile? FindInDirectory(string directory)
+	{
+		var candidate = System.IO.Path.Combine(directory, FileName);
+
+		return File.Exists(candidate) ? Read(candidate) : null;
 	}
 
 	private static WorkspaceConfigFile? Read(string path)

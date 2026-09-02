@@ -1,3 +1,5 @@
+using RoseMcp.Solutions;
+
 namespace RoseMcp.IntegrationTests;
 
 public sealed class SolutionFileReaderTests : IDisposable

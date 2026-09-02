@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 
-namespace RoseMcp.Worker;
+namespace RoseMcp.Solutions;
 
 /// <summary>
 /// Reads the project list straight out of a solution file, without MSBuild.

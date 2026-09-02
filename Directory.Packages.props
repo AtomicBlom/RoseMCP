@@ -20,6 +20,15 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
   </ItemGroup>
 
+  <ItemGroup Label="Debugging (live-app host)">
+    <!-- ICorDebug interop (MIT) and dbgshim, which finds a running process's runtime and loads the
+         mscordbi beside it. Both RID-specific dbgshim packages are referenced; only the one matching
+         the host's own RID copies its dbgshim.dll, and the host is published per RID. -->
+    <PackageVersion Include="ClrDebug" Version="0.4.2" />
+    <PackageVersion Include="Microsoft.Diagnostics.DbgShim.win-arm64" Version="9.0.661903" />
+    <PackageVersion Include="Microsoft.Diagnostics.DbgShim.win-x64" Version="9.0.661903" />
+  </ItemGroup>
+
   <ItemGroup Label="Tray (Windows only)">
     <PackageVersion Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
     <PackageVersion Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />

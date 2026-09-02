@@ -104,6 +104,7 @@ public static class ServiceCollectionExtensions
 			})
 			.WithTools<BrokerTools>()
 			.WithTools<BrokerAnalysisTools>()
+			.WithTools<LiveAppDebugTools>()
 			.WithToolErrorMessages();
 	}
 

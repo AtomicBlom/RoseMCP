@@ -19,4 +19,15 @@ public sealed class LiveAppInfoTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Host process id, the architecture it launched as, and whether it established its target.")]
 	public LiveAppInfo Info() => host.CurrentInfo();
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppDetach,
+		Title = "Detach the debugger",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Detach the debugger, leaving the target running. Called before the host is closed.")]
+	public LiveAppInfo Detach() => host.DetachTarget();
 }

@@ -13,6 +13,7 @@
     <Project Path="src/RoseMcp.Worker/RoseMcp.Worker.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/DebugProbeTarget/DebugProbeTarget.csproj" />
     <Project Path="tests/RoseMcp.TestSupport/RoseMcp.TestSupport.csproj" />
     <Project Path="tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj" />
     <Project Path="tests/RoseMcp.IntegrationTests/RoseMcp.IntegrationTests.csproj" />

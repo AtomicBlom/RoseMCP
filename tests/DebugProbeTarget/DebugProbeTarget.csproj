@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <!-- A plain framework-dependent build so it runs as the machine architecture (win-arm64 here),
+         which is what the modern-.NET attach test needs: a native-arch, debuggable .NET process. -->
+  </PropertyGroup>
+
+</Project>

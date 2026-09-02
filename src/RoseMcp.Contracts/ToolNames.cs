@@ -35,4 +35,28 @@ public static class ToolNames
 	/// architecture it launched as, and whether it established its target.
 	/// </summary>
 	public const string LiveAppInfo = "rose_live_app_info";
+
+	/// <summary>
+	/// Live-app-host-only. The broker forwards this to read the host's buffered debug events; the
+	/// agent-facing counterpart is <see cref="DebugEvents"/>.
+	/// </summary>
+	public const string LiveAppEvents = "rose_live_app_events";
+
+	/// <summary>
+	/// Live-app-host-only. The broker calls this before closing the host, so the debugger detaches
+	/// while the host is still alive and the target is left running rather than taken down with it.
+	/// </summary>
+	public const string LiveAppDetach = "rose_live_app_detach";
+
+	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
+	public const string DebugAttach = "rose_debug_attach";
+
+	/// <summary>Read new debug events (exceptions, log messages, module loads) from a session.</summary>
+	public const string DebugEvents = "rose_debug_events";
+
+	/// <summary>Detach the debugger and end a session, leaving the target running.</summary>
+	public const string DebugDetach = "rose_debug_detach";
+
+	/// <summary>List the live-app debug sessions the broker is supervising.</summary>
+	public const string DebugList = "rose_debug_list";
 }

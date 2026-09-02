@@ -158,11 +158,24 @@ public sealed class LiveAppSession : IAsyncDisposable
 		return arguments;
 	}
 
-	private async Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
+	/// <summary>Reads the host's buffered debug events after the given cursor.</summary>
+	public Task<LiveDebugEventPage> ReadEventsAsync(long after, CancellationToken cancellationToken)
+		=> SendAsync<LiveDebugEventPage>(
+			ToolNames.LiveAppEvents,
+			new Dictionary<string, object?> { ["after"] = after },
+			cancellationToken);
+
+	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
+		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);
+
+	private async Task<T> SendAsync<T>(
+		string tool,
+		IReadOnlyDictionary<string, object?> arguments,
+		CancellationToken cancellationToken)
 	{
 		// Not CallToolAsync: it abandons the wait without telling the host, which then finishes the
 		// work anyway. The same reasoning as the worker's SendAsync.
-		var result = await CancellableToolCall.InvokeAsync(_client, tool, EmptyArguments, progress: null, cancellationToken);
+		var result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress: null, cancellationToken);
 
 		if (result.StructuredContent is null)
 		{
@@ -176,6 +189,18 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public async ValueTask DisposeAsync()
 	{
 		_alive = false;
+
+		try
+		{
+			// Detach while the host is still alive, so the target is left running. An ICorDebug
+			// debuggee whose debugger just dies is taken down with it, so this must precede closing
+			// the host rather than relying on the host's own shutdown winning the race.
+			await SendAsync<LiveAppInfo>(ToolNames.LiveAppDetach, CancellationToken.None);
+		}
+		catch (Exception exception)
+		{
+			_logger.LogDebug(exception, "Detaching the live-app host for {Target} failed.", Target.Description);
+		}
 
 		try
 		{

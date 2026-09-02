@@ -121,8 +121,9 @@ reclaim memory or pick up a rebuilt generator.
   to disk, where every other solution over the same projects picks the new text up at its next read
   while still calling the old name from projects the renaming solution never had. That sibling is
   not stale, it is broken. Mutations report which solutions beside them compile the files they
-  touched. Reported, not acted on -- see `D:\Drawboard\Windows\union-solution.md` for why merging
-  across solutions is a much larger thing, and not always well defined.
+  touched. Reported, not acted on: making a change complete across solutions means loading them all
+  and merging the edits, and that is not always even well defined, since two solutions can build one
+  project under configurations with no setting in common.
 - **Analyzer assemblies are never loaded from where they live.** They are shadow-copied first. A
   loaded assembly is held open for the life of the process, and this process lives for hours, so
   loading them in place means the user cannot rebuild their own generator -- `dotnet build` fails

@@ -57,4 +57,17 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Resume a target held at a stopping breakpoint.")]
 	public LiveContinueResult Continue() => host.Continue();
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppStep,
+		Title = "Step",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Step a target held at a breakpoint: \"in\", \"over\", or \"out\".")]
+	public LiveContinueResult Step(
+		[Description("in, over, or out.")] string mode)
+		=> host.Step(mode);
 }

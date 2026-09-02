@@ -267,6 +267,29 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		return continued ? "Continued; the target is running again." : "Nothing was stopped at a breakpoint.";
 	}
 
+	[McpServerTool(
+		Name = ToolNames.DebugStep,
+		Title = "Step",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false)]
+	[Description(
+		"Step a target that is held at a breakpoint: 'in' steps into calls, 'over' runs them without "
+			+ "descending, 'out' runs to the caller. The step resumes the target briefly and then holds it "
+			+ "again at the new location, which arrives as a StepComplete event in rose_debug_events with a "
+			+ "fresh stack and locals. It is a no-op if nothing is currently stopped. Line granularity "
+			+ "needs a PDB; without one, a step lands at the runtime's own step boundaries.")]
+	public async Task<string> StepAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("in, over, or out.")] string mode = "over",
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		var stepped = await session.StepAsync(mode, cancellationToken);
+		return stepped ? $"Stepped {mode}; see the StepComplete event for the new location." : "Nothing was stopped to step.";
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

@@ -69,6 +69,9 @@ public static class ToolNames
 	/// <summary>Live-app-host-only. The broker forwards this to resume a target held at a breakpoint.</summary>
 	public const string LiveAppContinue = "rose_live_app_continue";
 
+	/// <summary>Live-app-host-only. The broker forwards this to step a held target.</summary>
+	public const string LiveAppStep = "rose_live_app_step";
+
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 
@@ -101,4 +104,7 @@ public static class ToolNames
 
 	/// <summary>Resume a target that is held at a stopping breakpoint.</summary>
 	public const string DebugContinue = "rose_debug_continue";
+
+	/// <summary>Step a target held at a breakpoint: in, over, or out.</summary>
+	public const string DebugStep = "rose_debug_step";
 }

@@ -198,6 +198,12 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public async Task<bool> ContinueAsync(CancellationToken cancellationToken)
 		=> (await SendAsync<LiveContinueResult>(ToolNames.LiveAppContinue, cancellationToken)).Continued;
 
+	public async Task<bool> StepAsync(string mode, CancellationToken cancellationToken)
+		=> (await SendAsync<LiveContinueResult>(
+			ToolNames.LiveAppStep,
+			new Dictionary<string, object?> { ["mode"] = mode },
+			cancellationToken)).Continued;
+
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);
 

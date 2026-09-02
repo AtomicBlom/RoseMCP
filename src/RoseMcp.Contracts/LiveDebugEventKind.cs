@@ -30,6 +30,9 @@ public enum LiveDebugEventKind
 	/// <summary>A <c>System.Diagnostics.Debugger.Log</c> message from the debuggee.</summary>
 	LogMessage,
 
-	/// <summary>Execution reached a breakpoint the debugger set. (Set by later work.)</summary>
+	/// <summary>Execution reached a breakpoint the debugger set (a tracepoint hit, or a stopping hold).</summary>
 	BreakpointHit,
+
+	/// <summary>A step (in/over/out) finished and the target is held at the new location.</summary>
+	StepComplete,
 }

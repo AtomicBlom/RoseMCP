@@ -114,6 +114,18 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return new LiveContinueResult { Continued = session?.Continue() == true };
 	}
 
+	/// <summary>Steps a target held at a breakpoint: "in", "over", or "out".</summary>
+	public LiveContinueResult Step(string mode)
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		return new LiveContinueResult { Continued = session?.Step(mode) == true };
+	}
+
 	/// <summary>A page of buffered debug events after the given cursor, with the session's state.</summary>
 	public LiveDebugEventPage ReadEvents(long after)
 	{

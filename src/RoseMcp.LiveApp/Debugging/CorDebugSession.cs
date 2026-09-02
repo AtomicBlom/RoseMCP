@@ -41,6 +41,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	private bool _stoppedAtBreakpoint;
 	private string? _stoppedBindingId;
+	private CorDebugThread? _stoppedThread;
 	private Timer? _autoContinueTimer;
 
 	public int? TargetProcessId { get; private set; }
@@ -88,6 +89,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			if (_process is null || _detached || _exited) return;
 
 			DisposeTimer();
+			_stoppedAtBreakpoint = false;
+			_stoppedThread = null;
 
 			try
 			{
@@ -162,6 +165,59 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	public bool Continue() => ContinueInternal(auto: false);
 
+	/// <summary>
+	/// Steps the held thread: <c>in</c> into calls, <c>over</c> them, or <c>out</c> of the current
+	/// frame. It resumes the target so the step runs; a StepComplete callback then holds it again at
+	/// the new location. Returns false when nothing is currently stopped.
+	/// </summary>
+	public bool Step(string mode)
+	{
+		lock (_gate)
+		{
+			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited) return false;
+
+			try
+			{
+				var stepper = _stoppedThread.CreateStepper();
+				switch (mode.Trim().ToLowerInvariant())
+				{
+					case "out":
+						stepper.StepOut();
+						break;
+					case "in":
+						stepper.Step(bStepIn: true);
+						break;
+					default: // "over"
+						stepper.Step(bStepIn: false);
+						break;
+				}
+			}
+			catch (Exception exception)
+			{
+				logger.LogWarning(exception, "Issuing a {Mode} step failed.", mode);
+				return false;
+			}
+
+			// Resume so the step executes; the StepComplete callback holds the target again.
+			_stoppedAtBreakpoint = false;
+			_stoppedBindingId = null;
+			_stoppedThread = null;
+			DisposeTimer();
+
+			try
+			{
+				_process.Continue(fIsOutOfBand: false);
+			}
+			catch (Exception exception)
+			{
+				logger.LogWarning(exception, "Continuing for a step failed.");
+				return false;
+			}
+
+			return true;
+		}
+	}
+
 	public void Dispose()
 	{
 		Detach();
@@ -231,6 +287,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			_stoppedAtBreakpoint = false;
 			var id = _stoppedBindingId;
 			_stoppedBindingId = null;
+			_stoppedThread = null;
 			DisposeTimer();
 
 			try
@@ -239,13 +296,14 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			}
 			catch (Exception exception)
 			{
-				logger.LogWarning(exception, "Continuing from breakpoint {Id} failed.", id);
+				logger.LogWarning(exception, "Continuing from a stop failed.");
 				return false;
 			}
 
+			var where = id is null ? "a step" : $"breakpoint {id}";
 			buffer.Append(
 				LiveDebugEventKind.SessionNotice,
-				auto ? $"Auto-continued from breakpoint {id} after the safety timeout." : $"Continued from breakpoint {id}.");
+				auto ? $"Auto-continued from {where} after the safety timeout." : $"Continued from {where}.");
 			return true;
 		}
 	}
@@ -427,6 +485,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			case BreakpointCorDebugManagedCallbackEventArgs hit:
 				return RecordBreakpointHit(hit);
 
+			case StepCompleteCorDebugManagedCallbackEventArgs step:
+				return Hold(step.Thread, LiveDebugEventKind.StepComplete, "Step complete", bindingId: null, autoContinueSeconds: null);
+
 			case Exception2CorDebugManagedCallbackEventArgs exception:
 				RecordException(exception);
 				return true;
@@ -483,7 +544,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		if (binding is { StopOnHit: true })
 		{
-			return HoldAtBreakpoint(binding, hit.Thread, ordinal, threadId);
+			return Hold(hit.Thread, LiveDebugEventKind.BreakpointHit, $"Breakpoint {binding.Raw} hit #{ordinal}", binding.Id, binding.AutoContinueSeconds);
 		}
 
 		// Tracepoint: a hit-count filter still counts every hit; it only thins what is logged.
@@ -499,28 +560,31 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// Holds the target at a stopping breakpoint: records the stop with its stack and arms the
-	/// auto-continue safety timer. Returns false so the caller does not continue -- the target stays
-	/// stopped until <see cref="Continue"/> or the timer fires.
+	/// Holds the target stopped (a breakpoint or a completed step): records the stop with its stack and
+	/// top-frame variables and arms the auto-continue safety timer. Returns false so the caller does not
+	/// continue -- the target stays stopped until <see cref="Continue"/>, <see cref="Step"/>, or the
+	/// timer fires. The walk happens before the lock because the thread is already stopped.
 	/// </summary>
-	private bool HoldAtBreakpoint(BreakpointBinding binding, CorDebugThread thread, long ordinal, int? threadId)
+	private bool Hold(CorDebugThread thread, LiveDebugEventKind kind, string prefix, string? bindingId, int? autoContinueSeconds)
 	{
-		// The thread is stopped, so this is the moment to walk it and read its top frame.
 		var frames = WalkStack(thread, MaxStackFrames);
 		var variables = ReadTopFrameVariables(thread);
+		var threadId = TryThreadId(thread);
+		var top = frames.Count > 0 ? frames[0] : "?";
 
 		lock (_gate)
 		{
 			_stoppedAtBreakpoint = true;
-			_stoppedBindingId = binding.Id;
+			_stoppedBindingId = bindingId;
+			_stoppedThread = thread;
 
-			var seconds = binding.AutoContinueSeconds ?? DefaultAutoContinueSeconds;
+			var seconds = autoContinueSeconds ?? DefaultAutoContinueSeconds;
 			DisposeTimer();
 			_autoContinueTimer = new Timer(_ => ContinueInternal(auto: true), null, TimeSpan.FromSeconds(seconds), Timeout.InfiniteTimeSpan);
 
 			buffer.Append(
-				LiveDebugEventKind.BreakpointHit,
-				$"Breakpoint {binding.Raw} hit #{ordinal} on thread {threadId?.ToString() ?? "?"} -- stopped; continue to resume (auto-continues in {seconds}s).",
+				kind,
+				$"{prefix} at {top} on thread {threadId?.ToString() ?? "?"} -- stopped; continue or step (auto-continues in {seconds}s).",
 				threadId: threadId,
 				frames: frames.Count > 0 ? frames : null,
 				variables: variables.Count > 0 ? variables : null);

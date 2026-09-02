@@ -210,6 +210,62 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// Stepping (issue #6): once held at a breakpoint, a step resumes the target briefly and holds it
+	/// again at the next location, which arrives as a StepComplete event with a fresh stack.
+	/// </summary>
+	[Fact]
+	public async Task Step_from_a_stop_lands_a_step_complete_with_a_stack()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "probe target",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(stop);
+
+			// Remove the breakpoint so only the step holds the target, then step.
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			Assert.True(await session.StepAsync("over", cancellationToken));
+
+			var stepComplete = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.StepComplete && entry.Sequence > stop!.Sequence,
+				cancellationToken,
+				startCursor: stop!.Sequence);
+			Assert.NotNull(stepComplete);
+			Assert.NotNull(stepComplete!.Frames);
+			Assert.Contains(stepComplete.Frames!, frame => frame.Contains("DebugProbeTarget.Program"));
+
+			// Release the step hold and confirm the target keeps running.
+			await session.ContinueAsync(cancellationToken);
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
 	private static async Task<LiveDebugEvent?> WaitForEventAsync(
 		LiveAppSession session,
 		Func<LiveDebugEvent, bool> match,

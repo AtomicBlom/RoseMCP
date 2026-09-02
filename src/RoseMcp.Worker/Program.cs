@@ -45,7 +45,8 @@ internal static class Program
 		builder.Services
 			.AddMcpServer(server => server.ServerInfo = new() { Name = "rose-mcp-worker", Version = ThisAssembly.Version })
 			.WithStdioServerTransport()
-			.WithToolsFromAssembly();
+			.WithToolsFromAssembly()
+			.WithToolErrorMessages(options.SolutionPath);
 
 		await builder.Build().RunAsync();
 		return 0;

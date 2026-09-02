@@ -252,6 +252,30 @@ public sealed class BrokerTests
 	}
 
 	/// <summary>
+	/// The failure that started this said "An error occurred invoking 'rose_rename_symbol'." and
+	/// nothing else, because the SDK drops the message of an exception it does not recognise. The
+	/// tool knew exactly what was wrong; a caller looking at the wrong workspace could not tell.
+	/// </summary>
+	[Fact]
+	public async Task A_failing_tool_says_what_went_wrong_and_where()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var elsewhere = Path.Combine(Path.GetTempPath(), $"absent-{Guid.NewGuid():N}", "Nowhere.cs");
+
+		var error = await Assert.ThrowsAnyAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
+			fixture.SolutionPath,
+			ToolNames.SymbolInfo,
+			new Dictionary<string, object?> { ["filePath"] = elsewhere, ["line"] = 1, ["column"] = 1 },
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken));
+
+		Assert.Contains(elsewhere, error.Message, StringComparison.OrdinalIgnoreCase);
+		Assert.Contains(fixture.SolutionPath, error.Message, StringComparison.OrdinalIgnoreCase);
+	}
+
+	/// <summary>
 	/// A result that does not name its workspace cannot be checked: nothing found in the wrong
 	/// solution is indistinguishable from nothing to find in the right one. The broker fills this
 	/// in for every result type, so it is asserted through the same path the tools use.

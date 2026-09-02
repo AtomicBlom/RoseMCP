@@ -22,9 +22,10 @@
 			NoLeftClickDelay="True"
 			LeftClickCommand="{x:Bind ShowCommand}">
 			<tb:TaskbarIcon.ContextFlyout>
-				<MenuFlyout>
+				<MenuFlyout Opening="OnMenuOpening">
 					<MenuFlyoutItem Text="Show workspaces" Click="OnShow" />
 					<MenuFlyoutSeparator />
+					<ToggleMenuFlyoutItem x:Name="TrayStartWithWindows" Text="Start with Windows" Click="OnToggleStartWithWindows" />
 					<MenuFlyoutItem Text="Open log folder" Click="OnOpenLogs" />
 					<MenuFlyoutItem Text="Close all workspaces" Click="OnCloseAll" />
 					<MenuFlyoutSeparator />
@@ -62,7 +63,14 @@
 				<Button Style="{StaticResource IconButtonStyle}" ToolTipService.ToolTip="More">
 					<FontIcon Glyph="&#xE712;" FontSize="16" />
 					<Button.Flyout>
-						<MenuFlyout Placement="BottomEdgeAlignedRight">
+						<MenuFlyout Placement="BottomEdgeAlignedRight" Opening="OnMenuOpening">
+							<ToggleMenuFlyoutItem x:Name="WindowStartWithWindows" Text="Start with Windows"
+								Click="OnToggleStartWithWindows">
+								<ToggleMenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE7E8;" />
+								</ToggleMenuFlyoutItem.Icon>
+							</ToggleMenuFlyoutItem>
+							<MenuFlyoutSeparator />
 							<MenuFlyoutItem Text="Open log folder" Click="OnOpenLogs">
 								<MenuFlyoutItem.Icon>
 									<FontIcon Glyph="&#xE8B7;" />

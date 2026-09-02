@@ -6,9 +6,9 @@
     Two jobs that share all their plumbing:
 
       promote  Hand the running instance a new build. Tests first, because this is the moment a
-               broken change reaches the tool you are using to work. The tray has to be stopped
-               before publishing -- a running exe cannot be overwritten -- so this costs an /mcp
-               reconnect and a solution reload.
+               broken change reaches the tool you are using to work. The tray, and any stdio
+               server running from the install, have to be stopped before publishing -- a running
+               exe cannot be overwritten -- so this costs an /mcp reconnect and a solution reload.
 
       package  Build the release artifacts, one zip per architecture.
 
@@ -119,6 +119,24 @@ function Stop-Tray
     return $true
 }
 
+function Stop-Servers
+{
+    # Stdio servers -- one per editor session, registered from the install -- hold its shared
+    # assemblies open, so publishing over them fails on the first DLL. Only the ones under this
+    # destination: a server running from some other install is not in the way. Their clients start
+    # a fresh one on the next call or on /mcp, and the tray they relay to is being replaced anyway.
+    $root = [System.IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
+    $running = @(Get-Process -Name 'RoseMcp.Server' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) })
+    if ($running.Count -eq 0) { return $false }
+
+    Write-Host "  stopping $($running.Count) stdio server(s) running from the install (pid $($running.Id -join ', '))"
+    $running | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
+
+    return $true
+}
+
 function Start-Tray
 {
     $exe = "$Destination/tray/RoseMcp.Tray.exe"
@@ -161,13 +179,14 @@ if ($Mode -eq 'promote')
     }
 
     $wasRunning = Stop-Tray
+    $stoppedServers = Stop-Servers
     Publish-Tree -Rid $Runtime[0] -Into $Destination
 
     if ($NoRestart) { Write-Host '  not restarting (-NoRestart)' }
     elseif ($wasRunning -or -not $NoRestart) { Start-Tray }
 
     Write-Host "promoted $($Runtime[0]) to $Destination"
-    if ($wasRunning) { Write-Host 'reconnect the MCP client with /mcp; the first call reloads the solution' }
+    if ($wasRunning -or $stoppedServers) { Write-Host 'reconnect the MCP client with /mcp; the first call reloads the solution' }
 
     return
 }

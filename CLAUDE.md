@@ -28,6 +28,9 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 ```
 
 - **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
+- **`RoseMcp.Solutions`** -- library. Reads solution files and `rosemcp.json` without MSBuild or
+  Roslyn, so the broker can decide *which* solution a call means without taking a dependency on the
+  thing that loads one. Also derives the short workspace key.
 - **`RoseMcp.Logging`** -- library. The file sink, referenced only by the three launchable hosts
   so Serilog stays off the DTO assembly and the tests.
 - **`RoseMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, the
@@ -82,6 +85,44 @@ reclaim memory or pick up a rebuilt generator.
 - **Reads never observe a snapshot older than disk.** If you add a read path, it goes through the
   `WorkspaceSession` barrier. No exceptions.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.
+- **A directory with two solutions is never resolved by guessing.** `SolutionResolver` used to sort
+  by name and take the first, which in `D:\Drawboard\Revit` is a one-project installer sitting beside
+  the seventeen-project solution everyone means -- so every bare call answered from the wrong
+  compilation and returned nothing, shaped exactly like a true negative. Containment decides it: the
+  solution that compiles the path you named is the one that can answer about it, and reading a
+  project list is a parse, not a build. A repository root encloses no project, so it reaches the tie
+  with nothing to go on -- that is an error naming the candidates, and a `"solution"` entry in the
+  directory's `rosemcp.json` settles it durably. Refusing is against the grain of everything else
+  here, and earns it because guessing is not cheap: the wrong guess pays a full design-time build of
+  a solution nobody asked for. `TrayRelay` lets that refusal past rather than falling through to the
+  tray, which with one workspace open would answer from whatever another session left loaded.
+- **Every result names the workspace that answered.** Attribution is added once, in
+  `WorkspaceManager`, so a tool added later cannot forget. The key is derived from the path rather
+  than minted per process -- workers are replaced routinely, and a key that died with one would tell
+  a caller its workspace was gone when nothing had changed. Spelled *and* hashed, because six
+  worktrees of one repository is the ordinary case and each holds a solution of the same name.
+- **An error says what went wrong, not that something did.** The SDK replaces the message of any
+  exception it does not recognise with "An error occurred invoking 'rose_rename_symbol'." A
+  call-tool filter at each MCP boundary forwards the real message instead, and the worker adds the
+  solution it owns. Convert at the boundary, never at the throw sites: the exception type carries
+  meaning further in -- services separate a caller's mistake from an impossible state, the manager
+  separates either from a dead worker, and retry decisions turn on that.
+- **Status may not report a field it cannot fill.** `GetStatusAsync` once passed `restore: null`,
+  `loadSeconds: 0` and no load diagnostics, hard-coded, so every status answer on every solution
+  carried the same three blanks. That is worse than omitting them: a failed restore reaches
+  `degradedReasons` only through the restore report, so the workspace called itself healthy in
+  exactly the situation it exists to warn about. Equally, do not report a signal that cannot mean
+  what it says -- `targetFramework` was read from the project name, which carries a TFM only when a
+  project multi-targets, leaving a permanent false alarm on the field that flags a wrong
+  configuration. And whether a project's semantics can be trusted is asked of the compilation, never
+  of MSBuild's chatter: MSBuild raises a `Failure` when NuGet's vulnerability audit cannot reach its
+  feed, which names every project it could not audit and says nothing about whether they compiled.
+- **A change that reaches another solution says so.** Roslyn renames within one `Solution` and writes
+  to disk, where every other solution over the same projects picks the new text up at its next read
+  while still calling the old name from projects the renaming solution never had. That sibling is
+  not stale, it is broken. Mutations report which solutions beside them compile the files they
+  touched. Reported, not acted on -- see `D:\Drawboard\Windows\union-solution.md` for why merging
+  across solutions is a much larger thing, and not always well defined.
 - **Analyzer assemblies are never loaded from where they live.** They are shadow-copied first. A
   loaded assembly is held open for the life of the process, and this process lives for hours, so
   loading them in place means the user cannot rebuild their own generator -- `dotnet build` fails
@@ -168,7 +209,7 @@ Where a machine keeps its install is that machine's business, so no path is comm
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
 process -- 81 tests in under a second, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes about eighty. `RoseMcp.TestSupport` holds the doubles
+builds and starts real workers, and takes under two minutes. `RoseMcp.TestSupport` holds the doubles
 both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 

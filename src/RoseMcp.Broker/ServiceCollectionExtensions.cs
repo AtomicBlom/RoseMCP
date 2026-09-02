@@ -63,6 +63,12 @@ public static class ServiceCollectionExtensions
 		with one solution nearby even the path is optional. The first call loads the solution and
 		takes a few seconds; every call after that is fast, so there is no reason to batch around it.
 
+		Every result names the workspace that answered, and carries a short workspaceKey you can pass
+		back as the workspace argument. Check it when an answer surprises you: an empty result from
+		the wrong solution looks exactly like an empty result from the right one. Where a directory
+		holds several solutions and the file you named does not single one out, the call fails and
+		lists them rather than picking.
+
 		Edits made by other tools are picked up automatically before each call, so results are never
 		stale and no refresh step exists. The one thing that does need rose_workspace_reload is
 		rebuilding an analyzer or source generator, because loaded assemblies cannot be replaced.

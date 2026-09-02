@@ -17,12 +17,15 @@ namespace RoseMcp.LiveApp;
 /// </summary>
 public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSessionHost> logger) : IHostedService
 {
+	private static readonly TimeSpan UwpRuntimeReadyTimeout = TimeSpan.FromSeconds(30);
+
 	private readonly Lock _gate = new();
 	private readonly DebugEventBuffer _events = new();
 	private LiveAppSessionState _state = LiveAppSessionState.Starting;
 	private int? _targetProcessId;
 	private string? _detail;
 	private CorDebugSession? _session;
+	private string? _uwpPackageFullName;
 
 	/// <summary>The architecture this host launched as, which is the target's architecture.</summary>
 	public static TargetArchitecture Architecture => RuntimeInformation.ProcessArchitecture switch
@@ -160,6 +163,9 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		session?.Detach();
 
+		// For a UWP target, also lift the package's debug mode so it returns to its normal lifecycle.
+		DisableUwpDebugging();
+
 		lock (_gate)
 		{
 			if (_state == LiveAppSessionState.Ready) _state = LiveAppSessionState.Ended;
@@ -185,6 +191,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		}
 
 		session?.Dispose();
+		DisableUwpDebugging();
 		return Task.CompletedTask;
 	}
 
@@ -200,7 +207,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				EstablishLaunch(options.Target.ExecutablePath, options.Target.Arguments);
 				break;
 
-			// LaunchUwp is a later slice of issue #4; for now the shell reports honestly.
+			case LiveAppTargetKind.LaunchUwp:
+				EstablishUwp(options.Target.AppUserModelId);
+				break;
+
 			default:
 				Fault($"{options.Target.Kind} is not implemented in this build.");
 				break;
@@ -292,6 +302,88 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		}
 
 		logger.LogInformation("Live-app session launched {Path} as pid {Pid} ({Architecture}).", executablePath, session.TargetProcessId, Architecture);
+	}
+
+	/// <summary>
+	/// Activates a packaged (UWP) app under the debugger. The UWP-specific hop is putting the package
+	/// into debug mode (no suspension, no activation timeout) before activating it, so the runtime has
+	/// time to start and the attach can wait for it. The app is caught a beat after launch, so the very
+	/// first OnLaunched has already run -- catching that needs a resume stub (issue #5).
+	/// </summary>
+	private void EstablishUwp(string? appUserModelId)
+	{
+		if (string.IsNullOrWhiteSpace(appUserModelId))
+		{
+			Fault("A UWP target needs an app user-model id.");
+			return;
+		}
+
+		var family = appUserModelId.Split('!', 2)[0];
+		string packageFullName;
+		try
+		{
+			packageFullName = Uwp.ResolvePackageFullName(family);
+		}
+		catch (Exception exception)
+		{
+			Fault(exception.Message);
+			return;
+		}
+
+		var session = new CorDebugSession(_events, logger);
+		int pid;
+		try
+		{
+			Uwp.EnableDebugging(packageFullName);
+			_uwpPackageFullName = packageFullName;
+			_events.Append(LiveDebugEventKind.SessionNotice, $"Enabled debug mode on {packageFullName}.");
+
+			pid = Uwp.ActivateApplication(appUserModelId);
+			_events.Append(LiveDebugEventKind.SessionNotice, $"Activated {appUserModelId} as pid {pid}.");
+
+			session.Attach(pid, UwpRuntimeReadyTimeout);
+		}
+		catch (Exception exception)
+		{
+			session.Dispose();
+			DisableUwpDebugging();
+			_events.Append(LiveDebugEventKind.SessionNotice, $"UWP launch failed: {exception.Message}");
+			Fault(exception.Message);
+			return;
+		}
+
+		lock (_gate)
+		{
+			_session = session;
+			_targetProcessId = pid;
+			_state = LiveAppSessionState.Ready;
+			_detail = null;
+		}
+
+		logger.LogInformation("Live-app session activated {Aumid} as pid {Pid} ({Architecture}).", appUserModelId, pid, Architecture);
+	}
+
+	/// <summary>Turns off a package's debug mode, if one was enabled, restoring its normal lifecycle.</summary>
+	private void DisableUwpDebugging()
+	{
+		string? packageFullName;
+		lock (_gate)
+		{
+			packageFullName = _uwpPackageFullName;
+			_uwpPackageFullName = null;
+		}
+
+		if (packageFullName is null) return;
+
+		try
+		{
+			Uwp.DisableDebugging(packageFullName);
+			logger.LogInformation("Disabled debug mode on {Package}.", packageFullName);
+		}
+		catch (Exception exception)
+		{
+			logger.LogWarning(exception, "Disabling debug mode on {Package} failed.", packageFullName);
+		}
 	}
 
 	private LiveAppSessionState EffectiveState()

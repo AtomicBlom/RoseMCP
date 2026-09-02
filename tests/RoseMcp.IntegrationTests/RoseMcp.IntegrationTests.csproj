@@ -16,8 +16,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\RoseMcp.Broker\RoseMcp.Broker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
-    <!-- Referenced so the host is built for the live-app session tests to launch; not used as a library. -->
-    <ProjectReference Include="..\..\src\RoseMcp.LiveApp\RoseMcp.LiveApp.csproj" />
+    <!-- Referenced so the host is built for the live-app session tests to launch; not used as a
+         library, and it is net10.0-windows, so ReferenceOutputAssembly is off to keep this net10.0
+         test project from taking a framework-incompatible compile reference on it. -->
+    <ProjectReference Include="..\..\src\RoseMcp.LiveApp\RoseMcp.LiveApp.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" />
     <!-- A real .NET target the attach test launches and debugs; built alongside, never referenced. -->
     <ProjectReference Include="..\DebugProbeTarget\DebugProbeTarget.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\RoseMcp.TestSupport\RoseMcp.TestSupport.csproj" />

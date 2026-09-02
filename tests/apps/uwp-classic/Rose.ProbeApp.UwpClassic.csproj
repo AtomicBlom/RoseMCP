@@ -27,6 +27,9 @@
     <MinimumVisualStudioVersion>14</MinimumVisualStudioVersion>
     <FileAlignment>512</FileAlignment>
     <ProjectTypeGuids>{A5A43C5B-DE2A-4C0C-9213-0A381AF9435A};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
+    <!-- Use the generated XAML type info rather than runtime reflection; reflection-based type info can
+         fail during framework startup on the classic-UWP CoreCLR. -->
+    <EnableTypeInfoReflection>false</EnableTypeInfoReflection>
     <!-- No signing: the tests register the loose build layout (Add-AppxPackage -Register), which
          needs no certificate, so no .pfx lives in the repo. -->
     <AppxPackageSigningEnabled>False</AppxPackageSigningEnabled>

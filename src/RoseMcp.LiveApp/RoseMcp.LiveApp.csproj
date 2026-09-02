@@ -2,6 +2,10 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- Windows-only by nature: it loads the target's mscordbi and uses the UWP shell COM interfaces,
+         so it targets net10.0-windows (which satisfies the platform-compatibility analyzer without any
+         extra runtime dependency, since it uses neither WinForms nor WPF). -->
+    <TargetFramework>net10.0-windows</TargetFramework>
     <!-- Publishable per-RID: the broker launches the host in the target's architecture (win-arm64
          for modern .NET here, win-x64 for classic UWP under emulation). -->
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>

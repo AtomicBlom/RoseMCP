@@ -78,6 +78,9 @@ public static class ToolNames
 	/// <summary>Launch a .NET executable under the debugger and start a session over it from startup.</summary>
 	public const string DebugLaunch = "rose_debug_launch";
 
+	/// <summary>Activate a packaged (UWP) app under the debugger by its app user-model id.</summary>
+	public const string DebugLaunchUwp = "rose_debug_launch_uwp";
+
 	/// <summary>Read new debug events (exceptions, log messages, module loads) from a session.</summary>
 	public const string DebugEvents = "rose_debug_events";
 

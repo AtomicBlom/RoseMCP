@@ -65,10 +65,19 @@ public static class LiveAppHostLauncher
 			.OrderByDescending(File.GetLastWriteTimeUtc)
 			.ToList();
 
+		// A build whose path carries the wanted RID is unambiguous; prefer it.
 		var ridMatch = candidates.FirstOrDefault(path => path.Contains(rid, StringComparison.OrdinalIgnoreCase));
 		if (ridMatch is not null) return ridMatch;
 
-		// A plain build output is the broker's architecture; use it only when that is what was asked.
-		return rid == RuntimeInformation.RuntimeIdentifier ? candidates.FirstOrDefault() : null;
+		// Otherwise a RID-less build is the broker's own architecture, so it is only right when the
+		// wanted RID is that architecture -- and it must not be some other RID's output, or a foreign
+		// host would be handed back (an x64 build sitting in bin beside an arm64 one, say).
+		if (rid != RuntimeInformation.RuntimeIdentifier) return null;
+		return candidates.FirstOrDefault(path => !CarriesAnyRid(path));
 	}
+
+	private static bool CarriesAnyRid(string path) =>
+		path.Contains("win-x64", StringComparison.OrdinalIgnoreCase)
+			|| path.Contains("win-arm64", StringComparison.OrdinalIgnoreCase)
+			|| path.Contains("win-x86", StringComparison.OrdinalIgnoreCase);
 }

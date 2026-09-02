@@ -65,10 +65,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// Attaches to a running process, waiting briefly for its runtime if it has only just started.
 	/// Throws with a plain message when the target is not a debuggable .NET process.
 	/// </summary>
-	public void Attach(int pid)
+	public void Attach(int pid, TimeSpan? runtimeReadyTimeout = null)
 	{
 		var shim = LoadDbgShim();
-		var runtime = FindRuntimeWithRetry(shim, pid);
+		var runtime = FindRuntimeWithRetry(shim, pid, runtimeReadyTimeout ?? RuntimeReadyTimeout);
 		try
 		{
 			_corDebug = CreateCorDebug(shim, pid, runtime.Path);
@@ -106,7 +106,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				throw new TimeoutException("The launched process never signalled runtime startup. Is it a .NET (Core) app?");
 			}
 
-			var runtime = FindRuntimeWithRetry(shim, launched.ProcessId);
+			var runtime = FindRuntimeWithRetry(shim, launched.ProcessId, RuntimeReadyTimeout);
 			try
 			{
 				_corDebug = CreateCorDebug(shim, launched.ProcessId, runtime.Path);
@@ -400,9 +400,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// A freshly started process has a pid before its CoreCLR loads, so the first EnumerateCLRs can
 	/// find none. Retry briefly, then give up with a message that names the likely cause.
 	/// </summary>
-	private RuntimeInProcess FindRuntimeWithRetry(DbgShim shim, int pid)
+	private RuntimeInProcess FindRuntimeWithRetry(DbgShim shim, int pid, TimeSpan runtimeReadyTimeout)
 	{
-		var deadline = DateTime.UtcNow + RuntimeReadyTimeout;
+		var deadline = DateTime.UtcNow + runtimeReadyTimeout;
 		while (true)
 		{
 			try

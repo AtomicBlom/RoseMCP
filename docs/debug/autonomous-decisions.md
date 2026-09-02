@@ -96,3 +96,34 @@ MSBuild project that `dotnet build` cannot build. The tests build it on demand w
 skip where that toolchain is absent, so the suite stays green without it. Verified end to end: it
 restores, builds Debug|x64 (CoreCLR, debuggable) with 0 warnings, registers as a loose package, and
 resolves to a real AUMID.
+
+### D11 — The live-app host is Windows-only; the rest stays cross-platform
+The live-app host (`RoseMcp.LiveApp`) targets `net10.0-windows` because it is Windows-only by nature:
+it loads the target's mscordbi (ICorDebug is a Windows debugging API) and uses the UWP shell COM
+interfaces. That satisfies the platform-compatibility analyzer with no extra runtime dependency (no
+WinForms/WPF). Deliberately, nothing else moved: RoseMcp.Contracts, .Broker, .Worker, .Solutions and
+.XamlDiff stay `net10.0` and cross-platform, so a Linux/Mac user keeps the full Roslyn surface; the
+broker launches the host as a separate process and never references it. A future Linux/Mac debugging
+backend would be a different host behind the same broker tools; for now the debug/UWP tools are
+Windows-gated by the host's availability, and the tray is already Windows-only. The integration test's
+reference to the host is build-only (ReferenceOutputAssembly=false, SkipGetTargetFrameworkProperties)
+so a net10.0 test project can still trigger its build.
+
+### D12 — Classic UWP launch/attach is built; the app's own startup crash is parked
+The full UWP debugger path is implemented: host `EstablishUwp` (IPackageDebugSettings.EnableDebugging
++ IApplicationActivationManager.ActivateApplication + attach, with debug-mode teardown on detach),
+`Uwp.cs` COM interop, per-target x64 host selection, and the `rose_debug_launch_uwp` tool. The
+cross-architecture attach it relies on (ARM64 broker -> x64 host -> x64 target) is proven by
+`Attaches_to_a_target_of_a_different_architecture`.
+
+What is parked: the classic UWP probe app, though it builds, registers, and resolves to a real AUMID,
+**crashes at CoreCLR host init when activated** (WER MoAppCrash, managed exception 0xe0434352),
+before any of its own code runs. Diagnosis so far: it is not the debugger path (activation itself
+fails); the missing `Microsoft.NET.CoreFramework.Debug.2.2` x64 framework was installed (no change);
+`EnableTypeInfoReflection=false` matched to the known-good gallery (no change); a custom `Main`
+wrapping `Application.Start` plus `LocalFolder` step-logging produced no log at all, so the throw is at
+or before framework startup. Getting the managed exception needs one of: admin (WER LocalDumps are
+denied here), a from-birth UWP debugger (issue #5, the resume-stub / debugger-command-line path), or
+knowledge of this machine's x64-emulated UWP CoreCLR setup. The integration test
+`Launches_and_debugs_the_classic_uwp_probe_app` is wired and **skips** with this reason; remove the
+skip once the app starts. This likely wants the user's input, since they build classic UWP here in VS.

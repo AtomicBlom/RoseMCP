@@ -100,6 +100,43 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	}
 
 	[McpServerTool(
+		Name = ToolNames.DebugLaunchUwp,
+		Title = "Launch a UWP app under the debugger",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = true,
+		UseStructuredContent = true)]
+	[Description(
+		"Activate a packaged (UWP) app under the debugger by its app user-model id (PackageFamilyName!App) "
+			+ "and start a session over it. The package is put in debug mode (no suspension, no activation "
+			+ "timeout) and activated, then attached -- so a classic UWP app, which has no ARM64 runtime and "
+			+ "runs x64 emulated, is debugged through the x64 host automatically. The app must already be "
+			+ "deployed. Detaching leaves it running and lifts debug mode. Returns the session id.")]
+	public async Task<LiveAppSessionSummary> LaunchUwpAsync(
+		[Description("The app user-model id, e.g. MyApp_1a2b3c4d5e6f7!App.")] string appUserModelId,
+		CancellationToken cancellationToken = default)
+	{
+		var target = new LiveAppTarget
+		{
+			Kind = LiveAppTargetKind.LaunchUwp,
+			AppUserModelId = appUserModelId,
+			Description = $"{appUserModelId} (UWP)",
+		};
+
+		var session = await sessions.StartAsync(target, cancellationToken);
+		var summary = session.Describe();
+
+		if (summary.State == LiveAppSessionState.Faulted)
+		{
+			await sessions.CloseAsync(session.SessionId, cancellationToken);
+			throw new McpException(summary.Detail ?? $"Could not launch {appUserModelId}.");
+		}
+
+		return summary;
+	}
+
+	[McpServerTool(
 		Name = ToolNames.DebugEvents,
 		Title = "Read debug events",
 		ReadOnly = true,

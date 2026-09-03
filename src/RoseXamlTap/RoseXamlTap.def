@@ -1,0 +1,4 @@
+LIBRARY RoseXamlTap
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE

@@ -428,6 +428,24 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
+	[McpServerTool(
+		Name = ToolNames.BuildFreshness,
+		Title = "Is the build output newer than the sources",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.BuildFreshness)]
+	public Task<BuildFreshnessReport> BuildFreshnessAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Limit to one project by name or path. Defaults to every project.")] string? project = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<BuildFreshnessReport>(WorkspaceHints.From(workspace), ToolNames.BuildFreshness, new()
+		{
+			["project"] = project,
+		}, cancellationToken, progress);
+
 	private Task<T> ForwardAsync<T>(
 		WorkspaceHints hints,
 		string tool,

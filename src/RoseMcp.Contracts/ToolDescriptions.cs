@@ -207,4 +207,17 @@ public static class ToolDescriptions
         the bug that hides. Verified against the whole solution, since a call site it missed is by
         definition somewhere it did not look.
         """;
+
+	public const string BuildFreshness = """
+        Whether each project's build output is newer than the sources it was built from -- the
+        question a green build does not answer. Ask this before running anything out of bin or obj:
+        a test, a debug host, a generator, a tool. Taking an artefact's existence for its currency is
+        how a test comes to run last week's binary and report a failure describing a change that was
+        already made, and in that case the solution compiled perfectly, so nothing about a build
+        would have said so. It needs no build of its own: the design-time build already knows every
+        project's output path and every file it compiles, so this is a file timestamp comparison and
+        answers immediately. It reports the output path, when it was written, the newest source and
+        how many are newer -- and says nothing about whether the code is correct, which is
+        rose_diagnostics.
+        """;
 }

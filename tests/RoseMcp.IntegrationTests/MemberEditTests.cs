@@ -100,6 +100,42 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// Leaving a literal's endings alone is right, and it has a consequence nothing else says: a
+	/// multi-line string written with bare newlines into a CRLF file fails dotnet format, no build
+	/// complains, and the obvious fix changes what the program says. Found three times in one
+	/// session writing this repository's own tool descriptions through these tools.
+	/// </summary>
+	[Fact]
+	public async Task Says_when_a_literal_was_written_with_the_wrong_line_endings()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var bare = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public string Bare() => @\"\nline one\nline two\n\";",
+		});
+
+		Assert.Contains(
+			bare.Notices,
+			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
+
+		// And says nothing when the caller wrote them the way the file does.
+		var matching = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public string Matching() => @\"\r\nline one\r\nline two\r\n\";",
+		});
+
+		Assert.DoesNotContain(
+			matching.Notices,
+			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// The compilation happens in the same call, which is the whole reason this is not two. A body
 	/// that does not compile comes back as an error against the member rather than as a build twenty
 	/// seconds later.

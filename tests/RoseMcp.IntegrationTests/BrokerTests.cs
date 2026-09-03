@@ -440,6 +440,27 @@ public sealed class BrokerTests
 		Assert.Contains("notifier.Notify(message, false)", text, StringComparison.Ordinal);
 	}
 
+	/// <summary>Build freshness over the wire, so its one argument cannot drift either.</summary>
+	[Fact]
+	public async Task Reports_build_freshness_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var report = await manager.CallAsync<BuildFreshnessReport>(
+			WorkspaceHints.From(fixture.SolutionPath),
+			ToolNames.BuildFreshness,
+			new Dictionary<string, object?> { ["project"] = "Core" },
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		var project = Assert.Single(report.Projects);
+
+		Assert.Equal("Core", project.Project);
+		Assert.True(project.Stale, "a fresh copy has no build output at all");
+		Assert.Equal(1, report.StaleCount);
+	}
+
 	/// <summary>
 	/// A result that does not name its workspace cannot be checked: nothing found in the wrong
 	/// solution is indistinguishable from nothing to find in the right one. The broker fills this

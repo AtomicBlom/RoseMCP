@@ -182,26 +182,34 @@ public static class MemberSyntax
 	/// indented for the destination is as likely as one that wrote at column zero, and only removing
 	/// the baseline first makes the two the same request.
 	/// </para>
+	/// <para>
+	/// Each line keeps the ending it arrived with. Rebuilding them all with one ending would be the
+	/// same mistake this is protecting literals from: the endings inside a verbatim or raw string are
+	/// part of its value, so normalising them here would change what the program says before the
+	/// whitespace pass ever got the chance to leave them alone.
+	/// </para>
 	/// </summary>
 	private static string Shift(string code, string indent, IReadOnlySet<int> literals)
 	{
-		var lines = code.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
-		var baseline = Baseline(lines);
+		var lines = Split(code);
+		var baseline = Baseline([.. lines.Select(line => line.Content)]);
 
 		var shifted = lines.Select((line, index) =>
 		{
-			if (literals.Contains(index)) return line;
+			if (literals.Contains(index)) return line.Content + line.Ending;
 
-			var stripped = baseline.Length > 0 && line.StartsWith(baseline, StringComparison.Ordinal)
-				? line[baseline.Length..]
-				: line;
+			var stripped = baseline.Length > 0 && line.Content.StartsWith(baseline, StringComparison.Ordinal)
+				? line.Content[baseline.Length..]
+				: line.Content;
 
 			// The first line's indentation comes from the trivia at the splice point, and padding a
 			// blank line only creates trailing whitespace for the next pass to strip again.
-			return index > 0 && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+			var prefixed = index > 0 && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+
+			return prefixed + line.Ending;
 		});
 
-		return string.Join("\n", shifted);
+		return string.Concat(shifted);
 	}
 
 	/// <summary>The indentation the code was written at, taken from its first line with content.</summary>
@@ -215,6 +223,36 @@ public static class MemberSyntax
 		}
 
 		return string.Empty;
+	}
+
+	/// <summary>
+	/// The lines, each with the ending it actually has. Splitting on a newline and joining with one
+	/// would rewrite every CRLF in the code to LF, which inside a string literal is a change to what
+	/// the program says rather than to how it looks.
+	/// </summary>
+	private static IReadOnlyList<(string Content, string Ending)> Split(string code)
+	{
+		var lines = new List<(string, string)>();
+		var start = 0;
+
+		for (var index = 0; index < code.Length; index++)
+		{
+			if (code[index] is not ('\n' or '\r')) continue;
+
+			var ending = code[index] == '\r' && index + 1 < code.Length && code[index + 1] == '\n'
+				? "\r\n"
+				: code[index].ToString();
+
+			lines.Add((code[start..index], ending));
+
+			index += ending.Length - 1;
+			start = index + 1;
+		}
+
+		// Whatever follows the last ending, which is the final line and has no ending of its own.
+		lines.Add((code[start..], string.Empty));
+
+		return lines;
 	}
 
 	/// <summary>

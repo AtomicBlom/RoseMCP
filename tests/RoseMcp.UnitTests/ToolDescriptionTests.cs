@@ -69,6 +69,7 @@ public sealed class ToolDescriptionTests
 	[InlineData(ToolNames.Diagnostics, "in place of building after every change")]
 	[InlineData(ToolNames.ListGeneratedDocuments, "no file search")]
 	[InlineData(ToolNames.ReadGeneratedDocument, "no other way")]
+	[InlineData(ToolNames.BuildFreshness, "a green build does not answer")]
 	public void Says_what_the_caller_would_otherwise_have_done(string tool, string expected)
 	{
 		var descriptions = Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);

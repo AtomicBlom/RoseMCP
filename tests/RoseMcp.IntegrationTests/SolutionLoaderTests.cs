@@ -122,7 +122,11 @@ public sealed class SolutionLoaderTests
 
 		Assert.Equal("Release", load.Result.Build.Configuration);
 		Assert.Equal("Release|AnyCPU", load.Result.Report.BuildConfiguration);
-		Assert.Contains(WorkspaceConfigFile.FileName, load.Result.Report.Notices.Single());
+		// Among the notices rather than the only one: a fixture nobody has built also gets told that
+		// its output is older than its sources, which is true and beside the point here.
+		Assert.Contains(
+			load.Result.Report.Notices,
+			notice => notice.Contains(WorkspaceConfigFile.FileName, StringComparison.Ordinal));
 	}
 
 	private static async Task<LoadScope> LoadAsync(FixtureSolution fixture)

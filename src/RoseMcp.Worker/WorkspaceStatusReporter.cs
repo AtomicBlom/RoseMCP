@@ -43,7 +43,7 @@ public static class WorkspaceStatusReporter
 			DegradedReasons = degradedReasons,
 			BuildConfiguration = build?.Describe(),
 			AvailableConfigurations = build?.Available.Configurations ?? [],
-			Notices = build?.Notice is { } notice ? [notice] : [],
+			Notices = [.. NoticesFor(build, solution, cancellationToken)],
 			Restore = restore,
 			LoadSeconds = loadSeconds,
 		};
@@ -228,6 +228,38 @@ public static class WorkspaceStatusReporter
 			.OfType<string>()
 			.Distinct(StringComparer.OrdinalIgnoreCase)
 			.ToArray();
+	}
+
+	/// <summary>
+	/// What is worth saying about a workspace without calling it degraded.
+	/// <para>
+	/// Stale build output belongs here and not in degradedReasons, and the distinction is the point.
+	/// Degraded means these answers cannot be trusted, and they are exactly as good with a stale bin
+	/// directory as without one -- this reads source, not assemblies. It is also the ordinary state
+	/// of a solution somebody is editing, so putting it in degradedReasons would mark almost every
+	/// workspace on the machine degraded: the same emptying of the word that the blanket
+	/// MSBuild-failure count below was already narrowed to avoid.
+	/// </para>
+	/// <para>
+	/// It is still worth saying, because the thing it warns about does not present as a build
+	/// failure. It presents as a test failing for a reason that has nothing to do with the change.
+	/// </para>
+	/// </summary>
+	private static IEnumerable<string> NoticesFor(
+		BuildProperties? build,
+		Solution solution,
+		CancellationToken cancellationToken)
+	{
+		if (build?.Notice is { } notice) yield return notice;
+
+		var stale = BuildFreshness.Of(solution, project: null, cancellationToken)
+			.Count(project => project.Stale);
+
+		if (stale == 0) yield break;
+
+		yield return $"{stale} project(s) have sources newer than their last build output, so anything run out "
+			+ "of bin or obj is not this code. rose_build_freshness says which. This does not make the "
+			+ "workspace degraded: these answers come from source.";
 	}
 
 	private static IReadOnlyList<string> CollectDegradedReasons(

@@ -99,6 +99,7 @@ public static class MemberEditService
 				cancellationToken);
 		}
 
+		notices.AddRange(finished.Notices);
 		notices.AddRange(Notices(request, verification, outcome));
 
 		var result = new MemberEditResult
@@ -347,7 +348,7 @@ public static class MemberEditService
 			solution = solution.WithDocumentText(id, final);
 		}
 
-		return new Finished(solution, line);
+		return new Finished(solution, line, [.. LiteralEndingNotices(root, span, text, rules)]);
 	}
 
 	/// <summary>
@@ -605,6 +606,45 @@ public static class MemberEditService
 			: IndentAt(text, type.SpanStart) + rules.IndentUnit;
 
 	/// <summary>
+	/// Warns about a multi-line string in the written code whose line endings are not the file's.
+	/// <para>
+	/// Nothing here rewrites them, and that is correct: the endings inside a verbatim or raw literal
+	/// are part of the string's value, which the compiler confirms -- the same raw literal written
+	/// with CRLF and with LF are different strings. But it has a consequence worth saying out loud,
+	/// because nothing else says it. A caller that writes a multi-line literal with bare newlines
+	/// into a CRLF file gets a file that fails <c>dotnet format</c>, no build complains, and the
+	/// obvious fix changes what the program says.
+	/// </para>
+	/// <para>
+	/// Found three times in one session, writing this repository's own tool descriptions through
+	/// these tools.
+	/// </para>
+	/// </summary>
+	private static IEnumerable<string> LiteralEndingNotices(
+		SyntaxNode root,
+		TextSpan span,
+		SourceText text,
+		WhitespaceRules rules)
+	{
+		foreach (var node in root.DescendantNodes())
+		{
+			if (node is not (LiteralExpressionSyntax or InterpolatedStringExpressionSyntax)) continue;
+			if (!span.IntersectsWith(node.Span)) continue;
+
+			var written = node.ToString();
+			if (!written.Contains('\n', StringComparison.Ordinal)) continue;
+			if (Whitespace.Dominant(SourceText.From(written)) == rules.LineEnding) continue;
+
+			var line = text.Lines.GetLineFromPosition(node.SpanStart).LineNumber + 1;
+
+			yield return $"The multi-line string at line {line} was written with line endings the file does not "
+				+ "use. They were left exactly as supplied, because the endings inside a literal are part of "
+				+ "the string -- but dotnet format will ask for them to change, and changing them changes the "
+				+ "value. Write it with the file's own endings.";
+		}
+	}
+
+	/// <summary>
 	/// Whether a member already has a blank line above it, which it will have when whoever wrote the
 	/// file put one there: the break belongs to the member below rather than the one above.
 	/// </summary>
@@ -679,5 +719,5 @@ public static class MemberEditService
 		string Symbol,
 		IReadOnlyList<string> Members);
 
-	private sealed record Finished(Solution Solution, int Line);
+	private sealed record Finished(Solution Solution, int Line, IReadOnlyList<string> Notices);
 }

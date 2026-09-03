@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
+using RoseMcp.XamlDiff;
 
 namespace RoseMcp.LiveApp.Xaml;
 
@@ -90,12 +91,116 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	}
 
 	/// <summary>
+	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree (#12).
+	/// Property edits on named elements are applied through the provider; structural edits and
+	/// unnamed-element targets are reported as not-yet-applied rather than dropped silently. Returns each
+	/// computed edit with its outcome, plus the diff engine's notes.
+	/// </summary>
+	public LiveXamlReloadResult ApplyReload(int pid, string oldXaml, string newXaml)
+	{
+		XamlDiffResult diff;
+		try
+		{
+			diff = RoseMcp.XamlDiff.XamlDiff.Compute(oldXaml, newXaml);
+		}
+		catch (Exception exception)
+		{
+			return new LiveXamlReloadResult { Detail = $"Could not diff the XAML: {exception.Message}" };
+		}
+
+		// Translate the edits the live applier supports -- property changes on named elements -- into
+		// provider commands; the rest are carried through as results marked unsupported.
+		var commands = new List<string>();
+		var plans = new List<(XamlEdit Edit, string? Name)>();
+		foreach (var edit in diff.Edits)
+		{
+			var name = NamedTarget(edit.Target);
+			var supported = name is not null && edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty;
+			plans.Add((edit, supported ? name : null));
+
+			if (supported)
+			{
+				var op = edit.Kind == XamlEditKind.SetProperty ? "SetProperty" : "ClearProperty";
+				commands.Add(string.Join('\t', op, name, edit.Property ?? string.Empty, edit.ValueType ?? string.Empty, edit.Value ?? string.Empty));
+			}
+		}
+
+		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
+		if (commands.Count > 0)
+		{
+			var (workDir, error) = Inject(pid, "apply", commands);
+			if (error is not null) return new LiveXamlReloadResult { Detail = error };
+
+			if (!WaitForFile(Path.Combine(workDir!, "apply.ready"), SnapshotTimeout))
+			{
+				return new LiveXamlReloadResult { Detail = "The XAML provider was injected but did not report the apply in time." };
+			}
+
+			statuses = ParseApplyResults(Path.Combine(workDir!, "apply.tsv"));
+		}
+
+		var results = new List<LiveXamlEditResult>();
+		foreach (var (edit, name) in plans)
+		{
+			string status;
+			if (name is null)
+			{
+				status = edit.Kind is XamlEditKind.AddChild or XamlEditKind.RemoveChild
+					? "unsupported: structural edits are not applied live yet"
+					: "unsupported: unnamed-element addressing is not applied live yet";
+			}
+			else
+			{
+				var op = edit.Kind == XamlEditKind.SetProperty ? "SetProperty" : "ClearProperty";
+				status = statuses.GetValueOrDefault($"{op}\t{name}\t{edit.Property}", "not reported");
+			}
+
+			results.Add(new LiveXamlEditResult
+			{
+				Kind = edit.Kind.ToString(),
+				Target = edit.Target,
+				Property = edit.Property,
+				Value = edit.Value,
+				Status = status,
+			});
+		}
+
+		return new LiveXamlReloadResult
+		{
+			Applied = results.Count(result => result.Status == "applied"),
+			Results = results,
+			Notes = diff.Notes,
+		};
+	}
+
+	/// <summary>A diff target of the form <c>#name</c> (a named element, not a path) yields its name.</summary>
+	private static string? NamedTarget(string target)
+		=> target.StartsWith('#') && !target.Contains('/') ? target[1..] : null;
+
+	private static Dictionary<string, string> ParseApplyResults(string applyFile)
+	{
+		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
+		foreach (var line in File.ReadLines(applyFile, Encoding.UTF8))
+		{
+			if (line.Length == 0) continue;
+
+			var fields = line.Split('\t');
+			if (fields.Length < 4) continue;
+
+			// Keyed by op, target name, property -- the same shape the command was sent as.
+			statuses[$"{fields[0]}\t{Unescape(fields[1])}\t{Unescape(fields[2])}"] = fields[3];
+		}
+
+		return statuses;
+	}
+
+	/// <summary>
 	/// Stages the provider, leaves the request for it, clears any stale output, and injects. Returns the
 	/// working folder, or an error string when the provider is unavailable, staging fails, or injection
 	/// is rejected. Each request re-injects because the provider does its work on the app's UI thread at
 	/// SetSite.
 	/// </summary>
-	private (string? WorkDir, string? Error) Inject(int pid, string request)
+	private (string? WorkDir, string? Error) Inject(int pid, string request, IReadOnlyList<string>? commands = null)
 	{
 		var provider = ResolveProviderPath();
 		if (provider is null)
@@ -115,13 +220,20 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			return (null, $"Could not stage the XAML provider: {exception.Message}");
 		}
 
-		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready" })
+		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv" })
 		{
 			TryDelete(Path.Combine(workDir, stale));
 		}
 
 		try
 		{
+			if (commands is not null)
+			{
+				// No explicit encoding: the default is UTF-8 without a BOM, which the provider's narrow
+				// command reader expects; Encoding.UTF8 would prepend a BOM and corrupt the first op.
+				File.WriteAllLines(Path.Combine(workDir, "commands.tsv"), commands);
+			}
+
 			File.WriteAllText(Path.Combine(workDir, "request.txt"), request);
 		}
 		catch (Exception exception)

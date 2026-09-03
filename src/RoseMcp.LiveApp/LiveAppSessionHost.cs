@@ -176,6 +176,27 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return _xaml.ReadProperties(pid, handle, includeDefaults);
 	}
 
+	/// <summary>
+	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree.
+	/// Returns each computed edit with its outcome.
+	/// </summary>
+	public LiveXamlReloadResult ReloadXaml(string oldXaml, string newXaml)
+	{
+		int? targetProcessId;
+		lock (_gate)
+		{
+			targetProcessId = _targetProcessId;
+			_xaml ??= new XamlDiagnosticsSession(logger);
+		}
+
+		if (targetProcessId is not { } pid)
+		{
+			return new LiveXamlReloadResult { Detail = "This session has no target process to inspect." };
+		}
+
+		return _xaml.ApplyReload(pid, oldXaml, newXaml);
+	}
+
 	/// <summary>A page of buffered debug events after the given cursor, with the session's state.</summary>
 	public LiveDebugEventPage ReadEvents(long after)
 	{

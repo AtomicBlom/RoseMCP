@@ -419,6 +419,31 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		return await session.ReadXamlPropertiesAsync(handle, includeDefaults, cancellationToken);
 	}
 
+	[McpServerTool(
+		Name = ToolNames.XamlApply,
+		Title = "Hot-reload XAML",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Hot-reload a running XAML app: diff two versions of its XAML and apply the changes to the live "
+			+ "visual tree, no relaunch. Pass the previous XAML and the new XAML; the diff reduces to the "
+			+ "minimal set of edits and each is applied and reported back with its outcome. Property changes "
+			+ "on named (x:Name) elements apply today -- a colour, a size, a piece of text; structural changes "
+			+ "and unnamed elements are reported as not-yet-applied rather than dropped. Use it after editing a "
+			+ "XAML file: pass what was on disk before and what is there now.")]
+	public async Task<LiveXamlReloadResult> XamlApplyAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("The previous XAML (what the file held before the edit).")] string oldXaml,
+		[Description("The new XAML to apply (what the file holds now).")] string newXaml,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

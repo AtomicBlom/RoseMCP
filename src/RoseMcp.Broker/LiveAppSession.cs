@@ -215,6 +215,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["handle"] = handle, ["includeDefaults"] = includeDefaults },
 			cancellationToken);
 
+	/// <summary>Diffs two XAML versions and applies the edits to the live tree; returns each edit's outcome.</summary>
+	public Task<LiveXamlReloadResult> ReloadXamlAsync(string oldXaml, string newXaml, CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlReloadResult>(
+			ToolNames.LiveAppXamlApply,
+			new Dictionary<string, object?> { ["oldXaml"] = oldXaml, ["newXaml"] = newXaml },
+			cancellationToken);
+
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);
 

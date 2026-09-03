@@ -207,8 +207,11 @@ public:
 			const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
 			WriteProperties(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10)), includeDefaults);
 		}
+		else if (request == L"apply")
+		{
+			ApplyCommands();
+		}
 
-		ApplyCommands();
 		return S_OK;
 	}
 
@@ -389,40 +392,54 @@ private:
 		FreePropertyChain(sources, sourceCount, values, valueCount);
 	}
 
+	// Applies each command from commands.tsv and writes apply.tsv -- one row per command with its
+	// outcome (applied / target not found / property not found / a failure code) -- so the host can
+	// report per-command results to the agent (#12).
 	void ApplyCommands()
 	{
-		const std::vector<Command> commands = ReadCommands();
-		if (commands.empty()) return;
+		if (g_workDir.empty()) return;
 
+		const std::vector<Command> commands = ReadCommands();
 		Log(L"applying " + std::to_wstring(commands.size()) + L" command(s)");
-		for (const auto& command : commands)
+
+		const std::wstring finalPath = g_workDir + L"\\apply.tsv";
+		const std::wstring tempPath = finalPath + L".tmp";
 		{
-			if (command.op == L"SetProperty")
+			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
+			for (const auto& command : commands)
 			{
-				ApplySetProperty(command);
-			}
-			else if (command.op == L"ClearProperty")
-			{
-				ApplyClearProperty(command);
-			}
-			else
-			{
-				Log(L"  skipped unsupported op '" + command.op + L"'");
+				std::wstring status;
+				if (command.op == L"SetProperty") status = ApplySetProperty(command);
+				else if (command.op == L"ClearProperty") status = ApplyClearProperty(command);
+				else status = L"unsupported op";
+
+				if (file)
+				{
+					const std::wstring row = command.op + L'\t' + Escape(command.target.c_str()) + L'\t'
+						+ Escape(command.property.c_str()) + L'\t' + status;
+					file << Utf8(row) << '\n';
+				}
 			}
 		}
-	}
 
-	void ApplySetProperty(const Command& command)
-	{
-		InstanceHandle target = 0;
-		if (!Find(command.target, target)) return;
-
-		unsigned int index = 0;
-		if (!PropertyIndex(target, command.property, index))
+		_wremove(finalPath.c_str());
+		if (_wrename(tempPath.c_str(), finalPath.c_str()) != 0)
 		{
-			Log(L"  SetProperty " + command.target + L"." + command.property + L": property not found on element");
+			Log(L"could not rename apply.tsv.tmp to apply.tsv");
 			return;
 		}
+
+		std::wofstream ready(g_workDir + L"\\apply.ready", std::ios::trunc);
+		if (ready) ready << commands.size() << L"\n";
+	}
+
+	std::wstring ApplySetProperty(const Command& command)
+	{
+		InstanceHandle target = 0;
+		if (!Find(command.target, target)) return L"target not found";
+
+		unsigned int index = 0;
+		if (!PropertyIndex(target, command.property, index)) return L"property not found";
 
 		BSTR typeName = SysAllocString(command.valueType.c_str());
 		BSTR value = SysAllocString(command.value.c_str());
@@ -430,34 +447,28 @@ private:
 		HRESULT hr = m_tree->CreateInstance(typeName, value, &valueHandle);
 		SysFreeString(typeName);
 		SysFreeString(value);
-		if (FAILED(hr))
-		{
-			Log(L"  SetProperty " + command.target + L"." + command.property + L": CreateInstance(" + command.valueType + L", " + command.value + L") failed hr=0x" + Hex(hr));
-			return;
-		}
+		if (FAILED(hr)) return L"CreateInstance failed 0x" + Hex(hr);
 
 		hr = m_tree->SetProperty(target, valueHandle, index);
-		Log(hr == S_OK
-			? L"  set " + command.target + L"." + command.property + L" = " + command.value
-			: L"  SetProperty " + command.target + L"." + command.property + L" failed hr=0x" + Hex(hr));
+		if (hr != S_OK) return L"SetProperty failed 0x" + Hex(hr);
+
+		Log(L"  set " + command.target + L"." + command.property + L" = " + command.value);
+		return L"applied";
 	}
 
-	void ApplyClearProperty(const Command& command)
+	std::wstring ApplyClearProperty(const Command& command)
 	{
 		InstanceHandle target = 0;
-		if (!Find(command.target, target)) return;
+		if (!Find(command.target, target)) return L"target not found";
 
 		unsigned int index = 0;
-		if (!PropertyIndex(target, command.property, index))
-		{
-			Log(L"  ClearProperty " + command.target + L"." + command.property + L": property not found");
-			return;
-		}
+		if (!PropertyIndex(target, command.property, index)) return L"property not found";
 
-		HRESULT hr = m_tree->ClearProperty(target, index);
-		Log(hr == S_OK
-			? L"  cleared " + command.target + L"." + command.property
-			: L"  ClearProperty " + command.target + L"." + command.property + L" failed hr=0x" + Hex(hr));
+		const HRESULT hr = m_tree->ClearProperty(target, index);
+		if (hr != S_OK) return L"ClearProperty failed 0x" + Hex(hr);
+
+		Log(L"  cleared " + command.target + L"." + command.property);
+		return L"applied";
 	}
 
 	bool Find(const std::wstring& name, InstanceHandle& handle)

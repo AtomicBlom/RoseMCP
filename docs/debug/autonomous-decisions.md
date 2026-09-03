@@ -230,3 +230,28 @@ source info, the file/line/column that set it. Decisions:
 Proven by `Reads_the_properties_of_a_xaml_element`: RootGrid's `Background` reads back `Local`,
 framework defaults are excluded until requested, and the caption's `Text` comes through as the exact
 string the XAML sets. The provenance is the bridge #18 (selection) and the Roslyn side build on.
+
+### D16 — XAML hot reload: diff in the host, apply named-element property edits live (#12)
+`rose_xaml_apply` takes two XAML versions, diffs them with `RoseMcp.XamlDiff` (#11), and applies the
+edits to the live tree, reporting each edit's outcome. Decisions:
+
+- **The host diffs and applies.** `RoseMcp.XamlDiff` is a pure, cross-platform, unit-tested library the
+  host now references; keeping the diff and apply in one place is one broker round trip and lets the
+  host translate an edit's addressing to what the provider understands.
+- **Property edits on named elements apply; the rest are reported, not dropped.** The provider
+  addresses elements by `x:Name`, so a diff target of `#name` maps straight to a `SetProperty` /
+  `ClearProperty` command. Structural edits (`AddChild`/`RemoveChild`) and unnamed-element path targets
+  come back with an `unsupported: ...` status rather than silently vanishing -- honest about the live
+  applier's current reach while the diff engine already detects them.
+- **Per-command results flow back.** The provider writes an `apply.tsv` (op, target, property, outcome)
+  beside its other files; the host joins it to the computed edits so the agent sees exactly what took
+  and what did not (`applied`, `target not found`, `property not found`, a failure code).
+- **The command file is UTF-8 without a BOM.** The provider reads `commands.tsv` with a narrow stream;
+  `File.WriteAllLines` with the default encoding is BOM-less UTF-8, where `Encoding.UTF8` would prepend
+  a BOM and corrupt the first op.
+
+Value types go through the provider's `CreateInstance`: brushes (from a hex colour), doubles, thickness
+and boolean are the reliable cases; a value the diff cannot type (a bare string) comes back as a
+`CreateInstance` failure rather than applying, which is the honest current limit. Proven by
+`Hot_reloads_a_property_on_the_live_uwp_probe`: it changes the caption's font size, applies it, and
+reads the live element's font size back as the new value -- the edit-to-live loop, end to end.

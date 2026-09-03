@@ -482,6 +482,75 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// XAML hot reload (#12): diff two versions of the probe's XAML and apply the change to the live tree,
+	/// no relaunch. Changes the caption's font size, applies it, and confirms the live element actually
+	/// took the new value by reading it back. Skips where the UWP or C++ toolchain is absent.
+	/// </summary>
+	[Fact]
+	public async Task Hot_reloads_a_property_on_the_live_uwp_probe()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
+		var oldXaml = File.ReadAllText(xamlPath);
+		var newXaml = oldXaml.Replace("FontSize=\"24\"", "FontSize=\"40\"");
+		Assert.NotEqual(oldXaml, newXaml); // The caption's font size is the one edit.
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp hot-reload probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+
+			var edit = reload.Results.FirstOrDefault(result => result.Target == "#Caption" && result.Property == "FontSize");
+			Assert.NotNull(edit);
+			Assert.Equal("applied", edit!.Status);
+			Assert.True(reload.Applied >= 1);
+
+			// The live element actually changed: reading its font size back gives the new value.
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var caption = tree.Nodes.First(node => node.Name == "Caption");
+			var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
+			var fontSize = properties.Properties.FirstOrDefault(property => property.Name == "FontSize");
+			Assert.NotNull(fontSize);
+			Assert.Equal("40", fontSize!.Value);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
 	[Fact]
 	public async Task Reports_a_missing_target_as_faulted()

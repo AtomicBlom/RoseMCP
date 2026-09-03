@@ -32,4 +32,17 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		[Description("The element handle from a tree snapshot.")] ulong handle,
 		[Description("Include framework default values, not only set ones.")] bool includeDefaults = false)
 		=> host.ReadXamlProperties(handle, includeDefaults);
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppXamlApply,
+		Title = "Live-app XAML hot reload",
+		ReadOnly = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Diff two XAML versions and apply the resulting edits to the live visual tree.")]
+	public LiveXamlReloadResult XamlApply(
+		[Description("The previous XAML.")] string oldXaml,
+		[Description("The new XAML to apply.")] string newXaml)
+		=> host.ReloadXaml(oldXaml, newXaml);
 }

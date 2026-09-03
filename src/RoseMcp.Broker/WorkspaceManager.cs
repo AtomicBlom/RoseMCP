@@ -58,17 +58,24 @@ public sealed class WorkspaceManager(
 	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => worker.Describe())];
 
 	/// <summary>
-	/// The worker for <paramref name="path"/>, starting one if needed.
+	/// The worker for whichever workspace <paramref name="hints"/> resolves to, starting one if
+	/// needed.
+	/// </summary>
+	public Task<WorkspaceWorker> GetOrStartAsync(WorkspaceHints hints, CancellationToken cancellationToken) =>
+		GetOrStartResolvedAsync(WorkspaceFor(hints), cancellationToken);
+
+	/// <summary>
+	/// The worker for a solution path already decided on.
 	/// <para>
 	/// A dead worker is replaced rather than reported. Workers die for ordinary reasons -- the
 	/// solution was deleted and has come back, a hard reload killed one, memory ran out -- and
 	/// making the caller retry after each of those would be needless ceremony.
 	/// </para>
 	/// </summary>
-	public async Task<WorkspaceWorker> GetOrStartAsync(string? path, CancellationToken cancellationToken)
+	private async Task<WorkspaceWorker> GetOrStartResolvedAsync(
+		string solutionPath,
+		CancellationToken cancellationToken)
 	{
-		var solutionPath = ResolveOrInfer(path);
-
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
@@ -138,14 +145,14 @@ public sealed class WorkspaceManager(
 	/// </para>
 	/// </summary>
 	public async Task<T> CallAsync<T>(
-		string? workspace,
+		WorkspaceHints hints,
 		string tool,
 		IReadOnlyDictionary<string, object?> arguments,
 		bool retryIfWorkerDied,
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue>? progress = null)
 	{
-		var worker = await GetOrStartAsync(workspace, cancellationToken);
+		var worker = await GetOrStartAsync(hints, cancellationToken);
 
 		try
 		{
@@ -155,7 +162,7 @@ public sealed class WorkspaceManager(
 		{
 			logger.LogInformation("Restarting the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
 
-			var replacement = await RestartAsync(worker.SolutionPath, cancellationToken);
+			var replacement = await RestartResolvedAsync(worker.SolutionPath, cancellationToken);
 
 			return Attribute(
 				await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
@@ -241,10 +248,11 @@ public sealed class WorkspaceManager(
 			worker);
 
 	/// <summary>Stops a worker and forgets it. Reopening starts a fresh process.</summary>
-	public async Task<bool> CloseAsync(string? path, CancellationToken cancellationToken)
-	{
-		var solutionPath = ResolveOrInfer(path);
+	public Task<bool> CloseAsync(WorkspaceHints hints, CancellationToken cancellationToken) =>
+		CloseResolvedAsync(WorkspaceFor(hints), cancellationToken);
 
+	private async Task<bool> CloseResolvedAsync(string solutionPath, CancellationToken cancellationToken)
+	{
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
@@ -268,63 +276,124 @@ public sealed class WorkspaceManager(
 	/// generator: assembly loading is one-way, so a process that has loaded the old one can never
 	/// see the new one.
 	/// </summary>
-	public async Task<WorkspaceWorker> RestartAsync(
-		string? path,
+	public Task<WorkspaceWorker> RestartAsync(
+		WorkspaceHints hints,
+		CancellationToken cancellationToken,
+		WorkspaceBuildOverrides? build = null) =>
+		RestartResolvedAsync(WorkspaceFor(hints), cancellationToken, build);
+
+	private async Task<WorkspaceWorker> RestartResolvedAsync(
+		string solutionPath,
 		CancellationToken cancellationToken,
 		WorkspaceBuildOverrides? build = null)
 	{
-		var solutionPath = ResolveOrInfer(path);
-
 		// Remembered rather than applied once, so a worker that dies and is replaced later comes back
 		// under the properties that were asked for rather than silently reverting.
 		if (build is not null) _buildOverrides[solutionPath] = build;
 
-		await CloseAsync(solutionPath, cancellationToken);
+		await CloseResolvedAsync(solutionPath, cancellationToken);
 
-		return await GetOrStartAsync(solutionPath, cancellationToken);
+		return await GetOrStartResolvedAsync(solutionPath, cancellationToken);
 	}
 
 	/// <summary>
-	/// Works out which workspace a call means.
+	/// Works out which workspace a call means. The one place that decides, and the order is the
+	/// whole design.
 	/// <para>
-	/// Falls back to discovering a solution from the working directory rather than demanding an
-	/// explicit open first. A tool that needs a setup call before it answers anything is a tool that
-	/// gets skipped in favour of grep, so the zero-argument path has to work.
+	/// Public because it answers a question worth asking without paying for it -- deciding is a few
+	/// file reads, where acting on the decision is a design-time build -- and because a routing rule
+	/// that can only be observed by running it is a routing rule nobody can test.
 	/// </para>
 	/// <para>
-	/// The two failures here throw McpException rather than ArgumentException, and the difference is
-	/// the whole point: the SDK turns an unrecognised exception into "An error occurred invoking
+	/// Inputs are tried by how much they know about the question actually asked. What the caller
+	/// named beats what the call implies, because they said it. What the call implies beats the
+	/// session's directory, because a path in the arguments is evidence about this question whereas a
+	/// directory is only where the asking happens to be from. And the session's directory is the last
+	/// word, because a bare call still has to work -- a tool that demands a setup call first is a
+	/// tool that loses to grep before it is ever tried.
+	/// </para>
+	/// <para>
+	/// What is deliberately absent is the set of loaded workspaces. This used to answer a bare call
+	/// from the single open worker, which is not a fact about the question at all but about what some
+	/// other session did earlier: a session in one repository could be answered, plausibly and
+	/// silently, from another. It is only ever named in the failure below, where it helps.
+	/// </para>
+	/// <para>
+	/// Both failures throw McpException rather than ArgumentException, and the difference is the whole
+	/// point: the SDK turns an unrecognised exception into "An error occurred invoking
 	/// 'rose_diagnostics'." and drops the message, so a caller that could have fixed the call itself
-	/// is told nothing. Both of these know exactly what the caller should do next, and both say so.
+	/// is told nothing. Both of these know what the caller should do next, and both say so.
 	/// </para>
 	/// </summary>
-	private string ResolveOrInfer(string? path)
+	public string WorkspaceFor(WorkspaceHints hints)
 	{
-		if (!string.IsNullOrWhiteSpace(path)) return Resolved(path);
+		// The caller named it. A name that resolves to nothing is theirs to hear about, so nothing
+		// here is caught -- falling through to a guess would answer a different question than asked.
+		if (!string.IsNullOrWhiteSpace(hints.Workspace)) return Resolved(hints.Workspace);
 
-		lock (_workers)
+		// Paths the call carries for its own reasons. The first that decides wins; an ambiguous one is
+		// remembered rather than thrown, because a later hint may still settle it and, failing that,
+		// an ambiguity about a path the caller actually named explains more than one about a directory.
+		AmbiguousSolutionException? ambiguity = null;
+
+		foreach (var path in hints.Paths)
 		{
-			if (_workers.Count == 1) return _workers.Keys.First();
+			if (string.IsNullOrWhiteSpace(path)) continue;
 
-			if (_workers.Count > 1)
+			// A hint need not be a path at all: diagnostics' target is a project name under project
+			// scope. Resolving that as a path makes it relative to the process working directory and
+			// answers from whichever solution is sitting there, which is worse than not trying.
+			if (!File.Exists(path) && !Directory.Exists(path)) continue;
+
+			try
 			{
-				throw new McpException(
-					$"{_workers.Count} workspaces are open, so the workspace argument is required. Open: "
-						+ string.Join(", ", _workers.Keys));
+				return Resolved(path);
+			}
+			catch (AmbiguousSolutionException exception)
+			{
+				ambiguity ??= exception;
+			}
+			catch (ArgumentException)
+			{
+				// Nothing to load near it. The next hint, or the session's directory, may do better.
 			}
 		}
 
+		var origin = CallOrigin.Directory ?? _options.DefaultWorkspaceRoot;
+
 		try
 		{
-			return Resolved(_options.DefaultWorkspaceRoot);
+			return Resolved(origin);
+		}
+		catch (AmbiguousSolutionException) when (ambiguity is not null)
+		{
+			throw ambiguity;
 		}
 		catch (ArgumentException exception)
 		{
+			if (ambiguity is not null) throw ambiguity;
+
 			throw new McpException(
-				"No workspace is open and no solution was found near "
-					+ $"{_options.DefaultWorkspaceRoot}. Pass a path to a solution, project, or any file "
-					+ "inside one.",
-				exception);
+				$"No solution or project was found near {origin}{OpenWorkspacesSuffix()}", exception);
+		}
+	}
+
+	/// <summary>
+	/// Names the loaded workspaces when resolution has failed. They are no basis for choosing, but
+	/// once choosing has failed they are the shortest route to a call that works -- each result
+	/// carries the key needed to name one.
+	/// </summary>
+	private string OpenWorkspacesSuffix()
+	{
+		lock (_workers)
+		{
+			if (_workers.Count == 0)
+			{
+				return ". Pass the workspace argument naming a solution, project, or any file inside one.";
+			}
+
+			return ". Pass the workspace argument naming a solution, project, or any file inside one. "
+				+ $"Already open: {string.Join(", ", _workers.Keys)}.";
 		}
 	}
 

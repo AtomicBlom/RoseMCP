@@ -60,13 +60,23 @@ reclaim memory or pick up a rebuilt generator.
   retention cannot do it, since it only prunes within one rolling base name and every session
   here has its own.
 - **A stdio session relays to a tray when one is running.** `TrayRelay` forwards both listing and
-  calling, declaring no tools of its own, so the surface cannot drift from the tray's. It fills in
-  the `workspace` argument any call omits, from the directory its client started it in -- which is
-  the point. An http broker serves every repository on the machine and, with two solutions open,
-  cannot know which one a bare call means; a stdio process cannot not know. Relaying buys both that
-  and one warm worker per solution shared across sessions, and it keeps the tray's window reading a
-  live `WorkspaceManager` rather than a pushed copy that could drift. With no tray, the same
-  process owns its workers as before.
+  calling, declaring no tools of its own, so the surface cannot drift from the tray's. It sends the
+  directory its client started it in as `_meta["rosemcp/originDirectory"]` and changes nothing else.
+  An http broker serves every repository on the machine and, with two solutions open, cannot know
+  which one a bare call means; a stdio process cannot not know. Relaying buys both that and one warm
+  worker per solution shared across sessions, and it keeps the tray's window reading a live
+  `WorkspaceManager` rather than a pushed copy that could drift. With no tray, the same process owns
+  its workers as before.
+- **The relay contributes a fact, never a conclusion.** It used to resolve that directory to a
+  solution and write the answer into the `workspace` argument, which failed three ways at once. It
+  matched the argument by name, and `rose_workspace_open` alone called its own `path` -- so an
+  explicitly named solution was read as an omission and refused for an ambiguity the caller had
+  already settled. It resolved before reading any argument, so a call carrying a `filePath`
+  containment would have decided was refused too, killing every `rose_*` tool in a multi-solution
+  root. And it ran for every tool, so `rose_debug_launch_uwp`, which takes no workspace and needs no
+  solution, failed with a solution-ambiguity error. Resolution belongs where every path converges --
+  the broker also serves clients with no relay in front of it -- so the relay sends what only it
+  knows and the broker ranks it against everything else.
 - **A cancelled call is cancelled all the way down, and the order is the trick.**
   `McpClient.CallToolAsync` honours a token by giving up locally and never telling the far side, so
   a cancelled analyzer run kept its worker busy five seconds longer -- which, because reads are
@@ -94,8 +104,18 @@ reclaim memory or pick up a rebuilt generator.
   with nothing to go on -- that is an error naming the candidates, and a `"solution"` entry in the
   directory's `rosemcp.json` settles it durably. Refusing is against the grain of everything else
   here, and earns it because guessing is not cheap: the wrong guess pays a full design-time build of
-  a solution nobody asked for. `TrayRelay` lets that refusal past rather than falling through to the
-  tray, which with one workspace open would answer from whatever another session left loaded.
+  a solution nobody asked for.
+- **One ordering decides which workspace a call means, in `WorkspaceManager.WorkspaceFor`.** The
+  workspace argument, then paths the call carries, then the calling session's directory, then refuse.
+  It was previously spread across three places that disagreed, and the worst of them was the last
+  resort: with no other signal the broker answered from the single loaded worker, which is a fact
+  about what another session did earlier rather than about the question, so a call in one repository
+  could be answered plausibly and silently from another. Loaded workspaces are named in the failure
+  and never used as an answer. Tools declare their inputs as `WorkspaceHints` and no longer spell the
+  ranking out themselves -- seventeen hand-written `workspace ?? filePath` chains had already drifted
+  to one `workspace ?? filePaths.FirstOrDefault()`, and one of those hints is not even a path
+  (`rose_diagnostics`' `target` is a project name under project scope), so a hint naming nothing on
+  disk is passed over rather than resolved relative to the process directory.
 - **Every result names the workspace that answered.** Attribution is added once, in
   `WorkspaceManager`, so a tool added later cannot forget. The key is derived from the path rather
   than minted per process -- workers are replaced routinely, and a key that died with one would tell

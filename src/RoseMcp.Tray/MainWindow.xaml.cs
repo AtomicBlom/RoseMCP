@@ -245,7 +245,7 @@ public sealed partial class MainWindow : Window
 	{
 		if (sender is not FrameworkElement { Tag: string solutionPath }) return;
 
-		await Manager.RestartAsync(solutionPath, CancellationToken.None);
+		await Manager.RestartAsync(WorkspaceHints.From(solutionPath), CancellationToken.None);
 		Refresh();
 	}
 
@@ -253,7 +253,7 @@ public sealed partial class MainWindow : Window
 	{
 		if (sender is not FrameworkElement { Tag: string solutionPath }) return;
 
-		await Manager.CloseAsync(solutionPath, CancellationToken.None);
+		await Manager.CloseAsync(WorkspaceHints.From(solutionPath), CancellationToken.None);
 		Refresh();
 	}
 
@@ -327,7 +327,7 @@ public sealed partial class MainWindow : Window
 	{
 		foreach (var worker in Manager.Workers)
 		{
-			await Manager.CloseAsync(worker.SolutionPath, CancellationToken.None);
+			await Manager.CloseAsync(WorkspaceHints.From(worker.SolutionPath), CancellationToken.None);
 		}
 
 		Refresh();

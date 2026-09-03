@@ -29,10 +29,10 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.WorkspaceOpen)]
 	public async Task<WorkspaceStatusReport> OpenAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to a solution, project, directory, or any file inside one.")] string path,
+		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
-		var worker = await workspaces.GetOrStartAsync(path, cancellationToken);
+		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(workspace), cancellationToken);
 		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
 	}
 
@@ -49,7 +49,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
-		var worker = await workspaces.GetOrStartAsync(workspace, cancellationToken);
+		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(workspace), cancellationToken);
 		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
 	}
 
@@ -71,7 +71,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.RestartAsync(
-			workspace,
+			WorkspaceHints.From(workspace),
 			cancellationToken,
 			WorkspaceBuildOverrides.From(configuration, platform, properties));
 		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
@@ -89,7 +89,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
-		var closed = await workspaces.CloseAsync(workspace, cancellationToken);
+		var closed = await workspaces.CloseAsync(WorkspaceHints.From(workspace), cancellationToken);
 		return closed ? "Workspace closed." : "That workspace was not open.";
 	}
 }

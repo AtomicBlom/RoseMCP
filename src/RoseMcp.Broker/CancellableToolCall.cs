@@ -33,7 +33,8 @@ public static class CancellableToolCall
 		string tool,
 		IReadOnlyDictionary<string, object?> arguments,
 		IProgress<ProgressNotificationValue>? progress,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		string? originDirectory = null)
 	{
 		var requestId = new RequestId(Guid.NewGuid().ToString("N"));
 		var progressToken = new ProgressToken(requestId.ToString());
@@ -44,10 +45,7 @@ public static class CancellableToolCall
 			Arguments = arguments.ToDictionary(
 				pair => pair.Key,
 				pair => JsonSerializer.SerializeToElement(pair.Value, ContractJson.Options)),
-			// ProgressToken is read-only, derived from _meta, so the token goes in there directly.
-			Meta = progress is null
-				? null
-				: new JsonObject { ["progressToken"] = JsonValue.Create(progressToken.ToString()) },
+			Meta = Meta(progressToken, progress, originDirectory),
 		};
 
 		await using var listening = progress is null
@@ -110,6 +108,35 @@ public static class CancellableToolCall
 			return response.Result.Deserialize<CallToolResult>(ContractJson.Options)
 				?? throw new InvalidOperationException($"The response to {tool} could not be read.");
 		}
+	}
+
+	/// <summary>
+	/// The out-of-band half of the request: the progress token, and the directory the calling session
+	/// lives in.
+	/// <para>
+	/// ProgressToken is read-only and derived from <c>_meta</c>, so the token goes in there directly.
+	/// The origin directory rides alongside it rather than in the arguments because it belongs to no
+	/// tool's schema -- see <see cref="CallOrigin"/>. Null when there is nothing to say, since an
+	/// empty <c>_meta</c> is not the same as none and there is no reason to send one.
+	/// </para>
+	/// </summary>
+	private static JsonObject? Meta(
+		ProgressToken progressToken,
+		IProgress<ProgressNotificationValue>? progress,
+		string? originDirectory)
+	{
+		if (progress is null && string.IsNullOrWhiteSpace(originDirectory)) return null;
+
+		var meta = new JsonObject();
+
+		if (progress is not null) meta["progressToken"] = JsonValue.Create(progressToken.ToString());
+
+		if (!string.IsNullOrWhiteSpace(originDirectory))
+		{
+			meta[CallOrigin.MetaKey] = JsonValue.Create(originDirectory);
+		}
+
+		return meta;
 	}
 
 	private static void Forward(

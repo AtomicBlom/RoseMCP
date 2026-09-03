@@ -39,6 +39,7 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | `rose_xaml_properties` | Read one element's properties (by handle) with provenance (Local / Style / Inherited / Default …) and, when the app carries source info, the XAML file and line that set each. |
 | `rose_xaml_apply` | Hot-reload: diff two XAML versions and apply the changes to the live tree with no relaunch, reporting each edit's outcome. Property changes on named elements today. |
 | `rose_debug_evaluate` | While stopped, evaluate a field-access expression (`name`, `name.field.field`) against the frame — read directly from memory, no debuggee code run. |
+| `rose_xaml_select_mode` / `rose_xaml_selection` | Let the user point: an overlay goes over the app, their next click picks that element, and the selection (type, `x:Name`, handle) feeds the property and hot-reload tools. |
 
 ## Limits worth knowing
 

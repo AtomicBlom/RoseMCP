@@ -229,6 +229,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["handle"] = handle, ["includeDefaults"] = includeDefaults },
 			cancellationToken);
 
+	/// <summary>Arms interactive select mode: the next click in the app picks that element.</summary>
+	public Task<LiveXamlSelection> EnterXamlSelectModeAsync(CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlSelection>(ToolNames.LiveAppXamlSelectMode, cancellationToken);
+
+	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>
+	public Task<LiveXamlSelection> ReadXamlSelectionAsync(CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlSelection>(ToolNames.LiveAppXamlSelection, cancellationToken);
+
 	/// <summary>Diffs two XAML versions and applies the edits to the live tree; returns each edit's outcome.</summary>
 	public Task<LiveXamlReloadResult> ReloadXamlAsync(string oldXaml, string newXaml, CancellationToken cancellationToken)
 		=> SendAsync<LiveXamlReloadResult>(

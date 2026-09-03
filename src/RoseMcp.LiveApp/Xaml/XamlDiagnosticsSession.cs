@@ -91,6 +91,68 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	}
 
 	/// <summary>
+	/// Arms interactive select mode (#18): injects the provider, which puts a transparent
+	/// input-capturing overlay on the app's diagnostics UI layer and stays resident. The next click in
+	/// the app lands on the overlay, which hit-tests the element beneath and records it for
+	/// <see cref="ReadSelection"/>. Confirms the overlay actually armed rather than assuming it.
+	/// </summary>
+	public LiveXamlSelection EnterSelectMode(int pid)
+	{
+		var (workDir, error) = Inject(pid, "select");
+		if (error is not null) return new LiveXamlSelection { Detail = error };
+
+		if (!WaitForFile(Path.Combine(workDir!, "select.ready"), SnapshotTimeout))
+		{
+			return new LiveXamlSelection { Detail = "The provider was injected but did not arm the selection overlay (the app may have no diagnostics UI layer)." };
+		}
+
+		return new LiveXamlSelection { Detail = "Select mode is armed: click an element in the app, then read the selection." };
+	}
+
+	/// <summary>
+	/// Reads the element the user clicked, if any. Deliberately does not inject: select mode left the
+	/// provider resident with its overlay, and re-injecting would tear that down.
+	/// </summary>
+	public LiveXamlSelection ReadSelection()
+	{
+		if (_workDir is null)
+		{
+			return new LiveXamlSelection { Detail = "Select mode has not been entered for this session." };
+		}
+
+		var selectionFile = Path.Combine(_workDir, "selection.tsv");
+		if (!File.Exists(selectionFile))
+		{
+			return new LiveXamlSelection { Detail = "Nothing has been selected yet; click an element in the app." };
+		}
+
+		try
+		{
+			foreach (var line in File.ReadLines(selectionFile, Encoding.UTF8))
+			{
+				var fields = line.Split('\t');
+				if (fields.Length < 3 || !ulong.TryParse(fields[0], out var handle)) continue;
+
+				var name = Unescape(fields[2]);
+				return new LiveXamlSelection
+				{
+					Selected = true,
+					Handle = handle,
+					TypeName = EmptyToNull(Unescape(fields[1])),
+					Name = string.IsNullOrEmpty(name) ? null : name,
+				};
+			}
+
+			return new LiveXamlSelection { Detail = "The recorded selection could not be read." };
+		}
+		catch (Exception exception)
+		{
+			logger.LogWarning(exception, "Reading the XAML selection failed.");
+			return new LiveXamlSelection { Detail = $"Could not read the selection: {exception.Message}" };
+		}
+	}
+
+	/// <summary>
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree (#12).
 	/// Property edits on named elements are applied through the provider; structural edits and
 	/// unnamed-element targets are reported as not-yet-applied rather than dropped silently. Returns each
@@ -220,7 +282,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			return (null, $"Could not stage the XAML provider: {exception.Message}");
 		}
 
-		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv" })
+		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv", "select.ready", "selection.tsv", "selection.ready" })
 		{
 			TryDelete(Path.Combine(workDir, stale));
 		}

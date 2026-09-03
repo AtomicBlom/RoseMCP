@@ -87,6 +87,12 @@ public static class ToolNames
 	/// <summary>Live-app-host-only. The broker forwards this to diff two XAML versions and apply the edits live.</summary>
 	public const string LiveAppXamlApply = "rose_live_app_xaml_apply";
 
+	/// <summary>Live-app-host-only. The broker forwards this to arm the interactive select-mode overlay.</summary>
+	public const string LiveAppXamlSelectMode = "rose_live_app_xaml_select_mode";
+
+	/// <summary>Live-app-host-only. The broker forwards this to read the element the user clicked.</summary>
+	public const string LiveAppXamlSelection = "rose_live_app_xaml_selection";
+
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 
@@ -140,4 +146,10 @@ public static class ToolNames
 
 	/// <summary>Hot-reload a running XAML app by diffing two versions and applying the edits live.</summary>
 	public const string XamlApply = "rose_xaml_apply";
+
+	/// <summary>Enter interactive select mode: the next click in the app picks that element.</summary>
+	public const string XamlSelectMode = "rose_xaml_select_mode";
+
+	/// <summary>Read the element the user picked by clicking it in the running app.</summary>
+	public const string XamlSelection = "rose_xaml_selection";
 }

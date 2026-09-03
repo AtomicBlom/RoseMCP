@@ -49,4 +49,24 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		[Description("The previous XAML.")] string oldXaml,
 		[Description("The new XAML to apply.")] string newXaml)
 		=> host.ReloadXaml(oldXaml, newXaml);
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppXamlSelectMode,
+		Title = "Live-app XAML select mode",
+		ReadOnly = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Arm the interactive selection overlay so the next click in the app picks that element.")]
+	public LiveXamlSelection XamlSelectMode() => host.EnterXamlSelectMode();
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppXamlSelection,
+		Title = "Live-app XAML selection",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Read the element the user picked by clicking it in the running app.")]
+	public LiveXamlSelection XamlSelection() => host.ReadXamlSelection();
 }

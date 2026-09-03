@@ -563,6 +563,66 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// Interactive selection (#18): arming select mode puts the provider's transparent overlay on the
+	/// app's diagnostics UI layer, and until someone clicks, the selection is empty rather than stale or
+	/// invented. The click itself is a human action, so this test deliberately stops at the armed state
+	/// rather than driving the mouse on a live desktop.
+	/// </summary>
+	[Fact]
+	public async Task Arms_interactive_select_mode_on_the_classic_uwp_probe()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp select probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			// The provider confirms the overlay is live, rather than the host assuming it.
+			var selectMode = await session.EnterXamlSelectModeAsync(cancellationToken);
+			Assert.True(
+				selectMode.Detail?.Contains("armed", StringComparison.OrdinalIgnoreCase) == true,
+				$"expected select mode to arm; got: {selectMode.Detail}");
+
+			// Nothing clicked yet: an empty selection that says so, safe to poll.
+			var selection = await session.ReadXamlSelectionAsync(cancellationToken);
+			Assert.False(selection.Selected);
+			Assert.NotNull(selection.Detail);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
 	[Fact]
 	public async Task Reports_a_missing_target_as_faulted()

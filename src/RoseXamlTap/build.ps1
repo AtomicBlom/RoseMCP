@@ -56,6 +56,7 @@ $env:INCLUDE = @(
     "$sdkRoot\Include\$($sdkVer.Name)\shared"
     "$sdkRoot\Include\$($sdkVer.Name)\um"
     "$sdkRoot\Include\$($sdkVer.Name)\winrt"
+    "$sdkRoot\Include\$($sdkVer.Name)\cppwinrt"  # C++/WinRT projections for the select-mode overlay
 ) -join ';'
 
 $env:LIB = @(
@@ -74,10 +75,11 @@ Push-Location $outDir
 try
 {
     $configFlags = if ($Configuration -eq 'Debug') { @('/Zi', '/Od', '/MDd') } else { @('/O2', '/MD') }
-    & $cl /nologo /LD /EHsc /std:c++17 /DUNICODE /D_UNICODE /W3 @configFlags `
+    # /bigobj: the C++/WinRT XAML headers push the object past the default section limit.
+    & $cl /nologo /LD /EHsc /std:c++20 /bigobj /DUNICODE /D_UNICODE /W3 @configFlags `
         "$here\RoseXamlTap.cpp" `
         /Fe:RoseXamlTap.dll `
-        /link /DLL /DEF:"$here\RoseXamlTap.def" ole32.lib oleaut32.lib
+        /link /DLL /DEF:"$here\RoseXamlTap.def" ole32.lib oleaut32.lib WindowsApp.lib
     if ($LASTEXITCODE -ne 0) { throw "cl.exe failed with exit code $LASTEXITCODE" }
 }
 finally

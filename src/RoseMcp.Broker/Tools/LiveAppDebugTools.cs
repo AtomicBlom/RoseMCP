@@ -470,6 +470,48 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		return await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
 	}
 
+	[McpServerTool(
+		Name = ToolNames.XamlSelectMode,
+		Title = "Enter XAML select mode",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Enter interactive select mode on a running XAML app: a transparent overlay goes over the app, "
+			+ "and the next click the user makes picks that element instead of reaching the app. Ask the user "
+			+ "to click the element they mean, then call rose_xaml_selection to find out what they picked. "
+			+ "This is how a user points at something on screen -- \"look at the element I selected\" -- and "
+			+ "hands it to you; the handle it yields feeds rose_xaml_properties and rose_xaml_apply directly.")]
+	public async Task<LiveXamlSelection> XamlSelectModeAsync(
+		[Description(SessionHelp)] string sessionId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.EnterXamlSelectModeAsync(cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.XamlSelection,
+		Title = "Read the selected XAML element",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Read the element the user picked by clicking it after rose_xaml_select_mode. Returns its type, "
+			+ "its x:Name when it has one, and the stable handle -- pass that to rose_xaml_properties to see "
+			+ "what the XAML sets on it, or to rose_xaml_apply's diff to change it. If nobody has clicked "
+			+ "yet it says so, so it is safe to poll while waiting for the user.")]
+	public async Task<LiveXamlSelection> XamlSelectionAsync(
+		[Description(SessionHelp)] string sessionId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.ReadXamlSelectionAsync(cancellationToken);
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

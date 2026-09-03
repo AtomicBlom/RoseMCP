@@ -224,6 +224,37 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return _xaml.ReadProperties(pid, handle, includeDefaults);
 	}
 
+	/// <summary>Arms interactive select mode: the next click in the app picks that element.</summary>
+	public LiveXamlSelection EnterXamlSelectMode()
+	{
+		int? targetProcessId;
+		lock (_gate)
+		{
+			targetProcessId = _targetProcessId;
+			_xaml ??= new XamlDiagnosticsSession(logger);
+		}
+
+		if (targetProcessId is not { } pid)
+		{
+			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
+		}
+
+		return _xaml.EnterSelectMode(pid);
+	}
+
+	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>
+	public LiveXamlSelection ReadXamlSelection()
+	{
+		XamlDiagnosticsSession? xaml;
+		lock (_gate)
+		{
+			xaml = _xaml;
+		}
+
+		return xaml?.ReadSelection()
+			?? new LiveXamlSelection { Detail = "Select mode has not been entered for this session." };
+	}
+
 	/// <summary>
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree.
 	/// Returns each computed edit with its outcome.

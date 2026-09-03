@@ -301,3 +301,27 @@ leaving a package debuggable, DLL planting in the staging folder, injection as a
 executing attacker code during inspection, secret exfiltration, wedging the target), and deployer
 guidance. No new gate was needed -- the same-user boundary and OS backstops already held; this writes
 down why.
+
+### D21 — Interactive selection: an in-app overlay on the diagnostics UI layer (#18)
+Chosen by the user over a host-side mouse hook, because it is what Visual Studio does and the click
+does not leak through to the app. `rose_xaml_select_mode` injects the provider with a `select` request;
+it puts a transparent, hit-testable `Grid` -- sized to the window -- on the diagnostics **UI layer**
+(`IXamlDiagnostics::GetUiLayer`, the layer meant for adorners, so the app's own tree is never touched)
+and stays resident. The next click lands on the overlay, whose handler marks the event handled,
+hit-tests the element beneath with `VisualTreeHelper.FindElementsInHostCoordinates`, records it, and
+tears the overlay down. `rose_xaml_selection` reads it and deliberately does **not** re-inject, since
+that would tear down the very overlay it is waiting on.
+
+This is the one place the provider needs C++/WinRT rather than raw `IVisualTreeService` COM (creating a
+UIElement and wiring a pointer event), which set the build up: cppwinrt include path, `WindowsApp.lib`,
+`/bigobj`, and `/std:c++20` (C++17 drags in the deprecated `experimental/coroutine`). Note that
+`GetUiLayer`, `GetHandleFromIInspectable` and `HitTest` are on **`IXamlDiagnostics`**, not
+`IVisualTreeService`.
+
+The selection carries the element's type, `x:Name`, and the same stable handle the tree reports, so it
+feeds `rose_xaml_properties` and `rose_xaml_apply` directly -- which is the point: a user clicks a
+thing on screen and the agent can then read and change it. Hover-highlight remains the fast-follow.
+Testing is split deliberately: the integration test drives it to the **armed** state and asserts the
+selection is empty until someone clicks (auto-clicking a live desktop from a test suite is not
+acceptable), and the click itself was verified once by hand -- clicking the probe's centre selected
+`TextBlock` `Caption`, exactly what is there.

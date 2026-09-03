@@ -32,6 +32,23 @@
 #include <mutex>
 #include <cstdlib>
 
+// C++/WinRT projections, for the interactive select-mode overlay (#18): create a transparent
+// input-capturing element on the diagnostics UI layer, hit-test the element under the click, and
+// report it. Included after the ABI headers above; the two live in separate namespaces.
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.UI.h>
+#include <winrt/Windows.UI.Xaml.h>
+#include <winrt/Windows.UI.Xaml.Controls.h>
+#include <winrt/Windows.UI.Xaml.Media.h>
+#include <winrt/Windows.UI.Input.h>
+#include <winrt/Windows.UI.Xaml.Input.h>
+
+namespace xaml = winrt::Windows::UI::Xaml;
+namespace xcontrols = winrt::Windows::UI::Xaml::Controls;
+namespace xmedia = winrt::Windows::UI::Xaml::Media;
+namespace xinput = winrt::Windows::UI::Xaml::Input;
+
 // {7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6}
 static const CLSID CLSID_RoseXamlTap =
 { 0x7b9e5c10, 0x2d4a, 0x4f3b, { 0x9e, 0x21, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6 } };
@@ -210,6 +227,10 @@ public:
 		else if (request == L"apply")
 		{
 			ApplyCommands();
+		}
+		else if (request == L"select")
+		{
+			EnterSelectMode();
 		}
 
 		return S_OK;
@@ -471,6 +492,132 @@ private:
 		return L"applied";
 	}
 
+	// Interactive selection (#18): put a transparent, input-capturing overlay on the diagnostics UI
+	// layer. It sits above the app, so the next click lands on it; the handler hit-tests the element
+	// beneath, records it, and tears the overlay down. The provider stays resident (the site holds it)
+	// from entering select mode until the click.
+	void EnterSelectMode()
+	{
+		try
+		{
+			::IInspectable* rawLayer = nullptr;
+			if (FAILED(m_diagnostics->GetUiLayer(&rawLayer)) || !rawLayer)
+			{
+				Log(L"select: GetUiLayer returned nothing");
+				return;
+			}
+
+			winrt::Windows::Foundation::IInspectable layerObject{ nullptr };
+			winrt::attach_abi(layerObject, rawLayer); // adopt the ref GetUiLayer returned
+			m_layer = layerObject.try_as<xcontrols::Panel>();
+			if (!m_layer)
+			{
+				Log(L"select: the UI layer is not a Panel");
+				return;
+			}
+
+			const auto bounds = xaml::Window::Current().Bounds();
+			m_overlay = xcontrols::Grid();
+			m_overlay.Background(xmedia::SolidColorBrush(winrt::Windows::UI::Colors::Transparent()));
+			m_overlay.Width(bounds.Width);
+			m_overlay.Height(bounds.Height);
+
+			m_pointerToken = m_overlay.PointerPressed(
+				[this](winrt::Windows::Foundation::IInspectable const&, xinput::PointerRoutedEventArgs const& e)
+				{
+					OnPointerPressed(e);
+				});
+
+			m_layer.Children().Append(m_overlay);
+
+			// Tell the host the overlay is live, so entering select mode can confirm rather than guess.
+			if (!g_workDir.empty())
+			{
+				std::wofstream armed(g_workDir + L"\\select.ready", std::ios::trunc);
+				if (armed) armed << L"armed\n";
+			}
+
+			Log(L"select: overlay armed on the UI layer");
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Log(std::wstring(L"select: entering failed: ") + error.message().c_str());
+		}
+	}
+
+	void OnPointerPressed(xinput::PointerRoutedEventArgs const& e)
+	{
+		try
+		{
+			e.Handled(true); // Swallow the click so it does not also reach the app.
+			const auto point = e.GetCurrentPoint(nullptr).Position();
+			const auto root = xaml::Window::Current().Content();
+			const auto elements = xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, true);
+
+			for (auto&& element : elements)
+			{
+				if (m_overlay && element == m_overlay) continue; // Our own overlay is on top; skip it.
+				RecordSelection(element);
+				break;
+			}
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Log(std::wstring(L"select: hit-test failed: ") + error.message().c_str());
+		}
+
+		RemoveOverlay();
+	}
+
+	void RecordSelection(xaml::UIElement const& element)
+	{
+		if (g_workDir.empty()) return;
+
+		InstanceHandle handle = 0;
+		m_diagnostics->GetHandleFromIInspectable(reinterpret_cast<::IInspectable*>(winrt::get_abi(element)), &handle);
+
+		std::wstring typeName{ winrt::get_class_name(element) };
+		std::wstring name;
+		if (const auto frameworkElement = element.try_as<xaml::FrameworkElement>())
+		{
+			name = frameworkElement.Name();
+		}
+
+		{
+			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
+			if (file)
+			{
+				const std::wstring row = std::to_wstring(handle) + L'\t' + Escape(typeName.c_str()) + L'\t' + Escape(name.c_str());
+				file << Utf8(row) << '\n';
+			}
+		}
+
+		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
+		if (ready) ready << handle << L"\n";
+		Log(L"select: recorded " + typeName + (name.empty() ? L"" : (L" (" + name + L")")));
+	}
+
+	void RemoveOverlay()
+	{
+		try
+		{
+			if (!m_overlay) return;
+
+			m_overlay.PointerPressed(m_pointerToken);
+			if (m_layer)
+			{
+				uint32_t index = 0;
+				if (m_layer.Children().IndexOf(m_overlay, index)) m_layer.Children().RemoveAt(index);
+			}
+
+			m_overlay = nullptr;
+		}
+		catch (winrt::hresult_error const&)
+		{
+			// Best-effort teardown; the layer may already be gone.
+		}
+	}
+
 	bool Find(const std::wstring& name, InstanceHandle& handle)
 	{
 		const auto it = m_byName.find(name);
@@ -568,6 +715,11 @@ private:
 	IVisualTreeService* m_tree = nullptr;
 	std::vector<TreeNode> m_nodes;
 	std::map<std::wstring, InstanceHandle> m_byName;
+
+	// Select-mode state, live between entering select mode and the click that ends it.
+	xcontrols::Panel m_layer{ nullptr };
+	xcontrols::Grid m_overlay{ nullptr };
+	winrt::event_token m_pointerToken{};
 };
 
 class RoseTapFactory final : public IClassFactory

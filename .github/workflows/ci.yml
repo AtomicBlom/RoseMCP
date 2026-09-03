@@ -1,0 +1,33 @@
+name: CI
+
+# Build, check formatting, and run the fast (unit) tests on every push and PR. The solution has
+# net10.0-windows projects (the live-app host, the tray), so this must run on Windows. The integration
+# suite loads real solutions and drives design-time builds, real debugger sessions, and -- for the XAML
+# and UWP tests -- toolchains that are not present on a hosted runner (those tests skip themselves), so
+# it stays the local pre-commit gate rather than a CI job for now.
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore RoseMcp.slnx
+
+      - name: Build
+        run: dotnet build RoseMcp.slnx --configuration Debug --no-restore
+
+      - name: Check formatting
+        run: dotnet format RoseMcp.slnx --verify-no-changes --no-restore
+
+      - name: Unit tests
+        run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj --configuration Debug --no-build

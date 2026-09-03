@@ -73,3 +73,6 @@ selected" -- the agent reads it with `rose_xaml_selection`, and the handle it ge
   property getters, method calls, and an object's `ToString` are deliberately not evaluated — that
   needs func-eval, which can hang or corrupt the target, and is left to an external debugger.
 - Conditions are cheap value-compares (`name OP literal`) over the stopped frame, not full expressions.
+- A property whose value the framework will not stringify reads back as an empty string rather than
+  as "cannot render" -- `CornerRadius` is the known one, while `Thickness` and `GridLength` are fine.
+  Hot reload still sets such properties; it is the display that is missing (issue #21).

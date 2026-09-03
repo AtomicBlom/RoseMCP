@@ -113,6 +113,53 @@ public sealed class XamlDiffTests
 		Assert.Equal("#b", edit.Target);
 	}
 
+
+	/// <summary>
+	/// A single-number struct is the case the name-and-shape inference gets wrong on its own:
+	/// CornerRadius="0" parses as a number, so it went out as a Double, which the apply side's
+	/// CreateInstance built quite happily and SetProperty then rejected with a bare E_FAIL. The
+	/// provider recovers by asking the property its own declared type, but the hint should be right
+	/// in the first place -- and every property whose type cannot be read off its value has to be
+	/// named here, because inference cannot get there.
+	/// </summary>
+	[Fact]
+	public void A_single_number_corner_radius_is_typed_as_a_corner_radius_not_a_double()
+	{
+		var edits = Compute(
+			$"<Border {Ns} x:Name=\"pane\" CornerRadius=\"8\" />",
+			$"<Border {Ns} x:Name=\"pane\" CornerRadius=\"0\" />");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal("CornerRadius", edit.Property);
+		Assert.Equal("0", edit.Value);
+		Assert.Equal("Windows.UI.Xaml.CornerRadius", edit.ValueType);
+	}
+
+	/// <summary>
+	/// The corner cases either side of it, so the fix for the above cannot quietly become "call every
+	/// number a CornerRadius": a genuine Double property stays a Double, and a four-part CornerRadius
+	/// is still a CornerRadius rather than being mistaken for the Thickness it looks exactly like.
+	/// </summary>
+	[Fact]
+	public void A_number_on_a_double_property_is_still_a_double()
+	{
+		var edits = Compute(
+			$"<Border {Ns} x:Name=\"pane\" Opacity=\"1\" />",
+			$"<Border {Ns} x:Name=\"pane\" Opacity=\"0.5\" />");
+
+		Assert.Equal("Windows.Foundation.Double", Assert.Single(edits).ValueType);
+	}
+
+	[Fact]
+	public void A_four_part_corner_radius_is_not_mistaken_for_a_thickness()
+	{
+		var edits = Compute(
+			$"<Border {Ns} x:Name=\"pane\" CornerRadius=\"8,8,0,0\" />",
+			$"<Border {Ns} x:Name=\"pane\" CornerRadius=\"0,0,8,8\" />");
+
+		Assert.Equal("Windows.UI.Xaml.CornerRadius", Assert.Single(edits).ValueType);
+	}
+
 	private static IReadOnlyList<XamlEdit> Compute(string oldXaml, string newXaml)
 		=> XamlDiff.XamlDiff.Compute(oldXaml, newXaml).Edits;
 }

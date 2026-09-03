@@ -495,9 +495,24 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
-	/// XAML hot reload (#12): diff two versions of the probe's XAML and apply the change to the live tree,
-	/// no relaunch. Changes the caption's font size, applies it, and confirms the live element actually
-	/// took the new value by reading it back. Skips where the UWP or C++ toolchain is absent.
+	/// XAML hot reload (#12): diff two versions of the probe's XAML and apply the changes to the live
+	/// tree, no relaunch. Two edits, deliberately, because they fail in different ways:
+	/// <list type="bullet">
+	/// <item>
+	/// The caption's font size is a Double, the straightforward case, and it is confirmed by reading
+	/// the live value back.
+	/// </item>
+	/// <item>
+	/// The pane's corner radius is a struct whose value is a single number, which the diff engine's
+	/// name-and-shape inference called a Double until it was told otherwise -- and a value built as
+	/// the wrong type is created quite happily and only fails at SetProperty, with an E_FAIL that
+	/// names nothing. This is the end-to-end guard for that, and for the provider's fallback to the
+	/// property's own declared type. It is asserted through its status rather than by reading it
+	/// back, because the framework hands us an empty string for a CornerRadius value (issue #21) --
+	/// Thickness stringifies, this one does not.
+	/// </item>
+	/// </list>
+	/// Skips where the UWP or C++ toolchain is absent.
 	/// </summary>
 	[Fact]
 	public async Task Hot_reloads_a_property_on_the_live_uwp_probe()
@@ -515,8 +530,11 @@ public sealed class LiveAppSessionTests
 
 		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
 		var oldXaml = File.ReadAllText(xamlPath);
-		var newXaml = oldXaml.Replace("FontSize=\"24\"", "FontSize=\"40\"");
-		Assert.NotEqual(oldXaml, newXaml); // The caption's font size is the one edit.
+		var newXaml = oldXaml
+			.Replace("FontSize=\"24\"", "FontSize=\"40\"")
+			.Replace("CornerRadius=\"8\"", "CornerRadius=\"0\"");
+		Assert.DoesNotContain("FontSize=\"40\"", oldXaml);
+		Assert.DoesNotContain("CornerRadius=\"0\"", oldXaml);
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
@@ -545,7 +563,14 @@ public sealed class LiveAppSessionTests
 			var edit = reload.Results.FirstOrDefault(result => result.Target == "#Caption" && result.Property == "FontSize");
 			Assert.NotNull(edit);
 			Assert.Equal("applied", edit!.Status);
-			Assert.True(reload.Applied >= 1);
+
+			// The struct-valued edit, which is the one that used to come back "SetProperty failed
+			// 0x80004005" because it had been built as a Double.
+			var radius = reload.Results.FirstOrDefault(result => result.Target == "#Pane" && result.Property == "CornerRadius");
+			Assert.NotNull(radius);
+			Assert.Equal("applied", radius!.Status);
+
+			Assert.Equal(2, reload.Applied);
 
 			// The live element actually changed: reading its font size back gives the new value.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);

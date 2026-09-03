@@ -458,3 +458,37 @@ element it picked, the rect it computed, and how many candidates it passed over,
 whether it drew. One run answered it -- the trace was *empty*, which ruled out every hit-testing
 theory at once and pointed straight at input never arriving. The tracing stayed in, bounded to six
 lines, because the next question about this layer will be the same shape as the last one.
+
+### D26 — A value's type comes from the property, not from the look of the string (#12)
+Found by dogfooding rather than by testing: asked to set a `Border`'s `CornerRadius` to 0 through hot
+reload, the apply came back `SetProperty failed 0x80004005`. The diff engine infers a value's type
+from the property name and the shape of the string, `"0"` parses as a number, so the edit went out as
+a `Double` -- and `CreateInstance` built that quite happily. Only `SetProperty` objected, with a bare
+`E_FAIL` naming neither the property nor the type, one layer below where the mistake was made.
+
+Two fixes, because there were two problems. `CornerRadius` joins the name-keyed table, so the common
+case takes no round trip. More importantly the provider no longer depends on that table being
+complete: `PropertyIndex` also reports the property's own **declared** value type, from the live
+property chain, and `ApplySetProperty` tries the host's hint first and falls back to that.
+
+The order is deliberate. The hint carries intent the runtime does not have -- a colour string is meant
+as a `SolidColorBrush` even where the live value is some other `Brush`, so preferring the declared
+type would break brush edits on gradient-valued properties. The declared type is the safety net
+because it is a fact rather than a guess. Failure messages now name the type attempted
+(`SetProperty(Windows.Foundation.Double) failed 0x...`), which is the sentence that was missing.
+
+The table was only ever going to be as complete as the properties someone had tried, so the fallback
+is the part that matters; the table is now an optimisation.
+
+Tested at both levels, because the two failure modes are different: `XamlDiffTests` asserts the hint
+for a one-number `CornerRadius`, plus the two cases either side of it -- a genuine `Double` property
+stays a `Double`, and a four-part `CornerRadius` is not mistaken for the `Thickness` it looks exactly
+like. The integration test then applies a `Double` edit and a struct edit in one reload against the
+live app, which is the guard for the fallback itself.
+
+The struct edit is asserted through its status rather than by reading the value back, and that
+asymmetry is not laziness: the framework returns an **empty string** for a `CornerRadius` value while
+stringifying `Thickness`, `GridLength`, `Size`, `Point` and `Vector3` perfectly well. The provider
+passes `PropertyChainValue.Value` straight through, so this is a gap in what XAML diagnostics chooses
+to render, not a formatting bug here -- issue #21, which also notes that the honest first move is to
+stop reporting an empty string as though the property were unset.

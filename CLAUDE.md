@@ -105,6 +105,15 @@ reclaim memory or pick up a rebuilt generator.
   directory's `rosemcp.json` settles it durably. Refusing is against the grain of everything else
   here, and earns it because guessing is not cheap: the wrong guess pays a full design-time build of
   a solution nobody asked for.
+- **Containment narrows, then a pin breaks the tie -- in that order.** `Disambiguate` used to check
+  the pin first, contradicting its own docstring and the name of the test covering it, which only
+  ever resolved a bare directory and so passed either way. It matters because the pin is the fix the
+  ambiguity error recommends: `D:\Drawboard\Windows\Windows.IntegrationFramework` holds three
+  solutions at its root and the largest omits 23 projects under `Pdf/` and 5 under `Shared/`, so
+  taking that advice pointed every question about those 28 projects at a compilation not containing
+  the file. A pin is an ambient default for the directory; containment is evidence about the path in
+  hand, and evidence wins. The pin still decides a bare directory, and still decides between several
+  solutions that all compile the path.
 - **One ordering decides which workspace a call means, in `WorkspaceManager.WorkspaceFor`.** The
   workspace argument, then paths the call carries, then the calling session's directory, then refuse.
   It was previously spread across three places that disagreed, and the worst of them was the last

@@ -14,7 +14,7 @@ namespace RoseMcp.Broker;
 /// silent and wrong: <c>D:\Drawboard\Revit</c> holds a 17-project solution beside a 1-project
 /// installer, and the installer sorts first, so every bare call in that repository answered from
 /// the wrong compilation while looking exactly like a true negative. Containment decides it where
-/// it can, a committed pin decides it where containment cannot, and anything still undecided is an
+/// it can, a committed pin decides what containment leaves tied, and anything still undecided is an
 /// error naming the candidates rather than a guess.
 /// </para>
 /// </summary>
@@ -136,25 +136,29 @@ public static class SolutionResolver
 	/// <summary>
 	/// Chooses between the solutions sharing one directory.
 	/// <para>
-	/// Containment first, because it is the only criterion that is actually about the question asked:
-	/// the solution that compiles the file you named is the one that can answer about it. A pin
-	/// beside them settles what containment cannot -- a bare directory encloses no project, so a
-	/// working directory at a repository root reaches here with nothing to go on.
+	/// Containment narrows, then a pin breaks whatever tie is left. Containment goes first because it
+	/// is the only criterion actually about the question asked -- the solution that compiles the file
+	/// you named is the one that can answer about it -- whereas a pin is an ambient default for the
+	/// directory, and evidence about this question beats a default set for all of them.
+	/// </para>
+	/// <para>
+	/// The order used to be the other way round, against this method's own description and against
+	/// the name of the test covering it, which only ever resolved a bare directory and so passed
+	/// either way. It is not academic. In <c>D:\Drawboard\Windows\Windows.IntegrationFramework</c>
+	/// three solutions share the root and the largest is not a superset: 23 projects under
+	/// <c>Pdf/</c> and 5 under <c>Shared/</c> are outside it. Pinning it -- which is what the
+	/// ambiguity error tells you to do -- made every question about those 28 projects resolve to a
+	/// compilation that does not contain the file, which is the wrong-compilation-shaped-like-a-true-
+	/// negative failure this class exists to prevent.
+	/// </para>
+	/// <para>
+	/// So a pin still decides a bare directory, which is the case it was added for, and still decides
+	/// between several solutions that all compile the path. It just no longer overrules the one that
+	/// does when the alternatives do not.
 	/// </para>
 	/// </summary>
 	private static SolutionChoice Disambiguate(string[] candidates, string requested, string directory)
 	{
-		var pinned = Pinned(candidates, directory);
-		if (pinned is not null)
-		{
-			return new SolutionChoice
-			{
-				SolutionPath = pinned.Value.Path,
-				Candidates = candidates,
-				Reason = $"pinned by {pinned.Value.By}",
-			};
-		}
-
 		var containing = candidates.Where(candidate => Contains(candidate, requested)).ToArray();
 		if (containing.Length == 1)
 		{
@@ -163,6 +167,21 @@ public static class SolutionResolver
 				SolutionPath = containing[0],
 				Candidates = candidates,
 				Reason = "the only one of them that compiles that path",
+			};
+		}
+
+		// Nothing singled the path out, so the directory's own default decides. Among those that do
+		// compile it where there were several, among all of them where there were none.
+		var pinned = Pinned(containing.Length > 1 ? containing : candidates, directory);
+		if (pinned is not null)
+		{
+			return new SolutionChoice
+			{
+				SolutionPath = pinned.Value.Path,
+				Candidates = candidates,
+				Reason = containing.Length > 1
+					? $"pinned by {pinned.Value.By}, of the {containing.Length} that compile that path"
+					: $"pinned by {pinned.Value.By}",
 			};
 		}
 

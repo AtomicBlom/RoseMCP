@@ -3,6 +3,9 @@
 An MCP server that gives coding agents real Roslyn semantics over a loaded C# solution:
 diagnostics, navigation, source-generated code, and refactorings.
 
+It is built using itself -- see **Dogfooding is the point** below, which is the development method
+and not a slogan.
+
 It exists to fix three things that other Roslyn MCP servers get wrong:
 
 1. **Stale diagnostics.** The agent edits files with its own tools, the workspace never learns,
@@ -295,6 +298,50 @@ Register the server with:
 ```
 claude mcp add rose -- <path>/RoseMcp.Server.exe
 ```
+
+## Dogfooding is the point, not a nicety
+
+This repository is the first consumer of its own tools, and that is the whole development method.
+**If Rose does not make creating, editing and refactoring C# better than grep and find-and-replace,
+it has little reason to exist** -- the navigation and diagnostics are worth something on their own,
+but not enough to justify a warm Roslyn process per solution. The only way to know whether it clears
+that bar is to build Rose using Rose.
+
+So, working in this repository:
+
+- **If Rose provides an action, use it.** `rose_find_references` rather than grep for usages,
+  `rose_rename_symbol` rather than find-and-replace, `rose_diagnostics` rather than a build to see
+  whether something compiles, `rose_symbol_info` rather than reading a file to learn a type.
+- **If it fails, or is worse than the thing it replaces, that is a defect in Rose.** Not an
+  inconvenience to route around quietly. File it, with what you were trying to do and what the tool
+  did instead.
+- **The workaround is allowed; the silence is not.** Mid-task, reach for `sed` and get unblocked --
+  but the finding is the valuable part of having hit it, and it is worthless unfiled.
+- **A tool nobody reaches for is a bug of the same severity as one that returns wrong answers.** If
+  the tool exists, works, and still lost to grep, the reason it lost is the finding. Usually the
+  description, the argument shape, or a setup step nobody wants to pay.
+
+### What this method has already turned up
+
+An agent session that added the whole live-app debugging and XAML surface to this repository -- ten
+commits, 109 unit and 144 integration tests -- used **zero `rose_*` tools on this repository's own
+code.** Every read was `grep`; every check was `dotnet build`, used as a syntax checker dozens of
+times at 14--25 seconds a go, while `rose_diagnostics` sat unused.
+
+Roughly fourteen distinct failures in that session were mechanical rather than logical: not one was a
+wrong decision about what to change, all of them were in *applying* a change already decided.
+Stripped CRLF failing `IDE0055`. A heredoc eating a backslash so a native provider wrote to a
+tab-named path. A splice that dropped a `private:` and duplicated a `}`. A call site missed and found
+only from `CS7036`. Every one is a category Roslyn cannot produce.
+
+The diagnosis is the part worth keeping: **a non-semantic edit path poisons the read path.** Because
+the editing was textual, the workspace was permanently mid-edit and a build was being paid for
+anyway -- so the semantic reads were never worth reaching for. That is why "let an agent write C#
+semantically" (issue #30) ranks above every other feature: it is not one more tool, it is what pulls
+the existing surface into use.
+
+None of that was discoverable by reasoning about the tool surface. It came from using it, badly, at
+length, and then counting.
 
 ## Conventions
 

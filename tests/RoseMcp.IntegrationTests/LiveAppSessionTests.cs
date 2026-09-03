@@ -506,6 +506,31 @@ public sealed class LiveAppSessionTests
 			Assert.Equal("Rose UWP Probe", text!.Value);
 			Assert.Equal("Local", text.Provenance);
 
+			// The caption's declaration is three attributes, and exactly those three come back. The
+			// UIElement composition properties -- CenterPoint, Rotation, Scale and the rest -- read as
+			// BaseValueSourceLocal the moment the framework touches one, so they were reported as six
+			// local sets that the markup does not make, crowding out the properties that matter.
+			var composition = new[] { "CenterPoint", "Rotation", "RotationAxis", "Scale", "TransformMatrix", "Translation" };
+			Assert.DoesNotContain(captionProperties.Properties, property => composition.Contains(property.Name));
+
+			// Still available to anyone who asks for everything on the element; just not offered as
+			// evidence of what the XAML sets.
+			var captionDefaults = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: true, cancellationToken);
+			Assert.Contains(captionDefaults.Properties, property => property.Name == "Scale");
+
+			// No property claims a location it cannot support. XAML diagnostics reports source info per
+			// source object, not per property, so for a value set on the element the only location
+			// available is the element's own tag -- which the element carries, and which was being
+			// copied onto every property. That made a genuine attribution byte-identical to a
+			// fabricated one, so it is emitted only when the source is something other than the element.
+			Assert.All(
+				captionProperties.Properties.Where(property => property.Provenance == "Local"),
+				property => Assert.Null(property.SourceFile));
+
+			// The element's own declaration is real, and is where it has always belonged.
+			Assert.Equal("ms-appx:///MainPage.xaml", captionProperties.SourceFile);
+			Assert.Equal(9, captionProperties.SourceLine);
+
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}
 		finally

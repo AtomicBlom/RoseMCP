@@ -125,6 +125,31 @@ static std::wstring Provenance(BaseValueSource source)
 	}
 }
 
+// The UIElement properties backed by a composition Visual. They read as BaseValueSourceLocal the
+// moment the framework touches one, whatever the XAML says, so an element whose whole declaration is
+// two attributes reported six local sets that do not exist -- crowding out, in that same answer, the
+// one property whose absence explained why the element was not hit-testable.
+//
+// A fixed list rather than a rule, because that is what this is: these six were added to UIElement
+// together and there is no flag distinguishing them. They are still reported when the caller asks for
+// defaults, since "everything on this element" is a legitimate question; they are just not evidence
+// of what the markup sets, which is what the default view is for.
+static bool IsComposition(const wchar_t* propertyName)
+{
+	if (!propertyName) return false;
+
+	static const wchar_t* const composition[] = {
+		L"CenterPoint", L"Rotation", L"RotationAxis", L"Scale", L"TransformMatrix", L"Translation",
+	};
+
+	for (const auto* candidate : composition)
+	{
+		if (wcscmp(propertyName, candidate) == 0) return true;
+	}
+
+	return false;
+}
+
 // A tab or newline in a type or name would break the row-per-element snapshot; keep every field on
 // one line and reversible.
 static std::wstring Escape(const wchar_t* text)
@@ -1378,6 +1403,37 @@ private:
 	// (default/style/local/...), and the source location that set it, plus an element row carrying its
 	// type and its own declaration site. Source locations are populated only when the app carries XAML
 	// source info; otherwise those fields are empty and the caller degrades to provenance alone.
+	/// Turns a handle to a SolidColorBrush into #AARRGGBB, leaving anything else alone.
+	///
+	/// The handle round-trips through GetIInspectableFromHandle, which is the reverse of what the
+	/// overlay uses to identify a clicked element. Only SolidColorBrush is rendered: it is the one
+	/// with an unambiguous textual form, and the overwhelming majority of what a hot reload sets. A
+	/// gradient or a brush behind a ThemeResource is left as its handle rather than being flattened
+	/// into a colour that would misrepresent it -- naming the resource key would be the better answer
+	/// there, and is a separate piece of work.
+	bool RenderBrush(const wchar_t* valueText, std::wstring& rendered)
+	{
+		if (!m_diagnostics || !valueText || !valueText[0]) return false;
+
+		const InstanceHandle valueHandle = static_cast<InstanceHandle>(_wcstoui64(valueText, nullptr, 10));
+		if (valueHandle == 0) return false;
+
+		::IInspectable* raw = nullptr;
+		if (FAILED(m_diagnostics->GetIInspectableFromHandle(valueHandle, &raw)) || !raw) return false;
+
+		winrt::Windows::Foundation::IInspectable instance{ nullptr };
+		winrt::attach_abi(instance, raw); // adopt the ref
+
+		const auto brush = instance.try_as<xmedia::SolidColorBrush>();
+		if (!brush) return false;
+
+		const auto colour = brush.Color();
+		wchar_t buffer[10];
+		swprintf_s(buffer, L"#%02X%02X%02X%02X", colour.A, colour.R, colour.G, colour.B);
+		rendered = buffer;
+		return true;
+	}
+
 	void WriteProperties(InstanceHandle handle, bool includeDefaults)
 	{
 		if (g_workDir.empty()) return;
@@ -1430,6 +1486,7 @@ private:
 			{
 				const PropertyChainValue& value = values[i];
 				if (value.Overridden) continue; // Only the effective value of each property.
+				if (!includeDefaults && IsComposition(value.PropertyName)) continue;
 
 				std::wstring provenance = L"Unknown";
 				std::wstring file2;
@@ -1440,7 +1497,23 @@ private:
 					const PropertyChainSource& source = sources[value.PropertyChainIndex];
 					provenance = Provenance(source.Source);
 					if (!includeDefaults && source.Source == BaseValueSourceDefault) continue;
-					if (source.SrcInfo.FileName && source.SrcInfo.FileName[0])
+
+					// The location belongs to the *source object*, not to the property.
+					// PropertyChainValue carries no source info at all -- the granularity this API
+					// offers is per source, so a per-property file and line is a fabrication by
+					// construction. For a Local value the source is the element itself, so every
+					// locally-set property was being stamped with the element's own tag position:
+					// six composition properties on a two-attribute element all claimed the same
+					// file, line and column, and a reader who went and looked would find nothing
+					// there. Worse, a genuine attribution was byte-identical to that.
+					//
+					// So it is emitted only when the source is something *other* than the element,
+					// where it locates a real and different thing -- the style or template that set
+					// the value, which is information the caller cannot get any other way. When the
+					// source is the element, the element's own row already carries its position and
+					// the property says nothing it cannot support.
+					const bool sourceIsElement = source.Handle == handle;
+					if (!sourceIsElement && source.SrcInfo.FileName && source.SrcInfo.FileName[0])
 					{
 						file2 = source.SrcInfo.FileName;
 						line = source.SrcInfo.LineNumber;
@@ -1450,6 +1523,16 @@ private:
 
 				const bool isNull = (value.MetadataBits & IsValueNull) != 0;
 				const wchar_t* valueText = isNull ? L"" : (value.Value ? value.Value : L"");
+
+				// A brush arrives as an object handle, which is the one thing a caller cannot use:
+				// setting Background="Blue" and reading back "2447634627144" makes hot reload
+				// unverifiable, and confirming the edit landed is the first thing anyone does after
+				// applying one. So a SolidColorBrush is resolved and rendered as its colour.
+				std::wstring rendered;
+				if (!isNull && (value.MetadataBits & IsValueHandle) != 0 && RenderBrush(valueText, rendered))
+				{
+					valueText = rendered.c_str();
+				}
 				const wchar_t* valueType = value.ValueType && value.ValueType[0] ? value.ValueType : (value.Type ? value.Type : L"");
 
 				std::wstring row = L"P\t" + Escape(value.PropertyName ? value.PropertyName : L"") + L'\t'

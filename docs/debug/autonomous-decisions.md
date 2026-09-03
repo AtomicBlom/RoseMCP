@@ -284,3 +284,20 @@ depends on per-element source info, which is not populated for a from-birth UWP 
 **resident, live-updating** provider is unnecessary while inject-per-query already returns a fresh
 snapshot on every call. **Hit-test** (element at a point) is the selection primitive and lands with #18.
 Proven by the rooting/paging assertions in `Reads_the_live_visual_tree_of_the_classic_uwp_probe`.
+
+### D19 — Debug event stream: buffered is the mechanism; push stays deferred (#8, extends D1)
+#8's useful half ships and is load-bearing: every debugger capability records into the bounded, sequenced
+`DebugEventBuffer`, read via `rose_debug_events` with a cursor. The proactive-push half (MCP
+notifications to the agent) stays deliberately deferred, for the reason D1 gave -- a turn-based agent
+cannot act on a notification mid-turn, so the buffer, not a push, is what it actually uses. This is the
+resolution of #8, not an omission: revisit only if a streaming/interactive (non-turn-based) client
+becomes a target, at which point the push rides the same buffer.
+
+### D20 — #15 threat model documented in full against the shipped surface
+`docs/debug/security-model.md` was expanded from the minimal gate into a full threat model now that the
+XAML injection, UWP from-birth launch, hot reload, and expression evaluation have shipped: assets, each
+capability's gate, an explicit list of threats considered with their mitigations (cross-user reach,
+leaving a package debuggable, DLL planting in the staging folder, injection as an escalation vector,
+executing attacker code during inspection, secret exfiltration, wedging the target), and deployer
+guidance. No new gate was needed -- the same-user boundary and OS backstops already held; this writes
+down why.

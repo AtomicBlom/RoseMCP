@@ -8,16 +8,6 @@ namespace RoseMcp.Worker;
 /// <summary>Semantic navigation: what a symbol is, where it is used, and finding it by name.</summary>
 public static class NavigationService
 {
-	private static readonly SymbolDisplayFormat SignatureFormat = new(
-		globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
-		typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-		genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
-		memberOptions: SymbolDisplayMemberOptions.IncludeParameters
-			| SymbolDisplayMemberOptions.IncludeType
-			| SymbolDisplayMemberOptions.IncludeContainingType,
-		parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeName,
-		miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
-
 	public static async Task<SymbolInfoResult> DescribeAsync(
 		WorkspaceSnapshot snapshot,
 		string filePath,
@@ -40,9 +30,9 @@ public static class NavigationService
 			Revision = snapshot.Revision,
 			Name = symbol.Name,
 			Kind = symbol.Kind.ToString(),
-			Signature = symbol.ToDisplayString(SignatureFormat),
+			Signature = symbol.ToDisplayString(SymbolSignature.Format),
 			Accessibility = symbol.DeclaredAccessibility.ToString(),
-			ContainingType = symbol.ContainingType?.ToDisplayString(SignatureFormat),
+			ContainingType = symbol.ContainingType?.ToDisplayString(SymbolSignature.Format),
 			Namespace = symbol.ContainingNamespace?.IsGlobalNamespace == false
 				? symbol.ContainingNamespace.ToDisplayString()
 				: null,
@@ -95,7 +85,7 @@ public static class NavigationService
 		return new ReferencesResult
 		{
 			Revision = snapshot.Revision,
-			Symbol = symbol.ToDisplayString(SignatureFormat),
+			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
 			Definitions = definitions,
 			References = truncated ? ordered[..maxResults] : ordered,
 			TotalCount = ordered.Length,
@@ -162,7 +152,7 @@ public static class NavigationService
 		return new ImplementationsResult
 		{
 			Revision = snapshot.Revision,
-			Symbol = symbol.ToDisplayString(SignatureFormat),
+			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
 			Relationship = relationship,
 			Matches = truncated ? ordered[..maxResults] : ordered,
 			TotalCount = ordered.Length,
@@ -212,7 +202,7 @@ public static class NavigationService
 			{
 				Name = symbol.Name,
 				Kind = symbol.Kind.ToString(),
-				Signature = symbol.ToDisplayString(SignatureFormat),
+				Signature = symbol.ToDisplayString(SymbolSignature.Format),
 
 				// Metadata symbols belong to no project in the solution, and saying so is more use
 				// than an empty string that reads like a bug.
@@ -250,7 +240,7 @@ public static class NavigationService
 				{
 					Name = symbol.Name,
 					Kind = symbol.Kind.ToString(),
-					Signature = symbol.ToDisplayString(SignatureFormat),
+					Signature = symbol.ToDisplayString(SymbolSignature.Format),
 					Project = project.Name,
 					Location = location is null
 						? null

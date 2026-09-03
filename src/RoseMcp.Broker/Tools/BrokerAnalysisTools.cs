@@ -304,6 +304,97 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
+	[McpServerTool(
+		Name = ToolNames.ReplaceMember,
+		Title = "Write over a member",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceMember)]
+	public Task<MemberEditResult> ReplaceMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The whole declaration, attributes and documentation comment included.")] string code,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ReplaceMember, new()
+		{
+			["symbol"] = symbol,
+			["code"] = code,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.ReplaceBody,
+		Title = "Write over a member's body",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceBody)]
+	public Task<MemberEditResult> ReplaceBodyAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The body: statements, a block in braces, or => expression;.")] string code,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ReplaceBody, new()
+		{
+			["symbol"] = symbol,
+			["code"] = code,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.AddMember,
+		Title = "Add members to a type",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddMember)]
+	public Task<MemberEditResult> AddMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The type to add to, as Namespace.Type.")] string type,
+		[Description("One or more whole declarations.")] string code,
+		[Description("Put them after this member, by name.")] string? after = null,
+		[Description("Put them before this member, by name.")] string? before = null,
+		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.AddMember, new()
+		{
+			["type"] = type,
+			["code"] = code,
+			["after"] = after,
+			["before"] = before,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
 	private Task<T> ForwardAsync<T>(
 		WorkspaceHints hints,
 		string tool,

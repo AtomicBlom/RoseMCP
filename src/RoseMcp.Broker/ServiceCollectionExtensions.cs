@@ -38,6 +38,13 @@ public static class ServiceCollectionExtensions
 		  implementations, partial declarations and cref references together, reports conflicts,
 		  and returns a diff. It also reports XAML that still names the old identifier, which it
 		  does not change: markup is text to the compiler, so a broken binding builds and runs.
+		- Writing code into a file that already exists: rose_replace_member, rose_replace_body and
+		  rose_add_member, not a text edit. They address a member by name, parse what you give them
+		  before the file is touched and refuse if it does not parse, write through the repository's
+		  own .editorconfig, and then compile and tell you what the edit broke. That last part is
+		  the point: it takes the build out of the edit loop. A name also does not go stale the way
+		  a line number does the moment an earlier edit lands. Writing a whole new file is still
+		  your own job; what these are for is editing inside one.
 		- Splitting a file that declares several types: rose_move_type_to_file, not a read followed
 		  by two writes. It carries the declaration across untouched and fixes the using directives
 		  in both files, which hand-splitting gets wrong in a way that fails the build.

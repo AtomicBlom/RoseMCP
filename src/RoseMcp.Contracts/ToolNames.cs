@@ -23,6 +23,9 @@ public static class ToolNames
 	public const string FormatDocuments = "rose_format";
 	public const string ListCodeFixes = "rose_list_code_fixes";
 	public const string ApplyCodeFix = "rose_apply_code_fix";
+	public const string ReplaceMember = "rose_replace_member";
+	public const string ReplaceBody = "rose_replace_body";
+	public const string AddMember = "rose_add_member";
 
 	/// <summary>
 	/// Worker-only. The broker calls this on connect to learn the process id, so it can sample

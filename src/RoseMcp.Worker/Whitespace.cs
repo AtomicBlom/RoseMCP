@@ -43,8 +43,16 @@ public static class Whitespace
 	/// how much is stripped from every line of it, so trimming there rewrites the string's content.
 	/// Nothing inside such a literal is touched, and no line that overlaps one is trimmed.
 	/// </para>
+	/// <para>
+	/// <paramref name="within"/> narrows it to the lines an edit actually wrote. A whole-file pass is
+	/// right when the caller asked for the file to be formatted and wrong when they asked for one
+	/// member to be replaced: a repository whose line endings are already inconsistent would then get
+	/// every line of the file rewritten by a one-member change, which buries the edit in a diff
+	/// nobody can review. Rewriting only what was written keeps the promise that whatever writes C#
+	/// ends formatted, without extending it to text this call never touched.
+	/// </para>
 	/// </summary>
-	public static SourceText Apply(SyntaxNode root, SourceText text, WhitespaceRules rules)
+	public static SourceText Apply(SyntaxNode root, SourceText text, WhitespaceRules rules, TextSpan? within = null)
 	{
 		var protectedSpans = MultiLineLiterals(root, text);
 		var source = text.ToString();
@@ -52,21 +60,29 @@ public static class Whitespace
 
 		foreach (var line in text.Lines)
 		{
-			var overlapsLiteral = protectedSpans.Any(span => span.IntersectsWith(line.SpanIncludingLineBreak));
+			// Overlapping rather than touching, so a region beginning where the previous line ends
+			// does not claim that line as well and widen the diff by one line for nothing.
+			var leaveAlone = protectedSpans.Any(span => span.IntersectsWith(line.SpanIncludingLineBreak))
+				|| (within is { } region && !region.OverlapsWith(line.SpanIncludingLineBreak));
+
 			var content = source[line.Span.Start..line.Span.End];
 
-			builder.Append(rules.TrimTrailingWhitespace && !overlapsLiteral ? content.TrimEnd(' ', '\t') : content);
+			builder.Append(rules.TrimTrailingWhitespace && !leaveAlone ? content.TrimEnd(' ', '\t') : content);
 
 			// The last line has no break of its own; the final-newline rule below decides whether it
 			// gains one.
 			if (line.End == line.EndIncludingLineBreak) continue;
 
-			builder.Append(overlapsLiteral
+			builder.Append(leaveAlone
 				? source[line.Span.End..line.EndIncludingLineBreak]
 				: rules.LineEnding);
 		}
 
-		if (rules.InsertFinalNewline && builder.Length > 0 && !EndsWithBreak(builder))
+		// The final newline belongs to the end of the file rather than to any line, so a narrowed
+		// pass only owns it when the edit reached that far.
+		var ownsTheEnd = within is null || within.Value.End >= text.Length;
+
+		if (rules.InsertFinalNewline && ownsTheEnd && builder.Length > 0 && !EndsWithBreak(builder))
 		{
 			builder.Append(rules.LineEnding);
 		}

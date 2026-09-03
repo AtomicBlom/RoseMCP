@@ -154,4 +154,37 @@ public static class ToolDescriptions
         of a full analyzer pass. Returns a unified diff; pass apply=false to preview. Ask
         rose_list_code_fixes what is available first.
         """;
+
+	public const string ReplaceMember = """
+        Writes over one member -- a method, property, field, constructor, or a whole type --
+        addressed by name rather than by line and column. Use this instead of a text edit: the code
+        is parsed as a declaration first and the call refuses without touching the file if it does
+        not parse, so an unbalanced brace, a dropped access modifier or an escape that leaked into
+        the source cannot reach disk. What it writes is formatted to the repository's own
+        .editorconfig, so the indentation and line endings cannot be wrong either. A name also does
+        not go stale the way a line number does the moment an earlier edit lands. The documentation
+        comment above the declaration is kept unless the code supplies one. It then compiles the
+        projects holding the file and returns the errors the edit introduced -- so edit and check is
+        one call, not an edit followed by a build.
+        """;
+
+	public const string ReplaceBody = """
+        Replaces a member's body and nothing else: the signature that comes out is the one that was
+        there, copied rather than rewritten, so it cannot drift. Takes statements, a block in
+        braces, or => expression;, and a member can switch between the last two without saying so.
+        Use this rather than a line-range edit, which is the usual way a member gets broken --
+        splicing a body against line numbers that have moved drops a brace or a modifier, and the
+        damage is found at the next build. Refuses if the code does not parse, formats what it
+        writes, and returns the errors the edit introduced.
+        """;
+
+	public const string AddMember = """
+        Adds one or more members to a type, addressed by name, placed with after or before rather
+        than appended blindly. Use this rather than finding the closing brace and inserting text:
+        the code is parsed first and refused if it does not parse, it lands with a blank line around
+        it and the repository's own indentation, and a member the type already declares is refused
+        instead of written as a duplicate the compiler would reject. It returns the errors the
+        addition introduced, so there is no build in the loop. A using directive is not a member and
+        is not added; add one yourself if the new code needs an import.
+        """;
 }

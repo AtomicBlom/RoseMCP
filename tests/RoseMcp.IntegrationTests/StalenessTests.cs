@@ -1,4 +1,8 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.Extensions.Logging.Abstractions;
+
+using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -30,6 +34,54 @@ public sealed class StalenessTests
 
 		Assert.NotEmpty(await ErrorsAsync(after));
 		Assert.True(after.Revision > before.Revision, "absorbing an external edit must advance the revision");
+	}
+
+	/// <summary>
+	/// Absorbing an edit is the server working, not a reason to distrust it.
+	/// <para>
+	/// These notices were being appended to degradedReasons, so almost every status call after an
+	/// edit reported the workspace degraded -- which empties the word, and is the same false alarm
+	/// that narrowed the MSBuild-failure count and took targetFramework out of the project name.
+	/// Worse, State was computed before the append, so a report could say Loaded while listing a
+	/// degraded reason. Found only because status gained a notices field to sit beside it.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Absorbing_an_edit_is_a_notice_and_not_a_reason_to_distrust_anything()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var loader = new SolutionLoader(
+			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
+			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
+			NullLogger<SolutionLoader>.Instance);
+
+		await using var host = new WorkspaceHost(
+			new WorkerOptions { SolutionPath = fixture.SolutionPath },
+			loader,
+			new SharedWorkProgress(),
+			NullLoggerFactory.Instance,
+			new NeverStops(),
+			NullLogger<WorkspaceHost>.Instance);
+
+		await host.StartAsync(TestContext.Current.CancellationToken);
+		await host.GetStatusAsync(TestContext.Current.CancellationToken);
+
+		// Edited behind the workspace's back, so the next status reconciles and absorbs it.
+		await File.WriteAllTextAsync(
+			fixture.Path("Simple", "Core", "Calculator.cs"),
+			"namespace Core;" + Environment.NewLine
+				+ "public static class Calculator { public static int Add(int a, int b) => a + b; }",
+			TestContext.Current.CancellationToken);
+
+		var status = await host.GetStatusAsync(TestContext.Current.CancellationToken);
+
+		Assert.Contains(status.Notices, notice => notice.Contains("Absorbed", StringComparison.Ordinal));
+		Assert.DoesNotContain(status.DegradedReasons, reason => reason.Contains("Absorbed", StringComparison.Ordinal));
+
+		// And the two fields agree, which they could not before.
+		Assert.Empty(status.DegradedReasons);
+		Assert.Equal(WorkspaceState.Loaded, status.State);
 	}
 
 	[Fact]

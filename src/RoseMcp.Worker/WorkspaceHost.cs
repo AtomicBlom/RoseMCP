@@ -62,7 +62,27 @@ public sealed class WorkspaceHost(
 
 				session.Build);
 
-			return report with { DegradedReasons = [.. report.DegradedReasons, .. snapshot.Notices] };
+			// A reconciliation notice is something that happened, not a reason to distrust the answer:
+			// "Absorbed 16 external file change(s)" is the server doing the job it exists for. These
+			// were being appended to degradedReasons, which emptied the word -- every status call
+			// after an edit reported one -- and left State contradicting its own list, since State had
+			// already been computed from the reasons the reporter found. Staleness is the exception
+			// that belongs there: a snapshot served while the solution file is missing is the last
+			// good one rather than current truth, which is exactly what Degraded means.
+			var reasons = snapshot.Stale
+				? (IReadOnlyList<string>)[.. report.DegradedReasons, .. snapshot.Notices]
+				: report.DegradedReasons;
+
+			var notices = snapshot.Stale
+				? report.Notices
+				: (IReadOnlyList<string>)[.. report.Notices, .. snapshot.Notices];
+
+			return report with
+			{
+				State = reasons.Count == 0 ? WorkspaceState.Loaded : WorkspaceState.Degraded,
+				DegradedReasons = reasons,
+				Notices = notices,
+			};
 		}
 		catch (SolutionUnloadedException exception)
 		{

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace RoseMcp.LiveApp.Debugging;
@@ -10,6 +11,81 @@ namespace RoseMcp.LiveApp.Debugging;
 /// </summary>
 internal static class Uwp
 {
+	private const int ProcessQueryLimitedInformation = 0x1000;
+
+	/// <summary>
+	/// The pids already running for a package family, asked of each process rather than of the shell.
+	/// <para>
+	/// Activation is not a launch when an instance exists: the system foregrounds the window that is
+	/// already there, no new process appears, and a from-birth debugger waits for a startup that will
+	/// never happen. That produced "the UWP resume stub did not connect; the app may not have
+	/// activated under the debugger" -- a description of the symptom for a cause that was sitting in
+	/// the process list the whole time.
+	/// </para>
+	/// <para>
+	/// GetPackageFamilyName on each process is the direct question. A process that refuses to open, or
+	/// that belongs to no package, is simply not a match -- this is used to explain a failure, so it
+	/// must never become one itself.
+	/// </para>
+	/// </summary>
+	public static IReadOnlyList<int> FindRunningProcesses(string packageFamilyName)
+	{
+		var running = new List<int>();
+		foreach (var process in Process.GetProcesses())
+		{
+			try
+			{
+				if (string.Equals(FamilyNameOf(process.Id), packageFamilyName, StringComparison.OrdinalIgnoreCase))
+				{
+					running.Add(process.Id);
+				}
+			}
+			catch (Exception)
+			{
+				// Not ours to explain; a process we cannot interrogate is not a match.
+			}
+			finally
+			{
+				process.Dispose();
+			}
+		}
+
+		return running;
+	}
+
+	private static string? FamilyNameOf(int processId)
+	{
+		var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+		if (handle == IntPtr.Zero) return null;
+
+		try
+		{
+			uint length = 0;
+			if (GetPackageFamilyName(handle, ref length, null) != ErrorInsufficientBuffer || length == 0)
+			{
+				return null; // Not a packaged process.
+			}
+
+			var buffer = new char[length];
+			return GetPackageFamilyName(handle, ref length, buffer) == 0
+				? new string(buffer, 0, (int)length - 1)
+				: null;
+		}
+		finally
+		{
+			CloseHandle(handle);
+		}
+	}
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	private static extern IntPtr OpenProcess(int access, bool inheritHandle, int processId);
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	private static extern bool CloseHandle(IntPtr handle);
+
+	[DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+	private static extern int GetPackageFamilyName(IntPtr process, ref uint length, char[]? familyName);
+
 	private static readonly Guid ClsidPackageDebugSettings = new("B1AEC16F-2383-4852-B0E9-8F0B1DC66B4D");
 	private static readonly Guid ClsidApplicationActivationManager = new("45BA127D-10A8-46EA-8AB7-56EA9078943C");
 

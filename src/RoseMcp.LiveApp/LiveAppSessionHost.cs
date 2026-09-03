@@ -482,6 +482,21 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return;
 		}
 
+		// Checked before activating, not after: activating an app that is already running foregrounds
+		// its window, so a failure here would have changed the user's screen for nothing and then
+		// blamed the debugger. Refusing with the pid is the useful answer -- attaching instead would
+		// silently give a mid-life session where a from-birth one was asked for, which is the whole
+		// point of launching.
+		var alreadyRunning = Uwp.FindRunningProcesses(family);
+		if (alreadyRunning.Count > 0)
+		{
+			Fault(
+				$"{family} is already running (pid {string.Join(", ", alreadyRunning)}), so activating it would "
+					+ "only foreground the existing window and there would be no startup to catch. Attach to it "
+					+ "with rose_debug_attach, or close it first to debug from birth.");
+			return;
+		}
+
 		var session = new CorDebugSession(_events, logger);
 		int pid;
 		try

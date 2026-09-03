@@ -1037,6 +1037,104 @@ public sealed class LiveAppSessionTests
 	/// The MSBuild that can build classic UWP, found via vswhere, or null when no such Visual Studio is
 	/// present -- in which case the UWP test skips rather than fails.
 	/// </summary>
+
+	/// <summary>
+	/// Launching a packaged app that is already running is not a launch: the system foregrounds the
+	/// window that exists, no new process appears, and a from-birth debugger waits for a startup that
+	/// will never happen. That surfaced as "the UWP resume stub did not connect; the app may not have
+	/// activated under the debugger" -- a description of the symptom for a cause sitting in the process
+	/// list all along.
+	/// <para>
+	/// It refuses rather than attaching, and names the pid. Attaching would silently hand back a
+	/// mid-life session where a from-birth one was asked for, which is the entire reason to launch.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Refuses_to_launch_a_uwp_app_that_is_already_running()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			// Started outside the debugger, the way a person would: shell:AppsFolder is how a packaged
+			// app is activated without any debugging involvement at all.
+			using (var launcher = Process.Start("explorer.exe", $"shell:AppsFolder\\{aumid}"))
+			{
+				launcher?.WaitForExit(10_000);
+			}
+
+			if (!await WaitForProbeProcessAsync(cancellationToken))
+			{
+				Assert.Skip("The UWP probe app did not start outside the debugger.");
+			}
+
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = aumid,
+					Description = "uwp already-running probe",
+				},
+				cancellationToken);
+
+			var summary = session.Describe();
+			Assert.Equal(LiveAppSessionState.Faulted, summary.State);
+			Assert.Contains("already running", summary.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+			// The remedy is named, and it is the one that works.
+			Assert.Contains("rose_debug_attach", summary.Detail ?? string.Empty, StringComparison.Ordinal);
+
+			await manager.CloseAsync(session.SessionId, cancellationToken);
+		}
+		finally
+		{
+			foreach (var probe in Process.GetProcessesByName("Rose.ProbeApp.UwpClassic"))
+			{
+				try
+				{
+					probe.Kill();
+				}
+				catch (Exception)
+				{
+					// Already gone.
+				}
+				finally
+				{
+					probe.Dispose();
+				}
+			}
+
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	private static async Task<bool> WaitForProbeProcessAsync(CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+		while (DateTime.UtcNow < deadline)
+		{
+			var running = Process.GetProcessesByName("Rose.ProbeApp.UwpClassic");
+			foreach (var process in running)
+			{
+				process.Dispose();
+			}
+
+			if (running.Length > 0) return true;
+			await Task.Delay(500, cancellationToken);
+		}
+
+		return false;
+	}
+
 	private static string? FindUwpMsBuild()
 	{
 		var vswhere = Path.Combine(

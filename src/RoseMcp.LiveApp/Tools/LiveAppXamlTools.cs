@@ -18,7 +18,11 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description("Inject the XAML diagnostics provider into the target and read a snapshot of its live visual tree.")]
-	public LiveXamlTree XamlTree() => host.ReadXamlTree();
+	public LiveXamlTree XamlTree(
+		[Description("Root the tree at this named element's subtree.")] string? rootName = null,
+		[Description("Skip this many nodes (paging).")] int offset = 0,
+		[Description("Return at most this many nodes; 0 for all.")] int limit = 0)
+		=> host.ReadXamlTree(rootName, offset, limit);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppXamlProperties,

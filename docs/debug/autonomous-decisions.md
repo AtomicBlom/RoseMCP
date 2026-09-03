@@ -273,3 +273,14 @@ throw. Two gotchas: `GetFieldValue` wants the raw `ICorDebugClass`, and casting 
 auto-inserted that very (wrong) cast to make a CS1503 compile, so a green build is not proof the cast
 is right. Proven by `Evaluates_a_field_access_expression_at_a_stop`: `state.Label` -> "beat" and
 `state.Inner.Count` -> -1 off a stopped frame, a missing field reported cleanly.
+
+### D18 — Visual-tree query: rooting and paging in the host; filtering and live are follow-ups (#9)
+`rose_xaml_tree` gained `rootName`, `offset`, and `limit`, applied host-side over the provider's full
+snapshot: root the result at a named element's subtree (walk the flat parent list), and page it, since a
+real app's tree runs to thousands of elements -- `Total` reports how many matched so the caller knows
+whether more remain. The provider still enumerates the whole tree each call; filtering there would save
+nothing at our scale. Two acceptance items are deliberate follow-ups: framework-chrome **filtering**
+depends on per-element source info, which is not populated for a from-birth UWP target yet (D15); and a
+**resident, live-updating** provider is unnecessary while inject-per-query already returns a fresh
+snapshot on every call. **Hit-test** (element at a point) is the selection primitive and lands with #18.
+Proven by the rooting/paging assertions in `Reads_the_live_visual_tree_of_the_classic_uwp_probe`.

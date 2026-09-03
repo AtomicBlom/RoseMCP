@@ -12,7 +12,11 @@ public sealed record LiveXamlTree
 {
 	public IReadOnlyList<LiveXamlNode> Nodes { get; init; } = [];
 
+	/// <summary>The number of nodes in this page.</summary>
 	public int Count => Nodes.Count;
+
+	/// <summary>How many nodes matched before paging, so the caller knows whether more remain.</summary>
+	public int Total { get; init; }
 
 	public string? Detail { get; init; }
 }

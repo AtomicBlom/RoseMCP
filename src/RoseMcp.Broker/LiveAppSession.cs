@@ -213,7 +213,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	/// <summary>Injects the XAML provider into the target and reads a snapshot of its live visual tree.</summary>
 	public Task<LiveXamlTree> ReadXamlTreeAsync(CancellationToken cancellationToken)
-		=> SendAsync<LiveXamlTree>(ToolNames.LiveAppXamlTree, cancellationToken);
+		=> ReadXamlTreeAsync(null, 0, 0, cancellationToken);
+
+	/// <summary>Reads the tree, optionally rooted at a named element and paged.</summary>
+	public Task<LiveXamlTree> ReadXamlTreeAsync(string? rootName, int offset, int limit, CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlTree>(
+			ToolNames.LiveAppXamlTree,
+			new Dictionary<string, object?> { ["rootName"] = rootName, ["offset"] = offset, ["limit"] = limit },
+			cancellationToken);
 
 	/// <summary>Reads one element's XAML properties (by handle) with provenance and source location.</summary>
 	public Task<LiveXamlProperties> ReadXamlPropertiesAsync(ulong handle, bool includeDefaults, CancellationToken cancellationToken)

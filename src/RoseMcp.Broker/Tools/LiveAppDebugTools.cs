@@ -412,10 +412,13 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "rather than failing. Use it to see the live tree of an app started with rose_debug_launch_uwp.")]
 	public async Task<LiveXamlTree> XamlTreeAsync(
 		[Description(SessionHelp)] string sessionId,
+		[Description("Root the tree at this named element's subtree; omit for the whole tree.")] string? rootName = null,
+		[Description("Skip this many nodes, for paging a large tree.")] int offset = 0,
+		[Description("Return at most this many nodes; 0 for all. Total says how many matched.")] int limit = 0,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReadXamlTreeAsync(cancellationToken);
+		return await session.ReadXamlTreeAsync(rootName, offset, limit, cancellationToken);
 	}
 
 	[McpServerTool(

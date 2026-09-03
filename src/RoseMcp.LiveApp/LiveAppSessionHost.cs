@@ -147,10 +147,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	/// <summary>
 	/// Injects the XAML diagnostics provider into the target and returns a snapshot of its live visual
-	/// tree. Returns a tree carrying only a detail (no nodes) when the target has no XAML UI or the
+	/// tree. Optionally rooted at a named element (its subtree only) and paged, since a real app's tree is
+	/// large. Returns a tree carrying only a detail (no nodes) when the target has no XAML UI or the
 	/// provider is unavailable, rather than throwing.
 	/// </summary>
-	public LiveXamlTree ReadXamlTree()
+	public LiveXamlTree ReadXamlTree(string? rootName, int offset, int limit)
 	{
 		int? targetProcessId;
 		lock (_gate)
@@ -164,7 +165,41 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlTree { Detail = "This session has no target process to inspect." };
 		}
 
-		return _xaml.ReadTree(pid);
+		var tree = _xaml.ReadTree(pid);
+		if (tree.Detail is not null) return tree;
+
+		IReadOnlyList<LiveXamlNode> matched = tree.Nodes;
+		if (!string.IsNullOrWhiteSpace(rootName))
+		{
+			var root = tree.Nodes.FirstOrDefault(node => node.Name == rootName);
+			if (root is null) return new LiveXamlTree { Detail = $"No element named '{rootName}' is in the tree." };
+			matched = Subtree(tree.Nodes, root);
+		}
+
+		var page = matched.Skip(Math.Max(0, offset)).Take(limit > 0 ? limit : int.MaxValue).ToList();
+		return new LiveXamlTree { Nodes = page, Total = matched.Count };
+	}
+
+	/// <summary>An element and all its descendants, from the flat node list, by walking parent handles.</summary>
+	private static List<LiveXamlNode> Subtree(IReadOnlyList<LiveXamlNode> all, LiveXamlNode root)
+	{
+		var childrenByParent = all.Where(node => node.Handle != root.Handle)
+			.ToLookup(node => node.Parent);
+
+		var subtree = new List<LiveXamlNode>();
+		var pending = new Queue<LiveXamlNode>();
+		pending.Enqueue(root);
+		while (pending.Count > 0)
+		{
+			var node = pending.Dequeue();
+			subtree.Add(node);
+			foreach (var child in childrenByParent[node.Handle])
+			{
+				pending.Enqueue(child);
+			}
+		}
+
+		return subtree;
 	}
 
 	/// <summary>

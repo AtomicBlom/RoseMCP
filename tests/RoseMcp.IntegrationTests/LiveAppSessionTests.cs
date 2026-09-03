@@ -396,6 +396,18 @@ public sealed class LiveAppSessionTests
 				Assert.Contains(tree.Nodes, node => node.Name == name);
 			}
 
+			// Rooting returns a named element's subtree only (#9): Panel's subtree has its descendants
+			// (the caption) but not its parent (RootGrid).
+			var panelSubtree = await session.ReadXamlTreeAsync("Panel", offset: 0, limit: 0, cancellationToken);
+			Assert.Contains(panelSubtree.Nodes, node => node.Name == "Panel");
+			Assert.Contains(panelSubtree.Nodes, node => node.Name == "Caption");
+			Assert.DoesNotContain(panelSubtree.Nodes, node => node.Name == "RootGrid");
+
+			// Paging: a limited page carries at most that many nodes, and Total says how many matched.
+			var firstPage = await session.ReadXamlTreeAsync(rootName: null, offset: 0, limit: 2, cancellationToken);
+			Assert.Equal(2, firstPage.Nodes.Count);
+			Assert.True(firstPage.Total > 2, $"expected more than a page of nodes; total {firstPage.Total}");
+
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}
 		finally

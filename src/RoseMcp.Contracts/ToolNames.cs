@@ -78,6 +78,9 @@ public static class ToolNames
 	/// </summary>
 	public const string LiveAppXamlTree = "rose_live_app_xaml_tree";
 
+	/// <summary>Live-app-host-only. The broker forwards this to read one element's XAML properties.</summary>
+	public const string LiveAppXamlProperties = "rose_live_app_xaml_properties";
+
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 
@@ -122,4 +125,7 @@ public static class ToolNames
 
 	/// <summary>Read a snapshot of a live app's XAML visual tree by injecting the diagnostics provider.</summary>
 	public const string XamlTree = "rose_xaml_tree";
+
+	/// <summary>Read one element's XAML properties, with provenance and source location.</summary>
+	public const string XamlProperties = "rose_xaml_properties";
 }

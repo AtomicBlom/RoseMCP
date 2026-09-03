@@ -28,6 +28,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	private const string ProviderFileName = "RoseXamlTap.dll";
 	private static readonly TimeSpan SnapshotTimeout = TimeSpan.FromSeconds(15);
 
+	private string? _workDir;
+	private string? _stagedProvider;
+
 	/// <summary>
 	/// Reads a snapshot of the target's live visual tree, injecting the provider first. Returns a tree
 	/// with a <see cref="LiveXamlTree.Detail"/> and no nodes -- never throws -- when the provider is not
@@ -35,10 +38,69 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	/// </summary>
 	public LiveXamlTree ReadTree(int pid)
 	{
+		var (workDir, error) = Inject(pid, "tree");
+		if (error is not null) return new LiveXamlTree { Detail = error };
+
+		if (!WaitForFile(Path.Combine(workDir!, "tree.ready"), SnapshotTimeout))
+		{
+			return new LiveXamlTree { Detail = "The XAML provider was injected but did not produce a tree snapshot in time." };
+		}
+
+		try
+		{
+			var nodes = ParseTree(Path.Combine(workDir!, "tree.tsv"));
+			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid}.", nodes.Count, pid);
+			return new LiveXamlTree { Nodes = nodes };
+		}
+		catch (Exception exception)
+		{
+			logger.LogWarning(exception, "Reading the XAML tree snapshot failed.");
+			return new LiveXamlTree { Detail = $"Could not read the tree snapshot: {exception.Message}" };
+		}
+	}
+
+	/// <summary>
+	/// Reads one element's properties by injecting the provider with a properties request. By default
+	/// only set (non-default) properties come back; <paramref name="includeDefaults"/> asks for the
+	/// framework defaults too. Returns a result with a detail (and no properties) rather than throwing
+	/// when the element cannot be read.
+	/// </summary>
+	public LiveXamlProperties ReadProperties(int pid, ulong handle, bool includeDefaults)
+	{
+		var request = includeDefaults ? $"properties {handle} all" : $"properties {handle}";
+		var (workDir, error) = Inject(pid, request);
+		if (error is not null) return new LiveXamlProperties { Handle = handle, Detail = error };
+
+		if (!WaitForFile(Path.Combine(workDir!, "properties.ready"), SnapshotTimeout))
+		{
+			return new LiveXamlProperties { Handle = handle, Detail = "The XAML provider was injected but did not produce the properties in time." };
+		}
+
+		try
+		{
+			var properties = ParseProperties(Path.Combine(workDir!, "properties.tsv"), handle);
+			logger.LogInformation("Read {Count} propert(y/ies) for handle {Handle} from pid {Pid}.", properties.Count, handle, pid);
+			return properties;
+		}
+		catch (Exception exception)
+		{
+			logger.LogWarning(exception, "Reading the XAML properties failed.");
+			return new LiveXamlProperties { Handle = handle, Detail = $"Could not read the properties: {exception.Message}" };
+		}
+	}
+
+	/// <summary>
+	/// Stages the provider, leaves the request for it, clears any stale output, and injects. Returns the
+	/// working folder, or an error string when the provider is unavailable, staging fails, or injection
+	/// is rejected. Each request re-injects because the provider does its work on the app's UI thread at
+	/// SetSite.
+	/// </summary>
+	private (string? WorkDir, string? Error) Inject(int pid, string request)
+	{
 		var provider = ResolveProviderPath();
 		if (provider is null)
 		{
-			return new LiveXamlTree { Detail = $"The XAML provider ({ProviderFileName}) was not found for this host's architecture; build src/RoseXamlTap for {ProviderPlatform()}." };
+			return (null, $"The XAML provider ({ProviderFileName}) was not found for this host's architecture; build src/RoseXamlTap for {ProviderPlatform()}.");
 		}
 
 		string workDir;
@@ -50,45 +112,50 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		catch (Exception exception)
 		{
 			logger.LogWarning(exception, "Staging the XAML provider sandbox folder failed.");
-			return new LiveXamlTree { Detail = $"Could not stage the XAML provider: {exception.Message}" };
+			return (null, $"Could not stage the XAML provider: {exception.Message}");
 		}
 
-		var treeFile = Path.Combine(workDir, "tree.tsv");
-		var readyFile = Path.Combine(workDir, "tree.ready");
-		TryDelete(treeFile);
-		TryDelete(readyFile);
-
-		var hr = InitializeXamlDiagnosticsEx(EndpointName, (uint)pid, null, stagedProvider, ProviderClsid, workDir);
-		if (hr < 0)
+		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready" })
 		{
-			return new LiveXamlTree { Detail = $"InitializeXamlDiagnosticsEx failed (0x{hr:x8}); the target may have no XAML UI or not be a packaged app." };
-		}
-
-		if (!WaitForFile(readyFile, SnapshotTimeout))
-		{
-			return new LiveXamlTree { Detail = "The XAML provider was injected but did not produce a tree snapshot in time." };
+			TryDelete(Path.Combine(workDir, stale));
 		}
 
 		try
 		{
-			var nodes = ParseTree(treeFile);
-			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid}.", nodes.Count, pid);
-			return new LiveXamlTree { Nodes = nodes };
+			File.WriteAllText(Path.Combine(workDir, "request.txt"), request);
 		}
 		catch (Exception exception)
 		{
-			logger.LogWarning(exception, "Reading the XAML tree snapshot failed.");
-			return new LiveXamlTree { Detail = $"Could not read the tree snapshot: {exception.Message}" };
+			return (null, $"Could not write the provider request: {exception.Message}");
 		}
+
+		var hr = InitializeXamlDiagnosticsEx(EndpointName, (uint)pid, null, stagedProvider, ProviderClsid, workDir);
+		if (hr < 0)
+		{
+			return (null, $"InitializeXamlDiagnosticsEx failed (0x{hr:x8}); the target may have no XAML UI or not be a packaged app.");
+		}
+
+		return (workDir, null);
 	}
 
 	private (string WorkDir, string StagedProvider) StageSandboxFolder(string provider)
 	{
+		// Stage once per session and reuse: the first injection loads the provider DLL into the target,
+		// which holds the file open, so a later injection cannot overwrite it -- and need not, since it
+		// is the same provider. Each request re-injects from this one staged copy.
+		if (_workDir is not null && _stagedProvider is not null && File.Exists(_stagedProvider))
+		{
+			return (_workDir, _stagedProvider);
+		}
+
 		var workDir = Path.Combine(Path.GetTempPath(), "RoseMcpXaml", Environment.ProcessId.ToString());
 		Directory.CreateDirectory(workDir);
 
 		var stagedProvider = Path.Combine(workDir, ProviderFileName);
-		File.Copy(provider, stagedProvider, overwrite: true);
+		if (!File.Exists(stagedProvider))
+		{
+			File.Copy(provider, stagedProvider, overwrite: true);
+		}
 
 		// ALL APPLICATION PACKAGES (S-1-15-2-1) and ALL RESTRICTED APPLICATION PACKAGES (S-1-15-2-2):
 		// Modify grants read+execute to load the DLL and read commands, and write for the provider's
@@ -98,6 +165,8 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			Icacls(workDir, $"/grant {sid}:(OI)(CI)(M)");
 		}
 
+		_workDir = workDir;
+		_stagedProvider = stagedProvider;
 		return (workDir, stagedProvider);
 	}
 
@@ -147,6 +216,58 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 
 		return nodes;
 	}
+
+	private static LiveXamlProperties ParseProperties(string propertiesFile, ulong handle)
+	{
+		string? typeName = null;
+		string? elementFile = null;
+		int? elementLine = null;
+		int? elementColumn = null;
+		var properties = new List<LiveXamlProperty>();
+
+		foreach (var line in File.ReadLines(propertiesFile, Encoding.UTF8))
+		{
+			if (line.Length == 0) continue;
+
+			var fields = line.Split('\t');
+			if (fields[0] == "E" && fields.Length >= 5)
+			{
+				typeName = EmptyToNull(Unescape(fields[1]));
+				elementFile = EmptyToNull(Unescape(fields[2]));
+				elementLine = ParsePositive(fields[3]);
+				elementColumn = ParsePositive(fields[4]);
+			}
+			else if (fields[0] == "P" && fields.Length >= 10)
+			{
+				var isNull = fields[9] == "1";
+				properties.Add(new LiveXamlProperty
+				{
+					Name = Unescape(fields[1]),
+					Value = isNull ? null : Unescape(fields[2]),
+					ValueType = EmptyToNull(Unescape(fields[3])),
+					DeclaringType = EmptyToNull(Unescape(fields[4])),
+					Provenance = fields[5],
+					SourceFile = EmptyToNull(Unescape(fields[6])),
+					SourceLine = ParsePositive(fields[7]),
+					SourceColumn = ParsePositive(fields[8]),
+				});
+			}
+		}
+
+		return new LiveXamlProperties
+		{
+			Handle = handle,
+			TypeName = typeName,
+			SourceFile = elementFile,
+			SourceLine = elementLine,
+			SourceColumn = elementColumn,
+			Properties = properties,
+		};
+	}
+
+	private static string? EmptyToNull(string value) => string.IsNullOrEmpty(value) ? null : value;
+
+	private static int? ParsePositive(string field) => int.TryParse(field, out var value) && value > 0 ? value : null;
 
 	private static string Unescape(string field)
 	{

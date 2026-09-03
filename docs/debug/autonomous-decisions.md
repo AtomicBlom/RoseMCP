@@ -201,3 +201,32 @@ Decisions taken:
 the probe from birth, inject, and read back its five named elements (RootGrid, Panel, Pane, Counter,
 Caption) through the host to the broker. The provider's SetProperty/ClearProperty apply path is kept
 for the hot-reload loop (#12); properties (#10) and interactive selection (#18) build on this snapshot.
+
+### D15 — XAML properties: provenance and source mapping over an inject-per-query request (#10)
+`rose_xaml_properties` reads one element's property chain by the handle a tree snapshot reported. Each
+effective (non-overridden) value comes back with its type and **provenance** -- `Local`, `Style`,
+`Inherited`, `Animation`, `Default`, ... from `BaseValueSource` -- and, when the app carries XAML
+source info, the file/line/column that set it. Decisions:
+
+- **Inject per query, with a request file.** The provider does all its work on the app's UI thread at
+  `SetSite`, so rather than keep it resident with a UI-thread marshal, each call re-injects. The host
+  leaves a `request.txt` (`tree`, or `properties <handle>`); the provider serves it and writes the
+  matching output. This was validated first: re-injection succeeds repeatedly, and -- the load-bearing
+  fact -- **an InstanceHandle is stable across injections**, so a handle from a tree call is valid in a
+  later properties call.
+- **Stage the provider once per session.** The first injection loads `RoseXamlTap.dll` into the target,
+  which holds the file open; a later injection cannot overwrite it and need not, since it is the same
+  provider. The host copies it once into the per-host work folder and reuses it.
+- **Default values are filtered out unless asked for.** An element has hundreds of properties, almost
+  all framework defaults; the provider drops `Default`-provenance values (keeping the set from being
+  pushed past the row cap) unless the request ends in ` all`, surfaced as `includeDefaults`.
+- **Source info degrades gracefully.** It needs the app built with XBF line info (UWP:
+  `DisableXbfLineInfo=false`, the classic-UWP default) and launched with
+  `ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO=1`. When absent, the file/line fields are simply null and the
+  agent still gets values and provenance. Populating source info for a from-birth UWP target means
+  getting that variable into the app's own environment (its activation env, not the host's) -- a
+  documented follow-up; the plumbing carries it through the moment it is present.
+
+Proven by `Reads_the_properties_of_a_xaml_element`: RootGrid's `Background` reads back `Local`,
+framework defaults are excluded until requested, and the caption's `Text` comes through as the exact
+string the XAML sets. The provenance is the bridge #18 (selection) and the Roslyn side build on.

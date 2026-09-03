@@ -30,6 +30,7 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
+#include <cstdlib>
 
 // {7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6}
 static const CLSID CLSID_RoseXamlTap =
@@ -66,6 +67,29 @@ static std::string Utf8(const std::wstring& text)
 	std::string out(static_cast<size_t>(size), '\0');
 	WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
 	return out;
+}
+
+// Where a property's effective value came from -- the bridge from a live value to how it was set.
+static std::wstring Provenance(BaseValueSource source)
+{
+	switch (source)
+	{
+		case BaseValueSourceDefault: return L"Default";
+		case BaseValueSourceBuiltInStyle: return L"BuiltInStyle";
+		case BaseValueSourceStyle: return L"Style";
+		case BaseValueSourceLocal: return L"Local";
+		case Inherited: return L"Inherited";
+		case DefaultStyleTrigger: return L"DefaultStyleTrigger";
+		case TemplateTrigger: return L"TemplateTrigger";
+		case StyleTrigger: return L"StyleTrigger";
+		case ImplicitStyleReference: return L"ImplicitStyleReference";
+		case ParentTemplate: return L"ParentTemplate";
+		case ParentTemplateTrigger: return L"ParentTemplateTrigger";
+		case Animation: return L"Animation";
+		case Coercion: return L"Coercion";
+		case BaseValueSourceVisualState: return L"VisualState";
+		default: return L"Unknown";
+	}
 }
 
 // A tab or newline in a type or name would break the row-per-element snapshot; keep every field on
@@ -168,10 +192,22 @@ public:
 		}
 
 		// Enumerate the tree (synchronous callbacks on this thread) to build the snapshot and name
-		// map, then write the snapshot and run any commands. All on the UI thread, where XAML lives.
+		// map, then serve the host's request and run any commands. All on the UI thread, where XAML
+		// lives -- which is why each request re-injects rather than being answered off a worker thread.
 		hr = m_tree->AdviseVisualTreeChange(this);
 		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
 		WriteTreeSnapshot();
+
+		const std::wstring request = ReadRequest();
+		if (request.rfind(L"properties ", 0) == 0)
+		{
+			// "properties <handle>" gives the set (non-default) properties; a trailing " all" includes
+			// the framework defaults too. Filtering defaults out keeps the interesting values from being
+			// pushed past the row cap on an element with hundreds of properties.
+			const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
+			WriteProperties(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10)), includeDefaults);
+		}
+
 		ApplyCommands();
 		return S_OK;
 	}
@@ -233,6 +269,124 @@ private:
 		std::wofstream ready(g_workDir + L"\\tree.ready", std::ios::trunc);
 		if (ready) ready << m_nodes.size() << L"\n";
 		Log(L"wrote tree.tsv with " + std::to_wstring(m_nodes.size()) + L" element(s)");
+	}
+
+	// The host writes one line saying what it wants of this injection (a tree is always written; a
+	// "properties <handle>" line asks for that element's property chain as well).
+	std::wstring ReadRequest()
+	{
+		if (g_workDir.empty()) return std::wstring();
+
+		std::wifstream file(g_workDir + L"\\request.txt");
+		std::wstring line;
+		if (file && std::getline(file, line))
+		{
+			if (!line.empty() && line.back() == L'\r') line.pop_back();
+			return line;
+		}
+
+		return std::wstring();
+	}
+
+	// One element's property chain: every effective (non-overridden) value with its type, provenance
+	// (default/style/local/...), and the source location that set it, plus an element row carrying its
+	// type and its own declaration site. Source locations are populated only when the app carries XAML
+	// source info; otherwise those fields are empty and the caller degrades to provenance alone.
+	void WriteProperties(InstanceHandle handle, bool includeDefaults)
+	{
+		if (g_workDir.empty()) return;
+
+		unsigned int sourceCount = 0;
+		unsigned int valueCount = 0;
+		PropertyChainSource* sources = nullptr;
+		PropertyChainValue* values = nullptr;
+		const HRESULT hr = m_tree->GetPropertyValuesChain(handle, &sourceCount, &sources, &valueCount, &values);
+		if (FAILED(hr))
+		{
+			Log(L"GetPropertyValuesChain(" + std::to_wstring(handle) + L") failed hr=0x" + Hex(hr));
+			std::wofstream ready(g_workDir + L"\\properties.ready", std::ios::trunc);
+			if (ready) ready << L"error\n";
+			return;
+		}
+
+		std::wstring elementType;
+		std::wstring elementFile;
+		unsigned int elementLine = 0;
+		unsigned int elementColumn = 0;
+		for (unsigned int i = 0; i < sourceCount; i++)
+		{
+			if (elementType.empty() && sources[i].TargetType) elementType = sources[i].TargetType;
+			const bool localWithSource = sources[i].Source == BaseValueSourceLocal && sources[i].SrcInfo.FileName && sources[i].SrcInfo.FileName[0];
+			if (localWithSource && elementFile.empty())
+			{
+				elementFile = sources[i].SrcInfo.FileName;
+				elementLine = sources[i].SrcInfo.LineNumber;
+				elementColumn = sources[i].SrcInfo.ColumnNumber;
+			}
+		}
+
+		const std::wstring finalPath = g_workDir + L"\\properties.tsv";
+		const std::wstring tempPath = finalPath + L".tmp";
+		unsigned int written = 0;
+		{
+			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
+			if (!file)
+			{
+				Log(L"could not open properties.tsv.tmp for writing");
+				return;
+			}
+
+			const std::wstring elementRow = L"E\t" + Escape(elementType.c_str()) + L'\t' + Escape(elementFile.c_str())
+				+ L'\t' + std::to_wstring(elementLine) + L'\t' + std::to_wstring(elementColumn);
+			file << Utf8(elementRow) << '\n';
+
+			for (unsigned int i = 0; i < valueCount && written < 256; i++)
+			{
+				const PropertyChainValue& value = values[i];
+				if (value.Overridden) continue; // Only the effective value of each property.
+
+				std::wstring provenance = L"Unknown";
+				std::wstring file2;
+				unsigned int line = 0;
+				unsigned int column = 0;
+				if (value.PropertyChainIndex < sourceCount)
+				{
+					const PropertyChainSource& source = sources[value.PropertyChainIndex];
+					provenance = Provenance(source.Source);
+					if (!includeDefaults && source.Source == BaseValueSourceDefault) continue;
+					if (source.SrcInfo.FileName && source.SrcInfo.FileName[0])
+					{
+						file2 = source.SrcInfo.FileName;
+						line = source.SrcInfo.LineNumber;
+						column = source.SrcInfo.ColumnNumber;
+					}
+				}
+
+				const bool isNull = (value.MetadataBits & IsValueNull) != 0;
+				const wchar_t* valueText = isNull ? L"" : (value.Value ? value.Value : L"");
+				const wchar_t* valueType = value.ValueType && value.ValueType[0] ? value.ValueType : (value.Type ? value.Type : L"");
+
+				std::wstring row = L"P\t" + Escape(value.PropertyName ? value.PropertyName : L"") + L'\t'
+					+ Escape(valueText) + L'\t' + Escape(valueType) + L'\t' + Escape(value.DeclaringType ? value.DeclaringType : L"")
+					+ L'\t' + provenance + L'\t' + Escape(file2.c_str()) + L'\t' + std::to_wstring(line) + L'\t'
+					+ std::to_wstring(column) + L'\t' + (isNull ? L"1" : L"0");
+				file << Utf8(row) << '\n';
+				written++;
+			}
+		}
+
+		_wremove(finalPath.c_str());
+		if (_wrename(tempPath.c_str(), finalPath.c_str()) != 0)
+		{
+			Log(L"could not rename properties.tsv.tmp to properties.tsv");
+			return;
+		}
+
+		std::wofstream ready(g_workDir + L"\\properties.ready", std::ios::trunc);
+		if (ready) ready << written << L"\n";
+		Log(L"wrote properties.tsv with " + std::to_wstring(written) + L" propert(y/ies) for handle " + std::to_wstring(handle));
+
+		FreePropertyChain(sources, sourceCount, values, valueCount);
 	}
 
 	void ApplyCommands()

@@ -395,6 +395,30 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		return await session.ReadXamlTreeAsync(cancellationToken);
 	}
 
+	[McpServerTool(
+		Name = ToolNames.XamlProperties,
+		Title = "Read a XAML element's properties",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Read one element's XAML properties, given the handle from rose_xaml_tree. Each property comes "
+			+ "with its value, type, and provenance -- Local (set on the element), Style, Inherited, "
+			+ "Animation, Default, and so on -- so you can tell what the XAML actually sets from framework "
+			+ "defaults; when the app carries source info, each also carries the file and line that set it. "
+			+ "Set (non-default) properties only by default; pass includeDefaults for the full set. This is "
+			+ "the bridge from a live element to its XAML source.")]
+	public async Task<LiveXamlProperties> XamlPropertiesAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("The element handle from rose_xaml_tree.")] ulong handle,
+		[Description("Include framework default values, not only the ones the XAML sets.")] bool includeDefaults = false,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.ReadXamlPropertiesAsync(handle, includeDefaults, cancellationToken);
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

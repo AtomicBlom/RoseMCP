@@ -35,6 +35,8 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | `rose_debug_continue` / `rose_debug_step` | Resume a held target, or step in / over / out. |
 | `rose_debug_list_tracepoints` / `_list_breakpoints` / `_remove_*` | Inspect and remove what is set. |
 | `rose_debug_detach` / `rose_debug_list` | End a session (leaving the target running); list sessions. |
+| `rose_xaml_tree` | Read a live XAML app's visual tree: a flat element list (handle, parent, child index, type, x:Name) that rebuilds into a tree. |
+| `rose_xaml_properties` | Read one element's properties (by handle) with provenance (Local / Style / Inherited / Default …) and, when the app carries source info, the XAML file and line that set each. |
 
 ## Limits worth knowing
 

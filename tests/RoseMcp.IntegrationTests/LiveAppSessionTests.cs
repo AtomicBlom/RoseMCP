@@ -404,6 +404,84 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// XAML property inspection (#10): read an element's properties with provenance. Confirms the set
+	/// (non-default) properties come back with a Local provenance for what the XAML sets -- including a
+	/// concrete string value -- that framework defaults are filtered out unless asked for, and that it
+	/// all rides through the host to the broker. Skips where the UWP or C++ toolchain is absent.
+	/// </summary>
+	[Fact]
+	public async Task Reads_the_properties_of_a_xaml_element()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp properties probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var rootGrid = tree.Nodes.FirstOrDefault(node => node.Name == "RootGrid");
+			var caption = tree.Nodes.FirstOrDefault(node => node.Name == "Caption");
+			Assert.NotNull(rootGrid);
+			Assert.NotNull(caption);
+
+			var properties = await session.ReadXamlPropertiesAsync(rootGrid!.Handle, includeDefaults: false, cancellationToken);
+			Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
+			Assert.NotEmpty(properties.Properties);
+
+			// Background is set in the probe's XAML, so it reads back with Local provenance...
+			var background = properties.Properties.FirstOrDefault(property => property.Name == "Background");
+			Assert.NotNull(background);
+			Assert.Equal("Local", background!.Provenance);
+
+			// ...and the framework defaults are filtered out unless asked for.
+			Assert.DoesNotContain(properties.Properties, property => property.Provenance == "Default");
+
+			var withDefaults = await session.ReadXamlPropertiesAsync(rootGrid.Handle, includeDefaults: true, cancellationToken);
+			Assert.Contains(withDefaults.Properties, property => property.Provenance == "Default");
+			Assert.True(withDefaults.Count > properties.Count);
+
+			// A concrete string value comes through: the caption's Text is exactly what the XAML sets.
+			var captionProperties = await session.ReadXamlPropertiesAsync(caption!.Handle, includeDefaults: false, cancellationToken);
+			var text = captionProperties.Properties.FirstOrDefault(property => property.Name == "Text");
+			Assert.NotNull(text);
+			Assert.Equal("Rose UWP Probe", text!.Value);
+			Assert.Equal("Local", text.Provenance);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
 	[Fact]
 	public async Task Reports_a_missing_target_as_faulted()

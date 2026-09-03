@@ -154,6 +154,28 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return _xaml.ReadTree(pid);
 	}
 
+	/// <summary>
+	/// Reads one element's XAML properties (by the handle a tree snapshot reported) with provenance and,
+	/// when the app carries source info, source location. Set properties only by default; the framework
+	/// defaults are included on request.
+	/// </summary>
+	public LiveXamlProperties ReadXamlProperties(ulong handle, bool includeDefaults)
+	{
+		int? targetProcessId;
+		lock (_gate)
+		{
+			targetProcessId = _targetProcessId;
+			_xaml ??= new XamlDiagnosticsSession(logger);
+		}
+
+		if (targetProcessId is not { } pid)
+		{
+			return new LiveXamlProperties { Handle = handle, Detail = "This session has no target process to inspect." };
+		}
+
+		return _xaml.ReadProperties(pid, handle, includeDefaults);
+	}
+
 	/// <summary>A page of buffered debug events after the given cursor, with the session's state.</summary>
 	public LiveDebugEventPage ReadEvents(long after)
 	{

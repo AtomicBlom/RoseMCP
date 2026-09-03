@@ -208,6 +208,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public Task<LiveXamlTree> ReadXamlTreeAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveXamlTree>(ToolNames.LiveAppXamlTree, cancellationToken);
 
+	/// <summary>Reads one element's XAML properties (by handle) with provenance and source location.</summary>
+	public Task<LiveXamlProperties> ReadXamlPropertiesAsync(ulong handle, bool includeDefaults, CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlProperties>(
+			ToolNames.LiveAppXamlProperties,
+			new Dictionary<string, object?> { ["handle"] = handle, ["includeDefaults"] = includeDefaults },
+			cancellationToken);
+
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);
 

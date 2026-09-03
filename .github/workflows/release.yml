@@ -1,0 +1,105 @@
+name: Release
+
+# Cutting a release is pushing a tag. MinVer reads that same tag for the version stamped into the
+# binaries, so the tag is the one thing anyone has to get right and there is no second place to bump.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      matrix:
+        include:
+          # Two runners, and not because of cross-compiling -- a Windows box publishes linux-x64
+          # perfectly well. It is the archive: neither zip nor a Windows-rolled tar records a Unix
+          # execute bit, so the apphost unpacks as "permission denied" before it can print anything.
+          # Rolling the tarball on Linux is the only part that has to happen there.
+          - os: windows-latest
+            runtimes: win-x64,win-arm64
+          - os: ubuntu-latest
+            runtimes: linux-x64,linux-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # MinVer reads the tag being released; the default single-commit fetch has no tags at all.
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Windows only: the unit tests still assume Windows paths, which is tracked in #34. A release
+      # should not be the first thing to find out the build is broken, and this is the platform that
+      # can say so today.
+      - name: Unit tests
+        if: runner.os == 'Windows'
+        run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj -c Release
+
+      # The same script used to package locally, so a release artifact and a hand-built one have the
+      # same layout -- the one where the broker finds the worker beside itself.
+      - name: Package
+        shell: pwsh
+        run: ./tools/deploy.ps1 -Mode package -Runtime ${{ matrix.runtimes }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rosemcp-${{ runner.os }}
+          path: artifacts/rosemcp-*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # The only permission in either workflow that writes to the repository, and it is scoped to the
+    # one job that needs it rather than to the file.
+    permissions:
+      contents: write
+
+    steps:
+      # No checkout: this job publishes what the matrix built and needs no source to do it.
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: rosemcp-*
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: artifacts
+        run: |
+          sha256sum rosemcp-* > SHA256SUMS
+          cat SHA256SUMS
+
+      # A tag with a hyphen is a prerelease by semver's own rule, and MinVer reads v0.2.0-rc.1 the
+      # same way -- so the release is marked to match the version inside the binaries rather than
+      # according to whoever remembered to tick the box.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            $prerelease \
+            artifacts/rosemcp-* artifacts/SHA256SUMS

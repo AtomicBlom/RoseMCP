@@ -101,9 +101,24 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		var (workDir, error) = Inject(pid, "select");
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
-		if (!WaitForFile(Path.Combine(workDir!, "select.ready"), SnapshotTimeout))
+		var readyFile = Path.Combine(workDir!, "select.ready");
+		if (!WaitForFile(readyFile, SnapshotTimeout))
 		{
 			return new LiveXamlSelection { Detail = "The provider was injected but did not arm select mode (the app may have no diagnostics UI layer)." };
+		}
+
+		// The provider reports the extent XAML arranged its capture layer at, and a zero is checked
+		// rather than assumed: an overlay that exists but was given no area is armed, invisible, and
+		// cannot be clicked -- which is indistinguishable from working if all you check is that it
+		// armed. That exact state shipped once, so it is now a reported failure.
+		var (width, height) = ReadArmedExtent(readyFile);
+		if (width <= 0 || height <= 0)
+		{
+			return new LiveXamlSelection
+			{
+				Detail = $"Select mode armed but its overlay was arranged at {width}x{height}, so nothing can be picked. "
+					+ "The app's diagnostics UI layer gave the overlay no area.",
+			};
 		}
 
 		return new LiveXamlSelection { Armed = true, Detail = "Select mode is armed: click an element in the app, then read the selection." };
@@ -162,6 +177,28 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		}
 	}
 
+	/// <summary>
+	/// Parses the provider's "armed &lt;width&gt;x&lt;height&gt;" marker. An unreadable or unexpected
+	/// marker reports zero, which the caller treats as a failure -- the safe direction, since the whole
+	/// point of the number is to catch an overlay that cannot be used.
+	/// </summary>
+	private static (int Width, int Height) ReadArmedExtent(string readyFile)
+	{
+		try
+		{
+			var parts = File.ReadAllText(readyFile).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length < 2) return (0, 0);
+
+			var extent = parts[1].Split('x');
+			if (extent.Length != 2) return (0, 0);
+
+			return (int.TryParse(extent[0], out var width) ? width : 0, int.TryParse(extent[1], out var height) ? height : 0);
+		}
+		catch (IOException)
+		{
+			return (0, 0);
+		}
+	}
 	/// <summary>
 	/// What the in-app toolbar says its mode is. Absent or unreadable counts as idle: the file is only
 	/// ever a hint about a UI the person controls, and no tool should fail because it is missing.

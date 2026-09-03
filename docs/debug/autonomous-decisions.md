@@ -393,3 +393,68 @@ was made, the test ran yesterday's host, and the failure it reported ("the provi
 this host's architecture") described a rename that had already been done. It now builds once per test
 run, memoised by output path. MSBuild is incremental, so the check is nearly free, and the failure mode
 it removes is one that reads as a bug in the code under test.
+
+### D25 — The toolbar, made by looking at it (#18, refines D22)
+D22 built the toolbar; this is what a person using it changed. Worth writing down because almost none
+of it was reachable by reasoning, and two of the bugs were invisible in exactly the way that wastes
+an afternoon.
+
+**Layout that does not stretch.** The capture layer was sized by `HorizontalAlignment::Stretch` and
+came out **0x0**. That failed in the worst possible shape: the toolbar still drew, because a `Canvas`
+does not clip children that hang outside it, and it still took input, because it has a size of its
+own -- so buttons, dragging and collapsing all worked, `select.ready` was written, and
+`LiveXamlSelection.Armed` came back true. Only the full-bleed layer collapsed, so select mode was on,
+tintless, and never received a single pointer event. Nothing was in the log, because nothing had
+failed. The original one-shot overlay had set `Width`/`Height` from `Window::Current().Bounds()`
+explicitly and D22 dropped that when it moved to alignment. **Everything on the diagnostics UI layer
+is now sized explicitly**, from the window bounds, with a `Window::SizeChanged` handler so it tracks
+a resize rather than being right only at startup -- which also keeps the drag clamp honest.
+
+The install log now records the layer's runtime type and its arranged size, because the first
+explanation offered for the collapse -- that the layer measures children at their desired size -- was
+wrong: the layer is a `Grid`, which does stretch its children. The real cause is upstream of that, and
+the layer's own arranged extent is the fact that distinguishes them. It costs one line.
+
+**Arming now reports an extent, and the host checks it.** `select.ready` carries
+`armed <width>x<height>`, taken from the capture layer's size after arrange, and `EnterSelectMode`
+fails when either is zero. The old check -- does the marker file exist -- passed happily throughout
+the bug above. A capability that reports success while being unusable is worse than one that reports
+failure, and this is the one place where the difference was demonstrated rather than imagined.
+
+**Glyph coverage is checked, not assumed.** The grip was to be braille U+283F (six dots) and the mark
+had a florette U+273F fallback. Neither is in Segoe UI. A missing glyph does not fail -- it renders as
+a hollow box, or whatever font fallback happens to find -- so reading the font's own character map
+(`GlyphTypeface.CharacterToGlyphMap`) before committing to a codepoint is the only way to know. Both
+were caught before they were seen. The six dots are **drawn** now, as 2x3 ellipses: shapes cannot
+miss, and the dot count is then exactly the one asked for rather than whatever a glyph contains.
+
+**The mark is geometry, from the same curve as the app icon.** It was briefly an embedded RCDATA PNG,
+which was a real improvement on staging a file into the sandbox, and then a worse idea than just
+drawing it: `r = cos(3*theta/2)`, even-odd filled, rotated 90 degrees -- `tools/Rose.ps1`'s own curve,
+so the toolbar cannot drift from the brand. That deleted the `.rc`, the asset, a generator script, the
+`rc.exe` build step, `BitmapImage`, `InMemoryRandomAccessStream`, a coroutine and three includes, and
+it is exact at every DPI. It is the small mark deliberately: above 32px the icon adds the stem and leg
+that make the R, and at 16px those are sub-pixel. No tile behind it -- the toolbar is already a dark
+panel, and a second rounded square inside one reads as a sticker.
+
+**Everything else came from use, not from thinking about it.** The collapsed thumb could only be
+grabbed by hitting one of its 2px dots, because its `Border` had padding but no `Background`, and a
+null background does not hit-test -- the same rule that makes the overlay click-through, this time
+working against us. The buttons were a few pixels wider than tall, sized by their padding, and are
+now explicitly square. The active mode wears RoseMCP's accent, read from `Rose.ps1` rather than
+matched by hand. The icons follow Visual Studio's toolbar -- a plain pointer for the neutral mode
+(`E8B0`), a pointer inside a marquee for picking, a chevron to fold away (`E76B`) -- and the marquee
+is composed from a dashed `Rectangle` plus that same pointer, because MDL2's nearest single glyph
+(`E8B3`, SelectAll) is a dense grid that turns to mush at button size. Candidate glyphs were rendered
+and looked at, at true size, before being chosen.
+
+**The provider's log is UTF-8.** It was a `wofstream`, which narrows to the ANSI code page, so the
+first badge caption with a `·` in it reached the log as a question mark. The snapshot writers already
+knew this; the log had been left behind.
+
+**How the invisible bug was actually found.** Three plausible causes, no way to choose between them,
+so the provider was made to say what it saw: `Beneath` traces the first few pointer moves with the
+element it picked, the rect it computed, and how many candidates it passed over, and `ShowBox` returns
+whether it drew. One run answered it -- the trace was *empty*, which ruled out every hit-testing
+theory at once and pointed straight at input never arriving. The tracing stayed in, bounded to six
+lines, because the next question about this layer will be the same shape as the last one.

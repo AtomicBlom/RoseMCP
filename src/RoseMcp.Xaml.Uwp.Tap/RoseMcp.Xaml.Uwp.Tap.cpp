@@ -37,6 +37,7 @@
 #include <sstream>
 #include <mutex>
 #include <cstdlib>
+#include <cmath>
 
 // C++/WinRT projections, for the resident in-app toolbar (#18): build the overlay on the diagnostics
 // UI layer, hit-test the element under a click, and report it. Included after the ABI headers above;
@@ -48,6 +49,8 @@
 #include <winrt/Windows.UI.Xaml.Controls.h>
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h> // ButtonBase::Click, or it is "auto before defined"
 #include <winrt/Windows.UI.Xaml.Media.h>
+#include <winrt/Windows.UI.Xaml.Shapes.h> // Rectangle and Path, for the outlines and the mark
+#include <winrt/Windows.UI.Core.h>        // WindowSizeChangedEventArgs
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.Xaml.Input.h>
 
@@ -55,6 +58,7 @@ namespace xaml = winrt::Windows::UI::Xaml;
 namespace xcontrols = winrt::Windows::UI::Xaml::Controls;
 namespace xmedia = winrt::Windows::UI::Xaml::Media;
 namespace xinput = winrt::Windows::UI::Xaml::Input;
+namespace xshapes = winrt::Windows::UI::Xaml::Shapes;
 
 // {7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6}
 static const CLSID CLSID_RoseTap =
@@ -71,6 +75,11 @@ static std::wstring Hex(HRESULT hr)
 	return buffer;
 }
 
+static std::string Utf8(const std::wstring& text);
+
+// UTF-8, for the same reason the snapshots are: a wofstream narrows to the ANSI code page, so an
+// element name or a separator outside it lands in the log as a question mark. A diagnostic file that
+// mangles the very names it exists to report is worth the one extra call.
 static void Log(const std::wstring& line)
 {
 	OutputDebugStringW((L"[RoseMcp.Xaml.Uwp.Tap] " + line + L"\n").c_str());
@@ -78,8 +87,8 @@ static void Log(const std::wstring& line)
 	std::lock_guard<std::mutex> guard(g_logMutex);
 	if (g_workDir.empty()) return;
 
-	std::wofstream file(g_workDir + L"\\rosemcp.xaml.uwp.tap.log", std::ios::app);
-	if (file) file << line << L"\n";
+	std::ofstream file(g_workDir + L"\\rosemcp.xaml.uwp.tap.log", std::ios::app | std::ios::binary);
+	if (file) file << Utf8(line) << '\n';
 }
 
 // The snapshot is UTF-8 so the host reads it with one fixed encoding regardless of the app's locale;
@@ -161,6 +170,18 @@ struct Command
 // UI instead of reporting it as part of the app's.
 static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
 
+// Segoe MDL2 Assets codepoints. Kept named and in one place because they are unreadable inline and a
+// wrong one renders as a hollow box rather than failing, so they have to be easy to check and swap --
+// and worth checking against the font's own character map, which is how two glyphs that are simply
+// absent from Segoe UI were caught before they shipped as boxes.
+//
+// These follow what Visual Studio's live-tree toolbar does: a plain pointer for the neutral mode, a
+// pointer inside a marquee for picking, and a chevron to fold away.
+static const wchar_t* const IconIdle = L"\xE8B0";   // Cursor -- a plain arrow pointer
+static const wchar_t* const IconHide = L"\xE76B";   // ChevronLeft
+
+
+
 // The resident in-app toolbar (#18). Installed on the diagnostics UI layer at the first injection and
 // left there for the life of the app, because the point of it is that a person can arm select mode
 // themselves and then talk to the agent -- rather than having to ask the agent to arm it first.
@@ -209,7 +230,13 @@ public:
 			Build();
 			m_layer.Children().Append(m_root);
 			WriteState();
-			Log(L"overlay: toolbar installed on the UI layer");
+
+			const auto bounds = xaml::Window::Current().Bounds();
+			Log(L"overlay: toolbar installed on a " + std::wstring(winrt::get_class_name(m_layer))
+				+ L" UI layer (arranged " + std::to_wstring(static_cast<int>(m_layer.ActualWidth())) + L"x"
+				+ std::to_wstring(static_cast<int>(m_layer.ActualHeight())) + L"), window "
+				+ std::to_wstring(static_cast<int>(bounds.Width)) + L"x"
+				+ std::to_wstring(static_cast<int>(bounds.Height)));
 		}
 		catch (winrt::hresult_error const& error)
 		{
@@ -228,6 +255,7 @@ public:
 		if (m_selecting)
 		{
 			WriteState();
+			WriteArmed();
 			return true;
 		}
 
@@ -238,17 +266,42 @@ public:
 			// A faint wash, not a plain Transparent: this is the "select mode is on" affordance, and a
 			// layer that swallows every click while looking like nothing at all is a layer that reads
 			// as the app having hung.
-			m_capture.Background(Brush(0x1E, 0x00, 0x78, 0xD4));
-			m_capture.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);
-			m_capture.VerticalAlignment(xaml::VerticalAlignment::Stretch);
+			m_capture.Background(Brush(0x14, 0x00, 0x78, 0xD4));
+
+			// Explicit, for the same reason the root is: it has to cover the window, and it cannot get
+			// that from an alignment.
+			const auto bounds = xaml::Window::Current().Bounds();
+			m_capture.Width(bounds.Width);
+			m_capture.Height(bounds.Height);
 			m_capture.PointerPressed(
 				[this](winrt::Windows::Foundation::IInspectable const&, xinput::PointerRoutedEventArgs const& e)
 				{
 					OnPick(e);
 				});
 
+			// Hover feedback is the whole reason this layer takes pointer moves as well as presses:
+			// without it there is no evidence the overlay has noticed the pointer at all.
+			m_capture.PointerMoved(
+				[this](winrt::Windows::Foundation::IInspectable const&, xinput::PointerRoutedEventArgs const& e)
+				{
+					OnHover(e);
+				});
+			m_capture.PointerExited(
+				[this](winrt::Windows::Foundation::IInspectable const&, xinput::PointerRoutedEventArgs const&)
+				{
+					ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
+				});
+
 			// Beneath the Canvas that holds the toolbar, so the toolbar's own buttons stay clickable
 			// while the rest of the window is collecting the pick.
+			// After arrange, not before: the point of reporting it is to catch the case where XAML gave
+			// the layer nothing, and before arrange every layer looks like that.
+			m_capture.SizeChanged(
+				[this](winrt::Windows::Foundation::IInspectable const&, xaml::SizeChangedEventArgs const&)
+				{
+					WriteArmed();
+				});
+
 			m_root.Children().InsertAt(0, m_capture);
 			m_selecting = true;
 			Chrome();
@@ -280,6 +333,7 @@ public:
 
 		m_capture = nullptr;
 		m_selecting = false;
+		ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
 		Chrome();
 		WriteState();
 	}
@@ -289,6 +343,11 @@ private:
 	{
 		return xmedia::SolidColorBrush(winrt::Windows::UI::Color{ a, r, g, b });
 	}
+
+	// RoseMCP's own accent, the crimson the app icon's tile is drawn in (tools/Rose.ps1).
+	static xmedia::SolidColorBrush Accent() { return Brush(0xFF, 0xC2, 0x18, 0x5B); }
+
+	static xmedia::SolidColorBrush Idle() { return Brush(0xFF, 0x2C, 0x2C, 0x36); }
 
 	static double Clamp(double value, double low, double high)
 	{
@@ -302,72 +361,75 @@ private:
 	{
 		m_root = xcontrols::Grid();
 		m_root.Name(OverlayRootName);
-		m_root.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);
-		m_root.VerticalAlignment(xaml::VerticalAlignment::Stretch);
+
+		// Sized explicitly, never by alignment. Stretch only fills when the parent hands its children
+		// the space, and the diagnostics UI layer does not: it measures them at their desired size. A
+		// stretching root therefore came out 0x0, which was invisible in the worst way -- the toolbar
+		// still drew, because a Canvas does not clip what hangs outside it, and it still took input,
+		// because it has a size of its own. Only the full-bleed capture layer collapsed, so select mode
+		// armed, showed no tint, and never saw a single pointer event.
+		Resize();
 
 		m_canvas = xcontrols::Canvas();
 		m_root.Children().Append(m_canvas);
+
+		// The window is not a fixed size, and neither is the thing we are covering.
+		xaml::Window::Current().SizeChanged(
+			[this](winrt::Windows::Foundation::IInspectable const&,
+				winrt::Windows::UI::Core::WindowSizeChangedEventArgs const&)
+			{
+				Resize();
+				Place();
+			});
+
+		// The outlines go on first so the toolbar always draws over them. Hover is dashed and thin,
+		// the pick solid and heavier, so the two never read as the same thing.
+		m_hoverBox = Outline(1.0, true);
+		m_hoverBadge = Badge();
+		m_selectBox = Outline(2.0, false);
+		m_selectBadge = Badge();
 
 		m_panel = xcontrols::Border();
 		m_panel.Background(Brush(0xF0, 0x1C, 0x1C, 0x22));
 		m_panel.BorderBrush(Brush(0xFF, 0x53, 0x53, 0x63));
 		m_panel.BorderThickness(xaml::Thickness{ 1, 1, 1, 1 });
-		m_panel.CornerRadius(xaml::CornerRadius{ 6, 6, 6, 6 });
-
-		auto content = xcontrols::Grid();
-		content.Children().Append(BuildFullView());
-		content.Children().Append(BuildThumb());
-		m_panel.Child(content);
-
+		m_panel.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
+		m_panel.Child(BuildBar());
 		m_canvas.Children().Append(m_panel);
 
 		const auto bounds = xaml::Window::Current().Bounds();
-		m_left = bounds.Width > 248.0 ? bounds.Width - 232.0 : 16.0;
-		m_top = 16.0;
+		m_dragLeft = bounds.Width > 220.0 ? bounds.Width - 200.0 : 16.0;
+		m_dragTop = 16.0;
 		Place();
 		Chrome();
 	}
 
-	xaml::UIElement BuildFullView()
+	// One row: grip, mark, then the modes and Hide. No status text -- the feedback that matters is on
+	// the element being hovered or picked, not in a line of prose over the app.
+	xaml::UIElement BuildBar()
 	{
-		m_full = xcontrols::StackPanel();
-		m_full.Orientation(xcontrols::Orientation::Vertical);
-		m_full.Spacing(4);
-		m_full.Padding(xaml::Thickness{ 6, 4, 6, 6 });
+		m_bar = xcontrols::StackPanel();
+		m_bar.Orientation(xcontrols::Orientation::Horizontal);
+		m_bar.Spacing(4);
+		m_bar.Padding(xaml::Thickness{ 4, 3, 4, 3 });
+		m_bar.Children().Append(DragHandle());
+		m_bar.Children().Append(BuildMark());
 
-		auto header = xcontrols::StackPanel();
-		header.Orientation(xcontrols::Orientation::Horizontal);
-		header.Spacing(6);
-		header.Children().Append(DragHandle());
-		header.Children().Append(Label(L"RoseMCP", 12.0, 0xB8));
-		header.Children().Append(Chip(L"Hide", [this] { Collapse(true); }));
-		m_full.Children().Append(header);
+		m_idleButton = Chip(Glyph(IconIdle, 12.0), L"Idle", [this] { EndSelect(); });
+		m_selectButton = Chip(SelectIcon(), L"Select element", [this] { BeginSelect(); });
+		m_bar.Children().Append(m_idleButton);
+		m_bar.Children().Append(m_selectButton);
+		m_bar.Children().Append(Chip(Glyph(IconHide, 12.0), L"Hide", [this] { Collapse(true); }));
 
-		auto modes = xcontrols::StackPanel();
-		modes.Orientation(xcontrols::Orientation::Horizontal);
-		modes.Spacing(4);
-		m_idleButton = Chip(L"Idle", [this] { EndSelect(); });
-		m_selectButton = Chip(L"Select Element", [this] { BeginSelect(); });
-		modes.Children().Append(m_idleButton);
-		modes.Children().Append(m_selectButton);
-		m_full.Children().Append(modes);
-
-		m_status = Label(L"", 11.0, 0x8C);
-		m_status.TextWrapping(xaml::TextWrapping::Wrap);
-		m_status.MaxWidth(200);
-		m_full.Children().Append(m_status);
-
-		return m_full;
-	}
-
-	// The collapsed view is the drag handle: one small grip that moves the toolbar, and a tap on it
-	// brings the full view back. XAML suppresses Tapped after a manipulation, so the two do not fight.
-	xaml::UIElement BuildThumb()
-	{
+		// Collapsed is the grip on its own, in the same panel, so folding away changes nothing else.
 		m_thumb = xcontrols::Border();
 		m_thumb.Visibility(xaml::Visibility::Collapsed);
-		m_thumb.Padding(xaml::Thickness{ 8, 4, 8, 4 });
-		m_thumb.Child(Label(GripGlyph, 13.0, 0xB8));
+
+		// A Background is what makes the whole thumb draggable. Without one only the dots themselves
+		// hit-test, so grabbing it meant hitting a 2px circle exactly -- which is how it felt.
+		m_thumb.Background(Brush(0x00, 0x00, 0x00, 0x00));
+		m_thumb.Padding(xaml::Thickness{ 8, 5, 8, 5 });
+		m_thumb.Child(Dots(0xB8));
 		AttachDrag(m_thumb);
 		m_thumb.Tapped(
 			[this](winrt::Windows::Foundation::IInspectable const&, xinput::TappedRoutedEventArgs const& e)
@@ -376,17 +438,115 @@ private:
 				Collapse(false);
 			});
 
-		return m_thumb;
+		auto content = xcontrols::Grid();
+		content.Children().Append(m_bar);
+		content.Children().Append(m_thumb);
+		return content;
 	}
 
-	xcontrols::TextBlock Label(const wchar_t* text, double size, uint8_t grey)
+	// The mark, drawn rather than embedded. It is the same rhodonea rose as the app icon --
+	// r = cos(3*theta/2), even-odd filled, rotated 90 degrees, the curve tools/Rose.ps1 draws -- so the
+	// toolbar cannot drift from the brand. As geometry it is exact at any size and any DPI, takes its
+	// colour from the toolbar, and needs no resource, no decode and nothing asynchronous at all.
+	//
+	// The rose alone, no monogram: above 32px the icon adds the stem and leg that make the R, and at
+	// the size this is drawn those are sub-pixel. There is no tile behind it either -- the toolbar is
+	// already a dark panel, and a second rounded square inside one reads as a sticker.
+	//
+	// n=3 and d=2 are not both odd, so the curve closes at 2*d*pi and has 2n = 6 petals. Even-odd is
+	// the whole point: it cancels where the curve crosses itself, and that is what makes the flower.
+	xaml::UIElement BuildMark()
+	{
+		constexpr double pi = 3.14159265358979323846;
+		constexpr double extent = 16.0;
+		constexpr double centre = extent / 2.0;
+		constexpr double radius = extent * 0.46; // no tile corner to keep clear of, so wider than 0.36
+		constexpr double rotation = pi / 2.0;
+		constexpr double k = 3.0 / 2.0;
+		constexpr double end = 4.0 * pi;
+		constexpr int steps = 720;               // smooth at this size; Rose.ps1's 2400 is for 256px
+
+		winrt::Windows::Foundation::Point start{};
+		xmedia::PolyLineSegment segment;
+		for (int i = 0; i <= steps; i++)
+		{
+			const double t = end * i / steps;
+			const double r = radius * std::cos(k * t);
+			const winrt::Windows::Foundation::Point point{
+				static_cast<float>(centre + r * std::cos(t + rotation)),
+				static_cast<float>(centre + r * std::sin(t + rotation)) };
+
+			if (i == 0)
+			{
+				start = point;
+			}
+			else
+			{
+				segment.Points().Append(point);
+			}
+		}
+
+		xmedia::PathFigure figure;
+		figure.StartPoint(start);
+		figure.IsClosed(true);
+		figure.IsFilled(true);
+		figure.Segments().Append(segment);
+
+		xmedia::PathGeometry geometry;
+		geometry.FillRule(xmedia::FillRule::EvenOdd);
+		geometry.Figures().Append(figure);
+
+		m_mark = xshapes::Path();
+		m_mark.Data(geometry);
+		m_mark.Fill(Brush(0xFF, 0xE4, 0xE4, 0xEC));
+		m_mark.Width(extent);
+		m_mark.Height(extent);
+		m_mark.VerticalAlignment(xaml::VerticalAlignment::Center);
+		m_mark.Margin(xaml::Thickness{ 2, 0, 3, 0 });
+		return m_mark;
+	}
+
+	xcontrols::TextBlock Label(const wchar_t* text, double size, uint8_t grey, const wchar_t* fontFamily)
 	{
 		auto block = xcontrols::TextBlock();
 		block.Text(text);
 		block.FontSize(size);
+		if (fontFamily) block.FontFamily(xmedia::FontFamily(fontFamily));
 		block.Foreground(Brush(0xFF, grey, grey, grey));
+		block.HorizontalAlignment(xaml::HorizontalAlignment::Center);
 		block.VerticalAlignment(xaml::VerticalAlignment::Center);
 		return block;
+	}
+
+	// Six dots, drawn rather than typed. The obvious characters for a grip -- braille U+283F, MDL2's
+	// GripperBar -- are not in Segoe UI, so a glyph here is a hollow box on some machines depending on
+	// what the font fallback finds. Shapes cannot miss, and the dot count is then exactly what was asked.
+	static xaml::UIElement Dots(uint8_t grey)
+	{
+		auto columns = xcontrols::StackPanel();
+		columns.Orientation(xcontrols::Orientation::Horizontal);
+		columns.Spacing(2);
+		columns.VerticalAlignment(xaml::VerticalAlignment::Center);
+
+		for (int column = 0; column < 2; column++)
+		{
+			auto rows = xcontrols::StackPanel();
+			rows.Orientation(xcontrols::Orientation::Vertical);
+			rows.Spacing(2);
+
+			for (int row = 0; row < 3; row++)
+			{
+				auto dot = xshapes::Ellipse();
+				dot.Width(2);
+				dot.Height(2);
+				dot.Fill(Brush(0xFF, grey, grey, grey));
+				rows.Children().Append(dot);
+			}
+
+			columns.Children().Append(rows);
+		}
+
+		return columns;
 	}
 
 	xcontrols::Border DragHandle()
@@ -395,26 +555,126 @@ private:
 
 		// A Background is what makes it take input at all; transparent keeps it from being seen.
 		handle.Background(Brush(0x00, 0x00, 0x00, 0x00));
-		handle.Padding(xaml::Thickness{ 2, 0, 2, 0 });
-		handle.Child(Label(GripGlyph, 13.0, 0x8C));
+		handle.Padding(xaml::Thickness{ 3, 0, 3, 0 });
+		handle.Child(Dots(0x8C));
 		AttachDrag(handle);
 		return handle;
 	}
 
-	xcontrols::Button Chip(const wchar_t* text, std::function<void()> action)
+	xcontrols::TextBlock Glyph(const wchar_t* glyph, double size)
+	{
+		return Label(glyph, size, 0xDC, L"Segoe MDL2 Assets");
+	}
+
+	// A pointer inside a marquee. MDL2 has no single glyph for it -- the nearest, SelectAll, is a
+	// dense grid that turns to mush at button size -- so it is composed: a dashed rectangle with the
+	// same pointer the Idle button uses, smaller and offset, sitting in it.
+	xaml::UIElement SelectIcon()
+	{
+		auto host = xcontrols::Grid();
+		host.Width(16);
+		host.Height(16);
+
+		auto marquee = xshapes::Rectangle();
+		marquee.Stroke(Brush(0xFF, 0xDC, 0xDC, 0xDC));
+		marquee.StrokeThickness(1);
+		marquee.StrokeDashArray().Append(2);
+		marquee.StrokeDashArray().Append(2);
+		// Both centred in the host, so the composition has no built-in bias; the pointer is then
+		// nudged down and right off that centre, which is where a cursor sits inside a marquee.
+		marquee.Width(13);
+		marquee.Height(13);
+		marquee.HorizontalAlignment(xaml::HorizontalAlignment::Center);
+		marquee.VerticalAlignment(xaml::VerticalAlignment::Center);
+		host.Children().Append(marquee);
+
+		auto pointer = Glyph(IconIdle, 10.0);
+		pointer.HorizontalAlignment(xaml::HorizontalAlignment::Center);
+		pointer.VerticalAlignment(xaml::VerticalAlignment::Center);
+		pointer.Margin(xaml::Thickness{ 4, 3, 0, 0 });
+		host.Children().Append(pointer);
+
+		return host;
+	}
+
+	// Icon-only, with the words moved into a tooltip: a glyph that misses still leaves the meaning
+	// reachable, and the toolbar stays out of the way of the app it is sitting on.
+	xcontrols::Button Chip(xaml::UIElement const& content, const wchar_t* tip, std::function<void()> action)
 	{
 		auto button = xcontrols::Button();
-		button.Content(winrt::box_value(winrt::hstring{ text }));
-		button.FontSize(11.0);
-		button.Padding(xaml::Thickness{ 8, 2, 8, 3 });
+		button.Content(content);
+
+		// Square, and explicitly so: a Button sized by its padding comes out a few pixels wider than
+		// tall with an icon in it, and three of those in a row is the thing that looks unconsidered.
+		button.Padding(xaml::Thickness{ 0, 0, 0, 0 });
+		button.Width(24);
+		button.Height(24);
 		button.MinWidth(0);
 		button.MinHeight(0);
-		button.Background(Brush(0xFF, 0x2C, 0x2C, 0x36));
-		button.Foreground(Brush(0xFF, 0xDC, 0xDC, 0xE4));
+		button.Background(Idle());
 		button.BorderThickness(xaml::Thickness{ 0, 0, 0, 0 });
+		button.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
+		button.VerticalAlignment(xaml::VerticalAlignment::Center);
+		xcontrols::ToolTipService::SetToolTip(button, winrt::box_value(winrt::hstring{ tip }));
 		button.Click(
 			[action](winrt::Windows::Foundation::IInspectable const&, xaml::RoutedEventArgs const&) { action(); });
 		return button;
+	}
+
+	// Two strokes, not one: the accent rose, with a dark companion sitting a pixel outside it.
+	//
+	// One rose stroke is invisible on a rose-coloured app, which is not a hypothetical -- it is the
+	// obvious thing to hit the moment RoseMCP is pointed at something built with RoseMCP's own palette.
+	// UWP does offer a blend mode for this (ElementCompositeMode::MinBlend, which exists precisely to
+	// make adorners readable over arbitrary content), but min() only separates the outline from a
+	// *lighter* ground -- over a dark app it darkens the outline into the background instead, trading
+	// one invisible case for another. Two contrasting strokes is what design tools do, and it holds on
+	// any ground at all.
+	//
+	// The pair lives in a Grid so a caller moves one element: the rose stretches to the bounds, and the
+	// dark one is inset by a negative margin so its stroke lands just outside the rose's.
+	xcontrols::Grid Outline(double thickness, bool dashed)
+	{
+		auto box = xcontrols::Grid();
+		box.Visibility(xaml::Visibility::Collapsed);
+		box.IsHitTestVisible(false);
+
+		auto contrast = xshapes::Rectangle();
+		contrast.Stroke(Brush(0xB0, 0x10, 0x10, 0x14));
+		contrast.StrokeThickness(1);
+		contrast.Margin(xaml::Thickness{ -thickness, -thickness, -thickness, -thickness });
+		box.Children().Append(contrast);
+
+		auto rose = xshapes::Rectangle();
+		rose.Stroke(Accent());
+		rose.StrokeThickness(thickness);
+		if (dashed)
+		{
+			rose.StrokeDashArray().Append(3);
+			rose.StrokeDashArray().Append(2);
+			contrast.StrokeDashArray().Append(3);
+			contrast.StrokeDashArray().Append(2);
+		}
+
+		box.Children().Append(rose);
+
+		m_canvas.Children().Append(box);
+		return box;
+	}
+
+	xcontrols::Border Badge()
+	{
+		auto badge = xcontrols::Border();
+		badge.Visibility(xaml::Visibility::Collapsed);
+		badge.IsHitTestVisible(false);
+		badge.Background(Accent());
+		badge.BorderBrush(Brush(0x90, 0x10, 0x10, 0x14));
+		badge.BorderThickness(xaml::Thickness{ 1, 1, 1, 1 });
+		badge.CornerRadius(xaml::CornerRadius{ 2, 2, 2, 2 });
+		badge.Padding(xaml::Thickness{ 4, 1, 4, 2 });
+		badge.Child(Label(L"", 11.0, 0xF0, nullptr));
+		m_canvas.Children().Append(badge);
+		return badge;
 	}
 
 	void AttachDrag(xaml::UIElement const& handle)
@@ -424,56 +684,183 @@ private:
 			[this](winrt::Windows::Foundation::IInspectable const&, xinput::ManipulationDeltaRoutedEventArgs const& e)
 			{
 				const auto translation = e.Delta().Translation;
-				m_left += translation.X;
-				m_top += translation.Y;
+				m_dragLeft += translation.X;
+				m_dragTop += translation.Y;
 				Place();
 				e.Handled(true);
 			});
 	}
 
-	// Kept inside the window, so a toolbar dragged at the edge cannot be lost off-screen.
+	// The drag position is tracked unclamped and clamped only on the way to the Canvas. Clamping the
+	// stored value instead is what made the toolbar feel detached from the pointer: once it had been
+	// pinned at an edge the stored position no longer matched where the pointer actually was, so the
+	// panel set off again the instant the pointer turned around, while it was still outside the window.
+	void Resize()
+	{
+		const auto bounds = xaml::Window::Current().Bounds();
+		if (m_root)
+		{
+			m_root.Width(bounds.Width);
+			m_root.Height(bounds.Height);
+		}
+
+		if (m_capture)
+		{
+			m_capture.Width(bounds.Width);
+			m_capture.Height(bounds.Height);
+		}
+	}
+
 	void Place()
 	{
 		if (!m_panel) return;
 
 		const auto bounds = xaml::Window::Current().Bounds();
-		m_left = Clamp(m_left, 0.0, bounds.Width - m_panel.ActualWidth());
-		m_top = Clamp(m_top, 0.0, bounds.Height - m_panel.ActualHeight());
-		xcontrols::Canvas::SetLeft(m_panel, m_left);
-		xcontrols::Canvas::SetTop(m_panel, m_top);
+		xcontrols::Canvas::SetLeft(m_panel, Clamp(m_dragLeft, 0.0, bounds.Width - m_panel.ActualWidth()));
+		xcontrols::Canvas::SetTop(m_panel, Clamp(m_dragTop, 0.0, bounds.Height - m_panel.ActualHeight()));
 	}
 
 	void Collapse(bool collapsed)
 	{
-		if (!m_full || !m_thumb) return;
+		if (!m_bar || !m_thumb) return;
 
-		m_full.Visibility(collapsed ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
+		m_bar.Visibility(collapsed ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
 		m_thumb.Visibility(collapsed ? xaml::Visibility::Visible : xaml::Visibility::Collapsed);
 	}
 
-	// Which mode is current, said in the toolbar itself: the active button is lit and the status line
-	// carries the last pick. Without this there is no way to tell armed from idle.
+	// Which mode is current, said in the toolbar itself: the active button wears the accent, the
+	// inactive one the panel's own grey.
 	void Chrome()
 	{
-		if (m_idleButton && m_selectButton)
+		if (!m_idleButton || !m_selectButton) return;
+
+		m_idleButton.Background(m_selecting ? Idle() : Accent());
+		m_selectButton.Background(m_selecting ? Accent() : Idle());
+	}
+
+	// Where an element sits in the window, in the coordinates the overlay's Canvas uses -- the UI layer
+	// is sized to the window, so the window root's space is the Canvas's space.
+	bool Bounds(xaml::UIElement const& element, winrt::Windows::Foundation::Rect& rect)
+	{
+		try
 		{
-			m_idleButton.Background(m_selecting ? Brush(0xFF, 0x2C, 0x2C, 0x36) : Brush(0xFF, 0x3E, 0x3E, 0x4C));
-			m_selectButton.Background(m_selecting ? Brush(0xFF, 0x00, 0x5A, 0xA8) : Brush(0xFF, 0x2C, 0x2C, 0x36));
+			const auto root = xaml::Window::Current().Content();
+			if (!root) return false;
+
+			const auto transform = element.TransformToVisual(root);
+			const auto origin = transform.TransformPoint(winrt::Windows::Foundation::Point{ 0, 0 });
+			const auto size = element.RenderSize();
+			if (size.Width <= 0 || size.Height <= 0) return false;
+
+			rect = winrt::Windows::Foundation::Rect{ origin.X, origin.Y, size.Width, size.Height };
+			return true;
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Trace(std::wstring(L"bounds failed: ") + error.message().c_str());
+			return false;
+		}
+	}
+
+	static std::wstring Describe(xaml::UIElement const& element)
+	{
+		std::wstring typeName{ winrt::get_class_name(element) };
+		const auto lastDot = typeName.rfind(L'.');
+		if (lastDot != std::wstring::npos) typeName = typeName.substr(lastDot + 1);
+
+		std::wstring name;
+		if (const auto frameworkElement = element.try_as<xaml::FrameworkElement>())
+		{
+			name = frameworkElement.Name();
 		}
 
-		if (!m_status) return;
+		return name.empty() ? typeName : (typeName + L" \x00B7 " + name);
+	}
 
-		if (m_selecting)
+	// Moves an outline and its badge onto an element, or hides both when there is nothing to show.
+	bool ShowBox(
+		xcontrols::Grid const& box,
+		xcontrols::Border const& badge,
+		xaml::UIElement const& element,
+		std::wstring const& caption)
+	{
+		winrt::Windows::Foundation::Rect rect{};
+		if (!box || !badge) return false;
+
+		if (!element || !Bounds(element, rect))
 		{
-			m_status.Text(L"Click an element to select it.");
+			box.Visibility(xaml::Visibility::Collapsed);
+			badge.Visibility(xaml::Visibility::Collapsed);
+			return false;
 		}
-		else if (!m_selectedLabel.empty())
+
+		box.Width(rect.Width);
+		box.Height(rect.Height);
+		xcontrols::Canvas::SetLeft(box, rect.X);
+		xcontrols::Canvas::SetTop(box, rect.Y);
+		box.Visibility(xaml::Visibility::Visible);
+
+		if (const auto text = badge.Child().try_as<xcontrols::TextBlock>()) text.Text(caption);
+
+		// Above the element, unless that would be off the top of the window, in which case inside it.
+		const double badgeHeight = 18.0;
+		const double top = rect.Y - badgeHeight - 2.0;
+		xcontrols::Canvas::SetLeft(badge, rect.X);
+		xcontrols::Canvas::SetTop(badge, top < 0.0 ? rect.Y + 2.0 : top);
+		badge.Visibility(xaml::Visibility::Visible);
+		return true;
+	}
+
+	xaml::UIElement Beneath(winrt::Windows::Foundation::Point const& point, winrt::Windows::Foundation::Rect& rect)
+	{
+		const auto root = xaml::Window::Current().Content();
+		if (!root)
 		{
-			m_status.Text(L"Selected " + m_selectedLabel);
+			Trace(L"beneath: the window has no content");
+			return nullptr;
 		}
-		else
+
+		const auto found = xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, true);
+		uint32_t considered = 0;
+		for (auto&& element : found)
 		{
-			m_status.Text(L"Idle.");
+			considered++;
+			if (IsOurs(element)) continue;      // Our own layers, if they are ever in this tree at all.
+			if (!Bounds(element, rect)) continue; // Zero-sized or not laid out: not what was pointed at.
+
+			Trace(L"beneath: " + Describe(element) + L" at " + std::to_wstring(static_cast<int>(rect.X))
+				+ L"," + std::to_wstring(static_cast<int>(rect.Y)) + L" "
+				+ std::to_wstring(static_cast<int>(rect.Width)) + L"x"
+				+ std::to_wstring(static_cast<int>(rect.Height))
+				+ L" (of " + std::to_wstring(considered) + L" considered)");
+			return element;
+		}
+
+		Trace(L"beneath: nothing usable under " + std::to_wstring(static_cast<int>(point.X)) + L","
+			+ std::to_wstring(static_cast<int>(point.Y)) + L" (" + std::to_wstring(considered) + L" considered)");
+		return nullptr;
+	}
+
+	// The first few pointer moves are traced and the rest are not: enough to tell a hover that found
+	// nothing from one that found something and failed to draw it, without a line per mouse move.
+	void Trace(const std::wstring& line)
+	{
+		if (m_traces >= 6) return;
+		m_traces++;
+		Log(line);
+	}
+
+	void OnHover(xinput::PointerRoutedEventArgs const& e)
+	{
+		try
+		{
+			winrt::Windows::Foundation::Rect rect{};
+			const auto element = Beneath(e.GetCurrentPoint(nullptr).Position(), rect);
+			ShowBox(m_hoverBox, m_hoverBadge, element, element ? Describe(element) : std::wstring());
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Trace(std::wstring(L"hover failed: ") + error.message().c_str());
 		}
 	}
 
@@ -482,14 +869,15 @@ private:
 		try
 		{
 			e.Handled(true); // Swallow the click so it does not also reach the app.
-			const auto point = e.GetCurrentPoint(nullptr).Position();
-			const auto root = xaml::Window::Current().Content();
-
-			for (auto&& element : xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, true))
+			winrt::Windows::Foundation::Rect rect{};
+			if (const auto element = Beneath(e.GetCurrentPoint(nullptr).Position(), rect))
 			{
-				if (IsOurs(element)) continue; // Our own layers are on top; look past them.
 				Record(element);
-				break;
+
+				// The picked element keeps its outline after select mode ends: that persistent mark is
+				// the evidence of what "the selected element" now means, for the person and the agent.
+				const bool drawn = ShowBox(m_selectBox, m_selectBadge, element, Describe(element));
+				Log(L"overlay: selection outline " + std::wstring(drawn ? L"drawn" : L"NOT drawn"));
 			}
 		}
 		catch (winrt::hresult_error const& error)
@@ -530,8 +918,6 @@ private:
 			name = frameworkElement.Name();
 		}
 
-		m_selectedLabel = name.empty() ? typeName : (typeName + L" (" + name + L")");
-
 		if (g_workDir.empty()) return;
 
 		{
@@ -545,7 +931,7 @@ private:
 
 		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
 		if (ready) ready << handle << L"\n";
-		Log(L"overlay: recorded " + m_selectedLabel);
+		Log(L"overlay: recorded " + typeName + (name.empty() ? L"" : (L" (" + name + L")")));
 	}
 
 	// The mode, on disk, because the person can change it from the toolbar without the host being in
@@ -556,14 +942,22 @@ private:
 
 		std::wofstream state(g_workDir + L"\\overlay.state", std::ios::trunc);
 		if (state) state << (m_selecting ? L"select" : L"idle") << L"\n";
-
-		if (!m_selecting) return;
-
-		std::wofstream armed(g_workDir + L"\\select.ready", std::ios::trunc);
-		if (armed) armed << L"armed\n";
 	}
 
-	static constexpr const wchar_t* GripGlyph = L"\x2237";
+	// "armed <width>x<height>", the extent XAML arranged the capture layer at. A zero here is the
+	// whole bug this reports: select mode that is on, invisible, and cannot be pointed at.
+	void WriteArmed()
+	{
+		if (g_workDir.empty() || !m_capture) return;
+
+		const int width = static_cast<int>(m_capture.ActualWidth());
+		const int height = static_cast<int>(m_capture.ActualHeight());
+
+		std::wofstream armed(g_workDir + L"\\select.ready", std::ios::trunc);
+		if (armed) armed << L"armed " << width << L"x" << height << L"\n";
+
+		Log(L"overlay: capture layer arranged at " + std::to_wstring(width) + L"x" + std::to_wstring(height));
+	}
 
 	IXamlDiagnostics* m_diagnostics = nullptr;
 	xcontrols::Panel m_layer{ nullptr };
@@ -571,15 +965,19 @@ private:
 	xcontrols::Canvas m_canvas{ nullptr };
 	xcontrols::Border m_panel{ nullptr };
 	xcontrols::Grid m_capture{ nullptr };
-	xcontrols::StackPanel m_full{ nullptr };
+	xcontrols::StackPanel m_bar{ nullptr };
 	xcontrols::Border m_thumb{ nullptr };
-	xcontrols::TextBlock m_status{ nullptr };
+	xshapes::Path m_mark{ nullptr };
 	xcontrols::Button m_idleButton{ nullptr };
 	xcontrols::Button m_selectButton{ nullptr };
-	std::wstring m_selectedLabel;
-	double m_left = 16.0;
-	double m_top = 16.0;
+	xcontrols::Grid m_hoverBox{ nullptr };
+	xcontrols::Grid m_selectBox{ nullptr };
+	xcontrols::Border m_hoverBadge{ nullptr };
+	xcontrols::Border m_selectBadge{ nullptr };
+	double m_dragLeft = 16.0;
+	double m_dragTop = 16.0;
 	bool m_selecting = false;
+	int m_traces = 0;
 };
 
 // Leaked deliberately: see the note on RoseOverlay. Only ever touched on the app's UI thread.
@@ -940,27 +1338,55 @@ private:
 		if (ready) ready << commands.size() << L"\n";
 	}
 
+	// The host sends the type it thinks the value should be, inferred from the property's name and the
+	// shape of the string. That guess is right for the common cases and wrong whenever a property's
+	// type cannot be read off its value -- CornerRadius="0" parses as a number, so it arrived as a
+	// Double, which CreateInstance built without complaint and SetProperty then rejected with a bare
+	// E_FAIL. So the hint is tried first, because it carries intent the runtime does not have (a colour
+	// string is meant as a SolidColorBrush even where the live value is some other Brush), and the
+	// property's own declared type is the fallback, because it is a fact rather than a guess.
 	std::wstring ApplySetProperty(const Command& command)
 	{
 		InstanceHandle target = 0;
 		if (!Find(command.target, target)) return L"target not found";
 
 		unsigned int index = 0;
-		if (!PropertyIndex(target, command.property, index)) return L"property not found";
+		std::wstring declaredType;
+		if (!PropertyIndex(target, command.property, index, declaredType)) return L"property not found";
 
-		BSTR typeName = SysAllocString(command.valueType.c_str());
-		BSTR value = SysAllocString(command.value.c_str());
-		InstanceHandle valueHandle = 0;
-		HRESULT hr = m_tree->CreateInstance(typeName, value, &valueHandle);
-		SysFreeString(typeName);
-		SysFreeString(value);
-		if (FAILED(hr)) return L"CreateInstance failed 0x" + Hex(hr);
+		std::wstring attempted;
+		std::wstring failure;
+		for (const auto& type : { command.valueType, declaredType })
+		{
+			if (type.empty() || type == attempted) continue;
+			attempted = type;
 
-		hr = m_tree->SetProperty(target, valueHandle, index);
-		if (hr != S_OK) return L"SetProperty failed 0x" + Hex(hr);
+			InstanceHandle valueHandle = 0;
+			BSTR typeName = SysAllocString(type.c_str());
+			BSTR value = SysAllocString(command.value.c_str());
+			HRESULT hr = m_tree->CreateInstance(typeName, value, &valueHandle);
+			SysFreeString(typeName);
+			SysFreeString(value);
+			if (FAILED(hr))
+			{
+				failure = L"CreateInstance(" + type + L") failed 0x" + Hex(hr);
+				continue;
+			}
 
-		Log(L"  set " + command.target + L"." + command.property + L" = " + command.value);
-		return L"applied";
+			hr = m_tree->SetProperty(target, valueHandle, index);
+			if (hr == S_OK)
+			{
+				Log(L"  set " + command.target + L"." + command.property + L" = " + command.value
+					+ L" (as " + type + L")");
+				return L"applied";
+			}
+
+			failure = L"SetProperty(" + type + L") failed 0x" + Hex(hr);
+		}
+
+		if (failure.empty()) failure = L"no value type to build " + command.property + L" from";
+		Log(L"  " + command.target + L"." + command.property + L": " + failure);
+		return failure;
 	}
 
 	std::wstring ApplyClearProperty(const Command& command)
@@ -993,6 +1419,15 @@ private:
 
 	bool PropertyIndex(InstanceHandle handle, const std::wstring& name, unsigned int& index)
 	{
+		std::wstring ignored;
+		return PropertyIndex(handle, name, index, ignored);
+	}
+
+	// Also reports the property's own declared value type. That is the one authoritative answer to
+	// "what does this property want", and the apply side needs it: a value built as the wrong type is
+	// created quite happily and only fails at SetProperty, with an E_FAIL that names nothing.
+	bool PropertyIndex(InstanceHandle handle, const std::wstring& name, unsigned int& index, std::wstring& valueType)
+	{
 		unsigned int sourceCount = 0;
 		unsigned int propertyCount = 0;
 		PropertyChainSource* sources = nullptr;
@@ -1006,6 +1441,7 @@ private:
 			if (!found && values[i].PropertyName && name == values[i].PropertyName)
 			{
 				index = values[i].Index;
+				valueType = values[i].Type ? values[i].Type : L"";
 				found = true;
 			}
 		}

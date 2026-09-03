@@ -95,6 +95,61 @@ function Publish-Tree
     # overwriting shared assemblies with windows-targeted variants of a different version.
     Invoke-Dotnet @('publish', "$repo/src/RoseMcp.Tray", '-c', 'Release', '-r', $Rid,
         '--self-contained', 'false', '-o', "$Into/tray") "RoseMcp.Tray ($Rid)"
+
+    Publish-LiveAppHosts -Into $Into
+}
+
+function Publish-LiveAppHosts
+{
+    <#
+        The debug host is published for every architecture, not just the broker's, because it has to
+        match the *target* process rather than the broker: an ARM64 machine still needs an x64 host to
+        debug a classic UWP app, which runs emulated. ICorDebug offers no cross-architecture path, so
+        this is not an optimisation to skip -- without the x64 host, debugging a packaged app on ARM64
+        fails with nothing to fall back on.
+
+        The layout is the one LiveAppHostLauncher looks for: live-app/<rid> beside the broker, with
+        each host's native XAML provider under xaml-provider/<rid> beside that host.
+    #>
+    param([string] $Into)
+
+    foreach ($hostRid in 'win-x64', 'win-arm64')
+    {
+        $hostDir = "$Into/live-app/$hostRid"
+        Invoke-Dotnet @('publish', "$repo/src/RoseMcp.LiveApp", '-c', 'Release', '-r', $hostRid,
+            '--self-contained', 'false', '-o', $hostDir) "RoseMcp.LiveApp ($hostRid)"
+
+        Copy-XamlProvider -Rid $hostRid -HostDir $hostDir
+    }
+}
+
+function Copy-XamlProvider
+{
+    <#
+        The provider is native C++ and is injected into the target, so it matches the target's
+        architecture exactly. It needs the MSVC toolset, which a machine that only publishes managed
+        code will not have -- so a missing toolset is a warning and the debugger ships without XAML
+        inspection, rather than the whole deploy failing over a capability the user may not want.
+    #>
+    param([string] $Rid, [string] $HostDir)
+
+    $platform = if ($Rid -eq 'win-arm64') { 'arm64' } else { 'x64' }
+    $build = "$repo/src/RoseMcp.Xaml.Uwp.Tap/build.ps1"
+    $dll = "$repo/src/RoseMcp.Xaml.Uwp.Tap/bin/$platform/Release/RoseMcp.Xaml.Uwp.Tap.dll"
+
+    Write-Host "  building the XAML provider ($platform)"
+    & pwsh -NoProfile -File $build -Platform $platform -Configuration Release *> $null
+
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dll))
+    {
+        Write-Warning "  the XAML provider could not be built for $platform; XAML inspection and hot reload will be unavailable for $Rid targets."
+        return
+    }
+
+    $into = "$HostDir/xaml-provider/$Rid"
+    New-Item -ItemType Directory -Force -Path $into | Out-Null
+    Copy-Item $dll $into -Force
+    Write-Host "  xaml provider ($platform) -> $into"
 }
 
 function Stop-Tray

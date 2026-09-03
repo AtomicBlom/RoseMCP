@@ -21,9 +21,17 @@ public static class LiveAppHostLauncher
 		var configured = Environment.GetEnvironmentVariable("ROSEMCP_LIVEAPP_HOST");
 		if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return Path.GetFullPath(configured);
 
-		// A published layout places per-RID hosts beside the broker under a well-known folder.
-		var alongside = Path.Combine(AppContext.BaseDirectory, "live-app", rid, executableName);
-		if (File.Exists(alongside)) return alongside;
+		// A published layout places per-RID hosts beside the broker under a well-known folder. Two
+		// places count as "beside", because two things host the broker: the server publishes flat into
+		// the install root, and the tray goes in a tray/ subfolder deliberately -- WinUI drags in
+		// enough that mixing it with the server risks one overwriting the other's shared assemblies.
+		// So the hosts are published once, into the root, and the tray finds them one level up rather
+		// than every deploy shipping a second copy of both architectures.
+		foreach (var root in new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "..") })
+		{
+			var alongside = Path.Combine(root, "live-app", rid, executableName);
+			if (File.Exists(alongside)) return Path.GetFullPath(alongside);
+		}
 
 		var inRepository = FindInRepository(executableName, rid);
 		if (inRepository is not null) return inRepository;

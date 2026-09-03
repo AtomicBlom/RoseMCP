@@ -32,6 +32,11 @@ public static class XamlDiff
 		["Margin"] = "Windows.UI.Xaml.Thickness",
 		["Padding"] = "Windows.UI.Xaml.Thickness",
 		["BorderThickness"] = "Windows.UI.Xaml.Thickness",
+
+		// A single number, so InferValueType would otherwise call it a Double -- which builds fine and
+		// then fails at SetProperty. The provider recovers from that by asking the property its own
+		// type, but getting it right here means the common case takes no round trip.
+		["CornerRadius"] = "Windows.UI.Xaml.CornerRadius",
 	};
 
 	public static XamlDiffResult Compute(string oldXaml, string newXaml)

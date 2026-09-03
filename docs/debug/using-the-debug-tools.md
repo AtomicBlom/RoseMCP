@@ -52,10 +52,13 @@ selected" -- the agent reads it with `rose_xaml_selection`, and the handle it ge
 - **The app stays usable.** The overlay carries no background of its own, and a XAML panel with no
   background takes no part in hit testing, so clicks pass straight through to the app. Only the toolbar
   itself takes input. There is no modifier chord to collide with anything the app already uses.
-- **Select mode is visible.** While it is armed the window carries a faint tint and the toolbar says so;
-  the click that picks an element is swallowed rather than also reaching the app. **Idle** cancels.
+- **Select mode is visible.** While it is armed the window carries a faint tint, the mode button wears
+  RoseMCP's accent, and the element under the pointer is outlined with a badge naming it. The click
+  that picks one is swallowed rather than also reaching the app. **Idle** cancels.
+- **The pick leaves a mark.** The chosen element keeps a solid outline and badge after select mode
+  ends, so "the selected element" means the same thing to you and to the agent until the next pick.
 - **It moves and folds away.** Drag it by the grip; **Hide** collapses it to that grip alone, and a tap
-  on the grip brings it back.
+  on the grip brings it back. It stays inside the window however hard you throw it.
 - Either side can arm select mode, and both are the same act -- the mode is read back from the toolbar
   rather than assumed, so an agent can tell whether a person has armed or cancelled it.
 - A selection sticks until the next pick is armed, so reading the tree or some properties in between

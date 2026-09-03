@@ -1,4 +1,8 @@
-// RoseXamlTap: a XAML Diagnostics provider (TAP) injected into a running UWP/WinUI app.
+// RoseMcp.Xaml.Uwp.Tap: a XAML Diagnostics provider (TAP) injected into a running UWP app.
+//
+// Named for the XAML framework it binds to rather than the app model: everything here is
+// Windows.UI.Xaml, which classic and modern UWP both use. WinUI 3 is Microsoft.UI.Xaml, a different
+// dll to initialise and a different set of projections, so it earns a sibling rather than a flag.
 //
 // InitializeXamlDiagnosticsEx (in Windows.UI.Xaml.dll), called from the live-app host, loads this DLL
 // into the target and hands the COM object below the live XAML diagnostics site. From that site we
@@ -27,19 +31,22 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
+#include <functional>
 #include <fstream>
 #include <sstream>
 #include <mutex>
 #include <cstdlib>
 
-// C++/WinRT projections, for the interactive select-mode overlay (#18): create a transparent
-// input-capturing element on the diagnostics UI layer, hit-test the element under the click, and
-// report it. Included after the ABI headers above; the two live in separate namespaces.
+// C++/WinRT projections, for the resident in-app toolbar (#18): build the overlay on the diagnostics
+// UI layer, hit-test the element under a click, and report it. Included after the ABI headers above;
+// the two live in separate namespaces.
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Xaml.h>
 #include <winrt/Windows.UI.Xaml.Controls.h>
+#include <winrt/Windows.UI.Xaml.Controls.Primitives.h> // ButtonBase::Click, or it is "auto before defined"
 #include <winrt/Windows.UI.Xaml.Media.h>
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.Xaml.Input.h>
@@ -50,7 +57,7 @@ namespace xmedia = winrt::Windows::UI::Xaml::Media;
 namespace xinput = winrt::Windows::UI::Xaml::Input;
 
 // {7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6}
-static const CLSID CLSID_RoseXamlTap =
+static const CLSID CLSID_RoseTap =
 { 0x7b9e5c10, 0x2d4a, 0x4f3b, { 0x9e, 0x21, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6 } };
 
 static std::atomic<long> g_lockCount{ 0 };
@@ -66,12 +73,12 @@ static std::wstring Hex(HRESULT hr)
 
 static void Log(const std::wstring& line)
 {
-	OutputDebugStringW((L"[RoseXamlTap] " + line + L"\n").c_str());
+	OutputDebugStringW((L"[RoseMcp.Xaml.Uwp.Tap] " + line + L"\n").c_str());
 
 	std::lock_guard<std::mutex> guard(g_logMutex);
 	if (g_workDir.empty()) return;
 
-	std::wofstream file(g_workDir + L"\\rosexamltap.log", std::ios::app);
+	std::wofstream file(g_workDir + L"\\rosemcp.xaml.uwp.tap.log", std::ios::app);
 	if (file) file << line << L"\n";
 }
 
@@ -150,6 +157,440 @@ struct Command
 	std::wstring value;
 };
 
+// The name the overlay's root carries in the live tree, so the tree snapshot can drop RoseMCP's own
+// UI instead of reporting it as part of the app's.
+static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
+
+// The resident in-app toolbar (#18). Installed on the diagnostics UI layer at the first injection and
+// left there for the life of the app, because the point of it is that a person can arm select mode
+// themselves and then talk to the agent -- rather than having to ask the agent to arm it first.
+//
+// Click-through is structural here, not a trick. A XAML panel whose Background is null does not take
+// part in hit testing, so the root Grid and the Canvas inside it are invisible to input and every
+// click reaches the app underneath; only the toolbar, which does have a Background, takes input.
+// Select mode adds a full-bleed capture layer beneath the toolbar, and a Background that is merely
+// transparent *does* hit-test, so that layer collects the pick; removing it restores click-through.
+// That is the whole mechanism -- no input hooks, no window subclassing, and nothing that could
+// collide with a modifier chord the app itself wants to use.
+//
+// It outlives the RoseTap instance that built it, so it is a leaked singleton rather than a member:
+// its event handlers capture `this`, and a `this` that could be deleted at the end of an injection
+// would leave the app holding handlers into freed memory. It also keeps its own reference to
+// IXamlDiagnostics, which is what lets a click resolve to a handle long after that injection is done.
+class RoseOverlay
+{
+public:
+	// Idempotent: the second and later injections find the toolbar already there and leave it alone.
+	void Install(IXamlDiagnostics* diagnostics)
+	{
+		if (m_root || !diagnostics) return;
+
+		try
+		{
+			::IInspectable* rawLayer = nullptr;
+			if (FAILED(diagnostics->GetUiLayer(&rawLayer)) || !rawLayer)
+			{
+				Log(L"overlay: GetUiLayer returned nothing");
+				return;
+			}
+
+			winrt::Windows::Foundation::IInspectable layerObject{ nullptr };
+			winrt::attach_abi(layerObject, rawLayer); // adopt the ref GetUiLayer returned
+			m_layer = layerObject.try_as<xcontrols::Panel>();
+			if (!m_layer)
+			{
+				Log(L"overlay: the UI layer is not a Panel");
+				return;
+			}
+
+			m_diagnostics = diagnostics;
+			m_diagnostics->AddRef();
+
+			Build();
+			m_layer.Children().Append(m_root);
+			WriteState();
+			Log(L"overlay: toolbar installed on the UI layer");
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Log(std::wstring(L"overlay: install failed: ") + error.message().c_str());
+			m_root = nullptr;
+		}
+	}
+
+	bool Installed() const { return static_cast<bool>(m_root); }
+
+	// Arms select mode. Returns whether it is armed, so the host can confirm rather than assume --
+	// including the case where the person had already armed it from the toolbar.
+	bool BeginSelect()
+	{
+		if (!m_root) return false;
+		if (m_selecting)
+		{
+			WriteState();
+			return true;
+		}
+
+		try
+		{
+			m_capture = xcontrols::Grid();
+
+			// A faint wash, not a plain Transparent: this is the "select mode is on" affordance, and a
+			// layer that swallows every click while looking like nothing at all is a layer that reads
+			// as the app having hung.
+			m_capture.Background(Brush(0x1E, 0x00, 0x78, 0xD4));
+			m_capture.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);
+			m_capture.VerticalAlignment(xaml::VerticalAlignment::Stretch);
+			m_capture.PointerPressed(
+				[this](winrt::Windows::Foundation::IInspectable const&, xinput::PointerRoutedEventArgs const& e)
+				{
+					OnPick(e);
+				});
+
+			// Beneath the Canvas that holds the toolbar, so the toolbar's own buttons stay clickable
+			// while the rest of the window is collecting the pick.
+			m_root.Children().InsertAt(0, m_capture);
+			m_selecting = true;
+			Chrome();
+			WriteState();
+			Log(L"overlay: select mode armed");
+			return true;
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Log(std::wstring(L"overlay: arming select mode failed: ") + error.message().c_str());
+			return false;
+		}
+	}
+
+	void EndSelect()
+	{
+		try
+		{
+			if (m_capture && m_root)
+			{
+				uint32_t index = 0;
+				if (m_root.Children().IndexOf(m_capture, index)) m_root.Children().RemoveAt(index);
+			}
+		}
+		catch (winrt::hresult_error const&)
+		{
+			// Best-effort teardown; the layer may already be gone.
+		}
+
+		m_capture = nullptr;
+		m_selecting = false;
+		Chrome();
+		WriteState();
+	}
+
+private:
+	static xmedia::SolidColorBrush Brush(uint8_t a, uint8_t r, uint8_t g, uint8_t b)
+	{
+		return xmedia::SolidColorBrush(winrt::Windows::UI::Color{ a, r, g, b });
+	}
+
+	static double Clamp(double value, double low, double high)
+	{
+		if (high < low) return low;
+		if (value < low) return low;
+		if (value > high) return high;
+		return value;
+	}
+
+	void Build()
+	{
+		m_root = xcontrols::Grid();
+		m_root.Name(OverlayRootName);
+		m_root.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);
+		m_root.VerticalAlignment(xaml::VerticalAlignment::Stretch);
+
+		m_canvas = xcontrols::Canvas();
+		m_root.Children().Append(m_canvas);
+
+		m_panel = xcontrols::Border();
+		m_panel.Background(Brush(0xF0, 0x1C, 0x1C, 0x22));
+		m_panel.BorderBrush(Brush(0xFF, 0x53, 0x53, 0x63));
+		m_panel.BorderThickness(xaml::Thickness{ 1, 1, 1, 1 });
+		m_panel.CornerRadius(xaml::CornerRadius{ 6, 6, 6, 6 });
+
+		auto content = xcontrols::Grid();
+		content.Children().Append(BuildFullView());
+		content.Children().Append(BuildThumb());
+		m_panel.Child(content);
+
+		m_canvas.Children().Append(m_panel);
+
+		const auto bounds = xaml::Window::Current().Bounds();
+		m_left = bounds.Width > 248.0 ? bounds.Width - 232.0 : 16.0;
+		m_top = 16.0;
+		Place();
+		Chrome();
+	}
+
+	xaml::UIElement BuildFullView()
+	{
+		m_full = xcontrols::StackPanel();
+		m_full.Orientation(xcontrols::Orientation::Vertical);
+		m_full.Spacing(4);
+		m_full.Padding(xaml::Thickness{ 6, 4, 6, 6 });
+
+		auto header = xcontrols::StackPanel();
+		header.Orientation(xcontrols::Orientation::Horizontal);
+		header.Spacing(6);
+		header.Children().Append(DragHandle());
+		header.Children().Append(Label(L"RoseMCP", 12.0, 0xB8));
+		header.Children().Append(Chip(L"Hide", [this] { Collapse(true); }));
+		m_full.Children().Append(header);
+
+		auto modes = xcontrols::StackPanel();
+		modes.Orientation(xcontrols::Orientation::Horizontal);
+		modes.Spacing(4);
+		m_idleButton = Chip(L"Idle", [this] { EndSelect(); });
+		m_selectButton = Chip(L"Select Element", [this] { BeginSelect(); });
+		modes.Children().Append(m_idleButton);
+		modes.Children().Append(m_selectButton);
+		m_full.Children().Append(modes);
+
+		m_status = Label(L"", 11.0, 0x8C);
+		m_status.TextWrapping(xaml::TextWrapping::Wrap);
+		m_status.MaxWidth(200);
+		m_full.Children().Append(m_status);
+
+		return m_full;
+	}
+
+	// The collapsed view is the drag handle: one small grip that moves the toolbar, and a tap on it
+	// brings the full view back. XAML suppresses Tapped after a manipulation, so the two do not fight.
+	xaml::UIElement BuildThumb()
+	{
+		m_thumb = xcontrols::Border();
+		m_thumb.Visibility(xaml::Visibility::Collapsed);
+		m_thumb.Padding(xaml::Thickness{ 8, 4, 8, 4 });
+		m_thumb.Child(Label(GripGlyph, 13.0, 0xB8));
+		AttachDrag(m_thumb);
+		m_thumb.Tapped(
+			[this](winrt::Windows::Foundation::IInspectable const&, xinput::TappedRoutedEventArgs const& e)
+			{
+				e.Handled(true);
+				Collapse(false);
+			});
+
+		return m_thumb;
+	}
+
+	xcontrols::TextBlock Label(const wchar_t* text, double size, uint8_t grey)
+	{
+		auto block = xcontrols::TextBlock();
+		block.Text(text);
+		block.FontSize(size);
+		block.Foreground(Brush(0xFF, grey, grey, grey));
+		block.VerticalAlignment(xaml::VerticalAlignment::Center);
+		return block;
+	}
+
+	xcontrols::Border DragHandle()
+	{
+		auto handle = xcontrols::Border();
+
+		// A Background is what makes it take input at all; transparent keeps it from being seen.
+		handle.Background(Brush(0x00, 0x00, 0x00, 0x00));
+		handle.Padding(xaml::Thickness{ 2, 0, 2, 0 });
+		handle.Child(Label(GripGlyph, 13.0, 0x8C));
+		AttachDrag(handle);
+		return handle;
+	}
+
+	xcontrols::Button Chip(const wchar_t* text, std::function<void()> action)
+	{
+		auto button = xcontrols::Button();
+		button.Content(winrt::box_value(winrt::hstring{ text }));
+		button.FontSize(11.0);
+		button.Padding(xaml::Thickness{ 8, 2, 8, 3 });
+		button.MinWidth(0);
+		button.MinHeight(0);
+		button.Background(Brush(0xFF, 0x2C, 0x2C, 0x36));
+		button.Foreground(Brush(0xFF, 0xDC, 0xDC, 0xE4));
+		button.BorderThickness(xaml::Thickness{ 0, 0, 0, 0 });
+		button.Click(
+			[action](winrt::Windows::Foundation::IInspectable const&, xaml::RoutedEventArgs const&) { action(); });
+		return button;
+	}
+
+	void AttachDrag(xaml::UIElement const& handle)
+	{
+		handle.ManipulationMode(xinput::ManipulationModes::TranslateX | xinput::ManipulationModes::TranslateY);
+		handle.ManipulationDelta(
+			[this](winrt::Windows::Foundation::IInspectable const&, xinput::ManipulationDeltaRoutedEventArgs const& e)
+			{
+				const auto translation = e.Delta().Translation;
+				m_left += translation.X;
+				m_top += translation.Y;
+				Place();
+				e.Handled(true);
+			});
+	}
+
+	// Kept inside the window, so a toolbar dragged at the edge cannot be lost off-screen.
+	void Place()
+	{
+		if (!m_panel) return;
+
+		const auto bounds = xaml::Window::Current().Bounds();
+		m_left = Clamp(m_left, 0.0, bounds.Width - m_panel.ActualWidth());
+		m_top = Clamp(m_top, 0.0, bounds.Height - m_panel.ActualHeight());
+		xcontrols::Canvas::SetLeft(m_panel, m_left);
+		xcontrols::Canvas::SetTop(m_panel, m_top);
+	}
+
+	void Collapse(bool collapsed)
+	{
+		if (!m_full || !m_thumb) return;
+
+		m_full.Visibility(collapsed ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
+		m_thumb.Visibility(collapsed ? xaml::Visibility::Visible : xaml::Visibility::Collapsed);
+	}
+
+	// Which mode is current, said in the toolbar itself: the active button is lit and the status line
+	// carries the last pick. Without this there is no way to tell armed from idle.
+	void Chrome()
+	{
+		if (m_idleButton && m_selectButton)
+		{
+			m_idleButton.Background(m_selecting ? Brush(0xFF, 0x2C, 0x2C, 0x36) : Brush(0xFF, 0x3E, 0x3E, 0x4C));
+			m_selectButton.Background(m_selecting ? Brush(0xFF, 0x00, 0x5A, 0xA8) : Brush(0xFF, 0x2C, 0x2C, 0x36));
+		}
+
+		if (!m_status) return;
+
+		if (m_selecting)
+		{
+			m_status.Text(L"Click an element to select it.");
+		}
+		else if (!m_selectedLabel.empty())
+		{
+			m_status.Text(L"Selected " + m_selectedLabel);
+		}
+		else
+		{
+			m_status.Text(L"Idle.");
+		}
+	}
+
+	void OnPick(xinput::PointerRoutedEventArgs const& e)
+	{
+		try
+		{
+			e.Handled(true); // Swallow the click so it does not also reach the app.
+			const auto point = e.GetCurrentPoint(nullptr).Position();
+			const auto root = xaml::Window::Current().Content();
+
+			for (auto&& element : xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, true))
+			{
+				if (IsOurs(element)) continue; // Our own layers are on top; look past them.
+				Record(element);
+				break;
+			}
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Log(std::wstring(L"overlay: hit test failed: ") + error.message().c_str());
+		}
+
+		EndSelect();
+	}
+
+	// Anything under our own root is ours -- the capture layer, the toolbar, and every part of it.
+	bool IsOurs(xaml::UIElement const& element) const
+	{
+		if (!m_root) return false;
+
+		xaml::DependencyObject node = element;
+		while (node)
+		{
+			if (node == m_root) return true;
+			node = xmedia::VisualTreeHelper::GetParent(node);
+		}
+
+		return false;
+	}
+
+	void Record(xaml::UIElement const& element)
+	{
+		InstanceHandle handle = 0;
+		if (m_diagnostics)
+		{
+			m_diagnostics->GetHandleFromIInspectable(reinterpret_cast<::IInspectable*>(winrt::get_abi(element)), &handle);
+		}
+
+		std::wstring typeName{ winrt::get_class_name(element) };
+		std::wstring name;
+		if (const auto frameworkElement = element.try_as<xaml::FrameworkElement>())
+		{
+			name = frameworkElement.Name();
+		}
+
+		m_selectedLabel = name.empty() ? typeName : (typeName + L" (" + name + L")");
+
+		if (g_workDir.empty()) return;
+
+		{
+			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
+			if (file)
+			{
+				const std::wstring row = std::to_wstring(handle) + L'\t' + Escape(typeName.c_str()) + L'\t' + Escape(name.c_str());
+				file << Utf8(row) << '\n';
+			}
+		}
+
+		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
+		if (ready) ready << handle << L"\n";
+		Log(L"overlay: recorded " + m_selectedLabel);
+	}
+
+	// The mode, on disk, because the person can change it from the toolbar without the host being in
+	// the conversation at all -- so the host has to be able to ask, rather than remember what it set.
+	void WriteState()
+	{
+		if (g_workDir.empty()) return;
+
+		std::wofstream state(g_workDir + L"\\overlay.state", std::ios::trunc);
+		if (state) state << (m_selecting ? L"select" : L"idle") << L"\n";
+
+		if (!m_selecting) return;
+
+		std::wofstream armed(g_workDir + L"\\select.ready", std::ios::trunc);
+		if (armed) armed << L"armed\n";
+	}
+
+	static constexpr const wchar_t* GripGlyph = L"\x2237";
+
+	IXamlDiagnostics* m_diagnostics = nullptr;
+	xcontrols::Panel m_layer{ nullptr };
+	xcontrols::Grid m_root{ nullptr };
+	xcontrols::Canvas m_canvas{ nullptr };
+	xcontrols::Border m_panel{ nullptr };
+	xcontrols::Grid m_capture{ nullptr };
+	xcontrols::StackPanel m_full{ nullptr };
+	xcontrols::Border m_thumb{ nullptr };
+	xcontrols::TextBlock m_status{ nullptr };
+	xcontrols::Button m_idleButton{ nullptr };
+	xcontrols::Button m_selectButton{ nullptr };
+	std::wstring m_selectedLabel;
+	double m_left = 16.0;
+	double m_top = 16.0;
+	bool m_selecting = false;
+};
+
+// Leaked deliberately: see the note on RoseOverlay. Only ever touched on the app's UI thread.
+static RoseOverlay* g_overlay = nullptr;
+
+static RoseOverlay& Overlay()
+{
+	if (!g_overlay) g_overlay = new RoseOverlay();
+	return *g_overlay;
+}
+
 class RoseTap final : public IObjectWithSite, public IVisualTreeServiceCallback
 {
 public:
@@ -215,6 +656,10 @@ public:
 		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
 		WriteTreeSnapshot();
 
+		// The toolbar is installed once and left there. It goes in after the snapshot so the very first
+		// tree cannot contain it, and the snapshot filters it out of every one after that.
+		Overlay().Install(m_diagnostics);
+
 		const std::wstring request = ReadRequest();
 		if (request.rfind(L"properties ", 0) == 0)
 		{
@@ -230,7 +675,9 @@ public:
 		}
 		else if (request == L"select")
 		{
-			EnterSelectMode();
+			// Arming from the agent and arming from the toolbar are the same act; whichever happens,
+			// the overlay writes select.ready and the host reads the pick back the same way.
+			Overlay().BeginSelect();
 		}
 
 		return S_OK;
@@ -261,12 +708,20 @@ public:
 private:
 	// One row per element: Handle, Parent, ChildIndex, Type, Name. Written to a temp file and renamed
 	// so the host never reads a half-written snapshot; a ".ready" marker is the host's signal.
+	//
+	// The resident toolbar is dropped from the answer: the tool reports the app's UI, not RoseMCP's own.
+	// The diagnostics UI layer it lives on is not enumerated by AdviseVisualTreeChange on the versions
+	// tested -- the count is identical before and after the toolbar goes up -- so this is a guard against
+	// a framework that does enumerate it, not a fix for one that does.
 	void WriteTreeSnapshot()
 	{
 		if (g_workDir.empty()) return;
 
+		const auto excluded = OverlaySubtree();
+
 		const std::wstring finalPath = g_workDir + L"\\tree.tsv";
 		const std::wstring tempPath = finalPath + L".tmp";
+		size_t written = 0;
 		{
 			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
 			if (!file)
@@ -277,9 +732,12 @@ private:
 
 			for (const auto& node : m_nodes)
 			{
+				if (excluded.count(node.Handle)) continue;
+
 				const std::wstring row = std::to_wstring(node.Handle) + L'\t' + std::to_wstring(node.Parent) + L'\t'
 					+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str());
 				file << Utf8(row) << '\n';
+				written++;
 			}
 		}
 
@@ -291,8 +749,36 @@ private:
 		}
 
 		std::wofstream ready(g_workDir + L"\\tree.ready", std::ios::trunc);
-		if (ready) ready << m_nodes.size() << L"\n";
-		Log(L"wrote tree.tsv with " + std::to_wstring(m_nodes.size()) + L" element(s)");
+		if (ready) ready << written << L"\n";
+		Log(L"wrote tree.tsv with " + std::to_wstring(written) + L" element(s)");
+	}
+
+	// The handles of our own toolbar's elements, empty whenever the layer is not enumerated at all.
+	// Enumeration is parent-before-child in practice, but this closes over the subtree rather than
+	// assuming it, since one missed pass would leak our UI into the answer.
+	std::set<InstanceHandle> OverlaySubtree() const
+	{
+		std::set<InstanceHandle> excluded;
+		for (const auto& node : m_nodes)
+		{
+			if (node.Name == OverlayRootName) excluded.insert(node.Handle);
+		}
+
+		if (excluded.empty()) return excluded;
+
+		for (bool grew = true; grew; )
+		{
+			grew = false;
+			for (const auto& node : m_nodes)
+			{
+				if (excluded.count(node.Handle)) continue;
+				if (!excluded.count(node.Parent)) continue;
+				excluded.insert(node.Handle);
+				grew = true;
+			}
+		}
+
+		return excluded;
 	}
 
 	// The host writes one line saying what it wants of this injection (a tree is always written; a
@@ -492,132 +978,6 @@ private:
 		return L"applied";
 	}
 
-	// Interactive selection (#18): put a transparent, input-capturing overlay on the diagnostics UI
-	// layer. It sits above the app, so the next click lands on it; the handler hit-tests the element
-	// beneath, records it, and tears the overlay down. The provider stays resident (the site holds it)
-	// from entering select mode until the click.
-	void EnterSelectMode()
-	{
-		try
-		{
-			::IInspectable* rawLayer = nullptr;
-			if (FAILED(m_diagnostics->GetUiLayer(&rawLayer)) || !rawLayer)
-			{
-				Log(L"select: GetUiLayer returned nothing");
-				return;
-			}
-
-			winrt::Windows::Foundation::IInspectable layerObject{ nullptr };
-			winrt::attach_abi(layerObject, rawLayer); // adopt the ref GetUiLayer returned
-			m_layer = layerObject.try_as<xcontrols::Panel>();
-			if (!m_layer)
-			{
-				Log(L"select: the UI layer is not a Panel");
-				return;
-			}
-
-			const auto bounds = xaml::Window::Current().Bounds();
-			m_overlay = xcontrols::Grid();
-			m_overlay.Background(xmedia::SolidColorBrush(winrt::Windows::UI::Colors::Transparent()));
-			m_overlay.Width(bounds.Width);
-			m_overlay.Height(bounds.Height);
-
-			m_pointerToken = m_overlay.PointerPressed(
-				[this](winrt::Windows::Foundation::IInspectable const&, xinput::PointerRoutedEventArgs const& e)
-				{
-					OnPointerPressed(e);
-				});
-
-			m_layer.Children().Append(m_overlay);
-
-			// Tell the host the overlay is live, so entering select mode can confirm rather than guess.
-			if (!g_workDir.empty())
-			{
-				std::wofstream armed(g_workDir + L"\\select.ready", std::ios::trunc);
-				if (armed) armed << L"armed\n";
-			}
-
-			Log(L"select: overlay armed on the UI layer");
-		}
-		catch (winrt::hresult_error const& error)
-		{
-			Log(std::wstring(L"select: entering failed: ") + error.message().c_str());
-		}
-	}
-
-	void OnPointerPressed(xinput::PointerRoutedEventArgs const& e)
-	{
-		try
-		{
-			e.Handled(true); // Swallow the click so it does not also reach the app.
-			const auto point = e.GetCurrentPoint(nullptr).Position();
-			const auto root = xaml::Window::Current().Content();
-			const auto elements = xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, true);
-
-			for (auto&& element : elements)
-			{
-				if (m_overlay && element == m_overlay) continue; // Our own overlay is on top; skip it.
-				RecordSelection(element);
-				break;
-			}
-		}
-		catch (winrt::hresult_error const& error)
-		{
-			Log(std::wstring(L"select: hit-test failed: ") + error.message().c_str());
-		}
-
-		RemoveOverlay();
-	}
-
-	void RecordSelection(xaml::UIElement const& element)
-	{
-		if (g_workDir.empty()) return;
-
-		InstanceHandle handle = 0;
-		m_diagnostics->GetHandleFromIInspectable(reinterpret_cast<::IInspectable*>(winrt::get_abi(element)), &handle);
-
-		std::wstring typeName{ winrt::get_class_name(element) };
-		std::wstring name;
-		if (const auto frameworkElement = element.try_as<xaml::FrameworkElement>())
-		{
-			name = frameworkElement.Name();
-		}
-
-		{
-			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
-			if (file)
-			{
-				const std::wstring row = std::to_wstring(handle) + L'\t' + Escape(typeName.c_str()) + L'\t' + Escape(name.c_str());
-				file << Utf8(row) << '\n';
-			}
-		}
-
-		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
-		if (ready) ready << handle << L"\n";
-		Log(L"select: recorded " + typeName + (name.empty() ? L"" : (L" (" + name + L")")));
-	}
-
-	void RemoveOverlay()
-	{
-		try
-		{
-			if (!m_overlay) return;
-
-			m_overlay.PointerPressed(m_pointerToken);
-			if (m_layer)
-			{
-				uint32_t index = 0;
-				if (m_layer.Children().IndexOf(m_overlay, index)) m_layer.Children().RemoveAt(index);
-			}
-
-			m_overlay = nullptr;
-		}
-		catch (winrt::hresult_error const&)
-		{
-			// Best-effort teardown; the layer may already be gone.
-		}
-	}
-
 	bool Find(const std::wstring& name, InstanceHandle& handle)
 	{
 		const auto it = m_byName.find(name);
@@ -715,11 +1075,6 @@ private:
 	IVisualTreeService* m_tree = nullptr;
 	std::vector<TreeNode> m_nodes;
 	std::map<std::wstring, InstanceHandle> m_byName;
-
-	// Select-mode state, live between entering select mode and the click that ends it.
-	xcontrols::Panel m_layer{ nullptr };
-	xcontrols::Grid m_overlay{ nullptr };
-	winrt::event_token m_pointerToken{};
 };
 
 class RoseTapFactory final : public IClassFactory
@@ -762,7 +1117,7 @@ static RoseTapFactory g_factory;
 
 extern "C" HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
 {
-	if (rclsid == CLSID_RoseXamlTap)
+	if (rclsid == CLSID_RoseTap)
 	{
 		return g_factory.QueryInterface(riid, ppv);
 	}

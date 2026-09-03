@@ -173,7 +173,7 @@ throws inside `OnLaunched` -- unreachable by a post-startup attach. The broker a
 unchanged; from-birth is internal to the host.
 
 ### D14 — The XAML provider is injected by the host, over an ACL'd folder channel (#2/#3/#9)
-The XAML track's foundation is in the repo. `src/RoseXamlTap` is the native diagnostics provider,
+The XAML track's foundation is in the repo. `src/RoseMcp.Xaml.Uwp.Tap` is the native diagnostics provider,
 ported from the hot-reload spike and extended to emit a full tree snapshot; the live-app **host**
 injects it (there is no separate injector process), since the host already runs in the target's
 architecture and holds its pid. Injection is `InitializeXamlDiagnosticsEx` from Windows.UI.Xaml.dll to
@@ -214,7 +214,7 @@ source info, the file/line/column that set it. Decisions:
   matching output. This was validated first: re-injection succeeds repeatedly, and -- the load-bearing
   fact -- **an InstanceHandle is stable across injections**, so a handle from a tree call is valid in a
   later properties call.
-- **Stage the provider once per session.** The first injection loads `RoseXamlTap.dll` into the target,
+- **Stage the provider once per session.** The first injection loads the provider DLL into the target,
   which holds the file open; a later injection cannot overwrite it and need not, since it is the same
   provider. The host copies it once into the per-host work folder and reuses it.
 - **Default values are filtered out unless asked for.** An element has hundreds of properties, almost
@@ -303,6 +303,7 @@ guidance. No new gate was needed -- the same-user boundary and OS backstops alre
 down why.
 
 ### D21 — Interactive selection: an in-app overlay on the diagnostics UI layer (#18)
+*Superseded in part by D22: the overlay is now resident and the person can arm select mode themselves.*
 Chosen by the user over a host-side mouse hook, because it is what Visual Studio does and the click
 does not leak through to the app. `rose_xaml_select_mode` injects the provider with a `select` request;
 it puts a transparent, hit-testable `Grid` -- sized to the window -- on the diagnostics **UI layer**
@@ -325,3 +326,70 @@ Testing is split deliberately: the integration test drives it to the **armed** s
 selection is empty until someone clicks (auto-clicking a live desktop from a test suite is not
 acceptable), and the click itself was verified once by hand -- clicking the probe's centre selected
 `TextBlock` `Caption`, exactly what is there.
+
+### D22 — The overlay is a resident, click-through toolbar the person drives (#18, supersedes half of D21)
+D21 shipped select mode as something only the agent could arm: the agent called `rose_xaml_select_mode`,
+the person clicked, the overlay came down. The user's own expectation was the other way round -- an
+adorner they enter select mode from, mark an element with, and *then* talk to the agent about -- and
+they were right that the agent-first ordering is the wrong default. Both are now the same act.
+
+Two constraints shaped the mechanism. A modifier chord (Ctrl+Shift+Click) was rejected outright: apps
+implement their own, and RoseMCP silently stealing one would be a collision nobody could diagnose. A
+perpetual overlay was accepted **provided nothing has to be hacked to make it work** -- and it does not,
+because XAML's hit testing already draws the line in the right place:
+
+- A panel whose `Background` is **null** takes no part in hit testing. The root `Grid` and the `Canvas`
+  inside it carry none, so they are invisible to input and every click reaches the app underneath.
+- The toolbar itself does have a `Background`, so it takes input. That is the whole of the always-on
+  case: a toolbar that works, over an app that still works.
+- A `Background` that is merely **transparent** *does* hit-test. Select mode inserts a full-bleed,
+  faintly tinted capture `Grid` at index 0 -- beneath the `Canvas`, so the toolbar's own buttons stay
+  live while the rest of the window collects the pick -- and removing it restores click-through. The
+  tint is deliberate: a layer that swallows every click while looking like nothing at all reads as the
+  app having hung.
+
+No input hooks, no window subclassing, nothing to collide with.
+
+The toolbar is installed by the first injection of *any* XAML tool and then left alone, which makes it
+outlive the `RoseTap` instance that built it -- so it is a leaked singleton holding its own
+`IXamlDiagnostics` reference, not a member. Its handlers capture `this`, and a `this` that died at the
+end of an injection would leave the app calling into freed memory; the kept reference is also what lets
+a click resolve to a handle long after that injection is done.
+
+It has the two views the user asked for: a full view (drag grip, name, Hide, `Idle` / `Select Element`,
+and a status line naming the last pick) and a collapsed grip that drags to move and taps to expand.
+Position is clamped to the window, so a toolbar dragged at the edge cannot be lost off-screen.
+
+Two consequences follow from the person being in control:
+
+- **The mode is read, not remembered.** It lives in `overlay.state` beside the other channel files,
+  because someone can arm or cancel from the toolbar with the host not in the conversation at all;
+  what this side last asked for proves nothing. `LiveXamlSelection.Armed` carries it back.
+- **A selection outlives an injection.** Only arming a fresh pick clears the selection files; reading
+  the tree must not throw away an element picked minutes ago.
+
+The tree snapshot filters our own subtree out by the root's name (`__RoseMcpOverlay`), so the tool keeps
+answering about the app's UI rather than RoseMCP's. On the versions tested the diagnostics UI layer is
+not enumerated by `AdviseVisualTreeChange` at all -- the count is identical before and after the
+toolbar goes up -- so that filter is a guard against a framework that does enumerate it, not a fix for
+one that does. The test asserts it either way.
+
+Rulers (pick one element, hover another, read the gap in pixels) and a nearest-neighbour zoom rendered
+into the overlay are the user's next two asks; both are cards, not code.
+
+### D23 — The provider is named for the XAML framework it binds to
+`src/RoseXamlTap` is now `src/RoseMcp.Xaml.Uwp.Tap`, matching how everything else here is named. The
+discriminator is the framework, not the app model: every line of it is `Windows.UI.Xaml`, which classic
+and modern UWP both use, so `UwpClassic` would have been too narrow. WinUI 3 is `Microsoft.UI.Xaml` --
+a different dll to initialise and a different set of projections -- so it earns a sibling,
+`RoseMcp.Xaml.WinUI.Tap`, rather than a flag on this one. The `.def` drops its `LIBRARY` statement
+along the way; the output name comes from `/Fe`, and a dotted name is not worth the quoting rules.
+
+### D24 — RID-specific test builds are rebuilt once per run, never merely "found"
+`EnsureX64Build` returned early when the exe already existed. That is the obvious optimisation and it
+is wrong: `win-x64` is a separate RID build that a normal `dotnet build` of the solution never touches,
+so an existing exe is routinely one source change out of date. It cost real time here -- a host change
+was made, the test ran yesterday's host, and the failure it reported ("the provider was not found for
+this host's architecture") described a rename that had already been done. It now builds once per test
+run, memoised by output path. MSBuild is incremental, so the check is nearly free, and the failure mode
+it removes is one that reads as a bug in the code under test.

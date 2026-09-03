@@ -1,6 +1,6 @@
-# Builds RoseXamlTap.dll with the MSVC toolset, without needing a Developer prompt. The provider is
-# injected into the target app and must match its architecture -- x64 for a classic UWP app running
-# emulated on ARM64, arm64 for a native ARM64 WinUI app -- so the platform is a parameter.
+# Builds RoseMcp.Xaml.Uwp.Tap.dll with the MSVC toolset, without needing a Developer prompt. The
+# provider is injected into the target app and must match its architecture -- x64 for a classic UWP
+# app running emulated on ARM64, arm64 for a native ARM64 one -- so the platform is a parameter.
 #
 # It finds Visual Studio through vswhere (the same discovery the tests use for the UWP toolchain), so
 # there is no hard-coded install path. Exits non-zero, with a clear reason, when the C++ toolset or
@@ -77,9 +77,9 @@ try
     $configFlags = if ($Configuration -eq 'Debug') { @('/Zi', '/Od', '/MDd') } else { @('/O2', '/MD') }
     # /bigobj: the C++/WinRT XAML headers push the object past the default section limit.
     & $cl /nologo /LD /EHsc /std:c++20 /bigobj /DUNICODE /D_UNICODE /W3 @configFlags `
-        "$here\RoseXamlTap.cpp" `
-        /Fe:RoseXamlTap.dll `
-        /link /DLL /DEF:"$here\RoseXamlTap.def" ole32.lib oleaut32.lib WindowsApp.lib
+        "$here\RoseMcp.Xaml.Uwp.Tap.cpp" `
+        /Fe:RoseMcp.Xaml.Uwp.Tap.dll `
+        /link /DLL /DEF:"$here\RoseMcp.Xaml.Uwp.Tap.def" ole32.lib oleaut32.lib WindowsApp.lib
     if ($LASTEXITCODE -ne 0) { throw "cl.exe failed with exit code $LASTEXITCODE" }
 }
 finally
@@ -87,4 +87,4 @@ finally
     Pop-Location
 }
 
-Write-Host "built $(Join-Path $outDir 'RoseXamlTap.dll')"
+Write-Host "built $(Join-Path $outDir 'RoseMcp.Xaml.Uwp.Tap.dll')"

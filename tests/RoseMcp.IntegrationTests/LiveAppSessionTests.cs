@@ -564,10 +564,11 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
-	/// Interactive selection (#18): arming select mode puts the provider's transparent overlay on the
-	/// app's diagnostics UI layer, and until someone clicks, the selection is empty rather than stale or
-	/// invented. The click itself is a human action, so this test deliberately stops at the armed state
-	/// rather than driving the mouse on a live desktop.
+	/// Interactive selection (#18): every XAML tool leaves RoseMCP's toolbar resident on the app's
+	/// diagnostics UI layer, the tree snapshot keeps that toolbar out of its answer, and arming select
+	/// mode is reported by the provider rather than assumed here. Until someone clicks, the selection is
+	/// empty rather than stale or invented -- the click is a human action, so this stops at the armed
+	/// state rather than driving the mouse on a live desktop.
 	/// </summary>
 	[Fact]
 	public async Task Arms_interactive_select_mode_on_the_classic_uwp_probe()
@@ -604,15 +605,26 @@ public sealed class LiveAppSessionTests
 				cancellationToken);
 			Assert.NotNull(running);
 
-			// The provider confirms the overlay is live, rather than the host assuming it.
+			// Any XAML tool installs the toolbar, and the tree must not report it: it is RoseMCP's UI,
+			// not the app's. Read the tree first so the toolbar is up, then read it again and check.
+			var beforeToolbar = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(beforeToolbar.Detail is null, $"expected a tree, got detail: {beforeToolbar.Detail}");
+
+			var withToolbar = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.DoesNotContain(withToolbar.Nodes, node => node.Name == "__RoseMcpOverlay");
+			Assert.Contains(withToolbar.Nodes, node => node.Name == "Caption");
+
+			// The provider confirms select mode armed, rather than the host assuming it.
 			var selectMode = await session.EnterXamlSelectModeAsync(cancellationToken);
 			Assert.True(
-				selectMode.Detail?.Contains("armed", StringComparison.OrdinalIgnoreCase) == true,
+				selectMode.Armed,
 				$"expected select mode to arm; got: {selectMode.Detail}");
 
-			// Nothing clicked yet: an empty selection that says so, safe to poll.
+			// Nothing picked yet: an empty selection that says so, safe to poll. Armed comes back from
+			// the toolbar's own state file, so this is the provider reporting, not the host remembering.
 			var selection = await session.ReadXamlSelectionAsync(cancellationToken);
 			Assert.False(selection.Selected);
+			Assert.True(selection.Armed, $"expected the toolbar to report select mode armed; got: {selection.Detail}");
 			Assert.NotNull(selection.Detail);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
@@ -926,18 +938,30 @@ public sealed class LiveAppSessionTests
 
 	private static string EnsureX64ProbeTargetBuilt() => EnsureX64Build("tests", "DebugProbeTarget", "net10.0", "DebugProbeTarget.exe");
 
+	// Built once per test run, never merely "found". Skipping the build when the exe already exists is
+	// the obvious optimisation and it is wrong: the win-x64 output is a separate RID build that a normal
+	// `dotnet build` of the solution does not touch, so an existing exe is routinely one source change
+	// out of date -- and the test then exercises yesterday's host and reports a failure that is not
+	// there. MSBuild is incremental, so paying for the check once a run costs almost nothing.
+	private static readonly Dictionary<string, string> X64Builds = [];
+
 	private static string EnsureX64Build(string area, string project, string targetFramework, string exeName)
 	{
 		var root = RepositoryRoot();
 		var configuration = Configuration();
 		var exe = Path.Combine(root, area, project, "bin", configuration, targetFramework, "win-x64", exeName);
-		if (File.Exists(exe)) return exe;
 
-		var csproj = Path.Combine(root, area, project, $"{project}.csproj");
-		RunDotnet($"build \"{csproj}\" -r win-x64 -c {configuration} --nologo");
+		lock (X64Builds)
+		{
+			if (X64Builds.TryGetValue(exe, out var built)) return built;
 
-		if (!File.Exists(exe)) throw new FileNotFoundException($"The win-x64 build did not produce {exeName}.", exe);
-		return exe;
+			var csproj = Path.Combine(root, area, project, $"{project}.csproj");
+			RunDotnet($"build \"{csproj}\" -r win-x64 -c {configuration} --nologo");
+
+			if (!File.Exists(exe)) throw new FileNotFoundException($"The win-x64 build did not produce {exeName}.", exe);
+			X64Builds[exe] = exe;
+			return exe;
+		}
 	}
 
 	private static void RunDotnet(string arguments)
@@ -1055,14 +1079,14 @@ public sealed class LiveAppSessionTests
 	/// </summary>
 	private static bool BuildXamlProvider()
 	{
-		var script = Path.Combine(RepositoryRoot(), "src", "RoseXamlTap", "build.ps1");
+		var script = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.Uwp.Tap", "build.ps1");
 		if (!File.Exists(script)) return false;
 
 		var (exitCode, _) = RunProcess(
 			"powershell",
 			$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform x64 -Configuration Debug");
 
-		var dll = Path.Combine(RepositoryRoot(), "src", "RoseXamlTap", "bin", "x64", "Debug", "RoseXamlTap.dll");
+		var dll = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.Uwp.Tap", "bin", "x64", "Debug", "RoseMcp.Xaml.Uwp.Tap.dll");
 		return exitCode == 0 && File.Exists(dll);
 	}
 

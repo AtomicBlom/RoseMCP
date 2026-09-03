@@ -10,7 +10,7 @@ using RoseMcp.XamlDiff;
 namespace RoseMcp.LiveApp.Xaml;
 
 /// <summary>
-/// Injects the RoseXamlTap diagnostics provider into the target and reads back what it reports (#2/#3).
+/// Injects the RoseMcp.Xaml.Uwp.Tap diagnostics provider into the target and reads back what it reports (#2/#3).
 /// <c>InitializeXamlDiagnosticsEx</c> (exported from Windows.UI.Xaml.dll) loads the provider into the
 /// app by pid; the two ends exchange tab-separated files through a working folder this side stages and
 /// grants the app's AppContainer rights to, since the provider runs sandboxed and cannot read Program
@@ -19,14 +19,14 @@ namespace RoseMcp.LiveApp.Xaml;
 /// </summary>
 internal sealed class XamlDiagnosticsSession(ILogger logger)
 {
-	// Must match CLSID_RoseXamlTap in RoseXamlTap.cpp.
+	// Must match CLSID_RoseTap in RoseMcp.Xaml.Uwp.Tap.cpp.
 	private static readonly Guid ProviderClsid = new("7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6");
 
 	// The well-known diagnostics endpoint; anything else makes InitializeXamlDiagnosticsEx return
 	// ERROR_NOT_FOUND (0x80070490).
 	private const string EndpointName = "VisualDiagConnection1";
 
-	private const string ProviderFileName = "RoseXamlTap.dll";
+	private const string ProviderFileName = "RoseMcp.Xaml.Uwp.Tap.dll";
 	private static readonly TimeSpan SnapshotTimeout = TimeSpan.FromSeconds(15);
 
 	private string? _workDir;
@@ -91,10 +91,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	}
 
 	/// <summary>
-	/// Arms interactive select mode (#18): injects the provider, which puts a transparent
-	/// input-capturing overlay on the app's diagnostics UI layer and stays resident. The next click in
-	/// the app lands on the overlay, which hit-tests the element beneath and records it for
-	/// <see cref="ReadSelection"/>. Confirms the overlay actually armed rather than assuming it.
+	/// Arms select mode (#18) from this side. The in-app toolbar is already resident -- any XAML tool
+	/// installs it -- so this is the same act as pressing its Select Element button, and exists because
+	/// an agent chasing a visual path to an element should not have to ask a person to press it.
+	/// Confirms the overlay actually armed rather than assuming it.
 	/// </summary>
 	public LiveXamlSelection EnterSelectMode(int pid)
 	{
@@ -103,27 +103,36 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 
 		if (!WaitForFile(Path.Combine(workDir!, "select.ready"), SnapshotTimeout))
 		{
-			return new LiveXamlSelection { Detail = "The provider was injected but did not arm the selection overlay (the app may have no diagnostics UI layer)." };
+			return new LiveXamlSelection { Detail = "The provider was injected but did not arm select mode (the app may have no diagnostics UI layer)." };
 		}
 
-		return new LiveXamlSelection { Detail = "Select mode is armed: click an element in the app, then read the selection." };
+		return new LiveXamlSelection { Armed = true, Detail = "Select mode is armed: click an element in the app, then read the selection." };
 	}
 
 	/// <summary>
-	/// Reads the element the user clicked, if any. Deliberately does not inject: select mode left the
-	/// provider resident with its overlay, and re-injecting would tear that down.
+	/// Reads the element that was picked, if any. Deliberately does not inject: the toolbar is resident
+	/// and owns the selection, and the person may have picked without this side being involved at all --
+	/// which is the case this exists for. That is also why the armed state is read from the provider's
+	/// own state file rather than remembered here.
 	/// </summary>
 	public LiveXamlSelection ReadSelection()
 	{
 		if (_workDir is null)
 		{
-			return new LiveXamlSelection { Detail = "Select mode has not been entered for this session." };
+			return new LiveXamlSelection { Detail = "No XAML tool has run against this session yet, so the in-app toolbar is not installed." };
 		}
 
+		var armed = ReadOverlayMode() == "select";
 		var selectionFile = Path.Combine(_workDir, "selection.tsv");
 		if (!File.Exists(selectionFile))
 		{
-			return new LiveXamlSelection { Detail = "Nothing has been selected yet; click an element in the app." };
+			return new LiveXamlSelection
+			{
+				Armed = armed,
+				Detail = armed
+					? "Select mode is armed; nothing has been picked yet."
+					: "Nothing has been picked yet. Press Select Element on the in-app toolbar, or arm it from here.",
+			};
 		}
 
 		try
@@ -137,18 +146,36 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 				return new LiveXamlSelection
 				{
 					Selected = true,
+					Armed = armed,
 					Handle = handle,
 					TypeName = EmptyToNull(Unescape(fields[1])),
 					Name = string.IsNullOrEmpty(name) ? null : name,
 				};
 			}
 
-			return new LiveXamlSelection { Detail = "The recorded selection could not be read." };
+			return new LiveXamlSelection { Armed = armed, Detail = "The recorded selection could not be read." };
 		}
 		catch (Exception exception)
 		{
 			logger.LogWarning(exception, "Reading the XAML selection failed.");
-			return new LiveXamlSelection { Detail = $"Could not read the selection: {exception.Message}" };
+			return new LiveXamlSelection { Armed = armed, Detail = $"Could not read the selection: {exception.Message}" };
+		}
+	}
+
+	/// <summary>
+	/// What the in-app toolbar says its mode is. Absent or unreadable counts as idle: the file is only
+	/// ever a hint about a UI the person controls, and no tool should fail because it is missing.
+	/// </summary>
+	private string ReadOverlayMode()
+	{
+		try
+		{
+			var stateFile = Path.Combine(_workDir!, "overlay.state");
+			return File.Exists(stateFile) ? File.ReadAllText(stateFile).Trim() : "idle";
+		}
+		catch (IOException)
+		{
+			return "idle";
 		}
 	}
 
@@ -267,7 +294,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		var provider = ResolveProviderPath();
 		if (provider is null)
 		{
-			return (null, $"The XAML provider ({ProviderFileName}) was not found for this host's architecture; build src/RoseXamlTap for {ProviderPlatform()}.");
+			return (null, $"The XAML provider ({ProviderFileName}) was not found for this host's architecture; build src/RoseMcp.Xaml.Uwp.Tap for {ProviderPlatform()}.");
 		}
 
 		string workDir;
@@ -282,9 +309,19 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			return (null, $"Could not stage the XAML provider: {exception.Message}");
 		}
 
-		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv", "select.ready", "selection.tsv", "selection.ready" })
+		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv" })
 		{
 			TryDelete(Path.Combine(workDir, stale));
+		}
+
+		// A selection outlives an injection, because the toolbar holding it does: reading the tree must
+		// not throw away an element the person picked minutes ago. Only arming a fresh pick clears it.
+		if (request == "select")
+		{
+			foreach (var stale in new[] { "select.ready", "selection.tsv", "selection.ready" })
+			{
+				TryDelete(Path.Combine(workDir, stale));
+			}
 		}
 
 		try
@@ -512,7 +549,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		var repositoryRoot = FindRepositoryRoot();
 		if (repositoryRoot is null) return null;
 
-		var providerBin = Path.Combine(repositoryRoot, "src", "RoseXamlTap", "bin", ProviderPlatform());
+		var providerBin = Path.Combine(repositoryRoot, "src", "RoseMcp.Xaml.Uwp.Tap", "bin", ProviderPlatform());
 		if (!Directory.Exists(providerBin)) return null;
 
 		return Directory.EnumerateFiles(providerBin, ProviderFileName, SearchOption.AllDirectories)

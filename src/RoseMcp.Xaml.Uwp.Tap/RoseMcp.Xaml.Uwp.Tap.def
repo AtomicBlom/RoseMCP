@@ -1,0 +1,5 @@
+; No LIBRARY statement: the output name comes from /Fe, and a dotted name here is not worth the
+; quoting rules. EXPORTS alone is what /DEF needs.
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE

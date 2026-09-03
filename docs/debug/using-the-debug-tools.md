@@ -39,7 +39,27 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | `rose_xaml_properties` | Read one element's properties (by handle) with provenance (Local / Style / Inherited / Default …) and, when the app carries source info, the XAML file and line that set each. |
 | `rose_xaml_apply` | Hot-reload: diff two XAML versions and apply the changes to the live tree with no relaunch, reporting each edit's outcome. Property changes on named elements today. |
 | `rose_debug_evaluate` | While stopped, evaluate a field-access expression (`name`, `name.field.field`) against the frame — read directly from memory, no debuggee code run. |
-| `rose_xaml_select_mode` / `rose_xaml_selection` | Let the user point: an overlay goes over the app, their next click picks that element, and the selection (type, `x:Name`, handle) feeds the property and hot-reload tools. |
+| `rose_xaml_select_mode` / `rose_xaml_selection` | Let the user point: arm select mode, their next click picks that element, and the selection (type, `x:Name`, handle) feeds the property and hot-reload tools. They can also arm it themselves from the in-app toolbar, so read the selection before arming. |
+
+## The in-app toolbar
+
+The first XAML tool to run against a session puts a small RoseMCP toolbar on the app's diagnostics UI
+layer, and leaves it there. It exists so a person can point at something without the agent having to
+arm anything first: press **Select Element**, click the thing you mean, then say "look at the element I
+selected" -- the agent reads it with `rose_xaml_selection`, and the handle it gets back feeds
+`rose_xaml_properties` and `rose_xaml_apply` directly.
+
+- **The app stays usable.** The overlay carries no background of its own, and a XAML panel with no
+  background takes no part in hit testing, so clicks pass straight through to the app. Only the toolbar
+  itself takes input. There is no modifier chord to collide with anything the app already uses.
+- **Select mode is visible.** While it is armed the window carries a faint tint and the toolbar says so;
+  the click that picks an element is swallowed rather than also reaching the app. **Idle** cancels.
+- **It moves and folds away.** Drag it by the grip; **Hide** collapses it to that grip alone, and a tap
+  on the grip brings it back.
+- Either side can arm select mode, and both are the same act -- the mode is read back from the toolbar
+  rather than assumed, so an agent can tell whether a person has armed or cancelled it.
+- A selection sticks until the next pick is armed, so reading the tree or some properties in between
+  does not lose it.
 
 ## Limits worth knowing
 

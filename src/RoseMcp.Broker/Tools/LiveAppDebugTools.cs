@@ -479,11 +479,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Enter interactive select mode on a running XAML app: a transparent overlay goes over the app, "
-			+ "and the next click the user makes picks that element instead of reaching the app. Ask the user "
-			+ "to click the element they mean, then call rose_xaml_selection to find out what they picked. "
-			+ "This is how a user points at something on screen -- \"look at the element I selected\" -- and "
-			+ "hands it to you; the handle it yields feeds rose_xaml_properties and rose_xaml_apply directly.")]
+		"Arm select mode on a running XAML app: the next click in the app picks that element instead of "
+			+ "reaching the app. Use it to get a visual path to an element -- ask the user to click the one "
+			+ "they mean, then call rose_xaml_selection to find out which it was. The user can also arm it "
+			+ "themselves from RoseMCP's in-app toolbar, so a user who says \"look at the element I selected\" "
+			+ "may already have picked one: call rose_xaml_selection first and only arm if nothing is there. "
+			+ "The handle it yields feeds rose_xaml_properties and rose_xaml_apply directly.")]
 	public async Task<LiveXamlSelection> XamlSelectModeAsync(
 		[Description(SessionHelp)] string sessionId,
 		CancellationToken cancellationToken = default)
@@ -500,10 +501,11 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Read the element the user picked by clicking it after rose_xaml_select_mode. Returns its type, "
-			+ "its x:Name when it has one, and the stable handle -- pass that to rose_xaml_properties to see "
-			+ "what the XAML sets on it, or to rose_xaml_apply's diff to change it. If nobody has clicked "
-			+ "yet it says so, so it is safe to poll while waiting for the user.")]
+		"Read the element the user picked by clicking it in the app -- whether they armed select mode from "
+			+ "RoseMCP's in-app toolbar or you armed it with rose_xaml_select_mode. Returns its type, its "
+			+ "x:Name when it has one, and the stable handle -- pass that to rose_xaml_properties to see what "
+			+ "the XAML sets on it, or to rose_xaml_apply's diff to change it. If nobody has picked yet it "
+			+ "says so, and whether select mode is armed, so it is safe to poll while waiting for the user.")]
 	public async Task<LiveXamlSelection> XamlSelectionAsync(
 		[Description(SessionHelp)] string sessionId,
 		CancellationToken cancellationToken = default)

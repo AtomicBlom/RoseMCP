@@ -9,16 +9,40 @@ on:
   push:
   pull_request:
 
+# A second push to a branch makes the first run's answer worthless before it finishes. Main is the
+# exception: that history is what tells you which commit broke the build, so it is never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Nothing here writes to the repository. The repository is public, so a fork's pull request runs this
+# workflow, and stating the permission beats inheriting whatever the repository default becomes.
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: windows-latest
+    # Without this a hung WinUI build holds the runner for six hours before GitHub gives up.
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
+
+      # setup-dotnet's own cache wants a packages.lock.json, which this repository does not use.
+      # Central package management puts every direct version in one file, so hashing that is close
+      # enough: a version bump misses the cache and everything else hits it. Worth having because
+      # Roslyn and the Windows App SDK are most of what a cold restore downloads.
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
 
       - name: Restore
         run: dotnet restore RoseMcp.slnx

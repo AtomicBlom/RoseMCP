@@ -140,3 +140,34 @@ The fix (all in the test harness -- `StageUwpProbeLayout`): parse the `*.build.a
 recipe's `LayoutDir`, and register that staged `AppX` layout. No change to the app, the host, or the
 debugger. MSBuild's `Build` target emits the recipe but never stages the layout (these old-style
 projects have no `Deploy` target), which is why the staging is done in the test.
+
+### D13 — UWP startup is captured from birth via a resume stub (#5)
+Attaching a beat after `ActivateApplication` misses the earliest window -- the first `OnLaunched`, the
+startup module loads, any exception thrown before the attach lands. The from-birth path (issue #5)
+closes it, and is now the default for UWP; the post-startup attach remains only as a fallback.
+
+The mechanism, verified empirically on this machine before it was built:
+`IPackageDebugSettings::EnableDebugging(pfn, debuggerCommandLine, env)` with a non-null command line
+makes the system, on the next activation, create the app **suspended** and launch that command line as
+the app's debugger with `-p <pid> -tid <tid>` appended. The command line relaunches this same host in
+resume-stub mode (`--uwp-resume-stub --pipe <name>`); host and stub meet on a named pipe. Three facts
+decided the design:
+- `ActivateApplication` does not return until the app is resumed, so it must run on a background thread
+  while the main flow arms its runtime-startup notification. The stub reporting the pid over the pipe is
+  what breaks the chicken-and-egg (the notification needs the pid, which activation only yields once the
+  app has been resumed).
+- The app is created `CREATE_SUSPENDED` (one thread, suspend count 1), not as a native debuggee: the
+  stub exiting does not kill it, and `ResumeThread(tid)` releases it. So the stub is a courier and a
+  synchronisation point, not a debugger.
+- The debugger command line has a length limit around 256 characters; over it, `EnableDebugging`
+  returns `E_INVALIDARG`. So the stub command line is kept short (no long log paths), and the host
+  falls back to the post-startup attach when even the minimal command line would not fit.
+
+Once the stub reports the ids, the session arms dbgshim's `GetStartupNotificationEvent(pid)`, tells the
+stub to resume, waits for the runtime to signal, and attaches -- the same startup dance
+`CorDebugSession.Launch` already used for a plain executable, now shared as `AttachAtSuspendedStartup`.
+The stub resumes the app even if the host never answers, so a missing or crashed host degrades to a
+normal run rather than a wedged, suspended process. Proven by
+`Captures_the_classic_uwp_probe_apps_startup_from_birth`, which catches a one-time exception the probe
+throws inside `OnLaunched` -- unreachable by a post-startup attach. The broker and the tool surface are
+unchanged; from-birth is internal to the host.

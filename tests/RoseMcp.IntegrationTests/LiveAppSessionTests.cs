@@ -287,6 +287,59 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// Startup capture from birth (#5): the same UWP path, but proving the debugger is present before the
+	/// app's first managed instruction. The probe throws a one-time RoseUwpStartupException inside its
+	/// OnLaunched, before the window shows; an attach that lands a beat after activation would have missed
+	/// it, so catching it proves the resume stub attached from the runtime's first breath.
+	/// </summary>
+	[Fact]
+	public async Task Captures_the_classic_uwp_probe_apps_startup_from_birth()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+
+		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp startup probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			var summary = session.Describe();
+			Assert.True(
+				summary.State == LiveAppSessionState.Ready,
+				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
+
+			// The startup exception fires inside OnLaunched, before the timer's first tick; only a
+			// from-birth attach is present in time to see it.
+			var startup = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpStartupException") ?? false),
+				cancellationToken);
+			Assert.NotNull(startup);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
 	[Fact]
 	public async Task Reports_a_missing_target_as_faulted()

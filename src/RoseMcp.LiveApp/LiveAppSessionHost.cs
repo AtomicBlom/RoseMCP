@@ -18,6 +18,7 @@ namespace RoseMcp.LiveApp;
 public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSessionHost> logger) : IHostedService
 {
 	private static readonly TimeSpan UwpRuntimeReadyTimeout = TimeSpan.FromSeconds(30);
+	private static readonly TimeSpan UwpStartupTimeout = TimeSpan.FromSeconds(30);
 
 	private readonly Lock _gate = new();
 	private readonly DebugEventBuffer _events = new();
@@ -305,10 +306,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
-	/// Activates a packaged (UWP) app under the debugger. The UWP-specific hop is putting the package
-	/// into debug mode (no suspension, no activation timeout) before activating it, so the runtime has
-	/// time to start and the attach can wait for it. The app is caught a beat after launch, so the very
-	/// first OnLaunched has already run -- catching that needs a resume stub (issue #5).
+	/// Activates a packaged (UWP) app under the debugger. By default this is from birth (issue #5): the
+	/// system creates the app suspended and launches a resume stub, so the debugger attaches before the
+	/// runtime's first instruction and the whole of startup -- the first OnLaunched, its module loads,
+	/// any exception it throws -- is captured. If the resume stub cannot be registered it falls back to
+	/// attaching a beat after activation, which misses only that earliest window.
 	/// </summary>
 	private void EstablishUwp(string? appUserModelId)
 	{
@@ -334,14 +336,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		int pid;
 		try
 		{
-			Uwp.EnableDebugging(packageFullName);
-			_uwpPackageFullName = packageFullName;
-			_events.Append(LiveDebugEventKind.SessionNotice, $"Enabled debug mode on {packageFullName}.");
-
-			pid = Uwp.ActivateApplication(appUserModelId);
-			_events.Append(LiveDebugEventKind.SessionNotice, $"Activated {appUserModelId} as pid {pid}.");
-
-			session.Attach(pid, UwpRuntimeReadyTimeout);
+			pid = ActivateUwpUnderDebugger(session, appUserModelId, packageFullName);
 		}
 		catch (Exception exception)
 		{
@@ -361,6 +356,64 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		}
 
 		logger.LogInformation("Live-app session activated {Aumid} as pid {Pid} ({Architecture}).", appUserModelId, pid, Architecture);
+	}
+
+	/// <summary>
+	/// Activates the app from birth: registers a resume stub as the package's debugger, so the system
+	/// creates the app suspended and hands the stub its ids. Activation itself blocks until the app is
+	/// resumed, so it runs on a background thread while the stub reports the ids, the session arms its
+	/// runtime-startup notification, and only then the stub resumes the app -- the ordering that catches
+	/// the runtime's first breath. Falls back to a post-startup attach when the stub command line is too
+	/// long to register.
+	/// </summary>
+	private int ActivateUwpUnderDebugger(CorDebugSession session, string appUserModelId, string packageFullName)
+	{
+		using var coordinator = new UwpStartupCoordinator();
+		var stubCommandLine = coordinator.TryBuildStubCommandLine();
+		if (stubCommandLine is null)
+		{
+			_events.Append(LiveDebugEventKind.SessionNotice, "The resume-stub command line is too long to register; attaching after startup instead.");
+			return ActivateUwpPostStartup(session, appUserModelId, packageFullName);
+		}
+
+		Uwp.EnableDebugging(packageFullName, stubCommandLine);
+		lock (_gate)
+		{
+			_uwpPackageFullName = packageFullName;
+		}
+
+		_events.Append(LiveDebugEventKind.SessionNotice, $"Enabled debug mode with a startup resume stub on {packageFullName}.");
+
+		coordinator.BeginActivation(appUserModelId);
+		var (pid, tid) = coordinator.WaitForStub(UwpStartupTimeout);
+		_events.Append(LiveDebugEventKind.SessionNotice, $"Resume stub reported pid {pid} (thread {tid}); attaching from birth.");
+
+		session.AttachUwpAtStartup(pid, coordinator.Resume, UwpStartupTimeout);
+		coordinator.CompleteActivation(UwpStartupTimeout);
+
+		_events.Append(LiveDebugEventKind.SessionNotice, $"Activated {appUserModelId} from birth as pid {pid}.");
+		return pid;
+	}
+
+	/// <summary>
+	/// The pre-#5 fallback: put the package into debug mode, activate it, and attach a beat later, by
+	/// which time the very first OnLaunched has already run.
+	/// </summary>
+	private int ActivateUwpPostStartup(CorDebugSession session, string appUserModelId, string packageFullName)
+	{
+		Uwp.EnableDebugging(packageFullName);
+		lock (_gate)
+		{
+			_uwpPackageFullName = packageFullName;
+		}
+
+		_events.Append(LiveDebugEventKind.SessionNotice, $"Enabled debug mode on {packageFullName}.");
+
+		var pid = Uwp.ActivateApplication(appUserModelId);
+		_events.Append(LiveDebugEventKind.SessionNotice, $"Activated {appUserModelId} as pid {pid}.");
+
+		session.Attach(pid, UwpRuntimeReadyTimeout);
+		return pid;
 	}
 
 	/// <summary>Turns off a package's debug mode, if one was enabled, restoring its normal lifecycle.</summary>

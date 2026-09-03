@@ -97,37 +97,61 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var launched = shim.CreateProcessForLaunch(commandLine, bSuspendProcess: true, IntPtr.Zero, workingDirectory);
 		try
 		{
-			using var startup = WrapEvent(shim.GetStartupNotificationEvent(launched.ProcessId), ownsHandle: true);
-			shim.ResumeProcess(launched.ResumeHandle);
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"Launched pid {launched.ProcessId}; waiting for its runtime.");
-
-			if (!startup.WaitOne(StartupTimeout))
-			{
-				throw new TimeoutException("The launched process never signalled runtime startup. Is it a .NET (Core) app?");
-			}
-
-			var runtime = FindRuntimeWithRetry(shim, launched.ProcessId, RuntimeReadyTimeout);
-			try
-			{
-				_corDebug = CreateCorDebug(shim, launched.ProcessId, runtime.Path);
-				_process = _corDebug.DebugActiveProcess(launched.ProcessId, win32Attach: false);
-				TargetProcessId = launched.ProcessId;
-
-				// The runtime is parked on this event until the debugger says go.
-				using var continueStartup = WrapEvent(runtime.Handle, ownsHandle: false);
-				continueStartup.Set();
-
-				buffer.Append(LiveDebugEventKind.SessionNotice, $"Attached to launched pid {launched.ProcessId} at startup.");
-				logger.LogInformation("Launched and attached pid {Pid} ({Runtime}).", launched.ProcessId, runtime.Path);
-			}
-			finally
-			{
-				shim.CloseCLREnumeration(runtime.Enumeration);
-			}
+			AttachAtSuspendedStartup(shim, launched.ProcessId, () => shim.ResumeProcess(launched.ResumeHandle), StartupTimeout);
 		}
 		finally
 		{
 			shim.CloseResumeHandle(launched.ResumeHandle);
+		}
+	}
+
+	/// <summary>
+	/// Attaches from birth to a UWP app that PLM has created suspended (issue #5): given the pid the
+	/// resume stub reported and a resume action that releases the app's main thread, it arms the
+	/// runtime-startup notification before the resume, then attaches when the runtime signals. This is
+	/// <see cref="Launch"/>'s mechanism for a process the shell created rather than dbgshim.
+	/// </summary>
+	public void AttachUwpAtStartup(int pid, Action resume, TimeSpan startupTimeout)
+	{
+		var shim = LoadDbgShim();
+		AttachAtSuspendedStartup(shim, pid, resume, startupTimeout);
+	}
+
+	/// <summary>
+	/// The shared startup-attach dance: arm the runtime-startup notification while the process is still
+	/// suspended before its CLR has loaded, trigger the caller's <paramref name="resume"/>, wait for the
+	/// runtime to signal, attach to it, and release it. The ordering is the whole trick -- the
+	/// notification must be armed before the process is resumed, or the runtime can start before the
+	/// debugger is listening and the startup is missed.
+	/// </summary>
+	private void AttachAtSuspendedStartup(DbgShim shim, int pid, Action resume, TimeSpan startupTimeout)
+	{
+		using var startup = WrapEvent(shim.GetStartupNotificationEvent(pid), ownsHandle: true);
+		resume();
+		buffer.Append(LiveDebugEventKind.SessionNotice, $"Resumed pid {pid}; waiting for its runtime.");
+
+		if (!startup.WaitOne(startupTimeout))
+		{
+			throw new TimeoutException("The process never signalled runtime startup. Is it a .NET (Core) app?");
+		}
+
+		var runtime = FindRuntimeWithRetry(shim, pid, RuntimeReadyTimeout);
+		try
+		{
+			_corDebug = CreateCorDebug(shim, pid, runtime.Path);
+			_process = _corDebug.DebugActiveProcess(pid, win32Attach: false);
+			TargetProcessId = pid;
+
+			// The runtime is parked on this event until the debugger says go.
+			using var continueStartup = WrapEvent(runtime.Handle, ownsHandle: false);
+			continueStartup.Set();
+
+			buffer.Append(LiveDebugEventKind.SessionNotice, $"Attached to pid {pid} at startup.");
+			logger.LogInformation("Attached at startup to pid {Pid} ({Runtime}).", pid, runtime.Path);
+		}
+		finally
+		{
+			shim.CloseCLREnumeration(runtime.Enumeration);
 		}
 	}
 

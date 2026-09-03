@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-
+using RoseMcp.LiveApp.Debugging;
 using RoseMcp.Logging;
 
 namespace RoseMcp.LiveApp;
@@ -10,6 +10,14 @@ internal static class Program
 {
 	private static async Task<int> Main(string[] args)
 	{
+		// The from-birth UWP path relaunches this same executable as the app's registered debugger, in
+		// stub mode. That run has no MCP server and no target of its own; it only relays the app's ids
+		// to the waiting host and resumes it, so it short-circuits everything below.
+		if (Array.IndexOf(args, UwpResumeStub.ModeFlag) >= 0)
+		{
+			return UwpResumeStub.Run(args);
+		}
+
 		LiveAppOptions options;
 		try
 		{

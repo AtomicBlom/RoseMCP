@@ -20,6 +20,18 @@ internal static class Uwp
 		settings.EnableDebugging(packageFullName, null, IntPtr.Zero);
 	}
 
+	/// <summary>
+	/// Debug mode with a registered debugger command line (issue #5, from birth): on the next
+	/// activation the system creates the app suspended and launches this command line as the app's
+	/// debugger, appending <c>-p &lt;pid&gt; -tid &lt;tid&gt;</c>. The command line has a length limit
+	/// around 256 characters, so the caller keeps it short.
+	/// </summary>
+	public static void EnableDebugging(string packageFullName, string debuggerCommandLine)
+	{
+		var settings = CreateComInstance<IPackageDebugSettings>(ClsidPackageDebugSettings);
+		settings.EnableDebugging(packageFullName, debuggerCommandLine, IntPtr.Zero);
+	}
+
 	public static void DisableDebugging(string packageFullName)
 	{
 		var settings = CreateComInstance<IPackageDebugSettings>(ClsidPackageDebugSettings);

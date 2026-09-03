@@ -28,6 +28,7 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | --- | --- |
 | `rose_debug_attach` | Attach to a running process by pid. Local, same-user only. |
 | `rose_debug_launch` | Launch a local .NET executable under the debugger, from startup. |
+| `rose_debug_launch_uwp` | Activate a packaged (UWP) app under the debugger by AUMID, from birth -- startup, first OnLaunched, and all -- through an architecture-matched host. |
 | `rose_debug_events` | Read events since a cursor: exceptions (with stacks), logs, module loads, hits. |
 | `rose_debug_add_tracepoint` | Log a method's hits and keep running (with an optional condition / hit-count filter). |
 | `rose_debug_set_breakpoint` | Hold the target on hit and record its stack and top-frame locals (with an optional condition). |

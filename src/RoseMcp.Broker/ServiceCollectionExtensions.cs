@@ -1,6 +1,9 @@
+using System.Text.Json.Nodes;
+
 using Microsoft.Extensions.DependencyInjection;
 
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 
 using RoseMcp.Broker.Tools;
 
@@ -121,7 +124,36 @@ public static class ServiceCollectionExtensions
 			.WithTools<BrokerTools>()
 			.WithTools<BrokerAnalysisTools>()
 			.WithTools<LiveAppDebugTools>()
+			.WithCallOrigin()
 			.WithToolErrorMessages();
+	}
+
+	/// <summary>
+	/// Picks the calling session's directory out of <c>_meta</c> and makes it available for the length
+	/// of the call.
+	/// <para>
+	/// A filter rather than a tool parameter, so no tool declares it and no tool can forget it -- the
+	/// same reasoning that puts attribution in one place. See <see cref="CallOrigin"/> for why the
+	/// broker needs telling at all.
+	/// </para>
+	/// </summary>
+	private static IMcpServerBuilder WithCallOrigin(this IMcpServerBuilder builder) =>
+		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+		{
+			using var origin = CallOrigin.Use(OriginDirectory(context.Params));
+
+			return await next(context, cancellationToken);
+		}));
+
+	/// <summary>
+	/// Reads the origin directory a relay sent, ignoring anything malformed. A client is free to send
+	/// whatever it likes here, and a bad value must fall back to inference rather than fail the call.
+	/// </summary>
+	private static string? OriginDirectory(CallToolRequestParams? parameters)
+	{
+		if (parameters?.Meta?[CallOrigin.MetaKey] is not JsonValue value) return null;
+
+		return value.TryGetValue(out string? directory) && Directory.Exists(directory) ? directory : null;
 	}
 
 	/// <summary>

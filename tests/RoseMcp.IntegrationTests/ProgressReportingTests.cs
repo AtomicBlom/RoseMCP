@@ -87,7 +87,7 @@ public sealed class ProgressReportingTests
 
 		// No tool call of any kind: starting the worker is enough, which is what makes a reload from
 		// the tray visible.
-		await manager.GetOrStartAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+		await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current.CancellationToken);
 
 		var load = await WaitForAsync(
 			() => manager.Describe().SingleOrDefault()?.Recent

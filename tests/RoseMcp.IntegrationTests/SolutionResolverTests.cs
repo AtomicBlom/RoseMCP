@@ -121,6 +121,30 @@ public sealed class SolutionResolverTests
 		Assert.Equal(repository.Main, SolutionResolver.Resolve(repository.Root), ignoreCase: true);
 	}
 
+	/// <summary>
+	/// The other half of that sentence, and the half nothing used to assert. A pin is the directory's
+	/// default; containment is evidence about the path in hand, and evidence wins.
+	/// <para>
+	/// This is not a hypothetical ordering. The pin is the fix the ambiguity error recommends, and
+	/// the repository that provoked it holds three solutions of which the largest omits 28 projects
+	/// -- so under the old order, taking that advice pointed every question about those projects at a
+	/// compilation that does not contain the file.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public void Containment_beats_a_pin_that_does_not_compile_the_path()
+	{
+		using var repository = new TwoSolutionRepository();
+
+		// Pinned to the solution that does not contain Wizard.
+		repository.Pin(Path.GetFileName(repository.Installer));
+
+		var choice = SolutionResolver.Choose(Path.Combine(repository.Root, "Wizard", "Thing.cs"));
+
+		Assert.Equal(repository.Main, choice.SolutionPath, ignoreCase: true);
+		Assert.Contains("compiles", choice.Reason, StringComparison.Ordinal);
+	}
+
 	/// <summary>A pin naming something that is not there must not stop the repository working.</summary>
 	[Fact]
 	public void A_pin_naming_an_absent_solution_is_ignored_rather_than_fatal()

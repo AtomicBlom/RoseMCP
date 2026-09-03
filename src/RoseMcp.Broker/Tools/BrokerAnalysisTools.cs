@@ -33,7 +33,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Maximum diagnostics to return. Defaults to 200.")] int maxResults = 200,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<DiagnosticsResult>(workspace ?? target, ToolNames.Diagnostics, new()
+		ForwardAsync<DiagnosticsResult>(WorkspaceHints.From(workspace, target), ToolNames.Diagnostics, new()
 		{
 			["scope"] = scope,
 			["target"] = target,
@@ -57,7 +57,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("One-based column, pointing at the identifier itself.")] int column,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<SymbolInfoResult>(workspace ?? filePath, ToolNames.SymbolInfo, new()
+		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(workspace, filePath), ToolNames.SymbolInfo, new()
 		{
 			["filePath"] = filePath,
 			["line"] = line,
@@ -80,7 +80,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Maximum references to return. Defaults to 200.")] int maxResults = 200,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<ReferencesResult>(workspace ?? filePath, ToolNames.FindReferences, new()
+		ForwardAsync<ReferencesResult>(WorkspaceHints.From(workspace, filePath), ToolNames.FindReferences, new()
 		{
 			["filePath"] = filePath,
 			["line"] = line,
@@ -102,7 +102,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Maximum matches to return. Defaults to 50.")] int maxResults = 50,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<SymbolSearchResult>(workspace, ToolNames.SearchSymbols, new()
+		ForwardAsync<SymbolSearchResult>(WorkspaceHints.From(workspace), ToolNames.SearchSymbols, new()
 		{
 			["query"] = query,
 			["maxResults"] = maxResults,
@@ -121,7 +121,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<GeneratedDocumentList>(workspace, ToolNames.ListGeneratedDocuments, new()
+		ForwardAsync<GeneratedDocumentList>(WorkspaceHints.From(workspace), ToolNames.ListGeneratedDocuments, new()
 		{
 			["project"] = project,
 		}, cancellationToken, progress);
@@ -140,7 +140,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Limit to one project by name.")] string? project = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<GeneratedDocumentContent>(workspace, ToolNames.ReadGeneratedDocument, new()
+		ForwardAsync<GeneratedDocumentContent>(WorkspaceHints.From(workspace), ToolNames.ReadGeneratedDocument, new()
 		{
 			["hintName"] = hintName,
 			["project"] = project,
@@ -168,7 +168,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<RenameResult>(workspace ?? filePath, ToolNames.RenameSymbol, new()
+		ForwardAsync<RenameResult>(WorkspaceHints.From(workspace, filePath), ToolNames.RenameSymbol, new()
 		{
 			["filePath"] = filePath,
 			["line"] = line,
@@ -197,7 +197,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Maximum matches to return. Defaults to 200.")] int maxResults = 200,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<ImplementationsResult>(workspace ?? filePath, ToolNames.FindImplementations, new()
+		ForwardAsync<ImplementationsResult>(WorkspaceHints.From(workspace, filePath), ToolNames.FindImplementations, new()
 		{
 			["filePath"] = filePath,
 			["line"] = line,
@@ -218,7 +218,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Path to the file.")] string filePath,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<CodeFixList>(workspace ?? filePath, ToolNames.ListCodeFixes, new()
+		ForwardAsync<CodeFixList>(WorkspaceHints.From(workspace, filePath), ToolNames.ListCodeFixes, new()
 		{
 			["filePath"] = filePath,
 		}, cancellationToken, progress);
@@ -242,7 +242,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<CodeFixResult>(workspace ?? filePath, ToolNames.ApplyCodeFix, new()
+		ForwardAsync<CodeFixResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ApplyCodeFix, new()
 		{
 			["diagnosticId"] = diagnosticId,
 			["filePath"] = filePath,
@@ -269,7 +269,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<FormatResult>(workspace ?? filePaths.FirstOrDefault(), ToolNames.FormatDocuments, new()
+		ForwardAsync<FormatResult>(WorkspaceHints.From(workspace, filePaths), ToolNames.FormatDocuments, new()
 		{
 			["filePaths"] = filePaths,
 			["apply"] = apply,
@@ -295,7 +295,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<MoveTypeResult>(workspace ?? filePath, ToolNames.MoveTypeToFile, new()
+		ForwardAsync<MoveTypeResult>(WorkspaceHints.From(workspace, filePath), ToolNames.MoveTypeToFile, new()
 		{
 			["filePath"] = filePath,
 			["typeName"] = typeName,
@@ -305,7 +305,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
 	private Task<T> ForwardAsync<T>(
-		string? workspace,
+		WorkspaceHints hints,
 		string tool,
 		Dictionary<string, object?> arguments,
 		CancellationToken cancellationToken,
@@ -317,6 +317,6 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			.Where(pair => pair.Value is not null)
 			.ToDictionary(pair => pair.Key, pair => pair.Value);
 
-		return workspaces.CallAsync<T>(workspace, tool, supplied, retryIfWorkerDied, cancellationToken, progress);
+		return workspaces.CallAsync<T>(hints, tool, supplied, retryIfWorkerDied, cancellationToken, progress);
 	}
 }

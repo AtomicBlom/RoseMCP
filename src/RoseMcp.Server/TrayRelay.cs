@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Threading.Channels;
 
 using ModelContextProtocol;
@@ -21,14 +20,17 @@ namespace RoseMcp.Server;
 /// process knows the directory its client started it in and an http broker never can.
 /// </para>
 /// <para>
+/// That second half is contributed rather than decided here: the directory goes out with every call
+/// and the broker ranks it against the arguments. See <see cref="CallToolAsync"/> for what deciding
+/// it in this process cost.
+/// </para>
+/// <para>
 /// The tools are not redeclared here. Listing is forwarded too, so the surface cannot drift from
 /// the tray's.
 /// </para>
 /// </summary>
 public sealed class TrayRelay : IAsyncDisposable
 {
-	private const string WorkspaceArgument = "workspace";
-
 	/// <summary>
 	/// How long to keep trying to reach the tray again before giving up on a call.
 	/// <para>
@@ -129,17 +131,37 @@ public sealed class TrayRelay : IAsyncDisposable
 			},
 			cancellationToken);
 
+	/// <summary>
+	/// Forwards one call, adding the directory this session was started in and changing nothing else.
+	/// <para>
+	/// A fact, not a conclusion, and that distinction is the whole of it. This used to resolve the
+	/// working directory to a solution and write the answer into the <c>workspace</c> argument, which
+	/// went wrong three ways at once. It looked for an argument by name, so
+	/// <c>rose_workspace_open</c> -- alone in calling its own <c>path</c> -- had an explicitly named
+	/// solution treated as an omission and was refused for an ambiguity it had already settled. It
+	/// resolved before reading the arguments, so a call carrying a file path that containment would
+	/// have decided was refused too. And it ran for every tool, so <c>rose_debug_launch_uwp</c>, which
+	/// takes no workspace and needs no solution, failed with a solution-ambiguity error.
+	/// </para>
+	/// <para>
+	/// Sending the directory instead leaves one ordering, in the broker, over the whole set of
+	/// arguments. It cannot pre-empt what the caller said, cannot miss an argument it does not know
+	/// the name of, and cannot refuse on behalf of a tool that never asked.
+	/// </para>
+	/// </summary>
 	public async ValueTask<CallToolResult> CallToolAsync(
 		CallToolRequestParams request,
 		McpServer client,
 		CancellationToken cancellationToken)
 	{
-		var arguments = WithWorkspace(request.Arguments);
+		var arguments = request.Arguments?.ToDictionary(pair => pair.Key, pair => (object?)pair.Value)
+			?? [];
 
 		await using var progress = OrderedProgress.For(client, request.ProgressToken);
 
 		return await InvokeAsync(
-			(tray, token) => CancellableToolCall.InvokeAsync(tray, request.Name, arguments, progress, token),
+			(tray, token) => CancellableToolCall.InvokeAsync(
+				tray, request.Name, arguments, progress, token, _workingDirectory),
 			cancellationToken);
 	}
 
@@ -272,67 +294,6 @@ public sealed class TrayRelay : IAsyncDisposable
 		or IOException
 		or ObjectDisposedException
 		or InvalidOperationException { Source: "ModelContextProtocol.Core" };
-
-	/// <summary>
-	/// Fills in the workspace a call left out, from the directory this process was started in.
-	/// <para>
-	/// This is the whole reason the relay is worth having. The tray serves every repository on the
-	/// machine, so with two solutions open it cannot guess which one a bare call means and has to
-	/// refuse. A stdio process cannot be ambiguous: its client chose its working directory. Filling
-	/// the argument in here means the tray is never asked the unanswerable question.
-	/// </para>
-	/// <para>
-	/// Only when the directory actually resolves. A session started above a solution, or somewhere
-	/// with none at all, is better served by the tray's own inference than by an argument naming a
-	/// directory that means nothing.
-	/// </para>
-	/// <para>
-	/// A directory holding several solutions is the one case that is not filled in and not passed on
-	/// either: <see cref="AmbiguousSolutionException"/> travels out of here to the caller. Falling
-	/// through would be worse than throwing, because the tray then infers from what it has open --
-	/// and with exactly one workspace open it would answer from that one, however unrelated the
-	/// repository it belongs to.
-	/// </para>
-	/// </summary>
-	private IReadOnlyDictionary<string, object?> WithWorkspace(IDictionary<string, JsonElement>? arguments)
-	{
-		var supplied = arguments?.ToDictionary(pair => pair.Key, pair => (object?)pair.Value) ?? [];
-
-		var alreadyThere = arguments is not null
-			&& arguments.TryGetValue(WorkspaceArgument, out var existing)
-			&& existing.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
-			&& !string.IsNullOrWhiteSpace(existing.ToString());
-
-		if (alreadyThere) return supplied;
-
-		SolutionChoice choice;
-		try
-		{
-			choice = SolutionResolver.Choose(_workingDirectory);
-		}
-		catch (ArgumentException)
-		{
-			return supplied;
-		}
-
-		supplied[WorkspaceArgument] = choice.SolutionPath;
-
-		if (choice.WasContested)
-		{
-			_logger.LogDebug(
-				"Filled in workspace {Workspace} from the working directory, {Reason}, from: {Candidates}.",
-				choice.SolutionPath,
-				choice.Reason,
-				string.Join(", ", choice.Candidates));
-		}
-		else
-		{
-			_logger.LogDebug(
-				"Filled in workspace {Workspace} from the working directory.", choice.SolutionPath);
-		}
-
-		return supplied;
-	}
 
 	/// <summary>
 	/// Relays progress in the order it arrived.

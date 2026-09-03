@@ -307,6 +307,103 @@ public sealed class BrokerTests
 	}
 
 	/// <summary>
+	/// The write tools, driven the way a client drives them: through the broker, by argument name,
+	/// into a real worker process.
+	/// <para>
+	/// This is the only thing that catches an argument the broker spells differently from the worker
+	/// it forwards to. Nothing in the type system connects the two -- the broker builds a dictionary
+	/// and the worker binds it by parameter name -- so a mismatch makes the tool uncallable while
+	/// every in-process test of the service behind it goes on passing.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Writes_C_sharp_by_symbol_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var hints = WorkspaceHints.From(fixture.SolutionPath);
+
+		var replaced = await manager.CallAsync<MemberEditResult>(
+			hints,
+			ToolNames.ReplaceMember,
+			new Dictionary<string, object?>
+			{
+				["symbol"] = "Library.Greeter.Greet(string)",
+				["code"] = "public string Greet(string name) => $\"{_prefix}! {name}\";",
+			},
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		Assert.True(replaced.Applied);
+		Assert.True(replaced.Verified);
+		Assert.Empty(replaced.IntroducedDiagnostics);
+
+		var body = await manager.CallAsync<MemberEditResult>(
+			hints,
+			ToolNames.ReplaceBody,
+			new Dictionary<string, object?>
+			{
+				["symbol"] = "Library.Greeter.Shout(string)",
+				["code"] = "return text.ToLowerInvariant();",
+			},
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		Assert.True(body.Applied);
+
+		var added = await manager.CallAsync<MemberEditResult>(
+			hints,
+			ToolNames.AddMember,
+			new Dictionary<string, object?>
+			{
+				["type"] = "Library.Greeter",
+				["code"] = "public int Doubled => Count * 2;",
+				["after"] = "Count",
+			},
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		Assert.True(added.Applied);
+		Assert.Equal(["Doubled"], added.Members);
+
+		// And the file on disk carries all three, in the repository's own formatting.
+		var text = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Greeter.cs"), TestContext.Current.CancellationToken);
+
+		Assert.Contains("\tpublic string Greet(string name) => $\"{_prefix}! {name}\";\r\n", text, StringComparison.Ordinal);
+		Assert.Contains("\tpublic int Doubled => Count * 2;\r\n", text, StringComparison.Ordinal);
+
+		// Statements, so a block: the shape follows what was supplied rather than what was there.
+		Assert.Contains(
+			"\tprivate static string Shout(string text)\r\n\t{\r\n\t\treturn text.ToLowerInvariant();\r\n\t}\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>Naming a symbol rather than a position has to survive the same trip.</summary>
+	[Fact]
+	public async Task Describes_a_named_symbol_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var info = await manager.CallAsync<SymbolInfoResult>(
+			WorkspaceHints.From(fixture.SolutionPath),
+			ToolNames.SymbolInfo,
+			new Dictionary<string, object?> { ["symbol"] = "Library.Greeter.PrefixLength" },
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		Assert.Equal("PrefixLength", info.Name);
+
+		var span = Assert.Single(info.DeclarationSpans);
+
+		Assert.Equal(2, span.LineCount);
+		Assert.EndsWith("Greeter.cs", span.FilePath, StringComparison.OrdinalIgnoreCase);
+	}
+
+	/// <summary>
 	/// A result that does not name its workspace cannot be checked: nothing found in the wrong
 	/// solution is indistinguishable from nothing to find in the right one. The broker fills this
 	/// in for every result type, so it is asserted through the same path the tools use.

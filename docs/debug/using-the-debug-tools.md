@@ -38,11 +38,14 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | `rose_xaml_tree` | Read a live XAML app's visual tree: a flat element list (handle, parent, child index, type, x:Name) that rebuilds into a tree. |
 | `rose_xaml_properties` | Read one element's properties (by handle) with provenance (Local / Style / Inherited / Default …) and, when the app carries source info, the XAML file and line that set each. |
 | `rose_xaml_apply` | Hot-reload: diff two XAML versions and apply the changes to the live tree with no relaunch, reporting each edit's outcome. Property changes on named elements today. |
+| `rose_debug_evaluate` | While stopped, evaluate a field-access expression (`name`, `name.field.field`) against the frame — read directly from memory, no debuggee code run. |
 
 ## Limits worth knowing
 
 - Line-granular stepping and local names need a PDB; without one a step lands at the runtime's own
   step boundaries and locals are indexed rather than named.
-- Object values are shown by type; reading an object's own value needs expression evaluation, which
-  is not built yet (see the decisions log).
+- Expression evaluation reads field-access chains only (`rose_debug_evaluate`): an argument or local,
+  then `.field` into the object graph, read from memory. It runs none of the debuggee's own code, so
+  property getters, method calls, and an object's `ToString` are deliberately not evaluated — that
+  needs func-eval, which can hang or corrupt the target, and is left to an external debugger.
 - Conditions are cheap value-compares (`name OP literal`) over the stopped frame, not full expressions.

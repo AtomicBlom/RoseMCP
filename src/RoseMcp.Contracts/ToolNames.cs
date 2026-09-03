@@ -72,6 +72,9 @@ public static class ToolNames
 	/// <summary>Live-app-host-only. The broker forwards this to step a held target.</summary>
 	public const string LiveAppStep = "rose_live_app_step";
 
+	/// <summary>Live-app-host-only. The broker forwards this to evaluate a field-access expression at a stop.</summary>
+	public const string LiveAppEvaluate = "rose_live_app_evaluate";
+
 	/// <summary>
 	/// Live-app-host-only. The broker forwards this to inject the XAML diagnostics provider into the
 	/// target and read a snapshot of its live visual tree.
@@ -125,6 +128,9 @@ public static class ToolNames
 
 	/// <summary>Step a target held at a breakpoint: in, over, or out.</summary>
 	public const string DebugStep = "rose_debug_step";
+
+	/// <summary>Evaluate a field-access expression against a stopped frame, without running debuggee code.</summary>
+	public const string DebugEvaluate = "rose_debug_evaluate";
 
 	/// <summary>Read a snapshot of a live app's XAML visual tree by injecting the diagnostics provider.</summary>
 	public const string XamlTree = "rose_xaml_tree";

@@ -132,6 +132,19 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return new LiveContinueResult { Continued = session?.Step(mode) == true };
 	}
 
+	/// <summary>Evaluates a field-access expression against the stopped frame; safe, no debuggee code runs.</summary>
+	public LiveEvaluation Evaluate(string expression)
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		return session?.Evaluate(expression)
+			?? new LiveEvaluation { Expression = expression, Error = "This session is not attached to a target." };
+	}
+
 	/// <summary>
 	/// Injects the XAML diagnostics provider into the target and returns a snapshot of its live visual
 	/// tree. Returns a tree carrying only a detail (no nodes) when the target has no XAML UI or the

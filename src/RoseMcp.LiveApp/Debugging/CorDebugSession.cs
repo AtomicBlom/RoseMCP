@@ -291,6 +291,104 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
+	/// <summary>
+	/// Evaluates a field-access expression against the stopped frame (issue #7): a root argument or local
+	/// name, then <c>.field</c> steps into the object graph, read directly from memory. It runs none of
+	/// the debuggee's own code -- no property getters, no method calls -- so it cannot hang or corrupt the
+	/// target; those need func-eval, a deliberate non-goal for now. Returns an error, not a throw, when
+	/// nothing is stopped or the expression does not resolve.
+	/// </summary>
+	public LiveEvaluation Evaluate(string expression)
+	{
+		lock (_gate)
+		{
+			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited)
+			{
+				return new LiveEvaluation { Expression = expression, Error = "The target is not stopped; evaluation needs a stop at a breakpoint or step." };
+			}
+
+			var parts = expression.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+			if (parts.Length == 0)
+			{
+				return new LiveEvaluation { Expression = expression, Error = "Empty expression." };
+			}
+
+			try
+			{
+				var current = ResolveRoot(_stoppedThread, parts[0]);
+				if (current is null)
+				{
+					return new LiveEvaluation { Expression = expression, Error = $"'{parts[0]}' is not an argument or local in the current frame." };
+				}
+
+				for (var i = 1; i < parts.Length; i++)
+				{
+					current = ResolveField(current, parts[i]);
+					if (current is null)
+					{
+						return new LiveEvaluation { Expression = expression, Error = $"Could not read '{parts[i]}' (not a field of the preceding value, or it is null)." };
+					}
+				}
+
+				var (typeName, value) = ValueReader.Read(current);
+				return new LiveEvaluation { Expression = expression, TypeName = typeName, Value = value };
+			}
+			catch (Exception exception)
+			{
+				logger.LogDebug(exception, "Evaluating '{Expression}' failed.", expression);
+				return new LiveEvaluation { Expression = expression, Error = exception.Message };
+			}
+		}
+	}
+
+	/// <summary>Resolves a bare name to an argument or local value in the stopped top frame.</summary>
+	private CorDebugValue? ResolveRoot(CorDebugThread thread, string name)
+	{
+		var frame = FindTopILFrame(thread);
+		if (frame is null) return null;
+
+		var function = frame.Function;
+		var moduleName = TryModuleName(function);
+		var methodToken = TryFunctionToken(function);
+		var (isStatic, parameterNames) = methodToken is { } token && moduleName is not null
+			? MethodTokens.ParameterNames(moduleName, token)
+			: (true, (IReadOnlyList<string>)[]);
+
+		var arguments = frame.EnumerateArguments().ToList();
+		for (var i = 0; i < arguments.Count; i++)
+		{
+			if (ArgumentName(i, isStatic, parameterNames) == name) return arguments[i];
+		}
+
+		var locals = frame.EnumerateLocalVariables().ToList();
+		for (var i = 0; i < locals.Count; i++)
+		{
+			if ($"local_{i}" == name) return locals[i];
+		}
+
+		return null;
+	}
+
+	/// <summary>Reads a field off a value by name: dereference a reference, then read the field directly.</summary>
+	private static CorDebugValue? ResolveField(CorDebugValue value, string fieldName)
+	{
+		if (value is CorDebugReferenceValue reference)
+		{
+			if (reference.IsNull) return null;
+			value = reference.Dereference();
+		}
+
+		if (value is not CorDebugObjectValue objectValue) return null;
+
+		var cls = objectValue.Class;
+		var token = MethodTokens.FieldToken(cls.Module.Name, (int)cls.Token, fieldName);
+		if (token is null) return null;
+
+		// GetFieldValue wants the raw ICorDebugClass; the ClrDebug wrapper is not it (casting the
+		// wrapper to the interface throws), so hand over its Raw.
+		return objectValue.GetFieldValue(cls.Raw, token.Value);
+	}
+
 	public void Dispose()
 	{
 		Detach();

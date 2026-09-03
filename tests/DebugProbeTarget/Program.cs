@@ -15,6 +15,7 @@ internal static class Program
 		while (DateTime.UtcNow < deadline)
 		{
 			Beat(iteration++);
+			Inspect(new ProbeState { Count = iteration, Inner = new ProbeState { Count = -1, Label = "inner" } });
 
 			try
 			{
@@ -27,6 +28,17 @@ internal static class Program
 
 			Thread.Sleep(200);
 		}
+	}
+
+	/// <summary>
+	/// Called once per loop with an object graph a debugger can stop on and evaluate: <c>state.Label</c>
+	/// and <c>state.Inner.Count</c> are stable field-access chains the evaluation test reads. Not inlined,
+	/// so a breakpoint has a real method to bind to and the argument is live at the stop.
+	/// </summary>
+	[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+	private static void Inspect(ProbeState state)
+	{
+		_ = state.Count;
 	}
 
 	/// <summary>
@@ -43,3 +55,16 @@ internal static class Program
 
 /// <summary>The distinctively named exception the attach test looks for in the debug event stream.</summary>
 internal sealed class RoseDebugProbeException() : Exception("rose debug probe");
+
+/// <summary>
+/// A small object graph the evaluation test drills into. Public fields (not properties) so a field-access
+/// evaluator can read them without running a getter.
+/// </summary>
+internal sealed class ProbeState
+{
+	public int Count;
+
+	public string Label = "beat";
+
+	public ProbeState? Inner;
+}

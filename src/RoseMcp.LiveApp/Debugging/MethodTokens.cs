@@ -53,6 +53,37 @@ internal static class MethodTokens
 	}
 
 	/// <summary>
+	/// The metadata token of a field on a type, by name, for reading it off a stopped object value
+	/// (safe field-access evaluation). Walks the type's own fields; returns null when there is no such
+	/// field, so a field-access expression against the wrong type fails cleanly.
+	/// </summary>
+	public static int? FieldToken(string modulePath, int typeToken, string fieldName)
+	{
+		try
+		{
+			using var stream = File.OpenRead(modulePath);
+			using var pe = new PEReader(stream);
+			var metadata = pe.GetMetadataReader();
+			var type = metadata.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.EntityHandle(typeToken));
+
+			foreach (var fieldHandle in type.GetFields())
+			{
+				var field = metadata.GetFieldDefinition(fieldHandle);
+				if (metadata.StringComparer.Equals(field.Name, fieldName))
+				{
+					return MetadataTokens.GetToken(fieldHandle);
+				}
+			}
+
+			return null;
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>
 	/// A method's parameter names in order and whether it is static, for naming a stopped frame's
 	/// arguments. An instance method's argument 0 is <c>this</c>, which these names do not include.
 	/// </summary>

@@ -374,6 +374,29 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	}
 
 	[McpServerTool(
+		Name = ToolNames.DebugEvaluate,
+		Title = "Evaluate an expression at a stop",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Evaluate a simple expression against a target held at a breakpoint or step: a field-access chain "
+			+ "-- an argument or local name, then .field into the object graph (e.g. state.Inner.Count). It "
+			+ "reads fields directly from memory and runs none of the debuggee's own code, so it never hangs "
+			+ "or changes the target; property getters and method calls are deliberately not evaluated. Only "
+			+ "valid while stopped. Local names need a PDB; arguments are always named. Returns the value and "
+			+ "its type, or an error explaining why it did not resolve.")]
+	public async Task<LiveEvaluation> EvaluateAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("A field-access expression, e.g. this.field or state.Inner.Count.")] string expression,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.EvaluateAsync(expression, cancellationToken);
+	}
+
+	[McpServerTool(
 		Name = ToolNames.XamlTree,
 		Title = "Read the live XAML visual tree",
 		ReadOnly = true,

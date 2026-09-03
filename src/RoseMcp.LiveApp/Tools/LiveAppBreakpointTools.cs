@@ -71,4 +71,16 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 	public LiveContinueResult Step(
 		[Description("in, over, or out.")] string mode)
 		=> host.Step(mode);
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppEvaluate,
+		Title = "Evaluate at a stop",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Evaluate a field-access expression against the stopped frame; runs no debuggee code.")]
+	public LiveEvaluation Evaluate(
+		[Description("A field-access expression, e.g. name or name.field.field.")] string expression)
+		=> host.Evaluate(expression);
 }

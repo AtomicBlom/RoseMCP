@@ -204,6 +204,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["mode"] = mode },
 			cancellationToken)).Continued;
 
+	/// <summary>Evaluates a field-access expression against the stopped frame; runs no debuggee code.</summary>
+	public Task<LiveEvaluation> EvaluateAsync(string expression, CancellationToken cancellationToken)
+		=> SendAsync<LiveEvaluation>(
+			ToolNames.LiveAppEvaluate,
+			new Dictionary<string, object?> { ["expression"] = expression },
+			cancellationToken);
+
 	/// <summary>Injects the XAML provider into the target and reads a snapshot of its live visual tree.</summary>
 	public Task<LiveXamlTree> ReadXamlTreeAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveXamlTree>(ToolNames.LiveAppXamlTree, cancellationToken);

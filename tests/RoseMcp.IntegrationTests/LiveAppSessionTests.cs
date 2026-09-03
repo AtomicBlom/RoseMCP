@@ -690,6 +690,65 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// Field-access evaluation at a stop (issue #7): held at a breakpoint on Inspect(ProbeState), drill
+	/// into the argument's object graph -- <c>state.Label</c> and <c>state.Inner.Count</c> -- reading
+	/// fields directly, no debuggee code run. A missing field is a clean error, not a throw.
+	/// </summary>
+	[Fact]
+	public async Task Evaluates_a_field_access_expression_at_a_stop()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "probe target",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Inspect", autoContinueSeconds: null, condition: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(stop);
+
+			// A field on the argument, and a two-level chain into the graph.
+			var label = await session.EvaluateAsync("state.Label", cancellationToken);
+			Assert.True(label.Error is null, $"state.Label should evaluate; error: {label.Error}");
+			Assert.Equal("string", label.TypeName);
+			Assert.Equal("\"beat\"", label.Value);
+
+			var innerCount = await session.EvaluateAsync("state.Inner.Count", cancellationToken);
+			Assert.Null(innerCount.Error);
+			Assert.Equal("int", innerCount.TypeName);
+			Assert.Equal("-1", innerCount.Value);
+
+			// A field that does not exist reports why rather than throwing.
+			var missing = await session.EvaluateAsync("state.Nope", cancellationToken);
+			Assert.NotNull(missing.Error);
+
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			Assert.True(await session.ContinueAsync(cancellationToken));
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// Stepping (issue #6): once held at a breakpoint, a step resumes the target briefly and holds it
 	/// again at the next location, which arrives as a StepComplete event with a fresh stack.
 	/// </summary>

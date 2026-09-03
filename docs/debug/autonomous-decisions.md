@@ -255,3 +255,21 @@ and boolean are the reliable cases; a value the diff cannot type (a bare string)
 `CreateInstance` failure rather than applying, which is the honest current limit. Proven by
 `Hot_reloads_a_property_on_the_live_uwp_probe`: it changes the caption's font size, applies it, and
 reads the live element's font size back as the new value -- the edit-to-live loop, end to end.
+
+### D17 — Expression evaluation: safe field-access only; func-eval is a deliberate non-goal (#7, resolves D6)
+D6 parked full expression evaluation as the plan's open question and the riskiest ICorDebug surface.
+The resolution: ship the safe, bounded part and draw the line explicitly. `rose_debug_evaluate`, valid
+only at a stop, evaluates a field-access chain -- an argument or local by name, then `.field` into the
+object graph -- by reading fields directly from memory (metadata field token + `GetFieldValue`). It
+runs **none of the debuggee's own code**, so it cannot hang or corrupt the target the way property
+getters, method calls, or `ToString` would; those need `ICorDebugEval` func-eval, which stays a
+deliberate non-goal -- for heavy inspection the agent attaches an external debugger. Stack and locals
+at a stop (already shipped) plus this cover the common "drill into the stopped object graph" need.
+
+Scope and limits: own (declared) fields, not inherited ones; arguments are always named, locals need a
+PDB (indexed `local_N` otherwise); a missing field or a null in the chain is a returned error, not a
+throw. Two gotchas: `GetFieldValue` wants the raw `ICorDebugClass`, and casting the ClrDebug
+`CorDebugClass` wrapper to that interface throws -- pass `cls.Raw`; and `dotnet format` "helpfully"
+auto-inserted that very (wrong) cast to make a CS1503 compile, so a green build is not proof the cast
+is right. Proven by `Evaluates_a_field_access_expression_at_a_stop`: `state.Label` -> "beat" and
+`state.Inner.Count` -> -1 off a stopped frame, a missing field reported cleanly.

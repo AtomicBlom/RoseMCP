@@ -1,5 +1,4 @@
 using Microsoft.CodeAnalysis;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -147,39 +146,6 @@ public sealed class StalenessTests
 		return errors;
 	}
 
-	private static async Task<SessionScope> OpenAsync(string name, string solutionFile)
-	{
-		var fixture = FixtureSolution.Copy(name, solutionFile);
-
-		var loader = new SolutionLoader(
-			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
-			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
-			NullLogger<SolutionLoader>.Instance);
-
-		var options = new WorkerOptions { SolutionPath = fixture.SolutionPath };
-		var load = await loader.LoadAsync(options, TestContext.Current.CancellationToken);
-
-		return new SessionScope(
-			fixture,
-			WorkspaceSession.Create(
-				load,
-				loader,
-				options,
-				NullLogger<WorkspaceSession>.Instance,
-				NullLogger<SolutionWatcher>.Instance));
-	}
-
-	/// <summary>Keeps the session and the temp fixture alive together, and tears both down in order.</summary>
-	private sealed class SessionScope(FixtureSolution fixture, WorkspaceSession session) : IAsyncDisposable
-	{
-		public FixtureSolution Fixture { get; } = fixture;
-
-		public WorkspaceSession Session { get; } = session;
-
-		public async ValueTask DisposeAsync()
-		{
-			await Session.DisposeAsync();
-			Fixture.Dispose();
-		}
-	}
+	private static Task<SessionScope> OpenAsync(string name, string solutionFile) =>
+		SessionScope.OpenAsync(name, solutionFile);
 }

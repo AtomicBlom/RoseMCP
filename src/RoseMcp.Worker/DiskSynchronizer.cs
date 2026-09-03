@@ -17,14 +17,47 @@ namespace RoseMcp.Worker;
 /// </summary>
 public sealed class DiskSynchronizer
 {
+	private static readonly char[] SeparatorChars = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
+
+	/// <summary>
+	/// Files whose appearance changes how projects evaluate, and which are not identified by their
+	/// extension. Deliberately named one by one: any new .json would otherwise force a reload, and
+	/// an agent writing code creates those for reasons that have nothing to do with the build.
+	/// </summary>
+	private static readonly HashSet<string> StructuralNames = new(StringComparer.OrdinalIgnoreCase)
+	{
+		".editorconfig", "global.json", "nuget.config", "packages.config", "rosemcp.json",
+	};
+
+	/// <summary>
+	/// Directories that hold no source the project compiles. The same list the watcher ignores, for
+	/// the same reasons.
+	/// </summary>
+	private static readonly HashSet<string> IgnoredDirectories =
+		new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", ".vs", "node_modules" };
+
 	private readonly Dictionary<DocumentId, TrackedDocument> _documents = [];
 	private readonly Dictionary<string, FileStamp?> _structuralFiles = new(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// Whether each project globs its source files, which costs one read of the project file and
+	/// never changes without the project file changing -- and that is a reload.
+	/// </summary>
+	private readonly Dictionary<string, bool> _globs = new(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// Files found on disk and deliberately not added, so the reason is given once rather than on
+	/// every read for as long as the file stays out of its project.
+	/// </summary>
+	private readonly HashSet<string> _declined = new(StringComparer.OrdinalIgnoreCase);
 
 	/// <summary>Rebuilds the tracking table from a freshly loaded solution.</summary>
 	public void Reset(Solution solution, string solutionPath)
 	{
 		_documents.Clear();
 		_structuralFiles.Clear();
+		_globs.Clear();
+		_declined.Clear();
 
 		foreach (var project in solution.Projects)
 		{
@@ -65,6 +98,79 @@ public sealed class DiskSynchronizer
 					document.Id, path, TrackedDocumentKind.Source, FileStamp.For(path));
 			}
 		}
+	}
+
+	/// <summary>
+	/// Adds files that have appeared on disk to the project whose directory holds them.
+	/// <para>
+	/// Without this a new source file is invisible. The sweep stats the documents it knows about and
+	/// a new file is not one of them, so the workspace goes on compiling a solution that does not
+	/// include it -- and every reference to the new type reports CS0103, which is indistinguishable
+	/// from the code actually being wrong. That is the worst failure this server can have: not an
+	/// error, but a confident answer about a file that is not there. An agent that writes C# creates
+	/// files constantly, so it was also the failure most likely to happen.
+	/// </para>
+	/// <para>
+	/// A reload would also fix it and is what this used to need, at the cost of a full design-time
+	/// build per new file. Adding the document is the same operation a mutation that creates a file
+	/// already performs, and the attribution is the honest part: containment in a project's
+	/// directory, which is exactly what the SDK's default globs compile, and a refusal to claim
+	/// anything for a project that lists its files instead.
+	/// </para>
+	/// </summary>
+	public async Task<NewFileResult> AbsorbNewAsync(
+		Solution solution,
+		IReadOnlyList<string> created,
+		CancellationToken cancellationToken)
+	{
+		// The watcher's list is used for one thing only: a project or build file appearing, which
+		// nothing here can patch in and which a directory walk for source files would not see.
+		var structural = created.Any(IsStructural);
+
+		var added = new List<string>();
+		var notInTheBuild = new List<string>();
+
+		foreach (var path in Untracked(solution, cancellationToken))
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			var owners = Owners(solution, path);
+			if (owners.Count == 0) continue;
+
+			if (!Globs(owners[0]))
+			{
+				// Once. The file stays untracked for as long as it stays out of the project, and
+				// repeating the notice on every read afterwards would bury everything else.
+				if (_declined.Add(path)) notInTheBuild.Add(path);
+				continue;
+			}
+
+			var text = await TryReadAsync(path, cancellationToken);
+			if (text is null) continue;
+
+			var stamp = FileStamp.For(path);
+
+			// Every project whose directory holds it, not just one. A multi-targeted project is
+			// several projects over one file, and a file missing from all but the first would report
+			// errors for the frameworks it was left out of.
+			foreach (var project in owners)
+			{
+				var id = DocumentId.CreateNewId(project.Id, Path.GetFileName(path));
+
+				solution = solution.AddDocument(id, Path.GetFileName(path), text, Folders(project, path), path);
+				_documents[id] = new TrackedDocument(id, path, TrackedDocumentKind.Source, stamp);
+			}
+
+			added.Add(path);
+		}
+
+		return new NewFileResult
+		{
+			Solution = solution,
+			Added = added,
+			StructuralChange = structural,
+			NotInTheBuild = notInTheBuild,
+		};
 	}
 
 	/// <summary>
@@ -134,6 +240,185 @@ public sealed class DiskSynchronizer
 			Deferred = (IReadOnlyList<string>?)deferred ?? [],
 		};
 	}
+
+	/// <summary>
+	/// Source files on disk that no document covers.
+	/// <para>
+	/// Found by walking the project directories rather than by trusting the watcher, for exactly the
+	/// reason the rest of this class stats rather than trusts it: a dropped or late event has to cost
+	/// latency and not correctness. A watcher event arrives some milliseconds after the write, so an
+	/// agent that creates a file and immediately asks about it would get an answer that depended on
+	/// the race -- which is worse than a slow answer and much worse than a wrong one, because it is
+	/// both intermittent and confident.
+	/// </para>
+	/// <para>
+	/// The cost is one pruned enumeration of the source tree per barrier, against the one stat per
+	/// tracked document the sweep already pays. Enumerating a directory returns its entries in bulk,
+	/// so this is the cheaper half of the two.
+	/// </para>
+	/// </summary>
+	private IReadOnlyList<string> Untracked(Solution solution, CancellationToken cancellationToken)
+	{
+		var tracked = _documents.Values
+			.Select(document => Path.GetFullPath(document.Path))
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+		var found = new List<string>();
+
+		foreach (var root in Roots(solution))
+		{
+			Walk(root, tracked, found, cancellationToken);
+		}
+
+		return found;
+	}
+
+	private static void Walk(
+		string directory,
+		HashSet<string> tracked,
+		List<string> found,
+		CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+
+		try
+		{
+			foreach (var file in Directory.EnumerateFiles(directory, "*.cs"))
+			{
+				var path = Path.GetFullPath(file);
+				if (!tracked.Contains(path)) found.Add(path);
+			}
+
+			foreach (var child in Directory.EnumerateDirectories(directory))
+			{
+				var name = Path.GetFileName(child);
+
+				// Build output holds thousands of files and generated sources that belong to the
+				// compiler rather than to the project, and a dot directory belongs to a tool.
+				if (IgnoredDirectories.Contains(name) || name.StartsWith('.')) continue;
+
+				Walk(child, tracked, found, cancellationToken);
+			}
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			// A directory that cannot be read this time is one the next barrier tries again.
+		}
+	}
+
+	/// <summary>
+	/// The directories to walk: every project's own, with any that sits inside another dropped, so a
+	/// project nested in another project's folder is not walked twice.
+	/// </summary>
+	private static IReadOnlyList<string> Roots(Solution solution)
+	{
+		var directories = solution.Projects
+			.Select(project => project.FilePath)
+			.OfType<string>()
+			.Select(file => Path.GetDirectoryName(Path.GetFullPath(file)))
+			.OfType<string>()
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.OrderBy(directory => directory.Length)
+			.ToArray();
+
+		var roots = new List<string>();
+
+		foreach (var directory in directories)
+		{
+			if (roots.Any(root => Encloses(root, directory))) continue;
+
+			roots.Add(directory);
+		}
+
+		return roots;
+	}
+
+	/// <summary>
+	/// The projects that would compile a file in that place: the ones whose directory is the closest
+	/// enclosing one. Closest, because a repository nests projects inside other projects' folders
+	/// often enough that the outermost would claim half the tree.
+	/// </summary>
+	private static IReadOnlyList<Project> Owners(Solution solution, string path)
+	{
+		var owners = new List<Project>();
+		var deepest = -1;
+
+		foreach (var project in solution.Projects)
+		{
+			if (project.FilePath is not { Length: > 0 } file) continue;
+			if (Path.GetDirectoryName(Path.GetFullPath(file)) is not { Length: > 0 } directory) continue;
+			if (!Encloses(directory, path)) continue;
+
+			if (directory.Length > deepest)
+			{
+				deepest = directory.Length;
+				owners.Clear();
+			}
+
+			// Two projects sharing a directory both glob it, so both really do compile the file.
+			if (directory.Length == deepest) owners.Add(project);
+		}
+
+		return owners;
+	}
+
+	/// <summary>
+	/// Folders as Roslyn means them: the path from the project directory down to the file. Worth
+	/// setting rather than leaving empty, because it is what tells an analyzer whether a namespace
+	/// matches the folder the file lives in.
+	/// </summary>
+	private static IReadOnlyList<string> Folders(Project project, string path)
+	{
+		if (project.FilePath is not { Length: > 0 } file) return [];
+		if (Path.GetDirectoryName(Path.GetFullPath(file)) is not { Length: > 0 } root) return [];
+		if (Path.GetDirectoryName(path) is not { Length: > 0 } directory) return [];
+
+		var relative = Path.GetRelativePath(root, directory);
+		if (relative is "." || relative.StartsWith("..", StringComparison.Ordinal)) return [];
+
+		return relative.Split(SeparatorChars, StringSplitOptions.RemoveEmptyEntries);
+	}
+
+	private bool Globs(Project project)
+	{
+		if (project.FilePath is not { Length: > 0 } file) return true;
+
+		var path = Path.GetFullPath(file);
+		if (_globs.TryGetValue(path, out var known)) return known;
+
+		bool globs;
+		try
+		{
+			globs = ProjectItemStyle.GlobsSourceFiles(File.ReadAllText(path));
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			globs = true;
+		}
+
+		_globs[path] = globs;
+
+		return globs;
+	}
+
+	/// <summary>
+	/// Files that change how a project evaluates rather than what is in it. None of them can be
+	/// patched into a snapshot, and an .editorconfig is among them because it decides what the
+	/// analyzers and the formatter do to every file beneath it.
+	/// </summary>
+	private static bool IsStructural(string path)
+	{
+		if (StructuralNames.Contains(Path.GetFileName(path))) return true;
+
+		return Path.GetExtension(path).ToLowerInvariant() is
+			".csproj" or ".props" or ".targets" or ".sln" or ".slnx" or ".slnf";
+	}
+
+	private static bool IsSource(string path) =>
+		string.Equals(Path.GetExtension(path), ".cs", StringComparison.OrdinalIgnoreCase);
+
+	private static bool Encloses(string directory, string path) =>
+		path.StartsWith(directory.TrimEnd(SeparatorChars) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
 	private bool DetectStructuralChange()
 	{

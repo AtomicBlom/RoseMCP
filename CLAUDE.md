@@ -97,6 +97,20 @@ reclaim memory or pick up a rebuilt generator.
   stdio hop is ordered, being one reader.
 - **Reads never observe a snapshot older than disk.** If you add a read path, it goes through the
   `WorkspaceSession` barrier. No exceptions.
+- **A file that appears is absorbed on the next read, not waited for.** A file created on disk is
+  part of the state of disk, and the stat sweep cannot find one -- it checks the documents it already
+  knows. So a new `.cs` file used to be invisible until something forced a reload, and every
+  reference to the new type reported `CS0103` against perfectly good code: not an error but a
+  confident answer about a file that is not there, which is the worst shape of failure here and the
+  one that became likely the moment an agent could write C# rather than only read it. The barrier
+  walks the project directories, pruned of `bin`, `obj` and dot directories, rather than trusting the
+  watcher -- a watcher event lands some milliseconds after the write and an agent asks immediately,
+  so trusting it would make the answer depend on a race, which is worse than a slow answer because it
+  is intermittent and still confident. Containment in a project's directory is the attribution,
+  because that is exactly what the SDK's default globs compile; a project whose own text lists its
+  files instead has nothing claimed for it and the file is reported as not being in the build. The
+  watcher's list of appearances is still used for one thing: a project or build file appearing, which
+  no snapshot can represent and which sends the session round a reload.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.
 - **A directory with two solutions is never resolved by guessing.** `SolutionResolver` used to sort
   by name and take the first, which in `D:\Drawboard\Revit` is a one-project installer sitting beside
@@ -164,7 +178,23 @@ reclaim memory or pick up a rebuilt generator.
   rewrites the trivia it has reason to touch, so a file it reindents comes out with mixed line
   endings -- which IDE0055 then fails the build over. `Whitespace` is the second pass that fixes
   every line, and it leaves multi-line verbatim and raw literals alone, because a newline in one is
-  content and a raw literal's indentation decides how much is stripped from it.
+  content and a raw literal's indentation decides how much is stripped from it. Both passes take a
+  span when the caller wrote one member rather than a file: a repository whose endings are already
+  inconsistent would otherwise have every line rewritten by a one-member change, which buries the
+  edit in a diff nobody can review.
+- **Nothing writes code it has not parsed, and nothing is addressed by position.** The three write
+  tools resolve the declaration and parse the code *before* the file is opened, so a refusal costs
+  nothing and can never leave a file half-written -- which is most of the value, since it removes
+  every failure a text splice produces by construction. Parsing happens inside a synthetic container
+  of the same kind as the real one, because a member only means something in a container: a bare
+  snippet parsed as a compilation unit turns `void M() { }` into a top-level local function, which
+  parses cleanly and means something else. The shape is then checked as well as the syntax, because
+  code that closes the container early and opens one of its own has no parse error at all and would
+  smuggle a type into the file at top level. And a member is named, never pointed at: a line and
+  column has to be found by reading the file first and is wrong the moment an earlier edit lands,
+  which is how a text edit path produces an anchor found in the wrong place. Where a name matches
+  more than one declaration it refuses and lists them, because writing correct code into the wrong
+  overload is the only failure with no symptom at all.
 - **A solution is loaded under properties it declares.** MSBuild's `Debug|AnyCPU` default is not
   universal. Where `TargetFramework` is derived from the configuration name -- Drawboard's Revit
   add-in derives it from `Debug-2024` through `Debug-2027` -- the wrong configuration yields projects
@@ -240,10 +270,10 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 81 tests in under a second, so it is worth running on every change.
+process -- 153 tests in about a second, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes under two minutes. `RoseMcp.TestSupport` holds the doubles
-both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
+builds and starts real workers, and takes four to five minutes. `RoseMcp.TestSupport` holds the
+doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
@@ -289,7 +319,10 @@ reaching for it is cheaper than that reflex. Three things carry that, in descend
 
    Use the Roslyn-backed `rose_*` MCP tools rather than grep or find-and-replace for C# in
    this repo: `rose_find_references` for usages, `rose_rename_symbol` for renames,
-   `rose_diagnostics` to check code compiles. Source-generated code is only readable via
+   `rose_diagnostics` to check code compiles. To change code in a file that already exists,
+   `rose_replace_member`, `rose_replace_body` and `rose_add_member` address a member by name,
+   refuse code that does not parse, format what they write, and report what the edit broke --
+   so there is no build in the edit loop. Source-generated code is only readable via
    `rose_list_generated_documents` / `rose_read_generated_document`.
    ```
 

@@ -16,4 +16,15 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- The version comes from the git tag, so a build carries the release it belongs to
+         rather than a number someone remembered to bump. Tags are v-prefixed. A build from
+         an archive with no .git falls back to 0.0.0-alpha.0, which is honest about not knowing. -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

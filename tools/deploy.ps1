@@ -10,7 +10,13 @@
                server running from the install, have to be stopped before publishing -- a running
                exe cannot be overwritten -- so this costs an /mcp reconnect and a solution reload.
 
-      package  Build the release artifacts, one zip per architecture.
+      package  Build the release artifacts, one archive per runtime. Windows gets a zip carrying the
+               broker, the worker, the tray and both live-app debug hosts. Linux gets a tar.gz with
+               the broker and the worker only -- the tray is WinUI and the debug host is ICorDebug,
+               so neither has a Linux build to ship. tar rather than zip because a zip records no
+               Unix permission bits, and an apphost without +x is "permission denied" on unpack;
+               for the same reason a Linux artifact has to be rolled on Linux, and packaging one
+               here warns rather than shipping something broken.
 
     Paths use forward slashes throughout; PowerShell accepts them on Windows.
 
@@ -24,7 +30,12 @@
 
 .EXAMPLE
     ./tools/deploy.ps1 -Mode package
-    Build rosemcp-win-x64.zip and rosemcp-win-arm64.zip under artifacts/.
+    Build all four artifacts under artifacts/: rosemcp-win-{x64,arm64}.zip and
+    rosemcp-linux-{x64,arm64}.tar.gz.
+
+.EXAMPLE
+    ./tools/deploy.ps1 -Mode package -Runtime linux-x64, linux-arm64
+    Just the Linux tarballs. This is what the release workflow runs on its Linux leg.
 
 .EXAMPLE
     ./tools/deploy.ps1 -Destination C:/Tools/RoseMcp
@@ -35,7 +46,7 @@ param(
     [ValidateSet('promote', 'package')]
     [string] $Mode = 'promote',
 
-    [ValidateSet('win-x64', 'win-arm64')]
+    [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64')]
     [string[]] $Runtime,
 
     # Install root for promote. Falls back to $env:ROSEMCP_DEPLOY_ROOT, then %LOCALAPPDATA%/RoseMcp.
@@ -52,21 +63,39 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# $IsWindows only exists in PowerShell 6 and up. Under Windows PowerShell 5.1 it is $null, which
+# reads as false -- and every platform decision below would then take the Linux branch on a Windows
+# machine, quietly packaging a tray-less tarball. $env:OS has been there since NT.
+$onWindows = if ($null -ne $IsWindows) { $IsWindows } else { $env:OS -eq 'Windows_NT' }
+
 $repo = Split-Path $PSScriptRoot -Parent
 if (-not $WorkspaceRoot) { $WorkspaceRoot = $repo }
 
 if (-not $Destination)
 {
     $configured = $env:ROSEMCP_DEPLOY_ROOT
-    $Destination = if ($configured) { $configured } else { Join-Path $env:LOCALAPPDATA 'RoseMcp' }
+    $localAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $HOME '.local/share' }
+    $Destination = if ($configured) { $configured } else { Join-Path $localAppData 'RoseMcp' }
 }
 
 $Destination = $Destination.Replace('\', '/')
 
 function Get-HostRuntime
 {
-    if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { return 'win-arm64' }
-    return 'win-x64'
+    $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
+    $os = if ($onWindows) { 'win' } else { 'linux' }
+    return "$os-$arch"
+}
+
+# Linux gets the broker and the worker and nothing else. The tray is WinUI 3 and the live-app host is
+# ICorDebug over dbgshim, both net10.0-windows, so there is no Linux build of either to ship -- a
+# Linux client runs the stdio broker, which owns its own workers when no tray is there to relay to.
+function Test-WindowsRid
+{
+    param([string] $Rid)
+
+    return $Rid.StartsWith('win-')
 }
 
 function Invoke-Dotnet
@@ -89,6 +118,12 @@ function Publish-Tree
     {
         Invoke-Dotnet @('publish', "$repo/src/$project", '-c', 'Release', '-r', $Rid,
             '--self-contained', 'false', '-o', $Into) "$project ($Rid)"
+    }
+
+    if (-not (Test-WindowsRid $Rid))
+    {
+        Write-Host '  (no tray, no live-app hosts: both are Windows-only)'
+        return
     }
 
     # The tray goes in a subfolder: WinUI drags in a lot, and mixing it with the server risks one
@@ -219,8 +254,10 @@ function Start-Tray
 
 if (-not $Runtime)
 {
-    # Promoting is for this machine; packaging is for everyone else's.
-    $Runtime = if ($Mode -eq 'package') { @('win-x64', 'win-arm64') } else { @(Get-HostRuntime) }
+    # Promoting is for this machine; packaging is for everyone else's. The release workflow narrows
+    # this with -Runtime, because the Linux tarballs have to be built on Linux to keep their
+    # executable bit -- see the packaging step below.
+    $Runtime = if ($Mode -eq 'package') { @('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64') } else { @(Get-HostRuntime) }
 }
 
 if ($Mode -eq 'promote')
@@ -233,11 +270,16 @@ if ($Mode -eq 'promote')
         Invoke-Dotnet @('test', "$repo/RoseMcp.slnx", '-c', 'Release') 'tests'
     }
 
-    $wasRunning = Stop-Tray
-    $stoppedServers = Stop-Servers
+    # Everything about stopping and restarting is about the tray and the stdio servers holding the
+    # install's files open, and neither exists off Windows: there is nothing to stop, and nothing to
+    # overwrite while it runs.
+    $wasRunning = if ($onWindows) { Stop-Tray } else { $false }
+    $stoppedServers = if ($onWindows) { Stop-Servers } else { $false }
+
     Publish-Tree -Rid $Runtime[0] -Into $Destination
 
-    if ($NoRestart) { Write-Host '  not restarting (-NoRestart)' }
+    if (-not (Test-WindowsRid $Runtime[0])) { Write-Host '  no tray to restart on this platform' }
+    elseif ($NoRestart) { Write-Host '  not restarting (-NoRestart)' }
     elseif ($wasRunning -or -not $NoRestart) { Start-Tray }
 
     Write-Host "promoted $($Runtime[0]) to $Destination"
@@ -256,12 +298,34 @@ foreach ($rid in $Runtime)
 
     Publish-Tree -Rid $rid -Into $stage
 
-    $zip = "$artifacts/rosemcp-$rid.zip"
-    if (Test-Path $zip) { Remove-Item $zip -Force }
+    if (Test-WindowsRid $rid)
+    {
+        $archive = "$artifacts/rosemcp-$rid.zip"
+        if (Test-Path $archive) { Remove-Item $archive -Force }
 
-    Compress-Archive -Path "$stage/*" -DestinationPath $zip
-    $size = [math]::Round((Get-Item $zip).Length / 1MB)
-    Write-Host "  packaged $zip (${size} MB)"
+        Compress-Archive -Path "$stage/*" -DestinationPath $archive
+    }
+    else
+    {
+        # tar rather than zip, because a zip carries no Unix permission bits: unpacked on Linux the
+        # apphost comes out without +x and RoseMcp.Server is "permission denied" before it prints
+        # anything. tar records the mode, but only the mode it is given -- Windows has no execute bit
+        # to record, so a tarball rolled here is just as broken and says so rather than shipping.
+        if ($onWindows)
+        {
+            Write-Warning "  $rid packaged on Windows: the apphost will unpack without +x. Build Linux artifacts on Linux."
+        }
+
+        $archive = "$artifacts/rosemcp-$rid.tar.gz"
+        if (Test-Path $archive) { Remove-Item $archive -Force }
+
+        # -C so the paths inside are relative to the stage rather than carrying artifacts/stage/<rid>.
+        & tar -czf $archive -C $stage '.'
+        if ($LASTEXITCODE -ne 0) { throw "tar failed for $rid (exited $LASTEXITCODE)" }
+    }
+
+    $size = [math]::Round((Get-Item $archive).Length / 1MB)
+    Write-Host "  packaged $archive (${size} MB)"
 }
 
 Write-Host "packaged $($Runtime -join ', ') into $artifacts"

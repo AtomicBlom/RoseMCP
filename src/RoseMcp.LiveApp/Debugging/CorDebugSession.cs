@@ -422,7 +422,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				AutoContinueSeconds = autoContinueSeconds,
 				ConditionText = string.IsNullOrWhiteSpace(condition) ? null : condition.Trim(),
 				Condition = parsedCondition,
-				Detail = "module not loaded yet",
+				Detail = "not bound yet",
 			};
 			_bindings.Add(binding);
 		}
@@ -927,13 +927,17 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				_process.Stop(0);
 				stopped = true;
 
+				var loaded = new List<string>();
 				foreach (var module in EnumerateModules(_process))
 				{
+					loaded.Add(SimpleName(module));
 					foreach (var binding in _bindings)
 					{
 						if (!binding.Bound) TryBind(binding, module);
 					}
 				}
+
+				ExplainUnbound(loaded);
 			}
 			catch (Exception exception)
 			{
@@ -983,8 +987,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return; // A module that cannot describe itself is not one we can read metadata from.
 		}
 
-		var simpleName = Path.GetFileNameWithoutExtension(module.Name);
-		if (!string.Equals(simpleName, binding.Location.ModuleSimpleName, StringComparison.OrdinalIgnoreCase)) return;
+		if (!string.Equals(SimpleName(module), binding.Location.ModuleSimpleName, StringComparison.OrdinalIgnoreCase)) return;
 
 		var token = MethodTokens.Find(module.Name, binding.Location.TypeName, binding.Location.MethodName);
 		if (token is null)
@@ -1011,6 +1014,52 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			logger.LogDebug(exception, "Binding {Id} at {Location} failed.", binding.Id, binding.Raw);
 		}
 	}
+
+	/// <summary>
+	/// Says why each still-unbound binding is unbound, against the modules that are actually loaded.
+	/// <para>
+	/// This exists because the answer used to be a guess dressed as a fact. A binding started life
+	/// saying "module not loaded yet" and kept saying it however the bind had failed, so a bare
+	/// <c>Namespace.Type.Method</c> whose module name was inferred wrongly -- the module is guessed
+	/// from the first namespace segment, which is only right when the assembly is named for its root
+	/// namespace -- reported that the module had not loaded while the event stream carried its load at
+	/// sequence 7. Two different failures, one message, and the one it chose pointed the caller at
+	/// waiting rather than at the spelling.
+	/// </para>
+	/// <para>
+	/// Only ever narrows: a detail already set by <see cref="TryBind"/> is a real finding about a
+	/// module that matched, and is left alone.
+	/// </para>
+	/// </summary>
+	private void ExplainUnbound(IReadOnlyList<string> loadedModules)
+	{
+		foreach (var binding in _bindings)
+		{
+			if (binding.Bound) continue;
+			if (binding.Detail is not (null or "not bound yet")) continue;
+
+			var wanted = binding.Location.ModuleSimpleName;
+			if (loadedModules.Contains(wanted, StringComparer.OrdinalIgnoreCase))
+			{
+				// The module is loaded and TryBind said nothing, so the type is what is missing --
+				// the method-level miss is reported by TryBind itself.
+				binding.Detail = $"no type {binding.Location.TypeName} in {wanted}";
+				continue;
+			}
+
+			if (!binding.Location.ModuleWasInferred)
+			{
+				binding.Detail = $"module {wanted} is not loaded ({loadedModules.Count} others are)";
+				continue;
+			}
+
+			// The actionable case, and the one that was being reported as a wait.
+			binding.Detail = $"no loaded module is named {wanted}, which was inferred from the type name; "
+				+ "give the assembly explicitly as Assembly!Namespace.Type.Method";
+		}
+	}
+
+	private static string SimpleName(CorDebugModule module) => Path.GetFileNameWithoutExtension(module.Name);
 
 	private static IEnumerable<CorDebugModule> EnumerateModules(CorDebugProcess process)
 	{

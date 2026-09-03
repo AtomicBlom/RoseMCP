@@ -27,6 +27,13 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	private const string EndpointName = "VisualDiagConnection1";
 
 	private const string ProviderFileName = "RoseMcp.Xaml.Uwp.Tap.dll";
+
+	// HRESULT_FROM_WIN32(ERROR_NOT_FOUND): the well-known diagnostics endpoint is not there yet.
+	private const int ErrorNotFound = unchecked((int)0x80070490);
+
+	// Long enough for a XAML app to get its first tree up, short enough that a target which genuinely
+	// has no XAML UI does not hold a tool call for an uncomfortable length of time.
+	private static readonly TimeSpan EndpointTimeout = TimeSpan.FromSeconds(20);
 	private static readonly TimeSpan SnapshotTimeout = TimeSpan.FromSeconds(15);
 
 	private string? _workDir;
@@ -377,13 +384,34 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			return (null, $"Could not write the provider request: {exception.Message}");
 		}
 
-		var hr = InitializeXamlDiagnosticsEx(EndpointName, (uint)pid, null, stagedProvider, ProviderClsid, workDir);
-		if (hr < 0)
+		// Retried, because the common failure here is transient and the old message called it fatal.
+		// The XAML diagnostics endpoint does not exist until the framework has built a tree, so a
+		// session that has only just attached -- which is exactly when an agent asks -- gets
+		// ERROR_NOT_FOUND for a second or two. A caller told "the target may have no XAML UI or not be
+		// a packaged app" about a packaged XAML app concludes the tool does not work on their app, and
+		// stops. It was reported that way from a real session: the same call twelve seconds later
+		// returned 629 nodes.
+		var deadline = DateTime.UtcNow + EndpointTimeout;
+		var hr = 0;
+		while (true)
 		{
-			return (null, $"InitializeXamlDiagnosticsEx failed (0x{hr:x8}); the target may have no XAML UI or not be a packaged app.");
+			hr = InitializeXamlDiagnosticsEx(EndpointName, (uint)pid, null, stagedProvider, ProviderClsid, workDir);
+			if (hr >= 0) return (workDir, null);
+			if (hr != ErrorNotFound || DateTime.UtcNow >= deadline) break;
+
+			Thread.Sleep(250);
 		}
 
-		return (workDir, null);
+		// Two failures, said apart. ERROR_NOT_FOUND after waiting is the endpoint never appearing,
+		// which is what "no XAML UI" actually looks like; anything else is its own HRESULT and should
+		// not be explained away as a missing UI.
+		var detail = hr == ErrorNotFound
+			? $"The target's XAML diagnostics endpoint did not appear within {EndpointTimeout.TotalSeconds:0}s "
+				+ $"(0x{ErrorNotFound:x8}). A XAML app that is still starting can take a moment; if it "
+				+ "persists, the target has no XAML UI or is not a packaged app."
+			: $"InitializeXamlDiagnosticsEx failed (0x{hr:x8}).";
+
+		return (null, detail);
 	}
 
 	private (string WorkDir, string StagedProvider) StageSandboxFolder(string provider)

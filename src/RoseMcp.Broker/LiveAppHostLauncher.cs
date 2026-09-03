@@ -73,6 +73,22 @@ public static class LiveAppHostLauncher
 			.OrderByDescending(File.GetLastWriteTimeUtc)
 			.ToList();
 
+		// Narrowed to the broker's own configuration before anything else, because `deploy.ps1`
+		// publishes Release per RID and leaves those artefacts in the repository's bin. Preferring a
+		// RID match on its own then let a Release host shadow a Debug build that was twenty minutes
+		// newer, so a Debug test run silently exercised a stale binary and a change under test was
+		// simply not there. An artefact existing is not the same as it being the current one -- the
+		// same trap the win-x64 test build hit, one layer down.
+		var configuration = ConfigurationOf(AppContext.BaseDirectory);
+		if (configuration is not null)
+		{
+			var matching = candidates
+				.Where(path => path.Contains($"{Path.DirectorySeparatorChar}{configuration}{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+				.ToList();
+
+			if (matching.Count > 0) candidates = matching;
+		}
+
 		// A build whose path carries the wanted RID is unambiguous; prefer it.
 		var ridMatch = candidates.FirstOrDefault(path => path.Contains(rid, StringComparison.OrdinalIgnoreCase));
 		if (ridMatch is not null) return ridMatch;
@@ -82,6 +98,24 @@ public static class LiveAppHostLauncher
 		// host would be handed back (an x64 build sitting in bin beside an arm64 one, say).
 		if (rid != RuntimeInformation.RuntimeIdentifier) return null;
 		return candidates.FirstOrDefault(path => !CarriesAnyRid(path));
+	}
+
+	/// <summary>
+	/// Which build configuration a directory belongs to, or null when it is not a build output at all
+	/// (a published layout, say, where the question does not arise).
+	/// </summary>
+	private static string? ConfigurationOf(string directory)
+	{
+		var separator = Path.DirectorySeparatorChar;
+		foreach (var configuration in new[] { "Debug", "Release" })
+		{
+			if (directory.Contains($"{separator}{configuration}{separator}", StringComparison.OrdinalIgnoreCase))
+			{
+				return configuration;
+			}
+		}
+
+		return null;
 	}
 
 	private static bool CarriesAnyRid(string path) =>

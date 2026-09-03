@@ -160,9 +160,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	/// <summary>Reads the host's buffered debug events after the given cursor.</summary>
 	public Task<LiveDebugEventPage> ReadEventsAsync(long after, CancellationToken cancellationToken)
+		=> ReadEventsAsync(after, null, 500, cancellationToken);
+
+	/// <summary>Reads a page, narrowed to certain event kinds and capped in size.</summary>
+	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string? kinds, int limit, CancellationToken cancellationToken)
 		=> SendAsync<LiveDebugEventPage>(
 			ToolNames.LiveAppEvents,
-			new Dictionary<string, object?> { ["after"] = after },
+			new Dictionary<string, object?> { ["after"] = after, ["kinds"] = kinds, ["limit"] = limit },
 			cancellationToken);
 
 	public Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, string? condition, CancellationToken cancellationToken)

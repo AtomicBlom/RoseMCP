@@ -5,7 +5,11 @@ namespace RoseMcp.LiveApp.Debugging;
 /// loaded. It carries the assembly (simple name) the method lives in, so binding can wait for exactly
 /// that module, plus the declaring type's full name and the method name.
 /// </summary>
-internal sealed record SymbolLocation(string ModuleSimpleName, string TypeName, string MethodName)
+internal sealed record SymbolLocation(
+	string ModuleSimpleName,
+	string TypeName,
+	string MethodName,
+	bool ModuleWasInferred)
 {
 	/// <summary>
 	/// Two spellings. <c>Namespace.Type.Method</c> guesses the module from the first namespace
@@ -42,6 +46,6 @@ internal sealed record SymbolLocation(string ModuleSimpleName, string TypeName, 
 			moduleName = moduleName[..^4];
 		}
 
-		return new SymbolLocation(moduleName, typeName, methodName);
+		return new SymbolLocation(moduleName, typeName, methodName, ModuleWasInferred: assembly is null);
 	}
 }

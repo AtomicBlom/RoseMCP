@@ -29,4 +29,10 @@ public sealed record LiveDebugEventPage
 	public int? TargetProcessId { get; init; }
 
 	public IReadOnlyList<LiveDebugEvent> Events { get; init; } = [];
+
+	/// <summary>
+	/// How many events in this window were passed over by the kind filter. Zero when unfiltered. It
+	/// is here so a small page is not mistaken for a quiet target -- the cursor has moved past these.
+	/// </summary>
+	public int Skipped { get; init; }
 }

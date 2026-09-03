@@ -52,24 +52,47 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 	}
 
 	/// <summary>
-	/// Everything captured after <paramref name="after"/>, newest cursor and buffer bounds alongside,
-	/// capped at <paramref name="limit"/> so one call cannot return an unbounded page.
+	/// A page of events after a cursor, optionally of only certain kinds.
+	/// <para>
+	/// The kind filter is applied here rather than by the caller, and the cursor still advances over
+	/// the events it skips. Filtering after the fact would either lose the skipped events' place --
+	/// leaving a cursor that re-reads them forever -- or force a caller wanting only exceptions to
+	/// pull every module load across the wire to find them. A minute-old app produced 312 events and
+	/// 93KB, which is over a client's token cap, so "read it all and grep" is not a usable answer.
+	/// </para>
 	/// </summary>
-	public (IReadOnlyList<LiveDebugEvent> Events, long NextCursor, long OldestAvailable, long TotalObserved) ReadAfter(
+	public (IReadOnlyList<LiveDebugEvent> Events, long NextCursor, long OldestAvailable, long TotalObserved, int Skipped) ReadAfter(
 		long after,
-		int limit = 500)
+		int limit = 500,
+		IReadOnlyCollection<LiveDebugEventKind>? kinds = null)
 	{
 		lock (_gate)
 		{
 			var oldest = _events.Count == 0 ? 0 : _events.Peek().Sequence;
 
-			var page = _events
-				.Where(entry => entry.Sequence > after)
-				.Take(limit)
-				.ToList();
+			var matching = new List<LiveDebugEvent>();
+			var skipped = 0;
+			var lastSeen = after;
 
-			var nextCursor = page.Count == 0 ? Math.Max(after, _observed) : page[^1].Sequence;
-			return (page, nextCursor, oldest, _observed);
+			foreach (var entry in _events)
+			{
+				if (entry.Sequence <= after) continue;
+				if (matching.Count >= limit) break;
+
+				lastSeen = entry.Sequence;
+				if (kinds is { Count: > 0 } && !kinds.Contains(entry.Kind))
+				{
+					skipped++;
+					continue;
+				}
+
+				matching.Add(entry);
+			}
+
+			// The cursor is where reading got to, not where the last *match* was, so a filtered read
+			// does not hand back a cursor that re-delivers everything it just chose to skip.
+			var nextCursor = _events.Count == 0 ? Math.Max(after, _observed) : lastSeen;
+			return (matching, nextCursor, oldest, _observed, skipped);
 		}
 	}
 }

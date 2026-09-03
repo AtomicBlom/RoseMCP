@@ -147,15 +147,23 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		"Debug events captured since a cursor: first-chance and unhandled exceptions, Debugger.Log "
 			+ "messages, and module loads. Pass the returned nextCursor as 'after' next time to get only "
 			+ "what is new. If your cursor is below oldestAvailable, the buffer dropped events between "
-			+ "them.")]
+			+ "them. Filter with 'kinds' -- a freshly started app produces hundreds of ModuleLoaded "
+			+ "events, and asking for LogMessage or ExceptionFirstChance alone is the difference between "
+			+ "a readable answer and one that has to be written to a file: "
+			+ "SessionNotice, ProcessCreated, ProcessExited, ModuleLoaded, ThreadCreated, ThreadExited, "
+			+ "ExceptionFirstChance, ExceptionUnhandled, LogMessage, BreakpointHit, StepComplete.")]
 	public async Task<LiveDebugEventPage> EventsAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description("Return only events whose sequence is greater than this; 0 for everything buffered.")]
 		long after = 0,
+		[Description("Comma-separated event kinds to return; omit for all. The cursor still advances over what is filtered out, and 'skipped' says how many those were.")]
+		string? kinds = null,
+		[Description("Maximum events in this page (default 500). Lower it when you only need to see whether something is happening.")]
+		int limit = 500,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReadEventsAsync(after, cancellationToken);
+		return await session.ReadEventsAsync(after, kinds, limit, cancellationToken);
 	}
 
 	[McpServerTool(

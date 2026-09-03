@@ -276,10 +276,13 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return _xaml.ApplyReload(pid, oldXaml, newXaml);
 	}
 
-	/// <summary>A page of buffered debug events after the given cursor, with the session's state.</summary>
-	public LiveDebugEventPage ReadEvents(long after)
+	/// <summary>
+	/// A page of buffered debug events after the given cursor, with the session's state. <paramref
+	/// name="kinds"/> narrows it to the kinds asked for, and <paramref name="limit"/> caps the window.
+	/// </summary>
+	public LiveDebugEventPage ReadEvents(long after, IReadOnlyCollection<LiveDebugEventKind>? kinds = null, int limit = 500)
 	{
-		var (events, nextCursor, oldest, total) = _events.ReadAfter(after);
+		var (events, nextCursor, oldest, total, skipped) = _events.ReadAfter(after, limit, kinds);
 
 		lock (_gate)
 		{
@@ -291,6 +294,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				TotalObserved = total,
 				TargetProcessId = _targetProcessId,
 				Events = events,
+				Skipped = skipped,
 			};
 		}
 	}

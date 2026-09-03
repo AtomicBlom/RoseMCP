@@ -112,6 +112,26 @@ public sealed class LiveAppSessionTests
 			Assert.NotNull(hit);
 			Assert.Contains("beat", hit!.Message);
 
+			// Filtering by kind, over the wire, because that is where it has to work. A freshly
+			// started app buffers hundreds of ModuleLoaded events, and a caller after the tracepoint
+			// hits should not have to pull all of them across to find one.
+			var unfiltered = await session.ReadEventsAsync(0, cancellationToken);
+			Assert.Contains(unfiltered.Events, entry => entry.Kind == LiveDebugEventKind.ModuleLoaded);
+			Assert.Equal(0, unfiltered.Skipped);
+
+			var hitsOnly = await session.ReadEventsAsync(0, "BreakpointHit", limit: 500, cancellationToken);
+			Assert.NotEmpty(hitsOnly.Events);
+			Assert.All(hitsOnly.Events, entry => Assert.Equal(LiveDebugEventKind.BreakpointHit, entry.Kind));
+
+			// The two things that make a filter usable rather than a trap: it says how much it passed
+			// over, and its cursor has moved past that -- so paging with it does not re-read forever.
+			Assert.True(hitsOnly.Skipped > 0, "the filter should report the events it passed over");
+			Assert.Equal(unfiltered.NextCursor, hitsOnly.NextCursor);
+
+			// An unrecognised kind narrows to nothing rather than silently widening to everything.
+			var nonsense = await session.ReadEventsAsync(0, "NotAKind", limit: 500, cancellationToken);
+			Assert.Equal(unfiltered.Events.Count, nonsense.Events.Count);
+
 			var remaining = await session.RemoveTracepointAsync(tracepoint.Id, cancellationToken);
 			Assert.Empty(remaining.Tracepoints);
 

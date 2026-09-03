@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -18,6 +19,17 @@ namespace RoseMcp.Broker;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+	/// <summary>
+	/// What the client is told during initialize. MinVer stamps it from the git tag at build time, so
+	/// a version in a bug report names a commit. The build metadata after '+' is dropped -- it is the
+	/// commit hash, which belongs in a log rather than in a handshake.
+	/// </summary>
+	private static readonly string ServerVersion =
+		typeof(ServiceCollectionExtensions).Assembly
+			.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+			?.InformationalVersion.Split('+')[0]
+		?? "0.0.0";
+
 	/// <summary>
 	/// Sent to the client during initialize, which means the model sees it before it decides how to
 	/// approach anything. That makes it the highest-leverage text in the server: tool descriptions
@@ -83,6 +95,14 @@ public static class ServiceCollectionExtensions
 		resolving -- it is almost certainly loaded under the wrong MSBuild configuration rather than
 		actually broken. rose_workspace_status reports the one in use and the ones the solution
 		declares; rose_workspace_reload takes a different one.
+		""";
+
+	/// <summary>
+	/// Appended to <see cref="Instructions"/> only on Windows, because the tools it describes are only
+	/// registered there. Instructions that name a tool the client cannot see are worse than silence:
+	/// they spend context teaching an approach that fails on the first call.
+	/// </summary>
+	private const string DebuggingInstructions = """
 
 		Debugging a running .NET process is done with the rose_debug_* tools, which attach a debugger
 		without Visual Studio and without loading the solution a second time, so they cost far less
@@ -115,15 +135,24 @@ public static class ServiceCollectionExtensions
 		// across connections the same way and supervised the same way.
 		services.AddSingleton<LiveAppSessionManager>();
 
-		return services
+		var builder = services
 			.AddMcpServer(server =>
 			{
-				server.ServerInfo = new() { Name = "rose-mcp", Version = "0.1.0" };
-				server.ServerInstructions = Instructions;
+				server.ServerInfo = new() { Name = "rose-mcp", Version = ServerVersion };
+				server.ServerInstructions = OperatingSystem.IsWindows()
+					? Instructions + DebuggingInstructions
+					: Instructions;
 			})
 			.WithTools<BrokerTools>()
-			.WithTools<BrokerAnalysisTools>()
-			.WithTools<LiveAppDebugTools>()
+			.WithTools<BrokerAnalysisTools>();
+
+		// The live-app debugger is ICorDebug and dbgshim, and RoseMcp.LiveApp is net10.0-windows, so
+		// none of it is there on a Linux build. The launch sites already know that, but registration
+		// did not, and a declared tool that cannot run is worse than an absent one: the caller only
+		// finds out at the call, having already chosen the approach the tool implied was available.
+		if (OperatingSystem.IsWindows()) builder = builder.WithTools<LiveAppDebugTools>();
+
+		return builder
 			.WithCallOrigin()
 			.WithToolErrorMessages();
 	}

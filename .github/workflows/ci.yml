@@ -26,7 +26,11 @@ jobs:
     # Without this a hung WinUI build holds the runner for six hours before GitHub gives up.
     timeout-minutes: 20
     steps:
+      # MinVer reads the version off the nearest git tag, and checkout fetches one commit
+      # with no tags by default -- which would silently version every build 0.0.0-alpha.0.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6

@@ -397,6 +397,37 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
+	[McpServerTool(
+		Name = ToolNames.ChangeSignature,
+		Title = "Change a member's parameters",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ChangeSignature)]
+	public Task<SignatureChangeResult> ChangeSignatureAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The parameters it should have, written as they would go between the parentheses.")] string parameters,
+		[Description("What to pass at existing call sites for a new parameter with no default, as name=expression.")] string[]? arguments = null,
+		[Description("Which file, when the member is declared in more than one -- a partial.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile the solution afterwards and report what the change broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<SignatureChangeResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ChangeSignature, new()
+		{
+			["symbol"] = symbol,
+			["parameters"] = parameters,
+			["arguments"] = arguments,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
 	private Task<T> ForwardAsync<T>(
 		WorkspaceHints hints,
 		string tool,

@@ -74,6 +74,41 @@ public static class MemberSyntax
 		_ => "class",
 	};
 
+	/// <summary>
+	/// The parameters <paramref name="text"/> declares, taken as what goes between the parentheses,
+	/// with any lines it wraps onto indented for a declaration sitting at <paramref name="indent"/>.
+	/// <para>
+	/// Source text rather than a structured list, because it is what someone writing C# already
+	/// knows how to write, and it carries for free everything a structured shape would have to
+	/// enumerate: defaults, ref and out, params, attributes, nullable annotations, generic arguments.
+	/// It also puts this behind the same promise as everything else here -- if it does not parse,
+	/// nothing is written.
+	/// </para>
+	/// <para>
+	/// The indentation is added rather than replaced, unlike a member's, because every line of a
+	/// parameter list is a continuation: there is no first line at column zero to take a baseline
+	/// from, so what the caller writes is read as relative to the declaration and the declaration's
+	/// own indentation goes in front of it.
+	/// </para>
+	/// </summary>
+	public static SeparatedSyntaxList<ParameterSyntax> ParseParameters(
+		string text,
+		ParseOptions? options,
+		string indent = "")
+	{
+		var list = SyntaxFactory.ParseParameterList($"({ShiftContinuations(text, indent)})", options: options);
+
+		var errors = list.GetDiagnostics()
+			.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+			.ToArray();
+
+		// One column for the parenthesis this added, and no lines at all: a parameter list is not
+		// wrapped in anything, so the only offset is the one character.
+		if (errors.Length > 0) throw Rejected(text, errors, lineOffset: 0, columnOffset: 1);
+
+		return list.Parameters;
+	}
+
 	/// <summary>True for a comment of any kind, documentation included.</summary>
 	public static bool IsComment(SyntaxTrivia trivia) => trivia.Kind() is
 		SyntaxKind.SingleLineCommentTrivia
@@ -180,6 +215,21 @@ public static class MemberSyntax
 		}
 
 		return string.Empty;
+	}
+
+	/// <summary>
+	/// Every line but the first with <paramref name="indent"/> in front of it. Blank lines are left
+	/// blank, since padding one only makes trailing whitespace for the next pass to strip.
+	/// </summary>
+	private static string ShiftContinuations(string text, string indent)
+	{
+		if (indent.Length == 0) return text;
+
+		var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+
+		return string.Join(
+			"\n",
+			lines.Select((line, index) => index == 0 || line.Trim().Length == 0 ? line : indent + line));
 	}
 
 	/// <summary>

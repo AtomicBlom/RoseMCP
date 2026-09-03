@@ -27,6 +27,8 @@ public static class ToolNames
 	public const string ReplaceBody = "rose_replace_body";
 	public const string AddMember = "rose_add_member";
 
+	public const string ChangeSignature = "rose_change_signature";
+
 	/// <summary>
 	/// Worker-only. The broker calls this on connect to learn the process id, so it can sample
 	/// memory from the outside and still get real numbers when the worker stops responding.

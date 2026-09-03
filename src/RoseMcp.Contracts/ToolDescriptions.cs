@@ -190,4 +190,21 @@ public static class ToolDescriptions
         addition introduced, so there is no build in the loop. A using directive is not a member and
         is not added; add one yourself if the new code needs an import.
         """;
+
+	public const string ChangeSignature = """
+        Changes a member's parameters and everything that has to change with them: the declaration
+        you named, the declaration it overrides or implements, every override and implementation of
+        that, and the arguments at every call site. Say what the parameters should be -- as you would
+        write them between the parentheses -- and what changed is worked out from it. Use this rather
+        than grep and an edit per layer: threading one optional parameter through a stack of
+        forwarders is where a call site gets missed, and the missed one compiles at some layers and
+        not others, so a build tells you about the wrong half. It also keeps the param tags in the
+        documentation comment in step, which is a build error where documentation is generated.
+        Parameters that already exist may not be reordered, since an argument's meaning at a call
+        site is not always recoverable from its position; new ones can go anywhere. A new parameter
+        needs a default or an argument to pass, and it reports every call site it did not change --
+        including the ones that still compile, because a forwarder still passing the old default is
+        the bug that hides. Verified against the whole solution, since a call site it missed is by
+        definition somewhere it did not look.
+        """;
 }

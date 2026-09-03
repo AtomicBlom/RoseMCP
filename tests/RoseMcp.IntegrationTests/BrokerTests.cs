@@ -404,6 +404,43 @@ public sealed class BrokerTests
 	}
 
 	/// <summary>
+	/// Changing a signature over the wire, which is where an argument the broker spells differently
+	/// would show up -- and this one has the most arguments of any tool here.
+	/// </summary>
+	[Fact]
+	public async Task Changes_a_signature_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var result = await manager.CallAsync<SignatureChangeResult>(
+			WorkspaceHints.From(fixture.SolutionPath),
+			ToolNames.ChangeSignature,
+			new Dictionary<string, object?>
+			{
+				["symbol"] = "Library.Notifier.Notify(string)",
+				["parameters"] = "string message, bool urgent",
+				["arguments"] = new[] { "urgent=false" },
+			},
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		Assert.True(result.Applied);
+		Assert.True(result.Verified);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		// The interface, the base and the override, plus the two call sites in the forwarder.
+		Assert.Equal(3, result.UpdatedDeclarations.Count);
+		Assert.Equal(3, result.UpdatedCallSites.Count);
+
+		var text = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Layers.cs"), TestContext.Current.CancellationToken);
+
+		Assert.Contains("public override string Notify(string text, bool urgent)", text, StringComparison.Ordinal);
+		Assert.Contains("notifier.Notify(message, false)", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// A result that does not name its workspace cannot be checked: nothing found in the wrong
 	/// solution is indistinguishable from nothing to find in the right one. The broker fills this
 	/// in for every result type, so it is asserted through the same path the tools use.

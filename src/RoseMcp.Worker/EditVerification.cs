@@ -22,22 +22,27 @@ namespace RoseMcp.Worker;
 /// </summary>
 public static class EditVerification
 {
+	/// <summary>
+	/// Compiles <paramref name="projects"/> before and after, and reports the difference.
+	/// </summary>
+	/// <param name="diagnostics">The shared analyser, so its cache is shared with rose_diagnostics.</param>
+	/// <param name="before">The solution as it was.</param>
+	/// <param name="after">The solution as the edit leaves it.</param>
+	/// <param name="projects">Which projects to compile, by name.</param>
+	/// <param name="nearest">
+	/// The file the edit was aimed at, so its own errors are reported first. An error there is
+	/// usually the cause and an error elsewhere usually the consequence.
+	/// </param>
+	/// <param name="cancellationToken">Cancels the compilations, which are the expensive part.</param>
 	public static async Task<Verification> RunAsync(
 		DiagnosticsService diagnostics,
 		Solution before,
 		Solution after,
-		string filePath,
+		IReadOnlyList<string> projects,
+		string? nearest,
 		CancellationToken cancellationToken)
 	{
-		var projects = after.GetDocumentIdsWithFilePath(filePath)
-			.Select(id => after.GetProject(id.ProjectId))
-			.OfType<Project>()
-			.Select(project => project.Name)
-			.Distinct(StringComparer.Ordinal)
-			.Order(StringComparer.Ordinal)
-			.ToArray();
-
-		if (projects.Length == 0) return Verification.NotRun;
+		if (projects.Count == 0) return Verification.NotRun;
 
 		var was = await ErrorsAsync(diagnostics, before, projects, cancellationToken);
 		var now = await ErrorsAsync(diagnostics, after, projects, cancellationToken);
@@ -47,12 +52,35 @@ public static class EditVerification
 		return new Verification
 		{
 			Ran = true,
-			Introduced = Ordered(introduced, filePath),
+			Introduced = Ordered(introduced, nearest),
 			ResolvedCount = resolved,
 			TotalCount = now.Count,
 			Projects = projects,
 		};
 	}
+
+	/// <summary>
+	/// The projects that hold a file, which is the right scope for a change that stays inside one
+	/// member: nothing outside them can see a body change at all.
+	/// </summary>
+	public static IReadOnlyList<string> ProjectsHolding(Solution solution, string filePath) =>
+		[
+			.. solution.GetDocumentIdsWithFilePath(filePath)
+				.Select(id => solution.GetProject(id.ProjectId))
+				.OfType<Project>()
+				.Select(project => project.Name)
+				.Distinct(StringComparer.Ordinal)
+				.Order(StringComparer.Ordinal),
+		];
+
+	/// <summary>
+	/// Every project, which is the right scope for a change to a signature: a call site this missed
+	/// is by definition somewhere it did not look, and that is the failure being designed out. It
+	/// costs less than it sounds, because the analyser caches per project against Roslyn's own
+	/// dependent semantic version -- so the second pass only recompiles what the change reached.
+	/// </summary>
+	public static IReadOnlyList<string> AllProjects(Solution solution) =>
+		[.. solution.Projects.Select(project => project.Name).Order(StringComparer.Ordinal)];
 
 	/// <summary>
 	/// Errors only, and every one of them.
@@ -132,13 +160,14 @@ public static class EditVerification
 	}
 
 	/// <summary>
-	/// The edited file first. An error there is usually the cause and an error elsewhere usually the
-	/// consequence, and a caller reading only the first line of the answer should get the cause.
+	/// The edited file first, when there is one. An error there is usually the cause and an error
+	/// elsewhere usually the consequence, and a caller reading only the first line of the answer
+	/// should get the cause.
 	/// </summary>
-	private static IReadOnlyList<DiagnosticEntry> Ordered(IReadOnlyList<DiagnosticEntry> introduced, string filePath) =>
+	private static IReadOnlyList<DiagnosticEntry> Ordered(IReadOnlyList<DiagnosticEntry> introduced, string? nearest) =>
 		[
 			.. introduced
-				.OrderByDescending(entry => SamePath(entry.FilePath, filePath))
+				.OrderByDescending(entry => nearest is not null && SamePath(entry.FilePath, nearest))
 				.ThenBy(entry => entry.FilePath, StringComparer.OrdinalIgnoreCase)
 				.ThenBy(entry => entry.Line),
 		];

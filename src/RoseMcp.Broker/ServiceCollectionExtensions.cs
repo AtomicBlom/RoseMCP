@@ -57,6 +57,12 @@ public static class ServiceCollectionExtensions
 		  the point: it takes the build out of the edit loop. A name also does not go stale the way
 		  a line number does the moment an earlier edit lands. Writing a whole new file is still
 		  your own job; what these are for is editing inside one.
+		- Adding, removing or retyping a parameter: rose_change_signature, not an edit per layer. It
+		  moves the base declaration and every override and implementation together, rewrites the
+		  arguments at every call site, keeps the param tags in the documentation in step, and
+		  reports the uses it did not change -- including the ones that still compile, which is
+		  where a missed layer hides. Threading one optional parameter through a stack of
+		  forwarders by hand is how a call site gets missed.
 		- Splitting a file that declares several types: rose_move_type_to_file, not a read followed
 		  by two writes. It carries the declaration across untouched and fixes the using directives
 		  in both files, which hand-splitting gets wrong in a way that fails the build.

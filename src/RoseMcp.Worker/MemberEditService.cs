@@ -88,8 +88,15 @@ public static class MemberEditService
 		{
 			progress?.Report("Compiling to see what the edit did", 70);
 
+			var path = written.Document.FilePath!;
+
 			verification = await EditVerification.RunAsync(
-				diagnostics, snapshot.Solution, finished.Solution, written.Document.FilePath!, cancellationToken);
+				diagnostics,
+				snapshot.Solution,
+				finished.Solution,
+				EditVerification.ProjectsHolding(finished.Solution, path),
+				path,
+				cancellationToken);
 		}
 
 		notices.AddRange(Notices(request, verification, outcome));
@@ -328,7 +335,7 @@ public static class MemberEditService
 		var line = text.Lines.GetLineFromPosition(nodes.Min(node => node.SpanStart)).LineNumber + 1;
 
 		var rules = Whitespace.RulesFor(formatted.Project, tree, text);
-		var final = Whitespace.Apply(root, text, rules, span);
+		var final = Whitespace.Apply(root, text, rules, [span]);
 
 		// Every project holding this file gets the same text. A linked document left on the old text
 		// would answer the next question from a file that no longer exists, which is the staleness

@@ -275,6 +275,50 @@ public sealed class RefactoringTools(
 			},
 			cancellationToken);
 
+	[McpServerTool(
+		Name = ToolNames.ChangeSignature,
+		Title = "Change a member's parameters",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ChangeSignature)]
+	public async Task<SignatureChangeResult> ChangeSignatureAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The parameters it should have, written as they would go between the parentheses.")] string parameters,
+		[Description("What to pass at existing call sites for a new parameter with no default, as name=expression.")] string[]? arguments = null,
+		[Description("Which file, when the member is declared in more than one -- a partial.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile the solution afterwards and report what the change broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		// The longest of the write operations by some distance: it finds every reference in the
+		// solution and then compiles all of it, so the wait is worth reporting.
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new ChangeSignatureRequest
+		{
+			Symbol = symbol,
+			Parameters = parameters,
+			Arguments = arguments ?? [],
+			FilePath = filePath,
+			Apply = apply,
+			Verify = verify,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => ChangeSignatureService.ChangeAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
 	/// <summary>
 	/// The three write-by-symbol tools differ only in their request, so they share everything else:
 	/// the same progress split, the same session, and the same ordering behind every pending

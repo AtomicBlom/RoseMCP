@@ -40,9 +40,10 @@ public static class Whitespace
 	/// as they are.
 	/// <para>
 	/// The exception is not a nicety. A newline inside a verbatim or raw string literal is part of the
-	/// value, so normalising it changes what the program does; and a raw literal's indentation decides
-	/// how much is stripped from every line of it, so trimming there rewrites the string's content.
-	/// Nothing inside such a literal is touched, and no line that overlaps one is trimmed.
+	/// value, so normalising it changes what the program does -- measured: a raw literal written with
+	/// CRLF and the same one written with LF are different strings, which the compiler confirms. A raw
+	/// literal is indentation-sensitive too, so trimming there rewrites the value as well. Nothing
+	/// inside such a literal is touched, and no line that overlaps one is trimmed.
 	/// </para>
 	/// <para>
 	/// <paramref name="within"/> narrows it to the lines an edit actually wrote. A whole-file pass is
@@ -52,8 +53,17 @@ public static class Whitespace
 	/// nobody can review. Rewriting only what was written keeps the promise that whatever writes C#
 	/// ends formatted, without extending it to text this call never touched.
 	/// </para>
+	/// <para>
+	/// Several spans rather than one, because a change can be scattered: a signature change rewrites
+	/// a declaration and every call site of it, and the lines between two call sites four hundred
+	/// apart were not written by anybody here.
+	/// </para>
 	/// </summary>
-	public static SourceText Apply(SyntaxNode root, SourceText text, WhitespaceRules rules, TextSpan? within = null)
+	public static SourceText Apply(
+		SyntaxNode root,
+		SourceText text,
+		WhitespaceRules rules,
+		IReadOnlyList<TextSpan>? within = null)
 	{
 		var protectedSpans = MultiLineLiterals(root, text);
 		var source = text.ToString();
@@ -64,11 +74,11 @@ public static class Whitespace
 			// Overlapping rather than touching, so a region beginning where the previous line ends
 			// does not claim that line as well and widen the diff by one line for nothing.
 			var leaveAlone = protectedSpans.Any(span => span.IntersectsWith(line.SpanIncludingLineBreak))
-				|| (within is { } region && !region.OverlapsWith(line.SpanIncludingLineBreak));
+				|| (within is not null && !within.Any(region => region.OverlapsWith(line.SpanIncludingLineBreak)));
 
-			var content = source[line.Span.Start..line.Span.End];
+			var written = source[line.Span.Start..line.Span.End];
 
-			builder.Append(rules.TrimTrailingWhitespace && !leaveAlone ? content.TrimEnd(' ', '\t') : content);
+			builder.Append(rules.TrimTrailingWhitespace && !leaveAlone ? written.TrimEnd(' ', '\t') : written);
 
 			// The last line has no break of its own; the final-newline rule below decides whether it
 			// gains one.
@@ -81,7 +91,7 @@ public static class Whitespace
 
 		// The final newline belongs to the end of the file rather than to any line, so a narrowed
 		// pass only owns it when the edit reached that far.
-		var ownsTheEnd = within is null || within.Value.End >= text.Length;
+		var ownsTheEnd = within is null || within.Any(region => region.End >= text.Length);
 
 		if (rules.InsertFinalNewline && ownsTheEnd && builder.Length > 0 && !EndsWithBreak(builder))
 		{
@@ -128,17 +138,22 @@ public static class Whitespace
 	}
 
 	/// <summary>
-	/// Spans of literals that cross a line, which are the only ones whose whitespace is content. A
-	/// single-line literal cannot hold a line ending, and nothing can follow it on its line except
-	/// code, so protecting those would only stop ordinary lines from being trimmed.
+	/// Spans of literals that cross a line, whose trailing whitespace is the value of a string
+	/// rather than layout. A single-line literal cannot hold a line ending, and nothing can follow
+	/// it on its line except code, so protecting those would only stop ordinary lines from being
+	/// trimmed.
 	/// </summary>
 	private static IReadOnlyList<TextSpan> MultiLineLiterals(SyntaxNode root, SourceText text) =>
-		[.. root.DescendantNodes()
-			.Where(node => node is LiteralExpressionSyntax or InterpolatedStringExpressionSyntax)
+		[.. Crossing(root.DescendantNodes()
+			.Where(node => node is LiteralExpressionSyntax or InterpolatedStringExpressionSyntax), text)];
+
+	/// <summary>The spans of those nodes that start and end on different lines.</summary>
+	private static IEnumerable<TextSpan> Crossing(IEnumerable<SyntaxNode> nodes, SourceText text) =>
+		nodes
 			.Select(node => node.Span)
 			.Where(span => text.Lines.GetLineFromPosition(span.Start).LineNumber
 				!= text.Lines.GetLineFromPosition(span.End).LineNumber)
-			.OrderBy(span => span.Start)];
+			.OrderBy(span => span.Start);
 
 	private static bool EndsWithBreak(StringBuilder builder) =>
 		builder[^1] is '\n' or '\r';

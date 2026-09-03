@@ -65,12 +65,15 @@ public static class ToolDescriptions
         """;
 
 	public const string SymbolInfo = """
-        What the symbol at a file position actually is: full signature, kind, accessibility,
-        containing type, XML documentation, every declaration site, and what the member overrides or
-        implements -- which is usually where an override's documentation actually lives. Resolved
-        from the compilation rather than read off the declaration text, and works from a use site as
-        well as a declaration. isFromSource being false means it lives in metadata and cannot be
-        renamed or edited.
+        What a symbol actually is: full signature, kind, accessibility, containing type, XML
+        documentation, every declaration site, and what the member overrides or implements -- which
+        is usually where an override's documentation actually lives. Name it as Namespace.Type.Member,
+        or point at a file position; naming needs no grep first and does not go stale when an earlier
+        edit moves the line. It also returns each declaration's first and last line, so where a
+        member stops is known rather than approximated -- which is what a text edit has to guess and
+        what it gets wrong. Resolved from the compilation rather than read off the declaration text,
+        and works from a use site as well as a declaration. isFromSource being false means it lives
+        in metadata and cannot be renamed or edited.
         """;
 
 	public const string FindReferences = """

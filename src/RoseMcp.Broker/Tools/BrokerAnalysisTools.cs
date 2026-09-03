@@ -44,7 +44,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 
 	[McpServerTool(
 		Name = ToolNames.SymbolInfo,
-		Title = "Describe the symbol at a position",
+		Title = "Describe a symbol",
 		ReadOnly = true,
 		Idempotent = true,
 		OpenWorld = false,
@@ -52,13 +52,15 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.SymbolInfo)]
 	public Task<SymbolInfoResult> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description("The symbol by name, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string? symbol = null,
+		[Description("Path to the file. With line and column, or to narrow a name.")] string? filePath = null,
+		[Description("One-based line number. Only needed when pointing at a position rather than naming a symbol.")] int? line = null,
+		[Description("One-based column, pointing at the identifier itself.")] int? column = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(workspace, filePath), ToolNames.SymbolInfo, new()
 		{
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,

@@ -22,13 +22,49 @@ public static class DeclarationLocator
 	/// <summary>How many candidates an error lists before it starts summarising.</summary>
 	private const int Listed = 8;
 
-	/// <summary>The declaration of a member, or of a type -- a type declaration is a member too.</summary>
-	public static Task<DeclarationTarget> FindMemberAsync(
+	/// <summary>
+	/// The one declaration of a member, or of a type -- a type declaration is a member too. For
+	/// writing: a partial declared in two files is two places a member could go, and which one is
+	/// the caller's decision.
+	/// </summary>
+	public static async Task<DeclarationTarget> FindMemberAsync(
 		Solution solution,
 		string requested,
 		string? filePath,
-		CancellationToken cancellationToken) =>
-		FindAsync(solution, requested, filePath, typesOnly: false, cancellationToken);
+		CancellationToken cancellationToken)
+	{
+		var found = await FindAsync(solution, requested, filePath, typesOnly: false, cancellationToken);
+
+		if (found.Declarations.Count == 1) return found.Declarations[0];
+
+		throw found.Declarations.Count == 0 ? found.NotFound() : found.Ambiguous();
+	}
+
+	/// <summary>
+	/// The one symbol a name refers to, whatever number of places declare it. For reading, where the
+	/// several declarations of a partial are all part of the answer rather than a choice to be made
+	/// -- and where refusing to describe a partial at all, as writing rightly does, would be absurd.
+	/// <para>
+	/// Overloads are still ambiguous, because they are genuinely different symbols with different
+	/// signatures, and that is what tells the two cases apart.
+	/// </para>
+	/// </summary>
+	public static async Task<DeclarationTarget> FindSymbolAsync(
+		Solution solution,
+		string requested,
+		string? filePath,
+		CancellationToken cancellationToken)
+	{
+		var found = await FindAsync(solution, requested, filePath, typesOnly: false, cancellationToken);
+
+		var bySignature = found.Declarations
+			.GroupBy(target => target.Signature, StringComparer.Ordinal)
+			.ToArray();
+
+		if (bySignature.Length == 1) return bySignature[0].First();
+
+		throw bySignature.Length == 0 ? found.NotFound() : found.Ambiguous();
+	}
 
 	/// <summary>
 	/// The declaration of a type, refusing anything else. Separate from <see cref="FindMemberAsync"/>
@@ -41,7 +77,14 @@ public static class DeclarationLocator
 		string? filePath,
 		CancellationToken cancellationToken)
 	{
-		var target = await FindAsync(solution, requested, filePath, typesOnly: true, cancellationToken);
+		var found = await FindAsync(solution, requested, filePath, typesOnly: true, cancellationToken);
+
+		if (found.Declarations.Count != 1)
+		{
+			throw found.Declarations.Count == 0 ? found.NotFound() : found.Ambiguous();
+		}
+
+		var target = found.Declarations[0];
 
 		// A named type whose declaration is not a type declaration is a delegate, and a delegate has
 		// no members to add to.
@@ -58,7 +101,12 @@ public static class DeclarationLocator
 		};
 	}
 
-	private static async Task<DeclarationTarget> FindAsync(
+	/// <summary>
+	/// Everything the search turned up, and everything needed to explain finding nothing. Kept as a
+	/// value rather than resolved here, because what counts as one answer differs between reading
+	/// and writing and only the caller knows which it is doing.
+	/// </summary>
+	private static async Task<Found> FindAsync(
 		Solution solution,
 		string requested,
 		string? filePath,
@@ -116,11 +164,42 @@ public static class DeclarationLocator
 			.DistinctBy(target => (Path.GetFullPath(target.FilePath).ToUpperInvariant(), target.Declaration.Span))
 			.ToArray();
 
-		if (distinct.Length == 1) return distinct[0];
+		return new Found
+		{
+			Address = address,
+			Declarations = distinct,
+			Named = named,
+			Matching = matching,
+			Generated = generated,
+			Elsewhere = elsewhere,
+			FilePath = filePath,
+			TypesOnly = typesOnly,
+		};
+	}
 
-		throw distinct.Length == 0
-			? NotFound(address, named, matching, generated, elsewhere, filePath, typesOnly)
-			: Ambiguous(address, distinct, filePath);
+	/// <summary>What the search found, and how to say that it was not enough.</summary>
+	private sealed record Found
+	{
+		public required SymbolAddress Address { get; init; }
+
+		public required IReadOnlyList<DeclarationTarget> Declarations { get; init; }
+
+		public required IReadOnlyList<ISymbol> Named { get; init; }
+
+		public required IReadOnlyList<ISymbol> Matching { get; init; }
+
+		public required int Generated { get; init; }
+
+		public required int Elsewhere { get; init; }
+
+		public required string? FilePath { get; init; }
+
+		public required bool TypesOnly { get; init; }
+
+		public ArgumentException NotFound() =>
+			DeclarationLocator.NotFound(Address, Named, Matching, Generated, Elsewhere, FilePath, TypesOnly);
+
+		public ArgumentException Ambiguous() => DeclarationLocator.Ambiguous(Address, Declarations, FilePath);
 	}
 
 	/// <summary>

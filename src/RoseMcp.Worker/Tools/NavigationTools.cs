@@ -38,7 +38,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 
 	[McpServerTool(
 		Name = ToolNames.SymbolInfo,
-		Title = "Describe the symbol at a position",
+		Title = "Describe a symbol",
 		ReadOnly = true,
 		Idempotent = true,
 		OpenWorld = false,
@@ -46,9 +46,10 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.SymbolInfo)]
 	public async Task<SymbolInfoResult> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description("The symbol by name, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string? symbol = null,
+		[Description("Absolute or solution-relative path to the file. With line and column, or to narrow a name.")] string? filePath = null,
+		[Description("One-based line number. Only needed when pointing at a position rather than naming a symbol.")] int? line = null,
+		[Description("One-based column, pointing at the identifier itself.")] int? column = null,
 		CancellationToken cancellationToken = default)
 	{
 		// Describing one symbol is instant. The only wait worth reporting is the workspace itself,
@@ -56,7 +57,11 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		using var following = sharedWork.Follow(WorkProgress.For(progress));
 
 		var snapshot = await host.ReadAsync(cancellationToken);
-		return await NavigationService.DescribeAsync(snapshot, filePath, line, column, cancellationToken);
+
+		return await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolInfoRequest { Symbol = symbol, FilePath = filePath, Line = line, Column = column },
+			cancellationToken);
 	}
 
 	[McpServerTool(

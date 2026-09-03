@@ -10,12 +10,10 @@ public static class NavigationService
 {
 	public static async Task<SymbolInfoResult> DescribeAsync(
 		WorkspaceSnapshot snapshot,
-		string filePath,
-		int line,
-		int column,
+		SymbolInfoRequest request,
 		CancellationToken cancellationToken)
 	{
-		var (symbol, _) = await SymbolLocator.ResolveAsync(snapshot.Solution, filePath, line, column, cancellationToken);
+		var symbol = await ResolveAsync(snapshot, request, cancellationToken);
 
 		var declarations = new List<SourceLocation>();
 		foreach (var location in symbol.Locations.Where(location => location.IsInSource))
@@ -38,11 +36,44 @@ public static class NavigationService
 				: null,
 			Documentation = string.IsNullOrWhiteSpace(documentation) ? null : documentation,
 			Declarations = declarations,
+			DeclarationSpans = await SymbolLocator.SpansOfAsync(symbol, cancellationToken),
 			BaseDefinitions = await DescribeAllAsync(snapshot, BaseDefinitions(symbol), cancellationToken),
 
 			// A symbol from metadata has no source locations, which is also why it cannot be renamed.
 			IsFromSource = declarations.Count > 0,
 		};
+	}
+
+	/// <summary>
+	/// The symbol the request names, however it named it. A request that says neither is an error
+	/// rather than a default: guessing which of the two was meant would answer about some other
+	/// symbol entirely, and answering confidently about the wrong symbol is the failure worth the
+	/// most trouble to avoid.
+	/// </summary>
+	private static async Task<ISymbol> ResolveAsync(
+		WorkspaceSnapshot snapshot,
+		SymbolInfoRequest request,
+		CancellationToken cancellationToken)
+	{
+		if (request.IsByName)
+		{
+			var target = await DeclarationLocator.FindSymbolAsync(
+				snapshot.Solution, request.Symbol!, request.FilePath, cancellationToken);
+
+			return target.Symbol;
+		}
+
+		if (!request.IsByPosition)
+		{
+			throw new ArgumentException(
+				"Name the symbol, as Namespace.Type.Member, or give filePath with line and column. "
+					+ "A name needs no position and does not go stale when the file is edited.");
+		}
+
+		var (symbol, _) = await SymbolLocator.ResolveAsync(
+			snapshot.Solution, request.FilePath!, request.Line!.Value, request.Column!.Value, cancellationToken);
+
+		return symbol;
 	}
 
 	public static async Task<ReferencesResult> FindReferencesAsync(

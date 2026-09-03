@@ -80,7 +80,9 @@ public sealed class ImplementationTests
 		var (line, column) = At(path, "Area() => Math.PI");
 
 		var info = await NavigationService.DescribeAsync(
-			snapshot, path, line, column, TestContext.Current.CancellationToken);
+			snapshot,
+			new SymbolInfoRequest { FilePath = path, Line = line, Column = column },
+			TestContext.Current.CancellationToken);
 
 		var implemented = Assert.Single(info.BaseDefinitions);
 

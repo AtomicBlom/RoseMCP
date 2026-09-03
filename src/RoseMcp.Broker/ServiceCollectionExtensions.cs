@@ -61,7 +61,9 @@ public static class ServiceCollectionExtensions
 		  it emits nothing and runs no MSBuild targets -- so build before concluding you are done.
 		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility,
 		  documentation and declaration sites rather than whatever the declaration text looks like,
-		  and says what the member overrides or implements.
+		  and says what the member overrides or implements. Name it rather than pointing at a line,
+		  and it also tells you the first and last line of the declaration -- so where a member
+		  stops is known rather than approximated by reading forty lines after it.
 		- Who implements or overrides something: rose_find_implementations. Grep cannot answer this
 		  at all, since an implementation need not mention the interface anywhere near the member.
 

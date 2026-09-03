@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
 using RoseMcp.LiveApp.Debugging;
+using RoseMcp.LiveApp.Xaml;
 
 namespace RoseMcp.LiveApp;
 
@@ -27,6 +28,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	private string? _detail;
 	private CorDebugSession? _session;
 	private string? _uwpPackageFullName;
+	private XamlDiagnosticsSession? _xaml;
 
 	/// <summary>The architecture this host launched as, which is the target's architecture.</summary>
 	public static TargetArchitecture Architecture => RuntimeInformation.ProcessArchitecture switch
@@ -128,6 +130,28 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		}
 
 		return new LiveContinueResult { Continued = session?.Step(mode) == true };
+	}
+
+	/// <summary>
+	/// Injects the XAML diagnostics provider into the target and returns a snapshot of its live visual
+	/// tree. Returns a tree carrying only a detail (no nodes) when the target has no XAML UI or the
+	/// provider is unavailable, rather than throwing.
+	/// </summary>
+	public LiveXamlTree ReadXamlTree()
+	{
+		int? targetProcessId;
+		lock (_gate)
+		{
+			targetProcessId = _targetProcessId;
+			_xaml ??= new XamlDiagnosticsSession(logger);
+		}
+
+		if (targetProcessId is not { } pid)
+		{
+			return new LiveXamlTree { Detail = "This session has no target process to inspect." };
+		}
+
+		return _xaml.ReadTree(pid);
 	}
 
 	/// <summary>A page of buffered debug events after the given cursor, with the session's state.</summary>

@@ -204,6 +204,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["mode"] = mode },
 			cancellationToken)).Continued;
 
+	/// <summary>Injects the XAML provider into the target and reads a snapshot of its live visual tree.</summary>
+	public Task<LiveXamlTree> ReadXamlTreeAsync(CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlTree>(ToolNames.LiveAppXamlTree, cancellationToken);
+
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);
 

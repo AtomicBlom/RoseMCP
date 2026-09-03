@@ -171,3 +171,33 @@ normal run rather than a wedged, suspended process. Proven by
 `Captures_the_classic_uwp_probe_apps_startup_from_birth`, which catches a one-time exception the probe
 throws inside `OnLaunched` -- unreachable by a post-startup attach. The broker and the tool surface are
 unchanged; from-birth is internal to the host.
+
+### D14 — The XAML provider is injected by the host, over an ACL'd folder channel (#2/#3/#9)
+The XAML track's foundation is in the repo. `src/RoseXamlTap` is the native diagnostics provider,
+ported from the hot-reload spike and extended to emit a full tree snapshot; the live-app **host**
+injects it (there is no separate injector process), since the host already runs in the target's
+architecture and holds its pid. Injection is `InitializeXamlDiagnosticsEx` from Windows.UI.Xaml.dll to
+the well-known endpoint `VisualDiagConnection1`; the provider loads into the app's AppContainer, so
+the two ends exchange tab-separated files through a working folder the host stages and grants
+`ALL APPLICATION PACKAGES` (S-1-15-2-1) and `ALL RESTRICTED APPLICATION PACKAGES` (S-1-15-2-2) rights
+to. That folder is the seed of the session channel (#2): a snapshot request/response today.
+
+Decisions taken:
+- **File-over-ACL'd-folder, not a named pipe, for the channel.** The spike proved a folder the
+  AppContainer can read and write works across the sandbox boundary; a named pipe from an AppContainer
+  needs a capability-aware ACL and is finicky. A snapshot is one file today; a longer-lived
+  request/response protocol (for live updates and selection, #18) can layer on the same folder.
+- **The snapshot is UTF-8, and the host reads UTF-8.** `std::wofstream` narrows wide text to the ANSI
+  code page, which the host was reading as UTF-16 -- so the tree parsed as zero elements even though
+  the provider had enumerated it. The provider now encodes each row with `WideCharToMultiByte(CP_UTF8)`
+  and writes bytes; one fixed encoding regardless of the app's locale, and non-ASCII names survive.
+- **The provider is resolved by the host's architecture** (x64 provider for a classic UWP app emulated
+  on ARM64), from an override, a published `xaml-provider/<rid>` layout, or the repo build output --
+  the same shape as the dbgshim and host resolvers.
+- **A target with no XAML UI is a detail, not a fault.** `rose_xaml_tree` returns an empty tree with a
+  reason when the target is not a XAML app or the provider is not built, rather than throwing.
+
+`rose_xaml_tree` is proven end to end by `Reads_the_live_visual_tree_of_the_classic_uwp_probe`: launch
+the probe from birth, inject, and read back its five named elements (RootGrid, Panel, Pane, Counter,
+Caption) through the host to the broker. The provider's SetProperty/ClearProperty apply path is kept
+for the hot-reload loop (#12); properties (#10) and interactive selection (#18) build on this snapshot.

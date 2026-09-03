@@ -57,6 +57,17 @@ static void Log(const std::wstring& line)
 	if (file) file << line << L"\n";
 }
 
+// The snapshot is UTF-8 so the host reads it with one fixed encoding regardless of the app's locale;
+// std::wofstream would narrow to the ANSI code page and lose any non-ASCII name.
+static std::string Utf8(const std::wstring& text)
+{
+	if (text.empty()) return std::string();
+	const int size = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+	std::string out(static_cast<size_t>(size), '\0');
+	WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
+	return out;
+}
+
 // A tab or newline in a type or name would break the row-per-element snapshot; keep every field on
 // one line and reversible.
 static std::wstring Escape(const wchar_t* text)
@@ -197,7 +208,7 @@ private:
 		const std::wstring finalPath = g_workDir + L"\\tree.tsv";
 		const std::wstring tempPath = finalPath + L".tmp";
 		{
-			std::wofstream file(tempPath, std::ios::trunc);
+			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
 			if (!file)
 			{
 				Log(L"could not open tree.tsv.tmp for writing");
@@ -206,8 +217,9 @@ private:
 
 			for (const auto& node : m_nodes)
 			{
-				file << node.Handle << L'\t' << node.Parent << L'\t' << node.ChildIndex << L'\t'
-					<< Escape(node.Type.c_str()) << L'\t' << Escape(node.Name.c_str()) << L'\n';
+				const std::wstring row = std::to_wstring(node.Handle) + L'\t' + std::to_wstring(node.Parent) + L'\t'
+					+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str());
+				file << Utf8(row) << '\n';
 			}
 		}
 

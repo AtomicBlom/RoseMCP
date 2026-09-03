@@ -373,6 +373,28 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		return stepped ? $"Stepped {mode}; see the StepComplete event for the new location." : "Nothing was stopped to step.";
 	}
 
+	[McpServerTool(
+		Name = ToolNames.XamlTree,
+		Title = "Read the live XAML visual tree",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Read a snapshot of a running app's live XAML visual tree. It injects a diagnostics provider into "
+			+ "the target and enumerates the tree on the app's UI thread, returning a flat list of elements "
+			+ "-- each with a stable handle, its parent handle and child index (rebuild the tree from those), "
+			+ "its type, and its x:Name when it has one. The target must be a XAML app (UWP/WinUI); for one "
+			+ "with no XAML UI, or when the provider is not built, the result carries a detail and no nodes "
+			+ "rather than failing. Use it to see the live tree of an app started with rose_debug_launch_uwp.")]
+	public async Task<LiveXamlTree> XamlTreeAsync(
+		[Description(SessionHelp)] string sessionId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.ReadXamlTreeAsync(cancellationToken);
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

@@ -340,6 +340,70 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// The XAML track's first vertical (#2/#3, seed of #9): launch the classic UWP probe, inject the
+	/// diagnostics provider, and read its live visual tree. Proves the provider builds, injects into the
+	/// AppContainer, enumerates on the UI thread, and reports the tree back through the host to the
+	/// broker. Skips where the UWP build toolchain or the C++ toolset is absent.
+	/// </summary>
+	[Fact]
+	public async Task Reads_the_live_visual_tree_of_the_classic_uwp_probe()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp xaml probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			var summary = session.Describe();
+			Assert.True(
+				summary.State == LiveAppSessionState.Ready,
+				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
+
+			// Wait until the app is well into running (its timer has ticked once) so the window and its
+			// visual tree are up before we enumerate.
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+			Assert.NotEmpty(tree.Nodes);
+
+			// The probe's named elements are all present, addressable from the flat parent/child list.
+			foreach (var name in new[] { "RootGrid", "Panel", "Pane", "Counter", "Caption" })
+			{
+				Assert.Contains(tree.Nodes, node => node.Name == name);
+			}
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
 	[Fact]
 	public async Task Reports_a_missing_target_as_faulted()
@@ -705,6 +769,23 @@ public sealed class LiveAppSessionTests
 		}
 
 		return layoutDirectory;
+	}
+
+	/// <summary>
+	/// Builds the native XAML diagnostics provider (x64) with build.ps1, returning false when the C++
+	/// toolset or Windows SDK is absent so the caller skips rather than fails.
+	/// </summary>
+	private static bool BuildXamlProvider()
+	{
+		var script = Path.Combine(RepositoryRoot(), "src", "RoseXamlTap", "build.ps1");
+		if (!File.Exists(script)) return false;
+
+		var (exitCode, _) = RunProcess(
+			"powershell",
+			$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform x64 -Configuration Debug");
+
+		var dll = Path.Combine(RepositoryRoot(), "src", "RoseXamlTap", "bin", "x64", "Debug", "RoseXamlTap.dll");
+		return exitCode == 0 && File.Exists(dll);
 	}
 
 	private const string UwpProbePackageName = "RoseMcp.ProbeApp.UwpClassic";

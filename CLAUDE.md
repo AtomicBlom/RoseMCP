@@ -195,6 +195,42 @@ reclaim memory or pick up a rebuilt generator.
   which is how a text edit path produces an anchor found in the wrong place. Where a name matches
   more than one declaration it refuses and lists them, because writing correct code into the wrong
   overload is the only failure with no symptom at all.
+- **Written code is indented for where it goes, because the formatter only does half of it.** Roslyn
+  reindents statements and moves braces -- rules it has -- so a line wrapped by hand *inside a body*
+  comes out right. A wrapped parameter list is layout it has no rule about, so it keeps whatever
+  indentation arrived, and neither IDE0055 nor `dotnet format` says a word because neither of them
+  has an opinion either. Code written for column zero therefore landed a level short of its
+  neighbours, silently. `MemberSyntax` takes the code's own baseline indentation off every line and
+  puts the destination's on: both halves, because a caller that has read the file and indented for
+  the destination is as likely as one that wrote at column zero, and only removing the baseline
+  first makes those the same request. Where the formatter *does* have a rule it still wins, since it
+  runs afterwards.
+- **The line endings inside a string literal are content, and this was measured.** A raw literal
+  written with CRLF and the same one written with LF are different strings -- the compiler says so,
+  which is worth knowing because it is tempting to assume raw literals normalise and they do not. So
+  nothing rewrites them, and `Shift` keeps each line's own ending rather than splitting on newlines
+  and joining with one, which would have changed values inside the literals it was carefully not
+  re-indenting. The consequence is reported rather than left silent: a multi-line literal written
+  with endings the file does not use fails `dotnet format` while no build complains, and the obvious
+  fix changes what the program says.
+- **A signature change moves the whole declaration group, or it does not compile.** A virtual
+  method whose override keeps the old parameters is a build error, and so is an interface member
+  whose implementations keep theirs -- so `rose_change_signature` changes the member, its base
+  declaration all the way up, the interface members it implements, and everything overriding or
+  implementing those. Only the declaration the caller named gets the parameters they wrote; the rest
+  are mapped by position and keep their own parameter names and attributes, because an override is
+  free to call its parameters something else and replacing its list wholesale would rename them
+  without saying so. Reordering existing parameters is refused rather than attempted: an argument's
+  meaning at a call site is not always recoverable from its position. And the call sites that still
+  compile are reported, because a forwarder that goes on passing the old default is the bug that
+  hides -- "compiles" and "correct" part company exactly there.
+- **A stale build output is a notice, never a degraded reason.** `Degraded` means these answers
+  cannot be trusted, and they are exactly as good with a stale `bin` as without one, because they
+  come from source. It is also the ordinary state of a solution somebody is editing, so putting it
+  in `degradedReasons` would mark almost every workspace on the machine degraded -- the same
+  emptying of the word that narrowed the MSBuild-failure count and took `targetFramework` out of the
+  project name. It is still said, because what it warns about does not present as a build failure:
+  it presents as a test failing for a reason that has nothing to do with the change.
 - **A solution is loaded under properties it declares.** MSBuild's `Debug|AnyCPU` default is not
   universal. Where `TargetFramework` is derived from the configuration name -- Drawboard's Revit
   add-in derives it from `Debug-2024` through `Debug-2027` -- the wrong configuration yields projects
@@ -270,9 +306,9 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 153 tests in about a second, so it is worth running on every change.
+process -- 166 tests in about a second, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes four to five minutes. `RoseMcp.TestSupport` holds the
+builds and starts real workers, and takes four to five minutes (194 tests). `RoseMcp.TestSupport` holds the
 doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 
@@ -322,8 +358,10 @@ reaching for it is cheaper than that reflex. Three things carry that, in descend
    `rose_diagnostics` to check code compiles. To change code in a file that already exists,
    `rose_replace_member`, `rose_replace_body` and `rose_add_member` address a member by name,
    refuse code that does not parse, format what they write, and report what the edit broke --
-   so there is no build in the edit loop. Source-generated code is only readable via
-   `rose_list_generated_documents` / `rose_read_generated_document`.
+   so there is no build in the edit loop. `rose_change_signature` adds, removes or retypes a
+   parameter across every override, implementation and call site at once. Before running
+   anything out of `bin`, `rose_build_freshness` says whether it is this code. Source-generated
+   code is only readable via `rose_list_generated_documents` / `rose_read_generated_document`.
    ```
 
 Register the server with:

@@ -127,8 +127,13 @@ public static class MemberEditService
 
 		GuardSharedDeclaration(target);
 
+		var text = await target.Document.GetTextAsync(cancellationToken);
+
 		var parsed = MemberSyntax.Parse(
-			request.Code, KeywordAround(target.Declaration), target.Document.Project.ParseOptions);
+			request.Code,
+			KeywordAround(target.Declaration),
+			target.Document.Project.ParseOptions,
+			IndentAt(text, target.Declaration.SpanStart));
 
 		if (parsed.Count != 1)
 		{
@@ -184,7 +189,10 @@ public static class MemberEditService
 		var head = text.ToString(TextSpan.FromBounds(declaration.SpanStart, bodyStart)).TrimEnd();
 
 		var parsed = MemberSyntax.Parse(
-			$"{head} {Body(request.Code)}", KeywordAround(declaration), target.Document.Project.ParseOptions);
+			$"{head} {Body(request.Code)}",
+			KeywordAround(declaration),
+			target.Document.Project.ParseOptions,
+			IndentAt(text, declaration.SpanStart));
 
 		if (parsed.Count != 1)
 		{
@@ -232,18 +240,24 @@ public static class MemberEditService
 					+ "cannot be written as a member. rose_replace_member can still replace one that exists.");
 		}
 
-		var parsed = MemberSyntax.Parse(request.Code, MemberSyntax.KeywordOf(type), target.Document.Project.ParseOptions);
-
-		GuardDuplicates(type, parsed);
-
-		var index = PlacementIndex(type, request);
 		var document = target.Document;
 
 		var text = await document.GetTextAsync(cancellationToken);
 		var tree = await document.GetSyntaxTreeAsync(cancellationToken)
 			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} is not a C# source file.");
 
-		var lineEnding = Whitespace.RulesFor(document.Project, tree, text).LineEnding;
+		var rules = Whitespace.RulesFor(document.Project, tree, text);
+		var lineEnding = rules.LineEnding;
+
+		var parsed = MemberSyntax.Parse(
+			request.Code,
+			MemberSyntax.KeywordOf(type),
+			document.Project.ParseOptions,
+			IndentFor(type, text, rules));
+
+		GuardDuplicates(type, parsed);
+
+		var index = PlacementIndex(type, request);
 
 		var marker = new SyntaxAnnotation();
 		var prepared = new List<MemberDeclarationSyntax>(parsed.Count);
@@ -498,8 +512,9 @@ public static class MemberEditService
 
 		if (verification.Introduced.Any(entry => Unresolved.Contains(entry.Id, StringComparer.Ordinal)))
 		{
-			yield return "A name that does not resolve is usually a missing using directive. A using directive is not "
-				+ "part of a member, so this did not add one -- put it above the namespace yourself and ask again.";
+			yield return "A name that does not resolve is either something not written yet or a missing using "
+				+ "directive. A using directive is not part of a member, so this did not add one -- if that is what "
+				+ "it needs, put it above the namespace yourself.";
 		}
 
 		// Said only where it can happen. A body cannot change a signature, and adding a member
@@ -561,6 +576,26 @@ public static class MemberEditService
 	/// </summary>
 	private static string KeywordAround(MemberDeclarationSyntax declaration) =>
 		declaration.Parent is BaseTypeDeclarationSyntax container ? MemberSyntax.KeywordOf(container) : "class";
+
+	/// <summary>
+	/// The indentation the line at <paramref name="position"/> starts with, which is what a
+	/// declaration written into that place has to line up with.
+	/// </summary>
+	private static string IndentAt(SourceText text, int position)
+	{
+		var line = text.Lines.GetLineFromPosition(position).ToString();
+
+		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
+	}
+
+	/// <summary>
+	/// Where a new member's lines belong: level with the members already there, or one level in from
+	/// the container when there are none to copy.
+	/// </summary>
+	private static string IndentFor(TypeDeclarationSyntax type, SourceText text, WhitespaceRules rules) =>
+		type.Members.Count > 0
+			? IndentAt(text, type.Members[0].SpanStart)
+			: IndentAt(text, type.SpanStart) + rules.IndentUnit;
 
 	/// <summary>
 	/// Whether a member already has a blank line above it, which it will have when whoever wrote the

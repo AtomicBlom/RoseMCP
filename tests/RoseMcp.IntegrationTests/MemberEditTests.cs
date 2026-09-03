@@ -45,6 +45,61 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// A line the caller wrapped by hand, landing at the indentation of where it went rather than
+	/// where it was written.
+	/// <para>
+	/// Found by using this tool on this repository: the formatter reindents statements and moves
+	/// braces, which are rules it has, but a wrapped parameter list is layout it has no rule about,
+	/// so it kept whatever arrived and the continuation lines sat a level short of their
+	/// neighbours. Neither IDE0055 nor dotnet format says a word about it, which is why it needs a
+	/// test of its own rather than a build to catch it.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Lines_up_a_parameter_list_the_caller_wrapped()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await ReplaceAsync(
+			session,
+			"Library.Greeter.Greet(string, string)",
+			"public string Greet(\n\tstring title,\n\tstring name)\n{\n\treturn $\"{_prefix}, {title} {name}!\";\n}");
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		// One tab for the member, two for the parameters it wrapped onto their own lines.
+		Assert.Contains(
+			"\tpublic string Greet(\r\n\t\tstring title,\r\n\t\tstring name)\r\n\t{\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The same shift must not reach inside a string. Its leading whitespace is part of the value,
+	/// and in a raw literal it decides how much is stripped from every line of it.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_the_inside_of_a_multi_line_literal_alone()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public string Banner() => @\"\nflush left on purpose\n\";",
+		});
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		// Verbatim, endings included: a newline inside the literal is part of the value the caller
+		// asked for, so normalising it to the file's CRLF would change what the program says.
+		Assert.Contains("@\"\nflush left on purpose\n\";", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// The compilation happens in the same call, which is the whole reason this is not two. A body
 	/// that does not compile comes back as an error against the member rather than as a build twenty
 	/// seconds later.

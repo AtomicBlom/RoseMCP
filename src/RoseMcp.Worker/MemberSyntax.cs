@@ -33,7 +33,8 @@ public static class MemberSyntax
 	private const int WrapperLines = 2;
 
 	/// <summary>
-	/// The members <paramref name="code"/> declares, in the order they were written.
+	/// The members <paramref name="code"/> declares, in the order they were written, re-indented for
+	/// a declaration sitting at <paramref name="indent"/>.
 	/// </summary>
 	/// <exception cref="ArgumentException">
 	/// The code does not parse, declares no member, or would put something outside the container.
@@ -41,36 +42,23 @@ public static class MemberSyntax
 	public static IReadOnlyList<MemberDeclarationSyntax> Parse(
 		string code,
 		string containerKeyword,
-		ParseOptions? options)
+		ParseOptions? options,
+		string indent = "")
 	{
 		if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("No code was supplied, so there is nothing to write.");
 
-		var wrapped = $"{containerKeyword} {WrapperName}\n{{\n{code.TrimEnd()}\n}}\n";
-		var tree = CSharpSyntaxTree.ParseText(wrapped, options as CSharpParseOptions);
+		var members = ParseWrapped(code, containerKeyword, options);
+		if (indent.Length == 0) return members;
 
-		var errors = tree.GetDiagnostics()
-			.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
-			.ToArray();
+		// Parsed twice, because the indentation cannot be worked out until the code has been
+		// understood: which lines sit inside a multi-line literal decides which of them have to be
+		// left exactly as they arrived. The second parse is of text, in microseconds, against an edit
+		// that is about to compile a project.
+		var shifted = Shift(code, indent, LiteralContinuations(members));
 
-		if (errors.Length > 0) throw Rejected(code, errors);
-
-		// One container and nothing beside it. A brace closed once too often parses without any
-		// error at all by ending the wrapper early, which would otherwise carry whatever follows
-		// past every check here and land it in the file at top level.
-		if (((CompilationUnitSyntax)tree.GetRoot()).Members is not [BaseTypeDeclarationSyntax wrapper]
-			|| wrapper.Identifier.Text != WrapperName)
-		{
-			throw new ArgumentException(
-				"The code closes more braces than it opens, so part of it would end up outside the member. "
-					+ "Supply the member declarations alone.");
-		}
-
-		GuardDanglingComment(wrapper);
-
-		var members = Members(wrapper);
-		if (members.Count == 0) throw new ArgumentException("The code declares no member, so there is nothing to write.");
-
-		return members;
+		return string.Equals(shifted, code, StringComparison.Ordinal)
+			? members
+			: ParseWrapped(shifted, containerKeyword, options);
 	}
 
 	/// <summary>
@@ -107,6 +95,120 @@ public static class MemberSyntax
 				+ "the member it describes.");
 	}
 
+	/// <summary>
+	/// Parses the code inside a synthetic container and checks the shape of what came out.
+	/// </summary>
+	private static IReadOnlyList<MemberDeclarationSyntax> ParseWrapped(
+		string code,
+		string containerKeyword,
+		ParseOptions? options)
+	{
+		var wrapped = $"{containerKeyword} {WrapperName}\n{{\n{code.TrimEnd()}\n}}\n";
+		var tree = CSharpSyntaxTree.ParseText(wrapped, options as CSharpParseOptions);
+
+		var errors = tree.GetDiagnostics()
+			.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+			.ToArray();
+
+		if (errors.Length > 0) throw Rejected(code, errors);
+
+		// One container and nothing beside it. A brace closed once too often parses without any
+		// error at all by ending the wrapper early, which would otherwise carry whatever follows
+		// past every check here and land it in the file at top level.
+		if (((CompilationUnitSyntax)tree.GetRoot()).Members is not [BaseTypeDeclarationSyntax wrapper]
+			|| wrapper.Identifier.Text != WrapperName)
+		{
+			throw new ArgumentException(
+				"The code closes more braces than it opens, so part of it would end up outside the member. "
+					+ "Supply the member declarations alone.");
+		}
+
+		GuardDanglingComment(wrapper);
+
+		var members = Members(wrapper);
+		if (members.Count == 0) throw new ArgumentException("The code declares no member, so there is nothing to write.");
+
+		return members;
+	}
+
+	/// <summary>
+	/// Re-indents code for where it is going: its own baseline indentation off every line, then the
+	/// destination's on.
+	/// <para>
+	/// This is the half of the promise the formatter cannot keep. It reindents statements and moves
+	/// braces, which are rules it has, and a line wrapped by hand inside a body comes out right
+	/// because of them -- but a wrapped parameter list is layout it has no rule about, so it keeps
+	/// whatever indentation arrived. Code written for column zero then lands a level short of its
+	/// neighbours, and neither IDE0055 nor dotnet format says a word, because neither of them has an
+	/// opinion either. Measured on this repository's own source, writing a member through this tool.
+	/// </para>
+	/// <para>
+	/// Both halves are needed rather than just the shift: a caller that has read the file and
+	/// indented for the destination is as likely as one that wrote at column zero, and only removing
+	/// the baseline first makes the two the same request.
+	/// </para>
+	/// </summary>
+	private static string Shift(string code, string indent, IReadOnlySet<int> literals)
+	{
+		var lines = code.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+		var baseline = Baseline(lines);
+
+		var shifted = lines.Select((line, index) =>
+		{
+			if (literals.Contains(index)) return line;
+
+			var stripped = baseline.Length > 0 && line.StartsWith(baseline, StringComparison.Ordinal)
+				? line[baseline.Length..]
+				: line;
+
+			// The first line's indentation comes from the trivia at the splice point, and padding a
+			// blank line only creates trailing whitespace for the next pass to strip again.
+			return index > 0 && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+		});
+
+		return string.Join("\n", shifted);
+	}
+
+	/// <summary>The indentation the code was written at, taken from its first line with content.</summary>
+	private static string Baseline(IReadOnlyList<string> lines)
+	{
+		foreach (var line in lines)
+		{
+			if (line.Trim().Length == 0) continue;
+
+			return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
+		}
+
+		return string.Empty;
+	}
+
+	/// <summary>
+	/// Lines whose leading whitespace belongs to a string rather than to the layout: every line of a
+	/// multi-line literal after its first. Prefixing one of those changes what the program says, and
+	/// in a raw literal it changes how much is stripped from all of them.
+	/// </summary>
+	private static IReadOnlySet<int> LiteralContinuations(IReadOnlyList<MemberDeclarationSyntax> members)
+	{
+		var lines = new HashSet<int>();
+
+		foreach (var member in members)
+		{
+			foreach (var node in member.DescendantNodesAndSelf())
+			{
+				if (node is not (LiteralExpressionSyntax or InterpolatedStringExpressionSyntax)) continue;
+
+				var span = node.SyntaxTree.GetLineSpan(node.Span);
+
+				for (var line = span.StartLinePosition.Line + 1; line <= span.EndLinePosition.Line; line++)
+				{
+					lines.Add(line - WrapperLines);
+				}
+			}
+		}
+
+		return lines;
+	}
+
 	private static IReadOnlyList<MemberDeclarationSyntax> Members(BaseTypeDeclarationSyntax wrapper) => wrapper switch
 	{
 		TypeDeclarationSyntax type => type.Members,
@@ -118,17 +220,21 @@ public static class MemberSyntax
 	/// The parse errors, each located in the code the caller sent rather than in the wrapper they
 	/// never saw, and quoting the line so the message can be acted on without reading anything back.
 	/// </summary>
-	private static ArgumentException Rejected(string code, IReadOnlyList<Diagnostic> errors)
+	private static ArgumentException Rejected(
+		string code,
+		IReadOnlyList<Diagnostic> errors,
+		int lineOffset = WrapperLines,
+		int columnOffset = 0)
 	{
 		var lines = code.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
 
 		var described = errors.Take(Listed).Select(error =>
 		{
 			var start = error.Location.GetLineSpan().StartLinePosition;
-			var line = start.Line - WrapperLines;
+			var line = start.Line - lineOffset;
 			var quoted = line >= 0 && line < lines.Length ? lines[line].Trim() : string.Empty;
 
-			return $"line {line + 1}, column {start.Character + 1}: {error.Id} {error.GetMessage()}"
+			return $"line {line + 1}, column {start.Character + 1 - columnOffset}: {error.Id} {error.GetMessage()}"
 				+ (quoted.Length > 0 ? $"  ->  {quoted}" : string.Empty);
 		});
 

@@ -19,6 +19,7 @@ public sealed class WhitespaceTests
 		LineEnding = Crlf,
 		TrimTrailingWhitespace = true,
 		InsertFinalNewline = true,
+		IndentUnit = "\t",
 	};
 
 	[Fact]

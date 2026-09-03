@@ -148,6 +148,65 @@ public sealed class MemberSyntaxTests
 		Assert.Equal(expected, MemberSyntax.KeywordOf(type));
 	}
 
+	/// <summary>
+	/// The half of formatting the formatter does not do. It reindents statements and moves braces,
+	/// so a line wrapped inside a body comes out right, but a wrapped parameter list is layout it
+	/// has no rule about and keeps whatever arrived -- and neither IDE0055 nor dotnet format has an
+	/// opinion either, so code written for column zero lands a level short of its neighbours and
+	/// nothing complains.
+	/// </summary>
+	[Fact]
+	public void Shifts_wrapped_lines_to_the_indentation_of_where_they_are_going()
+	{
+		var members = MemberSyntax.Parse(
+			"public void Write(\n\tint count,\n\tstring name)\n{\n\tSend(count);\n}",
+			"class",
+			null,
+			"\t");
+
+		var text = Assert.Single(members).ToFullString();
+
+		// A member at one tab wraps its parameters at two and holds its body at two.
+		Assert.Contains("\n\t\tint count,", text, StringComparison.Ordinal);
+		Assert.Contains("\n\t\tstring name)", text, StringComparison.Ordinal);
+		Assert.Contains("\n\t{", text, StringComparison.Ordinal);
+		Assert.Contains("\n\t\tSend(count);", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A caller that has read the file and indented for the destination is as likely as one that
+	/// wrote at column zero, and the two have to be the same request -- which is why the baseline
+	/// comes off before the destination's indentation goes on.
+	/// </summary>
+	[Fact]
+	public void Treats_code_already_indented_for_its_destination_the_same_way()
+	{
+		var atColumnZero = MemberSyntax.Parse(
+			"public void Write(\n\tint count)\n{\n\tSend(count);\n}", "class", null, "\t");
+
+		var preIndented = MemberSyntax.Parse(
+			"\tpublic void Write(\n\t\tint count)\n\t{\n\t\tSend(count);\n\t}", "class", null, "\t");
+
+		Assert.Equal(
+			Assert.Single(atColumnZero).ToFullString(),
+			Assert.Single(preIndented).ToFullString());
+	}
+
+	/// <summary>
+	/// The line inside a string is content, not layout. Shifting it changes what the program says,
+	/// and in a raw literal it changes how much is stripped from every other line of the value.
+	/// </summary>
+	[Fact]
+	public void Leaves_the_lines_inside_a_multi_line_literal_where_they_are()
+	{
+		var members = MemberSyntax.Parse(
+			"public string Text() => @\"\nkeep me here\n\";", "class", null, "\t");
+
+		var text = Assert.Single(members).ToFullString();
+
+		Assert.Contains("\nkeep me here\n", text, StringComparison.Ordinal);
+	}
+
 	private static IReadOnlyList<MemberDeclarationSyntax> Parse(string code) =>
 		MemberSyntax.Parse(code, "class", null);
 }

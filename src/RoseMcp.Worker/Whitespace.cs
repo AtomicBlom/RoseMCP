@@ -31,6 +31,7 @@ public static class Whitespace
 			LineEnding = Ending(options) ?? Dominant(text),
 			TrimTrailingWhitespace = Flag(options, "trim_trailing_whitespace") ?? false,
 			InsertFinalNewline = Flag(options, "insert_final_newline") ?? false,
+			IndentUnit = Indent(options),
 		};
 	}
 
@@ -160,5 +161,26 @@ public static class Whitespace
 		if (!options.TryGetValue(key, out var value)) return null;
 
 		return bool.TryParse(value.Trim(), out var parsed) ? parsed : null;
+	}
+
+	/// <summary>
+	/// One level of indentation: a tab, or as many spaces as indent_size asks for. Four spaces when
+	/// the file says nothing, which is the language's own default and so the likeliest thing a file
+	/// with no .editorconfig already uses.
+	/// </summary>
+	private static string Indent(AnalyzerConfigOptions options)
+	{
+		var tabs = options.TryGetValue("indent_style", out var style)
+			&& style.Trim().Equals("tab", StringComparison.OrdinalIgnoreCase);
+
+		if (tabs) return "\t";
+
+		var width = options.TryGetValue("indent_size", out var size)
+			&& int.TryParse(size.Trim(), out var parsed)
+			&& parsed is > 0 and <= 16
+				? parsed
+				: 4;
+
+		return new string(' ', width);
 	}
 }

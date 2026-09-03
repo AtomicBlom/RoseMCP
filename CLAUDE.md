@@ -240,11 +240,15 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 81 tests in under a second, so it is worth running on every change.
+process -- 109 tests in about three seconds, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes under two minutes. `RoseMcp.TestSupport` holds the doubles
-both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
-`TestSession` is an integration test however small it looks.
+builds and starts real workers: 144 tests in just under five minutes, of which
+`LiveAppSessionTests` is 16 tests and half the clock. CI runs the other 128, which take two and a
+half minutes -- the live-app tests need classic-UWP tooling, a C++ toolset and developer mode, and a
+hosted runner has none of them, so they would report as skipped, which reads like coverage rather
+than the absence of it. `RoseMcp.TestSupport` holds the doubles both need. Put a test where its cost
+puts it: a test that needs a `FixtureSolution` or a `TestSession` is an integration test however
+small it looks.
 
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.

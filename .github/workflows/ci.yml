@@ -59,3 +59,40 @@ jobs:
 
       - name: Unit tests
         run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj --configuration Debug --no-build
+
+  integration-tests:
+    # A job of its own rather than more steps on build-and-test, so formatting and the unit tests
+    # still answer in about three minutes while this runs beside them. It pays for a second restore
+    # and build to get that, which is the trade being made deliberately.
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Build
+        run: dotnet build RoseMcp.slnx --configuration Release
+
+      # The test executable directly, not dotnet test: xunit's own -class- filter is not something
+      # Microsoft.Testing.Platform forwards, and `dotnet test -- -class- ...` selects nothing at all.
+      #
+      # LiveAppSessionTests is excluded by name rather than left to skip itself. It needs classic-UWP
+      # tooling, a C++ toolset and developer mode; a hosted runner has none of those, and 16 tests
+      # reporting "skipped" in a green run reads as coverage that is not there. Excluding them says
+      # what this job checks. They stay a local gate, where the toolchain exists and they all run.
+      - name: Integration tests
+        run: ./tests/RoseMcp.IntegrationTests/bin/Release/net10.0/RoseMcp.IntegrationTests.exe -class- '*LiveAppSessionTests'

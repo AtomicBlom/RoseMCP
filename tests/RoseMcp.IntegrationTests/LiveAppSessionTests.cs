@@ -660,7 +660,10 @@ public sealed class LiveAppSessionTests
 			Assert.Contains(withToolbar.Nodes, node => node.Name == "Caption");
 
 			// The provider confirms select mode armed, rather than the host assuming it.
-			var selectMode = await session.EnterXamlSelectModeAsync(cancellationToken);
+			// The framework's own hit test, which is the default and the only sane one: with
+			// includeAllElements a background-less Grid stretched over the window shadows every
+			// element the user can actually click.
+			var selectMode = await session.EnterXamlSelectModeAsync(includeAllElements: false, justMyXaml: true, cancellationToken);
 			Assert.True(
 				selectMode.Armed,
 				$"expected select mode to arm; got: {selectMode.Detail}");
@@ -1119,20 +1122,42 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
-	/// Builds the native XAML diagnostics provider (x64) with build.ps1, returning false when the C++
-	/// toolset or Windows SDK is absent so the caller skips rather than fails.
+	/// Builds the native XAML diagnostics provider (x64) with build.ps1. Returns false only when the
+	/// toolchain is genuinely absent, so the caller skips; anything else throws.
+	/// <para>
+	/// That distinction is the point. This used to return false for any non-zero exit and the caller
+	/// skipped with the message "no C++ toolset", which meant a compile error in the provider -- or
+	/// two builds racing over one PDB, which is how it was noticed -- silently skipped the XAML tests
+	/// and left the suite green. A capability quietly not being tested is worse than a red build, and
+	/// looks identical to a machine that simply cannot build it. build.ps1 already separates the two:
+	/// it exits 3 from its own Fail for a missing toolset or SDK, and anything else is a real failure.
+	/// </para>
 	/// </summary>
 	private static bool BuildXamlProvider()
 	{
 		var script = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.Uwp.Tap", "build.ps1");
 		if (!File.Exists(script)) return false;
 
-		var (exitCode, _) = RunProcess(
+		var (exitCode, output) = RunProcess(
 			"powershell",
 			$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform x64 -Configuration Debug");
 
+		// 3 is build.ps1's Fail: no MSVC toolset, or no Windows SDK. The only skippable outcome.
+		if (exitCode == 3) return false;
+
+		if (exitCode != 0)
+		{
+			throw new InvalidOperationException(
+				$"Building the XAML provider failed (exit {exitCode}):{Environment.NewLine}{output}");
+		}
+
 		var dll = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.Uwp.Tap", "bin", "x64", "Debug", "RoseMcp.Xaml.Uwp.Tap.dll");
-		return exitCode == 0 && File.Exists(dll);
+		if (!File.Exists(dll))
+		{
+			throw new InvalidOperationException($"The XAML provider build reported success but produced no {dll}.");
+		}
+
+		return true;
 	}
 
 	private const string UwpProbePackageName = "RoseMcp.ProbeApp.UwpClassic";

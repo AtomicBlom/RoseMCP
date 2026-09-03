@@ -18,4 +18,14 @@ public sealed record LiveXamlNode
 	public required string TypeName { get; init; }
 
 	public string? Name { get; init; }
+
+	/// <summary>
+	/// The XAML file the element was declared in, when the app carries source info. Null means the
+	/// information is absent, which is not the same as the element having no source -- a control
+	/// template's parts and an app compiled without diagnostics source info both look like this.
+	/// </summary>
+	public string? File { get; init; }
+
+	/// <summary>The line in <see cref="File"/>, when there is one.</summary>
+	public int? Line { get; init; }
 }

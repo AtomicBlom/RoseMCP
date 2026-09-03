@@ -57,6 +57,11 @@ selected" -- the agent reads it with `rose_xaml_selection`, and the handle it ge
   that picks one is swallowed rather than also reaching the app. **Idle** cancels.
 - **The pick leaves a mark.** The chosen element keeps a solid outline and badge after select mode
   ends, so "the selected element" means the same thing to you and to the agent until the next pick.
+- **It picks what you clicked.** The framework's own hit test decides, so an invisible panel stretched
+  over the window -- an empty dialog host, say -- cannot swallow every click. And **Just my XAML** (the
+  `{ }` toggle, on by default) prefers the element your markup declares over a control template's
+  internals, so clicking a button selects the button rather than some `TextBlock` inside it. The
+  agent gets the whole stack under the click either way, so it can walk up or down without asking again.
 - **It moves and folds away.** Drag it by the grip; **Hide** collapses it to that grip alone, and a tap
   on the grip brings it back. It stays inside the window however hard you throw it.
 - Either side can arm select mode, and both are the same act -- the mode is read back from the toolbar

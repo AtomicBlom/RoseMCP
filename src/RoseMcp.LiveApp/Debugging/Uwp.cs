@@ -13,12 +13,25 @@ internal static class Uwp
 	private static readonly Guid ClsidPackageDebugSettings = new("B1AEC16F-2383-4852-B0E9-8F0B1DC66B4D");
 	private static readonly Guid ClsidApplicationActivationManager = new("45BA127D-10A8-46EA-8AB7-56EA9078943C");
 
+	/// <summary>
+	/// The environment the app is activated with, as a Win32 multi-string.
+	/// <para>
+	/// One variable, and it is the one that turns XAML source info on. Without it every element and
+	/// every property comes back with an empty file and line -- which is not merely a missing nicety:
+	/// it is the difference between "this property was set at MainPage.xaml:41" and a blank that is
+	/// indistinguishable from "not set in source". It is also the only exact way to tell an element
+	/// the developer wrote from a part of a control template, which is what a "just my XAML" view is.
+	/// </para>
+	/// <para>
+	/// This slot was passed as null while the source-info gap was carried as a known limitation, and
+	/// the limitation was simply this argument going unused.
+	/// </para>
+	/// </summary>
+	private const string ActivationEnvironment = "ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO=1\0\0";
+
 	/// <summary>Debug mode on a package: no suspension, no activation timeout, no termination.</summary>
 	public static void EnableDebugging(string packageFullName)
-	{
-		var settings = CreateComInstance<IPackageDebugSettings>(ClsidPackageDebugSettings);
-		settings.EnableDebugging(packageFullName, null, IntPtr.Zero);
-	}
+		=> EnableDebugging(packageFullName, null);
 
 	/// <summary>
 	/// Debug mode with a registered debugger command line (issue #5, from birth): on the next
@@ -26,10 +39,21 @@ internal static class Uwp
 	/// debugger, appending <c>-p &lt;pid&gt; -tid &lt;tid&gt;</c>. The command line has a length limit
 	/// around 256 characters, so the caller keeps it short.
 	/// </summary>
-	public static void EnableDebugging(string packageFullName, string debuggerCommandLine)
+	public static void EnableDebugging(string packageFullName, string? debuggerCommandLine)
 	{
 		var settings = CreateComInstance<IPackageDebugSettings>(ClsidPackageDebugSettings);
-		settings.EnableDebugging(packageFullName, debuggerCommandLine, IntPtr.Zero);
+
+		// The environment block has to outlive the call, so it is pinned rather than marshalled by
+		// the runtime: the signature takes an IntPtr precisely so the lifetime is explicit here.
+		var environment = Marshal.StringToHGlobalUni(ActivationEnvironment);
+		try
+		{
+			settings.EnableDebugging(packageFullName, debuggerCommandLine, environment);
+		}
+		finally
+		{
+			Marshal.FreeHGlobal(environment);
+		}
 	}
 
 	public static void DisableDebugging(string packageFullName)

@@ -234,8 +234,11 @@ public sealed class LiveAppSession : IAsyncDisposable
 			cancellationToken);
 
 	/// <summary>Arms interactive select mode: the next click in the app picks that element.</summary>
-	public Task<LiveXamlSelection> EnterXamlSelectModeAsync(CancellationToken cancellationToken)
-		=> SendAsync<LiveXamlSelection>(ToolNames.LiveAppXamlSelectMode, cancellationToken);
+	public Task<LiveXamlSelection> EnterXamlSelectModeAsync(bool includeAllElements, bool justMyXaml, CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlSelection>(
+			ToolNames.LiveAppXamlSelectMode,
+			new Dictionary<string, object?> { ["includeAllElements"] = includeAllElements, ["justMyXaml"] = justMyXaml },
+			cancellationToken);
 
 	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>
 	public Task<LiveXamlSelection> ReadXamlSelectionAsync(CancellationToken cancellationToken)

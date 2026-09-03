@@ -18,6 +18,13 @@ public sealed record LiveXamlSelection
 	/// </summary>
 	public bool Armed { get; init; }
 
+	/// <summary>
+	/// Whether picks currently prefer the app's own markup over a control template's parts. Read from
+	/// the toolbar, like <see cref="Armed"/>, because its toggle can change it without this side
+	/// being told.
+	/// </summary>
+	public bool JustMyXaml { get; init; } = true;
+
 	public ulong Handle { get; init; }
 
 	public string? TypeName { get; init; }
@@ -26,4 +33,10 @@ public sealed record LiveXamlSelection
 	public string? Name { get; init; }
 
 	public string? Detail { get; init; }
+
+	/// <summary>
+	/// The whole stack under the click, topmost first; <see cref="Handle"/> is the first of them.
+	/// Walk down it for a templated child, or up it for the container that holds what was clicked.
+	/// </summary>
+	public IReadOnlyList<LiveXamlSelectionCandidate> Candidates { get; init; } = [];
 }

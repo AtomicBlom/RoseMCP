@@ -154,6 +154,12 @@ struct TreeNode
 	unsigned int ChildIndex;
 	std::wstring Type;
 	std::wstring Name;
+
+	// Where the element was declared, from VisualElement::SrcInfo -- the field that separates the
+	// app's own markup from a control template's parts, and so the basis of "just my XAML".
+	std::wstring File;
+	unsigned int Line;
+	unsigned int Column;
 };
 
 // One parsed command line: op TAB target TAB property TAB valueType TAB value
@@ -179,6 +185,7 @@ static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
 // pointer inside a marquee for picking, and a chevron to fold away.
 static const wchar_t* const IconIdle = L"\xE8B0";   // Cursor -- a plain arrow pointer
 static const wchar_t* const IconHide = L"\xE76B";   // ChevronLeft
+static const wchar_t* const IconMyXaml = L"\xE943"; // Code -- braces, for "just my XAML"
 
 
 
@@ -247,11 +254,22 @@ public:
 
 	bool Installed() const { return static_cast<bool>(m_root); }
 
+	/// Takes the handle-to-source-file map from the tree enumeration, which is the only place it is
+	/// available: VisualElement::SrcInfo comes per element as the tree is walked, and the overlay only
+	/// ever sees UIElements. Refreshed on every injection, so it is current as of arming.
+	void SetSources(std::map<InstanceHandle, std::wstring> sources)
+	{
+		m_sources = std::move(sources);
+	}
+
 	// Arms select mode. Returns whether it is armed, so the host can confirm rather than assume --
 	// including the case where the person had already armed it from the toolbar.
-	bool BeginSelect()
+	bool BeginSelect(bool includeAllElements = false)
 	{
 		if (!m_root) return false;
+
+		m_includeAllElements = includeAllElements;
+		Chrome();
 		if (m_selecting)
 		{
 			WriteState();
@@ -316,8 +334,15 @@ public:
 		}
 	}
 
-	void EndSelect()
+	/// Whether a pick prefers the element declared in the app's own markup over a control template's
+	/// parts. Set from the host or from the toolbar's toggle; the two are the same switch.
+	void SetJustMyXaml(bool justMyXaml)
 	{
+		m_justMyXaml = justMyXaml;
+		Chrome();
+	}
+
+	void EndSelect()	{
 		try
 		{
 			if (m_capture && m_root)
@@ -416,9 +441,14 @@ private:
 		m_bar.Children().Append(BuildMark());
 
 		m_idleButton = Chip(Glyph(IconIdle, 12.0), L"Idle", [this] { EndSelect(); });
-		m_selectButton = Chip(SelectIcon(), L"Select element", [this] { BeginSelect(); });
+		m_selectButton = Chip(SelectIcon(), L"Select element", [this] { BeginSelect(false); });
+		m_myXamlButton = Chip(
+			Glyph(IconMyXaml, 12.0),
+			L"Just my XAML -- pick the element declared in the app's own markup, not a control template's parts",
+			[this] { ToggleMyXaml(); });
 		m_bar.Children().Append(m_idleButton);
 		m_bar.Children().Append(m_selectButton);
+		m_bar.Children().Append(m_myXamlButton);
 		m_bar.Children().Append(Chip(Glyph(IconHide, 12.0), L"Hide", [this] { Collapse(true); }));
 
 		// Collapsed is the grip on its own, in the same panel, so folding away changes nothing else.
@@ -728,14 +758,40 @@ private:
 		m_thumb.Visibility(collapsed ? xaml::Visibility::Visible : xaml::Visibility::Collapsed);
 	}
 
+	void ToggleMyXaml()
+	{
+		m_justMyXaml = !m_justMyXaml;
+		Chrome();
+		WriteState();
+		Log(std::wstring(L"overlay: just-my-XAML ") + (m_justMyXaml ? L"on" : L"off"));
+	}
+
+
 	// Which mode is current, said in the toolbar itself: the active button wears the accent, the
-	// inactive one the panel's own grey.
+	// inactive one the panel's own grey. Just-my-XAML is a toggle rather than a mode, so it is lit
+	// whenever it is on regardless of whether a pick is in progress.
 	void Chrome()
 	{
 		if (!m_idleButton || !m_selectButton) return;
 
 		m_idleButton.Background(m_selecting ? Idle() : Accent());
 		m_selectButton.Background(m_selecting ? Accent() : Idle());
+		if (m_myXamlButton) m_myXamlButton.Background(m_justMyXaml ? Accent() : Idle());
+	}
+
+	/// Whether an element was declared in the app's own markup.
+	///
+	/// The scheme is the whole test and it is exact, not a heuristic: the app's XAML resolves to
+	/// ms-appx:///Page.xaml, a control template's parts to ms-resource:///...themes/generic.xaml. An
+	/// element with no source info at all is not claimed either way -- absent is not the same as
+	/// framework, and treating it as framework would quietly empty the filter on an app that has no
+	/// source info to give.
+	bool IsAppXaml(InstanceHandle handle) const
+	{
+		const auto found = m_sources.find(handle);
+		if (found == m_sources.end()) return false;
+
+		return found->second.rfind(L"ms-appx:", 0) == 0;
 	}
 
 	// Where an element sits in the window, in the coordinates the overlay's Canvas uses -- the UI layer
@@ -820,7 +876,22 @@ private:
 			return nullptr;
 		}
 
-		const auto found = xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, true);
+		// includeAllElements is the caller's choice and defaults to FALSE, which is the whole point.
+		//
+		// With it true -- as this shipped -- the hit test returns elements the framework would never
+		// route input to, and on a real app that made click-to-select useless: an empty Grid with no
+		// Background, stretched over the window as a dialog host, sat topmost over everything and
+		// every click resolved to it. Input passes straight through such a panel, so the app was
+		// perfectly usable while the selector insisted that was the thing being clicked.
+		//
+		// The irony is total: a null Background not taking part in hit testing is the exact rule this
+		// overlay is built on -- it is why the toolbar is click-through -- and then the selector asked
+		// the framework to ignore it. "Click an element to select it" has to mean the element the
+		// app's own input system would route that click to, or it means nothing.
+		//
+		// True stays available on request, because inspecting an invisible overlay host is sometimes
+		// exactly the goal. It is never the default.
+		const auto found = xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, m_includeAllElements);
 		uint32_t considered = 0;
 		for (auto&& element : found)
 		{
@@ -869,10 +940,11 @@ private:
 		try
 		{
 			e.Handled(true); // Swallow the click so it does not also reach the app.
+			const auto point = e.GetCurrentPoint(nullptr).Position();
 			winrt::Windows::Foundation::Rect rect{};
-			if (const auto element = Beneath(e.GetCurrentPoint(nullptr).Position(), rect))
+			if (const auto element = Beneath(point, rect))
 			{
-				Record(element);
+				Record(element, point);
 
 				// The picked element keeps its outline after select mode ends: that persistent mark is
 				// the evidence of what "the selected element" now means, for the person and the agent.
@@ -903,35 +975,90 @@ private:
 		return false;
 	}
 
-	void Record(xaml::UIElement const& element)
+	/// Writes the whole hit stack, topmost first, the framework's own pick leading.
+	///
+	/// One element is not enough to be useful even when it is the right one: a click on a button
+	/// lands on some templated child of it, and a click meant for a container lands on the content
+	/// inside. Handing back the ordered stack lets the caller walk down for the templated part or up
+	/// for the container without another round trip, and the enumeration is already ordered, so it
+	/// costs a few more rows in a file that is written once per click.
+	void Record(xaml::UIElement const& element, winrt::Windows::Foundation::Point const& point)
+	{
+		if (g_workDir.empty()) return;
+
+		const auto root = xaml::Window::Current().Content();
+		InstanceHandle selected = 0;
+		unsigned int written = 0;
+
+		{
+			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
+			if (!file) return;
+
+			InstanceHandle topmost = 0;
+			InstanceHandle topmostApp = 0;
+
+			if (root)
+			{
+				for (auto&& candidate : xmedia::VisualTreeHelper::FindElementsInHostCoordinates(point, root, m_includeAllElements))
+				{
+					if (IsOurs(candidate)) continue;
+
+					winrt::Windows::Foundation::Rect ignored{};
+					if (!Bounds(candidate, ignored)) continue;
+					if (written >= 16) break; // Deep templates go on a long way; the top of the stack is the useful part.
+
+					const InstanceHandle handle = WriteCandidate(file, candidate);
+					if (topmost == 0) topmost = handle;
+					if (topmostApp == 0 && IsAppXaml(handle)) topmostApp = handle;
+					written++;
+				}
+			}
+
+			// The framework found nothing usable but something was picked, so say that much.
+			if (written == 0) topmost = WriteCandidate(file, element);
+
+			// The rows stay in hit order -- that ordering is the point of returning a stack. What
+			// just-my-XAML changes is which of them is *the* selection: a click on a button should
+			// mean the button the developer wrote, not whichever part of its template happens to be
+			// on top. It falls back to the framework's own pick when nothing in the stack came from
+			// the app's markup, so an app with no source info degrades to the previous behaviour
+			// rather than selecting nothing.
+			selected = (m_justMyXaml && topmostApp != 0) ? topmostApp : topmost;
+		}
+
+		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
+		if (ready) ready << selected << L"\n";
+		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" candidate(s)");
+	}
+
+	InstanceHandle WriteCandidate(std::ofstream& file, xaml::UIElement const& candidate)
 	{
 		InstanceHandle handle = 0;
 		if (m_diagnostics)
 		{
-			m_diagnostics->GetHandleFromIInspectable(reinterpret_cast<::IInspectable*>(winrt::get_abi(element)), &handle);
+			m_diagnostics->GetHandleFromIInspectable(reinterpret_cast<::IInspectable*>(winrt::get_abi(candidate)), &handle);
 		}
 
-		std::wstring typeName{ winrt::get_class_name(element) };
+		std::wstring typeName{ winrt::get_class_name(candidate) };
 		std::wstring name;
-		if (const auto frameworkElement = element.try_as<xaml::FrameworkElement>())
+		if (const auto frameworkElement = candidate.try_as<xaml::FrameworkElement>())
 		{
 			name = frameworkElement.Name();
 		}
 
-		if (g_workDir.empty()) return;
+		const std::wstring row = std::to_wstring(handle) + L'\t' + Escape(typeName.c_str()) + L'\t'
+			+ Escape(name.c_str()) + L'\t' + (IsFrameworkType(typeName) ? L"1" : L"0");
+		file << Utf8(row) << '\n';
+		return handle;
+	}
 
-		{
-			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
-			if (file)
-			{
-				const std::wstring row = std::to_wstring(handle) + L'\t' + Escape(typeName.c_str()) + L'\t' + Escape(name.c_str());
-				file << Utf8(row) << '\n';
-			}
-		}
-
-		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
-		if (ready) ready << handle << L"\n";
-		Log(L"overlay: recorded " + typeName + (name.empty() ? L"" : (L" (" + name + L")")));
+	/// Whether a type belongs to the XAML framework rather than to the app or a library. Namespace is
+	/// a coarse test and deliberately not dressed up as more: an app's Button is a framework type
+	/// declared in the app's markup, so this narrows a candidate stack and never decides it alone.
+	static bool IsFrameworkType(const std::wstring& typeName)
+	{
+		return typeName.rfind(L"Windows.UI.Xaml.", 0) == 0
+			|| typeName.rfind(L"Microsoft.UI.Xaml.", 0) == 0;
 	}
 
 	// The mode, on disk, because the person can change it from the toolbar without the host being in
@@ -941,7 +1068,7 @@ private:
 		if (g_workDir.empty()) return;
 
 		std::wofstream state(g_workDir + L"\\overlay.state", std::ios::trunc);
-		if (state) state << (m_selecting ? L"select" : L"idle") << L"\n";
+		if (state) state << (m_selecting ? L"select" : L"idle") << L" justMyXaml=" << (m_justMyXaml ? L"1" : L"0") << L"\n";
 	}
 
 	// "armed <width>x<height>", the extent XAML arranged the capture layer at. A zero here is the
@@ -970,6 +1097,7 @@ private:
 	xshapes::Path m_mark{ nullptr };
 	xcontrols::Button m_idleButton{ nullptr };
 	xcontrols::Button m_selectButton{ nullptr };
+	xcontrols::Button m_myXamlButton{ nullptr };
 	xcontrols::Grid m_hoverBox{ nullptr };
 	xcontrols::Grid m_selectBox{ nullptr };
 	xcontrols::Border m_hoverBadge{ nullptr };
@@ -978,7 +1106,26 @@ private:
 	double m_dragTop = 16.0;
 	bool m_selecting = false;
 	int m_traces = 0;
+	bool m_includeAllElements = false;
+	bool m_justMyXaml = true;
+	std::map<InstanceHandle, std::wstring> m_sources;
 };
+
+// Splits a request line on spaces, dropping the leading verb. Tokenised because matching a suffix
+// gets the wrong answer the moment there are two flags.
+static std::vector<std::wstring> Tokens(const std::wstring& request)
+{
+	std::vector<std::wstring> tokens;
+	std::wistringstream stream(request);
+	std::wstring token;
+	while (stream >> token)
+	{
+		tokens.push_back(token);
+	}
+
+	if (!tokens.empty()) tokens.erase(tokens.begin());
+	return tokens;
+}
 
 // Leaked deliberately: see the note on RoseOverlay. Only ever touched on the app's UI thread.
 static RoseOverlay* g_overlay = nullptr;
@@ -1058,6 +1205,16 @@ public:
 		// tree cannot contain it, and the snapshot filters it out of every one after that.
 		Overlay().Install(m_diagnostics);
 
+		// Per-element source info only exists here, where the tree was walked, so it is handed to the
+		// overlay: it is what "just my XAML" decides on, and a click has no other way to learn it.
+		std::map<InstanceHandle, std::wstring> sources;
+		for (const auto& node : m_nodes)
+		{
+			if (!node.File.empty()) sources[node.Handle] = node.File;
+		}
+
+		Overlay().SetSources(std::move(sources));
+
 		const std::wstring request = ReadRequest();
 		if (request.rfind(L"properties ", 0) == 0)
 		{
@@ -1071,11 +1228,24 @@ public:
 		{
 			ApplyCommands();
 		}
-		else if (request == L"select")
+		else if (request == L"select" || request.rfind(L"select ", 0) == 0)
 		{
 			// Arming from the agent and arming from the toolbar are the same act; whichever happens,
 			// the overlay writes select.ready and the host reads the pick back the same way.
-			Overlay().BeginSelect();
+			//
+			// Tokenised rather than suffix-matched: "all" asks for elements the framework would not
+			// hit-test (explicit, never the default -- see Beneath), and "nomyxaml" turns off the
+			// preference for the app's own markup. A flag the person set on the toolbar is left alone
+			// unless the request actually mentions it.
+			bool includeAll = false;
+			for (const auto& token : Tokens(request))
+			{
+				if (token == L"all") includeAll = true;
+				else if (token == L"myxaml") Overlay().SetJustMyXaml(true);
+				else if (token == L"nomyxaml") Overlay().SetJustMyXaml(false);
+			}
+
+			Overlay().BeginSelect(includeAll);
 		}
 
 		return S_OK;
@@ -1092,8 +1262,15 @@ public:
 	{
 		if (mutationType != Add) return S_OK;
 
+		// SrcInfo comes per element and was previously dropped on the floor. It is what tells an
+		// element the developer wrote from one a control template produced, which is the whole of
+		// "just my XAML" -- and it is a different field from PropertyChainSource::SrcInfo, so the
+		// two can be populated independently. Empty is recorded as empty; absent source info must
+		// not be reported as "declared nowhere".
 		m_nodes.push_back({ element.Handle, relation.Parent, relation.ChildIndex,
-			element.Type ? element.Type : L"", element.Name ? element.Name : L"" });
+			element.Type ? element.Type : L"", element.Name ? element.Name : L"",
+			element.SrcInfo.FileName ? element.SrcInfo.FileName : L"",
+			element.SrcInfo.LineNumber, element.SrcInfo.ColumnNumber });
 
 		if (element.Name && element.Name[0])
 		{
@@ -1133,7 +1310,8 @@ private:
 				if (excluded.count(node.Handle)) continue;
 
 				const std::wstring row = std::to_wstring(node.Handle) + L'\t' + std::to_wstring(node.Parent) + L'\t'
-					+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str());
+					+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str())
+					+ L'\t' + Escape(node.File.c_str()) + L'\t' + std::to_wstring(node.Line) + L'\t' + std::to_wstring(node.Column);
 				file << Utf8(row) << '\n';
 				written++;
 			}

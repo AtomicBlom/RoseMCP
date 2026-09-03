@@ -225,7 +225,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>Arms interactive select mode: the next click in the app picks that element.</summary>
-	public LiveXamlSelection EnterXamlSelectMode()
+	public LiveXamlSelection EnterXamlSelectMode(bool includeAllElements, bool justMyXaml)
 	{
 		int? targetProcessId;
 		lock (_gate)
@@ -239,7 +239,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
 		}
 
-		return _xaml.EnterSelectMode(pid);
+		return _xaml.EnterSelectMode(pid, includeAllElements, justMyXaml);
 	}
 
 	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>

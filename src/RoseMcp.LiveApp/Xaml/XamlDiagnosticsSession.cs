@@ -103,9 +103,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	/// an agent chasing a visual path to an element should not have to ask a person to press it.
 	/// Confirms the overlay actually armed rather than assuming it.
 	/// </summary>
-	public LiveXamlSelection EnterSelectMode(int pid)
+	public LiveXamlSelection EnterSelectMode(int pid, bool includeAllElements, bool justMyXaml)
 	{
-		var (workDir, error) = Inject(pid, "select");
+		// Tokens rather than flags in the name: the provider parses them, and a request that does not
+		// mention a toggle leaves whatever the person set on the toolbar alone.
+		var request = "select"
+			+ (includeAllElements ? " all" : string.Empty)
+			+ (justMyXaml ? " myxaml" : " nomyxaml");
+
+		var (workDir, error) = Inject(pid, request);
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
 		var readyFile = Path.Combine(workDir!, "select.ready");
@@ -144,13 +150,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			return new LiveXamlSelection { Detail = "No XAML tool has run against this session yet, so the in-app toolbar is not installed." };
 		}
 
-		var armed = ReadOverlayMode() == "select";
+		var (mode, justMyXaml) = ReadOverlayState();
+		var armed = mode == "select";
 		var selectionFile = Path.Combine(_workDir, "selection.tsv");
 		if (!File.Exists(selectionFile))
 		{
 			return new LiveXamlSelection
 			{
 				Armed = armed,
+				JustMyXaml = justMyXaml,
 				Detail = armed
 					? "Select mode is armed; nothing has been picked yet."
 					: "Nothing has been picked yet. Press Select Element on the in-app toolbar, or arm it from here.",
@@ -159,28 +167,65 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 
 		try
 		{
+			// Every row is a candidate, topmost first, and the first is the pick. The stack is read
+			// whole because one element is rarely the one wanted: a click on a button lands on part of
+			// its template, and a click meant for a container lands on the content inside it.
+			var candidates = new List<LiveXamlSelectionCandidate>();
+			var byHandle = ReadTreeIndex();
+
 			foreach (var line in File.ReadLines(selectionFile, Encoding.UTF8))
 			{
 				var fields = line.Split('\t');
 				if (fields.Length < 3 || !ulong.TryParse(fields[0], out var handle)) continue;
 
 				var name = Unescape(fields[2]);
+				byHandle.TryGetValue(handle, out var node);
+
+				candidates.Add(new LiveXamlSelectionCandidate
+				{
+					Handle = handle,
+					TypeName = Unescape(fields[1]),
+					Name = string.IsNullOrEmpty(name) ? null : name,
+					IsFrameworkType = fields.Length > 3 && fields[3] == "1",
+
+					// Joined from the tree rather than repeated in the selection file: the provider
+					// reports an element's source info once, when it enumerates.
+					File = node?.File,
+					Line = node?.Line,
+				});
+			}
+
+			if (candidates.Count == 0)
+			{
 				return new LiveXamlSelection
 				{
-					Selected = true,
 					Armed = armed,
-					Handle = handle,
-					TypeName = EmptyToNull(Unescape(fields[1])),
-					Name = string.IsNullOrEmpty(name) ? null : name,
+					JustMyXaml = justMyXaml,
+					Detail = "The recorded selection could not be read."
 				};
 			}
 
-			return new LiveXamlSelection { Armed = armed, Detail = "The recorded selection could not be read." };
+			var picked = candidates[0];
+			return new LiveXamlSelection
+			{
+				Selected = true,
+				Armed = armed,
+				JustMyXaml = justMyXaml,
+				Handle = picked.Handle,
+				TypeName = EmptyToNull(picked.TypeName),
+				Name = picked.Name,
+				Candidates = candidates,
+			};
 		}
 		catch (Exception exception)
 		{
 			logger.LogWarning(exception, "Reading the XAML selection failed.");
-			return new LiveXamlSelection { Armed = armed, Detail = $"Could not read the selection: {exception.Message}" };
+			return new LiveXamlSelection
+			{
+				Armed = armed,
+				JustMyXaml = justMyXaml,
+				Detail = $"Could not read the selection: {exception.Message}",
+			};
 		}
 	}
 
@@ -207,19 +252,49 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		}
 	}
 	/// <summary>
+	/// The last tree snapshot indexed by handle, for joining source info onto a selection. Empty when
+	/// no tree has been read: a selection is still perfectly usable without it, so a missing snapshot
+	/// costs the file and line rather than the answer.
+	/// </summary>
+	private Dictionary<ulong, LiveXamlNode> ReadTreeIndex()
+	{
+		try
+		{
+			var treeFile = Path.Combine(_workDir!, "tree.tsv");
+			if (!File.Exists(treeFile)) return [];
+
+			return ParseTree(treeFile).ToDictionary(node => node.Handle);
+		}
+		catch (Exception exception) when (exception is IOException or ArgumentException)
+		{
+			return [];
+		}
+	}
+
+	/// <summary>
 	/// What the in-app toolbar says its mode is. Absent or unreadable counts as idle: the file is only
 	/// ever a hint about a UI the person controls, and no tool should fail because it is missing.
 	/// </summary>
-	private string ReadOverlayMode()
+	private (string Mode, bool JustMyXaml) ReadOverlayState()
 	{
 		try
 		{
 			var stateFile = Path.Combine(_workDir!, "overlay.state");
-			return File.Exists(stateFile) ? File.ReadAllText(stateFile).Trim() : "idle";
+			if (!File.Exists(stateFile)) return ("idle", true);
+
+			// "<mode> justMyXaml=<0|1>". Tokenised, not compared whole: the file gained the toggle and
+			// a parser matching the entire line against "select" then read every armed overlay as idle,
+			// which the select-mode test caught precisely because it asserts the provider's own report
+			// rather than what this side last asked for.
+			var tokens = File.ReadAllText(stateFile).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+			var mode = tokens.Length > 0 ? tokens[0] : "idle";
+			var justMyXaml = !tokens.Contains("justMyXaml=0", StringComparer.Ordinal);
+
+			return (mode, justMyXaml);
 		}
 		catch (IOException)
 		{
-			return "idle";
+			return ("idle", true);
 		}
 	}
 
@@ -480,6 +555,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			}
 
 			var name = Unescape(fields[4]);
+			var declaredIn = fields.Length > 5 ? Unescape(fields[5]) : string.Empty;
+			var declaredAt = fields.Length > 6 && int.TryParse(fields[6], out var parsedLine) ? parsedLine : 0;
+
 			nodes.Add(new LiveXamlNode
 			{
 				Handle = handle,
@@ -487,6 +565,8 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 				ChildIndex = childIndex,
 				TypeName = Unescape(fields[3]),
 				Name = string.IsNullOrEmpty(name) ? null : name,
+				File = string.IsNullOrEmpty(declaredIn) ? null : declaredIn,
+				Line = declaredAt > 0 ? declaredAt : null,
 			});
 		}
 

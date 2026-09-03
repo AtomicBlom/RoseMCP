@@ -58,7 +58,12 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description("Arm the interactive selection overlay so the next click in the app picks that element.")]
-	public LiveXamlSelection XamlSelectMode() => host.EnterXamlSelectMode();
+	public LiveXamlSelection XamlSelectMode(
+		[Description("Include elements the framework would not hit-test. Off by default.")]
+		bool includeAllElements = false,
+		[Description("Prefer the element declared in the app's own markup over a control template's parts.")]
+		bool justMyXaml = true)
+		=> host.EnterXamlSelectMode(includeAllElements, justMyXaml);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppXamlSelection,

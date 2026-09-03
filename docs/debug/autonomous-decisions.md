@@ -492,3 +492,72 @@ stringifying `Thickness`, `GridLength`, `Size`, `Point` and `Vector3` perfectly 
 passes `PropertyChainValue.Value` straight through, so this is a gap in what XAML diagnostics chooses
 to render, not a formatting bug here -- issue #21, which also notes that the honest first move is to
 stop reporting an empty string as though the property were unset.
+
+### D27 — Select what the framework would hit, and prefer the app's own markup (#18)
+Two findings from a session driving this against a real app, and the first is the one that mattered.
+
+**The selector asked the framework to ignore its own hit testing.** `FindElementsInHostCoordinates`
+was called with `includeAllElements: true`, which returns elements no click would ever reach. On the
+app under test that made click-to-select useless: an empty `Grid` with no `Background`, stretched
+across the window as a dialog host, sat topmost over everything, so *every* click resolved to it.
+Input passes straight through such a panel, which is why the app itself was perfectly usable while
+the selector insisted that was the thing being clicked.
+
+The irony is complete. A panel with a null `Background` taking no part in hit testing is the rule
+this whole overlay is built on -- it is why the toolbar is click-through, and it is the first thing
+D22 says -- and then the selector opted out of it. "Click an element to select it" has to mean the
+element the app's own input system would route that click to, or it means nothing. It is `false` now,
+with `true` kept as an explicit opt-in, because inspecting an invisible host is occasionally the
+goal and never the default.
+
+**One element was never enough anyway.** A click on a button lands on some part of its template; a
+click meant for a container lands on the content inside it. The pick now comes back with the whole
+ordered stack beneath it, topmost first, capped at sixteen -- the enumeration is already ordered, so
+it costs a few rows in a file written once per click, and it saves a round trip every time the
+wanted element is one step up or down.
+
+**And "just my XAML" turned out to be exact rather than heuristic**, which was a surprise.
+`VisualElement` -- the struct the tree callback hands us per element -- carries a
+`SourceInfo { FileName, LineNumber, ColumnNumber, CharPosition, Hash }` that this code had been
+reading three fields out of and discarding. It is the discriminator Visual Studio's own Just My XAML
+uses, and the values are unambiguous: the app's markup resolves to `ms-appx:///Page.xaml` with a real
+line, a control template's parts to `ms-resource:///...themes/generic.xaml`. So the filter is a URI
+scheme comparison, not a guess about namespaces or names.
+
+It is on by default, because "the element I clicked" means the button the developer wrote rather than
+whichever templated child is on top, and it falls back to the framework's own pick when nothing under
+the click came from the app -- so an app without source info degrades to the previous behaviour
+instead of selecting nothing. Absent source info is deliberately not read as "framework": treating it
+that way would quietly empty the filter on exactly those apps. Both the agent's parameter and the
+toolbar's toggle set the same switch.
+
+### D28 — The source-info gap was an unused argument (#10, resolves a D15 limitation)
+Every element and every property had been coming back with an empty file and line, and that was
+carried from D15 onwards as a limitation of from-birth UWP activation. It was not. It was the third
+argument to `IPackageDebugSettings::EnableDebugging(pfn, debuggerCommandLine, environment)` being
+passed as `IntPtr.Zero`. Putting `ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO=1` in that environment block
+turns the whole thing on, and it was measured before and after on the probe: empty for all thirteen
+elements, then `ms-appx:///MainPage.xaml` with correct line numbers.
+
+Three things stop being limitations at once: property provenance can name a file and line, the tree
+can say where each element was declared, and "just my XAML" becomes exact (D27). It also settles an
+ambiguity a field report raised -- an empty file could not be told from "not set in source", and now
+an empty one means genuinely absent rather than never asked for.
+
+Worth stating plainly because it is the second time in this work that a capability was written off as
+unavailable when the truth was that nothing had asked for it: the first was the debug host's per-RID
+publish, which had never been wired into deploy at all (D9).
+
+### D29 — A capability that cannot be built fails the suite; only a missing toolchain skips it
+`BuildXamlProvider` returned false for *any* non-zero exit from `build.ps1`, and the caller skipped
+with "no C++ toolset". So a compile error in the provider -- or, as actually happened, two builds
+racing over one PDB -- silently skipped every XAML test and left the suite green at 143 passed.
+
+A capability quietly not being tested is worse than a red build, and from the outside it is
+indistinguishable from a machine that genuinely cannot build it. `build.ps1` already separates the
+two: its own `Fail` exits 3 for a missing MSVC toolset or Windows SDK, and every other non-zero exit
+is a real failure. So 3 skips, anything else throws with the build output, and a build that reports
+success but produces no DLL throws too.
+
+The race that exposed it is worth remembering on its own: the integration suite builds the native
+provider itself, so building it by hand while the suite is running corrupts both. Do one at a time.

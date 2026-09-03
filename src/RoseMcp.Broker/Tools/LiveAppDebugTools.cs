@@ -492,13 +492,29 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "they mean, then call rose_xaml_selection to find out which it was. The user can also arm it "
 			+ "themselves from RoseMCP's in-app toolbar, so a user who says \"look at the element I selected\" "
 			+ "may already have picked one: call rose_xaml_selection first and only arm if nothing is there. "
-			+ "The handle it yields feeds rose_xaml_properties and rose_xaml_apply directly.")]
+			+ "The selection carries the whole stack under the click, topmost first, so you can walk down "
+			+ "to a templated child or up to the container without arming again; each handle feeds "
+			+ "rose_xaml_properties and rose_xaml_apply directly.")]
 	public async Task<LiveXamlSelection> XamlSelectModeAsync(
 		[Description(SessionHelp)] string sessionId,
+		[Description(
+			"Also pick elements the framework would not route a click to -- an empty Grid with no "
+				+ "Background, something with IsHitTestVisible false. Off by default, because such an "
+				+ "element can cover the whole window and shadow everything the user can actually click. "
+				+ "Turn it on only to inspect an invisible host deliberately.")]
+		bool includeAllElements = false,
+		[Description(
+			"Prefer the element the app's own XAML declares over a control template's parts, the way "
+				+ "Visual Studio's Just My XAML does. On by default: a click on a button means the button "
+				+ "the developer wrote, not whichever templated child is topmost. Decided on the element's "
+				+ "source -- ms-appx: is the app's markup, ms-resource: is the framework's -- and it falls "
+				+ "back to the framework's own pick when nothing under the click came from the app. Turn it "
+				+ "off to select template internals.")]
+		bool justMyXaml = true,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.EnterXamlSelectModeAsync(cancellationToken);
+		return await session.EnterXamlSelectModeAsync(includeAllElements, justMyXaml, cancellationToken);
 	}
 
 	[McpServerTool(

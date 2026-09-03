@@ -86,6 +86,81 @@ public sealed class ToolDescriptionTests
 		Assert.Contains("degraded", status, StringComparison.OrdinalIgnoreCase);
 	}
 
+
+	/// <summary>
+	/// MCP requires a tool result's <c>structuredContent</c> to be a JSON <em>object</em>. A tool that
+	/// returns a bare collection serialises to a top-level array instead, and a strict client rejects
+	/// the whole result -- "expected record, received array" -- which does not degrade, it makes the
+	/// tool uncallable. Nothing in the SDK catches it, and neither does any test that only ever calls a
+	/// tool in-process, because the shape is only wrong once it has been serialised for a client.
+	/// <para>
+	/// It shipped on five tools: <c>rose_debug_list</c> and both list/remove pairs for tracepoints and
+	/// breakpoints. The wrapper records existed and said why they existed; the broker's own tools
+	/// unwrapped them again on the way out. So this asserts the property rather than the five names,
+	/// since the next tool to return a list will be written by someone who has not read this.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public void No_tool_returns_a_bare_collection()
+	{
+		foreach (var (name, returnType) in ReturnTypes(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly))
+		{
+			Assert.False(
+				IsCollection(returnType),
+				$"{name} returns {returnType.Name}, which serialises to a top-level array; "
+					+ "MCP requires structuredContent to be an object, so wrap it in a record with a named property");
+		}
+	}
+
+	/// <summary>The worker's tools travel the same channel to the broker, so they answer to it too.</summary>
+	[Fact]
+	public void No_worker_tool_returns_a_bare_collection()
+	{
+		foreach (var (name, returnType) in ReturnTypes(typeof(WorkspaceHost).Assembly))
+		{
+			Assert.False(IsCollection(returnType), $"{name} returns the collection {returnType.Name}");
+		}
+	}
+
+	/// <summary>
+	/// A string is a collection of characters as far as reflection is concerned, and is a perfectly
+	/// good scalar result, so it is excluded deliberately rather than by accident.
+	/// </summary>
+	private static bool IsCollection(Type type)
+	{
+		if (type == typeof(string)) return false;
+		if (type.IsArray) return true;
+
+		return type.GetInterfaces().Append(type).Any(candidate =>
+			candidate.IsGenericType && candidate.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+	}
+
+	private static IEnumerable<(string Name, Type ReturnType)> ReturnTypes(Assembly assembly)
+	{
+		foreach (var type in assembly.GetTypes())
+		{
+			if (type.GetCustomAttribute<McpServerToolTypeAttribute>() is null) continue;
+
+			foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+			{
+				if (method.GetCustomAttribute<McpServerToolAttribute>() is not { Name: { Length: > 0 } name }) continue;
+
+				// Unwrap Task<T> and ValueTask<T>: what a client sees is T.
+				var returned = method.ReturnType;
+				if (returned.IsGenericType
+					&& (returned.GetGenericTypeDefinition() == typeof(Task<>)
+						|| returned.GetGenericTypeDefinition() == typeof(ValueTask<>)))
+				{
+					returned = returned.GetGenericArguments()[0];
+				}
+
+				if (returned == typeof(Task) || returned == typeof(void)) continue;
+
+				yield return (name, returned);
+			}
+		}
+	}
+
 	private static Dictionary<string, string> Describe(Assembly assembly)
 	{
 		var descriptions = new Dictionary<string, string>(StringComparer.Ordinal);

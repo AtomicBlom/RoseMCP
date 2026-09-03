@@ -113,7 +113,7 @@ public sealed class LiveAppSessionTests
 			Assert.Contains("beat", hit!.Message);
 
 			var remaining = await session.RemoveTracepointAsync(tracepoint.Id, cancellationToken);
-			Assert.Empty(remaining);
+			Assert.Empty(remaining.Tracepoints);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 			Assert.False(child.HasExited);

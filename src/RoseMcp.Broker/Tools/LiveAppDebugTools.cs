@@ -188,7 +188,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		"List the live-app debug sessions the broker is supervising, each with its session id, target, "
 			+ "architecture, state, and process ids. Use it to recover a session id you did not keep from "
 			+ "rose_debug_attach, or to see what is currently attached before starting another session.")]
-	public IReadOnlyList<LiveAppSessionSummary> List() => sessions.Describe();
+	public LiveAppSessionList List() => new() { Sessions = sessions.Describe() };
 
 	[McpServerTool(
 		Name = ToolNames.DebugAddTracepoint,
@@ -232,7 +232,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "yet. Use it to confirm a tracepoint bound to a real method, since one whose module has not "
 			+ "loaded, or whose method name did not resolve, stays unbound and reports why rather than "
 			+ "failing loudly.")]
-	public async Task<IReadOnlyList<LiveTracepoint>> ListTracepointsAsync(
+	public async Task<LiveTracepointList> ListTracepointsAsync(
 		[Description(SessionHelp)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
@@ -252,7 +252,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		"Remove a tracepoint by id and return the remaining set. Use it to stop a tracepoint once you "
 			+ "have seen what you needed, rather than leaving a hot-path log running for the life of the "
 			+ "session; removing an id that is already gone is harmless and simply returns the current set.")]
-	public async Task<IReadOnlyList<LiveTracepoint>> RemoveTracepointAsync(
+	public async Task<LiveTracepointList> RemoveTracepointAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description("The tracepoint id returned by rose_debug_add_tracepoint.")] string tracepointId,
 		CancellationToken cancellationToken = default)
@@ -301,7 +301,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "timeout, and whether it is bound yet. Use it to confirm a breakpoint bound to a real method, "
 			+ "since one whose module has not loaded, or whose method name did not resolve, stays unbound "
 			+ "and reports why rather than failing loudly.")]
-	public async Task<IReadOnlyList<LiveBreakpoint>> ListBreakpointsAsync(
+	public async Task<LiveBreakpointList> ListBreakpointsAsync(
 		[Description(SessionHelp)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
@@ -321,7 +321,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		"Remove a stopping breakpoint by id and return the remaining set. Use it once you have seen what "
 			+ "you needed so execution stops passing through that method; removing one the target is "
 			+ "currently held at does not itself resume -- call rose_debug_continue for that.")]
-	public async Task<IReadOnlyList<LiveBreakpoint>> RemoveBreakpointAsync(
+	public async Task<LiveBreakpointList> RemoveBreakpointAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description("The breakpoint id returned by rose_debug_set_breakpoint.")] string breakpointId,
 		CancellationToken cancellationToken = default)

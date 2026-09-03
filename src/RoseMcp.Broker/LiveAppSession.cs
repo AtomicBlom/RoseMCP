@@ -171,14 +171,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["location"] = location, ["logMessage"] = logMessage, ["logEveryNthHit"] = logEveryNthHit, ["condition"] = condition },
 			cancellationToken);
 
-	public async Task<IReadOnlyList<LiveTracepoint>> ListTracepointsAsync(CancellationToken cancellationToken)
-		=> (await SendAsync<LiveTracepointList>(ToolNames.LiveAppListTracepoints, cancellationToken)).Tracepoints;
+	public Task<LiveTracepointList> ListTracepointsAsync(CancellationToken cancellationToken)
+		=> SendAsync<LiveTracepointList>(ToolNames.LiveAppListTracepoints, cancellationToken);
 
-	public async Task<IReadOnlyList<LiveTracepoint>> RemoveTracepointAsync(string id, CancellationToken cancellationToken)
-		=> (await SendAsync<LiveTracepointList>(
+	public Task<LiveTracepointList> RemoveTracepointAsync(string id, CancellationToken cancellationToken)
+		=> SendAsync<LiveTracepointList>(
 			ToolNames.LiveAppRemoveTracepoint,
 			new Dictionary<string, object?> { ["id"] = id },
-			cancellationToken)).Tracepoints;
+			cancellationToken);
 
 	public Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
 		=> SendAsync<LiveBreakpoint>(
@@ -186,14 +186,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["location"] = location, ["autoContinueSeconds"] = autoContinueSeconds, ["condition"] = condition },
 			cancellationToken);
 
-	public async Task<IReadOnlyList<LiveBreakpoint>> ListBreakpointsAsync(CancellationToken cancellationToken)
-		=> (await SendAsync<LiveBreakpointList>(ToolNames.LiveAppListBreakpoints, cancellationToken)).Breakpoints;
+	public Task<LiveBreakpointList> ListBreakpointsAsync(CancellationToken cancellationToken)
+		=> SendAsync<LiveBreakpointList>(ToolNames.LiveAppListBreakpoints, cancellationToken);
 
-	public async Task<IReadOnlyList<LiveBreakpoint>> RemoveBreakpointAsync(string id, CancellationToken cancellationToken)
-		=> (await SendAsync<LiveBreakpointList>(
+	public Task<LiveBreakpointList> RemoveBreakpointAsync(string id, CancellationToken cancellationToken)
+		=> SendAsync<LiveBreakpointList>(
 			ToolNames.LiveAppRemoveBreakpoint,
 			new Dictionary<string, object?> { ["id"] = id },
-			cancellationToken)).Breakpoints;
+			cancellationToken);
 
 	public async Task<bool> ContinueAsync(CancellationToken cancellationToken)
 		=> (await SendAsync<LiveContinueResult>(ToolNames.LiveAppContinue, cancellationToken)).Continued;

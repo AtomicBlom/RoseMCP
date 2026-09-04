@@ -27,7 +27,7 @@ public static class RoseFileLogging
 
 	/// <summary>
 	/// Writes this process's logs to
-	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/{component}/[{solution}-]{timestamp}.log.
+	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{component}/[{solution}-]{timestamp}.log.
 	/// </summary>
 	/// <param name="logging">The host's logging builder.</param>
 	/// <param name="component">Server, Worker, or Tray -- the process, not the assembly.</param>

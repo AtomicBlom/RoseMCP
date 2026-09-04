@@ -25,11 +25,11 @@ public sealed class LoggingTests : IDisposable
 	}
 
 	[Fact]
-	public void Puts_a_component_under_the_vendor_and_product_folders()
+	public void Puts_a_component_under_the_vendor_product_and_logs_folders()
 	{
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
 
-		Assert.Equal(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Worker"), directory);
+		Assert.Equal(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Logs", "Worker"), directory);
 	}
 
 	[Fact]

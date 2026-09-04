@@ -20,7 +20,9 @@
 
     Paths use forward slashes throughout; PowerShell accepts them on Windows.
 
-    promote installs to -Destination, or $env:ROSEMCP_DEPLOY_ROOT, or %LOCALAPPDATA%/RoseMcp.
+    promote installs to -Destination, or $env:ROSEMCP_DEPLOY_ROOT, or
+    %LOCALAPPDATA%/BinaryVibrance/RoseMCP -- the same vendor/product folder the logs already use,
+    so an install and its logs sit under one root instead of two unrelated ones.
     Nothing here assumes a particular drive; where a given machine keeps its install is that
     machine's business, not the repository's.
 
@@ -49,7 +51,8 @@ param(
     [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64')]
     [string[]] $Runtime,
 
-    # Install root for promote. Falls back to $env:ROSEMCP_DEPLOY_ROOT, then %LOCALAPPDATA%/RoseMcp.
+    # Install root for promote. Falls back to $env:ROSEMCP_DEPLOY_ROOT, then
+    # %LOCALAPPDATA%/BinaryVibrance/RoseMCP.
     [string] $Destination,
 
     [int] $Port = 5077,
@@ -76,7 +79,7 @@ if (-not $Destination)
 {
     $configured = $env:ROSEMCP_DEPLOY_ROOT
     $localAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $HOME '.local/share' }
-    $Destination = if ($configured) { $configured } else { Join-Path $localAppData 'RoseMcp' }
+    $Destination = if ($configured) { $configured } else { Join-Path $localAppData 'BinaryVibrance/RoseMCP' }
 }
 
 $Destination = $Destination.Replace('\', '/')

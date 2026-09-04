@@ -224,6 +224,18 @@ reclaim memory or pick up a rebuilt generator.
   meaning at a call site is not always recoverable from its position. And the call sites that still
   compile are reported, because a forwarder that goes on passing the old default is the bug that
   hides -- "compiles" and "correct" part company exactly there.
+- **An import goes where the file would have put it, and is refused when it is already in scope.**
+  Writing a member is not the whole job: the code routinely needs an import the file has not got,
+  and a tool that reports that and stops has handed the caller back to the text editing it was meant
+  to replace, at the moment they had just been talked out of it. Placement is read from the file
+  rather than from `.editorconfig` -- this repository sets
+  `dotnet_separate_import_directive_groups = false` and every file separates its groups anyway,
+  because the setting only stops the analyzer insisting -- and going in first means inheriting
+  whatever sat above the old first line, since a licence header under an import changes what the
+  file means to other tools. Whether it is needed is asked of the *compilation*, not of the import
+  block: a global using, an implicit using from the SDK, and the namespace the file is in are all
+  ways to be in scope without appearing there, and importing one of those again is IDE0005. Both
+  halves of getting it wrong are build errors, which is the only reason it is worth this much code.
 - **A stale build output is a notice, never a degraded reason.** `Degraded` means these answers
   cannot be trusted, and they are exactly as good with a stale `bin` as without one, because they
   come from source. It is also the ordinary state of a solution somebody is editing, so putting it
@@ -306,9 +318,9 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 166 tests in about a second, so it is worth running on every change.
+process -- 167 tests in about a second, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes four to five minutes (194 tests). `RoseMcp.TestSupport` holds the
+builds and starts real workers, and takes four to five minutes (203 tests). `RoseMcp.TestSupport` holds the
 doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 
@@ -359,7 +371,8 @@ reaching for it is cheaper than that reflex. Three things carry that, in descend
    `rose_replace_member`, `rose_replace_body` and `rose_add_member` address a member by name,
    refuse code that does not parse, format what they write, and report what the edit broke --
    so there is no build in the edit loop. `rose_change_signature` adds, removes or retypes a
-   parameter across every override, implementation and call site at once. Before running
+   parameter across every override, implementation and call site at once. Pass `usings` on any
+   of those when the code needs an import, or `rose_add_using` for code written another way. Before running
    anything out of `bin`, `rose_build_freshness` says whether it is this code. Source-generated
    code is only readable via `rose_list_generated_documents` / `rose_read_generated_document`.
    ```

@@ -2312,6 +2312,7 @@ private:
 				std::wstring status;
 				if (command.op == L"SetProperty") status = ApplySetProperty(command);
 				else if (command.op == L"ClearProperty") status = ApplyClearProperty(command);
+				else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
 				else status = L"unsupported op";
 
 				if (file)
@@ -2384,6 +2385,166 @@ private:
 		if (failure.empty()) failure = L"no value type to build " + command.property + L" from";
 		Log(L"  " + command.target + L"." + command.property + L": " + failure);
 		return failure;
+	}
+
+	// Removes an element from its parent's children.
+	//
+	// The command names the child, because that is what a diff knows: the element is in the old
+	// markup and not in the new one. RemoveChild takes a *parent and a position*, so both are read
+	// off the live tree here rather than carried in the command -- which is the better source in any
+	// case, since a markup index and a visual index are not always the same number and it is the
+	// visual one that is about to be indexed.
+	std::wstring ApplyRemoveChild(const Command& command)
+	{
+		InstanceHandle child = 0;
+		const std::wstring unresolved = Resolve(command.target, child);
+		if (!unresolved.empty()) return unresolved;
+
+		const TreeIndex index = BuildIndex();
+		const auto found = index.ByHandle.find(child);
+		if (found == index.ByHandle.end()) return L"target not found: it is not in the tree snapshot";
+
+		const InstanceHandle parent = m_nodes[found->second].Parent;
+		if (parent == 0) return L"cannot remove: it has no parent in the tree";
+
+		InstanceHandle collection = 0;
+		unsigned int position = 0;
+		if (!LocateInParent(parent, child, collection, position))
+		{
+			return L"cannot remove: it is not in any collection its parent exposes";
+		}
+
+		const HRESULT hr = m_tree->RemoveChild(collection, position);
+		if (hr != S_OK) return L"RemoveChild failed 0x" + Hex(hr);
+
+		// The node list is append-only: OnVisualTreeChange appends on Add and removes nothing on a
+		// Remove. So what has just gone has to be forgotten here, or the rest of this batch is
+		// resolved and indexed against a tree that no longer exists -- and the failure that produces
+		// is the removal landing on the sibling that moved up into the vacated position.
+		ForgetSubtree(child);
+
+		Log(L"  removed " + command.target);
+		return L"applied";
+	}
+
+	// Where a child actually sits: the collection holding it, and its index in that collection.
+	//
+	// RemoveChild is documented as taking a "parent", and the element is not what it means -- passing
+	// the panel handle returns ERROR_NOT_FOUND, which is what sent me looking. What it wants is the
+	// collection the child is in, which is the value of one of the parent's collection-valued
+	// properties: Children on a Panel, Items on an ItemsControl, and something else again elsewhere.
+	//
+	// Found by looking through those collections for the child rather than from a table of property
+	// names, because the name differs per container and the collection that contains the child is the
+	// answer by definition. Asking the collection also yields the index it will be removed at, rather
+	// than one inferred from the order the tree happened to be enumerated in -- which is the number
+	// that has to be right, and the one a sibling shifting would have made wrong.
+	bool LocateInParent(InstanceHandle parent, InstanceHandle child, InstanceHandle& collection, unsigned int& index)
+	{
+		if (!m_tree) return false;
+
+		unsigned int sourceCount = 0;
+		unsigned int propertyCount = 0;
+		PropertyChainSource* sources = nullptr;
+		PropertyChainValue* values = nullptr;
+		if (FAILED(m_tree->GetPropertyValuesChain(parent, &sourceCount, &sources, &propertyCount, &values)))
+		{
+			return false;
+		}
+
+		bool found = false;
+		for (unsigned int i = 0; i < propertyCount && !found; i++)
+		{
+			const bool isCollection = (values[i].MetadataBits & IsValueCollection) != 0;
+			const bool isHandle = (values[i].MetadataBits & IsValueHandle) != 0;
+			if (!isCollection || !isHandle || !values[i].Value || !values[i].Value[0]) continue;
+
+			const InstanceHandle candidate = static_cast<InstanceHandle>(_wcstoui64(values[i].Value, nullptr, 10));
+			if (candidate == 0) continue;
+
+			if (IndexIn(candidate, child, index))
+			{
+				collection = candidate;
+				found = true;
+				Log(L"  found the child in " + std::wstring(values[i].PropertyName ? values[i].PropertyName : L"?")
+					+ L" at index " + std::to_wstring(index));
+			}
+		}
+
+		FreePropertyChain(sources, sourceCount, values, propertyCount);
+		return found;
+	}
+
+	// The child's index within a collection, asked of the collection itself.
+	bool IndexIn(InstanceHandle collection, InstanceHandle child, unsigned int& index)
+	{
+		unsigned int count = 0;
+		if (FAILED(m_tree->GetCollectionCount(collection, &count)) || count == 0) return false;
+
+		unsigned int returned = count;
+		CollectionElementValue* elements = nullptr;
+		if (FAILED(m_tree->GetCollectionElements(collection, 0, &returned, &elements)) || !elements) return false;
+
+		bool found = false;
+		for (unsigned int i = 0; i < returned && !found; i++)
+		{
+			if ((elements[i].MetadataBits & IsValueHandle) == 0 || !elements[i].Value) continue;
+			if (static_cast<InstanceHandle>(_wcstoui64(elements[i].Value, nullptr, 10)) != child) continue;
+
+			index = elements[i].Index;
+			found = true;
+		}
+
+		for (unsigned int i = 0; i < returned; i++)
+		{
+			SysFreeString(elements[i].ValueType);
+			SysFreeString(elements[i].Value);
+		}
+
+		CoTaskMemFree(elements);
+		return found;
+	}
+
+	// Drops an element and everything beneath it from the node list and the name map.
+	//
+	// Closed over rather than assumed one level deep: removing a Border removes the TextBlock inside
+	// it, and leaving those descendants behind would leave addresses that resolve to elements the
+	// framework has already let go.
+	void ForgetSubtree(InstanceHandle root)
+	{
+		std::set<InstanceHandle> doomed{ root };
+		for (bool grew = true; grew; )
+		{
+			grew = false;
+			for (const auto& node : m_nodes)
+			{
+				if (doomed.count(node.Handle)) continue;
+				if (doomed.count(node.Parent) == 0) continue;
+
+				doomed.insert(node.Handle);
+				grew = true;
+			}
+		}
+
+		m_nodes.erase(
+			std::remove_if(
+				m_nodes.begin(),
+				m_nodes.end(),
+				[&doomed](const TreeNode& node) { return doomed.count(node.Handle) != 0; }),
+			m_nodes.end());
+
+		for (auto entry = m_byName.begin(); entry != m_byName.end(); )
+		{
+			auto& handles = entry->second;
+			handles.erase(
+				std::remove_if(
+					handles.begin(),
+					handles.end(),
+					[&doomed](InstanceHandle handle) { return doomed.count(handle) != 0; }),
+				handles.end());
+
+			entry = handles.empty() ? m_byName.erase(entry) : std::next(entry);
+		}
 	}
 
 	std::wstring ApplyClearProperty(const Command& command)

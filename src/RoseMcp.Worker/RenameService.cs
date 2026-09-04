@@ -68,6 +68,11 @@ public static class RenameService
 			snapshot.Solution, symbol.Name, cancellationToken);
 
 		var notices = new List<string>(snapshot.Notices);
+
+		// What the diff could not show. A rename reaching thirty files is already a diff nobody reads
+		// line by line, so a change it does not contain has to be stated rather than left to be found.
+		notices.AddRange(outcome.Notices);
+
 		if (!request.Apply) notices.Add("Preview only; nothing was written to disk.");
 		if (outcome.ChangedFiles.Count == 0) notices.Add("The rename produced no changes.");
 

@@ -502,6 +502,10 @@ public static class ChangeSignatureService
 		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 		if (outcome.ChangedFiles.Count == 0) yield return "The signature already read exactly like that.";
 
+		// What the diff could not show, which for a change reaching several files is worth saying
+		// before anything about what compiled.
+		foreach (var notice in outcome.Notices) yield return notice;
+
 		if (plan.Retyped.Count > 0)
 		{
 			yield return $"Retyped {string.Join(", ", plan.Retyped)}, which the call sites still pass their old "

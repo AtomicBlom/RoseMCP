@@ -112,6 +112,10 @@ public static class AddUsingService
 	{
 		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 
+		// What the diff could not show. An import goes in as one line, so a diff that carries more
+		// than that has had the file's endings rewritten around it.
+		foreach (var notice in outcome.Notices) yield return notice;
+
 		if (insertion.Added.Count == 0)
 		{
 			yield return "Every namespace asked for was in scope already, so the file was not touched.";

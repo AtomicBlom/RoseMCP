@@ -254,6 +254,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public Task<LiveXamlSelection> ReadXamlSelectionAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveXamlSelection>(ToolNames.LiveAppXamlSelection, cancellationToken);
 
+	/// <summary>Clears the picked element and the mark drawn over the running app.</summary>
+	public Task<LiveXamlSelection> ClearXamlSelectionAsync(CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlSelection>(ToolNames.LiveAppXamlDeselect, cancellationToken);
+
 	/// <summary>Diffs two XAML versions and applies the edits to the live tree; returns each edit's outcome.</summary>
 	public Task<LiveXamlReloadResult> ReloadXamlAsync(string oldXaml, string newXaml, CancellationToken cancellationToken)
 		=> SendAsync<LiveXamlReloadResult>(

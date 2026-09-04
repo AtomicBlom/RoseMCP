@@ -146,6 +146,70 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	}
 
 	/// <summary>
+	/// Clears the picked element: the mark drawn over the app and the record on disk, together.
+	/// <para>
+	/// Both halves or it is a lie. Hiding the outline alone leaves <c>rose_xaml_selection</c> naming an
+	/// element the person can no longer see; deleting the files alone leaves a mark over an app that no
+	/// longer means anything. The provider does both and then confirms, so this can report which of
+	/// "cleared" and "there was nothing selected" actually happened rather than treating them as one.
+	/// </para>
+	/// </summary>
+	public LiveXamlSelection ClearSelection(int pid)
+	{
+		var (workDir, error) = Inject(pid, "deselect");
+		if (error is not null) return new LiveXamlSelection { Detail = error };
+
+		var readyFile = Path.Combine(workDir!, "deselect.ready");
+		if (!WaitForFile(readyFile, SnapshotTimeout))
+		{
+			return new LiveXamlSelection
+			{
+				Detail = "The provider was injected but did not confirm the deselect (the app may have no diagnostics UI layer).",
+			};
+		}
+
+		var (mode, justMyXaml) = ReadOverlayState();
+		var had = ReadFirstLine(readyFile) == "cleared";
+
+		return new LiveXamlSelection
+		{
+			Armed = mode == "select",
+			JustMyXaml = justMyXaml,
+			Detail = had
+				? "The selection was cleared; the outline over the app is gone."
+				: "Nothing was selected, so there was nothing to clear.",
+		};
+	}
+
+	/// <summary>
+	/// The first word of a provider request. The verb decides what a request means to this side; the
+	/// tokens after it are the provider's business.
+	/// </summary>
+	private static string Verb(string request)
+	{
+		var space = request.IndexOf(' ', StringComparison.Ordinal);
+
+		return space < 0 ? request : request[..space];
+	}
+
+	/// <summary>
+	/// The first line of a provider ready file, trimmed, or empty when it could not be read. A file
+	/// that has just appeared can still be mid-write, and an unreadable confirmation is better treated
+	/// as no answer than as one.
+	/// </summary>
+	private static string ReadFirstLine(string path)
+	{
+		try
+		{
+			return File.ReadLines(path).FirstOrDefault()?.Trim() ?? string.Empty;
+		}
+		catch (IOException)
+		{
+			return string.Empty;
+		}
+	}
+
+	/// <summary>
 	/// Reads the element that was picked, if any. Deliberately does not inject: the toolbar is resident
 	/// and owns the selection, and the person may have picked without this side being involved at all --
 	/// which is the case this exists for. That is also why the armed state is read from the provider's
@@ -442,10 +506,18 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		}
 
 		// A selection outlives an injection, because the toolbar holding it does: reading the tree must
-		// not throw away an element the person picked minutes ago. Only arming a fresh pick clears it.
-		if (request == "select")
+		// not throw away an element the person picked minutes ago. Arming a fresh pick clears it, and
+		// so does an explicit deselect.
+		//
+		// Matched on the verb rather than the whole line, which is what this got wrong. The request
+		// arming select mode always carries at least one token -- "select myxaml" is the minimum
+		// EnterSelectMode can build -- so an equality test against "select" never once fired. The
+		// consequence was quiet in the worst way: arming reported success, and rose_xaml_selection
+		// then answered with the *previous* pick until a new click happened to land.
+		var clearsSelection = Verb(request) is "select" or "deselect";
+		if (clearsSelection)
 		{
-			foreach (var stale in new[] { "select.ready", "selection.tsv", "selection.ready" })
+			foreach (var stale in new[] { "select.ready", "selection.tsv", "selection.ready", "deselect.ready" })
 			{
 				TryDelete(Path.Combine(workDir, stale));
 			}

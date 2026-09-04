@@ -948,6 +948,94 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// Removing an element live (#11). <c>IVisualTreeService::RemoveChild</c> takes a parent and a
+	/// <em>position</em>, while a diff knows only that a child present in the old markup is absent from
+	/// the new one -- so the provider resolves the child's address and reads the parent and the index off
+	/// the live tree, which is the only place they can be trusted.
+	/// <para>
+	/// Which Border survives is the assertion that earns this. The two are identical but for their
+	/// colour, so an index off by one removes the wrong one and everything else still reads as success:
+	/// one Border left under the anchor, the edit reported <c>applied</c>, and the wrong element gone.
+	/// The survivor's Background is what tells them apart.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Removes_an_element_from_the_live_tree()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
+		var oldXaml = File.ReadAllText(xamlPath);
+
+		// Cut the second of the two unnamed Borders out of the markup, found by its colour rather than
+		// by a copied block of text so that reindenting the fixture cannot quietly stop this matching.
+		const string SecondBorder = "<Border Background=\"#FF2A3A2A\"";
+		const string FirstBackground = "#FF3A2A2A";
+		var start = oldXaml.IndexOf(SecondBorder, StringComparison.Ordinal);
+		Assert.True(start >= 0, "the probe markup no longer holds the second unnamed Border");
+		var close = oldXaml.IndexOf("</Border>", start, StringComparison.Ordinal) + "</Border>".Length;
+		var newXaml = oldXaml.Remove(start, close - start);
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = aumid,
+					Description = "uwp removal probe",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			var before = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.Equal(2, before.Nodes.Count(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]"));
+
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+
+			var removal = reload.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
+			Assert.NotNull(removal);
+			Assert.Equal("#Pair/Border[1]", removal!.Target);
+			Assert.Equal("applied", removal.Status);
+
+			// Read back off a fresh enumeration, so this checks the app rather than the provider's own
+			// bookkeeping: every injection builds a new tap and walks the tree again.
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var remaining = tree.Nodes.Where(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]").ToList();
+			var survivor = Assert.Single(remaining);
+			Assert.Equal("#Pair/Border[0]", survivor.Address);
+
+			// And it is the one that was meant to stay.
+			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[0]", cancellationToken));
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>The Background of whichever live element carries an address, read off the tree.</summary>
 	private static async Task<string?> BackgroundAtAsync(
 		LiveAppSession session,

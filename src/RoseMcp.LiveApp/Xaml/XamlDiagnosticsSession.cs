@@ -417,9 +417,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 
 	/// <summary>
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree (#12).
-	/// Property edits are applied through the provider whether or not the element has an <c>x:Name</c>;
-	/// structural edits are reported as not-yet-applied rather than dropped silently. Returns each
-	/// computed edit with its outcome, plus the diff engine's notes.
+	/// Property edits and removals apply whether or not the element has an <c>x:Name</c>; adding an
+	/// element is reported as not-yet-applied rather than dropped silently. Returns each computed edit
+	/// with its outcome, plus the diff engine's notes.
 	/// </summary>
 	public LiveXamlReloadResult ApplyReload(int pid, string oldXaml, string newXaml)
 	{
@@ -439,17 +439,20 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		// lands on, since anything inside a control template is unnamed. Whether an address resolves is
 		// a question about the live tree, so it is asked where the live tree is; this side has only the
 		// string, and a string cannot tell an unnameable element from an absent one.
+		//
+		// A removal carries the child's address and nothing else. RemoveChild needs a parent and a
+		// position, and the provider reads both off the live tree -- which is the only place they are
+		// reliable, since a markup index and a visual index are not always the same number.
 		var commands = new List<string>();
 		var plans = new List<(XamlEdit Edit, string? Target)>();
 		foreach (var edit in diff.Edits)
 		{
-			var applies = edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty;
+			var applies = edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty or XamlEditKind.RemoveChild;
 			plans.Add((edit, applies ? edit.Target : null));
 
 			if (applies)
 			{
-				var op = edit.Kind == XamlEditKind.SetProperty ? "SetProperty" : "ClearProperty";
-				commands.Add(string.Join('\t', op, edit.Target, edit.Property ?? string.Empty, edit.ValueType ?? string.Empty, edit.Value ?? string.Empty));
+				commands.Add(string.Join('\t', Op(edit.Kind), edit.Target, edit.Property ?? string.Empty, edit.ValueType ?? string.Empty, edit.Value ?? string.Empty));
 			}
 		}
 
@@ -470,16 +473,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		var results = new List<LiveXamlEditResult>();
 		foreach (var (edit, target) in plans)
 		{
-			string status;
-			if (target is null)
-			{
-				status = "unsupported: structural edits are not applied live yet";
-			}
-			else
-			{
-				var op = edit.Kind == XamlEditKind.SetProperty ? "SetProperty" : "ClearProperty";
-				status = statuses.GetValueOrDefault($"{op}\t{target}\t{edit.Property}", "not reported");
-			}
+			var status = target is null
+				? "unsupported: adding an element is not applied live yet"
+				: statuses.GetValueOrDefault($"{Op(edit.Kind)}\t{target}\t{edit.Property}", "not reported");
 
 			results.Add(new LiveXamlEditResult
 			{
@@ -498,6 +494,20 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			Notes = diff.Notes,
 		};
 	}
+
+	/// <summary>
+	/// The provider's name for an edit kind. One place, because the command and the lookup of its
+	/// result have to agree exactly -- they are keyed on this string, so two spellings of it would
+	/// apply the edit and then report it as "not reported".
+	/// </summary>
+	private static string Op(XamlEditKind kind) => kind switch
+	{
+		XamlEditKind.SetProperty => "SetProperty",
+		XamlEditKind.ClearProperty => "ClearProperty",
+		XamlEditKind.RemoveChild => "RemoveChild",
+		XamlEditKind.AddChild => "AddChild",
+		_ => kind.ToString(),
+	};
 
 	private static Dictionary<string, string> ParseApplyResults(string applyFile)
 	{

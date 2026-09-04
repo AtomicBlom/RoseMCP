@@ -6,6 +6,15 @@ namespace RoseMcp.Contracts;
 /// included on request. <see cref="SourceFile"/>/<see cref="SourceLine"/> locate the element's own XAML
 /// declaration when the app carries source info. <see cref="Detail"/> is set, with no properties, when
 /// the element could not be read.
+/// <para>
+/// "Set" is the framework's answer, and it is not quite "what the XAML sets" -- the difference is
+/// measured, not theoretical. Walking an element's property chain brings its untouched collection
+/// properties into existence, so a second read of the same element reports those as <c>Local</c>: on a
+/// <c>TextBlock</c>, <c>Inlines</c>, <c>TextHighlighters</c> and <c>SelectionHighlightColor</c> appear
+/// on read two and every read after, with the same provenance and as plausible a value as the
+/// properties the markup really set. A <c>Border</c>, having no such properties, is stable. The first
+/// read of an element is the accurate one, and it is our own read that spoils it.
+/// </para>
 /// </summary>
 public sealed record LiveXamlProperties
 {

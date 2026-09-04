@@ -341,6 +341,20 @@ reclaim memory or pick up a rebuilt generator.
   Addresses computed from the live tree are exact, being resolved against the tree they came from; an
   address a diff derived from markup is a best effort, since markup order is not always the visual
   tree's, and it fails by saying so.
+- **Reading an element's properties changes what the element reports about itself.** Walking the
+  property chain brings a `TextBlock`'s untouched collection properties into existence, and a
+  property that exists is no longer the framework's default -- so a second read reports `Inlines`,
+  `TextHighlighters` and `SelectionHighlightColor` as `Local`, with provenance and values as
+  plausible as the ones the markup really set. The first read of an element is the accurate one, and
+  it is our own read that spoils it. Measured, including the part that decides the fix: the additions
+  arrive as `Local`, so there is no source left to filter on and the one-line fix does not exist
+  (#97). A `Border` is stable, so this belongs to the type's text properties rather than to reading
+  as such. What follows is that `includeDefaults: false` means "what the framework calls set", which
+  is not quite "what the XAML sets" -- and the tool now says so rather than implying an exactness it
+  cannot deliver. **Do not "fix" it by caching the first read's names and filtering later reads to
+  them:** that hides exactly what the apply-then-read-back loop exists to verify, since an applied
+  property need not have appeared in the first read. It also means `rose_xaml_properties` is declared
+  read-only and is not quite, though nothing the app draws changes.
 - **One XAML request at a time, and the lock has to be re-entrant.** The live-app host serves MCP
   calls concurrently -- measured, not assumed: two tree reads issued together finished in 118ms
   against a warm single read of 112ms -- and every XAML request shares one work folder, one

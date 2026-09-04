@@ -459,11 +459,19 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "Animation, Default, and so on -- so you can tell what the XAML actually sets from framework "
 			+ "defaults; when the app carries source info, each also carries the file and line that set it. "
 			+ "Set (non-default) properties only by default; pass includeDefaults for the full set. This is "
-			+ "the bridge from a live element to its XAML source.")]
+			+ "the bridge from a live element to its XAML source. One caveat, and it is measured: reading an "
+			+ "element brings its untouched collection properties into existence, so a second read of the "
+			+ "same element reports a few more as Local than the first -- on a TextBlock, Inlines, "
+			+ "TextHighlighters and SelectionHighlightColor. The first read of an element is the accurate "
+			+ "one; do not treat properties that appear between two reads as something an edit did.")]
 	public async Task<LiveXamlProperties> XamlPropertiesAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description("The element handle from rose_xaml_tree.")] ulong handle,
-		[Description("Include framework default values, not only the ones the XAML sets.")] bool includeDefaults = false,
+		[Description(
+			"Include the framework defaults, not only what the framework reports as set. Note that those "
+				+ "are not quite the same question as what the XAML sets: a property the framework "
+				+ "materialises while being inspected counts as set from then on.")]
+		bool includeDefaults = false,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);

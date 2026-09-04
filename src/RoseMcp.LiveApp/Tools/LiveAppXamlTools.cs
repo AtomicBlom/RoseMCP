@@ -34,7 +34,7 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 	[Description("Read one element's XAML properties (by handle) with provenance and source location.")]
 	public LiveXamlProperties XamlProperties(
 		[Description("The element handle from a tree snapshot.")] ulong handle,
-		[Description("Include framework default values, not only set ones.")] bool includeDefaults = false)
+		[Description("Include the framework defaults, not only what it reports as set.")] bool includeDefaults = false)
 		=> host.ReadXamlProperties(handle, includeDefaults);
 
 	[McpServerTool(

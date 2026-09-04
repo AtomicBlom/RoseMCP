@@ -296,6 +296,22 @@ public sealed class XamlDiffTests
 		Assert.Equal("Windows.UI.Xaml.CornerRadius", Assert.Single(edits).ValueType);
 	}
 
+	/// <summary>
+	/// The gate a continuous apply needs before it records anything (#12). A first apply keeps what it
+	/// read as the baseline for the next one, so markup that does not parse must be refused there
+	/// rather than stored -- stored, it would make every later apply report a parse error about a file
+	/// the caller had since fixed.
+	/// </summary>
+	[Fact]
+	public void Reports_markup_it_cannot_parse_with_the_parsers_own_reason()
+	{
+		Assert.True(XamlDiff.XamlDiff.Parses($"<Border {Ns} x:Name=\"pane\" />", out var fine));
+		Assert.Null(fine);
+
+		Assert.False(XamlDiff.XamlDiff.Parses($"<Border {Ns} x:Name=\"pane\">", out var reason));
+		Assert.False(string.IsNullOrWhiteSpace(reason));
+	}
+
 	private static IReadOnlyList<XamlEdit> Compute(string oldXaml, string newXaml)
 		=> XamlDiff.XamlDiff.Compute(oldXaml, newXaml).Edits;
 

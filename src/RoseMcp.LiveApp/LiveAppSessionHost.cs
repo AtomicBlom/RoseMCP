@@ -348,9 +348,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	/// <summary>
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree.
-	/// Returns each computed edit with its outcome.
+	/// Returns each computed edit with its outcome. Naming a file rather than passing both versions is
+	/// the continuous-apply path (#12): the XAML session remembers what it has already sent.
 	/// </summary>
-	public LiveXamlReloadResult ReloadXaml(string oldXaml, string newXaml)
+	public LiveXamlReloadResult ReloadXaml(string? oldXaml, string? newXaml, string? filePath)
 	{
 		int? targetProcessId;
 		lock (_gate)
@@ -364,7 +365,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlReloadResult { Detail = "This session has no target process to inspect." };
 		}
 
-		return _xaml.ApplyReload(pid, oldXaml, newXaml);
+		return _xaml.ApplyReload(pid, oldXaml, newXaml, filePath);
 	}
 
 	/// <summary>

@@ -825,7 +825,7 @@ public sealed class LiveAppSessionTests
 				cancellationToken);
 			Assert.NotNull(running);
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
 			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
 
 			var edit = reload.Results.FirstOrDefault(result => result.Target == "#Caption" && result.Property == "FontSize");
@@ -929,7 +929,7 @@ public sealed class LiveAppSessionTests
 			Assert.Contains("#Pair/Border[0]", addresses);
 			Assert.Contains("#Pair/Border[1]", addresses);
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
 			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
 
 			var edit = reload.Results.FirstOrDefault(result => result.Target == "#Pair/Border[1]" && result.Property == "Background");
@@ -1010,7 +1010,7 @@ public sealed class LiveAppSessionTests
 			var before = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.Equal(2, before.Nodes.Count(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]"));
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
 			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
 
 			var removal = reload.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
@@ -1106,7 +1106,7 @@ public sealed class LiveAppSessionTests
 				cancellationToken);
 			Assert.NotNull(running);
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
 			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
 
 			var add = reload.Results.FirstOrDefault(result => result.Kind == "AddChild");
@@ -1190,7 +1190,7 @@ public sealed class LiveAppSessionTests
 				cancellationToken);
 			Assert.NotNull(running);
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
 			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
 
 			var edit = reload.Results.FirstOrDefault(result => result.Property == "Grid.Row");
@@ -1274,7 +1274,7 @@ public sealed class LiveAppSessionTests
 			var before = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.Equal(Was, await BackgroundAtAsync(session, before, "#Themed", cancellationToken));
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
 			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
 
 			var edit = reload.Results.FirstOrDefault(result => result.Kind == "SetResource");
@@ -1305,6 +1305,137 @@ public sealed class LiveAppSessionTests
 		var node = tree.Nodes.Single(candidate => candidate.Address == address);
 		var properties = await session.ReadXamlPropertiesAsync(node.Handle, includeDefaults: false, cancellationToken);
 		return properties.Properties.FirstOrDefault(property => property.Name == "Background")?.Value;
+	}
+
+	/// <summary>
+	/// The edit-to-live loop (#12): edit a XAML file, apply, edit it again, apply again, and the running
+	/// app follows -- with nothing carried between the calls but the path of the file.
+	/// <para>
+	/// Every apply test before this one passed both versions of the markup, which is the shape the tool
+	/// started with and close to unusable in the loop it exists for, since a caller that has just
+	/// written a file no longer holds what was in it. So the session remembers what it last sent, and
+	/// the assertion that earns this test is the <em>count</em> on the second edit: it changes a
+	/// different property from the first, so a baseline still sitting on the original would come back
+	/// with two edits rather than one. Re-sending an edit is harmless for a font size and, for an added
+	/// element, a second copy of it.
+	/// </para>
+	/// <para>
+	/// It edits a copy of the probe's markup rather than the file itself. What is under test is the
+	/// file-to-diff-to-apply-to-live path, which a copy exercises identically; editing the fixture in
+	/// place would leave a tracked file modified if this failed part way through, and the sibling tests
+	/// read that file expecting what is checked in.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Applies_successive_file_edits_to_the_running_app()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		var sourcePath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
+		var original = File.ReadAllText(sourcePath);
+		var editable = Path.Combine(Path.GetTempPath(), $"rose-reload-{Guid.NewGuid():N}.xaml");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp continuous hot-reload probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			// The app's own markup, untouched since it was launched. There is nothing to apply, and
+			// this side says so with evidence rather than by diffing the file against itself -- which
+			// would report nothing either, and would mean something else entirely.
+			var first = await session.ReloadXamlAsync(null, null, sourcePath, cancellationToken);
+			Assert.True(first.Detail is null, $"expected a baseline, got detail: {first.Detail}");
+			Assert.Empty(first.Results);
+			Assert.Contains(first.Notes, note => note.Contains("Nothing has edited") && note.Contains("MainPage.xaml"));
+
+			// A file that has changed since the app started is the other first-apply case: what the
+			// app was built from is gone, so it records the file and says so rather than guessing.
+			File.WriteAllText(editable, original);
+			var registered = await session.ReloadXamlAsync(null, null, editable, cancellationToken);
+			Assert.True(registered.Detail is null, $"expected a baseline, got detail: {registered.Detail}");
+			Assert.Empty(registered.Results);
+			Assert.Contains(registered.Notes, note => note.Contains("no longer on disk"));
+
+			// One edit, applied with nothing passed but the path.
+			File.WriteAllText(editable, original.Replace("FontSize=\"24\"", "FontSize=\"40\""));
+			var fontSize = await session.ReloadXamlAsync(null, null, editable, cancellationToken);
+			Assert.True(fontSize.Detail is null, $"expected an apply, got detail: {fontSize.Detail}");
+			var sizeEdit = Assert.Single(fontSize.Results);
+			Assert.Equal("#Caption", sizeEdit.Target);
+			Assert.Equal("FontSize", sizeEdit.Property);
+			Assert.Equal("applied", sizeEdit.Status);
+			Assert.Equal("40", await CaptionValueAsync(session, "FontSize", cancellationToken));
+
+			// A second edit, same session, no relaunch -- and a different property, which is what makes
+			// the single result below mean the baseline moved with the first apply.
+			File.WriteAllText(
+				editable,
+				original
+					.Replace("FontSize=\"24\"", "FontSize=\"40\"")
+					.Replace("Text=\"Rose UWP Probe\"", "Text=\"Edited twice\""));
+
+			var caption = await session.ReloadXamlAsync(null, null, editable, cancellationToken);
+			Assert.True(caption.Detail is null, $"expected an apply, got detail: {caption.Detail}");
+			var textEdit = Assert.Single(caption.Results);
+			Assert.Equal("#Caption", textEdit.Target);
+			Assert.Equal("Text", textEdit.Property);
+			Assert.Equal("applied", textEdit.Status);
+
+			// Both edits are on the running app: the second landed, and the first is still there rather
+			// than having been undone by a diff that started over from the original.
+			Assert.Equal("Edited twice", await CaptionValueAsync(session, "Text", cancellationToken));
+			Assert.Equal("40", await CaptionValueAsync(session, "FontSize", cancellationToken));
+
+			// And an apply with nothing to apply says which of the two nothings it was.
+			var unchanged = await session.ReloadXamlAsync(null, null, editable, cancellationToken);
+			Assert.True(unchanged.Detail is null, $"expected an apply, got detail: {unchanged.Detail}");
+			Assert.Empty(unchanged.Results);
+			Assert.Contains(unchanged.Notes, note => note.Contains("unchanged since the last apply"));
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+			if (File.Exists(editable)) File.Delete(editable);
+		}
+	}
+
+	/// <summary>One of the probe caption's live property values, read off the running app.</summary>
+	private static async Task<string?> CaptionValueAsync(
+		LiveAppSession session,
+		string property,
+		CancellationToken cancellationToken)
+	{
+		var tree = await session.ReadXamlTreeAsync(cancellationToken);
+		var caption = tree.Nodes.First(node => node.Name == "Caption");
+		var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
+
+		return properties.Properties.FirstOrDefault(candidate => candidate.Name == property)?.Value;
 	}
 
 	/// <summary>

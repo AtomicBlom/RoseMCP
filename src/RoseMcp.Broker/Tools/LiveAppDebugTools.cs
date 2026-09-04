@@ -479,25 +479,38 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Hot-reload a running XAML app: diff two versions of its XAML and apply the changes to the live "
-			+ "visual tree, no relaunch. Pass the previous XAML and the new XAML; the diff reduces to the "
-			+ "minimal set of edits and each is applied and reported back with its outcome. Property "
-			+ "changes, added elements, removed elements and changed resources all apply -- a colour, a "
-			+ "size, a piece of text, a whole new element with its own children, a brush in a resource "
-			+ "dictionary -- on any element the diff can address, named or not. An element with no x:Name "
-			+ "is addressed by the path rose_xaml_tree and rose_xaml_selection report as its address, so a "
-			+ "click inside a control template is targetable. Use it after editing a XAML file: pass what "
-			+ "was on disk before and what is there now. Read the notes as well as the results: they name "
-			+ "the edits it worked out but does not apply, such as adding or removing a resource, and the "
-			+ "fact that an element added live cannot carry an x:Name.")]
+		"Hot-reload a running XAML app: apply what a XAML file now holds to the live visual tree, no "
+			+ "relaunch, as many times as you like. Pass filePath -- the file you have just edited -- and "
+			+ "the session diffs it against what it last sent to that app, so the loop is edit, apply, "
+			+ "edit, apply, with nothing to carry between the calls. The first call for a file records a "
+			+ "baseline and applies nothing, because what the running app was built from is not something "
+			+ "this side can reconstruct: call it once before you start editing, or pass oldXaml with "
+			+ "filePath to apply that first change too. Property changes, added elements, removed elements "
+			+ "and changed resources all apply -- a colour, a size, a piece of text, a whole new element "
+			+ "with its own children, a brush in a resource dictionary -- on any element the diff can "
+			+ "address, named or not. An element with no x:Name is addressed by the path rose_xaml_tree "
+			+ "and rose_xaml_selection report as its address, so a click inside a control template is "
+			+ "targetable. For markup that is not on disk, pass oldXaml and newXaml instead of filePath. "
+			+ "Read the notes as well as the results: they name the edits it worked out but does not "
+			+ "apply, such as adding or removing a resource, and the fact that an element added live "
+			+ "cannot carry an x:Name. An edit reported as failed is not retried by the next apply -- "
+			+ "re-sending one that adds an element would add a second copy of it.")]
 	public async Task<LiveXamlReloadResult> XamlApplyAsync(
 		[Description(SessionHelp)] string sessionId,
-		[Description("The previous XAML (what the file held before the edit).")] string oldXaml,
-		[Description("The new XAML to apply (what the file holds now).")] string newXaml,
+		[Description(
+			"The XAML file to apply. What it holds now is diffed against what this session last sent to "
+				+ "the app, so an edit-and-apply loop needs only this.")]
+		string? filePath = null,
+		[Description(
+			"The previous XAML. Only needed for the first apply of a file this session has not seen "
+				+ "before, or with newXaml for markup that is not on disk.")]
+		string? oldXaml = null,
+		[Description("The new XAML to apply, when it is markup rather than a file. Pass oldXaml with it.")]
+		string? newXaml = null,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+		return await session.ReloadXamlAsync(oldXaml, newXaml, filePath, cancellationToken);
 	}
 
 	[McpServerTool(

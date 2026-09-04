@@ -341,6 +341,29 @@ reclaim memory or pick up a rebuilt generator.
   Addresses computed from the live tree are exact, being resolved against the tree they came from; an
   address a diff derived from markup is a best effort, since markup order is not always the visual
   tree's, and it fails by saying so.
+- **A hot reload is diffed against what was last sent to the app, never against what is on disk.**
+  Applying used to require both versions of the markup, which reads reasonably and is close to unusable
+  in the loop it exists for: an agent that has just written a file no longer holds what was in it, so
+  the one piece of state the session is in a position to keep was being asked of the caller. It keeps it
+  now, per file, and a caller passes a path. Two consequences are load-bearing. A *first* apply cannot
+  be diffed at all -- what the running app was built from is not on disk once it has been edited -- so
+  it records the file and says so, rather than diffing the file against itself and reporting the empty
+  result as success, which would skip the caller's first edit in silence. And the baseline advances
+  whether or not every edit took, because a structural edit is not idempotent: re-sending an `AddChild`
+  because something else in the batch failed puts a second copy of the element in on the attempt that
+  works. Failures are reported and belong to the caller. Whether the file has changed since the app
+  started is evidence about the file and nothing more, so it is three-valued -- a process that will not
+  give its start time makes that unknown, not "changed".
+- **A provider marker answers one request, and the generation is what says which.** Every handshake
+  through the work folder is "does this file exist", the host deletes the marker before injecting, and
+  `TryDelete` swallows its failures -- so the number the host stamps on the request and the provider
+  echoes back is the only thing separating this answer from the last one (#57, #89). Two things about
+  that are not mechanical. The tree snapshot is written *before* the request is read, so hoisting the
+  read is part of the stamp: otherwise the marker carries the previous request's number and the host
+  rejects a perfectly good tree as stale, which presents as a timeout blaming the app's diagnostics
+  layer. And `selection.ready` deliberately carries no generation at all, because it records a click,
+  which outlives the injection that armed select mode by design -- stamping it would have the read that
+  goes looking for it reject its own answer. One file cannot both answer a request and survive one.
 - **A XAML project's generated half is synthesised, and says so.** The markup compiler runs only in a
   real build, so `MSBuildWorkspace` hands us code-behind missing its base type, its `x:Name` fields
   and `InitializeComponent` -- 2030 phantom errors in one project of Drawboard's UWP app.

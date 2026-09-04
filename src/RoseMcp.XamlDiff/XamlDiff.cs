@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Xml;
 using System.Xml.Linq;
 
 namespace RoseMcp.XamlDiff;
@@ -46,6 +47,38 @@ public static class XamlDiff
 
 		DiffElement(XElement.Parse(oldXaml), XElement.Parse(newXaml), edits, notes);
 		return new XamlDiffResult { Edits = edits, Notes = notes };
+	}
+
+	/// <summary>
+	/// Whether <paramref name="markup"/> is something this engine can diff, with the parser's own
+	/// reason when it is not.
+	/// <para>
+	/// Here rather than in the callers so that one parser decides. A caller running its own
+	/// <c>XElement.Parse</c> would be answering a slightly different question, and could accept markup
+	/// this cannot diff or refuse markup it can.
+	/// </para>
+	/// <para>
+	/// It exists because a continuous apply records what it reads as the baseline for the next one, and
+	/// recording markup that does not parse leaves every later apply diffing against something
+	/// unparseable -- reporting a parse error about a file the caller has since fixed, with no way to
+	/// say so.
+	/// </para>
+	/// </summary>
+	public static bool Parses(string markup, out string? reason)
+	{
+		try
+		{
+			XElement.Parse(markup);
+			reason = null;
+
+			return true;
+		}
+		catch (XmlException exception)
+		{
+			reason = exception.Message;
+
+			return false;
+		}
 	}
 
 	private static void DiffElement(XElement oldElement, XElement newElement, List<XamlEdit> edits, List<string> notes)

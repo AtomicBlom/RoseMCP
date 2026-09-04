@@ -49,6 +49,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// (#57).
 	private long _generation;
 
+	// What this side has already sent to the app, per source file (#12). It is held here rather than by
+	// the caller for two reasons: this is the only place that can tell whether an apply reached the
+	// provider, and a caller that has just written a file no longer holds what was there before.
+	private readonly XamlReloadBaseline _baselines = new();
+
 	/// <summary>
 	/// Reads a snapshot of the target's live visual tree, injecting the provider first. Returns a tree
 	/// with a <see cref="LiveXamlTree.Detail"/> and no nodes -- never throws -- when the provider is not
@@ -464,13 +469,28 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree (#12).
 	/// Property changes, removals and additions all apply, and on any element the diff can address rather
 	/// than only a named one. Returns each computed edit with its outcome, plus the diff engine's notes.
+	/// <para>
+	/// The old version is usually not passed at all. A caller in the edit-to-live loop names the file it
+	/// has just written and this side diffs against what it last sent to the app -- see <see
+	/// cref="XamlReloadBaseline"/> for why that state belongs on this end.
+	/// </para>
 	/// </summary>
-	public LiveXamlReloadResult ApplyReload(int pid, string oldXaml, string newXaml)
+	public LiveXamlReloadResult ApplyReload(int pid, string? oldXaml, string? newXaml, string? filePath)
 	{
+		var (inputs, failure) = Resolve(pid, oldXaml, newXaml, filePath);
+		if (failure is not null) return new LiveXamlReloadResult { Detail = failure };
+
+		// Nothing to diff against, which is not a failure: the file's contents are the baseline from
+		// here on, so the caller's next edit applies on its own. The note says which reason it was.
+		if (inputs!.OldXaml is null)
+		{
+			return new LiveXamlReloadResult { Notes = inputs.Note is null ? [] : [inputs.Note] };
+		}
+
 		XamlDiffResult diff;
 		try
 		{
-			diff = RoseMcp.XamlDiff.XamlDiff.Compute(oldXaml, newXaml);
+			diff = RoseMcp.XamlDiff.XamlDiff.Compute(inputs.OldXaml, inputs.NewXaml);
 		}
 		catch (Exception exception)
 		{
@@ -487,7 +507,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// the fiddliest part of this somewhere no unit test can reach.
 		var commands = new List<string>();
 		var plans = new List<(XamlEdit Edit, List<string> Keys)>();
-		var notes = new List<string>(diff.Notes);
+		var notes = new List<string>();
+		if (inputs.Note is not null) notes.Add(inputs.Note);
+		notes.AddRange(diff.Notes);
 
 		foreach (var edit in diff.Edits)
 		{
@@ -552,11 +574,25 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 			if (!WaitForMarker(Path.Combine(workDir!, "apply.ready"), SnapshotTimeout))
 			{
-				return new LiveXamlReloadResult { Detail = "The XAML provider was injected but did not report the apply in time." };
+				// The baseline is deliberately left where it was, and the message says what that costs.
+				// The commands were injected, so they may well have run; this side just cannot say. So
+				// the next apply resends them, which is the caller's retry -- and for anything this
+				// batch was adding, a retry that lands twice is a second copy.
+				return new LiveXamlReloadResult
+				{
+					Detail = "The XAML provider was injected but did not report the apply in time. The edits may or "
+						+ "may not have reached the app, so applying the same change again could add a second copy "
+						+ "of anything this one was adding.",
+				};
 			}
 
 			statuses = ParseApplyResults(Path.Combine(workDir!, "apply.tsv"));
 		}
+
+		// Advanced whether or not every edit took, and that is the deliberate half. The app has been
+		// sent this version; re-sending a structural edit because something else in the batch failed
+		// would duplicate the elements that did go in. The failures are in the results to act on.
+		if (inputs.SourcePath is not null) _baselines.Advance(inputs.SourcePath, inputs.NewXaml);
 
 		var results = new List<LiveXamlEditResult>();
 		foreach (var (edit, keys) in plans)
@@ -577,6 +613,127 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			Results = results,
 			Notes = notes,
 		};
+	}
+
+	/// <summary>
+	/// Works out what to diff, from what the caller gave, or names what is missing or contradictory.
+	/// <para>
+	/// There are three ways to ask, and the one this was built for is to name the file and nothing
+	/// else. Two versions of the markup is the original shape, still honoured because a caller
+	/// composing markup may have no file at all. A file plus an explicit old version is the escape
+	/// hatch for the first apply after an edit this side never saw.
+	/// </para>
+	/// <para>
+	/// A file plus a new version is refused rather than reconciled. Two answers to "what does it say
+	/// now" is a question, and picking one silently is how a tool applies something convincingly and
+	/// not what was asked.
+	/// </para>
+	/// </summary>
+	private (ReloadInputs? Inputs, string? Error) Resolve(int pid, string? oldXaml, string? newXaml, string? filePath)
+	{
+		var hasFile = !string.IsNullOrWhiteSpace(filePath);
+		var hasNew = !string.IsNullOrEmpty(newXaml);
+		var hasOld = !string.IsNullOrEmpty(oldXaml);
+
+		if (!hasFile)
+		{
+			if (!hasNew)
+			{
+				return (null, "Nothing to apply: pass filePath to apply what a XAML file now holds, or newXaml with "
+					+ "oldXaml to apply markup that is not on disk.");
+			}
+
+			if (!hasOld)
+			{
+				return (null, "Nothing to diff against: pass filePath rather than newXaml and this side keeps track "
+					+ "of what it has already applied to the file, or pass oldXaml alongside newXaml.");
+			}
+
+			return (new ReloadInputs { OldXaml = oldXaml, NewXaml = newXaml! }, null);
+		}
+
+		if (hasNew)
+		{
+			return (null, "filePath and newXaml both say what the markup is now, so pass one: filePath to apply what "
+				+ "the file holds, newXaml to apply markup that is not on disk.");
+		}
+
+		string full;
+		try
+		{
+			full = Path.GetFullPath(filePath!);
+		}
+		catch (Exception exception)
+		{
+			return (null, $"'{filePath}' is not a usable path: {exception.Message}");
+		}
+
+		if (!File.Exists(full)) return (null, $"There is no file at {full}.");
+
+		string current;
+		try
+		{
+			current = File.ReadAllText(full);
+		}
+		catch (Exception exception)
+		{
+			return (null, $"Could not read {full}: {exception.Message}");
+		}
+
+		// Refused rather than recorded, and this is the reason the check is worth its lines. A first
+		// apply records what it read as the baseline for the next one, so recording markup that does
+		// not parse would leave every apply after it diffing against something unparseable -- a call
+		// reporting a parse error about a file the caller has since fixed, with nothing it can do to
+		// say so.
+		if (!RoseMcp.XamlDiff.XamlDiff.Parses(current, out var reason))
+		{
+			return (null, $"{full} is not markup this can diff, so nothing was recorded or applied: {reason}");
+		}
+
+		// An explicit old version wins over the baseline and still refreshes it. The caller is telling
+		// this side something it had no way to know, and the applies after it should carry on from
+		// there rather than needing to be told again.
+		if (hasOld) return (new ReloadInputs { OldXaml = oldXaml, NewXaml = current, SourcePath = full }, null);
+
+		var plan = _baselines.Prepare(full, current, AgeOf(pid, full));
+
+		return (new ReloadInputs { OldXaml = plan.OldXaml, NewXaml = current, SourcePath = full, Note = plan.Note }, null);
+	}
+
+	/// <summary>
+	/// What can be said about a file's last write against the moment the target started running. It
+	/// decides only the note on a first apply, and says "cannot tell" rather than assuming: "changed
+	/// since the app started" is a claim about the file, and a process that will not give its start
+	/// time is no evidence either way.
+	/// </summary>
+	private static XamlBaselineAge AgeOf(int pid, string path)
+	{
+		try
+		{
+			using var process = Process.GetProcessById(pid);
+
+			return File.GetLastWriteTimeUtc(path) > process.StartTime.ToUniversalTime()
+				? XamlBaselineAge.ChangedSinceTargetStarted
+				: XamlBaselineAge.UnchangedSinceTargetStarted;
+		}
+		catch (Exception)
+		{
+			return XamlBaselineAge.Unknown;
+		}
+	}
+
+	/// <summary>What an apply will diff, once the ways of asking for it have been reconciled.</summary>
+	private sealed record ReloadInputs
+	{
+		/// <summary>Null when there is nothing to diff against; <see cref="Note"/> then says why.</summary>
+		public string? OldXaml { get; init; }
+
+		public required string NewXaml { get; init; }
+
+		/// <summary>The file the markup came from, when it came from one. Keys the baseline.</summary>
+		public string? SourcePath { get; init; }
+
+		public string? Note { get; init; }
 	}
 
 	/// <summary>

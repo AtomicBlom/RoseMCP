@@ -44,11 +44,15 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		Idempotent = false,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("Diff two XAML versions and apply the resulting edits to the live visual tree.")]
+	[Description(
+		"Apply a XAML change to the live visual tree, from a file the session tracks or from two "
+			+ "versions of the markup.")]
 	public LiveXamlReloadResult XamlApply(
-		[Description("The previous XAML.")] string oldXaml,
-		[Description("The new XAML to apply.")] string newXaml)
-		=> host.ReloadXaml(oldXaml, newXaml);
+		[Description("The XAML file to apply what is now on disk from; the session tracks what it last sent.")]
+		string? filePath = null,
+		[Description("The previous XAML. Not needed with filePath after the first apply.")] string? oldXaml = null,
+		[Description("The new XAML to apply, for markup that is not on disk.")] string? newXaml = null)
+		=> host.ReloadXaml(oldXaml, newXaml, filePath);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppXamlSelectMode,

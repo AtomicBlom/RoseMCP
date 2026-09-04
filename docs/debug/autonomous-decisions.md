@@ -561,3 +561,66 @@ success but produces no DLL throws too.
 
 The race that exposed it is worth remembering on its own: the integration suite builds the native
 provider itself, so building it by hand while the suite is running corrupts both. Do one at a time.
+
+### D30 — A hot reload is diffed against what was last sent, not against what is on disk (#12, supersedes half of D16)
+D16 shipped `rose_xaml_apply` taking two versions of the markup, and recorded as a limitation that
+structural edits and unnamed-element addressing came back `unsupported`. #11 removed that half:
+properties, additions, removals, attached properties and keyed resources all apply, on named elements
+and unnamed ones alike. This is the other half. Taking both versions reads reasonably and is close to
+unusable in the loop the tool exists for, because an agent that has just written a file no longer
+holds what was in it -- so the one piece of state the session is in a position to keep was being
+asked of the caller.
+
+- **The session keeps the baseline, per file, and the caller passes a path.** It lives in
+  `XamlDiagnosticsSession` because that is the only place that can tell whether an apply reached the
+  provider, and it dies with the session, which is right: a baseline means nothing without the
+  running app it describes. The decision logic is a separate pure type
+  (`RoseMcp.XamlDiff.XamlReloadBaseline`) for the same reason the diff and the materialiser are --
+  the host cannot be unit tested.
+- **A first apply records and applies nothing.** What the running app was built from is not on disk
+  once the file has been edited, and this side will not reconstruct it. The alternative was to diff
+  the file against itself, which finds nothing and reports success, silently skipping the caller's
+  first edit -- the exact shape of failure this milestone is gated on. So it records, says which
+  reason it was, and `oldXaml` remains available for that one call.
+- **The baseline advances whether or not every edit took.** A structural edit is not idempotent:
+  re-sending an `AddChild` because something else in the batch failed puts a second copy of the
+  element in on the attempt that works. Failures are reported and belong to the caller. The one case
+  that does *not* advance is the provider failing to report at all -- the commands were injected and
+  may have run, so the message says that a retry could double what this batch was adding.
+- **Markup that does not parse is refused, not recorded.** Otherwise the first apply of a
+  half-written file becomes the baseline, and every apply after it reports a parse error about a file
+  the caller has since fixed, with nothing it can do to say so. One parser decides, via
+  `XamlDiff.Parses`, so the gate and the diff cannot disagree about what is diffable.
+- **The file's age is three-valued.** Unchanged since the app started, changed since, or unknown.
+  A process that will not give its start time is no evidence either way, and reporting that as
+  "changed" would be a claim about the file with nothing behind it.
+- **No file watcher, though the card offered one.** Applying on every save would mutate a running app
+  from a keystroke, including the saves mid-edit that do not parse, and an MCP tool has nowhere to
+  push the result: the agent would have to ask what happened anyway. The agent asks, and is told.
+
+Proven by `Applies_successive_file_edits_to_the_running_app`: two first-apply cases (a file untouched
+since launch, and one changed since), then two edits applied in one session with nothing passed but
+the path, each read back off the running app, then an apply with nothing to apply. The assertion that
+earns it is the count on the second edit -- it touches a different property from the first, so a
+baseline still sitting on the original would come back with two edits rather than one.
+
+### D31 — The stamp that proves a marker answers *this* request had to be read before the tree was written (#12, extends #57, closes most of #89)
+#57 gave the overlay's markers a generation: the host stamps a number on the request, the provider
+echoes it onto what it writes, and a marker carrying a different number is rejected as the previous
+request's. #89 recorded that the tree, properties and apply handshakes still answered on existence
+alone and called extending it mechanical. It is not, in two ways, and continuous apply is what made
+finding out worthwhile -- a stale `apply.tsv` reports the previous apply's per-edit outcomes as this
+one's, and in a loop that edits the same property repeatedly the keys line up, so it reads as success.
+
+- **The tree snapshot is written before the request is read.** `ReadRequest` is also what learns the
+  generation, so stamping the snapshot's marker without hoisting that read stamps it with the
+  *previous* number and the host rejects a perfectly good tree. It presented as a tree read that
+  timed out and blamed the app's diagnostics layer, and the continuous-apply test caught it within
+  the hour.
+- **`selection.ready` deliberately carries no generation.** It records a click, which outlives the
+  injection that armed select mode by design, so stamping it would have the read that goes looking
+  for it reject its own answer as stale. One file cannot both answer a request and survive one; what
+  #89 has left is splitting `selecthandle`'s confirmation onto its own marker.
+
+One `WriteMarker` writes all of them now, so the next marker added cannot forget the stamp -- which
+is exactly how this came to be half done.

@@ -71,6 +71,7 @@ public sealed class ToolDescriptionTests
 	[InlineData(ToolNames.ReadGeneratedDocument, "no other way")]
 	[InlineData(ToolNames.BuildFreshness, "a green build does not answer")]
 	[InlineData(ToolNames.AddUsing, "rather than editing the import block")]
+	[InlineData(ToolNames.ResolveName, "not reachable through rose_apply_code_fix")]
 	public void Says_what_the_caller_would_otherwise_have_done(string tool, string expected)
 	{
 		var descriptions = Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);

@@ -12,6 +12,12 @@ public sealed record CodeFixList : WorkspaceScopedResult
 	/// <summary>
 	/// Diagnostics present in the file that no fixer offers to repair, by id. Reported so the absence
 	/// of a fix reads as "nothing here can fix that" rather than "there is nothing wrong".
+	/// <para>
+	/// Includes ids a fixer claims and then declines: a provider that registers for a diagnostic and
+	/// offers no action is, from here, the same as no provider. Counting only unclaimed ids left
+	/// those diagnostics out of this list and out of <see cref="Fixes"/> both, which reported them as
+	/// not being there at all.
+	/// </para>
 	/// </summary>
 	public required IReadOnlyList<string> UnfixableIds { get; init; }
 

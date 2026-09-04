@@ -570,6 +570,35 @@ public sealed class MemberEditTests
 		Assert.Contains("Library.Greeter.Shout", elsewhere.Message, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// The signature comes out exactly as it went in, wrapping included.
+	/// <para>
+	/// Where a hand-wrapped parameter list sits is layout Roslyn's formatter has no rule about, and
+	/// neither IDE0055 nor dotnet format has an opinion either -- so a tool that re-indents one does
+	/// it silently, and the diff of a one-line body change grows a signature nobody touched. Replacing
+	/// a body promises the signature cannot drift; this is the cheapest place that promise can break.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_wrapped_signature_exactly_as_it_was()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(
+			session,
+			Request(MemberEditKind.ReplaceBody, "Library.Wrapped.Join", "return string.Concat(first, second, third);"));
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		Assert.Contains(
+			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third)\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
 	private static Task<MemberEditResult> ReplaceAsync(WorkspaceSession session, string symbol, string code) =>
 		EditAsync(session, Request(MemberEditKind.Replace, symbol, code));
 

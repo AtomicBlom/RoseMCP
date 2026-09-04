@@ -235,4 +235,19 @@ public static class ToolDescriptions
         way. It reports what it added, what was already covered and why, and how many errors the
         import resolved.
         """;
+
+	public const string ResolveName = """
+        Works out which namespace an unresolved name needs, so you do not have to already know. Give
+        it the name as the code spells it -- Encoding, List<int>, Encoding.UTF8 -- and it searches
+        the compilation's own universe: this project's source, the projects it references, and every
+        referenced assembly. Reach for it when a write reports CS0246, CS0103 or CS1061 and you
+        cannot say what the import should be; when you can, pass usings on the write itself and skip
+        this. It refuses to choose between two candidates rather than returning the first, because
+        the wrong import compiles and binds to the wrong type, which is the one failure here with no
+        symptom at all. It also says what an import would not fix: a nested type that has to be
+        written through its container, a type that takes a different number of type arguments, one
+        declared in a project this one does not reference, and a namespace already in scope. The
+        IDE's own add-import fix is not reachable through rose_apply_code_fix, since it lives in an
+        assembly this server does not load, so this is how to ask.
+        """;
 }

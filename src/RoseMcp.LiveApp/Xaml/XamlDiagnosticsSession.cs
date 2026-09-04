@@ -69,6 +69,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// folder in a global and does everything on the app's UI thread. Two folders would need a different
 	// provider, and would buy no parallelism from a single-threaded consumer. The wait can be long --
 	// the endpoint timeout is twenty seconds -- and a slow correct answer is the trade being made.
+	//
+	// It has to be a Monitor rather than a semaphore, and that is load-bearing: selecting by handle
+	// finishes by calling ReadSelection, which takes this lock again on the same thread. Monitor is
+	// re-entrant and lets that through; a SemaphoreSlim is not and would deadlock the call forever.
 	private readonly object _requests = new();
 
 	/// <summary>

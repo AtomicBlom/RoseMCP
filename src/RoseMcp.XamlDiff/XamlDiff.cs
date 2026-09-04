@@ -62,13 +62,26 @@ public static class XamlDiff
 			var matchIndex = FindMatch(newChild, oldChildren, usedOld);
 			if (matchIndex < 0)
 			{
+				var markup = newChild.ToString(SaveOptions.DisableFormatting);
+
 				edits.Add(new XamlEdit
 				{
 					Kind = XamlEditKind.AddChild,
 					Target = AddressOf(newElement),
-					Payload = newChild.ToString(SaveOptions.DisableFormatting),
+					Payload = markup,
 					Index = index,
 				});
+
+				// Said rather than left to be discovered. An x:Name belongs to a namescope the markup
+				// compiler filled in, and nothing settable at runtime puts an element into one -- so an
+				// element added here arrives without its name, and "#thatName" will not find it. Its
+				// path will. The surprise would otherwise land later, on a call that looks unrelated.
+				if (XamlMaterialiser.NamesAnything(markup))
+				{
+					notes.Add($"The element added under {AddressOf(newElement)} carries an x:Name, which a live "
+						+ "add cannot give it: names come from a namescope the markup compiler built. Address it "
+						+ "by its path instead.");
+				}
 			}
 			else
 			{
@@ -118,7 +131,7 @@ public static class XamlDiff
 
 	// Property attributes, including attached (dotted) ones; excludes namespace declarations and x:*
 	// directives, which are not runtime-settable properties.
-	private static Dictionary<string, string> Properties(XElement element)
+	internal static Dictionary<string, string> Properties(XElement element)
 	{
 		var result = new Dictionary<string, string>(StringComparer.Ordinal);
 		foreach (var attribute in element.Attributes())
@@ -190,10 +203,10 @@ public static class XamlDiff
 		return $"{element.Name.LocalName}[{index}]";
 	}
 
-	private static string? NameOf(XElement element)
+	internal static string? NameOf(XElement element)
 		=> element.Attribute(XName.Get("Name", XamlNamespace))?.Value ?? element.Attribute("Name")?.Value;
 
-	private static string InferValueType(string property, string value)
+	internal static string InferValueType(string property, string value)
 	{
 		if (ValueTypes.TryGetValue(property, out var mapped)) return mapped;
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -461,9 +462,8 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	/// <summary>
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree (#12).
-	/// Property edits and removals apply whether or not the element has an <c>x:Name</c>; adding an
-	/// element is reported as not-yet-applied rather than dropped silently. Returns each computed edit
-	/// with its outcome, plus the diff engine's notes.
+	/// Property changes, removals and additions all apply, and on any element the diff can address rather
+	/// than only a named one. Returns each computed edit with its outcome, plus the diff engine's notes.
 	/// </summary>
 	public LiveXamlReloadResult ApplyReload(int pid, string oldXaml, string newXaml)
 	{
@@ -477,27 +477,47 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return new LiveXamlReloadResult { Detail = $"Could not diff the XAML: {exception.Message}" };
 		}
 
-		// The target goes to the provider exactly as the diff wrote it, `#name` or path alike. It used
-		// to be narrowed to a bare x:Name first and anything else refused here without being tried,
-		// which ruled out every element the markup never named -- and that is most of what a click
-		// lands on, since anything inside a control template is unnamed. Whether an address resolves is
-		// a question about the live tree, so it is asked where the live tree is; this side has only the
-		// string, and a string cannot tell an unnameable element from an absent one.
+		// The target goes to the provider exactly as the diff wrote it, `#name` or path alike: whether an
+		// address resolves is a question about the live tree, so it is asked where the live tree is.
 		//
-		// A removal carries the child's address and nothing else. RemoveChild needs a parent and a
-		// position, and the provider reads both off the live tree -- which is the only place they are
-		// reliable, since a markup index and a visual index are not always the same number.
+		// An addition is the one edit that is not a single command. There is no way to apply markup --
+		// CreateInstance builds one object from a type name -- so the subtree is taken apart into build
+		// steps and sent as several commands, and this edit's outcome is the outcome of all of them. The
+		// taking apart lives in the diff library, which is pure and unit tested; doing it here would put
+		// the fiddliest part of this somewhere no unit test can reach.
 		var commands = new List<string>();
-		var plans = new List<(XamlEdit Edit, string? Target)>();
+		var plans = new List<(XamlEdit Edit, List<string> Keys)>();
+		var notes = new List<string>(diff.Notes);
+
 		foreach (var edit in diff.Edits)
 		{
-			var applies = edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty or XamlEditKind.RemoveChild;
-			plans.Add((edit, applies ? edit.Target : null));
+			var keys = new List<string>();
 
-			if (applies)
+			if (edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty or XamlEditKind.RemoveChild)
 			{
-				commands.Add(string.Join('\t', Op(edit.Kind), edit.Target, edit.Property ?? string.Empty, edit.ValueType ?? string.Empty, edit.Value ?? string.Empty));
+				var property = edit.Property ?? string.Empty;
+				commands.Add(Line(Op(edit.Kind), edit.Target, property, edit.ValueType ?? string.Empty, edit.Value ?? string.Empty, string.Empty, 0));
+				keys.Add(Key(Op(edit.Kind), edit.Target, property, string.Empty));
 			}
+			else if (edit.Kind is XamlEditKind.AddChild && edit.Payload is { } payload)
+			{
+				try
+				{
+					foreach (var step in XamlMaterialiser.Steps(payload, edit.Target, edit.Index ?? 0))
+					{
+						var (line, key) = Command(step);
+						commands.Add(line);
+						keys.Add(key);
+					}
+				}
+				catch (Exception exception)
+				{
+					keys.Clear();
+					notes.Add($"The element added under {edit.Target} could not be taken apart into build steps: {exception.Message}");
+				}
+			}
+
+			plans.Add((edit, keys));
 		}
 
 		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -515,19 +535,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		}
 
 		var results = new List<LiveXamlEditResult>();
-		foreach (var (edit, target) in plans)
+		foreach (var (edit, keys) in plans)
 		{
-			var status = target is null
-				? "unsupported: adding an element is not applied live yet"
-				: statuses.GetValueOrDefault($"{Op(edit.Kind)}\t{target}\t{edit.Property}", "not reported");
-
 			results.Add(new LiveXamlEditResult
 			{
 				Kind = edit.Kind.ToString(),
 				Target = edit.Target,
 				Property = edit.Property,
 				Value = edit.Value,
-				Status = status,
+				Status = Outcome(keys, statuses),
 			});
 		}
 
@@ -535,7 +551,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			Applied = results.Count(result => result.Status == "applied"),
 			Results = results,
-			Notes = diff.Notes,
+			Notes = notes,
 		};
 	}
 
@@ -553,6 +569,60 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		_ => kind.ToString(),
 	};
 
+	/// <summary>
+	/// One command line: op, target, property, value type, value, arg, index. The last two are only
+	/// used by a structural command, and the shape is fixed so the provider can read positionally
+	/// without every command having to carry every field.
+	/// </summary>
+	private static string Line(string op, string target, string property, string valueType, string value, string arg, int index) =>
+		string.Join('\t', op, target, property, valueType, value, arg, index.ToString(CultureInfo.InvariantCulture));
+
+	/// <summary>
+	/// How a command's result is found again. The arg is part of it: without it, one slot given two
+	/// children produces two rows keyed identically, and the second child's outcome silently replaces
+	/// the first's.
+	/// </summary>
+	private static string Key(string op, string target, string property, string arg) =>
+		string.Join('\t', op, target, property, arg);
+
+	/// <summary>The command for one build step, with the key its result will come back under.</summary>
+	private static (string Line, string Key) Command(XamlStep step) => step.Kind switch
+	{
+		XamlStepKind.Create => (
+			Line("CreateInstance", step.Target, step.TypeName ?? string.Empty, string.Empty, string.Empty, string.Empty, 0),
+			Key("CreateInstance", step.Target, step.TypeName ?? string.Empty, string.Empty)),
+
+		XamlStepKind.SetProperty => (
+			Line("SetProperty", step.Target, step.Property ?? string.Empty, step.ValueType ?? string.Empty, step.Value ?? string.Empty, string.Empty, 0),
+			Key("SetProperty", step.Target, step.Property ?? string.Empty, string.Empty)),
+
+		_ => (
+			Line("AddChild", step.Target, string.Empty, string.Empty, string.Empty, step.Child ?? string.Empty, step.Index),
+			Key("AddChild", step.Target, string.Empty, step.Child ?? string.Empty)),
+	};
+
+	/// <summary>
+	/// What to report for one edit, given the commands it turned into.
+	/// <para>
+	/// An edit built from several commands is only applied if every one of them was. Reporting the last
+	/// outcome, or the first, would let an addition whose element was created and then failed to attach
+	/// come back as a success -- and the caller would go looking for an element that exists and is in
+	/// nobody's tree.
+	/// </para>
+	/// </summary>
+	private static string Outcome(List<string> keys, Dictionary<string, string> statuses)
+	{
+		if (keys.Count == 0) return "unsupported: this edit is not applied live yet";
+
+		foreach (var key in keys)
+		{
+			var status = statuses.GetValueOrDefault(key, "not reported");
+			if (status != "applied") return status;
+		}
+
+		return "applied";
+	}
+
 	private static Dictionary<string, string> ParseApplyResults(string applyFile)
 	{
 		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -563,8 +633,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			var fields = line.Split('\t');
 			if (fields.Length < 4) continue;
 
-			// Keyed by op, target name, property -- the same shape the command was sent as.
-			statuses[$"{fields[0]}\t{Unescape(fields[1])}\t{Unescape(fields[2])}"] = fields[3];
+			// Keyed exactly the way the command was sent -- op, target, property, arg -- so each result can
+			// be found again. The arg comes after the status and may be missing from an older provider's row.
+			var arg = fields.Length > 4 ? Unescape(fields[4]) : string.Empty;
+			statuses[Key(fields[0], Unescape(fields[1]), Unescape(fields[2]), arg)] = fields[3];
 		}
 
 		return statuses;

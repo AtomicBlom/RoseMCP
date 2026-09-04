@@ -285,6 +285,27 @@ reclaim memory or pick up a rebuilt generator.
   pins it durably so no setup call is needed -- beside it and never up the tree, because two
   solutions in one directory routinely declare different configurations. Restore gets the same properties, because a repository that moves
   `BaseIntermediateOutputPath` per configuration moves its assets file with it.
+- **A structural edit is applied against the live collection, never against markup's idea of it.**
+  Two facts about `IVisualTreeService` cost real time to find and neither is visible in the
+  signatures. What `AddChild` and `RemoveChild` call a *parent* is the **collection**, not the
+  element: passing a panel's handle returns `ERROR_NOT_FOUND`, and what they want is the value of one
+  of its collection-valued properties (`Children` on a `Panel`, `Items` on an `ItemsControl`). And
+  `CreateInstance` takes a **null** value for an element, not an empty string -- an empty one asks the
+  framework to parse `""` as a Grid and it answers `E_UNEXPECTED`, which reads like a bad type name
+  and is not one. The two codes tell those apart: `E_FAIL` is "no type of that name", `E_UNEXPECTED`
+  is a real type built wrongly.
+  <br>
+  The index is asked of the collection rather than taken from the diff, and that is not tidiness. In
+  the test that proves this, the add runs first and inserts at 1, so the element the removal names has
+  moved to 2 by the time it runs -- the markup index would have removed the element just added, and
+  reported success. Removal also has to be *forgotten* from the node list, closed over descendants,
+  because that list is append-only: `OnVisualTreeChange` appends on Add and removes nothing on Remove,
+  so the next edit in the same batch would otherwise resolve against a tree that no longer exists.
+  <br>
+  Markup is taken apart in `RoseMcp.XamlDiff`, not in the host: the host cannot be unit tested, since
+  it targets Windows and the test projects cannot see inside it, and the ordering this depends on --
+  create, fill, nest, and attach to the running app *last*, so nothing can observe a half-built
+  element -- is exactly the kind of thing that needs a test rather than a comment.
 - **A live element is addressed by one grammar, counted the same way at both ends.** An `x:Name` is
   absent far more often than not -- everything inside a control template is unnamed -- so an element
   is addressed as `#name` or, failing that, `Type[index]` segments anchored at its nearest named

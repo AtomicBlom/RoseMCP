@@ -285,6 +285,23 @@ reclaim memory or pick up a rebuilt generator.
   pins it durably so no setup call is needed -- beside it and never up the tree, because two
   solutions in one directory routinely declare different configurations. Restore gets the same properties, because a repository that moves
   `BaseIntermediateOutputPath` per configuration moves its assets file with it.
+- **A live element is addressed by one grammar, counted the same way at both ends.** An `x:Name` is
+  absent far more often than not -- everything inside a control template is unnamed -- so an element
+  is addressed as `#name` or, failing that, `Type[index]` segments anchored at its nearest named
+  ancestor. Both halves have to count identically or the address resolves to the element next door,
+  which is the worst available outcome here: the change lands, the status says `applied`, and the
+  thing that moved is not the thing that was named. Three ways that went wrong are worth knowing.
+  The diff counted siblings by their *qualified* XML name and printed the *local* one, so
+  `local:Border` and `Border` each counted only their own kind and both came out `Border[0]` -- one
+  address for two elements. The visual tree carries a CLR type name and no XML namespace at all, so
+  the local name is the only part both ends can see, and that is what decides the count. And our own
+  toolbar is excluded when the index is built, not only when the snapshot is written: an address is a
+  position among siblings, so counting an element nobody can see shifts every address after it. A
+  duplicate `x:Name` is refused rather than answered, because a template instantiated three times
+  gives three elements of that name and picking one of them is a guess wearing a success message.
+  Addresses computed from the live tree are exact, being resolved against the tree they came from; an
+  address a diff derived from markup is a best effort, since markup order is not always the visual
+  tree's, and it fails by saying so.
 - **A XAML project's generated half is synthesised, and says so.** The markup compiler runs only in a
   real build, so `MSBuildWorkspace` hands us code-behind missing its base type, its `x:Name` fields
   and `InitializeComponent` -- 2030 phantom errors in one project of Drawboard's UWP app.

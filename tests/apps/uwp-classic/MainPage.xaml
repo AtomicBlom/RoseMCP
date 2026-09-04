@@ -15,6 +15,19 @@
             <Border x:Name="Transient" Background="#FF303A44" Padding="8" CornerRadius="4">
                 <TextBlock x:Name="TransientCaption" Text="comes and goes" Foreground="#FF8FA6BF" FontSize="12" />
             </Border>
+            <!-- Deliberately unnamed, under a named anchor. Every other element here has an x:Name,
+                 so nothing in this app could exercise the one addressing case that matters most:
+                 an element the markup never named, which is what a click lands on inside any
+                 control template. Two Borders of the same type rather than one, because resolving
+                 *something* is not the test. Telling Border[0] from Border[1] is. -->
+            <StackPanel x:Name="Pair" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                <Border Background="#FF3A2A2A" Padding="6" CornerRadius="3">
+                    <TextBlock Text="first" Foreground="#FF8FA6BF" FontSize="12" />
+                </Border>
+                <Border Background="#FF2A3A2A" Padding="6" CornerRadius="3">
+                    <TextBlock Text="second" Foreground="#FF8FA6BF" FontSize="12" />
+                </Border>
+            </StackPanel>
         </StackPanel>
     </Grid>
 </Page>

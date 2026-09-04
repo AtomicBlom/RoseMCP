@@ -176,7 +176,17 @@ public static class XamlDiff
 		var name = NameOf(element);
 		if (name is not null) return $"#{name}";
 
-		var index = element.ElementsBeforeSelf(element.Name).Count();
+		// Counted over the local name rather than the qualified one, because the local name is the only
+		// part the live tree has: an element there carries a CLR type name and no XML namespace at all,
+		// so an index that separated `local:Border` from `Border` would rest on a distinction the
+		// resolver cannot see. It counted the qualified name and printed the local one, so each of those
+		// two counted only its own kind and both came out `Border[0]` -- one address for two elements,
+		// which resolves to whichever the walk reaches first and reports a successful edit either way.
+		// Counting the way the resolver counts is what keeps the two halves in agreement.
+		//
+		// Property-element syntax needs no special case here: `Grid.RowDefinitions` has a dot in its
+		// local name and a type's never does, so it can equal no segment and is passed over.
+		var index = element.ElementsBeforeSelf().Count(sibling => sibling.Name.LocalName == element.Name.LocalName);
 		return $"{element.Name.LocalName}[{index}]";
 	}
 

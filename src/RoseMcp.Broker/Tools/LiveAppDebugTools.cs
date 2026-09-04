@@ -482,9 +482,11 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		"Hot-reload a running XAML app: diff two versions of its XAML and apply the changes to the live "
 			+ "visual tree, no relaunch. Pass the previous XAML and the new XAML; the diff reduces to the "
 			+ "minimal set of edits and each is applied and reported back with its outcome. Property changes "
-			+ "on named (x:Name) elements apply today -- a colour, a size, a piece of text; structural changes "
-			+ "and unnamed elements are reported as not-yet-applied rather than dropped. Use it after editing a "
-			+ "XAML file: pass what was on disk before and what is there now.")]
+			+ "apply today -- a colour, a size, a piece of text -- on any element the diff can address, named "
+			+ "or not; structural changes (adding or removing an element) are reported as not-yet-applied "
+			+ "rather than dropped. An element with no x:Name is addressed by the path rose_xaml_tree and "
+			+ "rose_xaml_selection report as its address, so a click inside a control template is targetable. "
+			+ "Use it after editing a XAML file: pass what was on disk before and what is there now.")]
 	public async Task<LiveXamlReloadResult> XamlApplyAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description("The previous XAML (what the file held before the edit).")] string oldXaml,
@@ -544,9 +546,13 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	[Description(
 		"Read the element the user picked by clicking it in the app -- whether they armed select mode from "
 			+ "RoseMCP's in-app toolbar or you armed it with rose_xaml_select_mode. Returns its type, its "
-			+ "x:Name when it has one, and the stable handle -- pass that to rose_xaml_properties to see what "
-			+ "the XAML sets on it, or to rose_xaml_apply's diff to change it. If nobody has picked yet it "
-			+ "says so, and whether select mode is armed, so it is safe to poll while waiting for the user.")]
+			+ "x:Name when it has one, the stable handle, and its address. Pass the handle to "
+			+ "rose_xaml_properties to see what the XAML sets on it, and use the address as the element's "
+			+ "identity in rose_xaml_apply's diff to change it -- the address works whether or not the markup "
+			+ "named it, which matters because a click usually lands on an unnamed part of a template. Every "
+			+ "candidate in the stack carries one too, so choosing an ancestor still leaves something "
+			+ "targetable. If nobody has picked yet it says so, and whether select mode is armed, so it is "
+			+ "safe to poll while waiting for the user.")]
 	public async Task<LiveXamlSelection> XamlSelectionAsync(
 		[Description(SessionHelp)] string sessionId,
 		CancellationToken cancellationToken = default)

@@ -51,6 +51,22 @@ public sealed class XamlDiffTests
 	}
 
 	[Fact]
+	public void Two_same_named_types_from_different_namespaces_do_not_share_an_address()
+	{
+		// The sibling index was counted over the *qualified* name and then printed with the *local*
+		// one, so a namespace-qualified element and a framework element of the same local name each
+		// counted only their own kind and both came out at index 0. Two different elements with one
+		// address is the worst shape this can fail in: an apply lands on whichever the resolver
+		// reaches first, and the reader sees a plausible target and a successful edit.
+		var edits = Compute(
+			$"<Grid {Ns} xmlns:local=\"using:App\"><local:Border Opacity=\"1\" /><Border Opacity=\"1\" /></Grid>",
+			$"<Grid {Ns} xmlns:local=\"using:App\"><local:Border Opacity=\"0.5\" /><Border Opacity=\"0.25\" /></Grid>");
+
+		Assert.Equal(2, edits.Count);
+		Assert.Equal(2, edits.Select(edit => edit.Target).Distinct().Count());
+	}
+
+	[Fact]
 	public void An_unnamed_element_under_a_named_ancestor_is_anchored_at_the_name()
 	{
 		var edits = Compute(

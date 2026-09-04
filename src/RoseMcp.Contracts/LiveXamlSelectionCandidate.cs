@@ -30,4 +30,11 @@ public sealed record LiveXamlSelectionCandidate
 	public string? File { get; init; }
 
 	public int? Line { get; init; }
+
+	/// <summary>
+	/// How to name this candidate to a tool that changes one; see LiveXamlNode.Address. Carried on
+	/// every candidate rather than only the picked one, because the stack exists precisely so a
+	/// caller can choose an ancestor off it -- and having chosen, it needs something it can target.
+	/// </summary>
+	public string? Address { get; init; }
 }

@@ -32,6 +32,13 @@ public sealed record LiveXamlSelection
 	/// <summary>The element's <c>x:Name</c>, when it has one.</summary>
 	public string? Name { get; init; }
 
+	/// <summary>
+	/// How to name the picked element to a tool that changes one; see LiveXamlNode.Address. This is
+	/// what turns a click into an edit: <see cref="Handle"/> reads it, and this changes it, including
+	/// where the markup never gave it a name.
+	/// </summary>
+	public string? Address { get; init; }
+
 	public string? Detail { get; init; }
 
 	/// <summary>

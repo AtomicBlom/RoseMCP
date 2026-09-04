@@ -31,6 +31,14 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private const int MaxVariables = 64;
 	private const int DefaultAutoContinueSeconds = 30;
 
+	/// <summary>
+	/// How many times to try detaching before giving up. Failure under contention is plausibly
+	/// transient and a retry is far cheaper than what failing costs the person whose app it is.
+	/// </summary>
+	private const int DetachAttempts = 3;
+
+	private static readonly TimeSpan DetachRetryDelay = TimeSpan.FromMilliseconds(50);
+
 	private readonly Lock _gate = new();
 	private readonly List<BreakpointBinding> _bindings = [];
 	private int _nextBindingId = 1;
@@ -155,11 +163,58 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	public void Detach()
+	/// <summary>
+	/// Detaches from the target, leaving it running, and says whether it managed to.
+	/// <para>
+	/// The return value is the whole point. This used to log its own failure and return normally,
+	/// which made the one operation whose entire contract is "the target keeps running" report
+	/// success for a target it was about to kill: <see cref="Dispose"/> then called
+	/// <c>Terminate()</c> under a comment asserting the process had been detached, and terminating
+	/// the interface while still attached takes the debuggee down with it.
+	/// </para>
+	/// <para>
+	/// Retried, and between attempts rather than inside one: <c>Stop</c>/<c>Detach</c> failing under
+	/// contention is plausibly transient -- the case that found this was a detach immediately after
+	/// a <c>Continue</c> that released a step hold -- and the gate is released between tries so a
+	/// callback that is itself waiting on it can drain rather than being held off by the retry.
+	/// </para>
+	/// </summary>
+	public bool Detach()
+	{
+		Exception? failure = null;
+
+		for (var attempt = 1; attempt <= DetachAttempts; attempt++)
+		{
+			if (TryDetachOnce(attempt, out failure)) return true;
+			if (attempt < DetachAttempts) Thread.Sleep(DetachRetryDelay);
+		}
+
+		// The failure deserves an event more than the success does: without one, a caller is told the
+		// session closed and is never told the debugger is still on their process.
+		buffer.Append(
+			LiveDebugEventKind.SessionNotice,
+			$"Could not detach from pid {TargetProcessId} after {DetachAttempts} attempts: "
+				+ $"{failure?.Message ?? "no reason given"}. The debugging interface is being left open rather "
+				+ "than terminated, because terminating it while still attached kills the target.");
+
+		logger.LogError(failure, "Detach from pid {Pid} failed after {Attempts} attempts.", TargetProcessId, DetachAttempts);
+
+		return false;
+	}
+
+	/// <summary>
+	/// One attempt, holding the gate for no longer than the attempt itself so the caller can wait
+	/// between tries without holding off the callbacks that arrive on mscordbi's thread.
+	/// </summary>
+	private bool TryDetachOnce(int attempt, out Exception? failure)
 	{
 		lock (_gate)
 		{
-			if (_process is null || _detached || _exited) return;
+			failure = null;
+
+			// Nothing is attached, so what detaching promises -- the target keeps running, and the
+			// interface is safe to terminate -- already holds.
+			if (_process is null || _detached || _exited) return true;
 
 			DisposeTimer();
 			_stoppedAtBreakpoint = false;
@@ -172,11 +227,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				_process.Detach();
 				_detached = true;
 				buffer.Append(LiveDebugEventKind.SessionNotice, "Detached; the target keeps running.");
-				logger.LogInformation("Detached from pid {Pid}.", TargetProcessId);
+				logger.LogInformation("Detached from pid {Pid} on attempt {Attempt}.", TargetProcessId, attempt);
+				return true;
 			}
 			catch (Exception exception)
 			{
-				logger.LogWarning(exception, "Detach from pid {Pid} failed.", TargetProcessId);
+				failure = exception;
+				logger.LogWarning(
+					exception, "Detach from pid {Pid} failed on attempt {Attempt}.", TargetProcessId, attempt);
+				return false;
 			}
 		}
 	}
@@ -389,12 +448,33 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		return objectValue.GetFieldValue(cls.Raw, token.Value);
 	}
 
+	/// <summary>
+	/// Detaches, and terminates the debugging interface only if that worked.
+	/// <para>
+	/// <c>Terminate()</c>'s documented precondition is that every process has been detached from or
+	/// terminated; running it while still attached is what takes the debuggee down with it. That
+	/// precondition used to be written here as a comment asserting the fact rather than as a check
+	/// of it, while <c>_detached</c> -- the field recording exactly that fact -- went unread.
+	/// </para>
+	/// <para>
+	/// Leaking the interface for the few seconds until this host process exits is strictly better
+	/// than killing the application somebody is running.
+	/// </para>
+	/// </summary>
 	public void Dispose()
 	{
-		Detach();
+		if (!Detach())
+		{
+			logger.LogWarning(
+				"Leaving the ICorDebug interface open for pid {Pid}: the detach failed, and terminating it "
+					+ "while still attached would take the target down.",
+				TargetProcessId);
+
+			return;
+		}
+
 		try
 		{
-			// Terminates the debugging interface, not the debuggee -- the process was detached above.
 			_corDebug?.Terminate();
 		}
 		catch (Exception exception)

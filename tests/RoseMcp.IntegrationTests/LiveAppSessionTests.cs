@@ -78,6 +78,69 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// #53: a detach that fails used to be swallowed, and the cleanup that followed it terminated the
+	/// debugging interface while still attached -- which takes the debuggee down with it. The target
+	/// surviving is the outcome; <see cref="LiveAppSession.DetachFailure"/> is the evidence, and it is
+	/// the more useful assertion of the two, because a close that reports a reason is a bug report
+	/// while a dead child process is a mystery.
+	/// </summary>
+	[Fact]
+	public async Task Closing_a_session_detaches_cleanly_and_leaves_the_target_running()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+
+			Assert.Null(session.DetachFailure);
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A target that has already exited has nothing to detach from, so closing must still report a
+	/// clean detach. Worth its own test because the fix turned "detach" from something that returned
+	/// nothing into something whose answer is now acted on: getting this case wrong would make every
+	/// close after a target exits report a detach failure and fail rose_debug_detach outright.
+	/// </summary>
+	[Fact]
+	public async Task Closing_a_session_whose_target_has_already_exited_is_not_a_detach_failure()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+		// Waited for, not just requested: the point is that the host observes the exit before the
+		// close, which is what puts the detach down its already-gone path rather than its normal one.
+		child.Kill(entireProcessTree: true);
+		await child.WaitForExitAsync(cancellationToken);
+		await WaitForEventAsync(session, entry => entry.Kind == LiveDebugEventKind.ProcessExited, cancellationToken);
+
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+
+		Assert.Null(session.DetachFailure);
+	}
+
+	private static LiveAppTarget AttachTo(int processId) => new()
+	{
+		Kind = LiveAppTargetKind.AttachProcess,
+		ProcessId = processId,
+		Description = "probe target",
+	};
+
+	/// <summary>
 	/// A tracepoint (issue #17): set at a method by name, it binds to the already-loaded module,
 	/// records each hit in the event stream with its message, never pauses the target, and can be
 	/// removed. This is the low-friction, non-freezing default for a turn-based agent.

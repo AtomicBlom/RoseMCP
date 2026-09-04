@@ -35,8 +35,9 @@ public static class SolutionWriter
 				cancellationToken.ThrowIfCancellationRequested();
 
 				var added = after.GetDocument(documentId);
-				if (added?.FilePath is not { Length: > 0 } path) continue;
+				if (added?.FilePath is not { Length: > 0 } addedPath) continue;
 
+				var path = Rooted(addedPath, added);
 				var text = (await added.GetTextAsync(cancellationToken)).ToString();
 
 				changed.Add(path);
@@ -58,8 +59,9 @@ public static class SolutionWriter
 
 				var oldDocument = before.GetDocument(documentId);
 				var newDocument = after.GetDocument(documentId);
-				if (oldDocument?.FilePath is not { Length: > 0 } path || newDocument is null) continue;
+				if (oldDocument?.FilePath is not { Length: > 0 } changedPath || newDocument is null) continue;
 
+				var path = Rooted(changedPath, oldDocument);
 				var oldText = (await oldDocument.GetTextAsync(cancellationToken)).ToString();
 				var newText = (await newDocument.GetTextAsync(cancellationToken)).ToString();
 				if (string.Equals(oldText, newText, StringComparison.Ordinal)) continue;
@@ -118,5 +120,26 @@ public static class SolutionWriter
 		var names = entries.Select(entry => Path.GetFileName(entry.Path)).ToArray();
 
 		return names.Length <= 3 ? string.Join(", ", names) : $"{names.Length} file(s)";
+	}
+
+	/// <summary>
+	/// The document's path, refusing one that is not rooted.
+	/// <para>
+	/// A relative <see cref="TextDocument.FilePath"/> resolves against the worker process's current
+	/// directory -- the repository root in the ordinary case, since a stdio worker inherits its
+	/// client's directory -- so the file lands outside the project while the result names a path
+	/// that reads as though it did not. The self-write record goes the same way, filed under a key
+	/// the disk barrier will never match again, which turns the damage into a mystery about
+	/// staleness rather than a bug anyone can find. Refusing names it at the moment it happens.
+	/// </para>
+	/// </summary>
+	private static string Rooted(string path, Document document)
+	{
+		if (Path.IsPathRooted(path)) return path;
+
+		throw new InvalidOperationException(
+			$"Document '{document.Name}' in project '{document.Project.Name}' has the relative path '{path}'. "
+			+ "Writing it would resolve that name against the worker's working directory rather than the "
+			+ "project directory, so nothing was written.");
 	}
 }

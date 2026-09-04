@@ -1,12 +1,16 @@
 name: CI
 
-# Build, check formatting, and run the fast (unit) tests on every push and PR. The solution has
-# net10.0-windows projects (the live-app host, the tray), so this must run on Windows. The integration
-# suite loads real solutions and drives design-time builds, real debugger sessions, and -- for the XAML
-# and UWP tests -- toolchains that are not present on a hosted runner (those tests skip themselves), so
-# it stays the local pre-commit gate rather than a CI job for now.
+# Build, check formatting, and run the fast (unit) tests on every pull request and on main. The
+# solution has net10.0-windows projects (the live-app host, the tray), so this must run on Windows.
+# The integration suite loads real solutions and drives design-time builds, real debugger sessions,
+# and -- for the XAML and UWP tests -- toolchains that are not present on a hosted runner (those
+# tests skip themselves), so it stays the local pre-commit gate rather than a CI job for now.
 on:
+  # Only main. A branch with a pull request open would otherwise run this twice for one
+  # change -- once for the push and once for the pull request -- which doubles the wait and
+  # halves the attention anybody pays to the result.
   push:
+    branches: [main]
   pull_request:
 
 # A second push to a branch makes the first run's answer worthless before it finishes. Main is the

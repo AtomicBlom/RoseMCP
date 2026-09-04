@@ -21,6 +21,18 @@ public sealed record LiveXamlProperty
 	/// <summary>The rendered value; null when the value is null.</summary>
 	public string? Value { get; init; }
 
+	/// <summary>
+	/// True when the framework gave no text for a value that is not null -- the value exists and
+	/// could not be rendered.
+	/// <para>
+	/// Present because an empty <see cref="Value"/> otherwise means two different things, and a
+	/// reader cannot tell an unset property from an unrenderable one. That is exactly how
+	/// <c>CornerRadius</c> reading as nothing went unnoticed: it looked like a property nobody had
+	/// set. String properties are excluded, since an unset string genuinely is empty.
+	/// </para>
+	/// </summary>
+	public bool ValueUnavailable { get; init; }
+
 	public string? ValueType { get; init; }
 
 	public string? DeclaringType { get; init; }

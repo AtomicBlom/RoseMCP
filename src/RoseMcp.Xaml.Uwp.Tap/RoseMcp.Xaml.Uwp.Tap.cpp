@@ -1988,6 +1988,75 @@ private:
 	// source info; otherwise those fields are empty and the caller degrades to provenance alone.
 	/// Turns a handle to a SolidColorBrush into #AARRGGBB, leaving anything else alone.
 	///
+	/// Reads a CornerRadius off the element itself, because XAML diagnostics renders it as nothing.
+	///
+	/// Both are structs, both are set by the same markup, and only one comes back with a value:
+	///
+	///     {"name":"Padding",      "value":"24,24,24,24", "valueType":"Windows.UI.Xaml.Thickness"}
+	///     {"name":"CornerRadius", "value":"",            "valueType":"Windows.UI.Xaml.CornerRadius"}
+	///
+	/// That is not our formatting -- the BSTR is populated by the framework and populated with
+	/// nothing -- so it can only be fixed by reading the value a second way.
+	///
+	/// Measured before being written, because the alternative was a per-type special case with a
+	/// maintenance tail and no idea how long the tail was. A sweep of every property of every
+	/// element in the probe app, 3,485 rows, found 32 empty-but-not-null values: 18 String
+	/// properties that genuinely are empty, and 14 CornerRadius. Thickness, GridLength, Size,
+	/// Vector3 and the rest all stringify. One type, so one special case.
+	///
+	/// The tail is still real: CornerRadius is declared by several unrelated types, and there is no
+	/// generic way to read a dependency property without the property's own static. If a seventh
+	/// type appears this returns false, and the caller reports the gap rather than an empty string --
+	/// which is the part that makes the next one findable instead of silent.
+	bool RenderCornerRadius(InstanceHandle handle, std::wstring& rendered)
+	{
+		if (!m_diagnostics || handle == 0) return false;
+
+		::IInspectable* raw = nullptr;
+		if (FAILED(m_diagnostics->GetIInspectableFromHandle(handle, &raw)) || !raw) return false;
+
+		winrt::Windows::Foundation::IInspectable instance{ nullptr };
+		winrt::attach_abi(instance, raw); // adopt the ref
+
+		xaml::CornerRadius radius{};
+		if (const auto border = instance.try_as<xcontrols::Border>()) radius = border.CornerRadius();
+		else if (const auto control = instance.try_as<xcontrols::Control>()) radius = control.CornerRadius();
+		else if (const auto grid = instance.try_as<xcontrols::Grid>()) radius = grid.CornerRadius();
+		else if (const auto stack = instance.try_as<xcontrols::StackPanel>()) radius = stack.CornerRadius();
+		else if (const auto relative = instance.try_as<xcontrols::RelativePanel>()) radius = relative.CornerRadius();
+		else if (const auto presenter = instance.try_as<xcontrols::ContentPresenter>()) radius = presenter.CornerRadius();
+		else return false;
+
+		// The same four-number form Thickness arrives in, so the two read alike and a caller that
+		// parses one parses the other.
+		rendered = Number(radius.TopLeft) + L"," + Number(radius.TopRight)
+			+ L"," + Number(radius.BottomRight) + L"," + Number(radius.BottomLeft);
+
+		return true;
+	}
+
+	/// A double as XAML would write it: no trailing zeros, and no decimal point when it is whole.
+	static std::wstring Number(double value)
+	{
+		wchar_t buffer[32];
+		swprintf_s(buffer, L"%g", value);
+		return buffer;
+	}
+
+	/// Whether an empty value is a value or a gap.
+	///
+	/// An unset string property really is the empty string -- AutomationProperties.Name and
+	/// SelectedText account for 18 of the 32 empty values in the probe -- so reporting those as
+	/// unrenderable would be a false alarm on the majority of them. Anything else that comes back
+	/// empty while not being null is the framework declining to stringify something, which is a gap.
+	static bool IsStringType(const wchar_t* valueType)
+	{
+		if (!valueType) return false;
+
+		const std::wstring type = valueType;
+		return type == L"Windows.Foundation.String" || type == L"System.String" || type == L"String";
+	}
+
 	/// The handle round-trips through GetIInspectableFromHandle, which is the reverse of what the
 	/// overlay uses to identify a clicked element. Only SolidColorBrush is rendered: it is the one
 	/// with an unambiguous textual form, and the overwhelming majority of what a hot reload sets. A
@@ -2116,12 +2185,30 @@ private:
 				{
 					valueText = rendered.c_str();
 				}
-				const wchar_t* valueType = value.ValueType && value.ValueType[0] ? value.ValueType : (value.Type ? value.Type : L"");
+
+				// A CornerRadius arrives as an empty string, which is the framework declining to
+				// stringify it rather than anything we did. Read off the element instead (#21).
+				const wchar_t* declaredType = value.ValueType && value.ValueType[0]
+					? value.ValueType
+					: (value.Type ? value.Type : L"");
+
+				const bool emptyButNotNull = !isNull && !valueText[0];
+				if (emptyButNotNull && std::wcscmp(declaredType, L"Windows.UI.Xaml.CornerRadius") == 0
+					&& RenderCornerRadius(handle, rendered))
+				{
+					valueText = rendered.c_str();
+				}
+
+				// Whatever is still empty and is not a string is a gap, said so rather than left to
+				// look like an unset property. That indistinguishability is the whole of why the
+				// CornerRadius case went unnoticed, and the next one should not need a sweep to find.
+				const bool unrenderable = !isNull && !valueText[0] && !IsStringType(declaredType);
 
 				std::wstring row = L"P\t" + Escape(value.PropertyName ? value.PropertyName : L"") + L'\t'
-					+ Escape(valueText) + L'\t' + Escape(valueType) + L'\t' + Escape(value.DeclaringType ? value.DeclaringType : L"")
+					+ Escape(valueText) + L'\t' + Escape(declaredType) + L'\t' + Escape(value.DeclaringType ? value.DeclaringType : L"")
 					+ L'\t' + provenance + L'\t' + Escape(file2.c_str()) + L'\t' + std::to_wstring(line) + L'\t'
-					+ std::to_wstring(column) + L'\t' + (isNull ? L"1" : L"0");
+					+ std::to_wstring(column) + L'\t' + (isNull ? L"1" : L"0")
+					+ L'\t' + (unrenderable ? L"1" : L"0");
 				file << Utf8(row) << '\n';
 				written++;
 			}

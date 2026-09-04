@@ -302,9 +302,12 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 					IsFrameworkType = fields.Length > 3 && fields[3] == "1",
 
 					// Joined from the tree rather than repeated in the selection file: the provider
-					// reports an element's source info once, when it enumerates.
+					// reports an element's source info once, when it enumerates, and its address is
+					// computed from the same parent and sibling relations -- so the tree snapshot is
+					// the one place either of them exists, and copying them here could only drift.
 					File = node?.File,
 					Line = node?.Line,
+					Address = node?.Address,
 				});
 			}
 
@@ -327,6 +330,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 				Handle = picked.Handle,
 				TypeName = EmptyToNull(picked.TypeName),
 				Name = picked.Name,
+				Address = picked.Address,
 				Candidates = candidates,
 			};
 		}
@@ -413,8 +417,8 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 
 	/// <summary>
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree (#12).
-	/// Property edits on named elements are applied through the provider; structural edits and
-	/// unnamed-element targets are reported as not-yet-applied rather than dropped silently. Returns each
+	/// Property edits are applied through the provider whether or not the element has an <c>x:Name</c>;
+	/// structural edits are reported as not-yet-applied rather than dropped silently. Returns each
 	/// computed edit with its outcome, plus the diff engine's notes.
 	/// </summary>
 	public LiveXamlReloadResult ApplyReload(int pid, string oldXaml, string newXaml)
@@ -429,20 +433,23 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			return new LiveXamlReloadResult { Detail = $"Could not diff the XAML: {exception.Message}" };
 		}
 
-		// Translate the edits the live applier supports -- property changes on named elements -- into
-		// provider commands; the rest are carried through as results marked unsupported.
+		// The target goes to the provider exactly as the diff wrote it, `#name` or path alike. It used
+		// to be narrowed to a bare x:Name first and anything else refused here without being tried,
+		// which ruled out every element the markup never named -- and that is most of what a click
+		// lands on, since anything inside a control template is unnamed. Whether an address resolves is
+		// a question about the live tree, so it is asked where the live tree is; this side has only the
+		// string, and a string cannot tell an unnameable element from an absent one.
 		var commands = new List<string>();
-		var plans = new List<(XamlEdit Edit, string? Name)>();
+		var plans = new List<(XamlEdit Edit, string? Target)>();
 		foreach (var edit in diff.Edits)
 		{
-			var name = NamedTarget(edit.Target);
-			var supported = name is not null && edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty;
-			plans.Add((edit, supported ? name : null));
+			var applies = edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty;
+			plans.Add((edit, applies ? edit.Target : null));
 
-			if (supported)
+			if (applies)
 			{
 				var op = edit.Kind == XamlEditKind.SetProperty ? "SetProperty" : "ClearProperty";
-				commands.Add(string.Join('\t', op, name, edit.Property ?? string.Empty, edit.ValueType ?? string.Empty, edit.Value ?? string.Empty));
+				commands.Add(string.Join('\t', op, edit.Target, edit.Property ?? string.Empty, edit.ValueType ?? string.Empty, edit.Value ?? string.Empty));
 			}
 		}
 
@@ -461,19 +468,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		}
 
 		var results = new List<LiveXamlEditResult>();
-		foreach (var (edit, name) in plans)
+		foreach (var (edit, target) in plans)
 		{
 			string status;
-			if (name is null)
+			if (target is null)
 			{
-				status = edit.Kind is XamlEditKind.AddChild or XamlEditKind.RemoveChild
-					? "unsupported: structural edits are not applied live yet"
-					: "unsupported: unnamed-element addressing is not applied live yet";
+				status = "unsupported: structural edits are not applied live yet";
 			}
 			else
 			{
 				var op = edit.Kind == XamlEditKind.SetProperty ? "SetProperty" : "ClearProperty";
-				status = statuses.GetValueOrDefault($"{op}\t{name}\t{edit.Property}", "not reported");
+				status = statuses.GetValueOrDefault($"{op}\t{target}\t{edit.Property}", "not reported");
 			}
 
 			results.Add(new LiveXamlEditResult
@@ -493,10 +498,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			Notes = diff.Notes,
 		};
 	}
-
-	/// <summary>A diff target of the form <c>#name</c> (a named element, not a path) yields its name.</summary>
-	private static string? NamedTarget(string target)
-		=> target.StartsWith('#') && !target.Contains('/') ? target[1..] : null;
 
 	private static Dictionary<string, string> ParseApplyResults(string applyFile)
 	{
@@ -682,6 +683,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			var declaredIn = fields.Length > 5 ? Unescape(fields[5]) : string.Empty;
 			var declaredAt = fields.Length > 6 && int.TryParse(fields[6], out var parsedLine) ? parsedLine : 0;
 
+			// A provider older than this host writes no ninth column. Read as "no address" rather than as
+			// a bad row: the provider is staged from the install beside us, so the two ship together, but a
+			// stale copy left behind in a sandbox would otherwise take the whole tree down with it.
+			var address = fields.Length > 8 ? Unescape(fields[8]) : string.Empty;
+
 			nodes.Add(new LiveXamlNode
 			{
 				Handle = handle,
@@ -691,6 +697,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 				Name = string.IsNullOrEmpty(name) ? null : name,
 				File = string.IsNullOrEmpty(declaredIn) ? null : declaredIn,
 				Line = declaredAt > 0 ? declaredAt : null,
+				Address = string.IsNullOrEmpty(address) ? null : address,
 			});
 		}
 

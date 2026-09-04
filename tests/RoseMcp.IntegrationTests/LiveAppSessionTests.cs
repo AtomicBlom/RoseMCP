@@ -866,6 +866,101 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// Addressing an element the markup never named (#11). Every element in the probe app used to carry
+	/// an <c>x:Name</c>, so nothing here could reach the case that matters most: a click inside a
+	/// control template lands on an element with no name, and until now there was no way to say which
+	/// element was meant -- the apply refused it, and a caller only found that out after composing a
+	/// whole before-and-after XAML pair. <c>#Pair/Border[1]</c> is the way to say it.
+	/// <para>
+	/// The negative assertion is the one that earns the test. Resolving <em>an</em> element proves
+	/// nothing, because the failure this replaces put the change on a plausible neighbour and reported
+	/// success either way -- so the first Border is read back as well, and has to be untouched.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Hot_reloads_an_unnamed_element_by_its_address()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
+		var oldXaml = File.ReadAllText(xamlPath);
+
+		// The second of the two unnamed Borders, and nothing else in the file.
+		const string FirstBackground = "#FF3A2A2A";
+		const string SecondBackground = "#FF2A3A2A";
+		const string ChangedBackground = "#FF00FF00";
+		Assert.Contains(SecondBackground, oldXaml);
+		var newXaml = oldXaml.Replace(SecondBackground, ChangedBackground);
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = aumid,
+					Description = "uwp address probe",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			// The provider derives an address from the live tree, so this half stands on its own: two
+			// unnamed siblings of one type are told apart by their position under the named anchor.
+			var before = await session.ReadXamlTreeAsync(cancellationToken);
+			var addresses = before.Nodes.Select(node => node.Address).ToList();
+			Assert.Contains("#Pair/Border[0]", addresses);
+			Assert.Contains("#Pair/Border[1]", addresses);
+
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+
+			var edit = reload.Results.FirstOrDefault(result => result.Target == "#Pair/Border[1]" && result.Property == "Background");
+			Assert.NotNull(edit);
+			Assert.Equal("applied", edit!.Status);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.Equal(ChangedBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[1]", cancellationToken));
+			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[0]", cancellationToken));
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	/// <summary>The Background of whichever live element carries an address, read off the tree.</summary>
+	private static async Task<string?> BackgroundAtAsync(
+		LiveAppSession session,
+		LiveXamlTree tree,
+		string address,
+		CancellationToken cancellationToken)
+	{
+		var node = tree.Nodes.Single(candidate => candidate.Address == address);
+		var properties = await session.ReadXamlPropertiesAsync(node.Handle, includeDefaults: false, cancellationToken);
+		return properties.Properties.FirstOrDefault(property => property.Name == "Background")?.Value;
+	}
+
+	/// <summary>
 	/// Interactive selection (#18): every XAML tool leaves RoseMCP's toolbar resident on the app's
 	/// diagnostics UI layer, the tree snapshot keeps that toolbar out of its answer, and arming select
 	/// mode is reported by the provider rather than assumed here. Until someone clicks, the selection is

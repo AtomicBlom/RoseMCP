@@ -5,7 +5,7 @@ namespace RoseMcp.Contracts;
 /// in-app toolbar's Select Element button or after an agent armed select mode.
 /// <see cref="Selected"/> is false, with a <see cref="Detail"/> saying why, when nobody has picked
 /// yet. <see cref="Handle"/> is the same stable handle the visual tree reports, so the usual property
-/// and hot-reload tools take it directly -- that is what turns "the thing I clicked" into something
+/// and live-edit tools take it directly -- that is what turns "the thing I clicked" into something
 /// the agent can read and change.
 /// </summary>
 public sealed record LiveXamlSelection

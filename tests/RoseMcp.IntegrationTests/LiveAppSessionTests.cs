@@ -763,7 +763,7 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
-	/// XAML hot reload (#12): diff two versions of the probe's XAML and apply the changes to the live
+	/// XAML live editing (#12): diff two versions of the probe's XAML and apply the changes to the live
 	/// tree, no relaunch. Two edits, deliberately, because they fail in different ways:
 	/// <list type="bullet">
 	/// <item>
@@ -783,7 +783,7 @@ public sealed class LiveAppSessionTests
 	/// Skips where the UWP or C++ toolchain is absent.
 	/// </summary>
 	[Fact]
-	public async Task Hot_reloads_a_property_on_the_live_uwp_probe()
+	public async Task Live_edits_a_property_on_the_uwp_probe()
 	{
 		var msbuild = FindUwpMsBuild();
 		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
@@ -812,7 +812,7 @@ public sealed class LiveAppSessionTests
 			{
 				Kind = LiveAppTargetKind.LaunchUwp,
 				AppUserModelId = aumid,
-				Description = "uwp hot-reload probe",
+				Description = "uwp live-edit probe",
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
@@ -825,20 +825,20 @@ public sealed class LiveAppSessionTests
 				cancellationToken);
 			Assert.NotNull(running);
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var edit = reload.Results.FirstOrDefault(result => result.Target == "#Caption" && result.Property == "FontSize");
+			var edit = applied.Results.FirstOrDefault(result => result.Target == "#Caption" && result.Property == "FontSize");
 			Assert.NotNull(edit);
 			Assert.Equal("applied", edit!.Status);
 
 			// The struct-valued edit, which is the one that used to come back "SetProperty failed
 			// 0x80004005" because it had been built as a Double.
-			var radius = reload.Results.FirstOrDefault(result => result.Target == "#Pane" && result.Property == "CornerRadius");
+			var radius = applied.Results.FirstOrDefault(result => result.Target == "#Pane" && result.Property == "CornerRadius");
 			Assert.NotNull(radius);
 			Assert.Equal("applied", radius!.Status);
 
-			Assert.Equal(2, reload.Applied);
+			Assert.Equal(2, applied.Applied);
 
 			// The live element actually changed: reading its font size back gives the new value.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
@@ -878,7 +878,7 @@ public sealed class LiveAppSessionTests
 	/// </para>
 	/// </summary>
 	[Fact]
-	public async Task Hot_reloads_an_unnamed_element_by_its_address()
+	public async Task Live_edits_an_unnamed_element_by_its_address()
 	{
 		var msbuild = FindUwpMsBuild();
 		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
@@ -929,10 +929,10 @@ public sealed class LiveAppSessionTests
 			Assert.Contains("#Pair/Border[0]", addresses);
 			Assert.Contains("#Pair/Border[1]", addresses);
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var edit = reload.Results.FirstOrDefault(result => result.Target == "#Pair/Border[1]" && result.Property == "Background");
+			var edit = applied.Results.FirstOrDefault(result => result.Target == "#Pair/Border[1]" && result.Property == "Background");
 			Assert.NotNull(edit);
 			Assert.Equal("applied", edit!.Status);
 
@@ -1010,10 +1010,10 @@ public sealed class LiveAppSessionTests
 			var before = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.Equal(2, before.Nodes.Count(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]"));
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var removal = reload.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
+			var removal = applied.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
 			Assert.NotNull(removal);
 			Assert.Equal("#Pair/Border[1]", removal!.Target);
 			Assert.Equal("applied", removal.Status);
@@ -1106,19 +1106,19 @@ public sealed class LiveAppSessionTests
 				cancellationToken);
 			Assert.NotNull(running);
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var add = reload.Results.FirstOrDefault(result => result.Kind == "AddChild");
+			var add = applied.Results.FirstOrDefault(result => result.Kind == "AddChild");
 			Assert.NotNull(add);
 			Assert.Equal("applied", add!.Status);
 
-			var removal = reload.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
+			var removal = applied.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
 			Assert.NotNull(removal);
 			Assert.Equal("applied", removal!.Status);
 
 			// The non-brush property, on a named element, so all three kinds are in the one apply.
-			var opacity = reload.Results.FirstOrDefault(result => result.Property == "Opacity");
+			var opacity = applied.Results.FirstOrDefault(result => result.Property == "Opacity");
 			Assert.NotNull(opacity);
 			Assert.Equal("applied", opacity!.Status);
 
@@ -1190,10 +1190,10 @@ public sealed class LiveAppSessionTests
 				cancellationToken);
 			Assert.NotNull(running);
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var edit = reload.Results.FirstOrDefault(result => result.Property == "Grid.Row");
+			var edit = applied.Results.FirstOrDefault(result => result.Property == "Grid.Row");
 			Assert.NotNull(edit);
 			Assert.Equal("#Attached", edit!.Target);
 			Assert.Equal("applied", edit.Status);
@@ -1274,10 +1274,10 @@ public sealed class LiveAppSessionTests
 			var before = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.Equal(Was, await BackgroundAtAsync(session, before, "#Themed", cancellationToken));
 
-			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var edit = reload.Results.FirstOrDefault(result => result.Kind == "SetResource");
+			var edit = applied.Results.FirstOrDefault(result => result.Kind == "SetResource");
 			Assert.NotNull(edit);
 			Assert.Equal("#RootGrid", edit!.Target);
 			Assert.Equal("ProbeAccent", edit.Property);
@@ -1351,7 +1351,7 @@ public sealed class LiveAppSessionTests
 			{
 				Kind = LiveAppTargetKind.LaunchUwp,
 				AppUserModelId = aumid,
-				Description = "uwp continuous hot-reload probe",
+				Description = "uwp continuous live-edit probe",
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
@@ -1367,7 +1367,7 @@ public sealed class LiveAppSessionTests
 			// The app's own markup, untouched since it was launched. There is nothing to apply, and
 			// this side says so with evidence rather than by diffing the file against itself -- which
 			// would report nothing either, and would mean something else entirely.
-			var first = await session.ReloadXamlAsync(null, null, sourcePath, cancellationToken);
+			var first = await session.ApplyXamlAsync(null, null, sourcePath, cancellationToken);
 			Assert.True(first.Detail is null, $"expected a baseline, got detail: {first.Detail}");
 			Assert.Empty(first.Results);
 			Assert.Contains(first.Notes, note => note.Contains("Nothing has edited") && note.Contains("MainPage.xaml"));
@@ -1375,14 +1375,14 @@ public sealed class LiveAppSessionTests
 			// A file that has changed since the app started is the other first-apply case: what the
 			// app was built from is gone, so it records the file and says so rather than guessing.
 			File.WriteAllText(editable, original);
-			var registered = await session.ReloadXamlAsync(null, null, editable, cancellationToken);
+			var registered = await session.ApplyXamlAsync(null, null, editable, cancellationToken);
 			Assert.True(registered.Detail is null, $"expected a baseline, got detail: {registered.Detail}");
 			Assert.Empty(registered.Results);
 			Assert.Contains(registered.Notes, note => note.Contains("no longer on disk"));
 
 			// One edit, applied with nothing passed but the path.
 			File.WriteAllText(editable, original.Replace("FontSize=\"24\"", "FontSize=\"40\""));
-			var fontSize = await session.ReloadXamlAsync(null, null, editable, cancellationToken);
+			var fontSize = await session.ApplyXamlAsync(null, null, editable, cancellationToken);
 			Assert.True(fontSize.Detail is null, $"expected an apply, got detail: {fontSize.Detail}");
 			var sizeEdit = Assert.Single(fontSize.Results);
 			Assert.Equal("#Caption", sizeEdit.Target);
@@ -1398,7 +1398,7 @@ public sealed class LiveAppSessionTests
 					.Replace("FontSize=\"24\"", "FontSize=\"40\"")
 					.Replace("Text=\"Rose UWP Probe\"", "Text=\"Edited twice\""));
 
-			var caption = await session.ReloadXamlAsync(null, null, editable, cancellationToken);
+			var caption = await session.ApplyXamlAsync(null, null, editable, cancellationToken);
 			Assert.True(caption.Detail is null, $"expected an apply, got detail: {caption.Detail}");
 			var textEdit = Assert.Single(caption.Results);
 			Assert.Equal("#Caption", textEdit.Target);
@@ -1411,7 +1411,7 @@ public sealed class LiveAppSessionTests
 			Assert.Equal("40", await CaptionValueAsync(session, "FontSize", cancellationToken));
 
 			// And an apply with nothing to apply says which of the two nothings it was.
-			var unchanged = await session.ReloadXamlAsync(null, null, editable, cancellationToken);
+			var unchanged = await session.ApplyXamlAsync(null, null, editable, cancellationToken);
 			Assert.True(unchanged.Detail is null, $"expected an apply, got detail: {unchanged.Detail}");
 			Assert.Empty(unchanged.Results);
 			Assert.Contains(unchanged.Notes, note => note.Contains("unchanged since the last apply"));

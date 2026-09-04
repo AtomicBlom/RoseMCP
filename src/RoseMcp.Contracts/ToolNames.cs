@@ -161,7 +161,7 @@ public static class ToolNames
 	/// <summary>Read one element's XAML properties, with provenance and source location.</summary>
 	public const string XamlProperties = "rose_xaml_properties";
 
-	/// <summary>Hot-reload a running XAML app by diffing two versions and applying the edits live.</summary>
+	/// <summary>Live-edit a running XAML app: apply a file's changes to its live visual tree.</summary>
 	public const string XamlApply = "rose_xaml_apply";
 
 	/// <summary>Enter interactive select mode: the next click in the app picks that element.</summary>

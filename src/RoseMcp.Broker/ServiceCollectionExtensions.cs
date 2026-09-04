@@ -149,10 +149,12 @@ public static class ServiceCollectionExtensions
 		- rose_xaml_tree and rose_xaml_properties read the live visual tree and one element's real
 		  values, with where each was set -- so "why is this the wrong colour" is answered from the
 		  running app rather than inferred from the XAML.
-		- rose_xaml_apply hot-reloads: edit the XAML file, pass its path, and the change is applied to
-		  the running app with no relaunch, as often as you like. It diffs against what it last sent, so
-		  there is nothing to carry between calls. The first call for a file records a baseline and
-		  applies nothing, so make it before you start editing.
+		- rose_xaml_apply live-edits it: edit the XAML file, pass its path, and the change is applied to
+		  the running app's visual tree with no relaunch, as often as you like -- what Visual Studio
+		  calls XAML Hot Reload. It diffs against what it last sent, so there is nothing to carry
+		  between calls. The first call for a file records a baseline and applies nothing, so make it
+		  before you start editing. The change lives on the objects in the tree, not in the app's
+		  markup, so it is gone if the app rebuilds that part of the UI.
 		- rose_xaml_select_mode and rose_xaml_selection let the user point at an element instead of
 		  describing it. Read the selection first: the user can arm the in-app toolbar themselves, so
 		  "look at the element I selected" may already have an answer waiting.

@@ -52,7 +52,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// What this side has already sent to the app, per source file (#12). It is held here rather than by
 	// the caller for two reasons: this is the only place that can tell whether an apply reached the
 	// provider, and a caller that has just written a file no longer holds what was there before.
-	private readonly XamlReloadBaseline _baselines = new();
+	private readonly XamlApplyBaseline _baselines = new();
 
 	/// <summary>
 	/// Reads a snapshot of the target's live visual tree, injecting the provider first. Returns a tree
@@ -466,25 +466,25 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree (#12).
+	/// Live-edits the target by diffing two XAML versions and applying the edits to its visual tree (#12).
 	/// Property changes, removals and additions all apply, and on any element the diff can address rather
 	/// than only a named one. Returns each computed edit with its outcome, plus the diff engine's notes.
 	/// <para>
 	/// The old version is usually not passed at all. A caller in the edit-to-live loop names the file it
 	/// has just written and this side diffs against what it last sent to the app -- see <see
-	/// cref="XamlReloadBaseline"/> for why that state belongs on this end.
+	/// cref="XamlApplyBaseline"/> for why that state belongs on this end.
 	/// </para>
 	/// </summary>
-	public LiveXamlReloadResult ApplyReload(int pid, string? oldXaml, string? newXaml, string? filePath)
+	public LiveXamlApplyResult ApplyEdits(int pid, string? oldXaml, string? newXaml, string? filePath)
 	{
 		var (inputs, failure) = Resolve(pid, oldXaml, newXaml, filePath);
-		if (failure is not null) return new LiveXamlReloadResult { Detail = failure };
+		if (failure is not null) return new LiveXamlApplyResult { Detail = failure };
 
 		// Nothing to diff against, which is not a failure: the file's contents are the baseline from
 		// here on, so the caller's next edit applies on its own. The note says which reason it was.
 		if (inputs!.OldXaml is null)
 		{
-			return new LiveXamlReloadResult { Notes = inputs.Note is null ? [] : [inputs.Note] };
+			return new LiveXamlApplyResult { Notes = inputs.Note is null ? [] : [inputs.Note] };
 		}
 
 		XamlDiffResult diff;
@@ -494,7 +494,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		}
 		catch (Exception exception)
 		{
-			return new LiveXamlReloadResult { Detail = $"Could not diff the XAML: {exception.Message}" };
+			return new LiveXamlApplyResult { Detail = $"Could not diff the XAML: {exception.Message}" };
 		}
 
 		// The target goes to the provider exactly as the diff wrote it, `#name` or path alike: whether an
@@ -570,7 +570,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		if (commands.Count > 0)
 		{
 			var (workDir, error) = Inject(pid, "apply", commands);
-			if (error is not null) return new LiveXamlReloadResult { Detail = error };
+			if (error is not null) return new LiveXamlApplyResult { Detail = error };
 
 			if (!WaitForMarker(Path.Combine(workDir!, "apply.ready"), SnapshotTimeout))
 			{
@@ -578,7 +578,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 				// The commands were injected, so they may well have run; this side just cannot say. So
 				// the next apply resends them, which is the caller's retry -- and for anything this
 				// batch was adding, a retry that lands twice is a second copy.
-				return new LiveXamlReloadResult
+				return new LiveXamlApplyResult
 				{
 					Detail = "The XAML provider was injected but did not report the apply in time. The edits may or "
 						+ "may not have reached the app, so applying the same change again could add a second copy "
@@ -607,7 +607,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			});
 		}
 
-		return new LiveXamlReloadResult
+		return new LiveXamlApplyResult
 		{
 			Applied = results.Count(result => result.Status == "applied"),
 			Results = results,
@@ -629,7 +629,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// not what was asked.
 	/// </para>
 	/// </summary>
-	private (ReloadInputs? Inputs, string? Error) Resolve(int pid, string? oldXaml, string? newXaml, string? filePath)
+	private (ApplyInputs? Inputs, string? Error) Resolve(int pid, string? oldXaml, string? newXaml, string? filePath)
 	{
 		var hasFile = !string.IsNullOrWhiteSpace(filePath);
 		var hasNew = !string.IsNullOrEmpty(newXaml);
@@ -649,7 +649,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 					+ "of what it has already applied to the file, or pass oldXaml alongside newXaml.");
 			}
 
-			return (new ReloadInputs { OldXaml = oldXaml, NewXaml = newXaml! }, null);
+			return (new ApplyInputs { OldXaml = oldXaml, NewXaml = newXaml! }, null);
 		}
 
 		if (hasNew)
@@ -693,11 +693,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// An explicit old version wins over the baseline and still refreshes it. The caller is telling
 		// this side something it had no way to know, and the applies after it should carry on from
 		// there rather than needing to be told again.
-		if (hasOld) return (new ReloadInputs { OldXaml = oldXaml, NewXaml = current, SourcePath = full }, null);
+		if (hasOld) return (new ApplyInputs { OldXaml = oldXaml, NewXaml = current, SourcePath = full }, null);
 
 		var plan = _baselines.Prepare(full, current, AgeOf(pid, full));
 
-		return (new ReloadInputs { OldXaml = plan.OldXaml, NewXaml = current, SourcePath = full, Note = plan.Note }, null);
+		return (new ApplyInputs { OldXaml = plan.OldXaml, NewXaml = current, SourcePath = full, Note = plan.Note }, null);
 	}
 
 	/// <summary>
@@ -723,7 +723,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>What an apply will diff, once the ways of asking for it have been reconciled.</summary>
-	private sealed record ReloadInputs
+	private sealed record ApplyInputs
 	{
 		/// <summary>Null when there is nothing to diff against; <see cref="Note"/> then says why.</summary>
 		public string? OldXaml { get; init; }

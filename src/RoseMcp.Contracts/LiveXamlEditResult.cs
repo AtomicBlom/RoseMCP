@@ -1,10 +1,10 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>
-/// One edit a hot reload computed and what became of it. <see cref="Status"/> is <c>applied</c> when it
-/// took, or the reason it did not -- <c>target not found</c>, <c>property not found</c>, an apply
-/// failure code, or <c>unsupported: ...</c> for the edits the live applier does not do yet (structural
-/// changes and unnamed-element addressing).
+/// One edit an apply computed and what became of it. <see cref="Status"/> is <c>applied</c> when it
+/// took, or the reason it did not: <c>target not found</c>, <c>property not found</c>, or an apply
+/// failure code from the framework. Property changes, additions, removals, attached properties and
+/// keyed resources all apply, on named elements and unnamed ones alike.
 /// </summary>
 public sealed record LiveXamlEditResult
 {

@@ -37,9 +37,9 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | `rose_debug_detach` / `rose_debug_list` | End a session (leaving the target running); list sessions. |
 | `rose_xaml_tree` | Read a live XAML app's visual tree: a flat element list (handle, parent, child index, type, x:Name) that rebuilds into a tree; can be rooted at a named element and paged. |
 | `rose_xaml_properties` | Read one element's properties (by handle) with provenance (Local / Style / Inherited / Default …) and, when the app carries source info, the XAML file and line that set each. |
-| `rose_xaml_apply` | Hot-reload: apply what a XAML file now holds to the live tree with no relaunch, reporting each edit's outcome. Properties, added and removed elements, attached properties and keyed resources, on named elements and unnamed ones alike. |
+| `rose_xaml_apply` | Live edit: apply what a XAML file now holds to the running app's visual tree with no relaunch, reporting each edit's outcome. Properties, added and removed elements, attached properties and keyed resources, on named elements and unnamed ones alike. Visual Studio calls this XAML Hot Reload. |
 | `rose_debug_evaluate` | While stopped, evaluate a field-access expression (`name`, `name.field.field`) against the frame — read directly from memory, no debuggee code run. |
-| `rose_xaml_select_mode` / `rose_xaml_selection` | Let the user point: arm select mode, their next click picks that element, and the selection (type, `x:Name`, handle) feeds the property and hot-reload tools. They can also arm it themselves from the in-app toolbar, so read the selection before arming. |
+| `rose_xaml_select_mode` / `rose_xaml_selection` | Let the user point: arm select mode, their next click picks that element, and the selection (type, `x:Name`, handle) feeds the property and live-edit tools. They can also arm it themselves from the in-app toolbar, so read the selection before arming. |
 
 ## The in-app toolbar
 
@@ -69,7 +69,7 @@ selected" -- the agent reads it with `rose_xaml_selection`, and the handle it ge
 - A selection sticks until the next pick is armed, so reading the tree or some properties in between
   does not lose it.
 
-## Editing a running app
+## Live-editing a running app
 
 `rose_xaml_apply` takes a **file path**, and the loop is edit, apply, edit, apply:
 
@@ -109,9 +109,13 @@ For markup with no file behind it -- something composed rather than saved -- pas
   property getters, method calls, and an object's `ToString` are deliberately not evaluated — that
   needs func-eval, which can hang or corrupt the target, and is left to an external debugger.
 - Conditions are cheap value-compares (`name OP literal`) over the stopped frame, not full expressions.
-- Hot reload changes the running app's tree, never its files. Nothing is written back to the markup,
-  and everything applied is lost when the app is relaunched -- it is the app's in-memory UI that
-  moves, so the file remains the only record of the change.
+- A live edit changes the running app's tree, never its files or its markup. Nothing is written back,
+  so the file remains the only record of the change -- and this is why "live edit" rather than "hot
+  reload": nothing is reloaded. Every edit lands on the element objects that exist at that moment.
+  A relaunch loses them, and so does anything that rebuilds that part of the UI, because the new
+  objects come from the app's compiled markup, which still says what it always did. Navigating away
+  from an uncached page and back is enough. (That follows from the mechanism -- property sets against
+  live instances -- rather than from a test: the probe app is a single page with no navigation.)
 - An element created live cannot be given an `x:Name`. Names are registered when the markup is
   parsed, so the tree gets the element but nothing can address it by name afterwards; the apply says
   so in its notes, and the element is still reachable by its `Type[index]` address.

@@ -39,7 +39,7 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppXamlApply,
-		Title = "Live-app XAML hot reload",
+		Title = "Live-app XAML edit",
 		ReadOnly = false,
 		Idempotent = false,
 		OpenWorld = false,
@@ -47,12 +47,12 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 	[Description(
 		"Apply a XAML change to the live visual tree, from a file the session tracks or from two "
 			+ "versions of the markup.")]
-	public LiveXamlReloadResult XamlApply(
+	public LiveXamlApplyResult XamlApply(
 		[Description("The XAML file to apply what is now on disk from; the session tracks what it last sent.")]
 		string? filePath = null,
 		[Description("The previous XAML. Not needed with filePath after the first apply.")] string? oldXaml = null,
 		[Description("The new XAML to apply, for markup that is not on disk.")] string? newXaml = null)
-		=> host.ReloadXaml(oldXaml, newXaml, filePath);
+		=> host.ApplyXaml(oldXaml, newXaml, filePath);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppXamlSelectMode,

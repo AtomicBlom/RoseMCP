@@ -1,7 +1,7 @@
 namespace RoseMcp.XamlDiff;
 
 /// <summary>
-/// What a hot reload has already sent to a running app, per source file, so a caller does not have to
+/// What a live edit has already sent to a running app, per source file, so a caller does not have to
 /// hold the previous version of a file it has just edited (#12).
 /// <para>
 /// The edit-to-live loop is why this exists. Applying used to need both versions of the markup, which
@@ -23,7 +23,7 @@ namespace RoseMcp.XamlDiff;
 /// materialiser live here.
 /// </para>
 /// </summary>
-public sealed class XamlReloadBaseline
+public sealed class XamlApplyBaseline
 {
 	// Case-insensitive because these are Windows paths, where one file arrives spelled two ways as a
 	// matter of course -- a drive letter's case differs between what a client sends and what this
@@ -35,7 +35,7 @@ public sealed class XamlReloadBaseline
 	/// nothing to diff against and the reason why. <paramref name="age"/> is what can be said about
 	/// the file relative to the moment the target started running.
 	/// </summary>
-	public XamlReloadPlan Prepare(string path, string current, XamlBaselineAge age)
+	public XamlApplyPlan Prepare(string path, string current, XamlBaselineAge age)
 	{
 		if (_applied.TryGetValue(path, out var applied))
 		{
@@ -44,7 +44,7 @@ public sealed class XamlReloadBaseline
 			// other is a change this engine cannot express.
 			var unchanged = string.Equals(applied, current, StringComparison.Ordinal);
 
-			return new XamlReloadPlan
+			return new XamlApplyPlan
 			{
 				OldXaml = applied,
 				Note = unchanged ? $"{Name(path)} is unchanged since the last apply, so there was nothing to send." : null,
@@ -72,7 +72,7 @@ public sealed class XamlReloadBaseline
 					+ "baseline now, so the next edit applies on its own; to apply this one, pass oldXaml as well.",
 		};
 
-		return new XamlReloadPlan { Note = reason };
+		return new XamlApplyPlan { Note = reason };
 	}
 
 	/// <summary>

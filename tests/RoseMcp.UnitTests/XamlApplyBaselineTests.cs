@@ -3,11 +3,11 @@ using RoseMcp.XamlDiff;
 namespace RoseMcp.UnitTests;
 
 /// <summary>
-/// What a hot reload has already sent to a running app, per file (#12). This is the state that makes
+/// What a live edit has already sent to a running app, per file (#12). This is the state that makes
 /// the edit-to-live loop possible without the caller holding a copy of every file it edits, and the
 /// decisions it makes are all about what can honestly be claimed on a first apply.
 /// </summary>
-public sealed class XamlReloadBaselineTests
+public sealed class XamlApplyBaselineTests
 {
 	private const string First = """<Grid><TextBlock x:Name="Caption" FontSize="24" /></Grid>""";
 	private const string Second = """<Grid><TextBlock x:Name="Caption" FontSize="40" /></Grid>""";
@@ -20,7 +20,7 @@ public sealed class XamlReloadBaselineTests
 	[Fact]
 	public void Diffs_each_apply_against_what_the_last_one_sent()
 	{
-		var baseline = new XamlReloadBaseline();
+		var baseline = new XamlApplyBaseline();
 
 		var registration = baseline.Prepare(@"C:\app\MainPage.xaml", First, XamlBaselineAge.UnchangedSinceTargetStarted);
 		Assert.Null(registration.OldXaml);
@@ -45,7 +45,7 @@ public sealed class XamlReloadBaselineTests
 	[Fact]
 	public void Records_a_first_apply_instead_of_diffing_a_file_against_itself()
 	{
-		var baseline = new XamlReloadBaseline();
+		var baseline = new XamlApplyBaseline();
 
 		var plan = baseline.Prepare(@"C:\app\MainPage.xaml", First, XamlBaselineAge.ChangedSinceTargetStarted);
 
@@ -67,7 +67,7 @@ public sealed class XamlReloadBaselineTests
 	[InlineData(XamlBaselineAge.Unknown, "could not be read")]
 	public void Says_what_it_knows_about_the_files_age_and_no_more(XamlBaselineAge age, string expected)
 	{
-		var plan = new XamlReloadBaseline().Prepare(@"C:\app\MainPage.xaml", First, age);
+		var plan = new XamlApplyBaseline().Prepare(@"C:\app\MainPage.xaml", First, age);
 
 		Assert.Null(plan.OldXaml);
 		Assert.Contains(expected, plan.Note);
@@ -81,7 +81,7 @@ public sealed class XamlReloadBaselineTests
 	[Fact]
 	public void Says_when_the_file_has_not_changed_since_the_last_apply()
 	{
-		var baseline = new XamlReloadBaseline();
+		var baseline = new XamlApplyBaseline();
 		baseline.Advance(@"C:\app\MainPage.xaml", First);
 
 		var plan = baseline.Prepare(@"C:\app\MainPage.xaml", First, XamlBaselineAge.ChangedSinceTargetStarted);
@@ -98,7 +98,7 @@ public sealed class XamlReloadBaselineTests
 	[Fact]
 	public void Treats_one_file_spelled_two_ways_as_one_file()
 	{
-		var baseline = new XamlReloadBaseline();
+		var baseline = new XamlApplyBaseline();
 		baseline.Advance(@"C:\App\MainPage.xaml", First);
 
 		var plan = baseline.Prepare(@"c:\app\mainpage.XAML", Second, XamlBaselineAge.ChangedSinceTargetStarted);
@@ -113,7 +113,7 @@ public sealed class XamlReloadBaselineTests
 	[Fact]
 	public void Keeps_a_baseline_for_each_file()
 	{
-		var baseline = new XamlReloadBaseline();
+		var baseline = new XamlApplyBaseline();
 		baseline.Advance(@"C:\app\MainPage.xaml", First);
 
 		Assert.False(baseline.Knows(@"C:\app\Settings.xaml"));

@@ -1,7 +1,7 @@
 # Live-app test target apps
 
 Real applications the live-app integration tests drive: attach a debugger, walk the visual tree, read
-and mutate properties, hot-reload XAML. Keeping them in the repository means the XAML/UWP work is
+and mutate properties, live-edit XAML. Keeping them in the repository means the XAML/UWP work is
 tested against apps we own, not a machine-specific external one.
 
 ## Frameworks

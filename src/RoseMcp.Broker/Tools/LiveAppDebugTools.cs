@@ -472,15 +472,16 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 
 	[McpServerTool(
 		Name = ToolNames.XamlApply,
-		Title = "Hot-reload XAML",
+		Title = "Live-edit XAML",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = false,
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Hot-reload a running XAML app: apply what a XAML file now holds to the live visual tree, no "
-			+ "relaunch, as many times as you like. Pass filePath -- the file you have just edited -- and "
+		"Live-edit a running XAML app -- what Visual Studio calls XAML Hot Reload: apply what a XAML "
+			+ "file now holds to the running app's visual tree, no relaunch, as many times as you like. "
+			+ "Pass filePath -- the file you have just edited -- and "
 			+ "the session diffs it against what it last sent to that app, so the loop is edit, apply, "
 			+ "edit, apply, with nothing to carry between the calls. The first call for a file records a "
 			+ "baseline and applies nothing, because what the running app was built from is not something "
@@ -495,7 +496,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "apply, such as adding or removing a resource, and the fact that an element added live "
 			+ "cannot carry an x:Name. An edit reported as failed is not retried by the next apply -- "
 			+ "re-sending one that adds an element would add a second copy of it.")]
-	public async Task<LiveXamlReloadResult> XamlApplyAsync(
+	public async Task<LiveXamlApplyResult> XamlApplyAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description(
 			"The XAML file to apply. What it holds now is diffed against what this session last sent to "
@@ -510,7 +511,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReloadXamlAsync(oldXaml, newXaml, filePath, cancellationToken);
+		return await session.ApplyXamlAsync(oldXaml, newXaml, filePath, cancellationToken);
 	}
 
 	[McpServerTool(

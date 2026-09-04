@@ -624,3 +624,42 @@ one's, and in a loop that edits the same property repeatedly the keys line up, s
 
 One `WriteMarker` writes all of them now, so the next marker added cannot forget the stamp -- which
 is exactly how this came to be half done.
+
+### D32 — It is a live edit, not a hot reload, and the difference is what it promises (#12, renames the vocabulary of D16, D26, D30 and D31)
+Everything above this entry calls `rose_xaml_apply` hot reload, and that is not quite a misuse --
+**XAML Hot Reload** is Microsoft's own name for this mechanism, renamed from "XAML Edit and Continue"
+in VS 2019, and it runs through the same XAML diagnostics channel this provider attaches to. Nor does
+Microsoft's version read from disk: it pushes the editor's buffer into the live tree, so the term
+carries no disk-reload meaning in this ecosystem either.
+
+It is still the wrong word here, for a reason worth stating because it is a claim about behaviour
+rather than about taste. **"Reload" says the app's markup is now the new markup.** It is not. Every
+edit is a `SetProperty` or an `AddChild` against the element objects that exist at that instant. The
+app's compiled markup is untouched, so anything that rebuilds that part of the UI -- a relaunch, or
+navigating away from an uncached page and back -- produces the original. A reader who took "hot
+reload" at face value would expect elements created later to carry the change, and they do not. The
+docs said "lost on relaunch", which is true and much weaker than the real limit.
+
+The second reason is local: "reload" was already spoken for. `WorkspaceReload`, `ReloadAsync` and
+`mustReload` are the *solution* reload, which genuinely reloads something. One word for both meant
+the word carried no information.
+
+So three tiers, because "edit" was already taken for the smallest one:
+
+| Tier | Word | Where |
+|---|---|---|
+| The capability | **live edit** | prose, docs, tool titles and descriptions |
+| The operation | **apply** | `ApplyXamlAsync`, `LiveXamlApplyResult`, `XamlApplyBaseline` |
+| The unit | **edit** | `XamlEdit`, `XamlEditKind`, `LiveXamlEditResult` |
+
+No MCP tool name changes -- they were already `rose_xaml_apply` and `rose_live_app_xaml_apply` -- and
+a result record's *type* name never appears in the JSON, so nothing client-visible moved. The eight
+identifier renames went through `rose_rename_symbol`, which is what it is for.
+
+One deliberate exception: the tool description and the server instructions both say "what Visual
+Studio calls XAML Hot Reload". Not as this project's vocabulary -- as the search term a reader
+already has. The whole point of the instructions text is that it is read before an approach is
+chosen, and an agent that knows the VS feature should recognise this as the same thing.
+
+Earlier entries keep their original wording, as D21 did when D22 superseded half of it. They record
+what was decided when, and the term they used is part of that.

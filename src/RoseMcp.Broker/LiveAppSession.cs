@@ -271,12 +271,12 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// continuous path (#12) -- the host diffs it against what it last sent -- and two versions of the
 	/// markup is for markup with no file behind it.
 	/// </summary>
-	public Task<LiveXamlReloadResult> ReloadXamlAsync(
+	public Task<LiveXamlApplyResult> ApplyXamlAsync(
 		string? oldXaml,
 		string? newXaml,
 		string? filePath,
 		CancellationToken cancellationToken)
-		=> SendAsync<LiveXamlReloadResult>(
+		=> SendAsync<LiveXamlApplyResult>(
 			ToolNames.LiveAppXamlApply,
 			new Dictionary<string, object?> { ["filePath"] = filePath, ["oldXaml"] = oldXaml, ["newXaml"] = newXaml },
 			cancellationToken);

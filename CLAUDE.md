@@ -341,7 +341,16 @@ reclaim memory or pick up a rebuilt generator.
   Addresses computed from the live tree are exact, being resolved against the tree they came from; an
   address a diff derived from markup is a best effort, since markup order is not always the visual
   tree's, and it fails by saying so.
-- **A hot reload is diffed against what was last sent to the app, never against what is on disk.**
+- **It is a live edit, not a hot reload, and the word is doing work.** Every edit is a property set or
+  an `AddChild` against the element objects that exist at that instant; the app's compiled markup is
+  untouched, so anything that rebuilds that part of the UI produces the original. "Reload" would
+  promise that elements created later carry the change, and they do not. `WorkspaceReload` is also
+  right there meaning the other thing, the one that genuinely reloads. So: the capability is a **live
+  edit**, the operation is an **apply**, and an **edit** is the smallest unit -- `XamlEdit`,
+  `LiveXamlEditResult`. Microsoft's own name for the mechanism is XAML Hot Reload, which is why the
+  tool description and the server instructions say so once each: it is the reader's search term, not
+  this project's vocabulary.
+- **A live edit is diffed against what was last sent to the app, never against what is on disk.**
   Applying used to require both versions of the markup, which reads reasonably and is close to unusable
   in the loop it exists for: an agent that has just written a file no longer holds what was in it, so
   the one piece of state the session is in a position to keep was being asked of the caller. It keeps it

@@ -20,8 +20,27 @@ public sealed record WorkspaceStatusReport : WorkspaceScopedResult
 
 	public required IReadOnlyList<ProjectStatus> Projects { get; init; }
 
-	/// <summary>Diagnostics MSBuild reported while loading -- unresolved references, failed projects.</summary>
+	/// <summary>
+	/// Diagnostics MSBuild reported while loading -- unresolved references, failed projects -- with
+	/// complaints that differ only in the file or URL they name folded into one line carrying a count.
+	/// <para>
+	/// Folded because they are otherwise most of the answer. On a 60-project solution this field was
+	/// 196KB of a 225KB report, and 509 of its 557 entries were one message: NuGet's vulnerability
+	/// audit failing to reach a feed, repeated once per project per feed. That is one fact about the
+	/// solution, not 509 facts, and it put every call over the client's token cap.
+	/// </para>
+	/// <para>
+	/// <see cref="LoadDiagnosticCount"/> is what MSBuild actually said, so the folding cannot
+	/// understate it.
+	/// </para>
+	/// </summary>
 	public required IReadOnlyList<string> LoadDiagnostics { get; init; }
+
+	/// <summary>
+	/// How many diagnostics MSBuild reported, before <see cref="LoadDiagnostics"/> folded the
+	/// repetitions together. Equal to that list's length when nothing repeated.
+	/// </summary>
+	public int LoadDiagnosticCount { get; init; }
 
 	/// <summary>
 	/// Why this workspace is <see cref="WorkspaceState.Degraded"/>, each paired with the command

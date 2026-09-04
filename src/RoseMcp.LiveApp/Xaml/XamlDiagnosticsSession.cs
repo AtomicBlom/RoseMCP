@@ -516,6 +516,30 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 					notes.Add($"The element added under {edit.Target} could not be taken apart into build steps: {exception.Message}");
 				}
 			}
+			else if (edit.Kind is XamlEditKind.SetResource && edit.Payload is { } resource)
+			{
+				// A resource is built the same way an added element is and then put somewhere else:
+				// behind a key rather than into a parent's children. So the same steps run, minus the
+				// attach, and one ReplaceResource finishes it.
+				try
+				{
+					foreach (var step in XamlMaterialiser.Unattached(resource))
+					{
+						var (line, key) = Command(step);
+						commands.Add(line);
+						keys.Add(key);
+					}
+
+					var name = edit.Property ?? string.Empty;
+					commands.Add(Line("ReplaceResource", edit.Target, name, string.Empty, string.Empty, XamlMaterialiser.RootSlot, 0));
+					keys.Add(Key("ReplaceResource", edit.Target, name, XamlMaterialiser.RootSlot));
+				}
+				catch (Exception exception)
+				{
+					keys.Clear();
+					notes.Add($"The resource '{edit.Property}' on {edit.Target} could not be taken apart into build steps: {exception.Message}");
+				}
+			}
 
 			plans.Add((edit, keys));
 		}

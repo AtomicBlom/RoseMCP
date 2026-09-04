@@ -306,6 +306,24 @@ reclaim memory or pick up a rebuilt generator.
   it targets Windows and the test projects cannot see inside it, and the ordering this depends on --
   create, fill, nest, and attach to the running app *last*, so nothing can observe a half-built
   element -- is exactly the kind of thing that needs a test rather than a comment.
+  <br>
+  A `*.Resources` block is the same trap wearing a different hat. It is a property written in element
+  form, so it is not a child: walking into it produced `Grid[0]/Grid.Resources[0]/SolidColorBrush[0]`
+  and the apply then failed naming a missing element, which is the wrong problem stated confidently.
+  It also must not occupy a child index, or an element added after a `<Grid.RowDefinitions>` is handed
+  a position counting something that is not its sibling. Resources are matched by `x:Key` and never by
+  position, and the whole resource is replaced rather than its properties edited, because one brush
+  object can sit behind several keys. `Resources` itself is **not** in the property chain -- it is an
+  ordinary property on `FrameworkElement`, not a dependency property -- so the dictionary is asked of
+  the element through `GetIInspectableFromHandle`, and `ReplaceResource` wants a *key handle*, which is
+  a boxed string put back through `GetHandleFromIInspectable`.
+  <br>
+  One thing about the fixture rather than the code, because it cost a crash to learn: XAML resolves
+  `{ThemeResource}` and `{StaticResource}` at parse time against resources declared *earlier*, so a
+  resources block placed after the element that uses it is a forward reference and the app dies on
+  launch. And the reference has to be `ThemeResource` for a replacement to be observable at all --
+  `StaticResource` resolves once when the tree is built, so replacing what the key means would change
+  the dictionary and move nothing on screen.
 - **A live element is addressed by one grammar, counted the same way at both ends.** An `x:Name` is
   absent far more often than not -- everything inside a control template is unnamed -- so an element
   is addressed as `#name` or, failing that, `Type[index]` segments anchored at its nearest named

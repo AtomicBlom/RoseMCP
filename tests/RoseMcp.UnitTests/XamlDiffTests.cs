@@ -50,6 +50,126 @@ public sealed class XamlDiffTests
 		Assert.Equal("Windows.Foundation.Double", edit.ValueType);
 	}
 
+	/// <summary>
+	/// A changed resource is an edit against the dictionary its owner holds, keyed by name.
+	/// <para>
+	/// It used to come out as <c>Grid[0]/Grid.Resources[0]/SolidColorBrush[0]</c>: the diff walked into
+	/// the resources block as though it were an element, and nothing can resolve that, because a
+	/// <c>*.Resources</c> block is a property written in element form and is never in the visual tree. So
+	/// changing a brush in a dictionary failed with a complaint about a missing element -- the wrong
+	/// problem, stated confidently.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public void A_changed_resource_is_an_edit_against_its_owners_dictionary()
+	{
+		var edits = Compute(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><SolidColorBrush x:Key=\"Accent\" Color=\"#FFFF0000\" /></Grid.Resources></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><SolidColorBrush x:Key=\"Accent\" Color=\"#FF00FF00\" /></Grid.Resources></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.SetResource, edit.Kind);
+		Assert.Equal("#root", edit.Target);
+		Assert.Equal("Accent", edit.Property);
+		Assert.Contains("#FF00FF00", edit.Payload);
+	}
+
+	/// <summary>
+	/// Resources are matched by key and never by position, which is the only thing that tells two
+	/// brushes apart. Reordering a dictionary therefore means nothing at all.
+	/// </summary>
+	[Fact]
+	public void Matches_resources_by_key_rather_than_by_where_they_sit()
+	{
+		var edits = Compute(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources>"
+				+ "<SolidColorBrush x:Key=\"A\" Color=\"#FF000001\" />"
+				+ "<SolidColorBrush x:Key=\"B\" Color=\"#FF000002\" />"
+				+ "</Grid.Resources></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources>"
+				+ "<SolidColorBrush x:Key=\"B\" Color=\"#FF000002\" />"
+				+ "<SolidColorBrush x:Key=\"A\" Color=\"#FF0000FF\" />"
+				+ "</Grid.Resources></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal("A", edit.Property);
+		Assert.Contains("#FF0000FF", edit.Payload);
+	}
+
+	/// <summary>
+	/// A block may hold its resources directly or wrap them in an explicit <c>ResourceDictionary</c>.
+	/// Both spellings mean one dictionary, and understanding only one of them would find no resources at
+	/// all in half the markup out there.
+	/// </summary>
+	[Fact]
+	public void Reads_resources_through_an_explicit_resource_dictionary()
+	{
+		var edits = Compute(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><ResourceDictionary>"
+				+ "<SolidColorBrush x:Key=\"Accent\" Color=\"#FFFF0000\" />"
+				+ "</ResourceDictionary></Grid.Resources></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><ResourceDictionary>"
+				+ "<SolidColorBrush x:Key=\"Accent\" Color=\"#FF00FF00\" />"
+				+ "</ResourceDictionary></Grid.Resources></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.SetResource, edit.Kind);
+		Assert.Equal("Accent", edit.Property);
+	}
+
+	/// <summary>Adding and removing a resource are said rather than attempted, since neither applies yet.</summary>
+	[Fact]
+	public void Says_when_a_resource_arrives_or_goes_rather_than_emitting_an_edit()
+	{
+		var added = Diff(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources /></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><SolidColorBrush x:Key=\"New\" Color=\"#FF000000\" /></Grid.Resources></Grid>");
+
+		Assert.Empty(added.Edits);
+		Assert.Contains(added.Notes, note => note.Contains("'New'", StringComparison.Ordinal) && note.Contains("is new", StringComparison.Ordinal));
+
+		var removed = Diff(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><SolidColorBrush x:Key=\"Gone\" Color=\"#FF000000\" /></Grid.Resources></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources /></Grid>");
+
+		Assert.Empty(removed.Edits);
+		Assert.Contains(removed.Notes, note => note.Contains("'Gone'", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A property written in element form does not occupy a child position. It did, so an element added
+	/// after a <c>Grid.RowDefinitions</c> was handed an index that counted something which is not its
+	/// sibling -- and went in at the wrong place, or nowhere.
+	/// </summary>
+	[Fact]
+	public void Does_not_let_property_element_syntax_take_up_a_child_position()
+	{
+		var edits = Compute(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.RowDefinitions><RowDefinition /></Grid.RowDefinitions></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.RowDefinitions><RowDefinition /></Grid.RowDefinitions><Border /></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.AddChild, edit.Kind);
+		Assert.Equal("#root", edit.Target);
+		Assert.Equal(0, edit.Index);
+	}
+
+	/// <summary>
+	/// A changed property element that is not a resources block is reported rather than walked into.
+	/// Walking in produced an edit addressed at something that is not an element, so the apply failed
+	/// naming a missing element instead of an edit it does not do.
+	/// </summary>
+	[Fact]
+	public void Says_when_a_property_written_in_element_form_changed()
+	{
+		var result = Diff(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.RowDefinitions><RowDefinition Height=\"10\" /></Grid.RowDefinitions></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.RowDefinitions><RowDefinition Height=\"20\" /></Grid.RowDefinitions></Grid>");
+
+		Assert.Empty(result.Edits);
+		Assert.Contains(result.Notes, note => note.Contains("Grid.RowDefinitions", StringComparison.Ordinal));
+	}
+
 	[Fact]
 	public void Two_same_named_types_from_different_namespaces_do_not_share_an_address()
 	{
@@ -178,4 +298,8 @@ public sealed class XamlDiffTests
 
 	private static IReadOnlyList<XamlEdit> Compute(string oldXaml, string newXaml)
 		=> XamlDiff.XamlDiff.Compute(oldXaml, newXaml).Edits;
+
+	/// <summary>The whole result, for the tests that are about what the diff says rather than what it does.</summary>
+	private static XamlDiffResult Diff(string oldXaml, string newXaml)
+		=> XamlDiff.XamlDiff.Compute(oldXaml, newXaml);
 }

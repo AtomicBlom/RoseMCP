@@ -2329,6 +2329,7 @@ private:
 				else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
 				else if (command.op == L"CreateInstance") status = ApplyCreate(command);
 				else if (command.op == L"AddChild") status = ApplyAddChild(command);
+				else if (command.op == L"ReplaceResource") status = ApplyReplaceResource(command);
 				else status = L"unsupported op";
 
 				if (file)
@@ -2527,6 +2528,85 @@ private:
 		}
 
 		return 0;
+	}
+
+	// Swaps what a key in an element's resource dictionary resolves to.
+	//
+	// ReplaceResource is on IVisualTreeService2, which is asked for here rather than at startup: a
+	// framework without it should cost this one command and not the whole XAML surface.
+	std::wstring ApplyReplaceResource(const Command& command)
+	{
+		InstanceHandle owner = 0;
+		const std::wstring unresolvedOwner = Resolve(command.target, owner);
+		if (!unresolvedOwner.empty()) return unresolvedOwner;
+
+		InstanceHandle value = 0;
+		const std::wstring unresolvedValue = Resolve(command.arg, value);
+		if (!unresolvedValue.empty()) return unresolvedValue;
+
+		InstanceHandle dictionary = 0;
+		if (!ResourcesOf(owner, dictionary)) return L"cannot replace: that element has no Resources dictionary";
+
+		// The key is a handle, not a string, which is the part of this signature that surprises. A
+		// boxed hstring is the honest way to make one: the diagnostics host can hand back a handle for
+		// any IInspectable, and a resource key in markup is a string.
+		InstanceHandle key = 0;
+		if (!KeyHandle(command.property, key)) return L"cannot replace: could not make a handle for the key";
+
+		IVisualTreeService2* resources = nullptr;
+		if (!m_diagnostics
+			|| FAILED(m_diagnostics->QueryInterface(__uuidof(IVisualTreeService2), reinterpret_cast<void**>(&resources)))
+			|| !resources)
+		{
+			return L"cannot replace: this framework does not offer IVisualTreeService2";
+		}
+
+		const HRESULT hr = resources->ReplaceResource(dictionary, key, value);
+		resources->Release();
+
+		if (hr != S_OK) return L"ReplaceResource failed 0x" + Hex(hr);
+
+		Log(L"  replaced resource " + command.property + L" on " + command.target);
+		return L"applied";
+	}
+
+	// An element's resource dictionary.
+	//
+	// Not from the property chain, which is where the first attempt looked and found nothing: that
+	// chain reports dependency properties, and Resources is not one -- it is an ordinary property on
+	// FrameworkElement. Asking the element itself is the answer, and the diagnostics host converts
+	// between handles and objects in both directions, so there is a route to it and back.
+	bool ResourcesOf(InstanceHandle owner, InstanceHandle& dictionary)
+	{
+		if (!m_diagnostics) return false;
+
+		::IInspectable* raw = nullptr;
+		if (FAILED(m_diagnostics->GetIInspectableFromHandle(owner, &raw)) || !raw) return false;
+
+		winrt::Windows::Foundation::IInspectable instance{ nullptr };
+		winrt::attach_abi(instance, raw); // adopt the ref
+
+		const auto element = instance.try_as<xaml::FrameworkElement>();
+		if (!element) return false;
+
+		const auto resources = element.Resources();
+		if (!resources) return false;
+
+		const HRESULT hr = m_diagnostics->GetHandleFromIInspectable(
+			reinterpret_cast<::IInspectable*>(winrt::get_abi(resources)), &dictionary);
+
+		return SUCCEEDED(hr) && dictionary != 0;
+	}
+
+	bool KeyHandle(const std::wstring& key, InstanceHandle& handle)
+	{
+		if (!m_diagnostics || key.empty()) return false;
+
+		const auto boxed = winrt::box_value(winrt::hstring{ key });
+		const HRESULT hr = m_diagnostics->GetHandleFromIInspectable(
+			reinterpret_cast<::IInspectable*>(winrt::get_abi(boxed)), &handle);
+
+		return SUCCEEDED(hr) && handle != 0;
 	}
 
 	// Puts a built instance into its new parent's children.

@@ -59,6 +59,24 @@ public static class XamlDiff
 
 		foreach (var newChild in newChildren)
 		{
+			// A dotted local name is property-element syntax -- <Page.Resources>, <Grid.RowDefinitions> --
+			// which writes a property and is never a child of anything in the visual tree. Two things
+			// follow, and both used to be wrong.
+			//
+			// It must not advance the child position. It did, so an element added after a
+			// <Grid.RowDefinitions> was given an index counting something that is not its sibling, and
+			// went in at the wrong place or nowhere.
+			//
+			// And it cannot be walked into as though it held children. Doing that produced addresses like
+			// `Grid[0]/Grid.Resources[0]/SolidColorBrush[0]`, which nothing can resolve -- so changing a
+			// brush in a resource dictionary failed with a message about a missing element, which is the
+			// wrong problem described confidently.
+			if (newChild.Name.LocalName.Contains('.'))
+			{
+				DiffPropertyElement(newElement, newChild, oldChildren, usedOld, edits, notes);
+				continue;
+			}
+
 			var matchIndex = FindMatch(newChild, oldChildren, usedOld);
 			if (matchIndex < 0)
 			{
@@ -94,11 +112,123 @@ public static class XamlDiff
 
 		for (var i = 0; i < oldChildren.Count; i++)
 		{
-			if (!usedOld[i])
-			{
-				edits.Add(new XamlEdit { Kind = XamlEditKind.RemoveChild, Target = AddressOf(oldChildren[i]) });
-			}
+			if (usedOld[i]) continue;
+
+			// A property that has gone is not a child that has gone, and asking the tree to remove one
+			// would look for an element of that name and not find it.
+			if (oldChildren[i].Name.LocalName.Contains('.')) continue;
+
+			edits.Add(new XamlEdit { Kind = XamlEditKind.RemoveChild, Target = AddressOf(oldChildren[i]) });
 		}
+	}
+
+	/// <summary>
+	/// A property written in element form. A resources block is understood; anything else is reported
+	/// rather than walked into, because walking in built an address for something that is not an element
+	/// and the apply then failed naming a missing element instead of an edit it does not do.
+	/// </summary>
+	private static void DiffPropertyElement(
+		XElement owner,
+		XElement newBlock,
+		List<XElement> oldChildren,
+		bool[] usedOld,
+		List<XamlEdit> edits,
+		List<string> notes)
+	{
+		var matchIndex = oldChildren.FindIndex(child => child.Name == newBlock.Name);
+		if (matchIndex >= 0) usedOld[matchIndex] = true;
+
+		var oldBlock = matchIndex >= 0 ? oldChildren[matchIndex] : null;
+
+		if (newBlock.Name.LocalName.EndsWith(".Resources", StringComparison.Ordinal))
+		{
+			DiffResources(owner, oldBlock, newBlock, edits, notes);
+			return;
+		}
+
+		var unchanged = oldBlock is not null
+			&& oldBlock.ToString(SaveOptions.DisableFormatting) == newBlock.ToString(SaveOptions.DisableFormatting);
+
+		if (unchanged) return;
+
+		notes.Add($"{newBlock.Name.LocalName} on {AddressOf(owner)} changed, and a property written in element "
+			+ "form is not applied live. An element's own attributes and its resources are.");
+	}
+
+	/// <summary>
+	/// Resources are keyed rather than positional, so they are matched by <c>x:Key</c> and never by where
+	/// they sit -- reordering a dictionary means nothing, and two resources of one type are told apart by
+	/// nothing else.
+	/// <para>
+	/// The whole resource is replaced rather than its attributes edited, because that is the shape of
+	/// what the framework offers: <c>ReplaceResource</c> swaps what a key resolves to. Editing the
+	/// existing instance's properties would be a different thing with different consequences, since one
+	/// brush object can be behind a dozen keys.
+	/// </para>
+	/// </summary>
+	private static void DiffResources(
+		XElement owner,
+		XElement? oldBlock,
+		XElement newBlock,
+		List<XamlEdit> edits,
+		List<string> notes)
+	{
+		var before = Keyed(oldBlock);
+		var after = Keyed(newBlock);
+
+		foreach (var (key, resource) in after)
+		{
+			var markup = resource.ToString(SaveOptions.DisableFormatting);
+
+			if (!before.TryGetValue(key, out var was))
+			{
+				notes.Add($"The resource '{key}' on {AddressOf(owner)} is new. Adding a resource is not applied "
+					+ "live yet; changing one that is already there is.");
+				continue;
+			}
+
+			if (was.ToString(SaveOptions.DisableFormatting) == markup) continue;
+
+			edits.Add(new XamlEdit
+			{
+				Kind = XamlEditKind.SetResource,
+				Target = AddressOf(owner),
+				Property = key,
+				Payload = markup,
+			});
+		}
+
+		foreach (var key in before.Keys)
+		{
+			if (after.ContainsKey(key)) continue;
+
+			notes.Add($"The resource '{key}' was removed from {AddressOf(owner)}. Removing a resource is not "
+				+ "applied live yet.");
+		}
+	}
+
+	/// <summary>
+	/// The resources in a block, by their <c>x:Key</c>. A block may hold its resources directly or wrap
+	/// them in an explicit <c>ResourceDictionary</c>; both spellings mean the same dictionary, and a
+	/// reader that understood only one would silently find no resources in half the markup it met.
+	/// </summary>
+	private static Dictionary<string, XElement> Keyed(XElement? block)
+	{
+		var keyed = new Dictionary<string, XElement>(StringComparer.Ordinal);
+		if (block is null) return keyed;
+
+		var children = block.Elements().ToList();
+		if (children is [{ } only] && only.Name.LocalName == "ResourceDictionary")
+		{
+			children = only.Elements().ToList();
+		}
+
+		foreach (var resource in children)
+		{
+			if (resource.Attribute(XName.Get("Key", XamlNamespace))?.Value is { } key) keyed[key] = resource;
+		}
+
+		return keyed;
 	}
 
 	private static void DiffProperties(string target, XElement oldElement, XElement newElement, List<XamlEdit> edits)

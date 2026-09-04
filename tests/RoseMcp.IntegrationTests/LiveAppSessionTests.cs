@@ -592,7 +592,7 @@ public sealed class LiveAppSessionTests
 
 			// The element's own declaration is real, and is where it has always belonged.
 			Assert.Equal("ms-appx:///MainPage.xaml", captionProperties.SourceFile);
-			Assert.Equal(9, captionProperties.SourceLine);
+			Assert.Equal(17, captionProperties.SourceLine);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}
@@ -1205,6 +1205,87 @@ public sealed class LiveAppSessionTests
 			var row = properties.Properties.FirstOrDefault(property => property.Name == "Grid.Row");
 			Assert.NotNull(row);
 			Assert.Equal("1", row!.Value);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	/// <summary>
+	/// Resource-dictionary edits (#11), the last thing on the card. A resource is keyed rather than
+	/// positional, and it is not an element in the visual tree at all -- a <c>*.Resources</c> block is a
+	/// property written in element form -- so before this the diff addressed one as
+	/// <c>Grid[0]/Grid.Resources[0]/SolidColorBrush[0]</c> and the apply failed complaining about a
+	/// missing element, which is the wrong problem stated confidently.
+	/// <para>
+	/// The assertion that matters is the second one: the element already using the key. Replacing what a
+	/// key resolves to is only worth anything if what was drawn from it follows, and that is a fact
+	/// about the framework rather than about this code -- which is why the probe references the brush
+	/// with <c>ThemeResource</c>, the form that re-evaluates.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Replaces_a_keyed_resource_on_the_live_tree()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
+		var oldXaml = File.ReadAllText(xamlPath);
+
+		const string Was = "#FF445566";
+		const string Now = "#FFAA3300";
+		Assert.Contains($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", oldXaml);
+		var newXaml = oldXaml.Replace($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", $"x:Key=\"ProbeAccent\" Color=\"{Now}\"");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = aumid,
+					Description = "uwp resource probe",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			// The element is drawing the old colour through the key before anything is changed.
+			var before = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.Equal(Was, await BackgroundAtAsync(session, before, "#Themed", cancellationToken));
+
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+
+			var edit = reload.Results.FirstOrDefault(result => result.Kind == "SetResource");
+			Assert.NotNull(edit);
+			Assert.Equal("#RootGrid", edit!.Target);
+			Assert.Equal("ProbeAccent", edit.Property);
+			Assert.Equal("applied", edit.Status);
+
+			// And the element that resolves the key follows it.
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.Equal(Now, await BackgroundAtAsync(session, tree, "#Themed", cancellationToken));
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}

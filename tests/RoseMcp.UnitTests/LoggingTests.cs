@@ -24,6 +24,19 @@ public sealed class LoggingTests : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// A rooted path for whichever platform this is running on.
+	/// <para>
+	/// Literal <c>C:\...</c> is what these tests used to pass, and it is not a path off Windows: with
+	/// no leading separator <see cref="Path.GetFullPath(string)"/> reads it as relative and prepends
+	/// the working directory, and <see cref="Path.GetFileName(string)"/> then returns the whole thing
+	/// because a backslash is an ordinary character. So the assertions failed for a reason that had
+	/// nothing to do with what they were testing.
+	/// </para>
+	/// </summary>
+	private static string Rooted(params string[] segments) =>
+		Path.Combine([OperatingSystem.IsWindows() ? @"C:\" : "/", .. segments]);
+
 	[Fact]
 	public void Puts_a_component_under_the_vendor_and_product_folders()
 	{
@@ -35,7 +48,7 @@ public sealed class LoggingTests : IDisposable
 	[Fact]
 	public void Keeps_the_solution_name_readable_in_the_encoded_form()
 	{
-		var encoded = RoseLogFile.EncodeSolutionPath(@"C:\Dev\Personal\RoseMCP\RoseMcp.slnx");
+		var encoded = RoseLogFile.EncodeSolutionPath(Rooted("Dev", "Personal", "RoseMCP", "RoseMcp.slnx"));
 
 		Assert.StartsWith("rosemcp.slnx-", encoded, StringComparison.Ordinal);
 		Assert.DoesNotContain(Path.DirectorySeparatorChar, encoded);
@@ -49,19 +62,36 @@ public sealed class LoggingTests : IDisposable
 	[Fact]
 	public void Separates_two_checkouts_that_share_a_solution_name()
 	{
-		var first = RoseLogFile.EncodeSolutionPath(@"C:\repo\main\A.slnx");
-		var second = RoseLogFile.EncodeSolutionPath(@"C:\repo\feature\A.slnx");
+		var first = RoseLogFile.EncodeSolutionPath(Rooted("repo", "main", "A.slnx"));
+		var second = RoseLogFile.EncodeSolutionPath(Rooted("repo", "feature", "A.slnx"));
 
 		Assert.NotEqual(first, second);
 	}
 
-	/// <summary>Windows paths are case-insensitive, so the same solution must encode the same.</summary>
+	/// <summary>
+	/// Case is folded exactly where the filesystem folds it, which is why this asserts two different
+	/// things on two platforms rather than one thing everywhere.
+	/// <para>
+	/// On Windows the two paths are one file, so they have to encode the same or one solution writes
+	/// two log files. On Linux they are two files, and giving them one name is worse than it sounds:
+	/// Serilog takes an exclusive lock, so the loser of a shared name logs nothing at all. That is
+	/// the failure <c>Claim</c> exists to prevent, and folding case here would reintroduce it a level
+	/// above.
+	/// </para>
+	/// </summary>
 	[Fact]
-	public void Treats_differently_cased_paths_as_one_solution()
+	public void Folds_case_exactly_where_the_filesystem_does()
 	{
-		Assert.Equal(
-			RoseLogFile.EncodeSolutionPath(@"C:\Repo\A.slnx"),
-			RoseLogFile.EncodeSolutionPath(@"c:\repo\a.slnx"));
+		var upper = RoseLogFile.EncodeSolutionPath(Rooted("Repo", "A.slnx"));
+		var lower = RoseLogFile.EncodeSolutionPath(Rooted("repo", "a.slnx"));
+
+		if (OperatingSystem.IsWindows())
+		{
+			Assert.Equal(upper, lower);
+			return;
+		}
+
+		Assert.NotEqual(upper, lower);
 	}
 
 	[Fact]
@@ -70,7 +100,7 @@ public sealed class LoggingTests : IDisposable
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
 		var now = new DateTimeOffset(2026, 9, 1, 14, 30, 22, TimeSpan.Zero);
 
-		var worker = RoseLogFile.Claim(directory, @"C:\repo\A.slnx", now);
+		var worker = RoseLogFile.Claim(directory, Rooted("repo", "A.slnx"), now);
 		var host = RoseLogFile.Claim(RoseLogFile.DirectoryFor("Tray", _root), null, now);
 
 		Assert.EndsWith("-20260901-143022.log", worker, StringComparison.Ordinal);

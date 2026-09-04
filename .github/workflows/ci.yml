@@ -63,3 +63,44 @@ jobs:
 
       - name: Unit tests
         run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj --configuration Debug --no-build
+
+  # The half of this repository that ships for Linux, built and tested there. Not the whole solution:
+  # the tray is WinUI and the debug host is ICorDebug, so `dotnet build RoseMcp.slnx` cannot succeed
+  # off Windows and never will. The unit test project references neither, which is what makes this
+  # possible at all -- and #34's point is that shipping a linux artifact without ever running it is
+  # the same trust nobody extends to the Windows half.
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # The two things a Linux user actually runs, published for the RIDs the release ships. This is
+      # what proves the claim in #34 -- that nothing in the broker or worker graph reaches the
+      # Windows-only projects -- rather than inferring it from the reference lists.
+      - name: Publish the broker and worker
+        run: |
+          for rid in linux-x64 linux-arm64; do
+            dotnet publish src/RoseMcp.Server -c Release -r $rid --self-contained false -o /tmp/$rid
+            dotnet publish src/RoseMcp.Worker -c Release -r $rid --self-contained false -o /tmp/$rid
+          done
+
+      # The paths in these used to be literal C:\... , which is not a path here: with no leading
+      # separator GetFullPath reads it as relative and GetFileName returns the whole string, so they
+      # failed for reasons that had nothing to do with what they test.
+      - name: Unit tests
+        run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj -c Release

@@ -36,23 +36,33 @@ public static partial class RoseLogFile
 	}
 
 	/// <summary>
-	/// A solution path reduced to one readable filename component.
+	/// A solution path as one path-safe token: its file name, readably, plus a hash of the whole path.
 	/// <para>
-	/// The name alone would collide across checkouts -- two worktrees of the same repository are
-	/// the normal case here, not a corner one -- so a hash of the full path is appended. It is
-	/// lowercased first because Windows paths are case-insensitive and the same solution reached
-	/// through differently-cased paths is the same solution.
+	/// Both halves are needed. Six worktrees of one repository is the ordinary case here and each
+	/// holds a solution of the same name, so the name alone would interleave their logs; the hash
+	/// alone would be unreadable.
+	/// </para>
+	/// <para>
+	/// The hash folds case only where the filesystem does. On Windows two differently-cased paths are
+	/// one file and must encode the same, or one solution writes two log files. On Linux they are two
+	/// files, and folding them together would give both the same name -- which matters more than it
+	/// sounds, because Serilog takes an exclusive lock and the loser of a shared name logs nothing at
+	/// all. That is the failure <see cref="Claim"/> exists to avoid, and doing it here would put it
+	/// back a level up.
 	/// </para>
 	/// </summary>
 	public static string EncodeSolutionPath(string solutionPath)
 	{
 		var full = Path.GetFullPath(solutionPath);
+		// The same decision RoseMcp.Solutions.PathCasing makes for the broker, spelled out again
+		// rather than shared: this assembly deliberately references nothing, so that it can be
+		// referenced by every host without dragging anything behind it.
+		var compared = OperatingSystem.IsWindows() ? full.ToLowerInvariant() : full;
 		var hash = Convert.ToHexString(
-			SHA256.HashData(Encoding.UTF8.GetBytes(full.ToLowerInvariant())).AsSpan(0, 4)).ToLowerInvariant();
+			SHA256.HashData(Encoding.UTF8.GetBytes(compared)).AsSpan(0, 4)).ToLowerInvariant();
 
-		// Lowercased along with the hash. A log file name is not prose, and one solution reached
-		// through two differently-cased paths producing two differently-named files is worse than
-		// losing the capitals.
+		// The readable half is lowercased regardless. A log file name is not prose, and where the
+		// filesystem is case-sensitive the hash above is what keeps two of them apart anyway.
 		var readable = InvalidNameCharacters().Replace(Path.GetFileName(full), "_").ToLowerInvariant();
 		if (readable.Length == 0) readable = "solution";
 

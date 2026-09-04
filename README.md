@@ -38,6 +38,16 @@ claude mcp add rose -- <path>/RoseMcp.Server.exe
 That is the whole setup. There is no `workspace_open` to call first — every tool resolves its own
 solution from a supplied path or from the working directory.
 
+The machine needs the .NET **SDK**, not only the runtime. The worker runs a design-time build
+through `Microsoft.CodeAnalysis.Workspaces.MSBuild`, which locates MSBuild and the targets out of
+an SDK installation — so with the runtime alone every project loads with no references and
+reports thousands of errors about `System.Object` being undefined. True on Windows too; it is
+only surprising on a server, where installing the runtime is the usual thing to do.
+
+Windows gets the tray and the `rose_debug_*` live-app surface as well. Linux gets the stdio
+broker and worker: the tray is WinUI and the debugger is ICorDebug, so neither has a Linux build
+to ship, and the tools that would have nothing behind them are not advertised there.
+
 To make an agent actually reach for it, add this to the consuming repository's `CLAUDE.md`:
 
 ```markdown

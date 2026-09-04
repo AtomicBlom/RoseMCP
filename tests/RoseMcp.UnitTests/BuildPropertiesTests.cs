@@ -33,6 +33,133 @@ public sealed class BuildPropertiesTests
 		Assert.Null(build.Notice);
 	}
 
+	/// <summary>
+	/// A chosen platform has to be marked as chosen, because the wrong one is survivable and therefore
+	/// silent: the projects load, and only the in-solution references quietly fail to resolve. Nothing
+	/// downstream can say so unless it knows the value was a guess.
+	/// </summary>
+	[Fact]
+	public void Records_that_a_platform_was_chosen_rather_than_asked_for()
+	{
+		var declared = new SolutionConfigurations
+		{
+			Configurations = ["Debug", "Release"],
+			Platforms = ["x64", "ARM64"],
+		};
+
+		var build = BuildProperties.Select(Options(), declared);
+
+		Assert.True(build.PlatformWasChosen);
+	}
+
+	[Fact]
+	public void Does_not_call_a_platform_chosen_when_the_caller_named_it()
+	{
+		var declared = new SolutionConfigurations
+		{
+			Configurations = ["Debug"],
+			Platforms = ["x64", "ARM64"],
+		};
+
+		var options = new WorkerOptions { SolutionPath = "S.slnx", Platform = "x64" };
+		var build = BuildProperties.Select(options, declared);
+
+		Assert.Equal("x64", build.Platform);
+		Assert.False(build.PlatformWasChosen);
+	}
+
+	/// <summary>
+	/// Nor when there was nothing to choose. A solution declaring AnyCPU leaves MSBuild's default
+	/// alone, and a default is not a guess.
+	/// </summary>
+	[Fact]
+	public void Does_not_call_msbuilds_own_default_a_chosen_platform()
+	{
+		var build = BuildProperties.Select(Options(), SolutionConfigurations.None);
+
+		Assert.False(build.PlatformWasChosen);
+	}
+
+	/// <summary>
+	/// #24: a chosen platform that turns out to be wrong resolves no in-solution references and does
+	/// not fail. Every project reports loaded, because each resolved the framework; what they did not
+	/// resolve is each other. The unresolved paths are the only evidence there is.
+	/// </summary>
+	[Fact]
+	public void Suspects_the_platform_it_chose_when_the_unresolved_paths_are_under_it()
+	{
+		var build = Chose("ARM64", ["x64", "ARM64"]);
+
+		var suspicion = build.SuspectWrongPlatform(
+		[
+			@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\A\bin\ARM64\Debug\A.dll'",
+			@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\B\bin\ARM64\Debug\B.dll'",
+		]);
+
+		Assert.NotNull(suspicion);
+		Assert.Contains("'ARM64' was chosen", suspicion, StringComparison.Ordinal);
+		Assert.Contains("2 load diagnostic(s)", suspicion, StringComparison.Ordinal);
+
+		// And it names the way out, which is the other platform rather than a general instruction.
+		Assert.Contains("platform=x64", suspicion, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A caller who named the platform has already decided. Telling them their own answer looks wrong
+	/// is a different and much noisier thing, and this is a degraded reason -- it has to stay rare.
+	/// </summary>
+	[Fact]
+	public void Says_nothing_about_a_platform_the_caller_asked_for()
+	{
+		var build = Chose("ARM64", ["x64", "ARM64"]) with { PlatformWasChosen = false };
+
+		Assert.Null(build.SuspectWrongPlatform([@"Cannot resolve 'D:\repo\A\bin\ARM64\Debug\A.dll'"]));
+	}
+
+	/// <summary>
+	/// The choice being right is the ordinary case, and it must be silent: a solution that declares
+	/// only ARM64 on an ARM64 machine with everything built is not degraded.
+	/// </summary>
+	[Fact]
+	public void Says_nothing_when_no_unresolved_path_is_under_the_chosen_platform()
+	{
+		var build = Chose("ARM64", ["x64", "ARM64"]);
+
+		Assert.Null(build.SuspectWrongPlatform(
+		[
+			"Found project reference without a matching metadata reference: A.csproj",
+			@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\A\bin\x64\Debug\A.dll'",
+		]));
+	}
+
+	/// <summary>Posix separators too, so this reads the same on Linux.</summary>
+	[Fact]
+	public void Recognises_the_chosen_platform_in_a_posix_path()
+	{
+		var build = Chose("ARM64", ["x64", "ARM64"]);
+
+		Assert.NotNull(build.SuspectWrongPlatform(["Cannot resolve '/home/me/repo/A/bin/ARM64/Debug/A.dll'"]));
+	}
+
+	/// <summary>
+	/// A platform name appearing in prose is not a path under it. The suspicion is a degraded reason,
+	/// so a false one costs the word its meaning.
+	/// </summary>
+	[Fact]
+	public void Does_not_take_the_platform_name_in_prose_for_an_output_path()
+	{
+		var build = Chose("ARM64", ["x64", "ARM64"]);
+
+		Assert.Null(build.SuspectWrongPlatform(["ARM64 support for this SDK is preview."]));
+	}
+
+	private static BuildProperties Chose(string platform, string[] declared) => new()
+	{
+		Platform = platform,
+		PlatformWasChosen = true,
+		Available = new SolutionConfigurations { Platforms = declared },
+	};
+
 	[Fact]
 	public void Picks_a_declared_configuration_when_the_solution_has_no_plain_Debug()
 	{

@@ -579,6 +579,33 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		return await session.ClearXamlSelectionAsync(cancellationToken);
 	}
 
+	[McpServerTool(
+		Name = ToolNames.XamlSelectElement,
+		Title = "Select a XAML element by handle",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Select an element by the handle rose_xaml_tree gave it, with no click involved. Use this to "
+			+ "pick an element structurally -- by type, by x:Name, by the source file its markup came "
+			+ "from -- instead of asking the user to click it, and use it when a click cannot reach the "
+			+ "element at all: a slider is the known case, because what a click resolves to is the "
+			+ "framework's answer and it is sometimes not the element anybody meant. It marks the "
+			+ "element in the running app exactly as a click would, so the user can see what you picked, "
+			+ "and it returns the same stack a click does -- the element first, then its ancestors "
+			+ "outwards, so you can go up to the container you actually meant without asking again. "
+			+ "Each handle feeds rose_xaml_properties and rose_xaml_apply directly.")]
+	public async Task<LiveXamlSelection> XamlSelectElementAsync(
+		[Description(SessionHelp)] string sessionId,
+		[Description("The element's handle, from rose_xaml_tree.")] ulong handle,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.SelectXamlElementAsync(handle, cancellationToken);
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

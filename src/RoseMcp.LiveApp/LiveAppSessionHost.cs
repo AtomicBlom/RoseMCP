@@ -281,6 +281,27 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
+	/// Selects the element a handle names, without a click. See
+	/// <see cref="XamlDiagnosticsSession.SelectByHandle"/> for why that matters.
+	/// </summary>
+	public LiveXamlSelection SelectXamlElement(ulong handle)
+	{
+		int? targetProcessId;
+		lock (_gate)
+		{
+			targetProcessId = _targetProcessId;
+			_xaml ??= new XamlDiagnosticsSession(logger);
+		}
+
+		if (targetProcessId is not { } pid)
+		{
+			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
+		}
+
+		return _xaml.SelectByHandle(pid, handle);
+	}
+
+	/// <summary>
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree.
 	/// Returns each computed edit with its outcome.
 	/// </summary>

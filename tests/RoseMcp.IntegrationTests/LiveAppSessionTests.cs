@@ -797,6 +797,249 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// #46: selecting by handle, with no hit test in the path. That is what reaches a control a click
+	/// cannot -- a slider is the reported case, and what a click resolves to is the framework's answer
+	/// rather than ours -- and it is the only way this suite can make a selection at all, since a
+	/// click is a human action and nothing here drives the mouse on a live desktop.
+	/// <para>
+	/// Skips where the UWP or C++ toolchain is absent.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Selects_a_xaml_element_by_handle_without_a_click()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp select-by-handle probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			// The handle comes from the tree, which is the whole route this exists to open.
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
+			Assert.NotNull(pane);
+
+			var selected = await session.SelectXamlElementAsync(pane!.Handle, cancellationToken);
+
+			Assert.True(selected.Selected, $"expected a selection; got: {selected.Detail}");
+			Assert.Equal(pane.Handle, selected.Handle);
+			Assert.Equal("Pane", selected.Name);
+
+			// The stack is the element then its ancestors outwards, so a caller who took the handle the
+			// tree gave them can still reach the container they actually meant.
+			Assert.Contains(selected.Candidates, candidate => candidate.Name == "Panel");
+			Assert.Contains(selected.Candidates, candidate => candidate.Name == "RootGrid");
+
+			// It reads back through the same path a click produces, which is the point of writing the
+			// same files: one read path, whichever route made the selection.
+			var reread = await session.ReadXamlSelectionAsync(cancellationToken);
+			Assert.True(reread.Selected);
+			Assert.Equal(pane.Handle, reread.Handle);
+
+			// And the handle it hands back drives the rest of the surface without another round trip.
+			var properties = await session.ReadXamlPropertiesAsync(selected.Handle, includeDefaults: false, cancellationToken);
+			Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
+			Assert.Contains(properties.Properties, property => property.Name == "CornerRadius");
+
+			// Clearing it works the same as for a click, because it is the same selection (#45).
+			var cleared = await session.ClearXamlSelectionAsync(cancellationToken);
+			Assert.False(cleared.Selected);
+			Assert.Contains("cleared", cleared.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	/// <summary>
+	/// A handle that names something real but not an element -- a Brush has one too -- is refused with
+	/// a sentence rather than drawing an outline round nothing.
+	/// </summary>
+	[Fact]
+	public async Task Refuses_to_select_a_handle_that_is_not_an_element()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp bad-handle probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+
+			await session.ReadXamlTreeAsync(cancellationToken);
+
+			// A handle nothing owns. The provider resolves it, finds nothing, and declines.
+			var selected = await session.SelectXamlElementAsync(1, cancellationToken);
+
+			Assert.False(selected.Selected);
+			Assert.NotNull(selected.Detail);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	/// <summary>
+	/// #51: a selection whose element leaves the visual tree is cleared, and says why.
+	/// <para>
+	/// The selection is the one mark that outlives the interaction which drew it, so it was the one
+	/// mark with nothing watching it -- the outline stayed where it was while pointing at nothing, and
+	/// the recorded handle stayed too, so the next properties call failed with a diagnostics HRESULT
+	/// instead of "the thing you picked no longer exists".
+	/// </para>
+	/// <para>
+	/// The probe's Transient border leaves the tree and comes back on a cycle, announcing each
+	/// departure in the event stream. It re-adds the same instance on purpose, which is what
+	/// virtualization and a rebuilt panel do -- so the handle stays valid across the removal, and
+	/// nothing about it can be used as a liveness test.
+	/// </para>
+	/// <para>
+	/// Testable at all only because of #46: a click is a human action, and this suite cannot make one.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Clears_a_selection_whose_element_leaves_the_tree()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp removal probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+
+			// Transient is only in the tree for part of its cycle, so finding it is a retry rather than
+			// a single read. Selecting it is the same call, because a select on something with no
+			// bounds is refused rather than half-applied.
+			var selected = await SelectTransientAsync(session, cancellationToken);
+			Assert.True(selected.Selected, $"expected to select Transient; got: {selected.Detail}");
+			Assert.Equal("Transient", selected.Name);
+
+			// Now wait for the app to take it away. The exception is the only channel out of the app.
+			var removed = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpTransientRemovedException") ?? false),
+				cancellationToken);
+			Assert.NotNull(removed);
+
+			// The provider clears on the removal callback, which arrives on the app's UI thread as the
+			// removal happens -- so by the time the exception has been observed the work is done.
+			var after = await session.ReadXamlSelectionAsync(cancellationToken);
+
+			Assert.False(after.Selected);
+			Assert.Equal(0ul, after.Handle);
+			Assert.Contains("removed from the visual tree", after.Detail ?? string.Empty, StringComparison.Ordinal);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	/// <summary>
+	/// Selects the probe's Transient border, waiting for one of its in-tree phases. Absent is the
+	/// expected answer some of the time, and a select against an element with no bounds is refused,
+	/// so both are retried rather than treated as failures.
+	/// </summary>
+	private static async Task<LiveXamlSelection> SelectTransientAsync(
+		LiveAppSession session,
+		CancellationToken cancellationToken)
+	{
+		LiveXamlSelection last = new() { Detail = "Transient never appeared in the tree." };
+
+		for (var attempt = 0; attempt < 20; attempt++)
+		{
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			if (tree.Nodes.FirstOrDefault(node => node.Name == "Transient") is { } transient)
+			{
+				last = await session.SelectXamlElementAsync(transient.Handle, cancellationToken);
+				if (last.Selected) return last;
+			}
+
+			await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken);
+		}
+
+		return last;
+	}
+
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
 	[Fact]
 	public async Task Reports_a_missing_target_as_faulted()

@@ -85,4 +85,15 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Clear the picked element and the mark drawn over the app.")]
 	public LiveXamlSelection XamlDeselect() => host.ClearXamlSelection();
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppXamlSelectElement,
+		Title = "Live-app XAML select by handle",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Select the element a handle names, without a click.")]
+	public LiveXamlSelection XamlSelectElement(ulong handle) => host.SelectXamlElement(handle);
 }

@@ -56,8 +56,10 @@ reclaim memory or pick up a rebuilt generator.
   protocol bug. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
   `Microsoft.Extensions.Logging` call sites, never a console sink, and there is a regression test
   asserting the pipeline writes nothing to stdout at all. Logs land in
-  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/{Server,Worker,Tray}/[{solution}-]{yyyyMMdd-HHmmss}.log`,
-  UTC in the name and UTC in every line so the two cannot disagree. A worker's file names the
+  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray}/[{solution}-]{yyyyMMdd-HHmmss}.log`
+  -- under their own `Logs` folder, separate from the install that shares the same vendor/product
+  parent, so promoting a build never touches a session's log files. UTC in the name and UTC in
+  every line so the two cannot disagree. A worker's file names the
   solution it owns, hashed as well as spelled, because two worktrees of one repository share a
   solution name. Twenty sessions are kept per component, pruned at startup -- Serilog's own
   retention cannot do it, since it only prunes within one rolling base name and every session
@@ -345,7 +347,8 @@ Deploy over the running instance, or build release zips:
 ./tools/deploy.ps1 -Mode package            # artifacts/rosemcp-win-{x64,arm64}.zip
 ```
 
-`promote` installs to `-Destination`, else `ROSEMCP_DEPLOY_ROOT`, else `%LOCALAPPDATA%/RoseMcp`.
+`promote` installs to `-Destination`, else `ROSEMCP_DEPLOY_ROOT`, else
+`%LOCALAPPDATA%/BinaryVibrance/RoseMCP` -- the same vendor/product folder the logs live under.
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child

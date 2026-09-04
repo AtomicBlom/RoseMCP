@@ -26,13 +26,15 @@ public static partial class RoseLogFile
 	public const int DefaultPartsPerSession = 3;
 
 	/// <summary>
-	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/{component}. The root is a parameter so a test can
-	/// point it somewhere disposable rather than at the machine's real profile.
+	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{component}. Nested under its own "Logs" folder,
+	/// separate from the install root that now shares the same vendor/product parent, so a deploy
+	/// publishing over the install never touches a session's log files. The root is a parameter so
+	/// a test can point it somewhere disposable rather than at the machine's real profile.
 	/// </summary>
 	public static string DirectoryFor(string component, string? localAppData = null)
 	{
 		var root = localAppData ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-		return Path.Combine(root, "BinaryVibrance", "RoseMCP", component);
+		return Path.Combine(root, "BinaryVibrance", "RoseMCP", "Logs", component);
 	}
 
 	/// <summary>

@@ -109,6 +109,13 @@ For markup with no file behind it -- something composed rather than saved -- pas
   property getters, method calls, and an object's `ToString` are deliberately not evaluated — that
   needs func-eval, which can hang or corrupt the target, and is left to an external debugger.
 - Conditions are cheap value-compares (`name OP literal`) over the stopped frame, not full expressions.
+- **The first read of an element's properties is the accurate one.** Reading the property chain
+  brings a `TextBlock`'s untouched collection properties into existence, and a property that exists
+  is no longer a framework default -- so a second read of the same element adds `Inlines`,
+  `TextHighlighters` and `SelectionHighlightColor` as `Local`, indistinguishable by provenance or by
+  value from what the markup really set. A `Border` has none of those and is stable. So
+  `includeDefaults: false` means "what the framework calls set", which is not quite "what the XAML
+  sets", and properties that appear between two reads are not something your edit did (issue #97).
 - A live edit changes the running app's tree, never its files or its markup. Nothing is written back,
   so the file remains the only record of the change -- and this is why "live edit" rather than "hot
   reload": nothing is reloaded. Every edit lands on the element objects that exist at that moment.

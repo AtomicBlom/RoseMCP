@@ -1527,6 +1527,113 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// What a second read of an element's properties reports (#97). Not the behaviour anyone would
+	/// choose -- it is the behaviour there is, pinned so it stops being a surprise.
+	/// <para>
+	/// Reading an element's property chain brings its untouched collection properties into existence,
+	/// and a property that exists is no longer the framework's default. So the second read of a
+	/// <c>TextBlock</c> reports <c>Inlines</c>, <c>TextHighlighters</c> and
+	/// <c>SelectionHighlightColor</c> as <c>Local</c>, with provenance and values as plausible as the
+	/// ones the markup really set. The first read is the accurate one, and it is our own read that
+	/// spoils it -- which also means <c>rose_xaml_properties</c> is declared read-only and is not
+	/// quite, though nothing the app draws changes.
+	/// </para>
+	/// <para>
+	/// Measured before it was documented: the three extras arrive with <c>provenance=Local</c>, so
+	/// there is no source to filter on and the one-line fix does not exist. A <c>Border</c> is stable
+	/// across reads, so this is TextBlock's text properties rather than something general -- which is
+	/// why the assertions below are about shape and not about a fixed list of names.
+	/// </para>
+	/// <para>
+	/// One fix must not be attempted, and it is the tempting one: caching the first read's names and
+	/// filtering later reads to them would hide exactly what the apply-then-read-back loop of #12
+	/// exists to verify, since an applied property need not have appeared in the first read.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task A_second_properties_read_reports_what_reading_the_first_created()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp second-read probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var caption = tree.Nodes.First(node => node.Name == "Caption");
+			var pane = tree.Nodes.First(node => node.Name == "Pane");
+
+			// A tree read does not do it -- only a properties read of that element does -- so this
+			// first read of the caption is still the markup's own answer.
+			var first = await NamesOfAsync(session, caption.Handle, cancellationToken);
+			Assert.Equal(["FontSize", "Foreground", "Text"], first);
+
+			var second = await NamesOfAsync(session, caption.Handle, cancellationToken);
+
+			// A superset, never a different set: nothing the markup set may disappear.
+			Assert.All(first, name => Assert.Contains(name, second));
+			Assert.True(second.Count > first.Count, $"expected the second read to grow, got {second.Count}");
+
+			// And the additions are indistinguishable by provenance, which is the finding that
+			// decided against filtering. If this ever fails because an addition arrives as something
+			// other than Local, there is a filter to write and #97 can be fixed properly.
+			var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
+			foreach (var added in second.Except(first))
+			{
+				var property = properties.Properties.Single(candidate => candidate.Name == added);
+				Assert.Equal("Local", property.Provenance);
+			}
+
+			// A Border has no collection property to materialise, so it does not move. This is what
+			// makes the behaviour a property of the element's type rather than of reading as such.
+			var paneFirst = await NamesOfAsync(session, pane.Handle, cancellationToken);
+			var paneSecond = await NamesOfAsync(session, pane.Handle, cancellationToken);
+			Assert.Equal(paneFirst, paneSecond);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	/// <summary>The names of one element's set properties, ordered so two reads can be compared.</summary>
+	private static async Task<List<string>> NamesOfAsync(
+		LiveAppSession session,
+		ulong handle,
+		CancellationToken cancellationToken)
+	{
+		var properties = await session.ReadXamlPropertiesAsync(handle, includeDefaults: false, cancellationToken);
+		Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
+
+		return [.. properties.Properties.Select(property => property.Name).Order(StringComparer.Ordinal)];
+	}
+
 	/// <summary>One of the probe caption's live property values, read off the running app.</summary>
 	private static async Task<string?> CaptionValueAsync(
 		LiveAppSession session,

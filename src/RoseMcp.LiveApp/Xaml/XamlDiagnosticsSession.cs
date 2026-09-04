@@ -54,12 +54,34 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// provider, and a caller that has just written a file no longer holds what was there before.
 	private readonly XamlApplyBaseline _baselines = new();
 
+	// One request at a time, and this is measured rather than defensive (#93). The host serves MCP
+	// calls concurrently -- two tree reads issued together finish in the time of one, where serialised
+	// they would take twice as long -- and everything below shares one work folder, one request.txt
+	// and one generation counter, so two in flight collide on all three.
+	//
+	// What that looked like, on ten concurrent pairs against the probe: a request.txt that could not be
+	// written because the other call held it, several fifteen-second waits for a snapshot the other
+	// call's injection had already consumed, and once a tree of 22 elements where the app has 24,
+	// returned with no detail set. That last one is the reason this is a lock and not a documented
+	// limitation: a truncated tree reported as success feeds handles to every other tool.
+	//
+	// Serialising rather than giving each request its own folder, because the provider keeps its work
+	// folder in a global and does everything on the app's UI thread. Two folders would need a different
+	// provider, and would buy no parallelism from a single-threaded consumer. The wait can be long --
+	// the endpoint timeout is twenty seconds -- and a slow correct answer is the trade being made.
+	private readonly object _requests = new();
+
 	/// <summary>
 	/// Reads a snapshot of the target's live visual tree, injecting the provider first. Returns a tree
 	/// with a <see cref="LiveXamlTree.Detail"/> and no nodes -- never throws -- when the provider is not
 	/// available for this architecture, injection fails, or the target has no XAML UI.
 	/// </summary>
 	public LiveXamlTree ReadTree(int pid)
+	{
+		lock (_requests) return ReadTreeCore(pid);
+	}
+
+	private LiveXamlTree ReadTreeCore(int pid)
 	{
 		var (workDir, error) = Inject(pid, "tree");
 		if (error is not null) return new LiveXamlTree { Detail = error };
@@ -90,6 +112,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// </summary>
 	public LiveXamlProperties ReadProperties(int pid, ulong handle, bool includeDefaults)
 	{
+		lock (_requests) return ReadPropertiesCore(pid, handle, includeDefaults);
+	}
+
+	private LiveXamlProperties ReadPropertiesCore(int pid, ulong handle, bool includeDefaults)
+	{
 		var request = includeDefaults ? $"properties {handle} all" : $"properties {handle}";
 		var (workDir, error) = Inject(pid, request);
 		if (error is not null) return new LiveXamlProperties { Handle = handle, Detail = error };
@@ -119,6 +146,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// Confirms the overlay actually armed rather than assuming it.
 	/// </summary>
 	public LiveXamlSelection EnterSelectMode(int pid, bool includeAllElements, bool justMyXaml)
+	{
+		lock (_requests) return EnterSelectModeCore(pid, includeAllElements, justMyXaml);
+	}
+
+	private LiveXamlSelection EnterSelectModeCore(int pid, bool includeAllElements, bool justMyXaml)
 	{
 		// Tokens rather than flags in the name: the provider parses them, and a request that does not
 		// mention a toggle leaves whatever the person set on the toolbar alone.
@@ -183,6 +215,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// </summary>
 	public LiveXamlSelection ClearSelection(int pid)
 	{
+		lock (_requests) return ClearSelectionCore(pid);
+	}
+
+	private LiveXamlSelection ClearSelectionCore(int pid)
+	{
 		var (workDir, error) = Inject(pid, "deselect");
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
@@ -226,6 +263,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// </para>
 	/// </summary>
 	public LiveXamlSelection SelectByHandle(int pid, ulong handle)
+	{
+		lock (_requests) return SelectByHandleCore(pid, handle);
+	}
+
+	private LiveXamlSelection SelectByHandleCore(int pid, ulong handle)
 	{
 		var (workDir, error) = Inject(pid, $"selecthandle {handle}");
 		if (error is not null) return new LiveXamlSelection { Detail = error };
@@ -288,6 +330,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// own state file rather than remembered here.
 	/// </summary>
 	public LiveXamlSelection ReadSelection()
+	{
+		lock (_requests) return ReadSelectionCore();
+	}
+
+	private LiveXamlSelection ReadSelectionCore()
 	{
 		if (_workDir is null)
 		{
@@ -476,6 +523,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// </para>
 	/// </summary>
 	public LiveXamlApplyResult ApplyEdits(int pid, string? oldXaml, string? newXaml, string? filePath)
+	{
+		lock (_requests) return ApplyEditsCore(pid, oldXaml, newXaml, filePath);
+	}
+
+	private LiveXamlApplyResult ApplyEditsCore(int pid, string? oldXaml, string? newXaml, string? filePath)
 	{
 		var (inputs, failure) = Resolve(pid, oldXaml, newXaml, filePath);
 		if (failure is not null) return new LiveXamlApplyResult { Detail = failure };
@@ -1048,11 +1100,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// </summary>
 	public void Dispose()
 	{
-		if (_workDir is null) return;
+		// Under the same lock as a request, or the folder can be deleted from under one in flight.
+		lock (_requests)
+		{
+			if (_workDir is null) return;
 
-		TryDeleteDirectory(_workDir);
-		_workDir = null;
-		_stagedProvider = null;
+			TryDeleteDirectory(_workDir);
+			_workDir = null;
+			_stagedProvider = null;
+		}
 	}
 
 	private void Icacls(string path, string arguments)

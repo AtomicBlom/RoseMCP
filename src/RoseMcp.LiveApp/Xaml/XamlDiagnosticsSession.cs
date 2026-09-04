@@ -134,7 +134,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			};
 		}
 
-		return new LiveXamlSelection { Armed = true, Detail = "Select mode is armed: click an element in the app, then read the selection." };
+		// JustMyXaml is reported from what was actually set, not left to the record's default. It defaults
+		// to true, so arming with justMyXaml: false answered "true" and a caller comparing the arming
+		// response against a later selection saw a contradiction it could not explain.
+		return new LiveXamlSelection
+		{
+			Armed = true,
+			JustMyXaml = justMyXaml,
+			Detail = "Select mode is armed: click an element in the app, then read the selection.",
+		};
 	}
 
 	/// <summary>

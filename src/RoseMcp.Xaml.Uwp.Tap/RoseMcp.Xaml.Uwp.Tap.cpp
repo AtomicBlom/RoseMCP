@@ -806,9 +806,9 @@ private:
 
 	/// Whether an element was declared in the app's own markup.
 	///
-	/// The scheme is the whole test and it is exact, not a heuristic: the app's XAML resolves to
-	/// ms-appx:///Page.xaml, a control template's parts to ms-resource:///...themes/generic.xaml. An
-	/// element with no source info at all is not claimed either way -- absent is not the same as
+	/// One question -- did this come out of the app's own package and assembly, or out of something
+	/// it merely references -- asked twice, because the two URI schemes encode ownership differently.
+	/// An element with no source info at all is not claimed either way: absent is not the same as
 	/// framework, and treating it as framework would quietly empty the filter on an app that has no
 	/// source info to give.
 	bool IsAppXaml(InstanceHandle handle) const
@@ -816,7 +816,38 @@ private:
 		const auto found = m_sources.find(handle);
 		if (found == m_sources.end()) return false;
 
-		return found->second.rfind(L"ms-appx:", 0) == 0;
+		const std::wstring& source = found->second;
+
+		// A page or user control. Under ms-appx the owner is the *authority*, which names the package
+		// the markup came out of, and an empty one means the app's own:
+		//
+		//     ms-appx:///Views/Shell/ShellView.xaml                             <- the app's own
+		//     ms-appx://Microsoft.UI.Xaml.2.8/.../21h1_themeresources.xaml      <- WinUI 2's
+		//
+		// Testing the scheme alone made the whole filter a no-op for any app on WinUI 2: system WinUI
+		// serves its themes as ms-resource:, so the scheme happens to separate them there, but
+		// Microsoft.UI.Xaml is a framework package inside the app package and its themes are ms-appx:
+		// like everything else. Every templated part of every MUXC control counted as the developer's
+		// own markup -- on the stack where "just my XAML" is worth the most, since that is the stack
+		// with the deepest templates.
+		if (source.rfind(L"ms-appx:///", 0) == 0) return true;
+		if (source.rfind(L"ms-appx:", 0) == 0) return false;
+		if (source.rfind(L"ms-resource:", 0) != 0) return false;
+
+		// A resource dictionary. Here the authority is empty either way, so it says nothing -- and an
+		// app that themes its own controls keeps those styles in ResourceDictionaries, served as
+		// ms-resource: exactly like the framework's. Reading "ms-resource: means theirs" steered
+		// clicks away from markup the developer unambiguously owns and can edit.
+		//
+		// The discriminator here is the assembly component. A dictionary that came from a referenced
+		// assembly names it:
+		//
+		//     ms-resource:///Files/windows.ui.xaml;component/themes/generic.xaml   <- the framework's
+		//     ms-resource:///Files/Themes/Default/Controls/TextBox.Styles.xaml     <- the app's own
+		//
+		// which also gives the right answer for a third-party control library: its templates are not
+		// the framework's, but they are equally not something the developer is going to edit.
+		return source.find(L";component/") == std::wstring::npos;
 	}
 
 	// Where an element sits in the window, in the coordinates the overlay's Canvas uses -- the UI layer

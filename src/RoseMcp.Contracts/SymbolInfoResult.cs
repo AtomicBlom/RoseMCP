@@ -28,6 +28,12 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 	public required IReadOnlyList<SourceLocation> Declarations { get; init; }
 
 	/// <summary>
+	/// The full extent of each declaration, so a caller knows where the member stops without
+	/// reading the file to find out. One entry per declaration: a partial has several.
+	/// </summary>
+	public IReadOnlyList<DeclarationSpan> DeclarationSpans { get; init; } = [];
+
+	/// <summary>
 	/// What this member overrides or implements, walking up the hierarchy. The other direction from
 	/// rose_find_implementations, and the one that answers "where does this actually come from" for
 	/// an override whose base declares the documentation.

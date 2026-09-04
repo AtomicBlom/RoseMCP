@@ -44,7 +44,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 
 	[McpServerTool(
 		Name = ToolNames.SymbolInfo,
-		Title = "Describe the symbol at a position",
+		Title = "Describe a symbol",
 		ReadOnly = true,
 		Idempotent = true,
 		OpenWorld = false,
@@ -52,13 +52,15 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.SymbolInfo)]
 	public Task<SymbolInfoResult> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description("The symbol by name, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string? symbol = null,
+		[Description("Path to the file. With line and column, or to narrow a name.")] string? filePath = null,
+		[Description("One-based line number. Only needed when pointing at a position rather than naming a symbol.")] int? line = null,
+		[Description("One-based column, pointing at the identifier itself.")] int? column = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(workspace, filePath), ToolNames.SymbolInfo, new()
 		{
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -301,6 +303,179 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["typeName"] = typeName,
 			["targetPath"] = targetPath,
 			["apply"] = apply,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.ReplaceMember,
+		Title = "Write over a member",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceMember)]
+	public Task<MemberEditResult> ReplaceMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The whole declaration, attributes and documentation comment included.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ReplaceMember, new()
+		{
+			["symbol"] = symbol,
+			["code"] = code,
+			["usings"] = usings,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.ReplaceBody,
+		Title = "Write over a member's body",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceBody)]
+	public Task<MemberEditResult> ReplaceBodyAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The body: statements, a block in braces, or => expression;.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ReplaceBody, new()
+		{
+			["symbol"] = symbol,
+			["code"] = code,
+			["usings"] = usings,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.AddMember,
+		Title = "Add members to a type",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddMember)]
+	public Task<MemberEditResult> AddMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The type to add to, as Namespace.Type.")] string type,
+		[Description("One or more whole declarations.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
+		[Description("Put them after this member, by name.")] string? after = null,
+		[Description("Put them before this member, by name.")] string? before = null,
+		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.AddMember, new()
+		{
+			["type"] = type,
+			["code"] = code,
+			["usings"] = usings,
+			["after"] = after,
+			["before"] = before,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.ChangeSignature,
+		Title = "Change a member's parameters",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ChangeSignature)]
+	public Task<SignatureChangeResult> ChangeSignatureAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The parameters it should have, written as they would go between the parentheses.")] string parameters,
+		[Description("What to pass at existing call sites for a new parameter with no default, as name=expression.")] string[]? arguments = null,
+		[Description("Which file, when the member is declared in more than one -- a partial.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile the solution afterwards and report what the change broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<SignatureChangeResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ChangeSignature, new()
+		{
+			["symbol"] = symbol,
+			["parameters"] = parameters,
+			["arguments"] = arguments,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.BuildFreshness,
+		Title = "Is the build output newer than the sources",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.BuildFreshness)]
+	public Task<BuildFreshnessReport> BuildFreshnessAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Limit to one project by name or path. Defaults to every project.")] string? project = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<BuildFreshnessReport>(WorkspaceHints.From(workspace), ToolNames.BuildFreshness, new()
+		{
+			["project"] = project,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
+		Name = ToolNames.AddUsing,
+		Title = "Import a namespace into a file",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddUsing)]
+	public Task<UsingResult> AddUsingAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Path to the file.")] string filePath,
+		[Description("Namespaces to ensure, as System.Text or using System.Text;.")] string[] namespaces,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the import resolved. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<UsingResult>(WorkspaceHints.From(workspace, filePath), ToolNames.AddUsing, new()
+		{
+			["filePath"] = filePath,
+			["namespaces"] = namespaces,
+			["apply"] = apply,
+			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 

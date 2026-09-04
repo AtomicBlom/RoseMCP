@@ -50,6 +50,24 @@ public static class ServiceCollectionExtensions
 		  implementations, partial declarations and cref references together, reports conflicts,
 		  and returns a diff. It also reports XAML that still names the old identifier, which it
 		  does not change: markup is text to the compiler, so a broken binding builds and runs.
+		- Writing code into a file that already exists: rose_replace_member, rose_replace_body and
+		  rose_add_member, not a text edit. They address a member by name, parse what you give them
+		  before the file is touched and refuse if it does not parse, write through the repository's
+		  own .editorconfig, and then compile and tell you what the edit broke. That last part is
+		  the point: it takes the build out of the edit loop. A name also does not go stale the way
+		  a line number does the moment an earlier edit lands. Writing a whole new file is still
+		  your own job; what these are for is editing inside one.
+		- When code you write needs an import: pass usings to the same call that writes it, rather
+		  than editing the import block afterwards. rose_add_using does the same for code that
+		  arrived some other way. Either way it goes where the file's own ordering puts it, and one
+		  already in scope -- from a global using, an implicit using, or the namespace the file is
+		  in -- is reported rather than added, because adding it again is a build error too.
+		- Adding, removing or retyping a parameter: rose_change_signature, not an edit per layer. It
+		  moves the base declaration and every override and implementation together, rewrites the
+		  arguments at every call site, keeps the param tags in the documentation in step, and
+		  reports the uses it did not change -- including the ones that still compile, which is
+		  where a missed layer hides. Threading one optional parameter through a stack of
+		  forwarders by hand is how a call site gets missed.
 		- Splitting a file that declares several types: rose_move_type_to_file, not a read followed
 		  by two writes. It carries the declaration across untouched and fixes the using directives
 		  in both files, which hand-splitting gets wrong in a way that fails the build.
@@ -66,7 +84,9 @@ public static class ServiceCollectionExtensions
 		  it emits nothing and runs no MSBuild targets -- so build before concluding you are done.
 		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility,
 		  documentation and declaration sites rather than whatever the declaration text looks like,
-		  and says what the member overrides or implements.
+		  and says what the member overrides or implements. Name it rather than pointing at a line,
+		  and it also tells you the first and last line of the declaration -- so where a member
+		  stops is known rather than approximated by reading forty lines after it.
 		- Who implements or overrides something: rose_find_implementations. Grep cannot answer this
 		  at all, since an implementation need not mention the interface anywhere near the member.
 

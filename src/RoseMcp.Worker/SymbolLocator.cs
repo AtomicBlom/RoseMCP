@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Text;
 
@@ -65,6 +66,66 @@ public static class SymbolLocator
 		var offset = Math.Clamp(column - 1, 0, textLine.Span.Length);
 
 		return textLine.Start + offset;
+	}
+
+	/// <summary>
+	/// The full extent of each of a symbol's declarations, widened upwards over the comments written
+	/// for it.
+	/// <para>
+	/// Widened by line rather than by taking the node's full span, because a full span reaches back
+	/// to the previous token and so swallows the blank line above the member -- and the answer a
+	/// caller wants is where the declaration starts, not where the one before it ended. Attributes
+	/// need no widening: they are part of the declaration's own syntax.
+	/// </para>
+	/// </summary>
+	public static async Task<IReadOnlyList<DeclarationSpan>> SpansOfAsync(
+		ISymbol symbol,
+		CancellationToken cancellationToken)
+	{
+		var spans = new List<DeclarationSpan>();
+
+		foreach (var reference in symbol.DeclaringSyntaxReferences)
+		{
+			var node = await reference.GetSyntaxAsync(cancellationToken);
+
+			// A field or a local declares through a variable declarator, and what a caller means by
+			// the declaration is the statement around it -- but only that far, since the member
+			// around a local is the whole method.
+			var declaration = node.Parent is VariableDeclarationSyntax { Parent: { } owner } ? owner : node;
+
+			var text = await declaration.SyntaxTree.GetTextAsync(cancellationToken);
+			var path = declaration.SyntaxTree.FilePath;
+
+			if (string.IsNullOrEmpty(path)) continue;
+
+			spans.Add(new DeclarationSpan
+			{
+				FilePath = path,
+				StartLine = FirstLine(text, declaration) + 1,
+				EndLine = text.Lines.GetLineFromPosition(declaration.Span.End).LineNumber + 1,
+			});
+		}
+
+		return spans;
+	}
+
+	/// <summary>
+	/// The declaration's own first line, or the first line of the comment block written immediately
+	/// above it.
+	/// </summary>
+	private static int FirstLine(SourceText text, SyntaxNode declaration)
+	{
+		var first = text.Lines.GetLineFromPosition(declaration.SpanStart).LineNumber;
+
+		while (first > 0)
+		{
+			var previous = text.Lines[first - 1].ToString().TrimStart();
+			if (!previous.StartsWith("//", StringComparison.Ordinal)) break;
+
+			first--;
+		}
+
+		return first;
 	}
 
 	public static async Task<SourceLocation> DescribeAsync(

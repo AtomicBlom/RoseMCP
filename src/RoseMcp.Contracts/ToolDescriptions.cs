@@ -65,12 +65,15 @@ public static class ToolDescriptions
         """;
 
 	public const string SymbolInfo = """
-        What the symbol at a file position actually is: full signature, kind, accessibility,
-        containing type, XML documentation, every declaration site, and what the member overrides or
-        implements -- which is usually where an override's documentation actually lives. Resolved
-        from the compilation rather than read off the declaration text, and works from a use site as
-        well as a declaration. isFromSource being false means it lives in metadata and cannot be
-        renamed or edited.
+        What a symbol actually is: full signature, kind, accessibility, containing type, XML
+        documentation, every declaration site, and what the member overrides or implements -- which
+        is usually where an override's documentation actually lives. Name it as Namespace.Type.Member,
+        or point at a file position; naming needs no grep first and does not go stale when an earlier
+        edit moves the line. It also returns each declaration's first and last line, so where a
+        member stops is known rather than approximated -- which is what a text edit has to guess and
+        what it gets wrong. Resolved from the compilation rather than read off the declaration text,
+        and works from a use site as well as a declaration. isFromSource being false means it lives
+        in metadata and cannot be renamed or edited.
         """;
 
 	public const string FindReferences = """
@@ -153,5 +156,83 @@ public static class ToolDescriptions
         Only the analyzers that report the requested id are run, so fixing one rule costs a fraction
         of a full analyzer pass. Returns a unified diff; pass apply=false to preview. Ask
         rose_list_code_fixes what is available first.
+        """;
+
+	public const string ReplaceMember = """
+        Writes over one member -- a method, property, field, constructor, or a whole type --
+        addressed by name rather than by line and column. Use this instead of a text edit: the code
+        is parsed as a declaration first and the call refuses without touching the file if it does
+        not parse, so an unbalanced brace, a dropped access modifier or an escape that leaked into
+        the source cannot reach disk. What it writes is formatted to the repository's own
+        .editorconfig, so the indentation and line endings cannot be wrong either. A name also does
+        not go stale the way a line number does the moment an earlier edit lands. The documentation
+        comment above the declaration is kept unless the code supplies one. It then compiles the
+        projects holding the file and returns the errors the edit introduced -- so edit and check is
+        one call, not an edit followed by a build.
+        """;
+
+	public const string ReplaceBody = """
+        Replaces a member's body and nothing else: the signature that comes out is the one that was
+        there, copied rather than rewritten, so it cannot drift. Takes statements, a block in
+        braces, or => expression;, and a member can switch between the last two without saying so.
+        Use this rather than a line-range edit, which is the usual way a member gets broken --
+        splicing a body against line numbers that have moved drops a brace or a modifier, and the
+        damage is found at the next build. Refuses if the code does not parse, formats what it
+        writes, and returns the errors the edit introduced.
+        """;
+
+	public const string AddMember = """
+        Adds one or more members to a type, addressed by name, placed with after or before rather
+        than appended blindly. Use this rather than finding the closing brace and inserting text:
+        the code is parsed first and refused if it does not parse, it lands with a blank line around
+        it and the repository's own indentation, and a member the type already declares is refused
+        instead of written as a duplicate the compiler would reject. It returns the errors the
+        addition introduced, so there is no build in the loop. A using directive is not a member and
+        is not added; add one yourself if the new code needs an import.
+        """;
+
+	public const string ChangeSignature = """
+        Changes a member's parameters and everything that has to change with them: the declaration
+        you named, the declaration it overrides or implements, every override and implementation of
+        that, and the arguments at every call site. Say what the parameters should be -- as you would
+        write them between the parentheses -- and what changed is worked out from it. Use this rather
+        than grep and an edit per layer: threading one optional parameter through a stack of
+        forwarders is where a call site gets missed, and the missed one compiles at some layers and
+        not others, so a build tells you about the wrong half. It also keeps the param tags in the
+        documentation comment in step, which is a build error where documentation is generated.
+        Parameters that already exist may not be reordered, since an argument's meaning at a call
+        site is not always recoverable from its position; new ones can go anywhere. A new parameter
+        needs a default or an argument to pass, and it reports every call site it did not change --
+        including the ones that still compile, because a forwarder still passing the old default is
+        the bug that hides. Verified against the whole solution, since a call site it missed is by
+        definition somewhere it did not look.
+        """;
+
+	public const string BuildFreshness = """
+        Whether each project's build output is newer than the sources it was built from -- the
+        question a green build does not answer. Ask this before running anything out of bin or obj:
+        a test, a debug host, a generator, a tool. Taking an artefact's existence for its currency is
+        how a test comes to run last week's binary and report a failure describing a change that was
+        already made, and in that case the solution compiled perfectly, so nothing about a build
+        would have said so. It needs no build of its own: the design-time build already knows every
+        project's output path and every file it compiles, so this is a file timestamp comparison and
+        answers immediately. It reports the output path, when it was written, the newest source and
+        how many are newer -- and says nothing about whether the code is correct, which is
+        rose_diagnostics.
+        """;
+
+	public const string AddUsing = """
+        Ensures a file imports the namespaces you name, put where the file's own ordering puts them.
+        Use this rather than editing the import block: sort position, whether System comes first,
+        whether groups are separated by a blank line and where the file header has to stay are all
+        things the file already decides and a splice guesses at -- and getting one wrong is IDE0055.
+        It also refuses to add what is already in scope, which is not the same as what the file
+        says: a global using, an implicit using from the SDK, or simply being the namespace the file
+        is in all count, and importing one of those again is IDE0005. Both are build errors where
+        the analyzers are turned up, which is where this matters. Prefer the usings argument on
+        rose_replace_member, rose_replace_body and rose_add_member when you are writing the code
+        that needs the import -- same work, no second call. This is for code that arrived some other
+        way. It reports what it added, what was already covered and why, and how many errors the
+        import resolved.
         """;
 }

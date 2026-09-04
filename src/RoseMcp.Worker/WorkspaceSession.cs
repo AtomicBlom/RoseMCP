@@ -148,7 +148,8 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	private async Task<WorkspaceSnapshot> ReconcileAsync(CancellationToken cancellationToken)
 	{
 		var notices = new List<string>();
-		var signal = _watcher.Drain();
+		var report = _watcher.Drain();
+		var signal = report.Signal;
 
 		// Never reconcile mid-checkout. Half the tree is the old branch and half is the new, and
 		// ingesting that produces a snapshot that never existed in any commit.
@@ -181,25 +182,50 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 		var sync = await _synchronizer.SyncAsync(_current, cancellationToken);
 
+		// Files that appeared rather than changed. The sweep cannot find these -- it stats what it
+		// already knows -- and until they are absorbed the workspace answers questions about a
+		// solution that does not contain them, which is not an error but a confident wrong answer.
+		var appeared = await _synchronizer.AbsorbNewAsync(sync.Solution, report.Created, cancellationToken);
+
 		// A full resync means the event stream had holes in it, so a project may have been added or
 		// removed without any tracked file changing. Only a reload can represent that.
-		var mustReload = sync.StructuralChange || signal.HasFlag(WatchSignal.FullResyncRequired);
+		var mustReload = sync.StructuralChange
+			|| appeared.StructuralChange
+			|| signal.HasFlag(WatchSignal.FullResyncRequired);
 
 		if (mustReload)
 		{
-			notices.Add(sync.StructuralChange
-				? "Project or solution files changed on disk; the solution was reloaded."
-				: "Bulk changes on disk outran incremental tracking; the solution was reloaded.");
+			notices.Add((sync.StructuralChange, appeared.StructuralChange) switch
+			{
+				(true, _) => "Project or solution files changed on disk; the solution was reloaded.",
+				(_, true) => "A project or build file appeared on disk; the solution was reloaded.",
+				_ => "Bulk changes on disk outran incremental tracking; the solution was reloaded.",
+			});
 
 			await ReloadAsync(cancellationToken);
 		}
-		else if (sync.AnythingChanged)
+		else if (sync.AnythingChanged || appeared.AnythingChanged)
 		{
-			_current = sync.Solution;
+			_current = appeared.Solution;
 			Interlocked.Increment(ref _revision);
 
 			if (sync.ChangedCount > 0) notices.Add($"Absorbed {sync.ChangedCount} external file change(s).");
 			if (sync.RemovedCount > 0) notices.Add($"{sync.RemovedCount} tracked document(s) no longer exist on disk.");
+
+			if (appeared.Added.Count > 0)
+			{
+				notices.Add($"Added {appeared.Added.Count} new file(s) that appeared on disk: "
+					+ string.Join(", ", appeared.Added.Take(5).Select(Path.GetFileName)));
+			}
+		}
+
+		// Said whether or not anything else changed, because the file exists, it looks compiled, and
+		// it is not -- and nothing in an answer that simply omits it would suggest otherwise.
+		foreach (var path in appeared.NotInTheBuild.Take(5))
+		{
+			notices.Add($"{Path.GetFileName(path)} appeared beside a project that lists the files it compiles "
+				+ "rather than globbing them, so it is not in the build and nothing here can see it. Add it to "
+				+ "the project file.");
 		}
 
 		if (sync.Deferred.Count > 0)

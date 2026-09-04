@@ -9,7 +9,11 @@ namespace RoseMcp.Worker.Tools;
 
 /// <summary>Changes to the solution. Everything here writes, so everything here reports a diff.</summary>
 [McpServerToolType]
-public sealed class RefactoringTools(WorkspaceHost host, CodeFixCatalog codeFixes, SharedWorkProgress sharedWork)
+public sealed class RefactoringTools(
+	WorkspaceHost host,
+	CodeFixCatalog codeFixes,
+	DiagnosticsService diagnostics,
+	SharedWorkProgress sharedWork)
 {
 	[McpServerTool(
 		Name = ToolNames.ApplyCodeFix,
@@ -168,6 +172,215 @@ public sealed class RefactoringTools(WorkspaceHost host, CodeFixCatalog codeFixe
 
 		return await session.MutateAsync(
 			(snapshot, token) => MoveTypeService.MoveAsync(snapshot, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.ReplaceMember,
+		Title = "Write over a member",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceMember)]
+	public Task<MemberEditResult> ReplaceMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The whole declaration, attributes and documentation comment included.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default) =>
+		EditAsync(
+			progress,
+			new MemberEditRequest
+			{
+				Kind = MemberEditKind.Replace,
+				Symbol = symbol,
+				Code = code,
+				Usings = usings ?? [],
+				FilePath = filePath,
+				Apply = apply,
+				Verify = verify,
+				ExpectedRevision = expectedRevision,
+			},
+			cancellationToken);
+
+	[McpServerTool(
+		Name = ToolNames.ReplaceBody,
+		Title = "Write over a member's body",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceBody)]
+	public Task<MemberEditResult> ReplaceBodyAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The body: statements, a block in braces, or => expression;.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default) =>
+		EditAsync(
+			progress,
+			new MemberEditRequest
+			{
+				Kind = MemberEditKind.ReplaceBody,
+				Symbol = symbol,
+				Code = code,
+				Usings = usings ?? [],
+				FilePath = filePath,
+				Apply = apply,
+				Verify = verify,
+				ExpectedRevision = expectedRevision,
+			},
+			cancellationToken);
+
+	[McpServerTool(
+		Name = ToolNames.AddMember,
+		Title = "Add members to a type",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddMember)]
+	public Task<MemberEditResult> AddMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The type to add to, as Namespace.Type.")] string type,
+		[Description("One or more whole declarations.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
+		[Description("Put them after this member, by name.")] string? after = null,
+		[Description("Put them before this member, by name.")] string? before = null,
+		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default) =>
+		EditAsync(
+			progress,
+			new MemberEditRequest
+			{
+				Kind = MemberEditKind.Add,
+				Symbol = type,
+				Code = code,
+				Usings = usings ?? [],
+				After = after,
+				Before = before,
+				FilePath = filePath,
+				Apply = apply,
+				Verify = verify,
+				ExpectedRevision = expectedRevision,
+			},
+			cancellationToken);
+
+	[McpServerTool(
+		Name = ToolNames.ChangeSignature,
+		Title = "Change a member's parameters",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ChangeSignature)]
+	public async Task<SignatureChangeResult> ChangeSignatureAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The parameters it should have, written as they would go between the parentheses.")] string parameters,
+		[Description("What to pass at existing call sites for a new parameter with no default, as name=expression.")] string[]? arguments = null,
+		[Description("Which file, when the member is declared in more than one -- a partial.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile the solution afterwards and report what the change broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		// The longest of the write operations by some distance: it finds every reference in the
+		// solution and then compiles all of it, so the wait is worth reporting.
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new ChangeSignatureRequest
+		{
+			Symbol = symbol,
+			Parameters = parameters,
+			Arguments = arguments ?? [],
+			FilePath = filePath,
+			Apply = apply,
+			Verify = verify,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => ChangeSignatureService.ChangeAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.AddUsing,
+		Title = "Import a namespace into a file",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddUsing)]
+	public async Task<UsingResult> AddUsingAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Absolute or solution-relative path to the file.")] string filePath,
+		[Description("Namespaces to ensure, as System.Text or using System.Text;.")] string[] namespaces,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the import resolved. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new AddUsingRequest
+		{
+			FilePath = filePath,
+			Namespaces = namespaces,
+			Apply = apply,
+			Verify = verify,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => AddUsingService.AddAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	/// <summary>
+	/// The three write-by-symbol tools differ only in their request, so they share everything else:
+	/// the same progress split, the same session, and the same ordering behind every pending
+	/// mutation and the disk barrier.
+	/// </summary>
+	private async Task<MemberEditResult> EditAsync(
+		IProgress<ProgressNotificationValue> progress,
+		MemberEditRequest request,
+		CancellationToken cancellationToken)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		return await session.MutateAsync(
+			(snapshot, token) => MemberEditService.EditAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
 }

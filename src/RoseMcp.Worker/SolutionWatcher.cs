@@ -20,6 +20,13 @@ public sealed class SolutionWatcher : IDisposable
 	/// </summary>
 	private const int BulkChangeThreshold = 50;
 
+	/// <summary>
+	/// How many appearances are worth remembering individually. A trickle of new files never trips
+	/// the bulk threshold, which is a window rather than a total, so the list needs a ceiling of its
+	/// own -- and past a couple of hundred new files, reloading is cheaper than patching them in.
+	/// </summary>
+	private const int CreationsRemembered = 200;
+
 	private static readonly TimeSpan BulkChangeWindow = TimeSpan.FromMilliseconds(500);
 
 	private static readonly char[] SeparatorChars = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
@@ -51,6 +58,12 @@ public sealed class SolutionWatcher : IDisposable
 	/// <summary>Files this worker wrote itself, so its own edits do not bounce back as external ones.</summary>
 	private readonly HashSet<string> _selfWrites = new(StringComparer.OrdinalIgnoreCase);
 
+	/// <summary>
+	/// Files seen appearing since the last barrier. Bounded: past <see cref="CreationsRemembered"/>
+	/// the list stops being the cheaper answer and a reload is asked for instead.
+	/// </summary>
+	private readonly HashSet<string> _created = new(StringComparer.OrdinalIgnoreCase);
+
 	public void NoteSelfWrite(string path)
 	{
 		lock (_gate)
@@ -66,19 +79,22 @@ public sealed class SolutionWatcher : IDisposable
 	public bool IsGitOperationInFlight() => GitOperationInFlight();
 
 	/// <summary>Takes and clears what has accumulated since the last call.</summary>
-	public WatchSignal Drain()
+	public WatchReport Drain()
 	{
 		lock (_gate)
 		{
 			var signal = _pending;
+			var created = _created.Count == 0 ? [] : _created.ToArray();
+
 			_pending = WatchSignal.None;
+			_created.Clear();
 
 			if (!File.Exists(_solutionPath))
 				signal |= WatchSignal.SolutionMissing;
 			if (GitOperationInFlight())
 				signal |= WatchSignal.GitOperationInFlight;
 
-			return signal;
+			return new WatchReport { Signal = signal, Created = created };
 		}
 	}
 
@@ -131,6 +147,21 @@ public sealed class SolutionWatcher : IDisposable
 
 			_eventsInWindow++;
 			_pending |= WatchSignal.FileChanges;
+
+			// A rename is an appearance at the new path; the old one is dropped by the stat sweep,
+			// which finds its file gone.
+			if (e.ChangeType is WatcherChangeTypes.Created or WatcherChangeTypes.Renamed)
+			{
+				if (_created.Count >= CreationsRemembered)
+				{
+					_created.Clear();
+					_pending |= WatchSignal.FullResyncRequired;
+				}
+				else
+				{
+					_created.Add(e.FullPath);
+				}
+			}
 
 			// A checkout rewrites HEAD or index, which says the working tree is being replaced
 			// wholesale rather than edited. Either way individual events stop being meaningful.

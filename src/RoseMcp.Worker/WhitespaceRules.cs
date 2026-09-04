@@ -20,4 +20,15 @@ public sealed record WhitespaceRules
 	public required bool TrimTrailingWhitespace { get; init; }
 
 	public required bool InsertFinalNewline { get; init; }
+
+	/// <summary>
+	/// One level of indentation, as the file's own settings spell it.
+	/// <para>
+	/// Here because it is read from the same place at the same time, and needed for the one thing the
+	/// formatter cannot do: shift a block of code to the indentation of where it is going. The
+	/// formatter reindents statements and moves braces, which are rules it has, but a line the author
+	/// wrapped by hand is layout it has no rule about, so it keeps whatever arrived.
+	/// </para>
+	/// </summary>
+	public required string IndentUnit { get; init; }
 }

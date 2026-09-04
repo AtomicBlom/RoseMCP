@@ -97,6 +97,20 @@ reclaim memory or pick up a rebuilt generator.
   stdio hop is ordered, being one reader.
 - **Reads never observe a snapshot older than disk.** If you add a read path, it goes through the
   `WorkspaceSession` barrier. No exceptions.
+- **A file that appears is absorbed on the next read, not waited for.** A file created on disk is
+  part of the state of disk, and the stat sweep cannot find one -- it checks the documents it already
+  knows. So a new `.cs` file used to be invisible until something forced a reload, and every
+  reference to the new type reported `CS0103` against perfectly good code: not an error but a
+  confident answer about a file that is not there, which is the worst shape of failure here and the
+  one that became likely the moment an agent could write C# rather than only read it. The barrier
+  walks the project directories, pruned of `bin`, `obj` and dot directories, rather than trusting the
+  watcher -- a watcher event lands some milliseconds after the write and an agent asks immediately,
+  so trusting it would make the answer depend on a race, which is worse than a slow answer because it
+  is intermittent and still confident. Containment in a project's directory is the attribution,
+  because that is exactly what the SDK's default globs compile; a project whose own text lists its
+  files instead has nothing claimed for it and the file is reported as not being in the build. The
+  watcher's list of appearances is still used for one thing: a project or build file appearing, which
+  no snapshot can represent and which sends the session round a reload.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.
 - **A directory with two solutions is never resolved by guessing.** `SolutionResolver` used to sort
   by name and take the first, which in `D:\Drawboard\Revit` is a one-project installer sitting beside
@@ -164,7 +178,71 @@ reclaim memory or pick up a rebuilt generator.
   rewrites the trivia it has reason to touch, so a file it reindents comes out with mixed line
   endings -- which IDE0055 then fails the build over. `Whitespace` is the second pass that fixes
   every line, and it leaves multi-line verbatim and raw literals alone, because a newline in one is
-  content and a raw literal's indentation decides how much is stripped from it.
+  content and a raw literal's indentation decides how much is stripped from it. Both passes take a
+  span when the caller wrote one member rather than a file: a repository whose endings are already
+  inconsistent would otherwise have every line rewritten by a one-member change, which buries the
+  edit in a diff nobody can review.
+- **Nothing writes code it has not parsed, and nothing is addressed by position.** The three write
+  tools resolve the declaration and parse the code *before* the file is opened, so a refusal costs
+  nothing and can never leave a file half-written -- which is most of the value, since it removes
+  every failure a text splice produces by construction. Parsing happens inside a synthetic container
+  of the same kind as the real one, because a member only means something in a container: a bare
+  snippet parsed as a compilation unit turns `void M() { }` into a top-level local function, which
+  parses cleanly and means something else. The shape is then checked as well as the syntax, because
+  code that closes the container early and opens one of its own has no parse error at all and would
+  smuggle a type into the file at top level. And a member is named, never pointed at: a line and
+  column has to be found by reading the file first and is wrong the moment an earlier edit lands,
+  which is how a text edit path produces an anchor found in the wrong place. Where a name matches
+  more than one declaration it refuses and lists them, because writing correct code into the wrong
+  overload is the only failure with no symptom at all.
+- **Written code is indented for where it goes, because the formatter only does half of it.** Roslyn
+  reindents statements and moves braces -- rules it has -- so a line wrapped by hand *inside a body*
+  comes out right. A wrapped parameter list is layout it has no rule about, so it keeps whatever
+  indentation arrived, and neither IDE0055 nor `dotnet format` says a word because neither of them
+  has an opinion either. Code written for column zero therefore landed a level short of its
+  neighbours, silently. `MemberSyntax` takes the code's own baseline indentation off every line and
+  puts the destination's on: both halves, because a caller that has read the file and indented for
+  the destination is as likely as one that wrote at column zero, and only removing the baseline
+  first makes those the same request. Where the formatter *does* have a rule it still wins, since it
+  runs afterwards.
+- **The line endings inside a string literal are content, and this was measured.** A raw literal
+  written with CRLF and the same one written with LF are different strings -- the compiler says so,
+  which is worth knowing because it is tempting to assume raw literals normalise and they do not. So
+  nothing rewrites them, and `Shift` keeps each line's own ending rather than splitting on newlines
+  and joining with one, which would have changed values inside the literals it was carefully not
+  re-indenting. The consequence is reported rather than left silent: a multi-line literal written
+  with endings the file does not use fails `dotnet format` while no build complains, and the obvious
+  fix changes what the program says.
+- **A signature change moves the whole declaration group, or it does not compile.** A virtual
+  method whose override keeps the old parameters is a build error, and so is an interface member
+  whose implementations keep theirs -- so `rose_change_signature` changes the member, its base
+  declaration all the way up, the interface members it implements, and everything overriding or
+  implementing those. Only the declaration the caller named gets the parameters they wrote; the rest
+  are mapped by position and keep their own parameter names and attributes, because an override is
+  free to call its parameters something else and replacing its list wholesale would rename them
+  without saying so. Reordering existing parameters is refused rather than attempted: an argument's
+  meaning at a call site is not always recoverable from its position. And the call sites that still
+  compile are reported, because a forwarder that goes on passing the old default is the bug that
+  hides -- "compiles" and "correct" part company exactly there.
+- **An import goes where the file would have put it, and is refused when it is already in scope.**
+  Writing a member is not the whole job: the code routinely needs an import the file has not got,
+  and a tool that reports that and stops has handed the caller back to the text editing it was meant
+  to replace, at the moment they had just been talked out of it. Placement is read from the file
+  rather than from `.editorconfig` -- this repository sets
+  `dotnet_separate_import_directive_groups = false` and every file separates its groups anyway,
+  because the setting only stops the analyzer insisting -- and going in first means inheriting
+  whatever sat above the old first line, since a licence header under an import changes what the
+  file means to other tools. Whether it is needed is asked of the *compilation*, not of the import
+  block: a global using, an implicit using from the SDK, and the namespace the file is in are all
+  ways to be in scope without appearing there, and importing one of those again is IDE0005. Both
+  halves of getting it wrong are build errors, which is the only reason it is worth this much code.
+- **A stale build output is a notice, never a degraded reason.** `Degraded` means these answers
+  cannot be trusted, and they are exactly as good with a stale `bin` as without one, because they
+  come from source. It is also the ordinary state of a solution somebody is editing, so putting it
+  in `degradedReasons` would mark almost every workspace on the machine degraded -- the same
+  emptying of the word that narrowed the MSBuild-failure count and took `targetFramework` out of the
+  project name. It is still said, because what it warns about does not present as a build failure:
+  it presents as a test failing for a reason that has nothing to do with the change.
 - **A solution is loaded under properties it declares.** MSBuild's `Debug|AnyCPU` default is not
   universal. Where `TargetFramework` is derived from the configuration name -- Drawboard's Revit
   add-in derives it from `Debug-2024` through `Debug-2027` -- the wrong configuration yields projects
@@ -240,10 +318,10 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 81 tests in under a second, so it is worth running on every change.
+process -- 167 tests in about a second, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes under two minutes. `RoseMcp.TestSupport` holds the doubles
-both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
+builds and starts real workers, and takes four to five minutes (203 tests). `RoseMcp.TestSupport` holds the
+doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
@@ -289,8 +367,14 @@ reaching for it is cheaper than that reflex. Three things carry that, in descend
 
    Use the Roslyn-backed `rose_*` MCP tools rather than grep or find-and-replace for C# in
    this repo: `rose_find_references` for usages, `rose_rename_symbol` for renames,
-   `rose_diagnostics` to check code compiles. Source-generated code is only readable via
-   `rose_list_generated_documents` / `rose_read_generated_document`.
+   `rose_diagnostics` to check code compiles. To change code in a file that already exists,
+   `rose_replace_member`, `rose_replace_body` and `rose_add_member` address a member by name,
+   refuse code that does not parse, format what they write, and report what the edit broke --
+   so there is no build in the edit loop. `rose_change_signature` adds, removes or retypes a
+   parameter across every override, implementation and call site at once. Pass `usings` on any
+   of those when the code needs an import, or `rose_add_using` for code written another way. Before running
+   anything out of `bin`, `rose_build_freshness` says whether it is this code. Source-generated
+   code is only readable via `rose_list_generated_documents` / `rose_read_generated_document`.
    ```
 
 Register the server with:

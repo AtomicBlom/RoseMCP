@@ -39,6 +39,49 @@ public sealed class AnalysisTools(
 	}
 
 	[McpServerTool(
+		Name = ToolNames.BuildFreshness,
+		Title = "Is the build output newer than the sources",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.BuildFreshness)]
+	public async Task<BuildFreshnessReport> BuildFreshnessAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Limit to one project by name or path. Defaults to every project.")] string? project = null,
+		CancellationToken cancellationToken = default)
+	{
+		// Comparing timestamps is instant. The only wait worth reporting is the workspace itself.
+		using var following = sharedWork.Follow(WorkProgress.For(progress));
+
+		var snapshot = await host.ReadAsync(cancellationToken);
+		var freshness = BuildFreshness.Of(snapshot.Solution, project, cancellationToken);
+		var stale = freshness.Count(candidate => candidate.Stale);
+
+		var notices = new List<string>(snapshot.Notices);
+
+		if (freshness.Count == 0 && !string.IsNullOrWhiteSpace(project))
+		{
+			notices.Add($"No project matched '{project}'.");
+		}
+
+		// Said out loud rather than left to be read off the list, because a caller asking this is about
+		// to run something and the answer they need is one word.
+		if (stale > 0)
+		{
+			notices.Add($"{stale} of {freshness.Count} project(s) would run as last built rather than as written.");
+		}
+
+		return new BuildFreshnessReport
+		{
+			Revision = snapshot.Revision,
+			Projects = freshness,
+			StaleCount = stale,
+			Notices = notices,
+		};
+	}
+
+	[McpServerTool(
 		Name = ToolNames.Diagnostics,
 		Title = "Roslyn diagnostics",
 		ReadOnly = true,

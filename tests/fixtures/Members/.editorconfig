@@ -1,0 +1,12 @@
+root = true
+
+# Stands in for a repository with opinions of its own, and deliberately not this one's: tabs and
+# CRLF are what the tools under test have to discover rather than assume.
+[*.cs]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = tab
+indent_size = 4
+csharp_new_line_before_open_brace = all

@@ -481,12 +481,14 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	[Description(
 		"Hot-reload a running XAML app: diff two versions of its XAML and apply the changes to the live "
 			+ "visual tree, no relaunch. Pass the previous XAML and the new XAML; the diff reduces to the "
-			+ "minimal set of edits and each is applied and reported back with its outcome. Property changes "
-			+ "apply today -- a colour, a size, a piece of text -- on any element the diff can address, named "
-			+ "or not; structural changes (adding or removing an element) are reported as not-yet-applied "
-			+ "rather than dropped. An element with no x:Name is addressed by the path rose_xaml_tree and "
-			+ "rose_xaml_selection report as its address, so a click inside a control template is targetable. "
-			+ "Use it after editing a XAML file: pass what was on disk before and what is there now.")]
+			+ "minimal set of edits and each is applied and reported back with its outcome. Property "
+			+ "changes, added elements and removed elements all apply -- a colour, a size, a piece of text, "
+			+ "a whole new element with its own children -- on any element the diff can address, named or "
+			+ "not. An element with no x:Name is addressed by the path rose_xaml_tree and "
+			+ "rose_xaml_selection report as its address, so a click inside a control template is "
+			+ "targetable. Use it after editing a XAML file: pass what was on disk before and what is there "
+			+ "now. An element added this way cannot carry an x:Name, since names come from a namescope the "
+			+ "markup compiler builds; the result says so, and its path reaches it.")]
 	public async Task<LiveXamlReloadResult> XamlApplyAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description("The previous XAML (what the file held before the edit).")] string oldXaml,

@@ -209,6 +209,14 @@ struct Command
 	std::wstring property;
 	std::wstring valueType;
 	std::wstring value;
+
+	// Structural commands need a second thing named and a position for it: AddChild says which slot
+	// holds the child and where in its new parent it goes. Given their own fields rather than folded
+	// into property and value, because the result rows are keyed on op, target and property, and
+	// having "property" mean a child slot in one row and a property name in the next would make those
+	// keys mean two different things.
+	std::wstring arg;
+	unsigned int index = 0;
 };
 
 // The name the overlay's root carries in the live tree, so the tree snapshot can drop RoseMCP's own
@@ -2303,6 +2311,12 @@ private:
 		const std::vector<Command> commands = ReadCommands();
 		Log(L"applying " + std::to_wstring(commands.size()) + L" command(s)");
 
+		// Slots live for one batch and no longer. They name instances that have been built but not
+		// yet attached to anything, which is what lets a nested element be created, filled and then
+		// handed to its parent -- and a slot surviving into the next apply would let one batch's
+		// half-built element be reached by another's command.
+		m_slots.clear();
+
 		const std::wstring finalPath = g_workDir + L"\\apply.tsv";
 		const std::wstring tempPath = finalPath + L".tmp";
 		{
@@ -2313,12 +2327,19 @@ private:
 				if (command.op == L"SetProperty") status = ApplySetProperty(command);
 				else if (command.op == L"ClearProperty") status = ApplyClearProperty(command);
 				else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
+				else if (command.op == L"CreateInstance") status = ApplyCreate(command);
+				else if (command.op == L"AddChild") status = ApplyAddChild(command);
 				else status = L"unsupported op";
 
 				if (file)
 				{
+					// The arg goes on the end, after the status, so a reader of the older four-field row
+					// is unaffected. It is there because the host keys these results by what it sent,
+					// and op-target-property alone stops being unique the moment one slot gets two
+					// children: both rows would be "AddChild <slot> <blank>", and the second child's
+					// outcome would overwrite the first's.
 					const std::wstring row = command.op + L'\t' + Escape(command.target.c_str()) + L'\t'
-						+ Escape(command.property.c_str()) + L'\t' + status;
+						+ Escape(command.property.c_str()) + L'\t' + status + L'\t' + Escape(command.arg.c_str());
 					file << Utf8(row) << '\n';
 				}
 			}
@@ -2425,6 +2446,169 @@ private:
 
 		Log(L"  removed " + command.target);
 		return L"applied";
+	}
+
+	// Builds an instance and keeps it in a slot for the rest of this batch, unattached to anything.
+	std::wstring ApplyCreate(const Command& command)
+	{
+		std::wstring resolved;
+		std::wstring failure;
+		const InstanceHandle handle = Construct(command.property, resolved, failure);
+		if (handle == 0) return failure;
+
+		m_slots[command.target] = handle;
+		Log(L"  built " + resolved + L" into " + command.target);
+		return L"applied";
+	}
+
+	// The type name markup carries is a local one -- "Border" -- while the value types the apply path
+	// builds are spelled out in full, so this looked like it needed a mapping. Measured, it does not:
+	// CreateInstance resolves a bare local name on the versions tested, and "Grid" and "Rectangle"
+	// both built on the first candidate even though they live in different namespaces.
+	//
+	// The candidates after the first are kept anyway, and cost nothing because they are only reached
+	// when the one before failed. They exist for the case the measurement cannot speak for: a control
+	// the app declares itself, whose local name the framework has no reason to know. Those are
+	// answered from the full names the live tree already reports for elements of that local name --
+	// the app's own answer about its own types, right by construction for anything already on screen
+	// -- and then from the framework namespaces a XAML author would have meant.
+	//
+	// The two failure codes are worth keeping in mind if this ever needs revisiting. E_FAIL (0x80004005)
+	// is "no type of that name"; E_UNEXPECTED (0x8000ffff) is a real type that could not be built as
+	// asked, which is what an empty value string produced before it became a null one.
+	InstanceHandle Construct(const std::wstring& typeName, std::wstring& resolved, std::wstring& failure)
+	{
+		if (typeName.empty())
+		{
+			failure = L"cannot build: no type was named";
+			return 0;
+		}
+
+		std::vector<std::wstring> candidates{ typeName };
+
+		for (const auto& node : m_nodes)
+		{
+			if (LocalType(node.Type) != typeName) continue;
+			if (std::find(candidates.begin(), candidates.end(), node.Type) != candidates.end()) continue;
+
+			candidates.push_back(node.Type);
+		}
+
+		for (const auto* space : {
+			L"Windows.UI.Xaml.Controls.", L"Windows.UI.Xaml.Shapes.",
+			L"Windows.UI.Xaml.Media.", L"Windows.UI.Xaml." })
+		{
+			const std::wstring qualified = std::wstring(space) + typeName;
+			if (std::find(candidates.begin(), candidates.end(), qualified) != candidates.end()) continue;
+
+			candidates.push_back(qualified);
+		}
+
+		for (const auto& candidate : candidates)
+		{
+			// A null value, not an empty one. An element has no textual value to parse, and asking the
+			// framework to parse "" as a Grid is what E_UNEXPECTED was complaining about -- the type
+			// resolved perfectly well, which the two different failure codes made clear: E_FAIL for a
+			// name that names nothing, E_UNEXPECTED for a real type given an argument it cannot use.
+			InstanceHandle handle = 0;
+			BSTR name = SysAllocString(candidate.c_str());
+			const HRESULT hr = m_tree->CreateInstance(name, nullptr, &handle);
+			SysFreeString(name);
+
+			if (FAILED(hr) || handle == 0)
+			{
+				failure = L"CreateInstance(" + candidate + L") failed 0x" + Hex(hr);
+				Log(L"  " + failure);
+				continue;
+			}
+
+			resolved = candidate;
+			return handle;
+		}
+
+		return 0;
+	}
+
+	// Puts a built instance into its new parent's children.
+	std::wstring ApplyAddChild(const Command& command)
+	{
+		InstanceHandle parent = 0;
+		const std::wstring unresolvedParent = Resolve(command.target, parent);
+		if (!unresolvedParent.empty()) return unresolvedParent;
+
+		InstanceHandle child = 0;
+		const std::wstring unresolvedChild = Resolve(command.arg, child);
+		if (!unresolvedChild.empty()) return unresolvedChild;
+
+		// The same lesson RemoveChild taught: what the API calls a parent is the collection, not the
+		// element. Here there is no child already in it to search for, so the collection has to be
+		// named -- and it is refused rather than guessed at when the parent has no children
+		// collection, because a Border holds its content in a single Child property and putting
+		// something there is a SetProperty, not an add.
+		InstanceHandle collection = 0;
+		std::wstring found;
+		if (!ChildCollectionOf(parent, collection, found))
+		{
+			return found.empty()
+				? L"cannot add: its parent exposes no children collection"
+				: L"cannot add: its parent exposes no children collection (it has " + found + L")";
+		}
+
+		const HRESULT hr = m_tree->AddChild(collection, child, command.index);
+		if (hr != S_OK) return L"AddChild failed 0x" + Hex(hr);
+
+		Log(L"  added " + command.arg + L" under " + command.target + L" at " + std::to_wstring(command.index));
+		return L"applied";
+	}
+
+	// The collection an element keeps its children in, by name, plus what was there to choose from
+	// when none of the names matched -- so a refusal can say what it saw instead of only that it
+	// failed.
+	bool ChildCollectionOf(InstanceHandle parent, InstanceHandle& collection, std::wstring& found)
+	{
+		if (!m_tree) return false;
+
+		unsigned int sourceCount = 0;
+		unsigned int propertyCount = 0;
+		PropertyChainSource* sources = nullptr;
+		PropertyChainValue* values = nullptr;
+		if (FAILED(m_tree->GetPropertyValuesChain(parent, &sourceCount, &sources, &propertyCount, &values)))
+		{
+			return false;
+		}
+
+		bool located = false;
+		for (const auto* wanted : { L"Children", L"Items" })
+		{
+			for (unsigned int i = 0; i < propertyCount && !located; i++)
+			{
+				const bool isCollection = (values[i].MetadataBits & IsValueCollection) != 0;
+				const bool isHandle = (values[i].MetadataBits & IsValueHandle) != 0;
+				const bool isReadOnly = (values[i].MetadataBits & IsValueCollectionReadOnly) != 0;
+				if (!isCollection || !isHandle || isReadOnly) continue;
+				if (!values[i].Value || !values[i].Value[0] || !values[i].PropertyName) continue;
+				if (std::wcscmp(values[i].PropertyName, wanted) != 0) continue;
+
+				collection = static_cast<InstanceHandle>(_wcstoui64(values[i].Value, nullptr, 10));
+				located = collection != 0;
+			}
+
+			if (located) break;
+		}
+
+		if (!located)
+		{
+			for (unsigned int i = 0; i < propertyCount; i++)
+			{
+				if ((values[i].MetadataBits & IsValueCollection) == 0 || !values[i].PropertyName) continue;
+
+				if (!found.empty()) found += L", ";
+				found += values[i].PropertyName;
+			}
+		}
+
+		FreePropertyChain(sources, sourceCount, values, propertyCount);
+		return located;
 	}
 
 	// Where a child actually sits: the collection holding it, and its index in that collection.
@@ -2738,6 +2922,18 @@ private:
 	{
 		if (target.empty()) return L"target not found: no target was given";
 
+		// A slot names something built earlier in this same batch and not yet attached to anything.
+		// It is checked before the tree, because it is not in the tree -- that is the whole point of
+		// it -- so no amount of walking would find it.
+		if (target[0] == L'$')
+		{
+			const auto slot = m_slots.find(target);
+			if (slot == m_slots.end()) return L"target not found: nothing has been built into " + target;
+
+			handle = slot->second;
+			return std::wstring();
+		}
+
 		const bool looksLikePath = target.find(L'/') != std::wstring::npos || target.find(L'[') != std::wstring::npos;
 		if (!looksLikePath)
 		{
@@ -2919,8 +3115,11 @@ private:
 			std::wstringstream stream(line);
 			std::wstring field;
 			while (std::getline(stream, field, L'\t')) fields.push_back(field);
-			fields.resize(5);
-			commands.push_back({ fields[0], fields[1], fields[2], fields[3], fields[4] });
+			fields.resize(7);
+			commands.push_back({
+				fields[0], fields[1], fields[2], fields[3], fields[4], fields[5],
+				static_cast<unsigned int>(_wcstoui64(fields[6].c_str(), nullptr, 10)),
+			});
 		}
 
 		return commands;
@@ -2942,6 +3141,10 @@ private:
 	// elements called the same thing -- and a single-valued map answered such a name with whichever
 	// arrived last, so an apply landed on an arbitrary one of them and reported success either way.
 	std::map<std::wstring, std::vector<InstanceHandle>> m_byName;
+
+	// Instances built during the current apply and not yet attached to the tree, by the slot name the
+	// host gave them. Cleared at the start of every batch.
+	std::map<std::wstring, InstanceHandle> m_slots;
 };
 
 class RoseTapFactory final : public IClassFactory

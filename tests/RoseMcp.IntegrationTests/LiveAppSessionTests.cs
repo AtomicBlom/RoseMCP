@@ -1036,6 +1036,112 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// The card's acceptance criterion for #11, whole: a diff that adds a child, removes a child and
+	/// changes a non-brush property, applied live in one call.
+	/// <para>
+	/// Adding is the piece that cannot be one command. There is no way to apply markup -- CreateInstance
+	/// builds one object from a type name -- so the subtree is decomposed into build steps and the
+	/// element is assembled off the tree before anything attaches it. What this checks is that the
+	/// assembled element arrives complete: it is not enough for it to exist, so its own property is read
+	/// back off the running app, and so is the nested child it was given.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Adds_removes_and_retypes_in_one_apply()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
+		var oldXaml = File.ReadAllText(xamlPath);
+
+		// The added element is deliberately a different type from the removed one. A diff is minimal, so
+		// swapping a Border for a Border is a property change and no structural edit happens at all --
+		// which is right, and not what this test is for.
+		//
+		// The two types are chosen to exercise both halves of resolving a name for CreateInstance. The app
+		// already has a Grid, so that one is answered from the types the live tree reports; it has no
+		// Rectangle anywhere, and Shapes is not the namespace Controls live in, so that one can only come
+		// from the framework namespaces tried afterwards.
+		const string SecondBorder = "<Border Background=\"#FF2A3A2A\"";
+		const string Added =
+			"<Grid Background=\"#FF00FFFF\"><Rectangle Fill=\"#FFFF00FF\" Width=\"10\" Height=\"10\" /></Grid>";
+
+		var start = oldXaml.IndexOf(SecondBorder, StringComparison.Ordinal);
+		Assert.True(start >= 0, "the probe markup no longer holds the second unnamed Border");
+		var close = oldXaml.IndexOf("</Border>", start, StringComparison.Ordinal) + "</Border>".Length;
+
+		var newXaml = oldXaml
+			.Remove(start, close - start)
+			.Insert(start, Added)
+			.Replace("Text=\"ticks: 0\"", "Text=\"ticks: 0\" Opacity=\"0.5\"");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = aumid,
+					Description = "uwp add probe",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+
+			var add = reload.Results.FirstOrDefault(result => result.Kind == "AddChild");
+			Assert.NotNull(add);
+			Assert.Equal("applied", add!.Status);
+
+			var removal = reload.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
+			Assert.NotNull(removal);
+			Assert.Equal("applied", removal!.Status);
+
+			// The non-brush property, on a named element, so all three kinds are in the one apply.
+			var opacity = reload.Results.FirstOrDefault(result => result.Property == "Opacity");
+			Assert.NotNull(opacity);
+			Assert.Equal("applied", opacity!.Status);
+
+			// The added element is in the app, and it arrived built rather than merely present: its own
+			// property is set, and the child it was given is underneath it. Existing is not complete.
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.Equal("#FF00FFFF", await BackgroundAtAsync(session, tree, "#Pair/Grid[0]", cancellationToken));
+
+			var nested = tree.Nodes.SingleOrDefault(node => node.Address == "#Pair/Grid[0]/Rectangle[0]");
+			Assert.NotNull(nested);
+			Assert.EndsWith("Rectangle", nested!.TypeName, StringComparison.Ordinal);
+
+			// And the removal happened: one Border left under the anchor, not two.
+			Assert.Single(tree.Nodes, node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]");
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>The Background of whichever live element carries an address, read off the tree.</summary>
 	private static async Task<string?> BackgroundAtAsync(
 		LiveAppSession session,

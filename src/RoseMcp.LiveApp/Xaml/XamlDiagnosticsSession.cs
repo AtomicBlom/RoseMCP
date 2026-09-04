@@ -70,10 +70,12 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// provider, and would buy no parallelism from a single-threaded consumer. The wait can be long --
 	// the endpoint timeout is twenty seconds -- and a slow correct answer is the trade being made.
 	//
-	// It has to be a Monitor rather than a semaphore, and that is load-bearing: selecting by handle
-	// finishes by calling ReadSelection, which takes this lock again on the same thread. Monitor is
-	// re-entrant and lets that through; a SemaphoreSlim is not and would deadlock the call forever.
-	private readonly object _requests = new();
+	// It has to be a re-entrant lock, and that is load-bearing: selecting by handle finishes by
+	// calling ReadSelection, which takes this lock again on the same thread. System.Threading.Lock
+	// counts recursion and lets that through, as Monitor did; a SemaphoreSlim does not and would
+	// deadlock the call forever. Proven by Selects_a_xaml_element_by_handle_without_a_click, which
+	// walks exactly that path -- a non-re-entrant lock hangs it rather than failing an assertion.
+	private readonly Lock _requests = new();
 
 	/// <summary>
 	/// Reads a snapshot of the target's live visual tree, injecting the provider first. Returns a tree

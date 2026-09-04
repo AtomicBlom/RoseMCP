@@ -351,9 +351,10 @@ reclaim memory or pick up a rebuilt generator.
   lock and not a documented limitation, since a truncated tree hands out handles for a tree that is
   not there. Serialised rather than given a folder each, because the provider keeps its work folder
   in a global and does everything on the app's UI thread, so two folders would need a different
-  provider and would buy no parallelism from a single-threaded consumer. It must be a `Monitor`:
-  selecting by handle finishes by calling `ReadSelection`, which takes the lock again on the same
-  thread, and a `SemaphoreSlim` would deadlock that forever. Do not conclude from a passing
+  provider and would buy no parallelism from a single-threaded consumer. It must be re-entrant --
+  `System.Threading.Lock`, which is what the rest of this codebase uses: selecting by handle finishes
+  by calling `ReadSelection`, which takes the lock again on the same thread, and a `SemaphoreSlim`
+  would deadlock that forever. Do not conclude from a passing
   concurrency test that the lock is unnecessary -- the silent failure appeared once in ten, and the
   test was confirmed to fail with the locks removed.
 - **It is a live edit, not a hot reload, and the word is doing work.** Every edit is a property set or

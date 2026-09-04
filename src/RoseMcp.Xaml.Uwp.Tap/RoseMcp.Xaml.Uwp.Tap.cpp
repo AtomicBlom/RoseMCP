@@ -38,6 +38,7 @@
 #include <mutex>
 #include <cstdlib>
 #include <cmath>
+#include <chrono>
 
 // C++/WinRT projections, for the resident in-app toolbar (#18): build the overlay on the diagnostics
 // UI layer, hit-test the element under a click, and report it. Included after the ABI headers above;
@@ -49,6 +50,7 @@
 #include <winrt/Windows.UI.Xaml.Controls.h>
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h> // ButtonBase::Click, or it is "auto before defined"
 #include <winrt/Windows.UI.Xaml.Media.h>
+#include <winrt/Windows.UI.Xaml.Media.Animation.h> // Storyboard and DoubleAnimation, for the proximity fades
 #include <winrt/Windows.UI.Xaml.Shapes.h> // Rectangle and Path, for the outlines and the mark
 #include <winrt/Windows.UI.Core.h>        // WindowSizeChangedEventArgs
 #include <winrt/Windows.UI.Input.h>
@@ -57,6 +59,7 @@
 namespace xaml = winrt::Windows::UI::Xaml;
 namespace xcontrols = winrt::Windows::UI::Xaml::Controls;
 namespace xmedia = winrt::Windows::UI::Xaml::Media;
+namespace xanim = winrt::Windows::UI::Xaml::Media::Animation;
 namespace xinput = winrt::Windows::UI::Xaml::Input;
 namespace xshapes = winrt::Windows::UI::Xaml::Shapes;
 
@@ -211,6 +214,7 @@ static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
 static const wchar_t* const IconIdle = L"\xE8B0";   // Cursor -- a plain arrow pointer
 static const wchar_t* const IconHide = L"\xE76B";   // ChevronLeft
 static const wchar_t* const IconMyXaml = L"\xE943"; // Code -- braces, for "just my XAML"
+static const wchar_t* const IconDeselect = L"\xE711"; // Cancel -- a plain cross, for clearing the pick
 
 
 
@@ -287,6 +291,38 @@ public:
 		m_sources = std::move(sources);
 	}
 
+	// What the toolbar is currently being used for. An operation in progress pins the panel at full
+	// strength: fading the thing somebody is in the middle of using is exactly the wrong moment for
+	// it, and proximity is the wrong question to ask then -- during a pick the pointer is out in the
+	// app by definition, which is precisely when the toolbar must stay readable.
+	//
+	// An enum and a set rather than a second look at m_selecting, because Select is the first of
+	// these and not the last: Ruler and Zoom are coming, and neither should have to remember to do
+	// this. Adding one here is adding one line there.
+	enum class Operation
+	{
+		Select,
+	};
+
+	void BeginOperation(Operation operation)
+	{
+		m_operations.insert(operation);
+		RefreshPanelFade();
+	}
+
+	void EndOperation(Operation operation)
+	{
+		m_operations.erase(operation);
+		RefreshPanelFade();
+	}
+
+	// The panel is legible when it is being used or when the pointer is on it, and a hint otherwise.
+	// One place, because the two conditions are independent and either can change without the other.
+	void RefreshPanelFade()
+	{
+		m_panelFade.To(m_operations.empty() && !m_overPanel ? PanelFar : PanelNear);
+	}
+
 	// Arms select mode. Returns whether it is armed, so the host can confirm rather than assume --
 	// including the case where the person had already armed it from the toolbar.
 	bool BeginSelect(bool includeAllElements = false)
@@ -347,6 +383,7 @@ public:
 
 			m_root.Children().InsertAt(0, m_capture);
 			m_selecting = true;
+			BeginOperation(Operation::Select);
 			Chrome();
 			WriteState();
 			Log(L"overlay: select mode armed");
@@ -367,6 +404,46 @@ public:
 		Chrome();
 	}
 
+	// Clears the pick: the mark on screen and the record on disk, which have to go together or
+	// this is a lie. Hiding the box alone leaves rose_xaml_selection reporting a selection the
+	// person can no longer see; deleting the files alone leaves a mark pointing at nothing.
+	//
+	// Reachable without arming, which is what was missing. Once something was picked the only
+	// ways out were picking something else or restarting the app.
+	//
+	// Returns whether there was anything to clear, so a caller can tell "cleared" from "nothing
+	// was selected" rather than having both read as success.
+	bool Deselect()
+	{
+		const bool had = m_hasSelection;
+
+		ShowBox(m_selectBox, m_selectBadge, nullptr, std::wstring());
+		m_hasSelection = false;
+		m_overSelection = false;
+		m_selectionRect = {};
+
+		if (!g_workDir.empty())
+		{
+			// Removed rather than emptied. The host waits on selection.ready existing, so a truncated
+			// one would still read as a selection that had arrived and merely say nothing about it.
+			_wremove((g_workDir + L"\\selection.ready").c_str());
+			_wremove((g_workDir + L"\\selection.tsv").c_str());
+		}
+
+		Chrome();
+		// Written after the clearing, so the host can confirm rather than assume -- and carrying
+		// whether there was anything to clear, because "cleared" and "nothing was selected" are
+		// different answers to the same request.
+		if (!g_workDir.empty())
+		{
+			std::wofstream done(g_workDir + L"\\deselect.ready", std::ios::trunc);
+			if (done) done << (had ? L"cleared" : L"nothing") << L"\n";
+		}
+
+		Log(had ? L"overlay: selection cleared" : L"overlay: deselect with nothing selected");
+		return had;
+	}
+
 	void EndSelect()	{
 		try
 		{
@@ -383,12 +460,31 @@ public:
 
 		m_capture = nullptr;
 		m_selecting = false;
+		EndOperation(Operation::Select);
 		ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
 		Chrome();
 		WriteState();
 	}
 
 private:
+	// How near the pointer has to be for a mark to be legible, and what it settles to when the
+	// pointer is elsewhere. Both marks are persistent by design -- the selection outlives the pick
+	// that made it, and the toolbar outlives everything -- so both spend most of their life being
+	// something the person did not ask to look at. Fading on proximity is what lets them stay
+	// available without staying in the way.
+	static constexpr double SelectionNear = 0.50;
+	static constexpr double SelectionFar = 0.10;
+	static constexpr double PanelNear = 1.00;
+	static constexpr double PanelFar = 0.50;
+
+	// Long enough to read as a fade rather than a flicker, short enough not to lag the pointer.
+	static constexpr int FadeMilliseconds = 160;
+
+	// The badge sits this far above the element it captions. Shared with the proximity test, which
+	// has to treat the caption as part of the selection.
+	static constexpr double BadgeHeight = 18.0;
+	static constexpr double BadgeGap = 2.0;
+
 	static xmedia::SolidColorBrush Brush(uint8_t a, uint8_t r, uint8_t g, uint8_t b)
 	{
 		return xmedia::SolidColorBrush(winrt::Windows::UI::Color{ a, r, g, b });
@@ -436,7 +532,18 @@ private:
 		// the pick solid and heavier, so the two never read as the same thing.
 		m_hoverBox = Outline(1.0, true);
 		m_hoverBadge = Badge();
-		m_selectBox = Outline(2.0, false);
+
+		// The pick rests on screen until something else replaces it or it is cleared, so it is the
+		// one mark that has to be liveable with. At full strength on a large container it is a
+		// full-window box sitting over the app for as long as the selection lasts, which is what a
+		// second user reported: not hard to see, hard to put up with.
+		//
+		// So it is drawn at the strength it should have when somebody is looking at it, and its
+		// opacity carries the rest -- SelectionNear when the pointer is inside it, SelectionFar when
+		// it is not. Baking the fade into the brushes instead was the first attempt, and it cannot
+		// express the thing that actually makes this work: the mark being loud enough to read at the
+		// moment you look for it.
+		m_selectBox = Outline(2.0, false, 0xFF, 0x33);
 		m_selectBadge = Badge();
 
 		m_panel = xcontrols::Border();
@@ -445,6 +552,7 @@ private:
 		m_panel.BorderThickness(xaml::Thickness{ 1, 1, 1, 1 });
 		m_panel.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
 		m_panel.Child(BuildBar());
+		m_panel.Opacity(PanelFar);
 		m_canvas.Children().Append(m_panel);
 
 		const auto bounds = xaml::Window::Current().Bounds();
@@ -452,6 +560,9 @@ private:
 		m_dragTop = 16.0;
 		Place();
 		Chrome();
+
+		// Last, because it reads the toolbar's position and the marks it fades.
+		WatchPointer();
 	}
 
 	// One row: grip, mark, then the modes and Hide. No status text -- the feedback that matters is on
@@ -474,6 +585,15 @@ private:
 		m_bar.Children().Append(m_idleButton);
 		m_bar.Children().Append(m_selectButton);
 		m_bar.Children().Append(m_myXamlButton);
+
+		// The way back out of a pick. Disabled rather than hidden when there is nothing selected:
+		// a button that comes and goes moves the three beside it, and this toolbar sits over
+		// somebody else's application.
+		m_deselectButton = Chip(
+			Glyph(IconDeselect, 12.0),
+			L"Deselect -- clear the picked element and its mark",
+			[this] { Deselect(); });
+		m_bar.Children().Append(m_deselectButton);
 		m_bar.Children().Append(Chip(Glyph(IconHide, 12.0), L"Hide", [this] { Collapse(true); }));
 
 		// Collapsed is the grip on its own, in the same panel, so folding away changes nothing else.
@@ -688,20 +808,30 @@ private:
 	//
 	// The pair lives in a Grid so a caller moves one element: the rose stretches to the bounds, and the
 	// dark one is inset by a negative margin so its stroke lands just outside the rose's.
-	xcontrols::Grid Outline(double thickness, bool dashed)
+	xcontrols::Grid Outline(double thickness, bool dashed, uint8_t strokeAlpha = 0xFF, uint8_t fillAlpha = 0x00)
 	{
 		auto box = xcontrols::Grid();
 		box.Visibility(xaml::Visibility::Collapsed);
 		box.IsHitTestVisible(false);
 
+		// The fill goes in first, under both strokes. It is what carries a resting mark: an outline
+		// alone is either loud enough to be an obstruction or too faint to find, whereas a wash over
+		// the element reads at a few percent -- the same trick the capture layer already uses.
+		if (fillAlpha > 0)
+		{
+			auto wash = xshapes::Rectangle();
+			wash.Fill(Brush(fillAlpha, 0xC2, 0x18, 0x5B));
+			box.Children().Append(wash);
+		}
+
 		auto contrast = xshapes::Rectangle();
-		contrast.Stroke(Brush(0xB0, 0x10, 0x10, 0x14));
+		contrast.Stroke(Brush(static_cast<uint8_t>(0xB0 * strokeAlpha / 0xFF), 0x10, 0x10, 0x14));
 		contrast.StrokeThickness(1);
 		contrast.Margin(xaml::Thickness{ -thickness, -thickness, -thickness, -thickness });
 		box.Children().Append(contrast);
 
 		auto rose = xshapes::Rectangle();
-		rose.Stroke(Accent());
+		rose.Stroke(Brush(strokeAlpha, 0xC2, 0x18, 0x5B));
 		rose.StrokeThickness(thickness);
 		if (dashed)
 		{
@@ -802,6 +932,10 @@ private:
 		m_idleButton.Background(m_selecting ? Idle() : Accent());
 		m_selectButton.Background(m_selecting ? Accent() : Idle());
 		if (m_myXamlButton) m_myXamlButton.Background(m_justMyXaml ? Accent() : Idle());
+
+		// Deselect is an action rather than a mode, so it never wears the accent -- only whether
+		// there is anything for it to do.
+		if (m_deselectButton) m_deselectButton.IsEnabled(m_hasSelection);
 	}
 
 	/// Whether an element was declared in the app's own markup.
@@ -889,6 +1023,224 @@ private:
 		return name.empty() ? typeName : (typeName + L" \x00B7 " + name);
 	}
 
+
+	// Watches where the pointer is, so the marks can get out of the way when it is not near them.
+	//
+	// A passive observer, and it has to be. The outlines are IsHitTestVisible(false) and the whole
+	// design of this overlay is that it does not take input away from the app it is sitting on, so
+	// PointerEntered on the mark is not available and giving it one would be the one thing this must
+	// never do. CoreWindow sees every move before XAML routes it and consumes nothing.
+	void WatchPointer()
+	{
+		m_selectionFade = MakeFader({ m_selectBox, m_selectBadge });
+		m_panelFade = MakeFader({ m_panel });
+
+		const auto window = xaml::Window::Current().CoreWindow();
+		if (!window) return;
+
+		window.PointerMoved(
+			[this](winrt::Windows::UI::Core::CoreWindow const&, winrt::Windows::UI::Core::PointerEventArgs const& e)
+			{
+				try
+				{
+					Proximity(e.CurrentPoint().Position());
+				}
+				catch (winrt::hresult_error const&)
+				{
+					// Runs on every pointer move in somebody else's application. Never throw out of it.
+				}
+			});
+
+		// Leaving the window is not a move, and without this whatever was last under the pointer stays
+		// lit for as long as the pointer is somewhere else entirely.
+		window.PointerExited(
+			[this](winrt::Windows::UI::Core::CoreWindow const&, winrt::Windows::UI::Core::PointerEventArgs const&)
+			{
+				try
+				{
+					Proximity(winrt::Windows::Foundation::Point{ -1.0f, -1.0f });
+				}
+				catch (winrt::hresult_error const&)
+				{
+				}
+			});
+	}
+
+	// Shows a freshly made selection, snapping when the pointer is already inside it and fading it up
+	// when it is not.
+	//
+	// Asking where the pointer is, rather than who asked for the selection, because that is the
+	// question the answer actually turns on -- and it happens to answer both callers. A click lands
+	// under the pointer, so the mark should simply be there: fading up would pretend the pointer were
+	// still on its way to somewhere it already is. A selection made by handle, which is #46 and the
+	// way an agent will reach this, lands wherever the element happens to be, and appearing at full
+	// strength somewhere the person is not looking is a flash in the corner of the eye rather than an
+	// answer. Today every path here is a click, so this always snaps; #46 gets the other half free.
+	void Reveal()
+	{
+		m_overSelection = Contains(m_selectionRect, m_pointer);
+
+		if (m_overSelection)
+		{
+			m_selectionFade.Snap(SelectionNear);
+			return;
+		}
+
+		// Left at SelectionNear rather than settling straight to SelectionFar: a selection nobody
+		// watched arrive is one they have to be told about, and the next pointer move fades it back
+		// down through the ordinary proximity rule.
+		m_selectionFade.To(SelectionNear);
+	}
+
+	// Both marks fade on the same rule: near the pointer they are legible, away from it they are a
+	// hint. Only a change of state starts an animation -- this runs on every pointer move, and
+	// restarting a storyboard sixty times a second over an app somebody is using is not acceptable.
+	void Proximity(winrt::Windows::Foundation::Point const& point)
+	{
+		m_pointer = point;
+
+		const bool overSelection = m_hasSelection && Contains(m_selectionRect, point);
+		if (overSelection != m_overSelection)
+		{
+			m_overSelection = overSelection;
+			m_selectionFade.To(overSelection ? SelectionNear : SelectionFar);
+		}
+
+		const bool overPanel = Contains(PanelRect(), point);
+		if (overPanel != m_overPanel)
+		{
+			m_overPanel = overPanel;
+			RefreshPanelFade();
+		}
+	}
+
+	// One storyboard per mark, built once and re-aimed, because the two obvious ways to do this are
+	// both wrong and they fail in opposite directions.
+	//
+	// Stop() before re-beginning looks like the tidy thing and is not: stopping an animation reverts
+	// the property to its *local* value, so one of the two directions snapped instead of fading --
+	// whichever direction happened to be heading back towards the value last written with .Opacity().
+	// The toolbar's mouse-out and the selection's mouse-in were both instant for exactly that reason,
+	// and they were instant in opposite directions because their local values sat at opposite ends.
+	//
+	// Building a fresh storyboard each time is the other trap: releasing one that is holding its end
+	// value lets the property fall back. Re-aiming a storyboard that stays alive has neither problem,
+	// and a DoubleAnimation with no From always starts from wherever the property has actually got to,
+	// so an interrupted fade hands over rather than jumping.
+	struct Fader
+	{
+		xanim::Storyboard Board{ nullptr };
+		std::vector<xanim::DoubleAnimation> Animations;
+
+		// What it is already heading for, so asking for the same thing twice is not a restart. The
+		// panel is asked on every pointer move across its edge and on every change of operation,
+		// and most of those answers are the one it is already giving.
+		double Target = -1.0;
+
+		void To(double value)
+		{
+			if (!Board || Target == value) return;
+
+			Target = value;
+
+			for (auto const& animation : Animations)
+			{
+				animation.To(value);
+			}
+
+			Board.Begin();
+		}
+
+		// Arrives at a value with no animation, for the moment when animating would be a lie. A pick
+		// happens under the pointer, so the mark is already being looked at: it should be there, not
+		// fade up as though the pointer were on its way.
+		//
+		// Still driven through the storyboard rather than by writing Opacity, because a held
+		// animation outranks a local value -- and SkipToFill leaves it held at the new value, so the
+		// next fade hands over from it the same way any other would.
+		void Snap(double value)
+		{
+			if (!Board) return;
+
+			Target = value;
+
+			for (auto const& animation : Animations)
+			{
+				animation.To(value);
+			}
+
+			Board.Begin();
+			Board.SkipToFill();
+		}
+	};
+
+	// Opacity is the one visual property XAML animates off the UI thread, which is what makes this
+	// affordable at all: a dependent animation would cost the app frames every time the pointer
+	// crossed an edge, and that is a strange thing to charge somebody for a diagnostics overlay.
+	static Fader MakeFader(std::vector<xaml::UIElement> const& targets)
+	{
+		Fader fader;
+		fader.Board = xanim::Storyboard();
+
+		for (auto const& target : targets)
+		{
+			if (!target) continue;
+
+			xanim::DoubleAnimation animation;
+			animation.EnableDependentAnimation(false);
+
+			// Duration is a value struct of a TimeSpan *and* a DurationType, and the type is not
+			// implied by the TimeSpan. Leaving it at its zero -- Automatic -- was the whole of why
+			// these ran for about a second instead of the sixth of one written just below.
+			animation.Duration(xaml::Duration{
+				winrt::Windows::Foundation::TimeSpan{ std::chrono::milliseconds(FadeMilliseconds) },
+				xaml::DurationType::TimeSpan });
+
+			xanim::Storyboard::SetTarget(animation, target);
+			xanim::Storyboard::SetTargetProperty(animation, L"Opacity");
+			fader.Board.Children().Append(animation);
+			fader.Animations.push_back(animation);
+		}
+
+		return fader;
+	}
+
+	// Where the toolbar is now, read live rather than remembered: it is draggable, it folds down to
+	// the grip, and the window it is clamped to resizes.
+	winrt::Windows::Foundation::Rect PanelRect() const
+	{
+		if (!m_panel) return {};
+
+		const double left = xcontrols::Canvas::GetLeft(m_panel);
+		const double top = xcontrols::Canvas::GetTop(m_panel);
+		if (std::isnan(left) || std::isnan(top)) return {};
+
+		return winrt::Windows::Foundation::Rect{
+			static_cast<float>(left),
+			static_cast<float>(top),
+			static_cast<float>(m_panel.ActualWidth()),
+			static_cast<float>(m_panel.ActualHeight()) };
+	}
+
+	static bool Contains(winrt::Windows::Foundation::Rect const& rect, winrt::Windows::Foundation::Point const& point)
+	{
+		return rect.Width > 0 && rect.Height > 0
+			&& point.X >= rect.X && point.X < rect.X + rect.Width
+			&& point.Y >= rect.Y && point.Y < rect.Y + rect.Height;
+	}
+
+	// The element's own rectangle, grown upwards to take in the badge that sits above it. Pointing at
+	// the caption is pointing at the selection -- without this, moving onto the one part that is still
+	// legible at rest is what makes the rest of the mark disappear.
+	static winrt::Windows::Foundation::Rect WithBadge(winrt::Windows::Foundation::Rect const& rect)
+	{
+		const float reach = static_cast<float>(BadgeHeight + BadgeGap);
+		const float top = rect.Y - reach;
+		if (top < 0.0f) return rect; // The badge was drawn inside the element, so the rect already covers it.
+
+		return winrt::Windows::Foundation::Rect{ rect.X, top, rect.Width, rect.Height + reach };
+	}
+
 	// Moves an outline and its badge onto an element, or hides both when there is nothing to show.
 	bool ShowBox(
 		xcontrols::Grid const& box,
@@ -915,8 +1267,7 @@ private:
 		if (const auto text = badge.Child().try_as<xcontrols::TextBlock>()) text.Text(caption);
 
 		// Above the element, unless that would be off the top of the window, in which case inside it.
-		const double badgeHeight = 18.0;
-		const double top = rect.Y - badgeHeight - 2.0;
+		const double top = rect.Y - BadgeHeight - BadgeGap;
 		xcontrols::Canvas::SetLeft(badge, rect.X);
 		xcontrols::Canvas::SetTop(badge, top < 0.0 ? rect.Y + 2.0 : top);
 		badge.Visibility(xaml::Visibility::Visible);
@@ -997,6 +1348,10 @@ private:
 		{
 			e.Handled(true); // Swallow the click so it does not also reach the app.
 			const auto point = e.GetCurrentPoint(nullptr).Position();
+
+			// A click is a pointer position, and not always preceded by a move -- a touch, or the
+			// pointer arriving and pressing in one gesture, produces no PointerMoved at all.
+			m_pointer = point;
 			winrt::Windows::Foundation::Rect rect{};
 			if (const auto element = Beneath(point, rect))
 			{
@@ -1005,6 +1360,10 @@ private:
 				// The picked element keeps its outline after select mode ends: that persistent mark is
 				// the evidence of what "the selected element" now means, for the person and the agent.
 				const bool drawn = ShowBox(m_selectBox, m_selectBadge, element, Describe(element));
+				m_hasSelection = true;
+				m_selectionRect = WithBadge(rect);
+				Reveal();
+				Chrome();
 				Log(L"overlay: selection outline " + std::wstring(drawn ? L"drawn" : L"NOT drawn"));
 			}
 		}
@@ -1154,13 +1513,33 @@ private:
 	xcontrols::Button m_idleButton{ nullptr };
 	xcontrols::Button m_selectButton{ nullptr };
 	xcontrols::Button m_myXamlButton{ nullptr };
+	xcontrols::Button m_deselectButton{ nullptr };
 	xcontrols::Grid m_hoverBox{ nullptr };
 	xcontrols::Grid m_selectBox{ nullptr };
 	xcontrols::Border m_hoverBadge{ nullptr };
 	xcontrols::Border m_selectBadge{ nullptr };
+	Fader m_selectionFade;
+	Fader m_panelFade;
+
+	// Where the selection is, so the pointer can be tested against it without asking the app.
+	// Held rather than recomputed: an element that has moved or been laid out again is issue #51's
+	// problem, and reaching into the app's tree on every pointer move to find out would not be a
+	// fix for it so much as a reason to be blamed for the app feeling slow.
+	winrt::Windows::Foundation::Rect m_selectionRect{};
+	// The last place the pointer was seen, in window coordinates. Kept because a selection can be
+	// made at a moment when there is no pointer event to read it from.
+	winrt::Windows::Foundation::Point m_pointer{ -1.0f, -1.0f };
+	bool m_overSelection = false;
+	bool m_overPanel = false;
 	double m_dragLeft = 16.0;
 	double m_dragTop = 16.0;
 	bool m_selecting = false;
+	std::set<Operation> m_operations;
+
+	// Whether a pick is currently marked. Tracked rather than inferred from the box's visibility,
+	// because the box is also hidden when an element could not be measured, and "drawn nothing"
+	// is not the same fact as "nothing is selected".
+	bool m_hasSelection = false;
 	int m_traces = 0;
 	bool m_includeAllElements = false;
 	bool m_justMyXaml = true;
@@ -1279,6 +1658,13 @@ public:
 			// pushed past the row cap on an element with hundreds of properties.
 			const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
 			WriteProperties(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10)), includeDefaults);
+		}
+		else if (request == L"deselect")
+		{
+			// The same act as the toolbar button, so the mark and the recorded selection go together
+			// whichever end asks. An agent that has finished with an element, and #51's tree watcher
+			// noticing the element is gone, both want exactly this.
+			Overlay().Deselect();
 		}
 		else if (request == L"apply")
 		{

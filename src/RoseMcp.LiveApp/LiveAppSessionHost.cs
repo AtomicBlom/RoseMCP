@@ -256,6 +256,31 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
+	/// Clears the picked element and the mark drawn over the app, so nothing is selected.
+	/// <para>
+	/// Injects, unlike <see cref="ReadXamlSelection"/>, because the mark lives in the app's own visual
+	/// tree and only the provider can take it down. Clearing the files from this side alone would
+	/// leave an outline over the app pointing at a selection that no longer exists.
+	/// </para>
+	/// </summary>
+	public LiveXamlSelection ClearXamlSelection()
+	{
+		int? targetProcessId;
+		lock (_gate)
+		{
+			targetProcessId = _targetProcessId;
+			_xaml ??= new XamlDiagnosticsSession(logger);
+		}
+
+		if (targetProcessId is not { } pid)
+		{
+			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
+		}
+
+		return _xaml.ClearSelection(pid);
+	}
+
+	/// <summary>
 	/// Hot-reloads the target by diffing two XAML versions and applying the edits to the live tree.
 	/// Returns each computed edit with its outcome.
 	/// </summary>

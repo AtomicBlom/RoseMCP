@@ -104,6 +104,9 @@ public static class ToolNames
 	/// <summary>Live-app-host-only. The broker forwards this to read the element the user clicked.</summary>
 	public const string LiveAppXamlSelection = "rose_live_app_xaml_selection";
 
+	/// <summary>Live-app-host-only. The broker forwards this to clear the picked element and its mark.</summary>
+	public const string LiveAppXamlDeselect = "rose_live_app_xaml_deselect";
+
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 
@@ -163,4 +166,7 @@ public static class ToolNames
 
 	/// <summary>Read the element the user picked by clicking it in the running app.</summary>
 	public const string XamlSelection = "rose_xaml_selection";
+
+	/// <summary>Clear the picked element, and the mark drawn over the running app.</summary>
+	public const string XamlDeselect = "rose_xaml_deselect";
 }

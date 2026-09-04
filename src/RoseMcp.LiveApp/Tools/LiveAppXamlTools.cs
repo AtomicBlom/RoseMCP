@@ -74,4 +74,15 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Read the element the user picked by clicking it in the running app.")]
 	public LiveXamlSelection XamlSelection() => host.ReadXamlSelection();
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppXamlDeselect,
+		Title = "Live-app XAML deselect",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Clear the picked element and the mark drawn over the app.")]
+	public LiveXamlSelection XamlDeselect() => host.ClearXamlSelection();
 }

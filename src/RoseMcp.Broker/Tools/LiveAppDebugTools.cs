@@ -555,6 +555,30 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		return await session.ReadXamlSelectionAsync(cancellationToken);
 	}
 
+	[McpServerTool(
+		Name = ToolNames.XamlDeselect,
+		Title = "Clear the selected XAML element",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(
+		"Clear the picked element: both the recorded selection and the mark RoseMCP draws over it in the "
+			+ "running app. Use it when you are done with an element, since the mark is deliberately "
+			+ "persistent -- it stays until something replaces it, which is what makes \"the selected "
+			+ "element\" mean something to you and the user at once, and also means the user is left "
+			+ "looking at it. The two halves always go together: clearing one and not the other would "
+			+ "either leave a mark over nothing or report a selection nobody can see. It reports whether "
+			+ "there was anything to clear, so it is safe to call when you are not sure.")]
+	public async Task<LiveXamlSelection> XamlDeselectAsync(
+		[Description(SessionHelp)] string sessionId,
+		CancellationToken cancellationToken = default)
+	{
+		var session = Require(sessionId);
+		return await session.ClearXamlSelectionAsync(cancellationToken);
+	}
+
 	private LiveAppSession Require(string sessionId)
 		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
 

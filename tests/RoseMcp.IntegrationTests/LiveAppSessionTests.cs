@@ -777,6 +777,18 @@ public sealed class LiveAppSessionTests
 			Assert.True(selection.Armed, $"expected the toolbar to report select mode armed; got: {selection.Detail}");
 			Assert.NotNull(selection.Detail);
 
+			// #45: the pick can be cleared, and clearing says which of "cleared" and "there was nothing
+			// selected" happened rather than treating both as success. Nothing has been picked here --
+			// a click is a human action and this suite does not drive the mouse on a live desktop -- so
+			// the second is the honest answer, and it is the one that used to be unreachable at all.
+			var cleared = await session.ClearXamlSelectionAsync(cancellationToken);
+			Assert.False(cleared.Selected);
+			Assert.Contains("nothing", cleared.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+			// And the toolbar is still there afterwards, because deselecting is not leaving.
+			var afterClearing = await session.ReadXamlSelectionAsync(cancellationToken);
+			Assert.False(afterClearing.Selected);
+
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}
 		finally

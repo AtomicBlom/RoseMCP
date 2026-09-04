@@ -88,6 +88,92 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	}
 
 	/// <summary>
+	/// Being told about an event without polling for it (#8). The agent is turn-based, so a pushed MCP
+	/// notification reaches nobody -- there is no listener between its turns. What it can use is one
+	/// call that does not come back until there is something to say, which is what waitSeconds is.
+	/// <para>
+	/// The cursor is taken past everything already buffered first, so this genuinely waits rather than
+	/// finding the answer sitting there. That the wait is woken by the event and not by a tick is the
+	/// assertion worth making, so the elapsed time is checked against the timeout: returning at the
+	/// deadline with the right content would pass a content-only assertion while being the behaviour
+	/// this exists to avoid.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Waiting_for_an_event_answers_when_it_arrives_rather_than_on_a_timeout()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// Everything so far, so the wait below has nothing already buffered to satisfy it.
+			var caughtUp = await session.ReadEventsAsync(0, cancellationToken);
+
+			var clock = System.Diagnostics.Stopwatch.StartNew();
+			var waited = await session.ReadEventsAsync(
+				caughtUp.NextCursor, nameof(LiveDebugEventKind.ExceptionFirstChance), 50, 30, cancellationToken);
+			clock.Stop();
+
+			Assert.NotEmpty(waited.Events);
+			Assert.All(waited.Events, entry => Assert.Equal(LiveDebugEventKind.ExceptionFirstChance, entry.Kind));
+			Assert.Contains(waited.Events, entry => entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false);
+
+			// The probe throws twice a second, so an answer that took anything like the full thirty
+			// seconds came from the deadline rather than from the event.
+			Assert.True(
+				clock.Elapsed < TimeSpan.FromSeconds(20),
+				$"the wait should have been woken by the event, not the timeout; it took {clock.Elapsed}");
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// The other half of the same contract: a wait for something that does not happen comes back
+	/// empty when its time is up, rather than hanging or reporting events of some other kind. Waiting
+	/// on BreakpointHit with no breakpoint set is exactly "wait for the next stop" against a target
+	/// that never stops.
+	/// </summary>
+	[Fact]
+	public async Task Waiting_for_an_event_that_does_not_happen_comes_back_empty()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			var caughtUp = await session.ReadEventsAsync(0, cancellationToken);
+
+			var clock = System.Diagnostics.Stopwatch.StartNew();
+			var waited = await session.ReadEventsAsync(
+				caughtUp.NextCursor, nameof(LiveDebugEventKind.BreakpointHit), 50, 2, cancellationToken);
+			clock.Stop();
+
+			Assert.Empty(waited.Events);
+			Assert.Equal(LiveAppSessionState.Ready, waited.State);
+
+			// It waited rather than answering at once, which is what makes the empty answer meaningful.
+			Assert.True(clock.Elapsed >= TimeSpan.FromSeconds(1.5), $"expected it to wait; it took {clock.Elapsed}");
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+	/// <summary>
 	/// #53: a detach that fails used to be swallowed, and the cleanup that followed it terminated the
 	/// debugging interface while still attached -- which takes the debuggee down with it. The target
 	/// surviving is the outcome; <see cref="LiveAppSession.DetachFailure"/> is the evidence, and it is

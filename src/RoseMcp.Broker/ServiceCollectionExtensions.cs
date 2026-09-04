@@ -142,7 +142,9 @@ public static class ServiceCollectionExtensions
 		  debugger so its earliest events are caught. Local, same-user processes only.
 		- rose_debug_events reads what has happened since a cursor -- exceptions with stack traces,
 		  Debugger.Log output, module loads, breakpoint hits -- so you read it between turns rather
-		  than waiting on the process.
+		  than waiting on the process. To wait for something instead of asking repeatedly, give it
+		  waitSeconds and it answers the moment a matching event arrives; with kinds it waits for one
+		  thing, and kinds=BreakpointHit is "wait until the target stops". Do not call it in a loop.
 		- rose_debug_add_tracepoint logs a method's hits and keeps running: the low-friction default,
 		  since it never freezes the app. rose_debug_set_breakpoint instead holds the target and
 		  records its stack and the top frame's locals and arguments; rose_debug_continue or

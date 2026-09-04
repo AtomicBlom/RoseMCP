@@ -379,6 +379,66 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
+	/// Reads a page, first waiting up to <paramref name="waitSeconds"/> for something to be in it.
+	/// <para>
+	/// Zero waits not at all, which is the old behaviour and still the right one for "what has
+	/// happened so far". A positive value is what a turn-based agent wants instead of a poll loop: one
+	/// call that comes back when there is something to say (#8). Paired with the kind filter it is
+	/// also "wait for the next stop", so that needs no mechanism of its own.
+	/// </para>
+	/// <para>
+	/// It returns as soon as the event is buffered rather than on a tick, and that is load-bearing for
+	/// a stopping breakpoint: the stop auto-continues after its safety timeout, so an agent told late
+	/// has less of the window left to evaluate anything in.
+	/// </para>
+	/// <para>
+	/// Which is also why a pushed notification is the wrong shape here, rather than merely unavailable
+	/// -- the natural thing to reach for is "notify me when the breakpoint hits", and it would be worse
+	/// than this. A stopping breakpoint holds the target for thirty seconds by default, and a channel
+	/// event is delivered on the caller's *next turn*, so the push can easily land after the target has
+	/// resumed and the frozen state it was announcing is gone. Waiting on the call returns at the
+	/// instant of the stop, with the caller already mid-call and the whole window in front of it. The
+	/// buffer covers the case that looks like it needs a push: an agent that has to *do* something to
+	/// trigger the breakpoint acts first and waits second, and the cursor means nothing that happened
+	/// in between was missed.
+	/// </para>
+	/// </summary>
+	public async Task<LiveDebugEventPage> ReadEventsAsync(
+		long after,
+		IReadOnlyCollection<LiveDebugEventKind>? kinds,
+		int limit,
+		int waitSeconds,
+		CancellationToken cancellationToken)
+	{
+		if (waitSeconds > 0)
+		{
+			var bounded = Math.Min(waitSeconds, MaxWaitSeconds);
+			await _events.WaitForAsync(after, kinds, TimeSpan.FromSeconds(bounded), cancellationToken);
+		}
+
+		return ReadEvents(after, kinds, limit);
+	}
+
+	/// <summary>
+	/// The longest this will hold a call open, however many seconds were asked for.
+	/// <para>
+	/// An unbounded wait is a call that outlives the client's own per-call timeout, and that failure is
+	/// worse than a short answer: the client gives up, the wait carries on here holding a reader, and
+	/// the caller sees a timeout on a call that was working. It is the same hazard #44 was corrected
+	/// about, arriving from the other direction -- there a long call was being removed, here one is
+	/// being introduced deliberately.
+	/// </para>
+	/// <para>
+	/// Truncating is safe in a way that truncating a read would not be, and that is what makes a cap
+	/// the right answer rather than an error. Events are buffered and addressed by cursor, so a wait
+	/// that comes back empty has lost nothing: the same call with the same cursor picks up whatever
+	/// arrives next. A minute also sits well clear of the thirty seconds a stopping breakpoint holds
+	/// the target for, so the case this exists for cannot be cut short by it.
+	/// </para>
+	/// </summary>
+	private const int MaxWaitSeconds = 60;
+
+	/// <summary>
 	/// A page of buffered debug events after the given cursor, with the session's state. <paramref
 	/// name="kinds"/> narrows it to the kinds asked for, and <paramref name="limit"/> caps the window.
 	/// </summary>

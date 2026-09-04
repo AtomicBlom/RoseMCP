@@ -142,6 +142,22 @@ public static class ServiceCollectionExtensions
 		  rose_debug_step (in/over/out) resumes it, and it auto-continues after a timeout so an
 		  unattended stop cannot wedge the app. Both take a cheap condition like count >= 100.
 		- rose_debug_detach ends a session and leaves the target running.
+
+		A running XAML app (UWP, WinUI) can also be inspected and edited in place with the rose_xaml_*
+		tools, against the same session. Reach for them instead of rebuilding and relaunching to see a
+		layout or colour change, and instead of reading markup to work out what the user is looking at.
+		- rose_xaml_tree and rose_xaml_properties read the live visual tree and one element's real
+		  values, with where each was set -- so "why is this the wrong colour" is answered from the
+		  running app rather than inferred from the XAML.
+		- rose_xaml_apply live-edits it: edit the XAML file, pass its path, and the change is applied to
+		  the running app's visual tree with no relaunch, as often as you like -- what Visual Studio
+		  calls XAML Hot Reload. It diffs against what it last sent, so there is nothing to carry
+		  between calls. The first call for a file records a baseline and applies nothing, so make it
+		  before you start editing. The change lives on the objects in the tree, not in the app's
+		  markup, so it is gone if the app rebuilds that part of the UI.
+		- rose_xaml_select_mode and rose_xaml_selection let the user point at an element instead of
+		  describing it. Read the selection first: the user can arm the in-app toolbar themselves, so
+		  "look at the element I selected" may already have an answer waiting.
 		""";
 
 	public static IMcpServerBuilder AddRoseMcpBroker(

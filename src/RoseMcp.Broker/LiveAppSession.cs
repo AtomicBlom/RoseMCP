@@ -266,11 +266,19 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["handle"] = handle },
 			cancellationToken);
 
-	/// <summary>Diffs two XAML versions and applies the edits to the live tree; returns each edit's outcome.</summary>
-	public Task<LiveXamlReloadResult> ReloadXamlAsync(string oldXaml, string newXaml, CancellationToken cancellationToken)
-		=> SendAsync<LiveXamlReloadResult>(
+	/// <summary>
+	/// Applies a XAML change to the live tree and returns each edit's outcome. Naming a file is the
+	/// continuous path (#12) -- the host diffs it against what it last sent -- and two versions of the
+	/// markup is for markup with no file behind it.
+	/// </summary>
+	public Task<LiveXamlApplyResult> ApplyXamlAsync(
+		string? oldXaml,
+		string? newXaml,
+		string? filePath,
+		CancellationToken cancellationToken)
+		=> SendAsync<LiveXamlApplyResult>(
 			ToolNames.LiveAppXamlApply,
-			new Dictionary<string, object?> { ["oldXaml"] = oldXaml, ["newXaml"] = newXaml },
+			new Dictionary<string, object?> { ["filePath"] = filePath, ["oldXaml"] = oldXaml, ["newXaml"] = newXaml },
 			cancellationToken);
 
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)

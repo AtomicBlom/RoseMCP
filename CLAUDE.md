@@ -306,6 +306,24 @@ reclaim memory or pick up a rebuilt generator.
   it targets Windows and the test projects cannot see inside it, and the ordering this depends on --
   create, fill, nest, and attach to the running app *last*, so nothing can observe a half-built
   element -- is exactly the kind of thing that needs a test rather than a comment.
+  <br>
+  A `*.Resources` block is the same trap wearing a different hat. It is a property written in element
+  form, so it is not a child: walking into it produced `Grid[0]/Grid.Resources[0]/SolidColorBrush[0]`
+  and the apply then failed naming a missing element, which is the wrong problem stated confidently.
+  It also must not occupy a child index, or an element added after a `<Grid.RowDefinitions>` is handed
+  a position counting something that is not its sibling. Resources are matched by `x:Key` and never by
+  position, and the whole resource is replaced rather than its properties edited, because one brush
+  object can sit behind several keys. `Resources` itself is **not** in the property chain -- it is an
+  ordinary property on `FrameworkElement`, not a dependency property -- so the dictionary is asked of
+  the element through `GetIInspectableFromHandle`, and `ReplaceResource` wants a *key handle*, which is
+  a boxed string put back through `GetHandleFromIInspectable`.
+  <br>
+  One thing about the fixture rather than the code, because it cost a crash to learn: XAML resolves
+  `{ThemeResource}` and `{StaticResource}` at parse time against resources declared *earlier*, so a
+  resources block placed after the element that uses it is a forward reference and the app dies on
+  launch. And the reference has to be `ThemeResource` for a replacement to be observable at all --
+  `StaticResource` resolves once when the tree is built, so replacing what the key means would change
+  the dictionary and move nothing on screen.
 - **A live element is addressed by one grammar, counted the same way at both ends.** An `x:Name` is
   absent far more often than not -- everything inside a control template is unnamed -- so an element
   is addressed as `#name` or, failing that, `Type[index]` segments anchored at its nearest named
@@ -323,6 +341,38 @@ reclaim memory or pick up a rebuilt generator.
   Addresses computed from the live tree are exact, being resolved against the tree they came from; an
   address a diff derived from markup is a best effort, since markup order is not always the visual
   tree's, and it fails by saying so.
+- **It is a live edit, not a hot reload, and the word is doing work.** Every edit is a property set or
+  an `AddChild` against the element objects that exist at that instant; the app's compiled markup is
+  untouched, so anything that rebuilds that part of the UI produces the original. "Reload" would
+  promise that elements created later carry the change, and they do not. `WorkspaceReload` is also
+  right there meaning the other thing, the one that genuinely reloads. So: the capability is a **live
+  edit**, the operation is an **apply**, and an **edit** is the smallest unit -- `XamlEdit`,
+  `LiveXamlEditResult`. Microsoft's own name for the mechanism is XAML Hot Reload, which is why the
+  tool description and the server instructions say so once each: it is the reader's search term, not
+  this project's vocabulary.
+- **A live edit is diffed against what was last sent to the app, never against what is on disk.**
+  Applying used to require both versions of the markup, which reads reasonably and is close to unusable
+  in the loop it exists for: an agent that has just written a file no longer holds what was in it, so
+  the one piece of state the session is in a position to keep was being asked of the caller. It keeps it
+  now, per file, and a caller passes a path. Two consequences are load-bearing. A *first* apply cannot
+  be diffed at all -- what the running app was built from is not on disk once it has been edited -- so
+  it records the file and says so, rather than diffing the file against itself and reporting the empty
+  result as success, which would skip the caller's first edit in silence. And the baseline advances
+  whether or not every edit took, because a structural edit is not idempotent: re-sending an `AddChild`
+  because something else in the batch failed puts a second copy of the element in on the attempt that
+  works. Failures are reported and belong to the caller. Whether the file has changed since the app
+  started is evidence about the file and nothing more, so it is three-valued -- a process that will not
+  give its start time makes that unknown, not "changed".
+- **A provider marker answers one request, and the generation is what says which.** Every handshake
+  through the work folder is "does this file exist", the host deletes the marker before injecting, and
+  `TryDelete` swallows its failures -- so the number the host stamps on the request and the provider
+  echoes back is the only thing separating this answer from the last one (#57, #89). Two things about
+  that are not mechanical. The tree snapshot is written *before* the request is read, so hoisting the
+  read is part of the stamp: otherwise the marker carries the previous request's number and the host
+  rejects a perfectly good tree as stale, which presents as a timeout blaming the app's diagnostics
+  layer. And `selection.ready` deliberately carries no generation at all, because it records a click,
+  which outlives the injection that armed select mode by design -- stamping it would have the read that
+  goes looking for it reject its own answer. One file cannot both answer a request and survive one.
 - **A XAML project's generated half is synthesised, and says so.** The markup compiler runs only in a
   real build, so `MSBuildWorkspace` hands us code-behind missing its base type, its `x:Name` fields
   and `InitializeComponent` -- 2030 phantom errors in one project of Drawboard's UWP app.

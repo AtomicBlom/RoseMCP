@@ -4,6 +4,14 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Grid x:Name="RootGrid" Background="#FF101418">
+        <!-- A keyed brush, so a resource edit has a dictionary to land in. Referenced with
+             ThemeResource rather than StaticResource on purpose: StaticResource resolves once when
+             the tree is built, so replacing what the key means would change the dictionary and move
+             nothing on screen. ThemeResource re-evaluates, which is what makes the change observable
+             and therefore testable. -->
+        <Grid.Resources>
+            <SolidColorBrush x:Key="ProbeAccent" Color="#FF445566" />
+        </Grid.Resources>
         <StackPanel x:Name="Panel" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
             <Border x:Name="Pane" Background="#FF202830" Padding="24" CornerRadius="8">
                 <TextBlock x:Name="Caption" Text="Rose UWP Probe" Foreground="#FFE8EEF4" FontSize="24" />
@@ -28,6 +36,19 @@
                     <TextBlock Text="second" Foreground="#FF8FA6BF" FontSize="12" />
                 </Border>
             </StackPanel>
+            <!-- A Grid with rows, so that an attached property has somewhere to mean something. The
+                 diff has always kept attached properties by their dotted name, which is a different
+                 question from whether the apply side can find one, and nothing here could ask it. -->
+            <Grid x:Name="Rows">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="Attached" Grid.Row="0" Text="attached" Foreground="#FF8FA6BF" FontSize="12" />
+            </Grid>
+            <Border x:Name="Themed" Background="{ThemeResource ProbeAccent}" Padding="4">
+                <TextBlock Text="themed" Foreground="#FF8FA6BF" FontSize="12" />
+            </Border>
         </StackPanel>
     </Grid>
 </Page>

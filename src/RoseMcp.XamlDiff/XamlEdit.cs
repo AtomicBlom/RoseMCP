@@ -14,6 +14,13 @@ public enum XamlEditKind
 
 	/// <summary>Remove the target child element.</summary>
 	RemoveChild,
+
+	/// <summary>
+	/// Put a new value behind a key in the target element's resource dictionary. The whole resource
+	/// is replaced rather than its properties edited, because that is what the framework offers:
+	/// <c>ReplaceResource</c> swaps what a key resolves to.
+	/// </summary>
+	SetResource,
 }
 
 /// <summary>

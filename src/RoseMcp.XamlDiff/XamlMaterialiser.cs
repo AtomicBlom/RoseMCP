@@ -44,6 +44,27 @@ public static class XamlMaterialiser
 		return steps;
 	}
 
+	/// <summary>
+	/// The steps that build <paramref name="markup"/> and leave it in <see cref="RootSlot"/>, attached
+	/// to nothing. For a resource, which goes behind a key rather than into a parent's children -- so
+	/// the caller finishes the job with whatever puts it there.
+	/// </summary>
+	public static IReadOnlyList<XamlStep> Unattached(string markup)
+	{
+		var steps = new List<XamlStep>();
+		var slots = 0;
+		Build(XElement.Parse(markup), steps, ref slots);
+
+		return steps;
+	}
+
+	/// <summary>
+	/// Where <see cref="Unattached"/> leaves the thing it built. The root is created first and slots are
+	/// handed out in creation order, so this is a fact about the ordering rather than a convention -- and
+	/// naming it here stops the caller hard-coding it and stops the two drifting.
+	/// </summary>
+	public const string RootSlot = "$0";
+
 	/// <summary>Whether markup names an element, which is worth saying because the name will not survive.</summary>
 	public static bool NamesAnything(string markup)
 	{

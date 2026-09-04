@@ -22,7 +22,7 @@ checks are an early, clear refusal layered on top, never a replacement.
 ## Assets
 
 - **The user's other processes and their data.** Only same-user, non-system targets are reachable.
-- **The debuggee's integrity.** Inspection must not corrupt or wedge the target; mutation (hot reload)
+- **The debuggee's integrity.** Inspection must not corrupt or wedge the target; mutation (live edit)
   is in-memory and non-persistent.
 - **Secrecy of runtime data.** Exception values, locals, arguments, and log output can be sensitive and
   stay local, surfaced only to the asking agent session.
@@ -68,11 +68,18 @@ The native provider is injected into the target -- for a packaged app, into its 
 - **Rebuildability.** The provider is a native DLL built out-of-tree and staged by copy, so it never
   blocks the user rebuilding it -- the same intent as the analyzer loader's shadow-copy.
 
-### Hot reload (`rose_xaml_apply`, #12)
-Mutates a running app's live visual tree from a diff of two XAML versions. It changes only in-memory UI
-state of the user's own app; nothing is written to the app's files and the change is lost on relaunch.
-Only property edits on named elements are applied; structural edits are reported, not performed. This
-is the user editing their own running UI, not a way to reach another process.
+### Live edit (`rose_xaml_apply`, #12)
+Mutates a running app's live visual tree from a diff of two versions of its XAML. It changes only
+in-memory UI state of the user's own app; nothing is written to the app's files and the change is lost
+on relaunch. Property edits, structural edits and keyed resources all apply. This is the user editing
+their own running UI, not a way to reach another process.
+
+Naming a file rather than passing markup means the tool **reads** a path the caller chose, in the
+broker's own security context. It reads and never writes, one file per call, and the path is the
+caller's -- the same authority as the agent session already has over the repository it is working in.
+The contents go nowhere but the diff: what reaches the target is a list of property and element edits,
+never the file. What the session retains is the last version it applied, per file, in memory, for the
+life of the session.
 
 ### Expression evaluation (`rose_debug_evaluate`, #7)
 Reads field-access chains off a stopped frame directly from memory. It deliberately runs **none of the

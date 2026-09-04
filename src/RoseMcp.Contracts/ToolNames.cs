@@ -95,7 +95,7 @@ public static class ToolNames
 	/// <summary>Live-app-host-only. The broker forwards this to read one element's XAML properties.</summary>
 	public const string LiveAppXamlProperties = "rose_live_app_xaml_properties";
 
-	/// <summary>Live-app-host-only. The broker forwards this to diff two XAML versions and apply the edits live.</summary>
+	/// <summary>Live-app-host-only. The broker forwards this to apply a XAML change to the live tree.</summary>
 	public const string LiveAppXamlApply = "rose_live_app_xaml_apply";
 
 	/// <summary>Live-app-host-only. The broker forwards this to arm the interactive select-mode overlay.</summary>
@@ -161,7 +161,7 @@ public static class ToolNames
 	/// <summary>Read one element's XAML properties, with provenance and source location.</summary>
 	public const string XamlProperties = "rose_xaml_properties";
 
-	/// <summary>Hot-reload a running XAML app by diffing two versions and applying the edits live.</summary>
+	/// <summary>Live-edit a running XAML app: apply a file's changes to its live visual tree.</summary>
 	public const string XamlApply = "rose_xaml_apply";
 
 	/// <summary>Enter interactive select mode: the next click in the app picks that element.</summary>

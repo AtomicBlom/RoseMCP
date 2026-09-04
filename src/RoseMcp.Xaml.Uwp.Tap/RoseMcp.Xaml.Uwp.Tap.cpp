@@ -82,6 +82,30 @@ static std::wstring g_workDir;
 static std::wstring g_generation;
 static std::mutex g_logMutex;
 
+// A ".ready" marker, plus the generation of the request it answers.
+//
+// One function for all of them so the next one added cannot forget the stamp, which is exactly how
+// this got left half done: #57 gave the overlay's markers a generation and the tree, properties and
+// apply handshakes kept answering on existence alone (#89). Continuous hot reload is what makes that
+// matter -- a stale apply.ready reports the *previous* apply's per-edit outcomes as this one's, and
+// in a loop that applies the same property over and over the keys line up, so it reads as success.
+//
+// Deliberately not used for selection.ready. That file records a click, which outlives the injection
+// that armed select mode by design, so stamping it with the generation current when the click
+// happened would have the read that goes looking for it reject its own answer as stale. The two
+// needs are contradictory in one file; separating them is the fix, and it is not this one.
+static void WriteMarker(const std::wstring& name, const std::wstring& payload)
+{
+	if (g_workDir.empty()) return;
+
+	std::wofstream marker(g_workDir + L"\\" + name, std::ios::trunc);
+	if (!marker) return;
+
+	marker << payload;
+	if (!g_generation.empty()) marker << L" gen=" << g_generation;
+	marker << L"\n";
+}
+
 static std::wstring Hex(HRESULT hr)
 {
 	wchar_t buffer[9];
@@ -449,16 +473,7 @@ public:
 		// Written after the clearing, so the host can confirm rather than assume -- and carrying
 		// whether there was anything to clear, because "cleared" and "nothing was selected" are
 		// different answers to the same request.
-		if (!g_workDir.empty())
-		{
-			std::wofstream done(g_workDir + L"\\deselect.ready", std::ios::trunc);
-			if (done)
-			{
-				done << (had ? L"cleared" : L"nothing");
-				if (!g_generation.empty()) done << L" gen=" << g_generation;
-				done << L"\n";
-			}
-		}
+		WriteMarker(L"deselect.ready", had ? L"cleared" : L"nothing");
 
 		Log(had ? L"overlay: selection cleared" : L"overlay: deselect with nothing selected");
 		return had;
@@ -1685,13 +1700,7 @@ private:
 		const int width = static_cast<int>(m_capture.ActualWidth());
 		const int height = static_cast<int>(m_capture.ActualHeight());
 
-		std::wofstream armed(g_workDir + L"\\select.ready", std::ios::trunc);
-		if (armed)
-		{
-			armed << L"armed " << width << L"x" << height;
-			if (!g_generation.empty()) armed << L" gen=" << g_generation;
-			armed << L"\n";
-		}
+		WriteMarker(L"select.ready", L"armed " + std::to_wstring(width) + L"x" + std::to_wstring(height));
 
 		Log(L"overlay: capture layer arranged at " + std::to_wstring(width) + L"x" + std::to_wstring(height));
 	}
@@ -1828,6 +1837,13 @@ public:
 			return E_NOINTERFACE;
 		}
 
+		// Read the request first, because reading it is also what learns the generation it carries --
+		// and the tree snapshot below is written before anything is dispatched, so it would otherwise
+		// be stamped with the *previous* request's number and rejected by the host as stale. Not
+		// hypothetical: it is what the continuous-apply test caught within the hour of the stamp being
+		// added, and it presented as a tree read that timed out and blamed the app's diagnostics layer.
+		const std::wstring request = ReadRequest();
+
 		// Enumerate the tree (synchronous callbacks on this thread) to build the snapshot and name
 		// map, then serve the host's request and run any commands. All on the UI thread, where XAML
 		// lives -- which is why each request re-injects rather than being answered off a worker thread.
@@ -1849,7 +1865,6 @@ public:
 
 		Overlay().SetSources(std::move(sources));
 
-		const std::wstring request = ReadRequest();
 		if (request.rfind(L"properties ", 0) == 0)
 		{
 			// "properties <handle>" gives the set (non-default) properties; a trailing " all" includes
@@ -1994,8 +2009,7 @@ private:
 			return;
 		}
 
-		std::wofstream ready(g_workDir + L"\\tree.ready", std::ios::trunc);
-		if (ready) ready << written << L"\n";
+		WriteMarker(L"tree.ready", std::to_wstring(written));
 		Log(L"wrote tree.tsv with " + std::to_wstring(written) + L" element(s)");
 	}
 
@@ -2171,8 +2185,7 @@ private:
 		if (FAILED(hr))
 		{
 			Log(L"GetPropertyValuesChain(" + std::to_wstring(handle) + L") failed hr=0x" + Hex(hr));
-			std::wofstream ready(g_workDir + L"\\properties.ready", std::ios::trunc);
-			if (ready) ready << L"error\n";
+			WriteMarker(L"properties.ready", L"error");
 			return;
 		}
 
@@ -2294,8 +2307,7 @@ private:
 			return;
 		}
 
-		std::wofstream ready(g_workDir + L"\\properties.ready", std::ios::trunc);
-		if (ready) ready << written << L"\n";
+		WriteMarker(L"properties.ready", std::to_wstring(written));
 		Log(L"wrote properties.tsv with " + std::to_wstring(written) + L" propert(y/ies) for handle " + std::to_wstring(handle));
 
 		FreePropertyChain(sources, sourceCount, values, valueCount);
@@ -2329,6 +2341,7 @@ private:
 				else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
 				else if (command.op == L"CreateInstance") status = ApplyCreate(command);
 				else if (command.op == L"AddChild") status = ApplyAddChild(command);
+				else if (command.op == L"ReplaceResource") status = ApplyReplaceResource(command);
 				else status = L"unsupported op";
 
 				if (file)
@@ -2352,8 +2365,7 @@ private:
 			return;
 		}
 
-		std::wofstream ready(g_workDir + L"\\apply.ready", std::ios::trunc);
-		if (ready) ready << commands.size() << L"\n";
+		WriteMarker(L"apply.ready", std::to_wstring(commands.size()));
 	}
 
 	// The host sends the type it thinks the value should be, inferred from the property's name and the
@@ -2527,6 +2539,85 @@ private:
 		}
 
 		return 0;
+	}
+
+	// Swaps what a key in an element's resource dictionary resolves to.
+	//
+	// ReplaceResource is on IVisualTreeService2, which is asked for here rather than at startup: a
+	// framework without it should cost this one command and not the whole XAML surface.
+	std::wstring ApplyReplaceResource(const Command& command)
+	{
+		InstanceHandle owner = 0;
+		const std::wstring unresolvedOwner = Resolve(command.target, owner);
+		if (!unresolvedOwner.empty()) return unresolvedOwner;
+
+		InstanceHandle value = 0;
+		const std::wstring unresolvedValue = Resolve(command.arg, value);
+		if (!unresolvedValue.empty()) return unresolvedValue;
+
+		InstanceHandle dictionary = 0;
+		if (!ResourcesOf(owner, dictionary)) return L"cannot replace: that element has no Resources dictionary";
+
+		// The key is a handle, not a string, which is the part of this signature that surprises. A
+		// boxed hstring is the honest way to make one: the diagnostics host can hand back a handle for
+		// any IInspectable, and a resource key in markup is a string.
+		InstanceHandle key = 0;
+		if (!KeyHandle(command.property, key)) return L"cannot replace: could not make a handle for the key";
+
+		IVisualTreeService2* resources = nullptr;
+		if (!m_diagnostics
+			|| FAILED(m_diagnostics->QueryInterface(__uuidof(IVisualTreeService2), reinterpret_cast<void**>(&resources)))
+			|| !resources)
+		{
+			return L"cannot replace: this framework does not offer IVisualTreeService2";
+		}
+
+		const HRESULT hr = resources->ReplaceResource(dictionary, key, value);
+		resources->Release();
+
+		if (hr != S_OK) return L"ReplaceResource failed 0x" + Hex(hr);
+
+		Log(L"  replaced resource " + command.property + L" on " + command.target);
+		return L"applied";
+	}
+
+	// An element's resource dictionary.
+	//
+	// Not from the property chain, which is where the first attempt looked and found nothing: that
+	// chain reports dependency properties, and Resources is not one -- it is an ordinary property on
+	// FrameworkElement. Asking the element itself is the answer, and the diagnostics host converts
+	// between handles and objects in both directions, so there is a route to it and back.
+	bool ResourcesOf(InstanceHandle owner, InstanceHandle& dictionary)
+	{
+		if (!m_diagnostics) return false;
+
+		::IInspectable* raw = nullptr;
+		if (FAILED(m_diagnostics->GetIInspectableFromHandle(owner, &raw)) || !raw) return false;
+
+		winrt::Windows::Foundation::IInspectable instance{ nullptr };
+		winrt::attach_abi(instance, raw); // adopt the ref
+
+		const auto element = instance.try_as<xaml::FrameworkElement>();
+		if (!element) return false;
+
+		const auto resources = element.Resources();
+		if (!resources) return false;
+
+		const HRESULT hr = m_diagnostics->GetHandleFromIInspectable(
+			reinterpret_cast<::IInspectable*>(winrt::get_abi(resources)), &dictionary);
+
+		return SUCCEEDED(hr) && dictionary != 0;
+	}
+
+	bool KeyHandle(const std::wstring& key, InstanceHandle& handle)
+	{
+		if (!m_diagnostics || key.empty()) return false;
+
+		const auto boxed = winrt::box_value(winrt::hstring{ key });
+		const HRESULT hr = m_diagnostics->GetHandleFromIInspectable(
+			reinterpret_cast<::IInspectable*>(winrt::get_abi(boxed)), &handle);
+
+		return SUCCEEDED(hr) && handle != 0;
 	}
 
 	// Puts a built instance into its new parent's children.

@@ -816,7 +816,27 @@ private:
 		const auto found = m_sources.find(handle);
 		if (found == m_sources.end()) return false;
 
-		return found->second.rfind(L"ms-appx:", 0) == 0;
+		const std::wstring& source = found->second;
+
+		// A page or user control the app declares.
+		if (source.rfind(L"ms-appx:", 0) == 0) return true;
+		if (source.rfind(L"ms-resource:", 0) != 0) return false;
+
+		// A resource dictionary. The scheme alone does not say whose it is, which is what the first
+		// version of this rule got wrong: an app that themes its own controls keeps those styles in
+		// ResourceDictionaries, and those are served as ms-resource: exactly like the framework's --
+		// so "ms-appx: is mine, ms-resource: is theirs" steered clicks away from markup the developer
+		// unambiguously owns and can edit.
+		//
+		// The discriminator is the assembly component. A dictionary that came from a referenced
+		// assembly names it:
+		//
+		//     ms-resource:///Files/windows.ui.xaml;component/themes/generic.xaml   <- the framework's
+		//     ms-resource:///Files/Themes/Default/Controls/TextBox.Styles.xaml     <- the app's own
+		//
+		// which also gives the right answer for a third-party control library: its templates are not
+		// the framework's, but they are equally not something the developer is going to edit.
+		return source.find(L";component/") == std::wstring::npos;
 	}
 
 	// Where an element sits in the window, in the coordinates the overlay's Canvas uses -- the UI layer

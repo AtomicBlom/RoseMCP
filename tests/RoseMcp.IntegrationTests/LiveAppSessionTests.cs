@@ -692,6 +692,20 @@ public sealed class LiveAppSessionTests
 			Assert.True(
 				selectMode.Armed,
 				$"expected select mode to arm; got: {selectMode.Detail}");
+			Assert.True(selectMode.JustMyXaml);
+
+			// Arming reports the preference it was actually given. It used to leave the field to the
+			// record's default of true, so arming with false answered true, and a caller comparing the
+			// arming response against a later selection saw a contradiction with no explanation. A
+			// field session hit exactly that and talked itself out of it with a plausible theory about
+			// arm-time preference versus what decided the pick -- which was not what the code did.
+			var withoutFilter = await session.EnterXamlSelectModeAsync(includeAllElements: false, justMyXaml: false, cancellationToken);
+			Assert.True(withoutFilter.Armed, $"expected select mode to arm; got: {withoutFilter.Detail}");
+			Assert.False(withoutFilter.JustMyXaml);
+
+			// And the toolbar agrees, because it is one switch rather than two pieces of state.
+			var afterDisabling = await session.ReadXamlSelectionAsync(cancellationToken);
+			Assert.False(afterDisabling.JustMyXaml);
 
 			// Nothing picked yet: an empty selection that says so, safe to poll. Armed comes back from
 			// the toolbar's own state file, so this is the provider reporting, not the host remembering.

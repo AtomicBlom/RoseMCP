@@ -24,7 +24,13 @@ public sealed class SignatureRewriter(
 	/// <summary>Call sites whose arguments could not be rewritten safely, by their original span.</summary>
 	public HashSet<TextSpan> Refused { get; } = [];
 
-	/// <summary>Call sites that were rewritten, by their original span.</summary>
+	/// <summary>
+	/// Call sites whose arguments actually came out different, by their original span. Rewriting one
+	/// to exactly what it already said is not a change, and counting it as one is what put a call
+	/// site in the updated list and the unchanged list at the same time -- the second half of #59.
+	/// The common case is precisely that: an optional parameter added on the end, where every call
+	/// site is rewritten to itself.
+	/// </summary>
 	public HashSet<TextSpan> Rewritten { get; } = [];
 
 	public override SyntaxNode? Visit(SyntaxNode? node)
@@ -50,6 +56,11 @@ public sealed class SignatureRewriter(
 			Refused.Add(node.Span);
 			return visited;
 		}
+
+		// Compared as text rather than as syntax, because the difference that matters here can be
+		// nothing but trivia: an argument that keeps its place and gains a name colon is the same
+		// tree shape spelled differently.
+		if (rewritten.ToFullString() == visited.ToFullString()) return visited;
 
 		Rewritten.Add(node.Span);
 

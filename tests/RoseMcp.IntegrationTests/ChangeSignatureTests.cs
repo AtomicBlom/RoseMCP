@@ -45,6 +45,70 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
+	/// Issue #59, end to end. A call site that already writes an argument for the parameter being
+	/// added does not compile as it stands -- which is the ordinary reason to reach for this tool -- and
+	/// its surplus argument was silently deleted, leaving a call that compiles and means something
+	/// else. Left alone, the very change being made is the one that makes it correct, which is what the
+	/// last two assertions check: nothing was introduced, and something was resolved.
+	/// <para>
+	/// The fixture is written here rather than checked in, because a call site that does not compile
+	/// would fail every other test that loads this solution.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Leaves_the_argument_a_call_site_already_wrote_for_the_new_parameter()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		// One overload, so the call site is unambiguously this method's even though it does not bind.
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Anticipating.cs"),
+			"""
+		namespace Library;
+
+		public static class Anticipating
+		{
+			public static string Describe(string text) => text;
+
+			public static string Call() => Describe("x", true);
+		}
+
+		""",
+			TestContext.Current.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Anticipating.Describe(string)", "string text, bool loud = false");
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Anticipating.cs");
+
+		// The argument is still there. This is the whole card: it used to come back as Describe("x").
+		Assert.Contains("Describe(\"x\", true)", text, StringComparison.Ordinal);
+
+		// Reported as one it did not touch, and reported once. It used to appear in both lists at
+		// once, the second time with a reason that was not what had happened to it.
+		Assert.Contains(
+			result.UnchangedCallSites,
+			site => site.Location.FilePath.EndsWith("Anticipating.cs", StringComparison.OrdinalIgnoreCase)
+				&& site.Reason.Contains("did not have yet", StringComparison.Ordinal));
+
+		Assert.DoesNotContain(
+			result.UpdatedCallSites,
+			site => site.FilePath.EndsWith("Anticipating.cs", StringComparison.OrdinalIgnoreCase));
+
+		var updated = result.UpdatedCallSites.Select(site => (site.FilePath, site.Line));
+		var unchanged = result.UnchangedCallSites.Select(site => (site.Location.FilePath, site.Location.Line));
+		Assert.Empty(updated.Intersect(unchanged));
+
+		// Leaving it alone is what makes it compile: the parameter it was written for now exists.
+		Assert.True(result.Verified);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.True(result.ResolvedDiagnosticCount > 0, "expected the call site's error to go away");
+	}
+
+	/// <summary>
 	/// A required parameter, which every call site does have to change. The argument is written as
 	/// a named one, because that is valid wherever it lands and needs no reasoning about position.
 	/// </summary>

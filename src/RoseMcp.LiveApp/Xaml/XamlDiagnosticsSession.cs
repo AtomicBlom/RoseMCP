@@ -261,13 +261,20 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		var selectionFile = Path.Combine(_workDir, "selection.tsv");
 		if (!File.Exists(selectionFile))
 		{
+			// A selection that went away on its own says why (#51). Without this the answer is
+			// "nothing has been picked yet", which is true and useless: something *was* picked, the
+			// app took it away, and the caller is left wondering whether their select ever worked.
+			var gone = ReadFirstLine(Path.Combine(_workDir, "selection.gone"));
+
 			return new LiveXamlSelection
 			{
 				Armed = armed,
 				JustMyXaml = justMyXaml,
-				Detail = armed
-					? "Select mode is armed; nothing has been picked yet."
-					: "Nothing has been picked yet. Press Select Element on the in-app toolbar, or arm it from here.",
+				Detail = gone.Length > 0
+					? gone
+					: armed
+						? "Select mode is armed; nothing has been picked yet."
+						: "Nothing has been picked yet. Press Select Element on the in-app toolbar, or arm it from here.",
 			};
 		}
 
@@ -551,7 +558,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		var clearsSelection = Verb(request) is "select" or "selecthandle" or "deselect";
 		if (clearsSelection)
 		{
-			foreach (var stale in new[] { "select.ready", "selection.tsv", "selection.ready", "deselect.ready" })
+			foreach (var stale in new[]
+			{
+				"select.ready", "selection.tsv", "selection.ready", "deselect.ready", "selection.gone",
+			})
 			{
 				TryDelete(Path.Combine(workDir, stale));
 			}

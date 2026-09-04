@@ -415,22 +415,8 @@ public:
 	// was selected" rather than having both read as success.
 	bool Deselect()
 	{
-		const bool had = m_hasSelection;
+		const bool had = Clear(nullptr);
 
-		ShowBox(m_selectBox, m_selectBadge, nullptr, std::wstring());
-		m_hasSelection = false;
-		m_overSelection = false;
-		m_selectionRect = {};
-
-		if (!g_workDir.empty())
-		{
-			// Removed rather than emptied. The host waits on selection.ready existing, so a truncated
-			// one would still read as a selection that had arrived and merely say nothing about it.
-			_wremove((g_workDir + L"\\selection.ready").c_str());
-			_wremove((g_workDir + L"\\selection.tsv").c_str());
-		}
-
-		Chrome();
 		// Written after the clearing, so the host can confirm rather than assume -- and carrying
 		// whether there was anything to clear, because "cleared" and "nothing was selected" are
 		// different answers to the same request.
@@ -442,6 +428,35 @@ public:
 
 		Log(had ? L"overlay: selection cleared" : L"overlay: deselect with nothing selected");
 		return had;
+	}
+
+	/// Clears the selection when the element it points at leaves the visual tree (#51).
+	///
+	/// The selection is the one mark that outlives the interaction which drew it, so it is the one
+	/// mark with nothing watching it. Left alone, the outline and badge stay exactly where they were
+	/// while pointing at nothing -- and worse, the *recorded* selection stays too, so
+	/// rose_xaml_properties and rose_xaml_apply get called against an element that is gone and fail
+	/// with a diagnostics HRESULT instead of "the thing you picked no longer exists".
+	///
+	/// Matched on the handle and never on the name, because a removal callback does not carry one:
+    /// measured, every VisualElement delivered with a Remove had an empty Name. Matching on the name
+	/// would have compiled, run, and never once fired.
+	///
+	/// Idempotent by construction, which is not incidental: a tap is advised per injection and none
+	/// of them ever unadvises (#68), so this is called once per live tap for a single removal. After
+	/// the first, the handle is zero and the rest are free.
+	void ClearIfRemoved(InstanceHandle handle)
+	{
+		if (handle == 0 || handle != m_selectedHandle) return;
+
+		// Said rather than merely done. A selection that vanishes with no explanation reads as a bug
+		// in the overlay, and an agent that asks for properties after a navigation deserves the
+		// sentence rather than an HRESULT from three layers down.
+		Clear(L"The selected element was removed from the visual tree, so the selection was cleared. "
+			L"Something in the app took it away -- a navigation, a collapsed panel, a recycled list "
+			L"container. Read the tree again and select what you want from it.");
+
+		Log(L"overlay: selection cleared because handle " + std::to_wstring(handle) + L" left the tree");
 	}
 
 	// Selects an element by its handle, with no hit test anywhere in the path -- which is the whole
@@ -485,6 +500,7 @@ public:
 		}
 
 		RecordFromTree(element, handle);
+		m_selectedHandle = handle;
 
 		const bool drawn = ShowBox(m_selectBox, m_selectBadge, element, Describe(element));
 		m_hasSelection = true;
@@ -1409,7 +1425,7 @@ private:
 			winrt::Windows::Foundation::Rect rect{};
 			if (const auto element = Beneath(point, rect))
 			{
-				Record(element, point);
+				m_selectedHandle = Record(element, point);
 
 				// The picked element keeps its outline after select mode ends: that persistent mark is
 				// the evidence of what "the selected element" now means, for the person and the agent.
@@ -1427,6 +1443,39 @@ private:
 		}
 
 		EndSelect();
+	}
+
+	/// The clearing itself. <paramref name="goneReason"/> is written where the host can find it later
+	/// when the selection went away on its own; a deliberate deselect passes null, because the caller
+	/// asking for it does not need to be told it happened.
+	bool Clear(const wchar_t* goneReason)
+	{
+		const bool had = m_hasSelection;
+
+		ShowBox(m_selectBox, m_selectBadge, nullptr, std::wstring());
+		m_hasSelection = false;
+		m_overSelection = false;
+		m_selectionRect = {};
+		m_selectedHandle = 0;
+
+		if (!g_workDir.empty())
+		{
+			// Removed rather than emptied. The host waits on selection.ready existing, so a truncated
+			// one would still read as a selection that had arrived and merely say nothing about it.
+			_wremove((g_workDir + L"\\selection.ready").c_str());
+			_wremove((g_workDir + L"\\selection.tsv").c_str());
+
+			// The note outlives this call, because nothing is waiting on it: the element went away
+			// between requests, and the host only finds out when it next asks.
+			if (goneReason && had)
+			{
+				std::wofstream gone(g_workDir + L"\\selection.gone", std::ios::trunc);
+				if (gone) gone << goneReason << L"\n";
+			}
+		}
+
+		Chrome();
+		return had;
 	}
 
 	/// Writes the selection for an element that arrived from the tree rather than from a click.
@@ -1494,9 +1543,9 @@ private:
 	/// inside. Handing back the ordered stack lets the caller walk down for the templated part or up
 	/// for the container without another round trip, and the enumeration is already ordered, so it
 	/// costs a few more rows in a file that is written once per click.
-	void Record(xaml::UIElement const& element, winrt::Windows::Foundation::Point const& point)
+	InstanceHandle Record(xaml::UIElement const& element, winrt::Windows::Foundation::Point const& point)
 	{
-		if (g_workDir.empty()) return;
+		if (g_workDir.empty()) return 0;
 
 		const auto root = xaml::Window::Current().Content();
 		InstanceHandle selected = 0;
@@ -1504,7 +1553,7 @@ private:
 
 		{
 			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
-			if (!file) return;
+			if (!file) return 0;
 
 			InstanceHandle topmost = 0;
 			InstanceHandle topmostApp = 0;
@@ -1541,6 +1590,8 @@ private:
 		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
 		if (ready) ready << selected << L"\n";
 		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" candidate(s)");
+
+		return selected;
 	}
 
 	InstanceHandle WriteCandidate(std::ofstream& file, xaml::UIElement const& candidate)
@@ -1623,6 +1674,10 @@ private:
 	// problem, and reaching into the app's tree on every pointer move to find out would not be a
 	// fix for it so much as a reason to be blamed for the app feeling slow.
 	winrt::Windows::Foundation::Rect m_selectionRect{};
+
+	// Which element is selected, so a removal can be recognised. The handle and not the name:
+	// a Remove callback carries an empty Name, measured, so matching on one would never fire.
+	InstanceHandle m_selectedHandle = 0;
 	// The last place the pointer was seen, in window coordinates. Kept because a selection can be
 	// made at a moment when there is no pointer event to read it from.
 	winrt::Windows::Foundation::Point m_pointer{ -1.0f, -1.0f };
@@ -1805,7 +1860,15 @@ public:
 	HRESULT STDMETHODCALLTYPE OnVisualTreeChange(
 		ParentChildRelation relation, VisualElement element, VisualMutationType mutationType) override
 	{
-		if (mutationType != Add) return S_OK;
+		if (mutationType != Add)
+		{
+			// A selection whose element has left the tree is stale in both halves -- the mark drawn
+			// over the app and the handle the host will keep calling with -- so the overlay is told.
+			// It matches on the handle and does nothing when it is not the selected one, which is
+			// what makes this safe to run once per advised tap (#68).
+			Overlay().ClearIfRemoved(element.Handle);
+			return S_OK;
+		}
 
 		// SrcInfo comes per element and was previously dropped on the floor. It is what tells an
 		// element the developer wrote from one a control template produced, which is the whole of

@@ -53,6 +53,16 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	public int? HostProcessId => _info?.HostProcessId;
 
+	/// <summary>
+	/// Why the detach did not happen, once this session has been disposed of, and null when it did.
+	/// <para>
+	/// Read after <see cref="DisposeAsync"/> by whatever reports the close, because "the session is
+	/// closed" and "the debugger is off your process" are two different claims and only the second
+	/// one is what a caller detaching actually asked for.
+	/// </para>
+	/// </summary>
+	public string? DetachFailure { get; private set; }
+
 	public static async Task<LiveAppSession> StartAsync(
 		string sessionId,
 		LiveAppTarget target,
@@ -281,11 +291,22 @@ public sealed class LiveAppSession : IAsyncDisposable
 			// Detach while the host is still alive, so the target is left running. An ICorDebug
 			// debuggee whose debugger just dies is taken down with it, so this must precede closing
 			// the host rather than relying on the host's own shutdown winning the race.
-			await SendAsync<LiveAppInfo>(ToolNames.LiveAppDetach, CancellationToken.None);
+			var info = await SendAsync<LiveAppInfo>(ToolNames.LiveAppDetach, CancellationToken.None);
+
+			// A host that could not detach reports Faulted rather than Ended, and that has to survive
+			// disposal: a caller told the session closed and not told the debugger is still on their
+			// process has been given the same silence this whole change exists to remove.
+			if (info.State == LiveAppSessionState.Faulted)
+			{
+				DetachFailure = info.Detail ?? "The host could not detach from the target.";
+				_logger.LogWarning(
+					"The live-app host for {Target} could not detach: {Detail}", Target.Description, DetachFailure);
+			}
 		}
 		catch (Exception exception)
 		{
-			_logger.LogDebug(exception, "Detaching the live-app host for {Target} failed.", Target.Description);
+			DetachFailure = exception.Message;
+			_logger.LogWarning(exception, "Detaching the live-app host for {Target} failed.", Target.Description);
 		}
 
 		try

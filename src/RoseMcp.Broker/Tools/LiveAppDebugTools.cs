@@ -176,13 +176,30 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	[Description(
 		"Detach the debugger and end the session, leaving the target process running exactly as before. "
 			+ "Use this to stop watching a process without killing it; a debugger that is simply abandoned "
-			+ "would otherwise risk taking the target down with it, which detaching avoids.")]
+			+ "would otherwise risk taking the target down with it, which detaching avoids. It fails rather "
+			+ "than reporting success if the debugger could not be detached, since that is the one outcome "
+			+ "where the target is at risk.")]
 	public async Task<string> DetachAsync(
 		[Description(SessionHelp)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
+		// Held before the close, because closing forgets it, and its answer to "did the detach
+		// actually happen" is the only thing that makes the sentence below true rather than habitual.
+		var session = sessions.Find(sessionId);
+
 		var closed = await sessions.CloseAsync(sessionId, cancellationToken);
-		return closed ? "Detached; the target keeps running." : "That session was not open.";
+		if (!closed) return "That session was not open.";
+
+		if (session?.DetachFailure is { Length: > 0 } failure)
+		{
+			throw new McpException(
+				$"The session is closed, but the debugger could not be detached from the target: {failure} "
+					+ "The debugging interface was deliberately left open rather than terminated, because "
+					+ "terminating it while attached kills the target -- so the target should still be running, "
+					+ "but it is no longer being watched and nothing here can confirm the debugger is off it.");
+		}
+
+		return "Detached; the target keeps running.";
 	}
 
 	[McpServerTool(

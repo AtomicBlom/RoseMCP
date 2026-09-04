@@ -303,19 +303,35 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// Detaches the debugger while the host is still alive, leaving the target running. The broker
 	/// calls this before it closes the host's stdin: an ICorDebug debuggee whose debugger simply dies
 	/// is taken down by the operating system, so the detach must complete first.
+	/// <para>
+	/// A detach that does not succeed leaves the session <see cref="LiveAppSessionState.Faulted"/>
+	/// rather than <see cref="LiveAppSessionState.Ended"/>, because the single thing Ended promises
+	/// here -- the debugger is off the target -- is exactly what did not happen.
+	/// </para>
 	/// </summary>
 	public LiveAppInfo DetachTarget()
 	{
 		CorDebugSession? session;
+		int? targetProcessId;
 		lock (_gate)
 		{
 			session = _session;
+			targetProcessId = _targetProcessId;
 		}
 
-		session?.Detach();
+		var detached = session?.Detach() ?? true;
 
 		// For a UWP target, also lift the package's debug mode so it returns to its normal lifecycle.
 		DisableUwpDebugging();
+
+		if (!detached)
+		{
+			Fault($"Could not detach the debugger from pid {targetProcessId}. It is still attached, and the "
+				+ "debugging interface has been left open rather than terminated, because terminating it while "
+				+ "attached kills the target. rose_debug_events has the reason it failed.");
+
+			return CurrentInfo();
+		}
 
 		lock (_gate)
 		{

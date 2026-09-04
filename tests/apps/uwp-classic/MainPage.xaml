@@ -9,6 +9,12 @@
                 <TextBlock x:Name="Caption" Text="Rose UWP Probe" Foreground="#FFE8EEF4" FontSize="24" />
             </Border>
             <TextBlock x:Name="Counter" Text="ticks: 0" Foreground="#FF8FA6BF" FontSize="16" HorizontalAlignment="Center" />
+            <!-- Leaves the visual tree and comes back, on a cycle, so a test can watch a removal
+                 happen to something it has selected (#51). Its own element rather than one of the
+                 others because every other test expects those to stay put. -->
+            <Border x:Name="Transient" Background="#FF303A44" Padding="8" CornerRadius="4">
+                <TextBlock x:Name="TransientCaption" Text="comes and goes" Foreground="#FF8FA6BF" FontSize="12" />
+            </Border>
         </StackPanel>
     </Grid>
 </Page>

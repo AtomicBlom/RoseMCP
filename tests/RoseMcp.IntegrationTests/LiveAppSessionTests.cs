@@ -603,6 +603,91 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// #21: a CornerRadius came back as an empty string while the Thickness beside it, set by the same
+	/// markup, came back as "24,24,24,24". Not our formatting -- the framework populates that BSTR
+	/// itself and populated it with nothing -- so it is read off the element instead.
+	/// <para>
+	/// A sweep of every property of every element in this app settled how far to go: 3,485 rows, 32 of
+	/// them empty while not null, and of those the only struct type was CornerRadius. So one per-type
+	/// special case rather than twenty, and a flag for whatever the next one turns out to be --
+	/// <c>CornerRadiusProtected</c> is already it, being protected and absent from the projection.
+	/// </para>
+	/// <para>
+	/// Skips where the UWP or C++ toolchain is absent.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Reads_a_corner_radius_the_framework_renders_as_nothing()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp corner-radius probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
+			Assert.NotNull(pane);
+
+			var properties = await session.ReadXamlPropertiesAsync(pane!.Handle, includeDefaults: false, cancellationToken);
+			Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
+
+			// The markup says CornerRadius="8", and it reads back in the same four-number form the
+			// Thickness beside it uses, so a caller that parses one parses the other.
+			var radius = properties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
+			Assert.NotNull(radius);
+			Assert.Equal("8,8,8,8", radius!.Value);
+			Assert.False(radius.ValueUnavailable);
+
+			var padding = properties.Properties.FirstOrDefault(property => property.Name == "Padding");
+			Assert.NotNull(padding);
+			Assert.Equal("24,24,24,24", padding!.Value);
+
+			// The other half: something the framework will not render, and cannot be read a second way
+			// because it is protected and not in the projection, says so rather than looking unset.
+			// An empty value that means two different things is how the CornerRadius case hid.
+			var all = await session.ReadXamlPropertiesAsync(tree.Nodes[0].Handle, includeDefaults: true, cancellationToken);
+			var unavailable = all.Properties.Where(property => property.ValueUnavailable).ToArray();
+
+			Assert.All(unavailable, property => Assert.Equal(string.Empty, property.Value));
+
+			// And a string that is genuinely empty is not flagged, or the flag fires on the majority of
+			// empty values and stops meaning anything.
+			Assert.DoesNotContain(
+				all.Properties.Where(property => property.ValueType == "Windows.Foundation.String"),
+				property => property.ValueUnavailable);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	/// <summary>
 	/// XAML hot reload (#12): diff two versions of the probe's XAML and apply the changes to the live
 	/// tree, no relaunch. Two edits, deliberately, because they fail in different ways:
 	/// <list type="bullet">
@@ -615,9 +700,9 @@ public sealed class LiveAppSessionTests
 	/// name-and-shape inference called a Double until it was told otherwise -- and a value built as
 	/// the wrong type is created quite happily and only fails at SetProperty, with an E_FAIL that
 	/// names nothing. This is the end-to-end guard for that, and for the provider's fallback to the
-	/// property's own declared type. It is asserted through its status rather than by reading it
-	/// back, because the framework hands us an empty string for a CornerRadius value (issue #21) --
-	/// Thickness stringifies, this one does not.
+	/// property's own declared type. It is asserted by reading the value back as well as through
+	/// its status: reading it back was impossible until #21, because the framework hands us an
+	/// empty string for a CornerRadius value where Thickness stringifies.
 	/// </item>
 	/// </list>
 	/// Skips where the UWP or C++ toolchain is absent.
@@ -687,6 +772,15 @@ public sealed class LiveAppSessionTests
 			var fontSize = properties.Properties.FirstOrDefault(property => property.Name == "FontSize");
 			Assert.NotNull(fontSize);
 			Assert.Equal("40", fontSize!.Value);
+
+			// And the struct-valued edit is now read back too, rather than trusted from its status.
+			// It used to be asserted only through "applied", because a CornerRadius came back as an
+			// empty string -- which is #21, and is fixed, so the weaker assertion has no reason left.
+			var pane = tree.Nodes.First(node => node.Name == "Pane");
+			var paneProperties = await session.ReadXamlPropertiesAsync(pane.Handle, includeDefaults: false, cancellationToken);
+			var cornerRadius = paneProperties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
+			Assert.NotNull(cornerRadius);
+			Assert.Equal("0,0,0,0", cornerRadius!.Value);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}

@@ -720,10 +720,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			else if (fields[0] == "P" && fields.Length >= 10)
 			{
 				var isNull = fields[9] == "1";
+
+				// Length-checked rather than assumed: an older provider staged in a recycled sandbox
+				// folder writes ten columns, and the row is still worth reading without the eleventh.
+				var unrenderable = fields.Length > 10 && fields[10] == "1";
 				properties.Add(new LiveXamlProperty
 				{
 					Name = Unescape(fields[1]),
 					Value = isNull ? null : Unescape(fields[2]),
+					ValueUnavailable = unrenderable,
 					ValueType = EmptyToNull(Unescape(fields[3])),
 					DeclaringType = EmptyToNull(Unescape(fields[4])),
 					Provenance = fields[5],

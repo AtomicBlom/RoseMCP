@@ -188,6 +188,7 @@ public sealed class RefactoringTools(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
 		[Description("The whole declaration, attributes and documentation comment included.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
@@ -200,6 +201,7 @@ public sealed class RefactoringTools(
 				Kind = MemberEditKind.Replace,
 				Symbol = symbol,
 				Code = code,
+				Usings = usings ?? [],
 				FilePath = filePath,
 				Apply = apply,
 				Verify = verify,
@@ -220,6 +222,7 @@ public sealed class RefactoringTools(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
 		[Description("The body: statements, a block in braces, or => expression;.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
@@ -232,6 +235,7 @@ public sealed class RefactoringTools(
 				Kind = MemberEditKind.ReplaceBody,
 				Symbol = symbol,
 				Code = code,
+				Usings = usings ?? [],
 				FilePath = filePath,
 				Apply = apply,
 				Verify = verify,
@@ -252,6 +256,7 @@ public sealed class RefactoringTools(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("The type to add to, as Namespace.Type.")] string type,
 		[Description("One or more whole declarations.")] string code,
+		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
 		[Description("Put them after this member, by name.")] string? after = null,
 		[Description("Put them before this member, by name.")] string? before = null,
 		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
@@ -266,6 +271,7 @@ public sealed class RefactoringTools(
 				Kind = MemberEditKind.Add,
 				Symbol = type,
 				Code = code,
+				Usings = usings ?? [],
 				After = after,
 				Before = before,
 				FilePath = filePath,
@@ -315,6 +321,44 @@ public sealed class RefactoringTools(
 
 		return await session.MutateAsync(
 			(snapshot, token) => ChangeSignatureService.ChangeAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.AddUsing,
+		Title = "Import a namespace into a file",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddUsing)]
+	public async Task<UsingResult> AddUsingAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Absolute or solution-relative path to the file.")] string filePath,
+		[Description("Namespaces to ensure, as System.Text or using System.Text;.")] string[] namespaces,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the import resolved. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new AddUsingRequest
+		{
+			FilePath = filePath,
+			Namespaces = namespaces,
+			Apply = apply,
+			Verify = verify,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => AddUsingService.AddAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}

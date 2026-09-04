@@ -72,7 +72,8 @@ public static class MemberEditService
 
 		progress?.Report("Formatting what was written", 40);
 
-		var finished = await FinishAsync(written, cancellationToken);
+		var imported = await WithImportsAsync(written, request, notices, cancellationToken);
+		var finished = await FinishAsync(imported, cancellationToken);
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 55);
 
@@ -281,6 +282,7 @@ public static class MemberEditService
 				blankBefore: position > 0 || index > 0,
 				blankAfter: position == parsed.Count - 1 && !followerIsSeparated,
 				lineEnding,
+				IndentFor(type, text, rules),
 				marker));
 		}
 
@@ -293,6 +295,49 @@ public static class MemberEditService
 			marker,
 			target.Signature,
 			[.. parsed.SelectMany(NamesOf)]);
+	}
+
+	/// <summary>
+	/// Ensures the imports the caller asked for, on the same file and before it is formatted.
+	/// <para>
+	/// Asked of the compilation rather than of the using list, because a namespace can be in scope
+	/// three ways this file does not show: a global using, an implicit using from the SDK, or simply
+	/// being the namespace the file is in. Adding a directive for one of those is IDE0005, which is a
+	/// build error here -- so the check that looks unnecessary is the one that keeps the tool from
+	/// breaking the build it was called to avoid.
+	/// </para>
+	/// </summary>
+	private static async Task<Written> WithImportsAsync(
+		Written written,
+		MemberEditRequest request,
+		List<string> notices,
+		CancellationToken cancellationToken)
+	{
+		if (request.Usings.Count == 0 || written.Root is not CompilationUnitSyntax root) return written;
+
+		var document = written.Document;
+		var model = await document.GetSemanticModelAsync(cancellationToken);
+		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
+		var text = await document.GetTextAsync(cancellationToken);
+
+		if (model is null || tree is null) return written;
+
+		var rules = Whitespace.RulesFor(document.Project, tree, text);
+		var style = UsingStyle.For(document.Project, tree, root, rules.LineEnding);
+
+		var insertion = UsingDirectives.Ensure(root, model, request.Usings, style, cancellationToken);
+
+		if (insertion.Added.Count > 0)
+		{
+			notices.Add($"Imported {string.Join(", ", insertion.Added)}.");
+		}
+
+		foreach (var covered in insertion.AlreadyInScope)
+		{
+			notices.Add($"Did not import {covered}.");
+		}
+
+		return written with { Root = insertion.Root };
 	}
 
 	/// <summary>
@@ -387,12 +432,22 @@ public static class MemberEditService
 	}
 
 	/// <summary>
-	/// A member as it will read in the file: separated from its neighbours by a blank line, ending
-	/// its own line, and marked so the formatter and the whitespace pass know which lines are new.
+	/// A member as it will read in the file: indented for where it is going, separated from its
+	/// neighbours by a blank line, ending its own line, and marked so the formatter and the
+	/// whitespace pass know which lines are new.
+	/// <para>
+	/// The indentation goes on as leading trivia rather than being left to the formatter, and that is
+	/// what makes this path behave like the replace path. Given a member whose first line is already
+	/// indented, the formatter leaves the lines it has no rule about -- a wrapped parameter list --
+	/// exactly where they are, which is where the shift put them. Given one with no leading
+	/// whitespace it recomputes the indentation itself, and then the shift and the formatter both
+	/// apply, and every wrapped line lands a level too deep. Measured: writing this very method
+	/// through the tool put its attribute arguments at three tabs.
+	/// </para>
 	/// <para>
 	/// The blank line is added here rather than left to the formatter, which reindents and moves
-	/// braces but never inserts a blank line between members -- so a member appended without one
-	/// lands flush against the one above it.
+	/// braces but never inserts one between members -- so a member appended without it lands flush
+	/// against the one above.
 	/// </para>
 	/// </summary>
 	private static MemberDeclarationSyntax Prepared(
@@ -400,11 +455,14 @@ public static class MemberEditService
 		bool blankBefore,
 		bool blankAfter,
 		string lineEnding,
+		string indent,
 		SyntaxAnnotation marker)
 	{
 		var newLine = SyntaxFactory.EndOfLine(lineEnding);
 
 		IEnumerable<SyntaxTrivia> leading = WithoutLeadingBlanks(member.GetLeadingTrivia());
+
+		if (indent.Length > 0) leading = [SyntaxFactory.Whitespace(indent), .. leading];
 		if (blankBefore) leading = [newLine, .. leading];
 
 		var trailing = member.GetTrailingTrivia();

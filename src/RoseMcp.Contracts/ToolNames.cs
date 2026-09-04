@@ -31,6 +31,8 @@ public static class ToolNames
 
 	public const string BuildFreshness = "rose_build_freshness";
 
+	public const string AddUsing = "rose_add_using";
+
 	/// <summary>
 	/// Worker-only. The broker calls this on connect to learn the process id, so it can sample
 	/// memory from the outside and still get real numbers when the worker stops responding.

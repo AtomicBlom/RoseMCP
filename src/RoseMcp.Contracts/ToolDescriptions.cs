@@ -220,4 +220,19 @@ public static class ToolDescriptions
         how many are newer -- and says nothing about whether the code is correct, which is
         rose_diagnostics.
         """;
+
+	public const string AddUsing = """
+        Ensures a file imports the namespaces you name, put where the file's own ordering puts them.
+        Use this rather than editing the import block: sort position, whether System comes first,
+        whether groups are separated by a blank line and where the file header has to stay are all
+        things the file already decides and a splice guesses at -- and getting one wrong is IDE0055.
+        It also refuses to add what is already in scope, which is not the same as what the file
+        says: a global using, an implicit using from the SDK, or simply being the namespace the file
+        is in all count, and importing one of those again is IDE0005. Both are build errors where
+        the analyzers are turned up, which is where this matters. Prefer the usings argument on
+        rose_replace_member, rose_replace_body and rose_add_member when you are writing the code
+        that needs the import -- same work, no second call. This is for code that arrived some other
+        way. It reports what it added, what was already covered and why, and how many errors the
+        import resolved.
+        """;
 }

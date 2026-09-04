@@ -462,6 +462,50 @@ public sealed class BrokerTests
 	}
 
 	/// <summary>
+	/// Both halves of importing, over the wire: the argument on a write tool, and the tool of its own.
+	/// </summary>
+	[Fact]
+	public async Task Imports_a_namespace_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var hints = WorkspaceHints.From(fixture.SolutionPath);
+
+		// The argument, on the call that writes the code needing it.
+		var written = await manager.CallAsync<MemberEditResult>(
+			hints,
+			ToolNames.AddMember,
+			new Dictionary<string, object?>
+			{
+				["type"] = "Library.Greeter",
+				["code"] = "public string Encoded() => Encoding.UTF8.EncodingName;",
+				["usings"] = new[] { "System.Text" },
+			},
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		Assert.True(written.Applied);
+		Assert.Empty(written.IntroducedDiagnostics);
+
+		// And the tool of its own, which finds this one already in scope and says so.
+		var again = await manager.CallAsync<UsingResult>(
+			hints,
+			ToolNames.AddUsing,
+			new Dictionary<string, object?>
+			{
+				["filePath"] = fixture.Path("Members", "Library", "Greeter.cs"),
+				["namespaces"] = new[] { "System.Text" },
+			},
+			retryIfWorkerDied: true,
+			TestContext.Current.CancellationToken);
+
+		Assert.Empty(again.Added);
+		Assert.False(again.Applied);
+		Assert.Contains(again.AlreadyInScope, reason => reason.Contains("already imported here", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// A result that does not name its workspace cannot be checked: nothing found in the wrong
 	/// solution is indistinguishable from nothing to find in the right one. The broker fills this
 	/// in for every result type, so it is asserted through the same path the tools use.

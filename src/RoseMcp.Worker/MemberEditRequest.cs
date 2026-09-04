@@ -19,6 +19,18 @@ public sealed record MemberEditRequest
 	public required string Code { get; init; }
 
 	/// <summary>
+	/// Namespaces the written code needs imported, ensured in the same file and the same call.
+	/// <para>
+	/// In the same call because that is the whole point: the need for an import is discovered at the
+	/// moment the member is written, and a second round trip to add one is the round trip these
+	/// tools exist to remove. One already in scope -- from this file, a global using, an implicit
+	/// using, or the namespace the file is in -- is reported and not added, since adding it is
+	/// IDE0005 and that is a build error where the analyzers are turned up.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<string> Usings { get; init; } = [];
+
+	/// <summary>
 	/// Which file, when the name alone does not settle it -- a partial type, or a partial member.
 	/// Also the workspace hint the broker ranks, being the one argument here that names a path.
 	/// </summary>

@@ -57,6 +57,11 @@ public static class ServiceCollectionExtensions
 		  the point: it takes the build out of the edit loop. A name also does not go stale the way
 		  a line number does the moment an earlier edit lands. Writing a whole new file is still
 		  your own job; what these are for is editing inside one.
+		- When code you write needs an import: pass usings to the same call that writes it, rather
+		  than editing the import block afterwards. rose_add_using does the same for code that
+		  arrived some other way. Either way it goes where the file's own ordering puts it, and one
+		  already in scope -- from a global using, an implicit using, or the namespace the file is
+		  in -- is reported rather than added, because adding it again is a build error too.
 		- Adding, removing or retyping a parameter: rose_change_signature, not an edit per layer. It
 		  moves the base declaration and every override and implementation together, rewrites the
 		  arguments at every call site, keeps the param tags in the documentation in step, and

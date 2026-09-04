@@ -31,7 +31,7 @@ public static class WorkspaceStatusReporter
 			solution, cancellationToken, progress);
 
 		var degradedReasons = (IReadOnlyList<string>)
-			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore), .. xamlReasons];
+			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build), .. xamlReasons];
 
 		return new WorkspaceStatusReport
 		{
@@ -263,10 +263,20 @@ public static class WorkspaceStatusReporter
 			+ "workspace degraded: these answers come from source.";
 	}
 
+	/// <summary>
+	/// Whether the platform this server chose looks like the wrong one, asked of the properties that
+	/// chose it and answered from what MSBuild then complained about.
+	/// </summary>
+	private static string? WrongPlatformSuspicion(
+		BuildProperties? build,
+		IReadOnlyList<WorkspaceDiagnostic> diagnostics) =>
+		build?.SuspectWrongPlatform(diagnostics.Select(diagnostic => diagnostic.Message));
+
 	private static IReadOnlyList<string> CollectDegradedReasons(
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		IReadOnlyList<ProjectStatus> projects,
-		RestoreReport? restore)
+		RestoreReport? restore,
+		BuildProperties? build)
 	{
 		var reasons = new List<string>();
 
@@ -275,6 +285,8 @@ public static class WorkspaceStatusReporter
 			reasons.Add("Restore failed, so the design-time build could not resolve references or analyzers. "
 				+ "Run dotnet restore and inspect the output.");
 		}
+
+		if (WrongPlatformSuspicion(build, workspaceDiagnostics) is { } platform) reasons.Add(platform);
 
 		foreach (var project in projects.Where(project => !project.LoadedSuccessfully))
 		{

@@ -28,6 +28,19 @@ public sealed record BuildProperties
 
 	public string? Platform { get; init; }
 
+	/// <summary>
+	/// Whether <see cref="Platform"/> was picked from the solution's declared list rather than asked
+	/// for by the caller.
+	/// <para>
+	/// Kept because the wrong platform is survivable and therefore silent. Nothing fails: the projects
+	/// load, MSBuild resolves what it can, and the references it cannot find are output assemblies
+	/// under a directory nobody has ever built. Knowing the value was a guess is what lets the status
+	/// report say that afterwards, rather than leaving a caller to tell "no references" apart from
+	/// "wrong platform" unaided.
+	/// </para>
+	/// </summary>
+	public bool PlatformWasChosen { get; init; }
+
 	public IReadOnlyDictionary<string, string> Extra { get; init; } =
 		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -82,8 +95,9 @@ public sealed record BuildProperties
 
 		return new BuildProperties
 		{
-			Configuration = configuration,
-			Platform = platform,
+			Configuration = configuration.Value,
+			Platform = platform.Value,
+			PlatformWasChosen = platform.Chosen,
 			Extra = Merge(pinned?.Properties, options.Properties),
 			Available = available,
 			Notice = notices.Count == 0 ? null : string.Join(" ", notices),
@@ -116,6 +130,52 @@ public sealed record BuildProperties
 		if (Extra.Count == 0) return head;
 
 		return $"{head} ({string.Join(", ", Extra.Select(property => $"{property.Key}={property.Value}"))})";
+	}
+
+	/// <summary>
+	/// Why the platform chosen here looks like the wrong one, or null when nothing suggests it is.
+	/// <para>
+	/// The signature is references that did not resolve, named under the output directory of a
+	/// platform nobody asked for. That is the whole of why a wrong platform is worth reporting rather
+	/// than leaving to be noticed: it does not fail. The projects load, MSBuild resolves the
+	/// framework, and what it cannot find are the in-solution outputs under <c>bin\ARM64\</c> on a
+	/// machine where everything has only ever been built x64. Every project still reports having
+	/// loaded successfully, because each resolved plenty of references -- just not each other's -- so
+	/// the workspace reads healthy while every cross-project answer is missing half its inputs.
+	/// </para>
+	/// <para>
+	/// Measured on Drawboard's 60-project DrawboardProjects.slnx from an ARM64 machine: it declares
+	/// x64 and ARM64 and no AnyCPU, ARM64 was chosen for matching the host, and 363 of the 557 load
+	/// diagnostics named assemblies under <c>\ARM64\</c> that do not exist. Nothing said so.
+	/// </para>
+	/// <para>
+	/// Only ever about a platform this server chose. A caller who named one has already decided, and
+	/// telling them their own answer looks wrong is a different and much noisier thing.
+	/// </para>
+	/// </summary>
+	public string? SuspectWrongPlatform(IEnumerable<string> diagnosticMessages)
+	{
+		if (this is not { PlatformWasChosen: true, Platform: { Length: > 0 } platform }) return null;
+
+		var blamed = diagnosticMessages.Count(message =>
+			message.Contains($@"\{platform}\", StringComparison.OrdinalIgnoreCase)
+			|| message.Contains($"/{platform}/", StringComparison.OrdinalIgnoreCase));
+
+		if (blamed == 0) return null;
+
+		var alternatives = Available.Platforms
+			.Where(candidate => !candidate.Equals(platform, StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+
+		var instead = alternatives.Length == 0
+			? "Reload with an explicit platform"
+			: $"Reload with platform={string.Join(" or platform=", alternatives)}";
+
+		return $"Platform '{platform}' was chosen here rather than asked for, and {blamed} load diagnostic(s) "
+			+ "name paths under it -- which is what a wrong platform looks like, because nothing has been "
+			+ "built for it and so the in-solution references do not resolve. The projects still load, so "
+			+ $"this does not present as a failure. {instead}, or pin the platform in a rosemcp.json beside "
+			+ "the solution.";
 	}
 
 	/// <summary>
@@ -152,7 +212,15 @@ public sealed record BuildProperties
 		declared.Replace(" ", string.Empty, StringComparison.Ordinal)
 			.Equals(RuntimeInformation.OSArchitecture.ToString(), StringComparison.OrdinalIgnoreCase);
 
-	private static string? Choose(
+	/// <summary>
+	/// The value to load under, and whether it was chosen here rather than asked for.
+	/// <para>
+	/// The second half matters as much as the first. A chosen platform that turns out to be wrong does
+	/// not fail: the projects still load, and the references behind them quietly do not resolve. Only
+	/// something that knows the value was a guess can say so afterwards.
+	/// </para>
+	/// </summary>
+	private static (string? Value, bool Chosen) Choose(
 		string? requested,
 		IReadOnlyList<string> declared,
 		string msbuildDefault,
@@ -168,10 +236,10 @@ public sealed record BuildProperties
 					+ $"({string.Join(", ", declared)}); loading with it anyway because it was asked for.");
 			}
 
-			return requested;
+			return (requested, false);
 		}
 
-		if (SolutionConfigurations.Declares(declared, msbuildDefault)) return null;
+		if (SolutionConfigurations.Declares(declared, msbuildDefault)) return (null, false);
 
 		// First declared is the fallback because that is what a solution build itself would take.
 		var chosen = declared.FirstOrDefault(prefer) ?? declared[0];
@@ -180,6 +248,6 @@ public sealed record BuildProperties
 			+ $"'{chosen}' was chosen from {string.Join(", ", declared)}. "
 			+ $"Pass {label.ToLowerInvariant()} explicitly to load a different one.");
 
-		return chosen;
+		return (chosen, true);
 	}
 }

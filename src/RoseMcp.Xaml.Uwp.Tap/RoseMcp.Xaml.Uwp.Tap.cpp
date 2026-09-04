@@ -444,6 +444,60 @@ public:
 		return had;
 	}
 
+	// Selects an element by its handle, with no hit test anywhere in the path -- which is the whole
+	// point of it.
+	//
+	// Some controls cannot be picked by clicking at all. A slider is the reported case, and it is not
+	// fixable at the hit-test layer: "what does a click land on" is a question the framework answers
+	// and the answer is sometimes not the thing you meant. Visual Studio's own XAML tools have the
+	// same gap, and the established way round it everywhere is to stop clicking and pick from the
+	// tree. rose_xaml_tree already hands out a handle for every element, so this closes that loop --
+	// and it is equally the way an agent selects something structurally, by type or by name or by the
+	// file it came from, without a person having to point at it.
+	bool SelectByHandle(InstanceHandle handle)
+	{
+		if (!m_diagnostics || handle == 0) return false;
+
+		::IInspectable* raw = nullptr;
+		if (FAILED(m_diagnostics->GetIInspectableFromHandle(handle, &raw)) || !raw)
+		{
+			Log(L"overlay: no live object for handle " + std::to_wstring(handle));
+			return false;
+		}
+
+		winrt::Windows::Foundation::IInspectable instance{ nullptr };
+		winrt::attach_abi(instance, raw); // adopt the ref
+
+		// Not every handle in the tree is a UIElement -- a Brush or a resource has one too -- and
+		// nothing can be outlined that has no place on screen.
+		const auto element = instance.try_as<xaml::UIElement>();
+		if (!element)
+		{
+			Log(L"overlay: handle " + std::to_wstring(handle) + L" is not a UIElement");
+			return false;
+		}
+
+		winrt::Windows::Foundation::Rect rect{};
+		if (!Bounds(element, rect))
+		{
+			Log(L"overlay: handle " + std::to_wstring(handle) + L" has no laid-out bounds");
+			return false;
+		}
+
+		RecordFromTree(element, handle);
+
+		const bool drawn = ShowBox(m_selectBox, m_selectBadge, element, Describe(element));
+		m_hasSelection = true;
+		m_selectionRect = WithBadge(rect);
+		Reveal();
+		Chrome();
+
+		Log(L"overlay: selected " + Describe(element) + L" by handle; outline "
+			+ std::wstring(drawn ? L"drawn" : L"NOT drawn"));
+
+		return true;
+	}
+
 	void EndSelect()	{
 		try
 		{
@@ -1375,6 +1429,49 @@ private:
 		EndSelect();
 	}
 
+	/// Writes the selection for an element that arrived from the tree rather than from a click.
+	///
+	/// The named element leads, then its ancestors outwards. A click records the hit stack because
+	/// one element is rarely the one wanted -- a click on a button lands on some templated child of
+	/// it -- and arriving from the tree has the same problem from the other side: the handle you had
+	/// was the one the tree gave you, and the container you actually meant is one or two hops up.
+	/// Walking up costs nothing and keeps the file one shape, so a caller reads the stack the same
+	/// way whichever route made it.
+	///
+	/// Just-my-XAML deliberately does not apply. It exists to decide *which* of several elements
+	/// under a click was meant; here the caller has named one exactly, and overriding that would be
+	/// answering a question nobody asked.
+	void RecordFromTree(xaml::UIElement const& element, InstanceHandle handle)
+	{
+		if (g_workDir.empty()) return;
+
+		unsigned int written = 0;
+
+		{
+			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
+			if (!file) return;
+
+			xaml::DependencyObject node = element;
+			while (node && written < 16)
+			{
+				if (const auto candidate = node.try_as<xaml::UIElement>())
+				{
+					if (IsOurs(candidate)) break; // Walked out of the app and into our own overlay.
+
+					WriteCandidate(file, candidate);
+					written++;
+				}
+
+				node = xmedia::VisualTreeHelper::GetParent(node);
+			}
+		}
+
+		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
+		if (ready) ready << handle << L"\n";
+
+		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" row(s) from the tree");
+	}
+
 	// Anything under our own root is ours -- the capture layer, the toolbar, and every part of it.
 	bool IsOurs(xaml::UIElement const& element) const
 	{
@@ -1658,6 +1755,12 @@ public:
 			// pushed past the row cap on an element with hundreds of properties.
 			const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
 			WriteProperties(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10)), includeDefaults);
+		}
+		else if (request.rfind(L"selecthandle ", 0) == 0)
+		{
+			// Checked before the arming verb below, and named without a space after "select" so the
+			// two cannot be confused: arming parses its tokens as flags, and a handle is not one.
+			Overlay().SelectByHandle(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
 		}
 		else if (request == L"deselect")
 		{

@@ -182,6 +182,40 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	}
 
 	/// <summary>
+	/// Selects the element a handle names, with no hit test involved.
+	/// <para>
+	/// The reason this exists is that some controls cannot be clicked on. A slider is the reported
+	/// case, and it is not fixable where the click lands: what a click resolves to is the framework's
+	/// answer, and it is sometimes not the element anybody meant -- Visual Studio's own XAML tools
+	/// have the same gap. Arriving from <c>rose_xaml_tree</c>, which already hands out a handle for
+	/// every element, reaches them.
+	/// </para>
+	/// <para>
+	/// It is also how an agent selects structurally -- by type, by name, by the file the markup came
+	/// from -- rather than asking a person to point at something.
+	/// </para>
+	/// </summary>
+	public LiveXamlSelection SelectByHandle(int pid, ulong handle)
+	{
+		var (workDir, error) = Inject(pid, $"selecthandle {handle}");
+		if (error is not null) return new LiveXamlSelection { Detail = error };
+
+		// The provider writes the selection files and nothing else, so waiting on selection.ready is
+		// the confirmation -- and it is the same file a click produces, which is what keeps one read
+		// path for both routes.
+		if (!WaitForFile(Path.Combine(workDir!, "selection.ready"), SnapshotTimeout))
+		{
+			return new LiveXamlSelection
+			{
+				Detail = $"The provider was injected but did not select handle {handle}. It may name something that "
+					+ "is not an element, or something no longer in the tree; rose_xaml_tree lists what is.",
+			};
+		}
+
+		return ReadSelection();
+	}
+
+	/// <summary>
 	/// The first word of a provider request. The verb decides what a request means to this side; the
 	/// tokens after it are the provider's business.
 	/// </summary>
@@ -514,7 +548,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		// EnterSelectMode can build -- so an equality test against "select" never once fired. The
 		// consequence was quiet in the worst way: arming reported success, and rose_xaml_selection
 		// then answered with the *previous* pick until a new click happened to land.
-		var clearsSelection = Verb(request) is "select" or "deselect";
+		var clearsSelection = Verb(request) is "select" or "selecthandle" or "deselect";
 		if (clearsSelection)
 		{
 			foreach (var stale in new[] { "select.ready", "selection.tsv", "selection.ready", "deselect.ready" })

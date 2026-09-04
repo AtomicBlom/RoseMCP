@@ -107,6 +107,9 @@ public static class ToolNames
 	/// <summary>Live-app-host-only. The broker forwards this to clear the picked element and its mark.</summary>
 	public const string LiveAppXamlDeselect = "rose_live_app_xaml_deselect";
 
+	/// <summary>Live-app-host-only. The broker forwards this to select an element by its handle.</summary>
+	public const string LiveAppXamlSelectElement = "rose_live_app_xaml_select_element";
+
 	/// <summary>Attach a debugger to a running process and start a live-app session over it.</summary>
 	public const string DebugAttach = "rose_debug_attach";
 
@@ -169,4 +172,14 @@ public static class ToolNames
 
 	/// <summary>Clear the picked element, and the mark drawn over the running app.</summary>
 	public const string XamlDeselect = "rose_xaml_deselect";
+
+	/// <summary>
+	/// Select an element by its handle, reaching what a click cannot.
+	/// <para>
+	/// Spelled out rather than <c>rose_xaml_select</c>, which is one word from
+	/// <see cref="XamlSelectMode"/> and means something quite different: that one arms and waits for
+	/// a person, this one selects now. Two names a suffix apart is how the wrong one gets called.
+	/// </para>
+	/// </summary>
+	public const string XamlSelectElement = "rose_xaml_select_element";
 }

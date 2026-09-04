@@ -470,11 +470,23 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 193 tests in about a second, so it is worth running on every change.
+process -- 253 tests in about a second, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes four to five minutes (218 tests). `RoseMcp.TestSupport` holds the
+builds and starts real workers, and takes about four minutes (236 tests). `RoseMcp.TestSupport` holds the
 doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
+
+Most of those four minutes is one serial chain, and it is worth knowing which: twenty tests drive the
+classic UWP probe app, a packaged app is single-instance, and each needs a real launch, attach,
+inject and close. They take a lease from `UwpProbeApp` so only one runs at a time; everything else
+runs in parallel around them. Two rules keep it that way, both of which cost real time to learn
+(D33). **Toolchain work goes in the assembly fixture, once, never per test** -- building the native
+provider is 23 seconds every time however warm it is, and seventeen tests doing it was over half the
+suite's wall clock. And **serialise the resource, not the class**: `[TestClass(DisableParallelization
+= true)]` reads as "these do not run in parallel with each other" and means "this class does not run
+in parallel with *anything*", which made the suite's two halves add up instead of overlapping.
+`MaxThreads` is no help here either -- a test awaiting I/O yields its slot, so it does not bound
+what is in flight.
 
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.

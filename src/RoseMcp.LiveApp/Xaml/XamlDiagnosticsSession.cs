@@ -278,15 +278,28 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var (workDir, error) = Inject(pid, $"selecthandle {handle}");
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
-		// The provider writes the selection files and nothing else, so waiting on selection.ready is
-		// the confirmation -- and it is the same file a click produces, which is what keeps one read
-		// path for both routes.
-		if (!WaitForMarker(Path.Combine(workDir!, "selection.ready"), SnapshotTimeout))
+		// A marker of its own, and the difference is fifteen seconds (#89). This used to wait on
+		// selection.ready, reasoning that the provider writes the selection files and nothing else --
+		// true, and that is the problem: it writes them only when it has a selection to record. A
+		// handle naming something that is not an element, or something since gone from the tree,
+		// produced no file at all, so the refusal arrived as a snapshot timeout. One file cannot both
+		// answer a request and survive one, which is the same lesson selection.ready taught from the
+		// other side. A "no" now costs what a "yes" costs.
+		var readyFile = Path.Combine(workDir!, "selecthandle.ready");
+		if (!WaitForMarker(readyFile, SnapshotTimeout))
 		{
 			return new LiveXamlSelection
 			{
-				Detail = $"The provider was injected but did not select handle {handle}. It may name something that "
-					+ "is not an element, or something no longer in the tree; rose_xaml_tree lists what is.",
+				Detail = $"The provider was injected but did not answer about handle {handle}.",
+			};
+		}
+
+		if (Verdict(readyFile) != "selected")
+		{
+			return new LiveXamlSelection
+			{
+				Detail = $"Handle {handle} was not selected. It may name something that is not an element, or "
+					+ "something no longer in the tree; rose_xaml_tree lists what is.",
 			};
 		}
 
@@ -926,7 +939,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			foreach (var stale in new[]
 			{
-				"select.ready", "selection.tsv", "selection.ready", "deselect.ready", "selection.gone",
+				"select.ready", "selection.tsv", "selection.ready", "selecthandle.ready", "deselect.ready", "selection.gone",
 			})
 			{
 				TryDelete(Path.Combine(workDir, stale));

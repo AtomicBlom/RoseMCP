@@ -663,3 +663,60 @@ chosen, and an agent that knows the VS feature should recognise this as the same
 
 Earlier entries keep their original wording, as D21 did when D22 superseded half of it. They record
 what was decided when, and the term they used is part of that.
+
+### D33 — The suite's wall clock was one incremental C++ build, run seventeen times (extends D24)
+The integration suite took **770s** on a machine with the UWP and C++ toolchains -- not the "four to
+five minutes" CLAUDE.md claimed, which was measured somewhere the live-app tests skip. Where it went
+was not where reasoning put it. The obvious suspect is the Roslyn side: 162 `FixtureSolution.Copy`
+calls, each paying a real `dotnet restore` and a real design-time build, none of it shared. That
+work is real -- 877s of it -- and it costs **zero wall clock**, because it runs in parallel
+underneath something longer.
+
+`LiveAppSessionTests` was 728.9s of the 770s, and its span was also 728.9s: one class is one xUnit
+collection, so its 31 tests ran strictly serially and everything else finished inside them. 94.7% of
+the suite was one class. Measured, then, per test, with the phases timed on their own:
+
+| repeated every test | cost | calls | total |
+|---|---|---|---|
+| `build.ps1`, the native provider | **23.0s** | 17 | **391s** |
+| `msbuild -t:Build`, the UWP app | 8.1s | 20 | 162s |
+| `msbuild -t:Restore`, the UWP app | 1.4s | 20 | 28s |
+| `Add-AppxPackage` + `Remove-AppxPackage` | 1.1s | 20 | 22s |
+| vswhere, layout stage | 0.2s | 20 | 4s |
+
+`build.ps1` was run three times back to back -- 24.0s, 23.0s, 22.8s. It is 23 seconds *every* time,
+fully warm and incremental, because the cost is re-entering the MSVC toolchain rather than compiling
+anything. Seventeen of those is over half the suite.
+
+D24 had already decided this for the RID builds: once per run, memoised, never merely "found". It was
+never extended to the app build, the provider build, or the registration, and those were the wall
+clock. `UwpProbeApp` is an assembly fixture that does all of it once, lazily -- lazily because an
+assembly fixture is constructed before any test runs, so eager work would make a filtered run of one
+Roslyn test pay for an MSVC build. That alone took the class from 728.9s to **272.7s**.
+
+Three things the numbers corrected, each of which reasoning had wrong.
+
+**`DisableParallelization` on the class is the wrong tool, and it costs 109s.** It reads as "these
+tests do not run in parallel with each other". It means "this class does not run in parallel with
+*anything*": 1 of 210 non-live tests overlapped a live one, so the two halves added -- 268s + 109s --
+rather than overlapping. What actually cannot overlap is two tests driving one app, so that is what
+is serialised, by a `SemaphoreSlim(1,1)` lease in the fixture. The eleven tests here that debug an
+ordinary .NET child process take no lease and join the pool. 205 of 210 now overlap, and the suite
+went to **251s**.
+
+**`MaxThreads` does not bound asynchronous tests.** Dropping it from 12 to 8 made the suite *slower*
+(259s), which is the wrong direction for a contention fix and was the clue. Sampling in-flight tests
+showed 194 running at t=25s against a nominal 12 -- a test that awaits I/O yields its slot, so
+`ParallelMode.All` is effectively unbounded here. The bound that matters is the lease, which is on
+the resource rather than on the scheduler.
+
+**A lease makes reported durations meaningless, and the span is the measure.** A test blocked on the
+lease has already started as far as xUnit is concerned, so the live tests report 88-108s each and
+their sum is nonsense. Run alone, the chain is **186s**, and that is the number to reason about.
+
+What is left is not waste. Twenty app launches at ~7.7s of genuine launch, attach, inject and close
+cannot be removed by tidying, and they cannot overlap while the app is single-instance. The
+suite is now 251s of which 186s is that chain and 65s is contention against it. Getting under two
+minutes needs the per-request re-injection to go, which is #50: every XAML request re-injects the
+provider today because the provider works on the app's UI thread at `SetSite`, and a persistent
+channel makes a tree read a message instead of an injection.

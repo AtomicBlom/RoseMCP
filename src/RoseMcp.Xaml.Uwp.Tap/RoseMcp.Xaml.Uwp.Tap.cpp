@@ -1877,7 +1877,12 @@ public:
 		{
 			// Checked before the arming verb below, and named without a space after "select" so the
 			// two cannot be confused: arming parses its tokens as flags, and a handle is not one.
-			Overlay().SelectByHandle(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
+			const bool selected = Overlay().SelectByHandle(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
+
+			// Answered either way, on a marker of its own. selection.ready is only written when there
+			// is a selection to record, so a handle resolving to nothing left the host waiting out its
+			// whole timeout for a refusal it could have had at once (#89).
+			WriteMarker(L"selecthandle.ready", selected ? L"selected" : L"none");
 		}
 		else if (request == L"deselect")
 		{

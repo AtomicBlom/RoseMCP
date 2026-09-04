@@ -437,18 +437,32 @@ public static class ChangeSignatureService
 	{
 		var unchanged = new List<UnchangedCallSite>();
 
+		// A call site belongs in one list and one only. The blanket loop at the bottom used to report
+		// every call site there was, including the ones just rewritten and the ones refused -- so a
+		// site the tool had only just changed also appeared as one that "needed no change", giving a
+		// reason that was not what happened to it. #59 hit both halves at once: the same location was
+		// listed as updated and as unchanged, and the refusal that is now the honest answer for it
+		// would have been drowned by the same duplicate.
+		var reported = new HashSet<Location>(applied.RewrittenCallSites);
+
 		foreach (var location in applied.RefusedCallSites)
 		{
+			reported.Add(location);
+
 			unchanged.Add(new UnchangedCallSite
 			{
 				Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),
-				Reason = "Its arguments could not be put back safely -- a params expansion, or an argument whose "
-					+ "meaning depends on its position. Change this one by hand.",
+				Reason = "Its arguments could not be put back safely -- an argument written for a parameter the "
+					+ "member did not have yet, a params expansion, or an argument whose meaning depends on its "
+					+ "position. It is left exactly as written, so if the change you just made is the one it was "
+					+ "waiting for, it may already be right; otherwise change it by hand.",
 			});
 		}
 
 		foreach (var location in work.SelectMany(item => item.Unusable))
 		{
+			reported.Add(location);
+
 			unchanged.Add(new UnchangedCallSite
 			{
 				Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),
@@ -464,6 +478,8 @@ public static class ChangeSignatureService
 			{
 				foreach (var location in item.CallSiteLocations.Values)
 				{
+					if (!reported.Add(location)) continue;
+
 					unchanged.Add(new UnchangedCallSite
 					{
 						Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),

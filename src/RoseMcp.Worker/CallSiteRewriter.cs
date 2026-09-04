@@ -40,6 +40,23 @@ public static class CallSiteRewriter
 		var byOldIndex = Match(arguments, plan, skip);
 		if (byOldIndex is null) return null;
 
+		// An argument sitting at or past the end of the old parameter list was written for a
+		// parameter the member did not have yet. There is no old parameter to map it from, so the
+		// emit loop below never looks at it -- and it used to disappear (#59).
+		//
+		// That is the worst way for this to fail. Such a call site does not compile, which is
+		// normally the whole reason the tool is being run; truncating it to the old arity produced a
+		// call that *does* compile and means something else, so the test it came from went on passing
+		// for a reason unrelated to what it was written to check. Refusing leaves the argument exactly
+		// as written, which -- once the declaration gains the parameter -- is the code that was wanted
+		// all along.
+		//
+		// Only at or past the old count. Below it, an unclaimed argument belonged to a parameter that
+		// is being removed, and dropping that one is precisely what removing a parameter means. A
+		// params expansion is not surplus either: Match has already folded those onto the params
+		// parameter's own index, which is why it reads that index off the old list.
+		if (byOldIndex.Keys.Any(slot => slot >= plan.OldCount)) return null;
+
 		var emitted = new List<ArgumentSyntax>();
 		var allPositionalSoFar = true;
 
@@ -106,7 +123,6 @@ public static class CallSiteRewriter
 
 		var matched = new Dictionary<int, List<ArgumentSyntax>>();
 		var position = 0;
-		var lastParams = plan.Parameters.FirstOrDefault(parameter => parameter.WasParams);
 
 		foreach (var argument in arguments.Arguments)
 		{
@@ -129,8 +145,11 @@ public static class CallSiteRewriter
 			position++;
 
 			// Past the end of the parameter list, the extras belong to the params parameter -- which
-			// is the only way there can be more arguments than parameters.
-			if (lastParams?.WasAt is { } at && slot > at) slot = at;
+			// is the only way there can legitimately be more arguments than parameters. Taken from
+			// the old list rather than from a parameter that survived, so a params parameter being
+			// removed still accounts for the arguments written for it instead of leaving them looking
+			// like arguments for a parameter that never existed.
+			if (plan.OldParamsAt is { } at && slot > at) slot = at;
 
 			if (!matched.TryGetValue(slot, out var existing)) matched[slot] = existing = [];
 

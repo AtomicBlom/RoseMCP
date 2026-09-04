@@ -688,6 +688,81 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// #22: a UWP session names the install location it actually got.
+	/// <para>
+	/// Two layouts can sit under one identity and version -- a stale <c>Release\AppX</c> registered
+	/// while a fresh <c>Debug\AppX</c> is on disk -- because <c>Add-AppxPackage -Register</c> silently
+	/// does nothing when a package of the same identity is already registered. Everything downstream
+	/// then describes the build nobody meant to run, and describes it accurately. The install location
+	/// is the one field that makes that visible, so it is asserted to be there and to be the layout
+	/// this test staged rather than merely non-null.
+	/// </para>
+	/// <para>
+	/// Skips where the UWP or C++ toolchain is absent.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Names_the_install_location_a_uwp_session_activated()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp install-location probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+
+			// On the session, which is what a caller reading one result sees.
+			var summary = session.Describe();
+			Assert.NotNull(summary.InstallLocation);
+			Assert.Equal(
+				Path.GetFullPath(layout).TrimEnd(Path.DirectorySeparatorChar),
+				Path.GetFullPath(summary.InstallLocation!).TrimEnd(Path.DirectorySeparatorChar),
+				ignoreCase: true);
+
+			// And in the event stream, where somebody reading what happened sees it at the moment it
+			// mattered rather than having to go and ask.
+			var events = await session.ReadEventsAsync(0, null, 500, cancellationToken);
+			Assert.Contains(
+				events.Events,
+				entry => entry.Kind == LiveDebugEventKind.SessionNotice
+					&& (entry.Message?.Contains("is registered from", StringComparison.Ordinal) ?? false));
+
+			// And on the tree, because that is the tool that answers plausibly rather than failing:
+			// its nodes carry source files, and a stale registration makes those the wrong files.
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+			Assert.Equal(summary.InstallLocation, tree.InstallLocation);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
+	/// <summary>
 	/// XAML hot reload (#12): diff two versions of the probe's XAML and apply the changes to the live
 	/// tree, no relaunch. Two edits, deliberately, because they fail in different ways:
 	/// <list type="bullet">

@@ -123,6 +123,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 			State = state,
 			HostProcessId = info?.HostProcessId,
 			TargetProcessId = info?.TargetProcessId ?? Target.ProcessId,
+			InstallLocation = info?.InstallLocation,
 			StartedUtc = StartedUtc,
 			Uptime = DateTime.UtcNow - StartedUtc,
 			Detail = info?.Detail,

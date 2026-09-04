@@ -140,7 +140,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		if (!startup.WaitOne(startupTimeout))
 		{
-			throw new TimeoutException("The process never signalled runtime startup. Is it a .NET (Core) app?");
+			// The modules the process has loaded say which runtime it is hosting, and that turns this
+			// from a question into a diagnosis. "Is it a .NET (Core) app?" was accurate about the
+			// process it got and useless: the answer was already in the process, and finding it meant
+			// listing modules by hand and recognising mrt100_app.dll.
+			var flavour = RuntimeFlavour.Describe(pid);
+
+			throw new TimeoutException(flavour is null
+				? "The process never signalled runtime startup, and its loaded modules could not be read to "
+					+ "say why. Is it a .NET (Core) app?"
+				: $"The process never signalled runtime startup. {flavour}");
 		}
 
 		var runtime = FindRuntimeWithRetry(shim, pid, RuntimeReadyTimeout);

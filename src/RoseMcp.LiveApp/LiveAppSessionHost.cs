@@ -28,6 +28,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	private string? _detail;
 	private CorDebugSession? _session;
 	private string? _uwpPackageFullName;
+
+	// Descriptive rather than a flag, so unlike _uwpPackageFullName it is not cleared when debug
+	// mode is lifted: it says which build this session ran, and that stays true afterwards.
+	private string? _uwpInstallLocation;
 	private XamlDiagnosticsSession? _xaml;
 
 	/// <summary>The architecture this host launched as, which is the target's architecture.</summary>
@@ -49,9 +53,45 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				Architecture = Architecture,
 				State = EffectiveState(),
 				TargetProcessId = _targetProcessId,
+				InstallLocation = _uwpInstallLocation,
 				Detail = _detail,
 			};
 		}
+	}
+
+	/// <summary>
+	/// Records which package this session is driving and where it is installed from, and says so.
+	/// <para>
+	/// The install location is the fact that makes a stale registration visible, and it is the fact
+	/// that was being dropped. Two layouts under one identity and version -- a <c>Release\AppX</c>
+	/// registered while a fresh <c>Debug\AppX</c> sits beside it -- is an ordinary state to reach,
+	/// because <c>Add-AppxPackage -Register</c> silently does nothing when a package of the same
+	/// identity is already registered. Everything after that describes the build nobody meant to run,
+	/// accurately, which is the worst way to be wrong.
+	/// </para>
+	/// <para>
+	/// Both in the event stream and on the session, deliberately. The notice is where somebody
+	/// reading what happened sees it at the moment it mattered; the field is where a caller that
+	/// only ever reads a result finds it.
+	/// </para>
+	/// </summary>
+	private void NoteUwpPackage(string packageFullName)
+	{
+		var installLocation = Uwp.ResolveInstallLocation(packageFullName);
+
+		lock (_gate)
+		{
+			// Both, and the first is what DisableUwpDebugging reads to know it has something to lift.
+			_uwpPackageFullName = packageFullName;
+			_uwpInstallLocation = installLocation;
+		}
+
+		_events.Append(
+			LiveDebugEventKind.SessionNotice,
+			installLocation is null
+				? $"{packageFullName} is registered, but its install location could not be read."
+				: $"{packageFullName} is registered from {installLocation}. If that is not the layout you "
+					+ "just built, the registration is stale and this session is debugging the wrong build.");
 	}
 
 	/// <summary>Adds a tracepoint to the attached target.</summary>
@@ -154,9 +194,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	public LiveXamlTree ReadXamlTree(string? rootName, int offset, int limit)
 	{
 		int? targetProcessId;
+		string? installLocation;
 		lock (_gate)
 		{
 			targetProcessId = _targetProcessId;
+			installLocation = _uwpInstallLocation;
 			_xaml ??= new XamlDiagnosticsSession(logger);
 		}
 
@@ -177,7 +219,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		}
 
 		var page = matched.Skip(Math.Max(0, offset)).Take(limit > 0 ? limit : int.MaxValue).ToList();
-		return new LiveXamlTree { Nodes = page, Total = matched.Count };
+
+		// Carried on every page, because this is the answer that looks right when it is not: the
+		// nodes below name source files, and a stale registration makes those files the wrong ones.
+		return new LiveXamlTree { Nodes = page, Total = matched.Count, InstallLocation = installLocation };
 	}
 
 	/// <summary>An element and all its descendants, from the flat node list, by walking parent handles.</summary>
@@ -604,10 +649,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		}
 
 		Uwp.EnableDebugging(packageFullName, stubCommandLine);
-		lock (_gate)
-		{
-			_uwpPackageFullName = packageFullName;
-		}
+		NoteUwpPackage(packageFullName);
 
 		_events.Append(LiveDebugEventKind.SessionNotice, $"Enabled debug mode with a startup resume stub on {packageFullName}.");
 
@@ -629,10 +671,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	private int ActivateUwpPostStartup(CorDebugSession session, string appUserModelId, string packageFullName)
 	{
 		Uwp.EnableDebugging(packageFullName);
-		lock (_gate)
-		{
-			_uwpPackageFullName = packageFullName;
-		}
+		NoteUwpPackage(packageFullName);
 
 		_events.Append(LiveDebugEventKind.SessionNotice, $"Enabled debug mode on {packageFullName}.");
 

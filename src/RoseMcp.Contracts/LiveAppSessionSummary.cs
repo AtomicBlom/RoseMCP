@@ -21,6 +21,17 @@ public sealed record LiveAppSessionSummary
 
 	public int? TargetProcessId { get; init; }
 
+	/// <summary>
+	/// Where the packaged app this session activated is installed from, for a UWP target. Null
+	/// otherwise, and null when it could not be read.
+	/// <para>
+	/// It is on the summary rather than only in the event stream because a caller that reads one
+	/// result and then works for an hour never goes back to the events, and a stale registration is
+	/// invisible in every other field.
+	/// </para>
+	/// </summary>
+	public string? InstallLocation { get; init; }
+
 	public required DateTime StartedUtc { get; init; }
 
 	public required TimeSpan Uptime { get; init; }

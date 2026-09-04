@@ -698,7 +698,9 @@ public static class MemberEditService
 	/// </para>
 	/// <para>
 	/// Found three times in one session, writing this repository's own tool descriptions through
-	/// these tools.
+	/// these tools. <see cref="Whitespace.LiteralsDisagreeingWith"/> is the same detection
+	/// <c>rose_format</c> runs over a whole file; only the sentence differs, because there the
+	/// literal was already in the file rather than just written into it.
 	/// </para>
 	/// </summary>
 	private static IEnumerable<string> LiteralEndingNotices(
@@ -707,17 +709,8 @@ public static class MemberEditService
 		SourceText text,
 		WhitespaceRules rules)
 	{
-		foreach (var node in root.DescendantNodes())
+		foreach (var line in Whitespace.LiteralsDisagreeingWith(root, text, rules, span))
 		{
-			if (node is not (LiteralExpressionSyntax or InterpolatedStringExpressionSyntax)) continue;
-			if (!span.IntersectsWith(node.Span)) continue;
-
-			var written = node.ToString();
-			if (!written.Contains('\n', StringComparison.Ordinal)) continue;
-			if (Whitespace.Dominant(SourceText.From(written)) == rules.LineEnding) continue;
-
-			var line = text.Lines.GetLineFromPosition(node.SpanStart).LineNumber + 1;
-
 			yield return $"The multi-line string at line {line} was written with line endings the file does not "
 				+ "use. They were left exactly as supplied, because the endings inside a literal are part of "
 				+ "the string -- but dotnet format will ask for them to change, and changing them changes the "

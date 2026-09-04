@@ -138,6 +138,66 @@ public static class Whitespace
 	}
 
 	/// <summary>
+	/// The lines that multi-line literals holding a line ending the rules do not ask for begin on.
+	/// <para>
+	/// Nothing rewrites them, and that is correct: a newline inside a verbatim or raw literal is part
+	/// of the string's value -- measured, the same raw literal written with CRLF and with LF are
+	/// different strings, which the compiler confirms. But leaving it at that is how a file comes to
+	/// fail <c>dotnet format</c> while no build complains and the obvious fix changes what the
+	/// program says, so the consequence is reported where it cannot be fixed.
+	/// </para>
+	/// <para>
+	/// Any disagreeing ending counts, not the literal's dominant one. A hand splice leaves a literal
+	/// that is mostly the file's endings with two lines that are not, and those two lines are exactly
+	/// what <c>dotnet format</c> fails on -- asking which ending the literal mostly uses would call
+	/// that one clean.
+	/// </para>
+	/// <para>
+	/// <paramref name="within"/> narrows it to what an edit wrote, for a caller reporting on its own
+	/// change rather than on the file it landed in.
+	/// </para>
+	/// </summary>
+	public static IReadOnlyList<int> LiteralsDisagreeingWith(
+		SyntaxNode root,
+		SourceText text,
+		WhitespaceRules rules,
+		TextSpan? within = null)
+	{
+		var lines = new List<int>();
+
+		foreach (var node in root.DescendantNodes())
+		{
+			if (node is not (LiteralExpressionSyntax or InterpolatedStringExpressionSyntax)) continue;
+			if (within is { } span && !span.IntersectsWith(node.Span)) continue;
+
+			var written = node.ToString();
+			if (!written.Contains('\n', StringComparison.Ordinal)) continue;
+			if (!HoldsAnEndingOtherThan(written, rules.LineEnding)) continue;
+
+			lines.Add(text.Lines.GetLineFromPosition(node.SpanStart).LineNumber + 1);
+		}
+
+		return lines;
+	}
+
+	/// <summary>Whether any line break in the text is something other than <paramref name="ending"/>.</summary>
+	private static bool HoldsAnEndingOtherThan(string written, string ending)
+	{
+		for (var index = 0; index < written.Length; index++)
+		{
+			if (written[index] is not ('\r' or '\n')) continue;
+
+			var length = written[index] == '\r' && index + 1 < written.Length && written[index + 1] == '\n' ? 2 : 1;
+
+			if (!string.Equals(written.Substring(index, length), ending, StringComparison.Ordinal)) return true;
+
+			index += length - 1;
+		}
+
+		return false;
+	}
+
+	/// <summary>
 	/// Spans of literals that cross a line, whose trailing whitespace is the value of a string
 	/// rather than layout. A single-line literal cannot hold a line ending, and nothing can follow
 	/// it on its line except code, so protecting those would only stop ordinary lines from being

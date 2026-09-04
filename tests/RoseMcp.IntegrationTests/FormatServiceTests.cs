@@ -52,6 +52,21 @@ public sealed class FormatServiceTests
 		"}",
 		string.Empty);
 
+	/// <summary>
+	/// Correct everywhere the formatter can reach and LF inside a verbatim literal, which is what an
+	/// edit made by hand into a CRLF file leaves behind. The whitespace pass will not touch the
+	/// literal, so this file formats to no change at all and still fails dotnet format.
+	/// </summary>
+	private static readonly string WithLfInsideALiteral = string.Join(
+		Crlf,
+		"namespace Core;",
+		string.Empty,
+		"public static class Literal",
+		"{",
+		"\tpublic const string Text = @\"one" + Lf + "two\";",
+		"}",
+		string.Empty);
+
 	[Fact]
 	public async Task Formats_a_file_to_what_the_editorconfig_asks_for()
 	{
@@ -152,6 +167,53 @@ public sealed class FormatServiceTests
 		var formatted = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
 		Assert.DoesNotContain(Lf, formatted.Replace(Crlf, string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// #35, the failure mode this project exists to prevent turned on itself: a file whose only
+	/// remaining problem is line endings inside a raw literal formats clean, reports success, and
+	/// then fails <c>dotnet format</c> at the build. Rewriting it is not the answer -- a newline
+	/// inside a literal is part of the string's value -- so the fix is that the tool says so.
+	/// </summary>
+	[Fact]
+	public async Task Says_which_literal_holds_endings_it_would_not_rewrite()
+	{
+		using var fixture = Prepare(out _);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Simple", "Core", "Literal.cs");
+		await File.WriteAllTextAsync(path, WithLfInsideALiteral, TestContext.Current.CancellationToken);
+
+		var result = await FormatAsync(session, [path]);
+		var notices = string.Join(" ", result.Notices);
+
+		Assert.Contains("Literal.cs", notices, StringComparison.Ordinal);
+		Assert.Contains("line endings the file does not use", notices, StringComparison.Ordinal);
+
+		// And it is still not rewritten, because doing so would change what the program says.
+		var after = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		Assert.Contains("one" + Lf + "two", after, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The other half: a literal written with the file's own endings must not be warned about, or
+	/// the notice fires on every file holding a multi-line string and stops being read.
+	/// </summary>
+	[Fact]
+	public async Task Says_nothing_about_a_literal_that_already_uses_the_files_endings()
+	{
+		using var fixture = Prepare(out _);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Simple", "Core", "Literal.cs");
+		await File.WriteAllTextAsync(
+			path,
+			WithLfInsideALiteral.Replace(Lf, Crlf, StringComparison.Ordinal),
+			TestContext.Current.CancellationToken);
+
+		var result = await FormatAsync(session, [path]);
+
+		Assert.DoesNotContain("line endings the file does not use", string.Join(" ", result.Notices), StringComparison.Ordinal);
 	}
 
 	private static FixtureSolution Prepare(out string manglePath)

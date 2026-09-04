@@ -187,6 +187,34 @@ internal static class Uwp
 		}
 	}
 
+	/// <summary>
+	/// Where the registered package actually lives on disk, or null when it cannot be read.
+	/// <para>
+	/// This is the one fact that makes a stale registration visible. Two layouts under one identity
+	/// and version -- a <c>Release\AppX</c> registered while a fresh <c>Debug\AppX</c> sits beside it
+	/// -- is an ordinary state to get into, because <c>Add-AppxPackage -Register</c> silently does
+	/// nothing when a package of the same identity is already registered. Everything downstream then
+	/// describes the build nobody meant to run, and describes it accurately.
+	/// </para>
+	/// <para>
+	/// Null rather than throwing: it is reported alongside a session, not depended on by one, and a
+	/// session that failed to start because its install path could not be read would be a worse
+	/// trade than a session missing one field.
+	/// </para>
+	/// </summary>
+	public static string? ResolveInstallLocation(string packageFullName)
+	{
+		uint length = 0;
+		var hr = GetPackagePathByFullName(packageFullName, ref length, null);
+		if (hr != ErrorInsufficientBuffer || length == 0) return null;
+
+		var path = new char[length];
+		hr = GetPackagePathByFullName(packageFullName, ref length, path);
+
+		// length comes back including the terminator, which is not part of the path.
+		return hr == 0 ? new string(path, 0, (int)length - 1) : null;
+	}
+
 	private static T CreateComInstance<T>(Guid clsid)
 	{
 		var type = Type.GetTypeFromCLSID(clsid, throwOnError: true)!;
@@ -205,6 +233,14 @@ internal static class Uwp
 		ref uint bufferLength,
 		IntPtr buffer,
 		IntPtr packageProperties);
+
+	// The Win32 route to what Get-AppxPackage calls InstallLocation, so nothing here has to spawn
+	// PowerShell to read one path.
+	[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+	private static extern int GetPackagePathByFullName(
+		string packageFullName,
+		ref uint pathLength,
+		[Out] char[]? path);
 
 	private enum ActivateOptions
 	{

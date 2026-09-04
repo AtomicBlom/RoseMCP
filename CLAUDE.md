@@ -182,6 +182,14 @@ reclaim memory or pick up a rebuilt generator.
   span when the caller wrote one member rather than a file: a repository whose endings are already
   inconsistent would otherwise have every line rewritten by a one-member change, which buries the
   edit in a diff nobody can review.
+- **A change a diff cannot show is said in words.** A unified diff compares the content of lines,
+  and a terminator is not content -- so rewriting a file's endings produces no hunk at all. That is
+  the change `rose_format` is called for most often, in exactly the repositories where it matters:
+  where IDE0055 is an error, an LF in a CRLF file is a failed build, and fixing it is the whole
+  reason the call was made. Reporting five changed files beside an empty diff reads precisely like a
+  call that did nothing. So `SolutionWriter` counts the lines that moved and every writing tool
+  passes the sentence on, rather than the alternatives: a whole-file hunk nobody can read, or
+  inventing a hunk header that is not a patch.
 - **Nothing writes code it has not parsed, and nothing is addressed by position.** The three write
   tools resolve the declaration and parse the code *before* the file is opened, so a refusal costs
   nothing and can never leave a file half-written -- which is most of the value, since it removes
@@ -341,9 +349,9 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 181 tests in about a second, so it is worth running on every change.
+process -- 193 tests in about a second, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes four to five minutes (217 tests). `RoseMcp.TestSupport` holds the
+builds and starts real workers, and takes four to five minutes (218 tests). `RoseMcp.TestSupport` holds the
 doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 

@@ -38,6 +38,20 @@ public sealed class FormatServiceTests
 		"    }",
 		"}");
 
+	/// <summary>
+	/// Correct in every way except its terminators: tabs, Allman braces, no trailing space, a final
+	/// newline -- and LF, in a repository whose .editorconfig says CRLF.
+	/// </summary>
+	private static readonly string OnlyEndings = string.Join(
+		Lf,
+		"namespace Core;",
+		string.Empty,
+		"public sealed class Endings",
+		"{",
+		"\tpublic int Value { get; set; }",
+		"}",
+		string.Empty);
+
 	[Fact]
 	public async Task Formats_a_file_to_what_the_editorconfig_asks_for()
 	{
@@ -102,6 +116,42 @@ public sealed class FormatServiceTests
 
 		Assert.Empty(second.ChangedFiles);
 		Assert.Contains("already formatted", string.Join(" ", second.Notices), StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The change this tool is called for most often is the one a diff cannot render.
+	/// <para>
+	/// A unified diff compares the content of lines, and a terminator is not content -- so rewriting
+	/// every LF in a file to CRLF produces no hunk at all. Left unsaid, a successful call reports
+	/// changed files beside an empty diff, which is precisely what a call that did nothing looks
+	/// like. The empty diff is asserted here rather than worked around, because it is a property of
+	/// what a diff is and not a defect to be fixed in the renderer.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Says_it_rewrote_line_endings_where_the_diff_cannot_show_it()
+	{
+		using var fixture = Prepare(out _);
+
+		var path = fixture.Path("Simple", "Core", "Endings.cs");
+		await File.WriteAllTextAsync(path, OnlyEndings, TestContext.Current.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await FormatAsync(session, [path]);
+
+		Assert.True(result.Applied);
+		Assert.Equal([path], result.ChangedFiles);
+		Assert.Empty(result.Diff);
+
+		var notices = string.Join(" ", result.Notices);
+
+		Assert.Contains("line ending(s) to CRLF", notices, StringComparison.Ordinal);
+		Assert.Contains("Endings.cs", notices, StringComparison.Ordinal);
+
+		var formatted = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+
+		Assert.DoesNotContain(Lf, formatted.Replace(Crlf, string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
 	}
 
 	private static FixtureSolution Prepare(out string manglePath)

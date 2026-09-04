@@ -94,7 +94,10 @@ public static class MoveTypeService
 			RemovedUsings = cleanup.Removed,
 			ChangedFiles = outcome.ChangedFiles,
 			Diff = outcome.Diff,
-			Notices = Notices(snapshot, request, moving, sourcePath, targetPath),
+
+			// The write's own notices last: what the diff could not show, which for a split that leaves
+			// the source file shorter is the easiest change of all to miss.
+			Notices = [.. Notices(snapshot, request, moving, sourcePath, targetPath), .. outcome.Notices],
 		};
 
 		return new MutationResult<MoveTypeResult>(result, request.Apply ? cleanup.Solution : null);

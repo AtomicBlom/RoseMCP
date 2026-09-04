@@ -104,6 +104,10 @@ public static class CodeFixService
 		var outcome = await SolutionWriter.ApplyAsync(
 			snapshot.Solution, changed, request.Apply, noteSelfWrite, cancellationToken);
 
+		// What the diff could not show. A fixer that rewrites a whole file can retype its endings on
+		// the way through, and that part of what it did appears in no hunk.
+		notices.AddRange(outcome.Notices);
+
 		if (!request.Apply) notices.Add("Preview only; nothing was written to disk.");
 		if (outcome.ChangedFiles.Count == 0) notices.Add("The fix produced no changes.");
 

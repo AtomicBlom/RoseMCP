@@ -563,6 +563,10 @@ public static class MemberEditService
 	{
 		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 
+		// What the diff could not show. Said before the verification lines, because a caller reading a
+		// result whose diff looks empty is asking about the write rather than about the compile.
+		foreach (var notice in outcome.Notices) yield return notice;
+
 		if (!verification.Ran)
 		{
 			if (outcome.ChangedFiles.Count > 0)

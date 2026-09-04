@@ -42,12 +42,32 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
           restore-keys: nuget-${{ runner.os }}-
-
-      # Windows only: the unit tests still assume Windows paths, which is tracked in #34. A release
-      # should not be the first thing to find out the build is broken, and this is the platform that
-      # can say so today.
-      - name: Unit tests
+      # Both Windows packages are built on one x64 runner, so the arm64 XAML provider comes from the
+      # MSVC ARM64 *cross*-toolset -- a separate installer component from the x64 one. Added rather
+      # than assumed, so it cannot vanish when windows-latest moves. If this step is wrong the
+      # release job fails; if it were merely absent, Assert-WindowsPackage in deploy.ps1 fails
+      # instead. Either way the artifact is not published without the provider, which is #64.
+      - name: Install the MSVC ARM64 cross-toolset
         if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installerDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vs = & "$installerDir\vswhere.exe" -latest -products * -property installationPath
+          if (-not $vs) { throw 'no Visual Studio installation on this runner' }
+
+          # --wait, because vs_installer detaches by default and the build would start before the
+          # toolset finished arriving. Exit code 3010 is "installed, reboot pending", which is fine
+          # for a compiler we are about to invoke out of its own folder.
+          $process = Start-Process -FilePath "$installerDir\vs_installer.exe" -Wait -PassThru -ArgumentList @(
+            'modify', '--installPath', "`"$vs`"", '--quiet', '--norestart', '--nocache',
+            '--add', 'Microsoft.VisualStudio.Component.VC.Tools.ARM64')
+
+          if ($process.ExitCode -notin 0, 3010) { throw "vs_installer exited $($process.ExitCode)" }
+
+      # Both platforms now, which is the point of #34: the tests used to assume Windows paths, so
+      # the Linux leg could publish an artifact nothing had ever run. A release should not be the
+      # first thing to find out the build is broken on the platform it is shipping for.
+      - name: Unit tests
         run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj -c Release
 
       # The same script used to package locally, so a release artifact and a hand-built one have the

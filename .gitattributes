@@ -1,0 +1,22 @@
+# The line endings are a property of this source, not of the machine that checked it out.
+#
+# `.editorconfig` declares `end_of_line = crlf` and escalates IDE0055 to an error, so a file that
+# arrives with LF in it is a failed build. With no attributes here, which endings arrived was
+# decided entirely by each machine's `core.autocrlf`: git stores this repository normalised to LF,
+# so a Windows clone converted on checkout and compiled clean, while a Linux clone kept LF and
+# failed 379 times across 77 files -- on the first build that ever ran there.
+#
+# `eol=crlf` overrides `core.autocrlf` and `core.eol` both, which is the whole point: what the
+# compiler sees stops depending on a setting nobody reviewing a pull request can see. The index
+# stays LF, git's normal form, so this changes no committed content -- only what checkout writes.
+* text=auto eol=crlf
+
+# A shebang line ending in CR is not a shebang, and the error names an interpreter that exists.
+# There are no shell scripts here today; this is so that adding one cannot reintroduce the bug
+# above in the one form where it does not present as a formatting complaint.
+*.sh text eol=lf
+
+# Binary detection is a guess about NUL bytes, and a wrong guess here corrupts an image rather
+# than merely reformatting it. These are the only binaries checked in.
+*.png binary
+*.ico binary

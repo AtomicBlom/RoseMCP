@@ -63,6 +63,12 @@ param(
     [switch] $NoRestart,
 
     [switch] $SkipTests
+,
+
+    # Fail rather than warn when the native XAML provider cannot be built. Always on for
+    # package, because that run cuts a release and a release that quietly ships without it is
+    # indistinguishable from a product bug. Available for promote so a local deploy can insist.
+    [switch] $RequireXamlProvider
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,6 +79,11 @@ $ErrorActionPreference = 'Stop'
 $onWindows = if ($null -ne $IsWindows) { $IsWindows } else { $env:OS -eq 'Windows_NT' }
 
 $repo = Split-Path $PSScriptRoot -Parent
+
+# package is the run that cuts a release, so a missing provider is fatal there whether or not
+# anybody remembered the switch. promote is somebody's laptop and may legitimately not have the
+# MSVC toolset at all.
+$xamlProviderRequired = $RequireXamlProvider -or $Mode -eq 'package'
 if (-not $WorkspaceRoot) { $WorkspaceRoot = $repo }
 
 if (-not $Destination)
@@ -157,7 +168,7 @@ function Publish-LiveAppHosts
         Invoke-Dotnet @('publish', "$repo/src/RoseMcp.LiveApp", '-c', 'Release', '-r', $hostRid,
             '--self-contained', 'false', '-o', $hostDir) "RoseMcp.LiveApp ($hostRid)"
 
-        Copy-XamlProvider -Rid $hostRid -HostDir $hostDir
+        Copy-XamlProvider -Rid $hostRid -HostDir $hostDir -Required:$xamlProviderRequired
     }
 }
 
@@ -169,7 +180,7 @@ function Copy-XamlProvider
         code will not have -- so a missing toolset is a warning and the debugger ships without XAML
         inspection, rather than the whole deploy failing over a capability the user may not want.
     #>
-    param([string] $Rid, [string] $HostDir)
+    param([string] $Rid, [string] $HostDir, [switch] $Required)
 
     $platform = if ($Rid -eq 'win-arm64') { 'arm64' } else { 'x64' }
     $build = "$repo/src/RoseMcp.Xaml.Uwp.Tap/build.ps1"
@@ -180,7 +191,12 @@ function Copy-XamlProvider
 
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dll))
     {
-        Write-Warning "  the XAML provider could not be built for $platform; XAML inspection and hot reload will be unavailable for $Rid targets."
+        $message = "the XAML provider could not be built for $platform; XAML inspection and hot " +
+            "reload will be unavailable for $Rid targets."
+
+        if ($Required) { throw $message }
+
+        Write-Warning "  $message"
         return
     }
 
@@ -188,6 +204,85 @@ function Copy-XamlProvider
     New-Item -ItemType Directory -Force -Path $into | Out-Null
     Copy-Item $dll $into -Force
     Write-Host "  xaml provider ($platform) -> $into"
+}
+
+function Get-PeMachine
+{
+    <#
+        The machine type out of a PE header, because Test-Path cannot tell you what is in the file.
+
+        Copy-XamlProvider derives its destination from $Rid while build.ps1 derives its source from
+        $Platform, so the two could disagree and produce a tree that looks complete and injects the
+        wrong architecture into the target -- which fails inside somebody else's app, a long way from
+        the packaging step that caused it.
+
+        The layout: at 0x3C sits the offset of the "PE\0\0" signature, and the machine word is the
+        two bytes straight after it.
+    #>
+    param([string] $Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try
+    {
+        $reader = [System.IO.BinaryReader]::new($stream)
+        $stream.Position = 0x3C
+        $stream.Position = $reader.ReadInt32()
+        if ($reader.ReadUInt32() -ne 0x00004550) { return $null }  # "PE\0\0"
+
+        return $reader.ReadUInt16()
+    }
+    finally
+    {
+        $stream.Dispose()
+    }
+}
+
+function Assert-WindowsPackage
+{
+    <#
+        Every win-* package must carry both debug hosts and both native XAML providers, and each
+        provider must actually be built for the architecture its folder claims.
+
+        This exists because the failure it catches is silent. Copy-XamlProvider warns and returns
+        when the MSVC toolset is missing -- right for a laptop that only publishes managed code -- and
+        nothing downstream looked. release.yml asserts only that an archive exists, which is true of a
+        zip with no xaml-provider directory in it at all, so the release went green, the checksums
+        were computed over it, and rose_xaml_tree failed on every target of that architecture for a
+        reason that was in a log nobody reads on a green run.
+
+        Asserted here rather than at the upload step, which is as close to the cause as it can be put.
+    #>
+    param([string] $Stage, [string] $Rid)
+
+    $expected = @{ 'win-x64' = 0x8664; 'win-arm64' = 0xAA64 }
+
+    foreach ($hostRid in 'win-x64', 'win-arm64')
+    {
+        $hostExe = "$Stage/live-app/$hostRid/RoseMcp.LiveApp.exe"
+        if (-not (Test-Path $hostExe)) { throw "$Rid package is missing $hostExe" }
+
+        $dll = "$Stage/live-app/$hostRid/xaml-provider/$hostRid/RoseMcp.Xaml.Uwp.Tap.dll"
+        if (-not (Test-Path $dll))
+        {
+            throw "$Rid package is missing the XAML provider at $dll. XAML inspection and hot reload " +
+                "would be unavailable for $hostRid targets, and nothing else would say so. On a build " +
+                "agent this is usually the MSVC ARM64 cross-toolset not being installed."
+        }
+
+        $machine = Get-PeMachine $dll
+        if ($machine -ne $expected[$hostRid])
+        {
+            # Parenthesised before -f on purpose: -f binds tighter than +, so formatting a
+            # concatenation without these brackets formats only the last piece of it and leaves
+            # the placeholders in the rest sitting there as literal text.
+            throw (("$Rid package has the wrong XAML provider for {0}: {1} reports machine " +
+                "0x{2:X4}, expected 0x{3:X4}. It would be injected into a target of the other " +
+                "architecture.") -f
+                $hostRid, $dll, $machine, $expected[$hostRid])
+        }
+    }
+
+    Write-Host "  layout checked: both debug hosts and both XAML providers present and correctly built"
 }
 
 function Stop-Tray
@@ -305,6 +400,8 @@ foreach ($rid in $Runtime)
     {
         $archive = "$artifacts/rosemcp-$rid.zip"
         if (Test-Path $archive) { Remove-Item $archive -Force }
+
+        Assert-WindowsPackage -Stage $stage -Rid $rid
 
         Compress-Archive -Path "$stage/*" -DestinationPath $archive
     }

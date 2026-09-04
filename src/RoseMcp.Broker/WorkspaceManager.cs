@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 
 using RoseMcp.Contracts;
+using RoseMcp.Solutions;
 
 namespace RoseMcp.Broker;
 
@@ -19,14 +20,14 @@ public sealed class WorkspaceManager(
 	ILoggerFactory loggerFactory,
 	ILogger<WorkspaceManager> logger) : IAsyncDisposable
 {
-	private readonly Dictionary<string, WorkspaceWorker> _workers = new(StringComparer.OrdinalIgnoreCase);
+	private readonly Dictionary<string, WorkspaceWorker> _workers = new(PathCasing.Comparer);
 
 	/// <summary>
 	/// MSBuild properties asked for at reload, per solution. Kept because they belong to the worker's
 	/// command line, and a worker replaced after a crash would otherwise lose them.
 	/// </summary>
 	private readonly Dictionary<string, WorkspaceBuildOverrides> _buildOverrides =
-		new(StringComparer.OrdinalIgnoreCase);
+		new(PathCasing.Comparer);
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 

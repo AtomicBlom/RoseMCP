@@ -14,8 +14,8 @@ namespace RoseMcp.Solutions;
 /// <para>
 /// Spelled and hashed both, because the name alone collides. Six worktrees of one repository is the
 /// ordinary case, not a corner one, and every one of them holds a solution of the same name. The
-/// hash is taken over the lowercased full path, since Windows reaches one solution through many
-/// casings and all of them are the same solution.
+/// hash is taken over the path folded the way the filesystem folds case -- see
+/// <see cref="PathCasing"/>, because that is a question about the platform and not about the path.
 /// </para>
 /// </summary>
 public static class WorkspaceKey
@@ -27,7 +27,7 @@ public static class WorkspaceKey
 	{
 		var full = Path.GetFullPath(solutionPath);
 		var hash = Convert.ToHexString(
-			SHA256.HashData(Encoding.UTF8.GetBytes(full.ToLowerInvariant())).AsSpan(0, HashBytes))
+			SHA256.HashData(Encoding.UTF8.GetBytes(PathCasing.Fold(full))).AsSpan(0, HashBytes))
 			.ToLowerInvariant();
 
 		// The extension is dropped but the casing is kept: unlike a log file name, this is shown to

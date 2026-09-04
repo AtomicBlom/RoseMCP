@@ -3,6 +3,7 @@ using System.Diagnostics;
 using ModelContextProtocol;
 
 using RoseMcp.Contracts;
+using RoseMcp.Solutions;
 
 namespace RoseMcp.Broker;
 
@@ -23,7 +24,7 @@ public sealed class ActivityLog
 	private const int RecentPerWorkspace = 8;
 
 	private readonly object _gate = new();
-	private readonly Dictionary<string, WorkspaceEntries> _byWorkspace = new(StringComparer.OrdinalIgnoreCase);
+	private readonly Dictionary<string, WorkspaceEntries> _byWorkspace = new(PathCasing.Comparer);
 	private long _nextId;
 
 	/// <summary>

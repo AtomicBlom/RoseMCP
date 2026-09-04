@@ -89,6 +89,10 @@ public static class FormatService
 			if (cleanup.Removed.Count > 0) notices.Add($"Removed {cleanup.Removed.Count} unnecessary using directive(s).");
 		}
 
+		// Read off the final text, so a literal the passes above left alone is reported once, against
+		// the line it ends up on rather than the line it started at.
+		notices.AddRange(await LiteralEndingNoticesAsync(solution, formatted, cancellationToken));
+
 		progress?.Report(request.Apply ? "Writing the changed files" : "Building the diff", 95);
 
 		var outcome = await SolutionWriter.ApplyAsync(
@@ -135,5 +139,56 @@ public static class FormatService
 		var rules = Whitespace.RulesFor(reformatted.Project, tree, text);
 
 		return reformatted.Project.Solution.WithDocumentText(reformatted.Id, Whitespace.Apply(root, text, rules));
+	}
+
+	/// <summary>
+	/// One notice per file holding a multi-line literal whose line endings are not the file's.
+	/// <para>
+	/// This is the half of the promise the formatter cannot keep. <c>rose_format</c> tells a caller
+	/// their file is formatted, and its own description tells them to call it after writing C# by any
+	/// other means -- and then <c>dotnet format</c> fails the same file on ENDOFLINE inside a raw
+	/// literal, at the build, which is exactly the shape of failure this whole surface exists to
+	/// remove. Rewriting it is not the answer, because a newline inside a literal is part of the
+	/// string's value: what is missing is that the tool ever said so.
+	/// </para>
+	/// <para>
+	/// Grouped by file rather than one notice per literal, because the sentence explaining why it was
+	/// left alone is the long part and it does not need saying five times.
+	/// </para>
+	/// </summary>
+	private static async Task<IReadOnlyList<string>> LiteralEndingNoticesAsync(
+		Solution solution,
+		IReadOnlyList<DocumentId> documentIds,
+		CancellationToken cancellationToken)
+	{
+		var notices = new List<string>();
+
+		foreach (var documentId in documentIds)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			var document = solution.GetDocument(documentId);
+			if (document is null) continue;
+
+			var root = await document.GetSyntaxRootAsync(cancellationToken);
+			var tree = await document.GetSyntaxTreeAsync(cancellationToken);
+			if (root is null || tree is null) continue;
+
+			var text = await document.GetTextAsync(cancellationToken);
+			var rules = Whitespace.RulesFor(document.Project, tree, text);
+			var lines = Whitespace.LiteralsDisagreeingWith(root, text, rules);
+			if (lines.Count == 0) continue;
+
+			var where = lines.Count == 1
+				? $"the multi-line string at line {lines[0]}"
+				: $"the multi-line strings at lines {string.Join(", ", lines)}";
+
+			notices.Add($"{document.Name}: {where} hold line endings the file does not use, and were left "
+				+ "alone -- a newline inside a literal is part of the string's value, so rewriting it changes "
+				+ "what the program says. dotnet format will still ask for them, and no build will complain. "
+				+ "Rewrite the literal with the file's own endings if the value allows it.");
+		}
+
+		return notices;
 	}
 }

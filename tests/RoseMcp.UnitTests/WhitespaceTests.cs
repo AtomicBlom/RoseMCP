@@ -101,6 +101,72 @@ public sealed class WhitespaceTests
 		Assert.Equal(expected, Whitespace.Dominant(SourceText.From(source)));
 	}
 
+	/// <summary>
+	/// The literal the whitespace pass deliberately will not touch is the one that then fails
+	/// dotnet format, so the least it can do is say where it is.
+	/// </summary>
+	[Fact]
+	public void Reports_a_multi_line_literal_whose_endings_are_not_the_files()
+	{
+		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Lf + "two\";" + Crlf + "}" + Crlf;
+
+		Assert.Equal([3], Disagreeing(source));
+	}
+
+	/// <summary>
+	/// Any disagreeing ending counts, not the literal's dominant one. A hand splice leaves a literal
+	/// that is mostly the file's endings with one line that is not, and that line is exactly what
+	/// dotnet format fails on -- asking which ending it mostly uses would call this clean.
+	/// </summary>
+	[Fact]
+	public void Reports_a_literal_that_mostly_agrees_and_partly_does_not()
+	{
+		var source = "class C" + Crlf + "{" + Crlf
+			+ "\tconst string Text = @\"one" + Crlf + "two" + Lf + "three" + Crlf + "four\";" + Crlf
+			+ "}" + Crlf;
+
+		Assert.Equal([3], Disagreeing(source));
+	}
+
+	[Fact]
+	public void Says_nothing_about_a_literal_written_with_the_files_own_endings()
+	{
+		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Crlf + "two\";" + Crlf + "}" + Crlf;
+
+		Assert.Empty(Disagreeing(source));
+	}
+
+	/// <summary>A single-line literal cannot hold a line ending, so it can never disagree about one.</summary>
+	[Fact]
+	public void Says_nothing_about_a_single_line_literal()
+	{
+		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = \"one\";" + Crlf + "}" + Crlf;
+
+		Assert.Empty(Disagreeing(source));
+	}
+
+	/// <summary>
+	/// A caller reporting on its own edit is asking about what it wrote, not about the file it landed
+	/// in -- a member replacement that warned about a literal four hundred lines away would be
+	/// blaming this change for something it did not do.
+	/// </summary>
+	[Fact]
+	public void Ignores_a_disagreeing_literal_outside_the_span_asked_about()
+	{
+		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Lf + "two\";" + Crlf + "}" + Crlf;
+
+		Assert.Empty(Disagreeing(source, SourceText.From(source).Lines[0].SpanIncludingLineBreak));
+	}
+
+	private static IReadOnlyList<int> Disagreeing(string source, TextSpan? within = null)
+	{
+		var tree = CSharpSyntaxTree.ParseText(source);
+		var text = SourceText.From(source);
+
+		return Whitespace.LiteralsDisagreeingWith(
+			tree.GetRoot(TestContext.Current.CancellationToken), text, Strict, within);
+	}
+
 	private static string Apply(string source, WhitespaceRules rules)
 	{
 		var tree = CSharpSyntaxTree.ParseText(source);

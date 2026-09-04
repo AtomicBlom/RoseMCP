@@ -139,7 +139,8 @@ public static class ToolDescriptions
         wants tabs and LF where it wants CRLF, and in a repository that treats IDE0055 as an error
         that is a failed build rather than untidiness. Returns a unified diff; pass apply=false to
         check formatting without writing. Multi-line string literals are left alone, since a newline
-        inside one is content rather than layout.
+        inside one is content rather than layout -- and reported, since dotnet format will still
+        ask for the endings inside one while no build complains.
         """;
 
 	public const string ListCodeFixes = """

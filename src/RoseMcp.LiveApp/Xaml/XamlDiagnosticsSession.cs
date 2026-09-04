@@ -17,7 +17,7 @@ namespace RoseMcp.LiveApp.Xaml;
 /// Files or write arbitrary paths. The provider must match the target's architecture, which is this
 /// host's architecture -- an x64 provider for a classic UWP app emulated on ARM64.
 /// </summary>
-internal sealed class XamlDiagnosticsSession(ILogger logger)
+internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 {
 	// Must match CLSID_RoseTap in RoseMcp.Xaml.Uwp.Tap.cpp.
 	private static readonly Guid ProviderClsid = new("7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6");
@@ -39,6 +39,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	private string? _workDir;
 	private string? _stagedProvider;
 
+	// The number stamped on the request being served, and echoed back by the provider on everything it
+	// writes. Every handshake here used to be "does this file exist", with the host deleting the marker
+	// before injecting -- so a delete that silently failed left the wait satisfied by the *previous*
+	// request's marker, and the host went on to read an answer written before it asked the question.
+	// The comment on TryDelete claimed the ready-marker wait handled an undeletable stale file; it
+	// could not, because existence is the same either way. A number the host chose can tell them apart
+	// (#57).
+	private long _generation;
+
 	/// <summary>
 	/// Reads a snapshot of the target's live visual tree, injecting the provider first. Returns a tree
 	/// with a <see cref="LiveXamlTree.Detail"/> and no nodes -- never throws -- when the provider is not
@@ -49,7 +58,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		var (workDir, error) = Inject(pid, "tree");
 		if (error is not null) return new LiveXamlTree { Detail = error };
 
-		if (!WaitForFile(Path.Combine(workDir!, "tree.ready"), SnapshotTimeout))
+		if (!WaitForMarker(Path.Combine(workDir!, "tree.ready"), SnapshotTimeout))
 		{
 			return new LiveXamlTree { Detail = "The XAML provider was injected but did not produce a tree snapshot in time." };
 		}
@@ -79,7 +88,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		var (workDir, error) = Inject(pid, request);
 		if (error is not null) return new LiveXamlProperties { Handle = handle, Detail = error };
 
-		if (!WaitForFile(Path.Combine(workDir!, "properties.ready"), SnapshotTimeout))
+		if (!WaitForMarker(Path.Combine(workDir!, "properties.ready"), SnapshotTimeout))
 		{
 			return new LiveXamlProperties { Handle = handle, Detail = "The XAML provider was injected but did not produce the properties in time." };
 		}
@@ -115,7 +124,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
 		var readyFile = Path.Combine(workDir!, "select.ready");
-		if (!WaitForFile(readyFile, SnapshotTimeout))
+		if (!WaitForMarker(readyFile, SnapshotTimeout))
 		{
 			return new LiveXamlSelection { Detail = "The provider was injected but did not arm select mode (the app may have no diagnostics UI layer)." };
 		}
@@ -134,13 +143,25 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			};
 		}
 
-		// JustMyXaml is reported from what was actually set, not left to the record's default. It defaults
-		// to true, so arming with justMyXaml: false answered "true" and a caller comparing the arming
-		// response against a later selection saw a contradiction it could not explain.
+		// Reported from what the provider recorded, not from what was asked for. The two agree
+		// whenever the round trip worked, and the point is what happens when they do not: a later
+		// rose_xaml_selection reads the provider's own state file, so an arming response that merely
+		// echoed the request would contradict that read with nothing to say which of them was right.
+		// Answering from the recorded value makes the two agree by construction.
+		var (mode, recorded, known) = ReadOverlayState();
+		if (!known || mode != "select")
+		{
+			return new LiveXamlSelection
+			{
+				Detail = "Select mode was armed, but the toolbar has not confirmed it, so what it is filtering "
+					+ "cannot be reported. Read the selection again in a moment.",
+			};
+		}
+
 		return new LiveXamlSelection
 		{
 			Armed = true,
-			JustMyXaml = justMyXaml,
+			JustMyXaml = recorded,
 			Detail = "Select mode is armed: click an element in the app, then read the selection.",
 		};
 	}
@@ -160,7 +181,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
 		var readyFile = Path.Combine(workDir!, "deselect.ready");
-		if (!WaitForFile(readyFile, SnapshotTimeout))
+		if (!WaitForMarker(readyFile, SnapshotTimeout))
 		{
 			return new LiveXamlSelection
 			{
@@ -168,8 +189,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			};
 		}
 
-		var (mode, justMyXaml) = ReadOverlayState();
-		var had = ReadFirstLine(readyFile) == "cleared";
+		var (mode, justMyXaml, _) = ReadOverlayState();
+
+		// The first token, not the whole line: the marker now carries the generation after its
+		// verdict, and comparing the line entire would read every clear as "nothing was selected".
+		var had = Verdict(readyFile) == "cleared";
 
 		return new LiveXamlSelection
 		{
@@ -203,7 +227,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		// The provider writes the selection files and nothing else, so waiting on selection.ready is
 		// the confirmation -- and it is the same file a click produces, which is what keeps one read
 		// path for both routes.
-		if (!WaitForFile(Path.Combine(workDir!, "selection.ready"), SnapshotTimeout))
+		if (!WaitForMarker(Path.Combine(workDir!, "selection.ready"), SnapshotTimeout))
 		{
 			return new LiveXamlSelection
 			{
@@ -244,6 +268,14 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	}
 
 	/// <summary>
+	/// The first token of a ready file: what the provider decided, without the generation it stamped
+	/// after it. Read as a token rather than as the whole line, because the line grew a second field
+	/// and an equality test against it would quietly answer "no" to every question.
+	/// </summary>
+	private static string Verdict(string path) =>
+		ReadFirstLine(path).Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
+
+	/// <summary>
 	/// Reads the element that was picked, if any. Deliberately does not inject: the toolbar is resident
 	/// and owns the selection, and the person may have picked without this side being involved at all --
 	/// which is the case this exists for. That is also why the armed state is read from the provider's
@@ -256,8 +288,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			return new LiveXamlSelection { Detail = "No XAML tool has run against this session yet, so the in-app toolbar is not installed." };
 		}
 
-		var (mode, justMyXaml) = ReadOverlayState();
-		var armed = mode == "select";
+		// This call deliberately does not inject, so the state file it reads was written for whatever
+		// request went last. That is the current state and can be trusted -- unless the provider never
+		// stamped it with that request's generation, which means it is not this side's answer to read.
+		var (mode, justMyXaml, known) = ReadOverlayState();
+		var armed = known && mode == "select";
 		var selectionFile = Path.Combine(_workDir, "selection.tsv");
 		if (!File.Exists(selectionFile))
 		{
@@ -388,26 +423,35 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 	/// What the in-app toolbar says its mode is. Absent or unreadable counts as idle: the file is only
 	/// ever a hint about a UI the person controls, and no tool should fail because it is missing.
 	/// </summary>
-	private (string Mode, bool JustMyXaml) ReadOverlayState()
+	private (string Mode, bool JustMyXaml, bool Known) ReadOverlayState()
 	{
 		try
 		{
 			var stateFile = Path.Combine(_workDir!, "overlay.state");
-			if (!File.Exists(stateFile)) return ("idle", true);
+			if (!File.Exists(stateFile)) return ("idle", true, false);
 
-			// "<mode> justMyXaml=<0|1>". Tokenised, not compared whole: the file gained the toggle and
-			// a parser matching the entire line against "select" then read every armed overlay as idle,
-			// which the select-mode test caught precisely because it asserts the provider's own report
-			// rather than what this side last asked for.
-			var tokens = File.ReadAllText(stateFile).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+			// "<mode> justMyXaml=<0|1> gen=<n>". Tokenised, not compared whole: the file gained the
+			// toggle and a parser matching the entire line against "select" then read every armed
+			// overlay as idle, which the select-mode test caught precisely because it asserts the
+			// provider's own report rather than what this side last asked for.
+			var line = File.ReadAllText(stateFile).Trim();
+			var tokens = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 			var mode = tokens.Length > 0 ? tokens[0] : "idle";
 			var justMyXaml = !tokens.Contains("justMyXaml=0", StringComparer.Ordinal);
 
-			return (mode, justMyXaml);
+			// Believed only when the provider wrote it for the request this side last sent. Every
+			// value in this file is legal, so a line left by an earlier request is a wrong answer
+			// with nothing to mark it as one -- and the defaults returned when the file is missing
+			// are legal too, which made "not written yet" and "written as true" the same reading.
+			// Whoever asks now gets to hear that it cannot be said (#57).
+			var generation = GenerationIn(line);
+			var known = generation is null || generation == _generation;
+
+			return (mode, justMyXaml, known);
 		}
 		catch (IOException)
 		{
-			return ("idle", true);
+			return ("idle", true, false);
 		}
 	}
 
@@ -452,7 +496,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			var (workDir, error) = Inject(pid, "apply", commands);
 			if (error is not null) return new LiveXamlReloadResult { Detail = error };
 
-			if (!WaitForFile(Path.Combine(workDir!, "apply.ready"), SnapshotTimeout))
+			if (!WaitForMarker(Path.Combine(workDir!, "apply.ready"), SnapshotTimeout))
 			{
 				return new LiveXamlReloadResult { Detail = "The XAML provider was injected but did not report the apply in time." };
 			}
@@ -576,7 +620,13 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 				File.WriteAllLines(Path.Combine(workDir, "commands.tsv"), commands);
 			}
 
-			File.WriteAllText(Path.Combine(workDir, "request.txt"), request);
+			// The generation goes on a second line, which the provider echoes onto what it writes
+			// back. A second line rather than another token or another file: the provider reads the
+			// request from the first line only, so nothing that parses a verb can be disturbed by
+			// this -- and one of those parsers matches on the line's own suffix ("properties <handle>
+			// all"), which an appended token would have broken silently.
+			_generation++;
+			File.WriteAllText(Path.Combine(workDir, "request.txt"), $"{request}\n{_generation}\n");
 		}
 		catch (Exception exception)
 		{
@@ -623,14 +673,32 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 			return (_workDir, _stagedProvider);
 		}
 
-		var workDir = Path.Combine(Path.GetTempPath(), "RoseMcpXaml", Environment.ProcessId.ToString());
+		var root = Path.Combine(Path.GetTempPath(), "RoseMcpXaml");
+
+		// Before staging anything, clear out what earlier hosts left behind. Nothing ever deleted
+		// these: 146 folders and 225.6 MB of them on the machine this was found on, each holding a
+		// copy of the provider and each carrying a grant to ALL APPLICATION PACKAGES, so they are
+		// world-readable directories accumulating in the user's TEMP.
+		SweepDeadSandboxFolders(root);
+
+		var workDir = Path.Combine(root, Environment.ProcessId.ToString());
+
+		// Our own pid's folder goes too, because a pid is reusable. A host that draws a recycled pid
+		// used to find a populated folder and, worse than a stale state file, load a stale *provider*:
+		// the copy below was skipped whenever the DLL was already there, so deploying a new provider
+		// and getting the old one was silent and every symptom pointed at the change just made. It is
+		// also why the fast rebuild loop (build the provider, copy it over, restart the app) worked at
+		// all -- a new pid meant a fresh copy -- and it would have stopped working the first time a
+		// pid came round again.
+		TryDeleteDirectory(workDir);
 		Directory.CreateDirectory(workDir);
 
+		// Unconditional. The overwrite was always there and always unreachable behind the existence
+		// test; it can only be reached now because the folder above is cleared first, which is why
+		// the two halves of this fix have to land together. One file copy per session is nothing
+		// beside injecting into a process.
 		var stagedProvider = Path.Combine(workDir, ProviderFileName);
-		if (!File.Exists(stagedProvider))
-		{
-			File.Copy(provider, stagedProvider, overwrite: true);
-		}
+		File.Copy(provider, stagedProvider, overwrite: true);
 
 		// ALL APPLICATION PACKAGES (S-1-15-2-1) and ALL RESTRICTED APPLICATION PACKAGES (S-1-15-2-2):
 		// Modify grants read+execute to load the DLL and read commands, and write for the provider's
@@ -643,6 +711,84 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		_workDir = workDir;
 		_stagedProvider = stagedProvider;
 		return (workDir, stagedProvider);
+	}
+
+	/// <summary>
+	/// Deletes the sandbox folders belonging to hosts that are gone, the way <c>RoseMcp.Logging</c>
+	/// prunes its own sessions at startup.
+	/// <para>
+	/// A folder is named after the pid that made it, so "is that pid still running" is the whole test.
+	/// A pid that has been recycled by some unrelated process reads as alive and its folder is kept,
+	/// which is the safe direction to be wrong in: the cost is one abandoned folder until the next
+	/// sweep, where deleting a live host's folder would pull the provider out from under it.
+	/// </para>
+	/// </summary>
+	private void SweepDeadSandboxFolders(string root)
+	{
+		try
+		{
+			if (!Directory.Exists(root)) return;
+
+			foreach (var folder in Directory.EnumerateDirectories(root))
+			{
+				if (!int.TryParse(Path.GetFileName(folder), out var pid)) continue;
+				if (pid == Environment.ProcessId) continue; // Ours; the caller deals with it deliberately.
+				if (IsAlive(pid)) continue;
+
+				TryDeleteDirectory(folder);
+			}
+		}
+		catch (Exception exception)
+		{
+			// Tidying, never the job: a folder that cannot be enumerated or removed costs disk and
+			// nothing else, and failing a XAML call over it would be the wrong trade entirely.
+			logger.LogDebug(exception, "Sweeping stale XAML provider sandbox folders under {Root} failed.", root);
+		}
+	}
+
+	private static bool IsAlive(int pid)
+	{
+		try
+		{
+			using var process = Process.GetProcessById(pid);
+			return !process.HasExited;
+		}
+		catch (ArgumentException)
+		{
+			return false; // No process with that id.
+		}
+		catch (InvalidOperationException)
+		{
+			return false;
+		}
+	}
+
+	private static void TryDeleteDirectory(string path)
+	{
+		try
+		{
+			if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+		}
+		catch (Exception)
+		{
+			// Whatever is still held belongs to an app that has the provider loaded, and that app
+			// outlives the debug session on purpose -- detaching leaves it running. The next host to
+			// start sweeps it once this pid is gone, which is why the sweep and this go together.
+		}
+	}
+
+	/// <summary>
+	/// Deletes this session's sandbox folder. Best effort by nature, for the reason above: the staged
+	/// provider is loaded into an app that is meant to still be running afterwards, so the DLL is
+	/// held open and only the next host's sweep can finish the job.
+	/// </summary>
+	public void Dispose()
+	{
+		if (_workDir is null) return;
+
+		TryDeleteDirectory(_workDir);
+		_workDir = null;
+		_stagedProvider = null;
 	}
 
 	private void Icacls(string path, string arguments)
@@ -782,16 +928,55 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		return builder.ToString();
 	}
 
-	private static bool WaitForFile(string path, TimeSpan timeout)
+	/// <summary>
+	/// Waits for a marker the provider wrote <em>for this request</em>.
+	/// <para>
+	/// Existence alone was the test, and it is not enough. The host deletes the marker before
+	/// injecting, so a file that exists afterwards normally does mean the provider has answered --
+	/// but <see cref="TryDelete"/> swallows its failures, and the moment one fails the wait is
+	/// satisfied instantly by the previous request's marker. Nothing downstream can tell the
+	/// difference, so arming reports success and the read that follows returns the arm before it,
+	/// which is a legal value and a wrong answer.
+	/// </para>
+	/// <para>
+	/// A marker carrying no generation at all is accepted: that is a provider older than this host,
+	/// and refusing it would turn a version skew into a timeout blaming the app's diagnostics layer.
+	/// A marker carrying a <em>different</em> generation is precisely the stale one this rejects.
+	/// </para>
+	/// </summary>
+	private bool WaitForMarker(string path, TimeSpan timeout)
 	{
 		var deadline = DateTime.UtcNow + timeout;
-		while (DateTime.UtcNow < deadline)
+		while (true)
 		{
-			if (File.Exists(path)) return true;
+			if (IsCurrent(path)) return true;
+			if (DateTime.UtcNow >= deadline) return false;
+
 			Thread.Sleep(100);
 		}
+	}
 
-		return File.Exists(path);
+	private bool IsCurrent(string path)
+	{
+		if (!File.Exists(path)) return false;
+
+		var generation = GenerationIn(ReadFirstLine(path));
+
+		return generation is null || generation == _generation;
+	}
+
+	/// <summary>The <c>gen=</c> token the provider stamped on a line, or null when it carries none.</summary>
+	private static long? GenerationIn(string line)
+	{
+		foreach (var token in line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+		{
+			if (token.StartsWith("gen=", StringComparison.Ordinal) && long.TryParse(token.AsSpan(4), out var generation))
+			{
+				return generation;
+			}
+		}
+
+		return null;
 	}
 
 	private static void TryDelete(string path)
@@ -802,7 +987,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger)
 		}
 		catch (Exception)
 		{
-			// A stale file we cannot delete is handled by the ready-marker wait, not fatal here.
+			// Not fatal, and no longer load-bearing: what a failure here used to produce was a wait
+			// satisfied by the stale file it had just failed to remove. The generation on the marker
+			// is what catches that now, so this is best-effort tidying rather than the thing keeping
+			// the handshake honest.
 		}
 	}
 

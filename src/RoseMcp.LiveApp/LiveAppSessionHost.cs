@@ -441,14 +441,25 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	public Task StopAsync(CancellationToken cancellationToken)
 	{
 		CorDebugSession? session;
+		XamlDiagnosticsSession? xaml;
 		lock (_gate)
 		{
 			session = _session;
 			_session = null;
+			xaml = _xaml;
+			_xaml = null;
 			_state = LiveAppSessionState.Ended;
 		}
 
 		session?.Dispose();
+
+		// The XAML sandbox folder belongs to the host that made it, so it goes when the host does.
+		// Nothing used to remove it at all, and the folders accumulated indefinitely -- each with a
+		// copy of the provider and a grant to ALL APPLICATION PACKAGES. Whatever the target app still
+		// holds open cannot go now, because detaching leaves that app running on purpose; the next
+		// host to start sweeps the remainder once this pid is gone (#57).
+		xaml?.Dispose();
+
 		DisableUwpDebugging();
 		return Task.CompletedTask;
 	}

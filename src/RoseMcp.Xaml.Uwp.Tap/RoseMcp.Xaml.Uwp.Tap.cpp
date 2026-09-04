@@ -69,6 +69,16 @@ static const CLSID CLSID_RoseTap =
 
 static std::atomic<long> g_lockCount{ 0 };
 static std::wstring g_workDir;
+
+// The host's number for the request being served, echoed into everything written back so the host
+// can tell a file this request produced from one left behind by the last (#57).
+//
+// It is needed because every handshake here was "does this file exist", and the host clears the
+// marker before injecting -- so the moment that clear silently fails, the wait is satisfied by the
+// *previous* request's marker and the host reads an answer written before it asked the question.
+// Existence cannot distinguish those; a number the host chose can. Carried as the text the host
+// wrote rather than parsed, since nothing on this side has any reason to do arithmetic on it.
+static std::wstring g_generation;
 static std::mutex g_logMutex;
 
 static std::wstring Hex(HRESULT hr)
@@ -404,6 +414,16 @@ public:
 		Chrome();
 	}
 
+	/// Rewrites the state file, whatever the request was. Called at the end of every injection so
+	/// that the file always carries the generation of the request that has just been served -- which
+	/// is what lets the host tell a current answer from one left behind by the previous request. A
+	/// request that changes nothing about the mode still has to leave that proof behind, or reading
+	/// the state after a plain tree call would come back as "cannot say".
+	void RefreshState()
+	{
+		WriteState();
+	}
+
 	// Clears the pick: the mark on screen and the record on disk, which have to go together or
 	// this is a lie. Hiding the box alone leaves rose_xaml_selection reporting a selection the
 	// person can no longer see; deleting the files alone leaves a mark pointing at nothing.
@@ -423,7 +443,12 @@ public:
 		if (!g_workDir.empty())
 		{
 			std::wofstream done(g_workDir + L"\\deselect.ready", std::ios::trunc);
-			if (done) done << (had ? L"cleared" : L"nothing") << L"\n";
+			if (done)
+			{
+				done << (had ? L"cleared" : L"nothing");
+				if (!g_generation.empty()) done << L" gen=" << g_generation;
+				done << L"\n";
+			}
 		}
 
 		Log(had ? L"overlay: selection cleared" : L"overlay: deselect with nothing selected");
@@ -1631,7 +1656,15 @@ private:
 		if (g_workDir.empty()) return;
 
 		std::wofstream state(g_workDir + L"\\overlay.state", std::ios::trunc);
-		if (state) state << (m_selecting ? L"select" : L"idle") << L" justMyXaml=" << (m_justMyXaml ? L"1" : L"0") << L"\n";
+		if (!state) return;
+
+		state << (m_selecting ? L"select" : L"idle") << L" justMyXaml=" << (m_justMyXaml ? L"1" : L"0");
+
+		// Appended, never inserted: the host tokenises this line, so a reader that does not know
+		// about the generation goes on working and one that does can tell whose answer this is.
+		if (!g_generation.empty()) state << L" gen=" << g_generation;
+
+		state << L"\n";
 	}
 
 	// "armed <width>x<height>", the extent XAML arranged the capture layer at. A zero here is the
@@ -1644,7 +1677,12 @@ private:
 		const int height = static_cast<int>(m_capture.ActualHeight());
 
 		std::wofstream armed(g_workDir + L"\\select.ready", std::ios::trunc);
-		if (armed) armed << L"armed " << width << L"x" << height << L"\n";
+		if (armed)
+		{
+			armed << L"armed " << width << L"x" << height;
+			if (!g_generation.empty()) armed << L" gen=" << g_generation;
+			armed << L"\n";
+		}
 
 		Log(L"overlay: capture layer arranged at " + std::to_wstring(width) + L"x" + std::to_wstring(height));
 	}
@@ -1848,6 +1886,12 @@ public:
 			Overlay().BeginSelect(includeAll);
 		}
 
+		// Last, and for every request rather than only the ones that change the mode. The state file
+		// is how the host asks what the toolbar is doing, and its answer is only usable if the host
+		// can tell it was written for the question just asked -- so every injection leaves that proof
+		// behind, including a tree or properties read that touches the mode not at all.
+		Overlay().RefreshState();
+
 		return S_OK;
 	}
 
@@ -1967,19 +2011,30 @@ private:
 
 	// The host writes one line saying what it wants of this injection (a tree is always written; a
 	// "properties <handle>" line asks for that element's property chain as well).
+	// The request is the first line, and the host's generation for it the second. Two lines of one
+	// file rather than a file each, because the first line is all the verb parsing has ever read --
+	// so a second line costs nothing and cannot disturb it, and "properties <handle> all" still
+	// matches on its own suffix.
 	std::wstring ReadRequest()
 	{
+		g_generation.clear();
+
 		if (g_workDir.empty()) return std::wstring();
 
 		std::wifstream file(g_workDir + L"\\request.txt");
 		std::wstring line;
-		if (file && std::getline(file, line))
+		if (!file || !std::getline(file, line)) return std::wstring();
+
+		if (!line.empty() && line.back() == L'\r') line.pop_back();
+
+		std::wstring generation;
+		if (std::getline(file, generation))
 		{
-			if (!line.empty() && line.back() == L'\r') line.pop_back();
-			return line;
+			if (!generation.empty() && generation.back() == L'\r') generation.pop_back();
+			g_generation = generation;
 		}
 
-		return std::wstring();
+		return line;
 	}
 
 	// One element's property chain: every effective (non-overridden) value with its type, provenance

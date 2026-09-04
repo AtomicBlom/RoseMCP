@@ -24,4 +24,14 @@ public sealed record Verification
 
 	/// <summary>The projects that were compiled.</summary>
 	public IReadOnlyList<string> Projects { get; init; } = [];
+
+	/// <summary>
+	/// What would import the names that did not resolve, one line each.
+	/// <para>
+	/// Computed here rather than by each caller so a write tool added later cannot forget it. The
+	/// compilation this reads has just been built to work out what the edit broke, so the answer
+	/// is a lookup rather than work.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<string> Suggestions { get; init; } = [];
 }

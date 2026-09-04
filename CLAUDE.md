@@ -204,7 +204,11 @@ reclaim memory or pick up a rebuilt generator.
   puts the destination's on: both halves, because a caller that has read the file and indented for
   the destination is as likely as one that wrote at column zero, and only removing the baseline
   first makes those the same request. Where the formatter *does* have a rule it still wins, since it
-  runs afterwards.
+  runs afterwards. Replacing a body has the same trap from the other side: the signature is copied
+  out of the file, and the span it is copied from begins *after* the indentation of its first line,
+  so a wrapped parameter list read that way looks written at column zero and every continuation
+  came out a level deep. Nothing downstream corrects it and nothing complains, so the signature
+  drifted on a change that promised to touch only the body.
 - **The line endings inside a string literal are content, and this was measured.** A raw literal
   written with CRLF and the same one written with LF are different strings -- the compiler says so,
   which is worth knowing because it is tempting to assume raw literals normalise and they do not. So
@@ -236,6 +240,25 @@ reclaim memory or pick up a rebuilt generator.
   block: a global using, an implicit using from the SDK, and the namespace the file is in are all
   ways to be in scope without appearing there, and importing one of those again is IDE0005. Both
   halves of getting it wrong are build errors, which is the only reason it is worth this much code.
+- **Which namespace a name needs is a search, and it refuses to pick.** Being told is the common
+  case by a distance -- someone writing `Encoding.UTF8` knows it is `System.Text` -- and the rest
+  is a question the compilation can already answer, since it holds every type in every referenced
+  assembly. What it must not do is choose. Plenty of names live in two namespaces at once, and the
+  wrong import is the worst shape of wrong here because it compiles and binds to the wrong type, so
+  the answer is one namespace or a list, never the first of several. It is as careful about the
+  things that look like an answer and are not: a nested type reachable only through its container,
+  an arity that does not match the use site, a type in a project this one does not reference, and a
+  namespace already in scope. Each of those turns adding the obvious using into a second error
+  rather than none. Most of the value is in never being asked -- the write tools run the search
+  over the errors they introduced, off the compilation they had just built to find them, so the
+  namespace arrives with the error rather than a call later. The IDE's own add-import fix is no
+  route to any of it: that lives in `Microsoft.CodeAnalysis.CSharp.Features`, which is not
+  referenced, and what *is* registered for CS0103 offers to generate the missing member -- the
+  wrong fix, confidently, for a name that exists already.
+- **A fixer that declines is the same as no fixer.** `rose_list_code_fixes` dropped a diagnostic
+  whose providers offered nothing from `fixes` and from `unfixableIds` both, so it disappeared from
+  the answer entirely -- which is exactly what the second list exists to prevent. CS0103 is what
+  found it: two fixers claim it and neither had anything to say.
 - **A stale build output is a notice, never a degraded reason.** `Degraded` means these answers
   cannot be trusted, and they are exactly as good with a stale `bin` as without one, because they
   come from source. It is also the ordinary state of a solution somebody is editing, so putting it
@@ -318,9 +341,9 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 167 tests in about a second, so it is worth running on every change.
+process -- 181 tests in about a second, so it is worth running on every change.
 `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes four to five minutes (203 tests). `RoseMcp.TestSupport` holds the
+builds and starts real workers, and takes four to five minutes (217 tests). `RoseMcp.TestSupport` holds the
 doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 
@@ -372,9 +395,11 @@ reaching for it is cheaper than that reflex. Three things carry that, in descend
    refuse code that does not parse, format what they write, and report what the edit broke --
    so there is no build in the edit loop. `rose_change_signature` adds, removes or retypes a
    parameter across every override, implementation and call site at once. Pass `usings` on any
-   of those when the code needs an import, or `rose_add_using` for code written another way. Before running
-   anything out of `bin`, `rose_build_freshness` says whether it is this code. Source-generated
-   code is only readable via `rose_list_generated_documents` / `rose_read_generated_document`.
+   of those when the code needs an import, or `rose_add_using` for code written another way; where
+   you cannot say which namespace a name needs, `rose_resolve_name` searches for it and refuses to
+   guess between two. Before running anything out of `bin`, `rose_build_freshness` says whether it
+   is this code. Source-generated code is only readable via `rose_list_generated_documents` /
+   `rose_read_generated_document`.
    ```
 
 Register the server with:

@@ -116,4 +116,37 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 
 		return await NavigationService.SearchAsync(snapshot, query, maxResults <= 0 ? 50 : maxResults, cancellationToken);
 	}
+
+	[McpServerTool(
+		Name = ToolNames.ResolveName,
+		Title = "Find the namespace a name needs",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ResolveName)]
+	public async Task<NameResolutionResult> ResolveNameAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The name as the code spells it: Encoding, List<int>, or Encoding.UTF8.")] string name,
+		[Description("The file it is used in. Scopes the search to what that project can reach, and is the only way to know what is in scope there already.")] string? filePath = null,
+		[Description("How many type arguments the use site supplies, where the name is not written with them.")] int? arity = null,
+		[Description("Maximum candidates to return. Defaults to 20.")] int maxResults = 20,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var snapshot = await host.ReadAsync(cancellationToken);
+		working.Report($"Working out what {name} could be");
+
+		var request = new ResolveNameRequest
+		{
+			Name = name,
+			FilePath = filePath,
+			Arity = arity,
+			MaxResults = maxResults <= 0 ? 20 : maxResults,
+		};
+
+		return await NameResolver.ResolveAsync(snapshot, request, cancellationToken, working);
+	}
 }

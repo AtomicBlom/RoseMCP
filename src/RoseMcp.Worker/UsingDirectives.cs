@@ -47,7 +47,7 @@ public static class UsingDirectives
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
-			if (Covering(current, model, requested, cancellationToken) is { } reason)
+			if (AlreadyInScope(current, model, requested, cancellationToken) is { } reason)
 			{
 				covered.Add($"{requested}: {reason}");
 				continue;
@@ -67,8 +67,14 @@ public static class UsingDirectives
 	/// are why this is asked of the compilation rather than of the using list: adding a directive
 	/// for something a global using already covers is IDE0005, which fails the build.
 	/// </para>
+	/// <para>
+	/// Public because resolving a name asks the same question from the other end: a candidate
+	/// namespace already in scope is one that would fix nothing, and that is worth saying rather
+	/// than filtering out. Two implementations of "already in scope" would be two chances to
+	/// disagree about what counts.
+	/// </para>
 	/// </summary>
-	private static string? Covering(
+	public static string? AlreadyInScope(
 		CompilationUnitSyntax root,
 		SemanticModel model,
 		string requested,

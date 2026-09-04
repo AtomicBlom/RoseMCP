@@ -41,7 +41,14 @@ public static class MemberEditService
 	/// </summary>
 	private const int Listed = 20;
 
-	/// <summary>Errors that mean a name did not resolve, which is usually an import rather than a mistake.</summary>
+	/// <summary>
+	/// Errors that mean a name did not resolve, which is usually an import rather than a mistake.
+	/// <para>
+	/// Wider than the set <see cref="MissingImports"/> looks a namespace up for, and deliberately so:
+	/// CS0234 says a qualified name's left-hand side resolved and its right-hand side did not, which
+	/// no import fixes, but it still belongs in the advice about what an unresolved name means.
+	/// </para>
+	/// </summary>
 	private static readonly string[] Unresolved = ["CS0246", "CS0103", "CS0234"];
 
 	public static async Task<MutationResult<MemberEditResult>> EditAsync(
@@ -189,19 +196,26 @@ public static class MemberEditService
 		}
 
 		var text = await target.Document.GetTextAsync(cancellationToken);
+		var indent = IndentAt(text, declaration.SpanStart);
 
 		// Joined by a single space, with whatever separated the old signature from its old body
 		// dropped. The two are not interchangeable: a block body sat on the next line, so keeping
 		// that break would leave an expression body's => stranded on a line of its own, which no
 		// formatting rule then pulls back. One space lets .editorconfig decide where the brace of a
 		// block goes, which is the only place that decision belongs.
-		var head = text.ToString(TextSpan.FromBounds(declaration.SpanStart, bodyStart)).TrimEnd();
+		//
+		// Prefixed with the indentation the file gives the first line, which the span begins after.
+		// Without it a hand-wrapped parameter list reads as written at column zero, and the shift that
+		// puts the member where it goes moves every continuation a level too deep -- and Roslyn's
+		// formatter has no rule about where a wrapped list sits, so nothing downstream puts it back.
+		// The signature then drifts on a change that promised to touch only the body.
+		var head = indent + text.ToString(TextSpan.FromBounds(declaration.SpanStart, bodyStart)).TrimEnd();
 
 		var parsed = MemberSyntax.Parse(
 			$"{head} {Body(request.Code)}",
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
-			IndentAt(text, declaration.SpanStart));
+			indent);
 
 		if (parsed.Count != 1)
 		{
@@ -576,11 +590,16 @@ public static class MemberEditService
 			yield return $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics for those.";
 		}
 
-		if (verification.Introduced.Any(entry => Unresolved.Contains(entry.Id, StringComparer.Ordinal)))
+		// The namespace itself, where the compilation could work it out. This is the answer the caller
+		// needs next, and it used to be the point at which they went back to editing text.
+		foreach (var suggestion in verification.Suggestions) yield return suggestion;
+
+		if (verification.Introduced.Any(entry => Unresolved.Contains(entry.Id, StringComparer.Ordinal))
+			&& verification.Suggestions.Count == 0)
 		{
-			yield return "A name that does not resolve is either something not written yet or a missing using "
-				+ "directive. A using directive is not part of a member, so this did not add one -- if that is what "
-				+ "it needs, put it above the namespace yourself.";
+			yield return "A name that does not resolve is either something not written yet or a missing import, and "
+				+ "nothing of that name is reachable from here -- so it is the first. rose_resolve_name searches for "
+				+ "one by name; the usings argument on this tool imports what the code needs in the same call.";
 		}
 
 		// Said only where it can happen. A body cannot change a signature, and adding a member

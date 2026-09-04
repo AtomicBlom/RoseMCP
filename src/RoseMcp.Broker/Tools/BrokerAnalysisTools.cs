@@ -111,6 +111,30 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress);
 
 	[McpServerTool(
+		Name = ToolNames.ResolveName,
+		Title = "Find the namespace a name needs",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ResolveName)]
+	public Task<NameResolutionResult> ResolveNameAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The name as the code spells it: Encoding, List<int>, or Encoding.UTF8.")] string name,
+		[Description("The file it is used in. Scopes the search to what that project can reach, and is the only way to know what is in scope there already.")] string? filePath = null,
+		[Description("How many type arguments the use site supplies, where the name is not written with them.")] int? arity = null,
+		[Description("Maximum candidates to return. Defaults to 20.")] int maxResults = 20,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<NameResolutionResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ResolveName, new()
+		{
+			["name"] = name,
+			["filePath"] = filePath,
+			["arity"] = arity,
+			["maxResults"] = maxResults,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
 		Name = ToolNames.ListGeneratedDocuments,
 		Title = "List source-generated documents",
 		ReadOnly = true,

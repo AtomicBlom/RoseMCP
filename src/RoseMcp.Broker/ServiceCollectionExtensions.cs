@@ -61,7 +61,10 @@ public static class ServiceCollectionExtensions
 		  than editing the import block afterwards. rose_add_using does the same for code that
 		  arrived some other way. Either way it goes where the file's own ordering puts it, and one
 		  already in scope -- from a global using, an implicit using, or the namespace the file is
-		  in -- is reported rather than added, because adding it again is a build error too.
+		  in -- is reported rather than added, because adding it again is a build error too. Where
+		  you cannot say which namespace a name needs, rose_resolve_name searches the compilation
+		  for it and refuses to choose between two candidates rather than returning the first,
+		  because the wrong import compiles and binds to the wrong type.
 		- Adding, removing or retyping a parameter: rose_change_signature, not an edit per layer. It
 		  moves the base declaration and every override and implementation together, rewrites the
 		  arguments at every call site, keeps the param tags in the documentation in step, and

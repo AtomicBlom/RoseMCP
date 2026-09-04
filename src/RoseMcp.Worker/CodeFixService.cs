@@ -149,15 +149,20 @@ public static class CodeFixService
 		foreach (var diagnostic in diagnostics)
 		{
 			var providers = catalog.ProvidersFor(document.Project, diagnostic.Id);
-			if (providers.IsEmpty)
+			var actions = providers.IsEmpty
+				? []
+				: await OfferedAsync(providers, document, diagnostic, cancellationToken);
+
+			// A provider that claims the id and then offers nothing is, to a caller, the same as no
+			// provider at all. Skipping those left the diagnostic out of both lists and so out of the
+			// answer entirely -- which is precisely what UnfixableIds exists to prevent, and it was
+			// happening to CS0103: two fixers claim it and neither had anything to say.
+			if (actions.Count == 0)
 			{
 				if (!unfixable.Contains(diagnostic.Id, StringComparer.Ordinal)) unfixable.Add(diagnostic.Id);
 
 				continue;
 			}
-
-			var actions = await OfferedAsync(providers, document, diagnostic, cancellationToken);
-			if (actions.Count == 0) continue;
 
 			fixes.Add(new AvailableCodeFix
 			{
@@ -171,13 +176,27 @@ public static class CodeFixService
 			});
 		}
 
+		var notices = new List<string>(snapshot.Notices);
+
+		// Said whenever an unresolved name is present, not only when nothing claimed it. What is
+		// registered for CS0103 and CS0246 here is the "generate the missing member" family, which is
+		// the wrong fix when the name exists already and only needs importing; the right one,
+		// add-import, lives in Microsoft.CodeAnalysis.CSharp.Features -- the IDE layer this server
+		// deliberately does not reference.
+		if (diagnostics.Any(diagnostic => MissingImports.IsUnresolved(diagnostic.Id)))
+		{
+			notices.Add("A name that does not resolve has no add-import fix here: that one belongs to the IDE "
+				+ "layer, which this server does not load, and what is registered instead offers to generate the "
+				+ "missing member. rose_resolve_name finds which namespace it needs and rose_add_using writes it in.");
+		}
+
 		return new CodeFixList
 		{
 			Revision = snapshot.Revision,
 			FilePath = document.FilePath ?? filePath,
 			Fixes = fixes,
 			UnfixableIds = unfixable,
-			Notices = snapshot.Notices,
+			Notices = notices,
 		};
 	}
 

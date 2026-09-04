@@ -48,14 +48,20 @@ public static class EditVerification
 		var now = await ErrorsAsync(diagnostics, after, projects, cancellationToken);
 
 		var (introduced, resolved) = Delta(was, now);
+		var ordered = Ordered(introduced, nearest);
 
 		return new Verification
 		{
 			Ran = true,
-			Introduced = Ordered(introduced, nearest),
+			Introduced = ordered,
 			ResolvedCount = resolved,
 			TotalCount = now.Count,
 			Projects = projects,
+
+			// Asked here rather than by each write tool, so the one thing a caller wants next after
+			// "this name does not resolve" arrives with the error rather than a call later.
+			Suggestions = await MissingImports.SuggestAsync(
+				new WorkspaceSnapshot { Solution = after, Revision = 0 }, ordered, cancellationToken),
 		};
 	}
 

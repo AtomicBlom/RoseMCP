@@ -532,6 +532,11 @@ public static class ChangeSignatureService
 		{
 			yield return $"{existing} error(s) in the solution were there before this change.";
 		}
+
+		// A new or retyped parameter names a type, and the declaration's file is as likely to be
+		// missing the import for it as any other. This tool writes to files it was never pointed at,
+		// so the caller has no reason to have thought about their imports at all.
+		foreach (var suggestion in verification.Suggestions) yield return suggestion;
 	}
 
 	/// <summary>

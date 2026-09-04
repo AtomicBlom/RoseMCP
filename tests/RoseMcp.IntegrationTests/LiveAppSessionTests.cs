@@ -1425,6 +1425,108 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// Two XAML calls in flight together (#93). The host serves MCP calls concurrently -- measured
+	/// rather than assumed: two tree reads issued together finished in the time of one, where
+	/// serialised they take twice as long -- and everything behind them shares one work folder, one
+	/// request.txt and one generation counter.
+	/// <para>
+	/// What that produced, over ten concurrent pairs against this probe: a request.txt that could not
+	/// be written because the other call held it, several fifteen-second waits for a snapshot the
+	/// other call's injection had already consumed, and once <em>a tree of 22 elements where the app
+	/// has 24, returned with no detail set</em>. The last one is why this is a test and not a note in
+	/// the docs. A truncated tree reported as success hands out handles for a tree that is not there,
+	/// and nothing downstream can tell.
+	/// </para>
+	/// <para>
+	/// Repeated, because one pair landing well says nothing -- the silent failure appeared once in
+	/// ten. Asserted on the answers and not on timing: the fix makes these calls queue, so timing is
+	/// what changed, but a duration assertion would be flaky and slower is not the property worth
+	/// protecting. A tree read paired with a property read is the pair most likely to expose it, since
+	/// the two want different content in the one request file.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Serves_two_xaml_calls_in_flight_together()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "uwp concurrency probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			// The answer every concurrent read below has to match. Read on its own, so it is the
+			// uncontended truth about the app rather than one of the results under test.
+			var alone = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(alone.Detail is null, $"expected a tree, got detail: {alone.Detail}");
+			var expected = alone.Nodes.Count;
+			Assert.True(expected > 1, $"the probe should have more than one element, got {expected}");
+			var caption = alone.Nodes.First(node => node.Name == "Caption");
+
+			for (var attempt = 0; attempt < 5; attempt++)
+			{
+				var first = session.ReadXamlTreeAsync(cancellationToken);
+				var second = session.ReadXamlTreeAsync(cancellationToken);
+				var trees = await Task.WhenAll(first, second);
+
+				foreach (var tree in trees)
+				{
+					Assert.True(tree.Detail is null, $"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
+					Assert.Equal(expected, tree.Nodes.Count);
+				}
+			}
+
+			for (var attempt = 0; attempt < 5; attempt++)
+			{
+				var treeTask = session.ReadXamlTreeAsync(cancellationToken);
+				var propertiesTask = session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
+				var tree = await treeTask;
+				var properties = await propertiesTask;
+
+				Assert.True(tree.Detail is null, $"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
+				Assert.Equal(expected, tree.Nodes.Count);
+
+				Assert.True(properties.Detail is null, $"attempt {attempt}: expected properties, got detail: {properties.Detail}");
+				Assert.Equal(caption.Handle, properties.Handle);
+				Assert.NotEmpty(properties.Properties);
+
+				// The element it answered about, rather than only the handle it echoed. How many
+				// properties come back is deliberately not asserted: that count is not stable across
+				// repeat reads even without concurrency, which is its own defect and not this one.
+				Assert.Contains(properties.Properties, property => property.Name == "Text");
+			}
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>One of the probe caption's live property values, read off the running app.</summary>
 	private static async Task<string?> CaptionValueAsync(
 		LiveAppSession session,

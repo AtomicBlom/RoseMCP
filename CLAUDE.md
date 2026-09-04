@@ -341,6 +341,22 @@ reclaim memory or pick up a rebuilt generator.
   Addresses computed from the live tree are exact, being resolved against the tree they came from; an
   address a diff derived from markup is a best effort, since markup order is not always the visual
   tree's, and it fails by saying so.
+- **One XAML request at a time, and the lock has to be re-entrant.** The live-app host serves MCP
+  calls concurrently -- measured, not assumed: two tree reads issued together finished in 118ms
+  against a warm single read of 112ms -- and every XAML request shares one work folder, one
+  `request.txt` and one generation counter. Ten concurrent pairs against the probe produced three
+  outcomes: a `request.txt` that could not be written because the other call held it, several
+  fifteen-second waits for a snapshot the other call's injection had already consumed, and once a
+  tree of 22 elements where the app has 24, returned with no detail set. The last is why this is a
+  lock and not a documented limitation, since a truncated tree hands out handles for a tree that is
+  not there. Serialised rather than given a folder each, because the provider keeps its work folder
+  in a global and does everything on the app's UI thread, so two folders would need a different
+  provider and would buy no parallelism from a single-threaded consumer. It must be re-entrant --
+  `System.Threading.Lock`, which is what the rest of this codebase uses: selecting by handle finishes
+  by calling `ReadSelection`, which takes the lock again on the same thread, and a `SemaphoreSlim`
+  would deadlock that forever. Do not conclude from a passing
+  concurrency test that the lock is unnecessary -- the silent failure appeared once in ten, and the
+  test was confirmed to fail with the locks removed.
 - **It is a live edit, not a hot reload, and the word is doing work.** Every edit is a property set or
   an `AddChild` against the element objects that exist at that instant; the app's compiled markup is
   untouched, so anything that rebuilds that part of the UI produces the original. "Reload" would

@@ -40,6 +40,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	private string? _workDir;
 	private string? _stagedProvider;
 
+	// The host end of the pipe the provider connects back on (#50). Present alongside the file
+	// channel while the two overlap: this proves the AppContainer can reach it before any request
+	// depends on it, which is the one thing about #50 that could not be settled by reading.
+	private XamlProviderPipe? _pipe;
+
 	// The number stamped on the request being served, and echoed back by the provider on everything it
 	// writes. Every handshake here used to be "does this file exist", with the host deleting the marker
 	// before injecting -- so a delete that silently failed left the wait satisfied by the *previous*
@@ -89,6 +94,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlTree ReadTreeCore(int pid)
 	{
+		// The pipe first, where the provider is already resident: no injection, no marker, no file.
+		// This is the whole point of #50 -- the provider does its work on the app's UI thread, so
+		// every request used to re-inject to get onto that thread, and a resident reader reaching it
+		// through the dispatcher makes a read a message instead.
+		if (_pipe?.Connected == true && _pipe.Request("tree", SnapshotTimeout) is { } served)
+		{
+			var fromPipe = ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", fromPipe.Count, pid);
+			return new LiveXamlTree { Nodes = fromPipe };
+		}
+
 		var (workDir, error) = Inject(pid, "tree");
 		if (error is not null) return new LiveXamlTree { Detail = error };
 
@@ -99,7 +115,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 		try
 		{
-			var nodes = ParseTree(Path.Combine(workDir!, "tree.tsv"));
+			var nodes = ParseTree(File.ReadLines(Path.Combine(workDir!, "tree.tsv"), Encoding.UTF8));
 			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid}.", nodes.Count, pid);
 			return new LiveXamlTree { Nodes = nodes };
 		}
@@ -124,6 +140,33 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	private LiveXamlProperties ReadPropertiesCore(int pid, ulong handle, bool includeDefaults)
 	{
 		var request = includeDefaults ? $"properties {handle} all" : $"properties {handle}";
+
+		// The pipe first, where the provider is resident (#50). The reply is a status line and then
+		// the rows, so "the chain could not be read" stays distinguishable from "read it and there
+		// was nothing" -- a distinction the marker file made with the word "error" and an empty reply
+		// could not make at all.
+		if (_pipe?.Connected == true && _pipe.Request(request, SnapshotTimeout) is { } served)
+		{
+			var lines = served.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+			if (lines.Length > 0 && lines[0] == "error")
+			{
+				return new LiveXamlProperties
+				{
+					Handle = handle,
+					Detail = "The XAML provider could not read that element's property chain. The handle may "
+						+ "name something that is not an element, or something no longer in the tree.",
+				};
+			}
+
+			if (lines.Length > 0 && lines[0] == "ok")
+			{
+				var fromPipe = ParseProperties(lines.Skip(1), handle);
+				logger.LogInformation(
+					"Read {Count} propert(y/ies) for handle {Handle} from pid {Pid} over the pipe.", fromPipe.Count, handle, pid);
+				return fromPipe;
+			}
+		}
+
 		var (workDir, error) = Inject(pid, request);
 		if (error is not null) return new LiveXamlProperties { Handle = handle, Detail = error };
 
@@ -134,7 +177,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 		try
 		{
-			var properties = ParseProperties(Path.Combine(workDir!, "properties.tsv"), handle);
+			var properties = ParseProperties(File.ReadLines(Path.Combine(workDir!, "properties.tsv"), Encoding.UTF8), handle);
 			logger.LogInformation("Read {Count} propert(y/ies) for handle {Handle} from pid {Pid}.", properties.Count, handle, pid);
 			return properties;
 		}
@@ -523,7 +566,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			var treeFile = Path.Combine(_workDir!, "tree.tsv");
 			if (!File.Exists(treeFile)) return [];
 
-			return ParseTree(treeFile).ToDictionary(node => node.Handle);
+			return ParseTree(File.ReadLines(treeFile, Encoding.UTF8)).ToDictionary(node => node.Handle);
 		}
 		catch (Exception exception) when (exception is IOException or ArgumentException)
 		{
@@ -1015,8 +1058,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var hr = 0;
 		while (true)
 		{
-			hr = InitializeXamlDiagnosticsEx(EndpointName, (uint)pid, null, stagedProvider, ProviderClsid, workDir);
-			if (hr >= 0) return (workDir, null);
+			// wszInitializationData is an arbitrary string handed to the TAP, and it already carries
+			// the work directory, so the pipe name rides in the same slot -- no new plumbing to
+			// establish the channel. Separated by '|', which cannot occur in a Windows path.
+			var initData = _pipe is null ? workDir : $"{workDir}|{_pipe.Name}";
+
+			hr = InitializeXamlDiagnosticsEx(EndpointName, (uint)pid, null, stagedProvider, ProviderClsid, initData);
+			if (hr >= 0)
+			{
+				NoteProviderPipe();
+				return (workDir, null);
+			}
 			if (hr != ErrorNotFound || DateTime.UtcNow >= deadline) break;
 
 			Thread.Sleep(250);
@@ -1034,6 +1086,24 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		return (null, detail);
 	}
 
+	/// <summary>
+	/// Records whether the provider connected back on the pipe. Observation only for now: every
+	/// request still goes through the files, so a pipe that never connects costs nothing but the
+	/// line in the log that says so (#50).
+	/// </summary>
+	private void NoteProviderPipe()
+	{
+		if (_pipe is null || _pipe.Connected) return;
+
+		var greeting = _pipe.WaitForProvider(TimeSpan.FromSeconds(5));
+		if (greeting is null)
+		{
+			logger.LogWarning("The XAML provider did not connect on {PipeName}.", _pipe.Name);
+			return;
+		}
+
+		logger.LogInformation("The XAML provider connected on {PipeName} and said: {Greeting}", _pipe.Name, greeting);
+	}
 	private (string WorkDir, string StagedProvider) StageSandboxFolder(string provider)
 	{
 		// Stage once per session and reuse: the first injection loads the provider DLL into the target,
@@ -1078,6 +1148,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			Icacls(workDir, $"/grant {sid}:(OI)(CI)(M)");
 		}
+
+		// Created with the folder rather than lazily, because the name has to exist before the first
+		// injection carries it.
+		_pipe = new XamlProviderPipe(logger);
+		_pipe.Listen();
 
 		_workDir = workDir;
 		_stagedProvider = stagedProvider;
@@ -1160,6 +1235,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			if (_workDir is null) return;
 
+			_pipe?.Dispose();
+			_pipe = null;
+
 			TryDeleteDirectory(_workDir);
 			_workDir = null;
 			_stagedProvider = null;
@@ -1185,10 +1263,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		}
 	}
 
-	private static List<LiveXamlNode> ParseTree(string treeFile)
+	private static List<LiveXamlNode> ParseTree(IEnumerable<string> lines)
 	{
 		var nodes = new List<LiveXamlNode>();
-		foreach (var line in File.ReadLines(treeFile, Encoding.UTF8))
+		foreach (var line in lines)
 		{
 			if (line.Length == 0) continue;
 
@@ -1224,7 +1302,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		return nodes;
 	}
 
-	private static LiveXamlProperties ParseProperties(string propertiesFile, ulong handle)
+	private static LiveXamlProperties ParseProperties(IEnumerable<string> lines, ulong handle)
 	{
 		string? typeName = null;
 		string? elementFile = null;
@@ -1232,7 +1310,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		int? elementColumn = null;
 		var properties = new List<LiveXamlProperty>();
 
-		foreach (var line in File.ReadLines(propertiesFile, Encoding.UTF8))
+		foreach (var line in lines)
 		{
 			if (line.Length == 0) continue;
 

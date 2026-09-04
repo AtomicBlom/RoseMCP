@@ -1142,6 +1142,78 @@ public sealed class LiveAppSessionTests
 		}
 	}
 
+	/// <summary>
+	/// Attached properties on the apply side (#11). The diff has always kept <c>Grid.Row</c> by its
+	/// dotted name, which is a different question from whether the provider can find one: an attached
+	/// property is not declared on the element it is set on, so whether it turns up in that element's
+	/// property chain under the same spelling the markup used is a fact about the framework and had
+	/// never been asked.
+	/// </summary>
+	[Fact]
+	public async Task Sets_an_attached_property_on_the_live_tree()
+	{
+		var msbuild = FindUwpMsBuild();
+		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+
+		EnsureX64HostBuilt();
+
+		var layout = BuildUwpProbeApp(msbuild!);
+		var aumid = RegisterUwpProbeApp(layout);
+		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+
+		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
+		var oldXaml = File.ReadAllText(xamlPath);
+
+		Assert.Contains("Grid.Row=\"0\"", oldXaml);
+		var newXaml = oldXaml.Replace("Grid.Row=\"0\"", "Grid.Row=\"1\"");
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = aumid,
+					Description = "uwp attached probe",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var running = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(running);
+
+			var reload = await session.ReloadXamlAsync(oldXaml, newXaml, cancellationToken);
+			Assert.True(reload.Detail is null, $"expected a reload, got detail: {reload.Detail}");
+
+			var edit = reload.Results.FirstOrDefault(result => result.Property == "Grid.Row");
+			Assert.NotNull(edit);
+			Assert.Equal("#Attached", edit!.Target);
+			Assert.Equal("applied", edit.Status);
+
+			// Read back off the app, because "applied" only says SetProperty returned S_OK.
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var element = tree.Nodes.Single(node => node.Name == "Attached");
+			var properties = await session.ReadXamlPropertiesAsync(element.Handle, includeDefaults: false, cancellationToken);
+			var row = properties.Properties.FirstOrDefault(property => property.Name == "Grid.Row");
+			Assert.NotNull(row);
+			Assert.Equal("1", row!.Value);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterUwpProbeApp();
+		}
+	}
+
 	/// <summary>The Background of whichever live element carries an address, read off the tree.</summary>
 	private static async Task<string?> BackgroundAtAsync(
 		LiveAppSession session,

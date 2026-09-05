@@ -61,6 +61,52 @@ namespace xshapes = winrt::Windows::UI::Xaml::Shapes;
 static const CLSID CLSID_RoseTap =
 { 0x7b9e5c10, 0x2d4a, 0x4f3b, { 0x9e, 0x21, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6 } };
 
+// The overlay's one genuine seam (#75): a passive observer of pointer movement, used for the
+// proximity fade that gets the marks out of the way. Two properties are required, and CoreWindow has
+// both -- it sees every move before XAML routes it, and it consumes nothing, so select mode never
+// takes input away from the app underneath.
+//
+// WinUI 3 has no CoreWindow, and its InputPointerSource was measured against exactly these two
+// properties rather than assumed equivalent, because the issue proposing the port doubted it. On a
+// WinUI 3 app, sweeping 41 moves over plain content and then 33 over an element whose handler sets
+// Handled: the island's source counted all 74, while the app's own root handler counted the 41 and
+// none of the 33. So it sees moves the app has already handled, and takes none of them away. The
+// WinUI provider (#76) implements this function with it.
+//
+// Positions arrive in the window's coordinate space, which is the anchor's: the diagnostics UI layer
+// is sized to the window, so no transform is needed here. A WinUI implementation reporting island
+// coordinates must check that still holds rather than inherit the assumption.
+//
+// The anchor goes unused under UWP, where the CoreWindow is ambient. It is in the signature because
+// WinUI 3 has no ambient window and must reach the content island through an element.
+static bool RoseTapWatchPointer(
+	xaml::UIElement const& anchor,
+	std::function<void(winrt::Windows::Foundation::Point const&)> onMove,
+	std::function<void()> onExit)
+{
+	(void)anchor;
+
+	const auto current = xaml::Window::Current();
+	if (!current) return false;
+
+	const auto window = current.CoreWindow();
+	if (!window) return false;
+
+	window.PointerMoved(
+		[onMove](winrt::Windows::UI::Core::CoreWindow const&, winrt::Windows::UI::Core::PointerEventArgs const& e)
+		{
+			onMove(e.CurrentPoint().Position());
+		});
+
+	window.PointerExited(
+		[onExit](winrt::Windows::UI::Core::CoreWindow const&, winrt::Windows::UI::Core::PointerEventArgs const&)
+		{
+			onExit();
+		});
+
+	return true;
+}
+
 // The two layers that need the aliases and the class id above: the overlay is written against the
 // six aliases, and the COM object needs CLSID_RoseTap to answer DllGetClassObject.
 #include "../RoseMcp.Xaml.Tap/tap_overlay.h"

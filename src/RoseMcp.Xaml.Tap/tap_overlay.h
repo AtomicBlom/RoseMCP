@@ -9,6 +9,19 @@
 // projections, its aliases and its CLSID, because a header that pulled in one framework's projections
 // itself would be the very coupling the split exists to remove. tap_channel.h and tap_diagnostics.h
 // come first for the same reason: the overlay logs and writes markers through the channel.
+//
+// The provider must also define, before including this:
+//
+//   bool RoseTapWatchPointer(
+//       xaml::UIElement const& anchor,
+//       std::function<void(winrt::Windows::Foundation::Point const&)> onMove,
+//       std::function<void()> onExit);
+//
+// which is the *only* thing here a namespace alias cannot supply (#75). It installs a passive
+// observer of pointer movement in the anchor's window, reporting positions in the anchor's own
+// coordinate space, and returns false when the framework offers nothing suitable. Two properties are
+// required of it and neither is negotiable: it must consume nothing, and it must see moves the app
+// has already marked handled. Everything else in this file is an alias swap.
 
 // The name the overlay's root carries in the live tree, so the tree snapshot can drop RoseMCP's own
 // UI instead of reporting it as part of the app's.
@@ -75,7 +88,7 @@ public:
 			m_layer.Children().Append(m_root);
 			WriteState();
 
-			const auto bounds = xaml::Window::Current().Bounds();
+			const auto bounds = Extent();
 			Log(L"overlay: toolbar installed on a " + std::wstring(winrt::get_class_name(m_layer))
 				+ L" UI layer (arranged " + std::to_wstring(static_cast<int>(m_layer.ActualWidth())) + L"x"
 				+ std::to_wstring(static_cast<int>(m_layer.ActualHeight())) + L"), window "
@@ -157,7 +170,7 @@ public:
 
 			// Explicit, for the same reason the root is: it has to cover the window, and it cannot get
 			// that from an alignment.
-			const auto bounds = xaml::Window::Current().Bounds();
+			const auto bounds = Extent();
 			m_capture.Width(bounds.Width);
 			m_capture.Height(bounds.Height);
 			m_capture.PointerPressed(
@@ -306,6 +319,17 @@ public:
 			return false;
 		}
 
+		// Said apart, because they are different answers and only one of them is about the element
+		// being unusable. Selecting something in another window is an ordinary thing to ask for in a
+		// multi-window app, and answering it with "no laid-out bounds" sends the caller looking at an
+		// element that is laid out perfectly well (#75).
+		if (!SharesRoot(element))
+		{
+			Log(L"overlay: handle " + std::to_wstring(handle) + L" is in another window; this overlay "
+				+ L"covers only the one it was installed in, so the element cannot be marked");
+			return false;
+		}
+
 		winrt::Windows::Foundation::Rect rect{};
 		if (!Bounds(element, rect))
 		{
@@ -404,13 +428,20 @@ private:
 		m_root.Children().Append(m_canvas);
 
 		// The window is not a fixed size, and neither is the thing we are covering.
-		xaml::Window::Current().SizeChanged(
-			[this](winrt::Windows::Foundation::IInspectable const&,
-				winrt::Windows::UI::Core::WindowSizeChangedEventArgs const&)
-			{
-				Resize();
-				Place();
-			});
+		//
+		// XamlRoot::Changed rather than Window::SizeChanged (#75): it exists under both frameworks,
+		// and it fires for the thing actually being covered. It also fires on a scale change, which
+		// the window event does not -- moving the app to a monitor at a different DPI resizes the
+		// XAML content without resizing the window, and the old handler slept through it.
+		if (const auto root = Root())
+		{
+			root.Changed(
+				[this](xaml::XamlRoot const&, xaml::XamlRootChangedEventArgs const&)
+				{
+					Resize();
+					Place();
+				});
+		}
 
 		// The outlines go on first so the toolbar always draws over them. Hover is dashed and thin,
 		// the pick solid and heavier, so the two never read as the same thing.
@@ -439,7 +470,7 @@ private:
 		m_panel.Opacity(PanelFar);
 		m_canvas.Children().Append(m_panel);
 
-		const auto bounds = xaml::Window::Current().Bounds();
+		const auto bounds = Extent();
 		m_dragLeft = bounds.Width > 220.0 ? bounds.Width - 200.0 : 16.0;
 		m_dragTop = 16.0;
 		Place();
@@ -766,7 +797,7 @@ private:
 	// panel set off again the instant the pointer turned around, while it was still outside the window.
 	void Resize()
 	{
-		const auto bounds = xaml::Window::Current().Bounds();
+		const auto bounds = Extent();
 		if (m_root)
 		{
 			m_root.Width(bounds.Width);
@@ -784,7 +815,7 @@ private:
 	{
 		if (!m_panel) return;
 
-		const auto bounds = xaml::Window::Current().Bounds();
+		const auto bounds = Extent();
 		xcontrols::Canvas::SetLeft(m_panel, Clamp(m_dragLeft, 0.0, bounds.Width - m_panel.ActualWidth()));
 		xcontrols::Canvas::SetTop(m_panel, Clamp(m_dragTop, 0.0, bounds.Height - m_panel.ActualHeight()));
 	}
@@ -868,13 +899,67 @@ private:
 		return source.find(L";component/") == std::wstring::npos;
 	}
 
+	// The XamlRoot this overlay lives in, taken from the diagnostics UI layer it was installed on.
+	//
+	// Everything below used to ask Window::Current, which does not exist in WinUI 3 (#75). XamlRoot
+	// answers all three things that were wanted of it -- the extent, the root content, and a
+	// size-changed event -- and it answers them on UWP too, since 1903, so this is one implementation
+	// rather than a seam. That was worth checking rather than assuming: the alternative was a
+	// per-provider host surface, and every line of it would have been the same line twice.
+	//
+	// It is also the more truthful question. Window::Current().Bounds() is the window; what the
+	// overlay actually covers is the XAML content, and the UI layer is sized to that.
+	xaml::XamlRoot Root() const
+	{
+		return m_layer ? m_layer.XamlRoot() : nullptr;
+	}
+
+	// The size of the area the overlay covers. Named Extent because Bounds is taken, just below, by
+	// the question of where one element sits.
+	winrt::Windows::Foundation::Size Extent() const
+	{
+		const auto root = Root();
+		return root ? root.Size() : winrt::Windows::Foundation::Size{ 0, 0 };
+	}
+
+	xaml::UIElement Content() const
+	{
+		const auto root = Root();
+		return root ? root.Content() : nullptr;
+	}
+
+	// Whether an element belongs to the XamlRoot this overlay was installed in.
+	//
+	// A WinUI 3 app can have several windows, and the tree snapshot enumerates whatever the framework
+	// gives it, so an element can be laid out perfectly well somewhere this overlay cannot draw (#75).
+	// The decision is one overlay, in the root the diagnostics site handed us, and elements outside it
+	// are *said* to be outside it. The alternatives were both worse: an overlay per XamlRoot multiplies
+	// a leaked singleton by however many windows the app opens, and drawing anyway puts the mark at the
+	// right coordinates in the wrong window, which is the failure #45 and #51 already exist about.
+	//
+	// UWP reaches here too and always agrees, having one root. That is why this costs nothing to have.
+	bool SharesRoot(xaml::UIElement const& element) const
+	{
+		const auto ours = Root();
+		if (!ours) return false;
+
+		const auto theirs = element.XamlRoot();
+		return theirs && theirs == ours;
+	}
+
 	// Where an element sits in the window, in the coordinates the overlay's Canvas uses -- the UI layer
 	// is sized to the window, so the window root's space is the Canvas's space.
 	bool Bounds(xaml::UIElement const& element, winrt::Windows::Foundation::Rect& rect)
 	{
 		try
 		{
-			const auto root = xaml::Window::Current().Content();
+			// Checked before the transform rather than left to it. TransformToVisual across two
+			// XamlRoots does not fail in a way that says what went wrong, so the caller was told the
+			// element had no laid-out bounds -- a confident wrong answer about one that is laid out
+			// fine, in another window.
+			if (!SharesRoot(element)) return false;
+
+			const auto root = Content();
 			if (!root) return false;
 
 			const auto transform = element.TransformToVisual(root);
@@ -913,33 +998,38 @@ private:
 	// A passive observer, and it has to be. The outlines are IsHitTestVisible(false) and the whole
 	// design of this overlay is that it does not take input away from the app it is sitting on, so
 	// PointerEntered on the mark is not available and giving it one would be the one thing this must
-	// never do. CoreWindow sees every move before XAML routes it and consumes nothing.
+	// never do. The observer has to see every move *before* XAML routes it and consume nothing.
+	//
+	// This is the one seam in the overlay that a namespace alias cannot close (#75), so the provider
+	// supplies it: UWP has CoreWindow, WinUI 3 does not and uses InputPointerSource off the content
+	// island. Both were measured against the two properties above rather than assumed -- see the note
+	// on RoseTapWatchPointer in the provider.
+	//
+	// Failure here is not fatal and deliberately so. It costs the proximity fade, which is why the
+	// marks get out of the way; it does not cost select mode, which picks through the full-bleed
+	// capture layer and never came through this.
 	void WatchPointer()
 	{
 		m_selectionFade = MakeFader({ m_selectBox, m_selectBadge });
 		m_panelFade = MakeFader({ m_panel });
 
-		const auto window = xaml::Window::Current().CoreWindow();
-		if (!window) return;
-
-		window.PointerMoved(
-			[this](winrt::Windows::UI::Core::CoreWindow const&, winrt::Windows::UI::Core::PointerEventArgs const& e)
+		const auto watched = RoseTapWatchPointer(
+			m_layer,
+			[this](winrt::Windows::Foundation::Point const& position)
 			{
 				try
 				{
-					Proximity(e.CurrentPoint().Position());
+					Proximity(position);
 				}
 				catch (winrt::hresult_error const&)
 				{
 					// Runs on every pointer move in somebody else's application. Never throw out of it.
 				}
-			});
-
-		// Leaving the window is not a move, and without this whatever was last under the pointer stays
-		// lit for as long as the pointer is somewhere else entirely.
-		window.PointerExited(
-			[this](winrt::Windows::UI::Core::CoreWindow const&, winrt::Windows::UI::Core::PointerEventArgs const&)
+			},
+			[this]()
 			{
+				// Leaving is not a move, and without this whatever was last under the pointer stays
+				// lit for as long as the pointer is somewhere else entirely.
 				try
 				{
 					Proximity(winrt::Windows::Foundation::Point{ -1.0f, -1.0f });
@@ -948,6 +1038,8 @@ private:
 				{
 				}
 			});
+
+		if (!watched) Log(L"overlay: no pointer source; the marks will not fade with proximity");
 	}
 
 	// Shows a freshly made selection, snapping when the pointer is already inside it and fading it up
@@ -1160,7 +1252,7 @@ private:
 
 	xaml::UIElement Beneath(winrt::Windows::Foundation::Point const& point, winrt::Windows::Foundation::Rect& rect)
 	{
-		const auto root = xaml::Window::Current().Content();
+		const auto root = Content();
 		if (!root)
 		{
 			Trace(L"beneath: the window has no content");
@@ -1361,7 +1453,7 @@ private:
 	{
 		if (g_workDir.empty()) return 0;
 
-		const auto root = xaml::Window::Current().Content();
+		const auto root = Content();
 		InstanceHandle selected = 0;
 		unsigned int written = 0;
 

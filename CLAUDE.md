@@ -357,6 +357,31 @@ reclaim memory or pick up a rebuilt generator.
   would deadlock that forever. Do not conclude from a passing
   concurrency test that the lock is unnecessary -- the silent failure appeared once in ten, and the
   test was confirmed to fail with the locks removed.
+- **The overlay asks its `XamlRoot`, not its window, and the pointer hook is the only seam left.**
+  `Window.Current` does not exist in WinUI 3, and nine sites wanted three things of it: the extent,
+  the root content, and a size-changed event. `XamlRoot` answers all three *and* exists on UWP since
+  1903, so it is one implementation rather than a per-provider host surface -- worth checking rather
+  than assuming, because the alternative was every line of it written twice. Every `Bounds()` use read
+  only `Width` and `Height`, so `XamlRoot.Size` is a drop-in for a `Rect`. `XamlRoot.Changed` also
+  fires on a scale change, which the window event does not: moving the app to a monitor at a different
+  DPI resizes the XAML content without resizing the window, and the old handler slept through it.
+  <br>
+  What is left is `RoseTapWatchPointer`, which the provider defines before including `tap_overlay.h`,
+  next to the aliases and the CLSID. It installs a **passive** observer of pointer movement for the
+  proximity fade, and two properties are required of it: it must consume nothing, and it must see
+  moves the app has already marked handled. UWP's `CoreWindow` has both. WinUI 3 has no `CoreWindow`,
+  and `InputPointerSource` was *measured* against exactly those two rather than assumed equivalent --
+  41 moves over plain content then 33 over an element whose handler sets `Handled`, and the island's
+  source counted all 74 while the app's own root handler counted the 41 and none of the 33. Losing it
+  costs the fade and nothing else: select mode picks through the full-bleed capture layer and never
+  came through here, so a provider that cannot supply it logs and carries on.
+  <br>
+  One overlay, in the root the diagnostics site handed us. A WinUI 3 app can have several windows and
+  the snapshot enumerates all of them, so `SharesRoot` is asked before anything is drawn -- an element
+  elsewhere is *said* to be elsewhere. It used to be told it had "no laid-out bounds", which is a
+  confident wrong answer about an element laid out perfectly well, and `TransformToVisual` across two
+  roots does not fail in a way that says otherwise. Drawing anyway would put the mark at the right
+  coordinates in the wrong window, which is the failure #45 and #51 are already about.
 - **It is a live edit, not a hot reload, and the word is doing work.** Every edit is a property set or
   an `AddChild` against the element objects that exist at that instant; the app's compiled markup is
   untouched, so anything that rebuilds that part of the UI produces the original. "Reload" would

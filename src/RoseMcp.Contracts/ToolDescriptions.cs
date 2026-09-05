@@ -38,6 +38,13 @@ public static class ToolDescriptions
 
 	public const string ColumnArgument = "One-based column, pointing at the identifier itself.";
 
+	public const string VerifyScopeArgument =
+		"How much to compile when verifying: auto, file, dependents, or solution. Defaults to auto, "
+			+ "which compiles the file's own projects for a body change or an effectively private "
+			+ "member and their dependents otherwise -- a public member added, reshaped or removed "
+			+ "breaks its dependents by construction. Narrowing it to file is faster and says in the "
+			+ "result which dependents nobody looked at.";
+
 	public const string WorkspaceOpen = """
         Starts loading a solution into a warm Roslyn host and returns at once, without waiting for the
         load. Call it when you are about to ask questions about a large one and have something else to

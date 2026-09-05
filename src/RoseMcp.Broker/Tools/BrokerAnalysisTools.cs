@@ -353,6 +353,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
@@ -364,6 +365,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,
+			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
@@ -384,6 +386,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
@@ -395,6 +398,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,
+			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
@@ -417,6 +421,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
@@ -430,6 +435,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,
+			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 

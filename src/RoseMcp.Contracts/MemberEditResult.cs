@@ -64,8 +64,20 @@ public sealed record MemberEditResult : WorkspaceMutationResult
 	public int TotalErrorCount { get; init; }
 
 	/// <summary>
-	/// The projects that were compiled: the ones that hold this file, not the ones that depend on
-	/// them. Named so the caller knows the scope of the answer rather than guessing at it.
+	/// The projects that were compiled. Named so the caller knows the scope of the answer rather
+	/// than guessing at it.
 	/// </summary>
 	public IReadOnlyList<string> ProjectsChecked { get; init; } = [];
+
+	/// <summary>
+	/// Projects that reference the edited ones and were not compiled, although this edit changes
+	/// something they can see. Empty unless the caller narrowed the scope by hand.
+	/// <para>
+	/// In the result rather than in a notice, because it is what qualifies the answer: a public
+	/// member reshaped, added or removed breaks its dependents by construction, so reporting no
+	/// introduced errors without saying where nobody looked is a clean bill of health for half the
+	/// question.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<string> DependentsNotChecked { get; init; } = [];
 }

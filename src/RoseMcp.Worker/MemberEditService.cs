@@ -102,7 +102,7 @@ public static class MemberEditService
 				diagnostics,
 				snapshot.Solution,
 				finished.Solution,
-				EditVerification.ProjectsHolding(finished.Solution, path),
+				EditVerification.ScopeFor(finished.Solution, path, written.Reaches, request.VerifyScope),
 				path,
 				cancellationToken);
 		}
@@ -124,6 +124,10 @@ public static class MemberEditService
 			ResolvedDiagnosticCount = verification.ResolvedCount,
 			TotalErrorCount = verification.TotalCount,
 			ProjectsChecked = verification.Projects,
+			DependentsNotChecked = request.Verify && outcome.ChangedFiles.Count > 0
+				? EditVerification.SkippedDependents(
+					finished.Solution, written.Document.FilePath!, written.Reaches, request.VerifyScope)
+				: [],
 			ChangedFiles = outcome.ChangedFiles,
 			Notices = notices,
 		};
@@ -168,7 +172,8 @@ public static class MemberEditService
 			root.ReplaceNode(target.Declaration, replacement),
 			marker,
 			target.Signature,
-			[.. NamesOf(parsed[0])]);
+			[.. NamesOf(parsed[0])],
+			target.Symbol);
 	}
 
 	/// <summary>
@@ -243,7 +248,8 @@ public static class MemberEditService
 			root.ReplaceNode(declaration, replacement),
 			marker,
 			target.Signature,
-			[.. NamesOf(declaration)]);
+			[.. NamesOf(declaration)],
+			Reaches: null);
 	}
 
 	private static async Task<Written> AddAsync(
@@ -316,7 +322,8 @@ public static class MemberEditService
 			root.ReplaceNode(type, updated),
 			marker,
 			target.Signature,
-			[.. parsed.SelectMany(NamesOf)]);
+			[.. parsed.SelectMany(NamesOf)],
+			target.Symbol);
 	}
 
 	/// <summary>
@@ -799,7 +806,8 @@ public static class MemberEditService
 		SyntaxNode Root,
 		SyntaxAnnotation Marker,
 		string Symbol,
-		IReadOnlyList<string> Members);
+		IReadOnlyList<string> Members,
+		ISymbol? Reaches);
 
 	private sealed record Finished(Solution Solution, int Line, IReadOnlyList<string> Notices);
 

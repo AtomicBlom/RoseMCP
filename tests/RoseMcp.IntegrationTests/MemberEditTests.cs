@@ -627,4 +627,96 @@ public sealed class MemberEditTests
 
 	private static Task<string> ReadAsync(FixtureSolution fixture, string file) =>
 		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current.CancellationToken);
+
+	/// <summary>
+	/// A public member reshaped breaks its dependents by construction, so the projects that reference
+	/// this one are compiled too. Checking only the file's own would report a clean edit at exactly the
+	/// moment it is not one -- which is the confident-answer-to-a-different-question this whole surface
+	/// is built to avoid.
+	/// </summary>
+	[Fact]
+	public async Task Compiles_the_dependents_of_a_public_member()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Core.Calculator.Multiply",
+			Code = "public static int Multiply(int left, int right, int scale) => left * right * scale;",
+		});
+
+		Assert.Contains("App", result.ProjectsChecked);
+		Assert.Contains(
+			result.IntroducedDiagnostics,
+			entry => entry.FilePath!.EndsWith("Program.cs", StringComparison.OrdinalIgnoreCase));
+		Assert.Empty(result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// Narrowing the scope by hand is allowed and is not silent: the same edit reports nothing wrong,
+	/// and says which dependents nobody looked at. Reporting no introduced errors without that is a
+	/// clean bill of health for half the question.
+	/// </summary>
+	[Fact]
+	public async Task Names_the_dependents_a_narrowed_scope_skipped()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Core.Calculator.Multiply",
+			Code = "public static int Multiply(int left, int right, int scale) => left * right * scale;",
+			VerifyScope = VerifyScope.File,
+		});
+
+		Assert.DoesNotContain("App", result.ProjectsChecked);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Contains("App", result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// A private member cannot be seen outside the projects holding it however the edit reshapes it,
+	/// so the wide scope is not paid for. Effective accessibility, not declared: a public member of a
+	/// private nested type is private too.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_private_member_in_its_own_projects()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Core.Calculator.Twice",
+			Code = "private static int Twice(int value, int times) => value * times;",
+		});
+
+		Assert.Equal(["Core"], result.ProjectsChecked);
+		Assert.Empty(result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// A body cannot be seen outside at all: the signature that comes out is the one that was there,
+	/// copied rather than rewritten, so nothing downstream can be looking at anything different.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_body_change_in_its_own_projects()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Core.Calculator.Multiply",
+			Code = "=> right * left;",
+		});
+
+		Assert.Equal(["Core"], result.ProjectsChecked);
+	}
 }

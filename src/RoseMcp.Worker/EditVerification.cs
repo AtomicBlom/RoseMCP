@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 using Microsoft.CodeAnalysis;
 
 using RoseMcp.Contracts;
@@ -78,6 +80,124 @@ public static class EditVerification
 				.Distinct(StringComparer.Ordinal)
 				.Order(StringComparer.Ordinal),
 		];
+
+	/// <summary>
+	/// The projects to compile for one edit, chosen from what the edit can reach.
+	/// </summary>
+	/// <param name="solution">The solution as the edit leaves it.</param>
+	/// <param name="filePath">The edited file, whose own projects are always included.</param>
+	/// <param name="reaches">
+	/// The symbol the edit changes the shape of, or null when it changes no shape -- a body, whose
+	/// signature is copied character for character and which nothing outside can see.
+	/// </param>
+	/// <param name="requested">What the caller asked for, or Auto to be told.</param>
+	public static IReadOnlyList<string> ScopeFor(
+		Solution solution,
+		string filePath,
+		ISymbol? reaches,
+		VerifyScope requested)
+	{
+		if (requested == VerifyScope.Solution) return AllProjects(solution);
+
+		var holding = ProjectsHolding(solution, filePath);
+
+		if (requested == VerifyScope.File) return holding;
+
+		var outward = requested == VerifyScope.Dependents || (reaches is not null && ReachesOutside(solution, reaches));
+
+		return outward ? WithDependents(solution, holding) : holding;
+	}
+
+	/// <summary>
+	/// The dependent projects a narrower scope left out although the edit can reach them, so a result
+	/// can say what it did not check rather than reporting a clean edit that was only half looked at.
+	/// Empty whenever the scope covers everything the edit reaches, which is what Auto always does.
+	/// </summary>
+	public static IReadOnlyList<string> SkippedDependents(
+		Solution solution,
+		string filePath,
+		ISymbol? reaches,
+		VerifyScope requested)
+	{
+		if (requested != VerifyScope.File || reaches is null || !ReachesOutside(solution, reaches)) return [];
+
+		var holding = ProjectsHolding(solution, filePath);
+
+		return [.. WithDependents(solution, holding).Except(holding, StringComparer.Ordinal)];
+	}
+
+	/// <summary>
+	/// Those projects and everything that transitively references them.
+	/// <para>
+	/// Less expensive than the count of projects suggests, because the analyser caches per project
+	/// against Roslyn's own dependent semantic version: the second of the two passes only recompiles
+	/// what the change actually reached.
+	/// </para>
+	/// </summary>
+	public static IReadOnlyList<string> WithDependents(Solution solution, IReadOnlyList<string> projects)
+	{
+		var graph = solution.GetProjectDependencyGraph();
+		var names = new HashSet<string>(projects, StringComparer.Ordinal);
+
+		foreach (var project in solution.Projects.Where(project => names.Contains(project.Name)).ToArray())
+		{
+			foreach (var id in graph.GetProjectsThatTransitivelyDependOnThisProject(project.Id))
+			{
+				if (solution.GetProject(id) is { } dependent) names.Add(dependent.Name);
+			}
+		}
+
+		return [.. names.Order(StringComparer.Ordinal)];
+	}
+
+	/// <summary>
+	/// Whether a change to this symbol's shape can break code in another project.
+	/// <para>
+	/// Effective accessibility, not declared: a public member of an internal type is internal, and
+	/// taking the declared value would widen the scope for most of a well-encapsulated solution.
+	/// </para>
+	/// <para>
+	/// Internal reaches outward only where the assembly says so. This is read from the project's own
+	/// InternalsVisibleTo attributes rather than assumed either way, because assuming it never reaches
+	/// is wrong for every repository whose test project sees internals -- which is most of them -- and
+	/// assuming it always does makes the wide scope the default for almost every edit.
+	/// </para>
+	/// </summary>
+	private static bool ReachesOutside(Solution solution, ISymbol symbol)
+	{
+		var accessibility = Effective(symbol);
+
+		if (accessibility is Accessibility.Public or Accessibility.Protected
+			or Accessibility.ProtectedOrInternal)
+		{
+			return true;
+		}
+
+		if (accessibility is not (Accessibility.Internal or Accessibility.ProtectedAndInternal)) return false;
+
+		return symbol.ContainingAssembly is { } assembly && HasFriends(assembly);
+	}
+
+	/// <summary>
+	/// The narrowest accessibility on the way out: a public member of an internal type is internal, and
+	/// a member of a private nested type is private however it is declared.
+	/// </summary>
+	private static Accessibility Effective(ISymbol symbol)
+	{
+		var narrowest = symbol.DeclaredAccessibility;
+
+		for (var containing = symbol.ContainingType; containing is not null; containing = containing.ContainingType)
+		{
+			if (containing.DeclaredAccessibility < narrowest) narrowest = containing.DeclaredAccessibility;
+		}
+
+		return narrowest;
+	}
+
+	/// <summary>Whether an assembly hands its internals to any other, which makes internal reach out.</summary>
+	private static bool HasFriends(IAssemblySymbol assembly) =>
+		assembly.GetAttributes().Any(attribute =>
+			attribute.AttributeClass?.Name == nameof(InternalsVisibleToAttribute));
 
 	/// <summary>
 	/// Every project, which is the right scope for a change to a signature: a call site this missed

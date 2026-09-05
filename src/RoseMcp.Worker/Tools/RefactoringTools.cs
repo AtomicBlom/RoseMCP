@@ -191,6 +191,7 @@ public sealed class RefactoringTools(
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
@@ -204,6 +205,7 @@ public sealed class RefactoringTools(
 				FilePath = filePath,
 				Apply = apply,
 				Verify = verify,
+				VerifyScope = ScopeOf(verifyScope),
 				ExpectedRevision = expectedRevision,
 			},
 			cancellationToken);
@@ -225,6 +227,7 @@ public sealed class RefactoringTools(
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
@@ -238,6 +241,7 @@ public sealed class RefactoringTools(
 				FilePath = filePath,
 				Apply = apply,
 				Verify = verify,
+				VerifyScope = ScopeOf(verifyScope),
 				ExpectedRevision = expectedRevision,
 			},
 			cancellationToken);
@@ -261,6 +265,7 @@ public sealed class RefactoringTools(
 		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
@@ -276,6 +281,7 @@ public sealed class RefactoringTools(
 				FilePath = filePath,
 				Apply = apply,
 				Verify = verify,
+				VerifyScope = ScopeOf(verifyScope),
 				ExpectedRevision = expectedRevision,
 			},
 			cancellationToken);
@@ -381,5 +387,20 @@ public sealed class RefactoringTools(
 			(snapshot, token) => MemberEditService.EditAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
+	}
+
+	/// <summary>
+	/// The scope a caller named, or Auto where they named nothing. A name that is not one of the four
+	/// is refused rather than taken as Auto: falling back silently would say the edit was checked
+	/// against dependents when it was not, which is the one thing a verification must never do.
+	/// </summary>
+	private static VerifyScope ScopeOf(string? requested)
+	{
+		if (string.IsNullOrWhiteSpace(requested)) return VerifyScope.Auto;
+
+		if (Enum.TryParse<VerifyScope>(requested, ignoreCase: true, out var scope)) return scope;
+
+		throw new ArgumentException(
+			$"'{requested}' is not a verification scope. Use auto, file, dependents, or solution.");
 	}
 }

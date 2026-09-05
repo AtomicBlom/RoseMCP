@@ -1,3 +1,5 @@
+using RoseMcp.Contracts;
+
 namespace RoseMcp.Worker;
 
 /// <summary>Which declaration to write, and what to write into it.</summary>
@@ -55,6 +57,14 @@ public sealed record MemberEditRequest
 	/// compilation rather than a build.
 	/// </summary>
 	public bool Verify { get; init; } = true;
+
+	/// <summary>
+	/// How much to compile. <see cref="VerifyScope.Auto"/> reads it off the edit -- the file's own
+	/// projects for a body change or an effectively private member, their dependents otherwise --
+	/// which is the only setting that is right without the caller working out what a member's
+	/// accessibility implies about who breaks.
+	/// </summary>
+	public VerifyScope VerifyScope { get; init; } = VerifyScope.Auto;
 
 	/// <summary>
 	/// Fail rather than apply if the workspace has moved past this revision. Matters when more than

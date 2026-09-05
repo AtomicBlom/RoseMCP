@@ -51,6 +51,13 @@ public static class MemberEditService
 	/// </summary>
 	private static readonly string[] Unresolved = ["CS0246", "CS0103", "CS0234"];
 
+	/// <summary>
+	/// How many distinct unresolved names an import is looked up for. An edit that introduces forty
+	/// has gone wrong in a way no import list will fix, and forty searches would make reporting that
+	/// failure slower than the failure.
+	/// </summary>
+	private const int Looked = 5;
+
 	public static async Task<MutationResult<MemberEditResult>> EditAsync(
 		WorkspaceSnapshot snapshot,
 		DiagnosticsService diagnostics,
@@ -90,21 +97,40 @@ public static class MemberEditService
 		if (outcome.ChangedFiles.Count == 0) notices.Add("The file already said exactly that, so nothing changed.");
 
 		var verification = Verification.NotRun;
+		var solution = finished.Solution;
+		var path = written.Document.FilePath!;
 
 		// A preview is verified too: what an edit would break is the question a preview is asking.
 		if (request.Verify && outcome.ChangedFiles.Count > 0)
 		{
 			progress?.Report("Compiling to see what the edit did", 70);
 
-			var path = written.Document.FilePath!;
+			var scope = EditVerification.ScopeFor(solution, path, written.Reaches, request.VerifyScope);
 
 			verification = await EditVerification.RunAsync(
-				diagnostics,
-				snapshot.Solution,
-				finished.Solution,
-				EditVerification.ScopeFor(finished.Solution, path, written.Reaches, request.VerifyScope),
-				path,
-				cancellationToken);
+				diagnostics, snapshot.Solution, solution, scope, path, cancellationToken);
+
+			// Only where something did not bind, so an edit whose imports were right or unneeded pays
+			// nothing for this and the one that needed it pays the compile it would have paid at the
+			// next build.
+			var wanted = request.ResolveUsings && verification.Introduced.Any(entry => MissingImports.IsUnresolved(entry.Id));
+
+			if (wanted)
+			{
+				progress?.Report("Working out which namespaces the code needs", 80);
+
+				solution = await ResolveImportsAsync(
+					snapshot, solution, written, path, verification.Introduced, notices, cancellationToken);
+
+				if (!ReferenceEquals(solution, finished.Solution))
+				{
+					outcome = await SolutionWriter.ApplyAsync(
+						snapshot.Solution, solution, request.Apply, noteSelfWrite, cancellationToken);
+
+					verification = await EditVerification.RunAsync(
+						diagnostics, snapshot.Solution, solution, scope, path, cancellationToken);
+				}
+			}
 		}
 
 		notices.AddRange(finished.Notices);
@@ -132,7 +158,7 @@ public static class MemberEditService
 			Notices = notices,
 		};
 
-		var changed = request.Apply && outcome.ChangedFiles.Count > 0 ? finished.Solution : null;
+		var changed = request.Apply && outcome.ChangedFiles.Count > 0 ? solution : null;
 
 		return new MutationResult<MemberEditResult>(result, changed);
 	}
@@ -367,6 +393,40 @@ public static class MemberEditService
 		}
 
 		return written with { Root = insertion.Root };
+	}
+
+	/// <summary>
+	/// Works out what would import the names the edit left unresolved, adds the ones with a single
+	/// answer, and reports the rest.
+	/// <para>
+	/// The half <see cref="MissingImports"/> stops short of. Reporting the namespace and leaving the
+	/// caller to add it is a round trip at exactly the moment they were promised there would not be
+	/// one: the code was just written by this tool, and it does not compile.
+	/// </para>
+	/// </summary>
+	private static async Task<Solution> ResolveImportsAsync(
+		WorkspaceSnapshot snapshot,
+		Solution solution,
+		Written written,
+		string path,
+		IReadOnlyList<DiagnosticEntry> introduced,
+		List<string> notices,
+		CancellationToken cancellationToken)
+	{
+		var imports = await ResolvedImports.ForAsync(
+			new WorkspaceSnapshot { Solution = solution, Revision = snapshot.Revision },
+			introduced,
+			path,
+			Looked,
+			cancellationToken);
+
+		notices.AddRange(imports.Added);
+		notices.AddRange(imports.Ambiguous);
+		notices.AddRange(imports.Unresolved);
+
+		return imports.AnythingToAdd
+			? await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, cancellationToken)
+			: solution;
 	}
 
 	/// <summary>

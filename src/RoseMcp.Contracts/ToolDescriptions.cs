@@ -278,6 +278,21 @@ public static class ToolDescriptions
         import resolved.
         """;
 
+	public const string AddFile = """
+        Creates a C# file: in the project whose directory contains the path, with the namespace the
+        folder implies, in the repository's own tabs, braces, line endings and final newline, and
+        with the imports the code needs worked out and added. Use this rather than writing the file
+        with a text tool, which is what starts most work and so is the earliest place a session
+        stops being able to ask semantic questions: a file written outside the workspace leaves it
+        mid-edit, and from there every read is worth less than a build. It parses the code before
+        placing anything, so a refusal writes nothing, and it refuses a path that already exists
+        rather than overwriting it. Pass just the declarations and a file-scoped namespace is added;
+        pass a whole file and its own namespace is kept, with a notice when that disagrees with the
+        folder, since IDE0130 is a build error where it is turned up. It says which project claimed
+        the file -- and says so loudly when that project lists the files it compiles rather than
+        globbing them, because then the file exists, looks compiled, and is not.
+        """;
+
 	public const string ReplaceDocComment = """
         Replaces a declaration's documentation comment, addressed by name, without touching the code
         under it. Use this rather than rose_replace_member or a text edit when only the prose is

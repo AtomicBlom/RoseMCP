@@ -33,6 +33,19 @@ public sealed record MemberEditRequest
 	public IReadOnlyList<string> Usings { get; init; } = [];
 
 	/// <summary>
+	/// Work out what would import the names the edit leaves unresolved, and add the ones with a
+	/// single answer.
+	/// <para>
+	/// On by default. The compilation that finds those names has just been built to say what the
+	/// edit broke, so the search is a lookup rather than work, and it runs only where something
+	/// failed to bind -- an edit whose imports were right or unneeded pays nothing. What is not
+	/// added is a name with more than one candidate: the wrong import compiles and binds to the
+	/// wrong type, so those come back as a choice.
+	/// </para>
+	/// </summary>
+	public bool ResolveUsings { get; init; } = true;
+
+	/// <summary>
 	/// Which file, when the name alone does not settle it -- a partial type, or a partial member.
 	/// Also the workspace hint the broker ranks, being the one argument here that names a path.
 	/// </summary>

@@ -390,6 +390,52 @@ public sealed class RefactoringTools(
 	}
 
 	[McpServerTool(
+		Name = ToolNames.AddFile,
+		Title = "Create a C# file",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddFile)]
+	public async Task<AddFileResult> AddFileAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Where the file goes. Absolute, or relative to the solution.")] string filePath,
+		[Description("The C#: a whole file, or just the declarations, in which case a namespace is added.")] string code,
+		[Description("Namespaces to import on top of whatever the code turns out to need.")] string[]? usings = null,
+		[Description("Which project compiles it, where the path is inside more than one project's directory.")] string? project = null,
+		[Description("Work out the namespaces the code needs and add the ones with a single answer. Defaults to true.")] bool resolveUsings = true,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the file broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new AddFileRequest
+		{
+			FilePath = filePath,
+			Code = code,
+			Usings = usings ?? [],
+			Project = project,
+			ResolveUsings = resolveUsings,
+			Apply = apply,
+			Verify = verify,
+			VerifyScope = ScopeOf(verifyScope),
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => AddFileService.AddAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
 		Name = ToolNames.ReplaceDocComment,
 		Title = "Replace a documentation comment",
 		ReadOnly = false,

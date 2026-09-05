@@ -29,6 +29,7 @@ public sealed class ToolSurfaceTests
 	/// </summary>
 	private static readonly string[] Roslyn =
 	[
+		ToolNames.AddFile,
 		ToolNames.AddMember,
 		ToolNames.AddUsing,
 		ToolNames.ApplyCodeFix,

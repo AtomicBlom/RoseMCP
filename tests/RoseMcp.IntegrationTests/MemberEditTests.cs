@@ -719,4 +719,58 @@ public sealed class MemberEditTests
 
 		Assert.Equal(["Core"], result.ProjectsChecked);
 	}
+
+	/// <summary>
+	/// A member edit resolves its own imports too, off the compilation that was already built to say
+	/// what the edit broke. Reporting the namespace and stopping is a round trip at the moment the
+	/// caller was promised there would not be one.
+	/// </summary>
+	[Fact]
+	public async Task Imports_what_a_written_member_turned_out_to_need()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public byte[] Bytes() => Encoding.UTF8.GetBytes(_prefix);",
+		});
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Contains(result.Notices, notice => notice.Contains("imported System.Text", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("using System.Text;", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Two candidates is a choice the caller has to make. Nothing is imported, and the reason is said
+	/// rather than left as a bare unresolved name, which would send them off to write a type that
+	/// already exists twice.
+	/// </summary>
+	[Fact]
+	public async Task Reports_rather_than_chooses_between_two_namespaces()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public string Colour() => Palette.Name;",
+		});
+
+		Assert.Contains(
+			result.Notices,
+			notice => notice.Contains("Palette is in 2 namespaces", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.DoesNotContain("using Library.Left;", text, StringComparison.Ordinal);
+	}
 }

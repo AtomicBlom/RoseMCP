@@ -132,7 +132,7 @@ public static class MissingImports
 	/// is what happens for a diagnostic inside generated code: its file exists only in the
 	/// compilation, so there is no document to find.
 	/// </summary>
-	private static async Task<string?> NameAtAsync(
+	public static async Task<string?> NameAtAsync(
 		Solution solution,
 		string filePath,
 		int line,

@@ -668,16 +668,34 @@ reaching for it is cheaper than that reflex. Three things carry that, in descend
    ## C# navigation and refactoring
 
    Use the Roslyn-backed `rose_*` MCP tools rather than grep or find-and-replace for C# in
-   this repo: `rose_find_references` for usages, `rose_rename_symbol` for renames,
-   `rose_diagnostics` to check code compiles. To change code in a file that already exists,
-   `rose_replace_member`, `rose_replace_body` and `rose_add_member` address a member by name,
-   refuse code that does not parse, format what they write, and report what the edit broke --
-   so there is no build in the edit loop. `rose_change_signature` adds, removes or retypes a
-   parameter across every override, implementation and call site at once. Pass `usings` on any
-   of those when the code needs an import, or `rose_add_using` for code written another way; where
-   you cannot say which namespace a name needs, `rose_resolve_name` searches for it and refuses to
-   guess between two. Before running anything out of `bin`, `rose_build_freshness` says whether it
-   is this code. Source-generated code is only readable via `rose_list_generated_documents` /
+   this repo. Every one of them addresses code by name -- `Namespace.Type.Member`, with a
+   parameter list for an overload -- so nothing needs a line and column found by grepping
+   first, and nothing goes stale when an earlier edit moves a line.
+
+   Reading: `rose_outline` for what a type or a file contains, `rose_symbol_info` with
+   `includeSource` for one member and its code, `rose_find_references` for usages (grouped by
+   the member each is inside), `rose_find_implementations` for the other direction,
+   `rose_project_graph` for what depends on what. None of these ends in a file read, which
+   matters: once the file is open the next edit goes through a text tool.
+
+   Writing: `rose_add_file` starts a new file, in the right project, with the namespace its
+   folder implies and the imports its code needs. `rose_replace_member`, `rose_add_member` and
+   `rose_delete_member` change a member; `rose_replace_body` changes one, and takes `find` and
+   `replace` for a change too small to re-emit the whole body for, or `position` to insert at
+   one end. `rose_replace_doc_comment` and `rose_set_attribute` change the prose and the
+   attributes without touching the code. `rose_change_signature` adds, removes or retypes a
+   parameter across every override, implementation and call site at once, and
+   `rose_move_member` moves one between types with its call sites. All of them refuse code
+   that does not parse, format what they write, and report what the edit broke -- so there is
+   no build in the edit loop.
+
+   Imports are worked out for you: a written member's unresolved names are looked up and the
+   unambiguous ones imported, with the rest reported as a choice rather than guessed at. Pass
+   `usings` to be explicit, `rose_add_using` for code written another way, and
+   `rose_resolve_name` to search for a namespace without committing to one.
+
+   Before running anything out of `bin`, `rose_build_freshness` says whether it is this code.
+   Source-generated code is only readable via `rose_list_generated_documents` /
    `rose_read_generated_document`.
    ```
 

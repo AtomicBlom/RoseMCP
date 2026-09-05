@@ -17,6 +17,103 @@ namespace RoseMcp.IntegrationTests;
 public sealed class BrokerTests
 {
 	/// <summary>
+	/// Starting a load without waiting for it (#44). A large solution takes about two minutes, and
+	/// every second of that used to be a session blocked on a call, with nothing it could usefully do
+	/// instead.
+	/// <para>
+	/// This is <c>rose_workspace_open</c> rather than a tool of its own, and the pairing is the point:
+	/// open had been <c>rose_workspace_status</c> under a second name, down to the same two lines of
+	/// body, which is why its description had to admit it was "rarely needed on its own". Not waiting
+	/// is what gives it something to be.
+	/// </para>
+	/// <para>
+	/// What is asserted is the contract that can be asserted: the tool answers about the solution it
+	/// resolved, asking twice starts one worker rather than two, and a real question afterwards still
+	/// gets a real answer -- which is the claim that makes starting early safe. The non-blocking
+	/// property itself is structural rather than timed, because it comes from the tool reading only
+	/// broker-side state and never calling the worker; a stopwatch here would be measuring how long a
+	/// two-project fixture takes to load, which is not the thing under test and would fail on a busy
+	/// machine for a reason that is not a bug.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Opening_a_workspace_answers_without_waiting_for_the_load()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+		var tools = new RoseMcp.Broker.Tools.BrokerTools(manager);
+
+		var started = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		Assert.Equal(fixture.SolutionPath, started.SolutionPath);
+		Assert.NotEmpty(started.Key);
+		Assert.True(started.Alive, $"the worker should be alive; exit reason was '{started.ExitReason}'");
+
+		// Polling is the same call, so it must not start a second worker.
+		var polled = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		Assert.Equal(started.ProcessId, polled.ProcessId);
+		Assert.Single(manager.Workers);
+
+		// And the promise that makes starting early safe: every other tool still blocks until the
+		// workspace can answer, so a question asked immediately gets a real answer rather than a
+		// half-loaded one.
+		var status = await tools.StatusAsync(
+			new Progress<ProgressNotificationValue>(), fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		Assert.Equal(WorkspaceState.Loaded, status.State);
+		Assert.NotEmpty(status.Projects);
+
+		// Loaded now, so opening again has nothing to wait for and says nothing about waiting. The
+		// notice belongs to the loading answer alone: told unconditionally it would read as "still
+		// working" on a workspace that is finished, which is the one thing a caller polling for
+		// completion must not be told.
+		var settled = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		Assert.Equal(WorkspaceState.Loaded, settled.State);
+		Assert.DoesNotContain(settled.Notices, notice => notice.Contains("Still loading", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A loading answer says what will happen next, because nothing will happen on its own.
+	/// <para>
+	/// Pushing the completion where the caller could act on it -- the shape the caller actually wants,
+	/// a result that arrives when the load finishes -- needs <c>notifications/claude/channel</c>. That
+	/// is client-specific rather than MCP, is in research preview behind an organisation policy, and
+	/// is dropped silently where it is not enabled, with no error returned to the server. So this tool
+	/// cannot know whether a promise to notify would be kept, and a promise that can be silently
+	/// broken is worse than none. What it can do is say that calling again is the mechanism, which is
+	/// where the answer would have arrived anyway: channel events are delivered on the caller's next
+	/// turn, not mid-turn.
+	/// </para>
+	/// <para>
+	/// Asserted on the fact rather than the wording -- that a still-loading answer carries advice and
+	/// a finished one does not -- since the sentence is meant to be rewritten as it is read in
+	/// practice, and a test that pins prose stops that happening.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task A_loading_answer_says_how_to_find_out_it_has_finished()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+		var tools = new RoseMcp.Broker.Tools.BrokerTools(manager);
+
+		var opened = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
+
+		// A two-project fixture can be loaded before the first call returns, and that is a legitimate
+		// outcome of this tool rather than a flake -- so the assertion is on the pairing of state and
+		// notice, which holds either way, instead of on catching it mid-load.
+		if (opened.State == WorkspaceState.Loading)
+		{
+			Assert.Contains(opened.Notices, notice => notice.Contains("rose_workspace_open", StringComparison.Ordinal));
+		}
+		else
+		{
+			Assert.DoesNotContain(opened.Notices, notice => notice.Contains("Still loading", StringComparison.Ordinal));
+		}
+	}
+	/// <summary>
 	/// MSBuild properties are fixed when a workspace opens, so asking for different ones is a
 	/// restart -- and the restart has to actually carry them to the new process.
 	/// </summary>

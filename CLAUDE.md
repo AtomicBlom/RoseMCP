@@ -165,6 +165,17 @@ reclaim memory or pick up a rebuilt generator.
   configuration. And whether a project's semantics can be trusted is asked of the compilation, never
   of MSBuild's chatter: MSBuild raises a `Failure` when NuGet's vulnerability audit cannot reach its
   feed, which names every project it could not audit and says nothing about whether they compiled.
+  <br>
+  The corollary decides result *types*, which is where it gets applied wrongly. A call that answers
+  before a load has finished cannot fill a revision, a project list or a load-diagnostic list, and
+  MCP gives a tool one output schema -- so `rose_workspace_open` returns a `WorkspaceSummary` and
+  `rose_workspace_status` a `WorkspaceStatusReport`, rather than one shape with the awkward half
+  nulled out. **Say it with the state, not with a null.** `WorkspaceState.Loading` is a fact about
+  the workspace that implies a next action; a null field says only that something is unknown, and it
+  can be missed in a way a required discriminator cannot. It is also the only shape carrying the
+  activity log's percentages, so a poll can watch a load rather than merely wait for it. Do not
+  reintroduce a second tool for this: `rose_workspace_open` was `rose_workspace_status` under another
+  name, down to the same two lines of body, and not waiting is what gives it something to be.
 - **A change that reaches another solution says so.** Roslyn renames within one `Solution` and writes
   to disk, where every other solution over the same projects picks the new text up at its next read
   while still calling the old name from projects the renaming solution never had. That sibling is

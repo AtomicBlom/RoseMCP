@@ -249,6 +249,29 @@ public sealed class XamlDiffTests
 		Assert.Equal("#b", edit.Target);
 	}
 
+	/// <summary>
+	/// Two removals from one parent go out last-first, because an unnamed element is addressed by its
+	/// position and the apply resolves that position against the live collection at the moment the edit
+	/// runs. Emitted forwards, removing <c>Border[0]</c> renumbers the survivor to 0 and the very next
+	/// edit fails with "no Border[1] here, among 1 element(s) of type Border" -- arithmetic that was
+	/// right about a tree which had already moved. Caught by a test fixture emptying a container it had
+	/// just filled with two elements and being handed one back, silently, which then poisoned the next
+	/// test to use that container.
+	/// </summary>
+	[Fact]
+	public void Two_removed_children_go_out_last_first()
+	{
+		var edits = Compute(
+			$"<StackPanel {Ns}><Border /><Border /></StackPanel>",
+			$"<StackPanel {Ns}></StackPanel>");
+
+		Assert.Equal(2, edits.Count);
+		Assert.All(edits, edit => Assert.Equal(XamlEditKind.RemoveChild, edit.Kind));
+		Assert.Equal(
+			["StackPanel[0]/Border[1]", "StackPanel[0]/Border[0]"],
+			edits.Select(edit => edit.Target));
+	}
+
 
 	/// <summary>
 	/// A single-number struct is the case the name-and-shape inference gets wrong on its own:

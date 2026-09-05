@@ -790,3 +790,77 @@ established -- the index being asked of the live collection rather than taken fr
 obvious suspect. Exclusivity costs the overlap, which was worth almost nothing here because every
 XAML request serialises behind one lock and one UI thread anyway, and keeps the shared launch, which
 is where the time was. That is a fix pending an explanation, not an explanation.
+
+### D36 - A batch of sibling removals has to go out last-first (#11, and it explains D35's loose end)
+D35 shipped a test taking the app exclusively with the note "a fix pending an explanation, not an
+explanation". This is the explanation, and the fix turned out to belong in the product rather than in
+the test.
+
+An unnamed element is addressed by its position among its siblings, and the apply resolves that
+position against the *live* collection at the moment the edit runs. That is deliberate, and the
+existing note says why: an add earlier in the same batch has already moved everything after it. What
+that reasoning missed is that a **removal** moves things too, and moves them the other way. Emitted
+in document order, deleting two adjacent children removed the first and then refused the second:
+
+    RemoveChild #Slot0/Border[0] => applied
+    RemoveChild #Slot0/Border[1] => target not found: no Border[1] here, among 1 element(s) of type Border
+
+Correct arithmetic about a tree that had already moved. `XamlDiff` now emits removals last-first, so
+nothing a later edit names can shift under it, and a unit test pins the order rather than the
+behaviour, because the ordering is the whole of the fix.
+
+**How it hid is the part worth keeping.** The fixture emptied each slot between tests and never
+looked at what the apply reported, so a slot that had held two elements was handed on holding one.
+Slots come off a stack, so the slot just released is the next one out: the residue was picked up
+immediately, by a different test, which counted elements it had not added and failed somewhere else
+entirely. Three symptoms that looked unrelated - a removal reported applied that did not happen, an
+element count off by one, a test that passed alone and failed in company - were one bug seen from
+three places. The fixture now checks that its cleanup worked, off the statuses the apply already
+returns rather than a confirming read, because the same rule that governs a phase B turn governs a
+slot: a resource handed back wrong is a failing test, not a tidiness problem.
+
+**And a suite green once is not a green suite.** D35 was reported on a single run of each. Run twice
+more, main failed 1 and then 2 of its 31 live-app tests - this bug, and two others it had been
+masking. One was a test asserting a whole-tree element count against the probe's Transient pair,
+which leaves the visual tree for one second in every five *by design*, so that #51 has a removal to
+watch; a fixed count over ten reads spanning seconds was a coin flip, and what that test actually
+protects - that a concurrent read is not silently truncated - is said just as well by counting the
+stable elements. The other was `DebugProbeTarget` self-terminating on a 120-second deadline while the
+suite runs longer than that, so the tests asserting their target is still alive were failing on it
+having correctly done what it was told. A timer shorter than the run it bounds fails exactly when the
+machine is busiest, which is when a suite is least able to explain itself. The deadline has to be
+longer than the whole suite rather than longer than one test, and is now ten minutes.
+
+That is the second answer. The first was to delete the deadline and have the target die when its
+stdin closes, the way a worker dies with the broker, so the bound would be the parent's lifetime
+rather than a number guessed in advance -- which is the right shape, and does not work here. Each
+target passes on its own; the nine debugger tests hang as a group, reproducibly, with not one test
+completing. The interaction between a redirected stdin, inherited handles across nine concurrently
+launched children and an `ICorDebug` attach is not understood, and is recorded unexplained rather
+than left out, because the idea is good enough that somebody will have it again. A fixture that can
+hang the suite is worse than the deadline it was replacing -- which is a rule this initiative had
+already written down, and then had to be taught twice.
+
+**A fourth cause, and the one that took the longest to see, because it was the design's own shape.**
+With the other three fixed, a run still failed two slot tests together on "the target's XAML
+diagnostics endpoint did not appear within 20s". Phase C tests overlap on purpose, and each asks the
+fixture for the shared session. After a phase A test has ended the app, several of them arrive at
+that request at once, each correctly observes no app running, and each begins by ending the app
+before launching it -- so the second kills what the first has just launched, and whoever loses holds
+a session whose process is gone. Twenty seconds later the injection reports a missing diagnostics
+endpoint, which describes the corpse and not the killing, and points at the app rather than at the
+fixture. Bringing the app up is the one thing readers do that is not read-only, and it now takes a
+lock of its own, with the readiness question asked again inside it so that the queue behind the first
+launch observes the app rather than tearing it down to build the same one again.
+
+That is the third time in this initiative that one resource has been reached through two paths that
+did not know about each other: two locks over a single-instance app (D35), a fixture and a test both
+emptying one slot (above), and now overlapping readers each relaunching one app. The rule already
+written down -- one gate for everything that touches the app -- is right and keeps being applied one
+layer too high. It is not enough for the *tests* to be sequenced correctly if the thing they queue for
+can be rebuilt by several of them at once.
+
+The method note: a flake rate is a measurement, and measurements need repeats. Reporting a suite
+green off one run is the same error as reasoning about a slowdown instead of profiling it, and it was
+made in the same initiative that had just been corrected for the latter. Four causes, and the first
+run of the day showed one of them.

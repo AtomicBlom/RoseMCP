@@ -183,6 +183,19 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	private readonly PhaseGate _phases = new();
 	private readonly Stack<int> _freeSlots = new(Enumerable.Range(0, SlotCount).Reverse());
 
+	/// <summary>
+	/// Held while the shared app is being brought up, because bringing it up is the one thing readers
+	/// do that is not read-only. Phase C tests run together on purpose, and each of them asks for the
+	/// shared session -- so after a phase A test has ended the app, several of them arrive at once,
+	/// each correctly sees no app running, and each starts by ending the app before launching it.
+	/// The second one kills what the first has just launched. Whoever loses that race holds a session
+	/// whose process is gone, and the next XAML call spends twenty seconds discovering it and reports
+	/// "the target's XAML diagnostics endpoint did not appear", which describes the corpse rather than
+	/// the killing. The phase gate cannot cover this: readers are meant to overlap, and the relaunch
+	/// is the exception hiding among them.
+	/// </summary>
+	private readonly SemaphoreSlim _relaunch = new(1, 1);
+
 	private LiveAppSessionManager? _sharedManager;
 	private LiveAppSession? _sharedSession;
 
@@ -217,10 +230,14 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// </summary>
 	/// <param name="cancellationToken">The calling test's token.</param>
 	/// <param name="exclusive">
-	/// True to take the app to yourself as well as the slot. For an edit whose correctness depends on
-	/// the rest of the tree holding still -- a removal resolves its index against the live collection,
-	/// not against the diff -- where owning the slot is not on its own enough. Slower, so it is asked
-	/// for rather than assumed, and a test that needs it should say why.
+	/// True to take the app to yourself as well as the slot, for an edit whose correctness depends on
+	/// the rest of the tree holding still. No test needs it today. The removal test did, or was
+	/// believed to: it passed alone and failed in company, and exclusivity was given to it as a fix
+	/// pending an explanation. The explanation turned out to be the fixture emitting its own cleanup
+	/// removals in document order so that each renumbered the next (D36), which exclusivity never
+	/// addressed and only hid. Kept because the capability is real and the next test to want it should
+	/// not have to rebuild it -- but a test reaching for this should say what it is protecting against,
+	/// since last time the honest answer was "nothing, the bug is elsewhere".
 	/// </param>
 	public async Task<SlotTurn> TakeSlotAsync(CancellationToken cancellationToken, bool exclusive = false)
 	{
@@ -277,16 +294,36 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// </summary>
 	private async Task<LiveAppSession> SharedSessionAsync(CancellationToken cancellationToken)
 	{
-		// Ready is the session's opinion of itself and it outlives the app: a phase A test kills the
-		// process, and the session goes on reporting Ready until something asks it to do work. So the
-		// question is asked of the operating system instead, which is the only party that knows.
-		if (_sharedSession is { } existing
-			&& existing.Describe().State == LiveAppSessionState.Ready
-			&& AppIsRunning())
-		{
-			return existing;
-		}
+		if (Usable(_sharedSession)) return _sharedSession!;
 
+		await _relaunch.WaitAsync(cancellationToken);
+		try
+		{
+			// Asked again inside the lock. Everyone queued here arrived because the app was down, and
+			// all but the first are now looking at the app the first one launched -- so without this
+			// they would each tear down a healthy app to build the same one again, which is the
+			// stampede the lock is here to stop rather than merely to serialise.
+			if (Usable(_sharedSession)) return _sharedSession!;
+
+			return await LaunchSharedAsync(cancellationToken);
+		}
+		finally
+		{
+			_relaunch.Release();
+		}
+	}
+
+	/// <summary>
+	/// Whether a session can be handed to a test. Ready is the session's opinion of itself and it
+	/// outlives the app: a phase A test kills the process, and the session goes on reporting Ready
+	/// until something asks it to do work. So the process question is asked of the operating system,
+	/// which is the only party that knows.
+	/// </summary>
+	private static bool Usable(LiveAppSession? session) =>
+		session is not null && session.Describe().State == LiveAppSessionState.Ready && AppIsRunning();
+
+	private async Task<LiveAppSession> LaunchSharedAsync(CancellationToken cancellationToken)
+	{
 		await CloseSharedAsync();
 		await StopAppAndWaitAsync();
 
@@ -496,6 +533,15 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// Removes everything a test put in its slot, by reading what is actually there rather than by
 	/// replaying what the test said it added. A test that failed half way through added some of its
 	/// elements and not others, and that is exactly when the slot most needs emptying.
+	/// <para>
+	/// It then checks it worked, which is the same rule phase B turns already keep and for the same
+	/// reason: a slot handed on still occupied is not a tidiness problem, it is a wrong answer given
+	/// confidently to whichever test is handed it next. That test finds elements it did not add,
+	/// counts them, and fails somewhere else entirely -- and because slots come off a stack, the slot
+	/// that comes back is almost always the one that goes straight back out. This is how the
+	/// last-first ordering in <c>XamlDiff</c> was found: emptying a slot holding two elements removed
+	/// one, failed on the other, and said nothing, because nothing here looked at the result.
+	/// </para>
 	/// </summary>
 	private async Task EmptySlotAsync(LiveAppSession session, string slot)
 	{
@@ -507,11 +553,23 @@ public sealed class UwpProbeApp : IAsyncDisposable
 		if (children.Count == 0) return;
 
 		var held = string.Concat(children.Select(child => $"<{Local(child.TypeName)} />"));
-		await session.ApplyXamlAsync(
+		var applied = await session.ApplyXamlAsync(
 			$"<Grid x:Name=\"{slot}\"{SlotTurn.NamespacesFor}>{held}</Grid>",
 			$"<Grid x:Name=\"{slot}\"{SlotTurn.NamespacesFor} />",
 			filePath: null,
 			CancellationToken.None);
+
+		// Checked off what the apply reports rather than by reading the slot back, which is the same
+		// answer for nothing: an edit that did not land says so here, and a confirming read would be
+		// another injection into an app the whole suite is already queueing behind.
+		var refused = applied.Results.Where(result => result.Status != "applied").ToList();
+		if (applied.Detail is null && refused.Count == 0) return;
+
+		var statuses = string.Join(", ", refused.Select(result => $"{result.Kind} {result.Target} => {result.Status}"));
+		throw new InvalidOperationException(
+			$"{slot} could not be emptied, so the next test handed it would have found {children.Count} "
+				+ $"element(s) it did not add and failed for a reason of its own. Detail: {applied.Detail ?? "(none)"}. "
+				+ $"Refused: {(statuses.Length == 0 ? "(none)" : statuses)}");
 	}
 
 	/// <summary>The local half of a CLR type name, which is what markup and the diff both count by.</summary>
@@ -628,6 +686,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 		// The shared app goes first, because unregistering a package with a debugger attached to it is
 		// the untidy version of the same thing.
 		await CloseSharedAsync();
+		_relaunch.Dispose();
 
 		lock (_gate)
 		{

@@ -834,13 +834,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 		// cut out of the app's markup: a removal is the edit that most needs to be nobody else's, since
 		// the index it resolves against is a position among siblings.
 		//
-		// Exclusive as well as slotted, which owning a slot did not turn out to cover. This passed on
-		// its own and failed in company, reporting the removal applied while both Borders were still
-		// in the tree -- so something about a removal does not survive another test working at the
-		// same time, and the index being asked of the live collection rather than taken from the diff
-		// is the obvious suspect. Taking the app is the honest fix until that is understood: it gives
-		// up the overlap, which was worth almost nothing here, and keeps the shared launch, which is
-		// where the time actually was.
+		// It used to take the app exclusively as well, because it passed alone and failed in company
+		// reporting the removal applied while both Borders were still there. That was never a
+		// concurrency problem and exclusivity never fixed it, only hid it: the fixture's own slot
+		// cleanup emitted its two removals in document order, the first renumbered the second, and the
+		// slot was handed on still holding an element this test then counted as one of its own. The
+		// ordering is fixed in XamlDiff and the cleanup checks itself now (D36), so a slot is enough.
 		const string FirstBackground = "#FF3A2A2A";
 		const string Pair =
 			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />"
@@ -848,7 +847,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 		const string Survivor =
 			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />";
 
-		await using var turn = await probe.TakeSlotAsync(cancellationToken, exclusive: true);
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
 		var session = turn.Session;
 		{
 			var built = await session.ApplyXamlAsync(
@@ -1266,11 +1265,21 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 
 		{
 
+			// Counted without the probe's Transient pair, which is the one thing in this app that
+			// changes on its own: it leaves the visual tree and comes back on a five-second cycle, by
+			// design, so that #51 has a removal to watch. Two elements go with it, and this test reads
+			// the tree ten times over several seconds -- so a fixed whole-tree count was a coin flip
+			// against a one-second-in-five window, and it came up 43 and then 41. What this protects is
+			// that a concurrent read is not silently *truncated* (22 elements where the app has 24),
+			// and every stable element being present says that just as well.
+			static int Stable(LiveXamlTree tree) =>
+				tree.Nodes.Count(node => node.Name is not ("Transient" or "TransientCaption"));
+
 			// The answer every concurrent read below has to match. Read on its own, so it is the
 			// uncontended truth about the app rather than one of the results under test.
 			var alone = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.True(alone.Detail is null, $"expected a tree, got detail: {alone.Detail}");
-			var expected = alone.Nodes.Count;
+			var expected = Stable(alone);
 			Assert.True(expected > 1, $"the probe should have more than one element, got {expected}");
 			var caption = alone.Nodes.First(node => node.Name == "Caption");
 
@@ -1283,7 +1292,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 				foreach (var tree in trees)
 				{
 					Assert.True(tree.Detail is null, $"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
-					Assert.Equal(expected, tree.Nodes.Count);
+					Assert.Equal(expected, Stable(tree));
 				}
 			}
 
@@ -1295,7 +1304,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 				var properties = await propertiesTask;
 
 				Assert.True(tree.Detail is null, $"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
-				Assert.Equal(expected, tree.Nodes.Count);
+				Assert.Equal(expected, Stable(tree));
 
 				Assert.True(properties.Detail is null, $"attempt {attempt}: expected properties, got detail: {properties.Detail}");
 				Assert.Equal(caption.Handle, properties.Handle);

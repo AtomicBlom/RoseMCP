@@ -33,6 +33,10 @@ public static class ToolNames
 
 	public const string AddUsing = "rose_add_using";
 
+	public const string ReplaceDocComment = "rose_replace_doc_comment";
+
+	public const string SetAttribute = "rose_set_attribute";
+
 	public const string ResolveName = "rose_resolve_name";
 
 	/// <summary>

@@ -389,6 +389,113 @@ public sealed class RefactoringTools(
 			cancellationToken);
 	}
 
+	[McpServerTool(
+		Name = ToolNames.ReplaceDocComment,
+		Title = "Replace a documentation comment",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceDocComment)]
+	public async Task<MemberEditResult> ReplaceDocCommentAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The comment: plain text taken as the summary, or the whole thing as XML.")] string comment,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var request = new DeclarationEditRequest
+		{
+			Symbol = symbol,
+			Comment = comment,
+			FilePath = filePath,
+			Apply = apply,
+			Verify = verify,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await RunAsync(
+			progress,
+			(session, snapshot, working, token) => DeclarationEditService.ReplaceDocCommentAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.SetAttribute,
+		Title = "Add, replace or remove an attribute",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.SetAttribute)]
+	public async Task<MemberEditResult> SetAttributeAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The attribute as it appears in source, brackets optional: Obsolete(\"use Parse\").")] string attribute,
+		[Description("set, add, or remove. Defaults to set, which replaces the one of that name and refuses where there are several.")] string action = "set",
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var request = new DeclarationEditRequest
+		{
+			Symbol = symbol,
+			Attribute = attribute,
+			Action = ActionOf(action),
+			FilePath = filePath,
+			Apply = apply,
+			Verify = verify,
+			VerifyScope = ScopeOf(verifyScope),
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await RunAsync(
+			progress,
+			(session, snapshot, working, token) => DeclarationEditService.SetAttributeAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	/// <summary>
+	/// The queue, the progress split and the session, which every declaration edit needs and none of
+	/// them varies.
+	/// </summary>
+	private async Task<MemberEditResult> RunAsync(
+		IProgress<ProgressNotificationValue> progress,
+		Func<WorkspaceSession, WorkspaceSnapshot, IWorkProgress, CancellationToken, Task<MutationResult<MemberEditResult>>> work,
+		CancellationToken cancellationToken)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		return await session.MutateAsync(
+			(snapshot, token) => work(session, snapshot, working, token), cancellationToken);
+	}
+
+	/// <summary>
+	/// The action a caller named, or Set where they named nothing. An unrecognised one is refused
+	/// rather than taken as Set, which would replace an attribute a caller meant to add.
+	/// </summary>
+	private static AttributeAction ActionOf(string? requested)
+	{
+		if (string.IsNullOrWhiteSpace(requested)) return AttributeAction.Set;
+
+		if (Enum.TryParse<AttributeAction>(requested, ignoreCase: true, out var action)) return action;
+
+		throw new ArgumentException($"'{requested}' is not an action. Use set, add, or remove.");
+	}
+
 	/// <summary>
 	/// The scope a caller named, or Auto where they named nothing. A name that is not one of the four
 	/// is refused rather than taken as Auto: falling back silently would say the edit was checked

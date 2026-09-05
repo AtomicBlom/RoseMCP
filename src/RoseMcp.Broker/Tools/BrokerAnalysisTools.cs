@@ -515,6 +515,68 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
+	[McpServerTool(
+		Name = ToolNames.ReplaceDocComment,
+		Title = "Replace a documentation comment",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceDocComment)]
+	public Task<MemberEditResult> ReplaceDocCommentAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The comment: plain text taken as the summary, or the whole thing as XML.")] string comment,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ReplaceDocComment, new()
+		{
+			["symbol"] = symbol,
+			["comment"] = comment,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.SetAttribute,
+		Title = "Add, replace or remove an attribute",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.SetAttribute)]
+	public Task<MemberEditResult> SetAttributeAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The attribute as it appears in source, brackets optional: Obsolete(\"use Parse\").")] string attribute,
+		[Description("set, add, or remove. Defaults to set, which replaces the one of that name and refuses where there are several.")] string action = "set",
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.SetAttribute, new()
+		{
+			["symbol"] = symbol,
+			["attribute"] = attribute,
+			["action"] = action,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["verifyScope"] = verifyScope,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
 	private Task<T> ForwardAsync<T>(
 		WorkspaceHints hints,
 		string tool,

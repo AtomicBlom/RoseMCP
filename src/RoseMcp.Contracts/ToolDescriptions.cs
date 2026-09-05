@@ -278,6 +278,31 @@ public static class ToolDescriptions
         import resolved.
         """;
 
+	public const string ReplaceDocComment = """
+        Replaces a declaration's documentation comment, addressed by name, without touching the code
+        under it. Use this rather than rose_replace_member or a text edit when only the prose is
+        changing: composing a whole member to change one sentence is a trade nobody takes, and once
+        the file is open in an editor the code half goes through the editor too. Pass the summary as
+        plain text or the whole comment as XML; it emits /// in the file's own indentation and line
+        endings, keeps a licence header or region directive above it, and refuses XML that does not
+        parse, which would otherwise land as CS1570. It compiles afterwards and reports what changed,
+        because a comment can break a build: a param tag for a parameter that is gone is CS1572 and a
+        parameter with no tag is CS1573, wherever a documentation file is generated.
+        """;
+
+	public const string SetAttribute = """
+        Adds, replaces or removes one attribute on a declaration, addressed by the declaration's name
+        and the attribute's. Use this rather than splicing text into the brackets: the attribute is
+        parsed first and refused if it does not parse, it lands in a list of its own below the
+        documentation comment, and removing the last attribute in a bracket takes the brackets with
+        it rather than leaving an empty pair that does not compile. action=set replaces the one
+        attribute of that name and refuses when the declaration carries several -- four InlineData
+        attributes is the ordinary shape of a test, and replacing the first would compile while
+        changing the wrong case. action=add puts another one on; action=remove takes one away.
+        Obsolete and ObsoleteAttribute are the same attribute here. It compiles afterwards, and does
+        so across the dependents, since an attribute is visible to everything that uses the member.
+        """;
+
 	public const string ResolveName = """
         Works out which namespace an unresolved name needs, so you do not have to already know. Give
         it the name as the code spells it -- Encoding, List<int>, Encoding.UTF8 -- and it searches

@@ -62,6 +62,8 @@ public sealed class ToolDescriptionTests
 	[InlineData(ToolNames.MoveTypeToFile, "rather than reading a file and writing two")]
 	[InlineData(ToolNames.FormatDocuments, "by any other means")]
 	[InlineData(ToolNames.ApplyCodeFix, "rather than editing each occurrence")]
+	[InlineData(ToolNames.ReplaceDocComment, "rather than rose_replace_member or a text edit")]
+	[InlineData(ToolNames.SetAttribute, "rather than splicing text into the brackets")]
 	[InlineData(ToolNames.ReplaceMember, "instead of a text edit")]
 	[InlineData(ToolNames.ReplaceBody, "rather than a line-range edit")]
 	[InlineData(ToolNames.AddMember, "rather than finding the closing brace")]

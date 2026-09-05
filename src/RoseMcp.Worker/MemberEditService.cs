@@ -80,6 +80,7 @@ public static class MemberEditService
 		var written = request.Kind switch
 		{
 			MemberEditKind.Add => await AddAsync(snapshot.Solution, request, notices, cancellationToken),
+			MemberEditKind.Delete => await DeleteAsync(snapshot.Solution, request, cancellationToken),
 			MemberEditKind.ReplaceBody => await ReplaceBodyAsync(snapshot.Solution, request, notices, cancellationToken),
 			_ => await ReplaceAsync(snapshot.Solution, request, notices, cancellationToken),
 		};
@@ -201,6 +202,61 @@ public static class MemberEditService
 			[.. NamesOf(parsed[0])],
 			target.Symbol);
 	}
+
+	/// <summary>
+	/// Takes a member out, with its documentation comment and its attributes, leaving the blank lines
+	/// around it as one.
+	/// <para>
+	/// The only write that is safe semantically and nothing else: what makes a deletion wrong is
+	/// invisible to a text edit. It is referenced somewhere, which the compile afterwards answers. It
+	/// is one of several partial declarations, or an override whose base is abstract, so removing it
+	/// breaks somewhere else entirely. Its documentation comment goes with it, or the next member
+	/// inherits a summary describing something that is gone.
+	/// </para>
+	/// <para>
+	/// The directives are the part a splice cannot get right. A member whose leading trivia opens a
+	/// region and whose trailing trivia closes it leaves the file with CS1024 or CS1028 if the pair is
+	/// cut in half, so removal keeps whatever is unbalanced and lets the region close around nothing.
+	/// </para>
+	/// </summary>
+	private static async Task<Written> DeleteAsync(
+		Solution solution,
+		MemberEditRequest request,
+		CancellationToken cancellationToken)
+	{
+		var target = await DeclarationLocator.FindMemberAsync(solution, request.Symbol, request.FilePath, cancellationToken);
+
+		GuardSharedDeclaration(target);
+
+		if (target.Declaration.Parent is not { } parent)
+		{
+			throw new ArgumentException(
+				$"{target.Signature} is not inside anything, so there is nothing to remove it from.");
+		}
+
+		var root = await RootOf(target.Document, cancellationToken);
+
+		var without = parent.RemoveNode(
+			target.Declaration,
+			SyntaxRemoveOptions.KeepNoTrivia | SyntaxRemoveOptions.KeepUnbalancedDirectives)
+			?? throw new InvalidOperationException($"Removing {target.Signature} left nothing to write.");
+
+		// Annotating the container rather than the member, because the member is what has gone. It is
+		// what the formatting passes are pointed at, so they stay off the rest of the file.
+		var marker = new SyntaxAnnotation();
+
+		return new Written(
+			target.Document,
+			root.ReplaceNode(parent, without.WithAdditionalAnnotations(marker)),
+			marker,
+			target.Signature,
+			[NameOfDeclaration(target.Declaration)],
+			target.Symbol);
+	}
+
+	/// <summary>The name a removed declaration went by, for reporting what was taken out.</summary>
+	private static string NameOfDeclaration(MemberDeclarationSyntax declaration) =>
+		NamesOf(declaration).FirstOrDefault() ?? declaration.Kind().ToString();
 
 	/// <summary>
 	/// Replaces a body by rebuilding the member from its own signature text and the supplied body,

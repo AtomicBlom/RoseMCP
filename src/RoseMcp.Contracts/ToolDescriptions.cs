@@ -278,6 +278,18 @@ public static class ToolDescriptions
         import resolved.
         """;
 
+	public const string DeleteMember = """
+        Removes a member from a type, addressed by name, taking its documentation comment and its
+        attributes with it. Use this rather than cutting a line range: the span is resolved from the
+        compilation instead of counted by hand, so it cannot take a brace or a modifier with it, and
+        a region opened above the member and closed below it comes out balanced rather than as
+        CS1024. It refuses an ambiguous name instead of removing one of two overloads, which is the
+        deletion with no symptom at all -- it compiles, and the behaviour that was meant to change
+        did not. Deleting something still referenced is allowed and reported: the call sites come
+        back as the errors the removal introduced, in the same call, checked across the projects
+        that depend on this one when the member was visible to them.
+        """;
+
 	public const string AddFile = """
         Creates a C# file: in the project whose directory contains the path, with the namespace the
         folder implies, in the repository's own tabs, braces, line endings and final newline, and

@@ -390,6 +390,38 @@ public sealed class RefactoringTools(
 	}
 
 	[McpServerTool(
+		Name = ToolNames.DeleteMember,
+		Title = "Remove a member",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.DeleteMember)]
+	public Task<MemberEditResult> DeleteMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the removal broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default) =>
+		EditAsync(
+			progress,
+			new MemberEditRequest
+			{
+				Kind = MemberEditKind.Delete,
+				Symbol = symbol,
+				FilePath = filePath,
+				Apply = apply,
+				Verify = verify,
+				VerifyScope = ScopeOf(verifyScope),
+				ExpectedRevision = expectedRevision,
+			},
+			cancellationToken);
+
+	[McpServerTool(
 		Name = ToolNames.AddFile,
 		Title = "Create a C# file",
 		ReadOnly = false,

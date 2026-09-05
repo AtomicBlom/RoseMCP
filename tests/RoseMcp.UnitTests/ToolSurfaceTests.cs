@@ -35,6 +35,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.ApplyCodeFix,
 		ToolNames.BuildFreshness,
 		ToolNames.ChangeSignature,
+		ToolNames.DeleteMember,
 		ToolNames.Diagnostics,
 		ToolNames.FindImplementations,
 		ToolNames.FindReferences,

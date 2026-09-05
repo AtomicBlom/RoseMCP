@@ -773,4 +773,132 @@ public sealed class MemberEditTests
 
 		Assert.DoesNotContain("using Library.Left;", text, StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// A private helper with nothing referencing it, which is the case that made this a gap: an unused
+	/// private is IDE0051, a build error in this repository, and removing it meant finding a line range
+	/// and cutting text in a session whose whole point was not doing that.
+	/// </summary>
+	[Fact]
+	public async Task Removes_a_member_with_its_documentation_comment()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Library.Regioned.Thrice",
+		});
+
+		Assert.True(result.Applied);
+		Assert.True(result.Verified);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Equal(["Thrice"], result.Members);
+
+		var text = await ReadAsync(fixture, "Regioned.cs");
+
+		Assert.DoesNotContain("Thrice", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("Trebles it", text, StringComparison.Ordinal);
+		Assert.Contains("Twice", text, StringComparison.Ordinal);
+
+		// The region survives, balanced. Cutting a line range takes one half of a pair and leaves the
+		// file with CS1024 or CS1028, which is the class of failure this exists to remove.
+		Assert.Contains("#region Helpers", text, StringComparison.Ordinal);
+		Assert.Contains("#endregion", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("\r\n\r\n\r\n", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Removing something still referenced is allowed -- the callers may be going too -- and the call
+	/// sites come back as the errors it introduced rather than at the next build.
+	/// </summary>
+	[Fact]
+	public async Task Reports_what_a_removal_broke_across_the_dependents()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Core.Calculator.Multiply",
+		});
+
+		Assert.True(result.Applied);
+		Assert.Contains("App", result.ProjectsChecked);
+		Assert.Contains(
+			result.IntroducedDiagnostics,
+			entry => entry.FilePath!.EndsWith("Program.cs", StringComparison.OrdinalIgnoreCase));
+		Assert.Empty(result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// An ambiguous name is refused rather than resolved. Removing one of two overloads is the deletion
+	/// with no symptom: it compiles, and the behaviour that was meant to change did not.
+	/// </summary>
+	[Fact]
+	public async Task Refuses_to_remove_an_ambiguous_name()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Greeter.cs");
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => EditAsync(session, new MemberEditRequest
+			{
+				Kind = MemberEditKind.Delete,
+				Symbol = "Library.Greeter.Greet",
+			}));
+
+		Assert.Contains("matches 2 declarations", thrown.Message, StringComparison.Ordinal);
+		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+	}
+
+	/// <summary>The named overload goes and the other stays.</summary>
+	[Fact]
+	public async Task Removes_the_overload_the_parameter_list_names()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Library.Greeter.Greet(string, string)",
+		});
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.DoesNotContain("string title", text, StringComparison.Ordinal);
+		Assert.Contains("public string Greet(string name)", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Removing the only member of a type leaves a type, not a syntax error. The braces collapse onto
+	/// something that now needs different formatting, which is one of the things a text edit gets wrong.
+	/// </summary>
+	[Fact]
+	public async Task Removes_the_last_member_of_a_type()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Library.IShape.Area",
+		});
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var text = await ReadAsync(fixture, "Kinds.cs");
+
+		Assert.Contains("public interface IShape", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("double Area()", text, StringComparison.Ordinal);
+	}
 }

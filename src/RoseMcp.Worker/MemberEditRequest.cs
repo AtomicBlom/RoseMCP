@@ -16,9 +16,10 @@ public sealed record MemberEditRequest
 	/// <summary>
 	/// The C# to write. A whole declaration for <see cref="MemberEditKind.Replace"/> and
 	/// <see cref="MemberEditKind.Add"/>; statements, a block, or <c>=&gt; expression;</c> for
-	/// <see cref="MemberEditKind.ReplaceBody"/>.
+	/// <see cref="MemberEditKind.ReplaceBody"/>. Empty for <see cref="MemberEditKind.Delete"/>,
+	/// which writes nothing.
 	/// </summary>
-	public required string Code { get; init; }
+	public string Code { get; init; } = string.Empty;
 
 	/// <summary>
 	/// Namespaces the written code needs imported, ensured in the same file and the same call.

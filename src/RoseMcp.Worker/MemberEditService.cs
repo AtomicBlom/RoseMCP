@@ -300,9 +300,10 @@ public static class MemberEditService
 		// formatter has no rule about where a wrapped list sits, so nothing downstream puts it back.
 		// The signature then drifts on a change that promised to touch only the body.
 		var head = indent + text.ToString(TextSpan.FromBounds(declaration.SpanStart, bodyStart)).TrimEnd();
+		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, notices);
 
 		var parsed = MemberSyntax.Parse(
-			$"{head} {Body(request.Code)}",
+			$"{head} {Body(written)}",
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
 			indent,
@@ -333,6 +334,60 @@ public static class MemberEditService
 			[.. NamesOf(declaration)],
 			Reaches: null);
 	}
+
+	/// <summary>
+	/// The body to write, from whichever of the three payloads the caller sent.
+	/// <para>
+	/// Three because re-emitting a sixty-line body to change one line is what sends a caller back to a
+	/// text anchor: the granularity is right and the payload is expensive. All three end here, as a
+	/// whole body, so what reaches disk has been parsed and formatted either way.
+	/// </para>
+	/// </summary>
+	private static string BodyFor(
+		MemberDeclarationSyntax declaration,
+		string signature,
+		SourceText text,
+		int bodyStart,
+		MemberEditRequest request,
+		List<string> notices)
+	{
+		var payloads = (request.Code.Length > 0 ? 1 : 0)
+			+ (request.Find is { Length: > 0 } ? 1 : 0)
+			+ (request.Position is not null ? 1 : 0);
+
+		if (request.Position is not null && request.Code.Length > 0) payloads--;
+
+		if (payloads == 0)
+		{
+			throw new ArgumentException(
+				"Nothing to write. Pass code with the whole body, find and replace to change part of it, or "
+					+ "position with code to insert at one end.");
+		}
+
+		if (payloads > 1)
+		{
+			throw new ArgumentException(
+				"Pass one of code, find and replace, or position with code -- they are three ways of saying what "
+					+ "the body becomes, and more than one leaves it ambiguous.");
+		}
+
+		if (request.Find is { Length: > 0 } find)
+		{
+			var body = text.ToString(TextSpan.FromBounds(bodyStart, declaration.Span.End)).TrimEnd(';', ' ', '\t');
+
+			return BodyEdit.Anchored(body, find, request.Replace ?? string.Empty);
+		}
+
+		if (request.Position is not { } position) return request.Code;
+
+		if (BodyBlock(declaration) is not { } block) throw BodyEdit.NoStatements(signature);
+
+		return BodyEdit.Inserted(declaration, block, request.Code, position == BodyPosition.Start, notices);
+	}
+
+	/// <summary>The block a member is written with, or null where it has an expression body instead.</summary>
+	private static BlockSyntax? BodyBlock(MemberDeclarationSyntax declaration) =>
+		declaration is BaseMethodDeclarationSyntax method ? method.Body : null;
 
 	private static async Task<Written> AddAsync(
 		Solution solution,

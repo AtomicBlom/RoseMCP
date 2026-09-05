@@ -222,4 +222,46 @@ public sealed class NavigationTests
 
 		Assert.Contains("local variable or a parameter", thrown.Message, StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// The source with the answer, so understanding a member does not end in a file read -- which is
+	/// the moment the file is in front of the caller and the next edit goes through a text tool.
+	/// </summary>
+	[Fact]
+	public async Task Returns_the_source_of_a_member_when_asked()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
+			TestContext.Current.CancellationToken,
+			includeSource: true);
+
+		var source = Assert.Single(info.Source);
+
+		Assert.Contains("public string Greet(string name)", source, StringComparison.Ordinal);
+		Assert.Contains("return $\"{_prefix}, {name}!\";", source, StringComparison.Ordinal);
+
+		// The documentation comment comes with it: half of what a reader wanted the source for.
+		Assert.Contains("<summary>The greeting for one name.</summary>", source, StringComparison.Ordinal);
+	}
+
+	/// <summary>Not asked for, not paid for: the field stays empty rather than always carrying a body.</summary>
+	[Fact]
+	public async Task Leaves_the_source_out_unless_it_is_asked_for()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
+			TestContext.Current.CancellationToken);
+
+		Assert.Empty(info.Source);
+	}
 }

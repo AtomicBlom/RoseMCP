@@ -215,12 +215,18 @@ public static class ToolDescriptions
 
 	public const string ReplaceBody = """
         Replaces a member's body and nothing else: the signature that comes out is the one that was
-        there, copied rather than rewritten, so it cannot drift. Takes statements, a block in
-        braces, or => expression;, and a member can switch between the last two without saying so.
-        Use this rather than a line-range edit, which is the usual way a member gets broken --
-        splicing a body against line numbers that have moved drops a brace or a modifier, and the
-        damage is found at the next build. Refuses if the code does not parse, formats what it
-        writes, and returns the errors the edit introduced.
+        there, copied rather than rewritten, so it cannot drift. Three ways to say what the body
+        becomes, and exactly one of them per call. code takes the whole body -- statements, a block
+        in braces, or => expression;, and a member can switch between the last two without saying
+        so. find and replace change part of it, matched on the tokens inside this one member, so
+        indentation and line endings cannot cause a miss and a one-line change costs one line rather
+        than the whole body; nothing or more than one match is refused. position (start or end) with
+        code inserts instead of replacing, and end means before a closing return or throw, since
+        anything after one is unreachable. Use any of them rather than a line-range edit, which is
+        the usual way a member gets broken -- splicing against line numbers that have moved drops a
+        brace or a modifier, and the damage is found at the next build. Whichever payload arrives,
+        what is written is a whole body: it is parsed first, refused if it does not parse, formatted,
+        and the errors it introduced come back.
         """;
 
 	public const string AddMember = """

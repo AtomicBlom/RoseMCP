@@ -222,7 +222,10 @@ public sealed class RefactoringTools(
 	public Task<MemberEditResult> ReplaceBodyAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The body: statements, a block in braces, or => expression;.")] string code,
+		[Description("The body: statements, a block in braces, or => expression;. Leave it off when using find, and pass just the statements to insert when using position.")] string? code = null,
+		[Description("Code to find inside this body and replace, matched on the tokens so indentation and line endings do not matter. Cheaper than re-emitting a long body for a one-line change; refused if it matches nothing or more than one thing.")] string? find = null,
+		[Description("What to put in place of find. Empty removes the matched code.")] string? replace = null,
+		[Description("start or end, to insert code rather than replace the body. end means before a closing return or throw, since anything after one is unreachable.")] string? position = null,
 		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
@@ -236,7 +239,10 @@ public sealed class RefactoringTools(
 			{
 				Kind = MemberEditKind.ReplaceBody,
 				Symbol = symbol,
-				Code = code,
+				Code = code ?? string.Empty,
+				Find = find,
+				Replace = replace,
+				Position = PositionOf(position),
 				Usings = usings ?? [],
 				FilePath = filePath,
 				Apply = apply,
@@ -572,6 +578,19 @@ public sealed class RefactoringTools(
 		if (Enum.TryParse<AttributeAction>(requested, ignoreCase: true, out var action)) return action;
 
 		throw new ArgumentException($"'{requested}' is not an action. Use set, add, or remove.");
+	}
+
+	/// <summary>
+	/// Where a caller asked to insert, or null where they asked for none. An unrecognised name is
+	/// refused rather than taken as one end: inserting at the wrong end of a body compiles.
+	/// </summary>
+	private static BodyPosition? PositionOf(string? requested)
+	{
+		if (string.IsNullOrWhiteSpace(requested)) return null;
+
+		if (Enum.TryParse<BodyPosition>(requested, ignoreCase: true, out var position)) return position;
+
+		throw new ArgumentException($"'{requested}' is not a position. Use start or end.");
 	}
 
 	/// <summary>

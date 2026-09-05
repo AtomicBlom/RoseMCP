@@ -22,6 +22,23 @@ public sealed record MemberEditRequest
 	public string Code { get; init; } = string.Empty;
 
 	/// <summary>
+	/// Code to find inside the body, for a change too small to be worth re-emitting the whole thing
+	/// for. Matched on the token stream, so indentation and line endings cannot cause a miss, and
+	/// only inside the one member the name resolved to. Zero matches or several is a refusal.
+	/// </summary>
+	public string? Find { get; init; }
+
+	/// <summary>What to put in place of <see cref="Find"/>. Empty removes the matched code.</summary>
+	public string? Replace { get; init; }
+
+	/// <summary>
+	/// Where to insert <see cref="Code"/> instead of replacing the body: the top of the block, or the
+	/// end of it -- which means before a closing return or throw, since anything after one is
+	/// unreachable.
+	/// </summary>
+	public BodyPosition? Position { get; init; }
+
+	/// <summary>
 	/// Namespaces the written code needs imported, ensured in the same file and the same call.
 	/// <para>
 	/// In the same call because that is the whole point: the need for an import is discovered at the

@@ -11,7 +11,8 @@ public static class NavigationService
 	public static async Task<SymbolInfoResult> DescribeAsync(
 		WorkspaceSnapshot snapshot,
 		SymbolTarget request,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		bool includeSource = false)
 	{
 		var symbol = await request.ResolveAsync(snapshot, cancellationToken);
 
@@ -41,6 +42,8 @@ public static class NavigationService
 
 			// A symbol from metadata has no source locations, which is also why it cannot be renamed.
 			IsFromSource = declarations.Count > 0,
+
+			Source = includeSource ? await SourceOfAsync(symbol, cancellationToken) : [],
 		};
 	}
 
@@ -179,6 +182,29 @@ public static class NavigationService
 		}
 
 		return [.. bases.Distinct(SymbolEqualityComparer.Default)];
+	}
+
+	/// <summary>
+	/// The text of every declaration of a symbol, straight out of the tree it was parsed from.
+	/// <para>
+	/// The full span rather than the span alone, so the documentation comment and the attributes come
+	/// with the member -- they are what a reader wanted the source for as often as the code is.
+	/// </para>
+	/// </summary>
+	private static async Task<IReadOnlyList<string>> SourceOfAsync(ISymbol symbol, CancellationToken cancellationToken)
+	{
+		var written = new List<string>();
+
+		foreach (var reference in symbol.DeclaringSyntaxReferences)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			var node = await reference.GetSyntaxAsync(cancellationToken);
+
+			written.Add(node.ToFullString().Trim());
+		}
+
+		return written;
 	}
 
 	private static async Task<IReadOnlyList<SymbolMatch>> DescribeAllAsync(

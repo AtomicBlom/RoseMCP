@@ -53,6 +53,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
+		[Description("Also return the declaration's own source text, so understanding a member does not end in a file read.")] bool includeSource = false,
 		CancellationToken cancellationToken = default)
 	{
 		// Describing one symbol is instant. The only wait worth reporting is the workspace itself,
@@ -64,7 +65,8 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		return await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column },
-			cancellationToken);
+			cancellationToken,
+			includeSource);
 	}
 
 	[McpServerTool(

@@ -56,6 +56,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
+		[Description("Also return the declaration's own source text, so understanding a member does not end in a file read.")] bool includeSource = false,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(workspace, filePath), ToolNames.SymbolInfo, new()
@@ -64,6 +65,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
+			["includeSource"] = includeSource,
 		}, cancellationToken, progress);
 
 	[McpServerTool(
@@ -381,7 +383,10 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	public Task<MemberEditResult> ReplaceBodyAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The body: statements, a block in braces, or => expression;.")] string code,
+		[Description("The body: statements, a block in braces, or => expression;. Leave it off when using find, and pass just the statements to insert when using position.")] string? code = null,
+		[Description("Code to find inside this body and replace, matched on the tokens so indentation and line endings do not matter. Cheaper than re-emitting a long body for a one-line change; refused if it matches nothing or more than one thing.")] string? find = null,
+		[Description("What to put in place of find. Empty removes the matched code.")] string? replace = null,
+		[Description("start or end, to insert code rather than replace the body. end means before a closing return or throw, since anything after one is unreachable.")] string? position = null,
 		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
@@ -394,6 +399,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		{
 			["symbol"] = symbol,
 			["code"] = code,
+			["find"] = find,
+			["replace"] = replace,
+			["position"] = position,
 			["usings"] = usings,
 			["filePath"] = filePath,
 			["apply"] = apply,

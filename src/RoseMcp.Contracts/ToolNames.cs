@@ -33,6 +33,10 @@ public static class ToolNames
 
 	public const string AddUsing = "rose_add_using";
 
+	public const string Outline = "rose_outline";
+
+	public const string ProjectGraph = "rose_project_graph";
+
 	public const string DeleteMember = "rose_delete_member";
 
 	public const string AddFile = "rose_add_file";

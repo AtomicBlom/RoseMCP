@@ -284,6 +284,27 @@ public static class ToolDescriptions
         import resolved.
         """;
 
+	public const string Outline = """
+        What a type or a file declares: every member with its full signature, kind, accessibility,
+        whether it is abstract or static, and the first line of its documentation. Name a type or
+        give a file path -- one of the two. Use it instead of reading the file to find out what is in
+        it, which is the read that comes before most edits and the one that puts the file in front of
+        you: once it is open, the edit goes through a text tool and none of the rest of this is worth
+        reaching for. The signatures are the compiler's, so implementing an interface can be written
+        from this alone, and each member says where it is, so the next call names a file without
+        searching. Members a generator wrote are marked, since there is no file to edit for those.
+        Pass includeInherited to get what the base classes contribute too.
+        """;
+
+	public const string ProjectGraph = """
+        How the solution's projects depend on each other: what each one references, everything that
+        transitively references it, its framework, its output assembly, and whether it is a test
+        project. Two questions this answers that nothing else does -- where a new type is allowed to
+        live, and how far a change to a public member reaches. The second is the transitive list, and
+        working it out by opening project files gets it wrong, because the set that breaks is
+        everything depending on the project rather than everything naming the member.
+        """;
+
 	public const string DeleteMember = """
         Removes a member from a type, addressed by name, taking its documentation comment and its
         attributes with it. Use this rather than cutting a line range: the span is resolved from the

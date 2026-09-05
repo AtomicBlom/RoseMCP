@@ -163,6 +163,17 @@ public static class NavigationService
 	{
 		var bases = new List<ISymbol>();
 
+		// A type's bases are the same question one level up, and were previously answered only for a
+		// member -- so asking what a class derives from returned nothing at all.
+		if (symbol is INamedTypeSymbol named)
+		{
+			if (named.BaseType is { SpecialType: not SpecialType.System_Object } super) bases.Add(super);
+
+			bases.AddRange(named.Interfaces);
+
+			return [.. bases.Distinct(SymbolEqualityComparer.Default)];
+		}
+
 		var overridden = symbol switch
 		{
 			IMethodSymbol method => method.OverriddenMethod,

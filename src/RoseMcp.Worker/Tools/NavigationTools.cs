@@ -157,4 +157,46 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 
 		return await NameResolver.ResolveAsync(snapshot, request, cancellationToken, working);
 	}
+
+	[McpServerTool(
+		Name = ToolNames.Outline,
+		Title = "Outline a type or a file",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.Outline)]
+	public async Task<OutlineResult> OutlineAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The type, as Namespace.Type. One of this and filePath.")] string? type = null,
+		[Description("The file to outline. One of this and type; also narrows a partial type to one of its files.")] string? filePath = null,
+		[Description("Also list what the base classes contribute. Off by default.")] bool includeInherited = false,
+		CancellationToken cancellationToken = default)
+	{
+		using var following = sharedWork.Follow(WorkProgress.For(progress));
+
+		var snapshot = await host.ReadAsync(cancellationToken);
+
+		return await OutlineService.OutlineAsync(snapshot, type, filePath, includeInherited, cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.ProjectGraph,
+		Title = "How the projects depend on each other",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ProjectGraph)]
+	public async Task<ProjectGraphResult> ProjectGraphAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
+		CancellationToken cancellationToken = default)
+	{
+		using var following = sharedWork.Follow(WorkProgress.For(progress));
+
+		var snapshot = await host.ReadAsync(cancellationToken);
+
+		return ProjectGraphService.Describe(snapshot, project);
+	}
 }

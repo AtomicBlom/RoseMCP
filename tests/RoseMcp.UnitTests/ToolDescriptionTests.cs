@@ -68,6 +68,8 @@ public sealed class ToolDescriptionTests
 	[InlineData(ToolNames.ReplaceBody, "rather than a line-range edit")]
 	[InlineData(ToolNames.AddFile, "rather than writing the file")]
 	[InlineData(ToolNames.DeleteMember, "rather than cutting a line range")]
+	[InlineData(ToolNames.Outline, "instead of reading the file")]
+	[InlineData(ToolNames.ProjectGraph, "nothing else does")]
 	[InlineData(ToolNames.AddMember, "rather than finding the closing brace")]
 	[InlineData(ToolNames.ChangeSignature, "an edit per layer")]
 	[InlineData(ToolNames.Diagnostics, "in place of building after every change")]

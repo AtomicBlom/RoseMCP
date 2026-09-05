@@ -115,6 +115,46 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress);
 
 	[McpServerTool(
+		Name = ToolNames.Outline,
+		Title = "Outline a type or a file",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.Outline)]
+	public Task<OutlineResult> OutlineAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The type, as Namespace.Type. One of this and filePath.")] string? type = null,
+		[Description("The file to outline. One of this and type; also narrows a partial type to one of its files.")] string? filePath = null,
+		[Description("Also list what the base classes contribute. Off by default.")] bool includeInherited = false,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<OutlineResult>(WorkspaceHints.From(workspace, filePath), ToolNames.Outline, new()
+		{
+			["type"] = type,
+			["filePath"] = filePath,
+			["includeInherited"] = includeInherited,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
+		Name = ToolNames.ProjectGraph,
+		Title = "How the projects depend on each other",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ProjectGraph)]
+	public Task<ProjectGraphResult> ProjectGraphAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<ProjectGraphResult>(WorkspaceHints.From(workspace), ToolNames.ProjectGraph, new()
+		{
+			["project"] = project,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
 		Name = ToolNames.ResolveName,
 		Title = "Find the namespace a name needs",
 		ReadOnly = true,

@@ -284,6 +284,18 @@ public static class ToolDescriptions
         import resolved.
         """;
 
+	public const string MoveMember = """
+        Moves a static member from one type to another and takes its call sites with it, in one
+        change. Use this rather than adding it to the new type and deleting it from the old: those
+        are two writes, and a failure between them leaves the member declared twice. The call sites
+        are the part that gets forgotten -- callSites=qualify writes the new type in front of each
+        one, callSites=usingStatic adds a using static to each calling file and leaves the calls as
+        they are, and the choice is made once here rather than once per file. The declaration moves
+        exactly as written, documentation comment and attributes included, reindented for where it
+        lands. Instance members are refused: moving one changes what 'this' means inside it and every
+        call site would need a receiver it has no reason to have to hand.
+        """;
+
 	public const string Outline = """
         What a type or a file declares: every member with its full signature, kind, accessibility,
         whether it is abstract or static, and the first line of its documentation. Name a type or

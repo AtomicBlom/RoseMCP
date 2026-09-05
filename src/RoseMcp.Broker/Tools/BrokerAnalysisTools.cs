@@ -564,6 +564,39 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
 	[McpServerTool(
+		Name = ToolNames.MoveMember,
+		Title = "Move a member to another type",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.MoveMember)]
+	public Task<MemberEditResult> MoveMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member to move, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The type it moves into, as Namespace.Type.")] string targetType,
+		[Description("qualify to write the new type in front of every call, or usingStatic to import it in each calling file. Defaults to qualify.")] string callSites = "qualify",
+		[Description("Which file, when the member is declared in more than one -- a partial type.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the move broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.MoveMember, new()
+		{
+			["symbol"] = symbol,
+			["targetType"] = targetType,
+			["callSites"] = callSites,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["verifyScope"] = verifyScope,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
 		Name = ToolNames.DeleteMember,
 		Title = "Remove a member",
 		ReadOnly = false,

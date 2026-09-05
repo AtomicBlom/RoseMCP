@@ -42,6 +42,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.FormatDocuments,
 		ToolNames.ListCodeFixes,
 		ToolNames.ListGeneratedDocuments,
+		ToolNames.MoveMember,
 		ToolNames.MoveTypeToFile,
 		ToolNames.Outline,
 		ToolNames.ProjectGraph,

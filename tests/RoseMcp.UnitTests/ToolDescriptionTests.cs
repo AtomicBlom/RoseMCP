@@ -59,6 +59,7 @@ public sealed class ToolDescriptionTests
 	[InlineData(ToolNames.FindReferences, "text search")]
 	[InlineData(ToolNames.FindImplementations, "Grep cannot")]
 	[InlineData(ToolNames.RenameSymbol, "find-and-replace")]
+	[InlineData(ToolNames.MoveMember, "rather than adding it to the new type")]
 	[InlineData(ToolNames.MoveTypeToFile, "rather than reading a file and writing two")]
 	[InlineData(ToolNames.FormatDocuments, "by any other means")]
 	[InlineData(ToolNames.ApplyCodeFix, "rather than editing each occurrence")]

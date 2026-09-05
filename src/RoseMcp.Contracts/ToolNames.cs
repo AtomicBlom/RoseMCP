@@ -33,6 +33,8 @@ public static class ToolNames
 
 	public const string AddUsing = "rose_add_using";
 
+	public const string MoveMember = "rose_move_member";
+
 	public const string Outline = "rose_outline";
 
 	public const string ProjectGraph = "rose_project_graph";

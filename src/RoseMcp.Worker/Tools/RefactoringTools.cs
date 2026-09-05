@@ -396,6 +396,60 @@ public sealed class RefactoringTools(
 	}
 
 	[McpServerTool(
+		Name = ToolNames.MoveMember,
+		Title = "Move a member to another type",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.MoveMember)]
+	public async Task<MemberEditResult> MoveMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member to move, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The type it moves into, as Namespace.Type.")] string targetType,
+		[Description("qualify to write the new type in front of every call, or usingStatic to import it in each calling file. Defaults to qualify.")] string callSites = "qualify",
+		[Description("Which file, when the member is declared in more than one -- a partial type.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the move broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var request = new MoveMemberRequest
+		{
+			Symbol = symbol,
+			TargetType = targetType,
+			CallSites = StyleOf(callSites),
+			FilePath = filePath,
+			Apply = apply,
+			Verify = verify,
+			VerifyScope = ScopeOf(verifyScope),
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await RunAsync(
+			progress,
+			(session, snapshot, working, token) => MoveMemberService.MoveAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	/// <summary>
+	/// What the caller asked to happen to the call sites. An unrecognised name is refused rather than
+	/// taken as either: the two produce different files, and guessing would produce the one they did
+	/// not ask for.
+	/// </summary>
+	private static CallSiteStyle StyleOf(string? requested)
+	{
+		if (string.IsNullOrWhiteSpace(requested)) return CallSiteStyle.Qualify;
+
+		if (Enum.TryParse<CallSiteStyle>(requested, ignoreCase: true, out var style)) return style;
+
+		throw new ArgumentException($"'{requested}' is not a call-site style. Use qualify or usingStatic.");
+	}
+
+	[McpServerTool(
 		Name = ToolNames.DeleteMember,
 		Title = "Remove a member",
 		ReadOnly = false,

@@ -50,6 +50,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// The XAML framework dll the initialiser is pointed at, resolved from the target, or null where
 	// the framework exports its own initialiser and needs no telling.
 	private string? _diagnosticsPath;
+	// The host end of the pipe the provider connects back on (#50). Present alongside the file
+	// channel while the two overlap: this proves the AppContainer can reach it before any request
+	// depends on it, which is the one thing about #50 that could not be settled by reading.
+	private XamlProviderPipe? _pipe;
 
 	// The number stamped on the request being served, and echoed back by the provider on everything it
 	// writes. Every handshake here used to be "does this file exist", with the host deleting the marker
@@ -100,6 +104,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlTree ReadTreeCore(int pid)
 	{
+		// The pipe first, where the provider is already resident: no injection, no marker, no file.
+		// This is the whole point of #50 -- the provider does its work on the app's UI thread, so
+		// every request used to re-inject to get onto that thread, and a resident reader reaching it
+		// through the dispatcher makes a read a message instead.
+		if (_pipe?.Connected == true && _pipe.Request("tree", SnapshotTimeout) is { } served)
+		{
+			var fromPipe = ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", fromPipe.Count, pid);
+			return new LiveXamlTree { Nodes = fromPipe };
+		}
+
 		var (workDir, error) = Inject(pid, "tree");
 		if (error is not null) return new LiveXamlTree { Detail = error };
 
@@ -110,7 +125,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 		try
 		{
-			var nodes = ParseTree(Path.Combine(workDir!, "tree.tsv"));
+			var nodes = ParseTree(File.ReadLines(Path.Combine(workDir!, "tree.tsv"), Encoding.UTF8));
 			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid}.", nodes.Count, pid);
 			return new LiveXamlTree { Nodes = nodes };
 		}
@@ -135,6 +150,33 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	private LiveXamlProperties ReadPropertiesCore(int pid, ulong handle, bool includeDefaults)
 	{
 		var request = includeDefaults ? $"properties {handle} all" : $"properties {handle}";
+
+		// The pipe first, where the provider is resident (#50). The reply is a status line and then
+		// the rows, so "the chain could not be read" stays distinguishable from "read it and there
+		// was nothing" -- a distinction the marker file made with the word "error" and an empty reply
+		// could not make at all.
+		if (_pipe?.Connected == true && _pipe.Request(request, SnapshotTimeout) is { } served)
+		{
+			var lines = served.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+			if (lines.Length > 0 && lines[0] == "error")
+			{
+				return new LiveXamlProperties
+				{
+					Handle = handle,
+					Detail = "The XAML provider could not read that element's property chain. The handle may "
+						+ "name something that is not an element, or something no longer in the tree.",
+				};
+			}
+
+			if (lines.Length > 0 && lines[0] == "ok")
+			{
+				var fromPipe = ParseProperties(lines.Skip(1), handle);
+				logger.LogInformation(
+					"Read {Count} propert(y/ies) for handle {Handle} from pid {Pid} over the pipe.", fromPipe.Count, handle, pid);
+				return fromPipe;
+			}
+		}
+
 		var (workDir, error) = Inject(pid, request);
 		if (error is not null) return new LiveXamlProperties { Handle = handle, Detail = error };
 
@@ -145,7 +187,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 		try
 		{
-			var properties = ParseProperties(Path.Combine(workDir!, "properties.tsv"), handle);
+			var properties = ParseProperties(File.ReadLines(Path.Combine(workDir!, "properties.tsv"), Encoding.UTF8), handle);
 			logger.LogInformation("Read {Count} propert(y/ies) for handle {Handle} from pid {Pid}.", properties.Count, handle, pid);
 			return properties;
 		}
@@ -167,6 +209,42 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		lock (_requests) return EnterSelectModeCore(pid, includeAllElements, justMyXaml);
 	}
 
+	/// <summary>
+	/// Disarms select mode, the same act as the toolbar's Idle button.
+	/// <para>
+	/// The other half of a switch that only had one position reachable from here. Arming puts a
+	/// pointer-capturing layer over the app and waits for a click; nothing but that click, or a person
+	/// pressing Idle, took it away again -- selecting by handle does not, because it never goes through
+	/// the click path that ends the mode. An agent that armed and then changed its mind had left the
+	/// app modal with no way back.
+	/// </para>
+	/// <para>
+	/// Clearing the pick stays a separate act. Armed and picked are two pieces of state, and folding
+	/// them together would remove "clear this one and let me pick another", which is the ordinary way
+	/// a person uses the toolbar.
+	/// </para>
+	/// </summary>
+	public LiveXamlSelection ExitSelectMode(int pid)
+	{
+		lock (_requests) return ExitSelectModeCore(pid);
+	}
+
+	private LiveXamlSelection ExitSelectModeCore(int pid)
+	{
+		var (workDir, error) = Inject(pid, "idle");
+		if (error is not null) return new LiveXamlSelection { Detail = error };
+
+		if (!WaitForMarker(Path.Combine(workDir!, "idle.ready"), SnapshotTimeout))
+		{
+			return new LiveXamlSelection { Detail = "The provider was injected but did not report select mode disarmed." };
+		}
+
+		// Answered from the provider's own state rather than from the fact that it acknowledged, for
+		// the same reason arming is: a later rose_xaml_selection reads that state file, and a reply
+		// that merely echoed the request could contradict it with nothing to say which was right.
+		var after = ReadSelectionCore();
+		return after with { Detail = after.Armed ? "Select mode is still armed." : "Select mode is off." };
+	}
 	private LiveXamlSelection EnterSelectModeCore(int pid, bool includeAllElements, bool justMyXaml)
 	{
 		// Tokens rather than flags in the name: the provider parses them, and a request that does not
@@ -289,15 +367,28 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var (workDir, error) = Inject(pid, $"selecthandle {handle}");
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
-		// The provider writes the selection files and nothing else, so waiting on selection.ready is
-		// the confirmation -- and it is the same file a click produces, which is what keeps one read
-		// path for both routes.
-		if (!WaitForMarker(Path.Combine(workDir!, "selection.ready"), SnapshotTimeout))
+		// A marker of its own, and the difference is fifteen seconds (#89). This used to wait on
+		// selection.ready, reasoning that the provider writes the selection files and nothing else --
+		// true, and that is the problem: it writes them only when it has a selection to record. A
+		// handle naming something that is not an element, or something since gone from the tree,
+		// produced no file at all, so the refusal arrived as a snapshot timeout. One file cannot both
+		// answer a request and survive one, which is the same lesson selection.ready taught from the
+		// other side. A "no" now costs what a "yes" costs.
+		var readyFile = Path.Combine(workDir!, "selecthandle.ready");
+		if (!WaitForMarker(readyFile, SnapshotTimeout))
 		{
 			return new LiveXamlSelection
 			{
-				Detail = $"The provider was injected but did not select handle {handle}. It may name something that "
-					+ "is not an element, or something no longer in the tree; rose_xaml_tree lists what is.",
+				Detail = $"The provider was injected but did not answer about handle {handle}.",
+			};
+		}
+
+		if (Verdict(readyFile) != "selected")
+		{
+			return new LiveXamlSelection
+			{
+				Detail = $"Handle {handle} was not selected. It may name something that is not an element, or "
+					+ "something no longer in the tree; rose_xaml_tree lists what is.",
 			};
 		}
 
@@ -485,7 +576,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			var treeFile = Path.Combine(_workDir!, "tree.tsv");
 			if (!File.Exists(treeFile)) return [];
 
-			return ParseTree(treeFile).ToDictionary(node => node.Handle);
+			return ParseTree(File.ReadLines(treeFile, Encoding.UTF8)).ToDictionary(node => node.Handle);
 		}
 		catch (Exception exception) when (exception is IOException or ArgumentException)
 		{
@@ -921,7 +1012,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return (null, $"Could not stage the XAML provider: {exception.Message}");
 		}
 
-		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv" })
+		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv", "idle.ready" })
 		{
 			TryDelete(Path.Combine(workDir, stale));
 		}
@@ -940,7 +1031,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			foreach (var stale in new[]
 			{
-				"select.ready", "selection.tsv", "selection.ready", "deselect.ready", "selection.gone",
+				"select.ready", "selection.tsv", "selection.ready", "selecthandle.ready", "deselect.ready", "selection.gone",
 			})
 			{
 				TryDelete(Path.Combine(workDir, stale));
@@ -979,8 +1070,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var hr = 0;
 		while (true)
 		{
-			hr = _initialise!(tap.EndpointName, (uint)pid, _diagnosticsPath, stagedProvider, tap.ProviderClsid, workDir);
-			if (hr >= 0) return (workDir, null);
+			// wszInitializationData is an arbitrary string handed to the TAP, and it already carries
+			// the work directory, so the pipe name rides in the same slot -- no new plumbing to
+			// establish the channel. Separated by '|', which cannot occur in a Windows path.
+			var initData = _pipe is null ? workDir : $"{workDir}|{_pipe.Name}";
+
+			hr = _initialise!(tap.EndpointName, (uint)pid, _diagnosticsPath, stagedProvider, tap.ProviderClsid, initData);
+			if (hr >= 0)
+			{
+				NoteProviderPipe();
+				return (workDir, null);
+			}
 			if (hr != ErrorNotFound || DateTime.UtcNow >= deadline) break;
 
 			Thread.Sleep(250);
@@ -1003,6 +1103,24 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		return (null, detail);
 	}
 
+	/// <summary>
+	/// Records whether the provider connected back on the pipe. Observation only for now: every
+	/// request still goes through the files, so a pipe that never connects costs nothing but the
+	/// line in the log that says so (#50).
+	/// </summary>
+	private void NoteProviderPipe()
+	{
+		if (_pipe is null || _pipe.Connected) return;
+
+		var greeting = _pipe.WaitForProvider(TimeSpan.FromSeconds(5));
+		if (greeting is null)
+		{
+			logger.LogWarning("The XAML provider did not connect on {PipeName}.", _pipe.Name);
+			return;
+		}
+
+		logger.LogInformation("The XAML provider connected on {PipeName} and said: {Greeting}", _pipe.Name, greeting);
+	}
 	private (string WorkDir, string StagedProvider) StageSandboxFolder(XamlTap tap, string provider)
 	{
 		// Stage once per session and reuse: the first injection loads the provider DLL into the target,
@@ -1054,6 +1172,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 				Icacls(workDir, $"/grant {sid}:(OI)(CI)(M)");
 			}
 		}
+
+		// Created with the folder rather than lazily, because the name has to exist before the first
+		// injection carries it.
+		_pipe = new XamlProviderPipe(logger);
+		_pipe.Listen();
 
 		_workDir = workDir;
 		_stagedProvider = stagedProvider;
@@ -1136,6 +1259,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			if (_workDir is null) return;
 
+			_pipe?.Dispose();
+			_pipe = null;
+
 			TryDeleteDirectory(_workDir);
 			_workDir = null;
 			_stagedProvider = null;
@@ -1161,10 +1287,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		}
 	}
 
-	private static List<LiveXamlNode> ParseTree(string treeFile)
+	private static List<LiveXamlNode> ParseTree(IEnumerable<string> lines)
 	{
 		var nodes = new List<LiveXamlNode>();
-		foreach (var line in File.ReadLines(treeFile, Encoding.UTF8))
+		foreach (var line in lines)
 		{
 			if (line.Length == 0) continue;
 
@@ -1200,7 +1326,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		return nodes;
 	}
 
-	private static LiveXamlProperties ParseProperties(string propertiesFile, ulong handle)
+	private static LiveXamlProperties ParseProperties(IEnumerable<string> lines, ulong handle)
 	{
 		string? typeName = null;
 		string? elementFile = null;
@@ -1208,7 +1334,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		int? elementColumn = null;
 		var properties = new List<LiveXamlProperty>();
 
-		foreach (var line in File.ReadLines(propertiesFile, Encoding.UTF8))
+		foreach (var line in lines)
 		{
 			if (line.Length == 0) continue;
 

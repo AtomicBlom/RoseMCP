@@ -101,6 +101,13 @@ public static class ServiceCollectionExtensions
 		with one solution nearby even the path is optional. The first call loads the solution and
 		takes a few seconds; every call after that is fast, so there is no reason to batch around it.
 
+		A large solution is the exception: the first call can take a couple of minutes. If you are
+		about to work in one and have something else to do first -- reading the files you are going to
+		ask about, checking out a branch, running the part of a build that needs no Roslyn --
+		rose_workspace_open begins the load and returns at once, and calling it again says how far it
+		has got without waiting. Asking a real question early is always safe: every other tool blocks
+		until the workspace can answer, so it waits exactly as it would have.
+
 		Every result names the workspace that answered, and carries a short workspaceKey you can pass
 		back as the workspace argument. Check it when an answer surprises you: an empty result from
 		the wrong solution looks exactly like an empty result from the right one. Where a directory

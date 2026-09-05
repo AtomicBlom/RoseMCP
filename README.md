@@ -75,7 +75,8 @@ to check code compiles. Source-generated code is only readable via
 | `rose_apply_code_fix` | Applies one, to a file, a project, or the whole solution, through Roslyn's fix-all. |
 | `rose_list_generated_documents` | What the generators actually produced, per project. |
 | `rose_read_generated_document` | The generated source itself. Nothing on disk to read — this is the only way to see it. |
-| `rose_workspace_open` / `_status` / `_reload` / `_close` | Load state, per-project health, degraded-load detection, and the MSBuild properties in use. `_reload` can change them. |
+| `rose_workspace_open` | Starts a load and returns at once, so a session can do something else while a large solution opens. Call it again to see how far it has got. |
+| `rose_workspace_status` / `_reload` / `_close` | Load state, per-project health, degraded-load detection, and the MSBuild properties in use. `_reload` can change them. |
 
 Every result carries a `revision`, so a caller can tell whether two answers describe the same
 world.

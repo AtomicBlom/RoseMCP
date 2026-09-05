@@ -18,12 +18,18 @@ namespace RoseMcp.Contracts;
 public static class ToolDescriptions
 {
 	public const string WorkspaceOpen = """
-        Loads a solution into a warm Roslyn host and keeps it loaded, so later calls cost nothing to
-        set up. Rarely needed on its own: every other tool opens the enclosing solution itself. Call
-        it to pay the load deliberately rather than inside the first real question, or to read the
-        per-project load state up front -- including any reason the workspace is degraded, most often
-        a source generator whose assembly has not been built, which otherwise produces no generated
-        code and no error.
+        Starts loading a solution into a warm Roslyn host and returns at once, without waiting for the
+        load. Call it when you are about to ask questions about a large one and have something else to
+        do first -- read the files you are going to ask about, check out a branch, run the part of a
+        build that needs no Roslyn -- then call it again to see how far the load has got. It answers
+        from the broker's own view (state, the solution it resolved, project count once known, and any
+        running operation with its percentage), so polling it never waits on the load it is reporting
+        on, and calling it on a solution already loading or loaded changes nothing.
+
+        Never required: every other tool opens the enclosing solution itself, and every one of them
+        blocks until the workspace can answer, so asking a real question early is safe -- it waits
+        exactly as it would have. Use rose_workspace_status when you want the loaded detail and are
+        content to wait for it.
         """;
 
 	public const string WorkspaceStatus = """

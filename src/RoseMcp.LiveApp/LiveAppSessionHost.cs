@@ -269,8 +269,16 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return _xaml.ReadProperties(pid, handle, includeDefaults);
 	}
 
-	/// <summary>Arms interactive select mode: the next click in the app picks that element.</summary>
-	public LiveXamlSelection EnterXamlSelectMode(bool includeAllElements, bool justMyXaml)
+	/// <summary>
+	/// Arms interactive select mode so the next click in the app picks that element, or disarms it.
+	/// <para>
+	/// Both positions of one switch, because the toolbar has always had both and only arming was
+	/// reachable from here. Arming lays a pointer-capturing layer over the app; picking by handle does
+	/// not take it away, since that never goes through the click path that ends the mode, so an agent
+	/// that armed and changed its mind had left the app modal with no way back.
+	/// </para>
+	/// </summary>
+	public LiveXamlSelection EnterXamlSelectMode(bool includeAllElements, bool justMyXaml, bool arm = true)
 	{
 		int? targetProcessId;
 		lock (_gate)
@@ -284,7 +292,9 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
 		}
 
-		return _xaml.EnterSelectMode(pid, includeAllElements, justMyXaml);
+		return arm
+			? _xaml.EnterSelectMode(pid, includeAllElements, justMyXaml)
+			: _xaml.ExitSelectMode(pid);
 	}
 
 	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>

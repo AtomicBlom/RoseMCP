@@ -151,16 +151,27 @@ static bool RoseTapWatchPointer(
 // framework having ignored the tap entirely; it cost days on exactly that reading. UWP has no such
 // constraint because it enumerates inline.
 //
-// So the body runs on a thread of its own, and the part that touches XAML is sent back. The queue
-// is captured in SetSite rather than looked up here, because that is the one moment this provider
-// is known to be on the UI thread -- GetForCurrentThread from the worker would return null, and
-// silently.
+// So the body runs on a thread of its own, and the part that touches XAML is sent back. The same
+// seam carries the pipe reader (#50), which needs the UI thread for the same reason from a different
+// direction.
+//
+// The queue comes from IXamlDiagnostics::GetDispatcher rather than from GetForCurrentThread. That is
+// a xamlOM method, so the shared half asks for it and only the cast is here -- and unlike asking the
+// current thread it answers from anywhere, which the reader thread needs and the worker thread this
+// provider creates needs too.
 static winrt::Microsoft::UI::Dispatching::DispatcherQueue g_uiQueue{ nullptr };
+static DWORD g_uiThreadId = 0;
 
-static void RoseTapCaptureUiThread()
+static void RoseTapCaptureDispatcher(::IInspectable* raw)
 {
-	g_uiQueue = winrt::Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread();
-	if (!g_uiQueue) Log(L"no DispatcherQueue on the siting thread; XAML work will run where it is asked");
+	g_uiThreadId = ::GetCurrentThreadId();
+	if (!raw) return;
+
+	winrt::Windows::Foundation::IInspectable dispatcher{ nullptr };
+	winrt::attach_abi(dispatcher, raw); // adopt the ref
+	if (!g_uiQueue) g_uiQueue = dispatcher.try_as<winrt::Microsoft::UI::Dispatching::DispatcherQueue>();
+
+	Log(g_uiQueue ? L"SetSite: holding the UI dispatcher" : L"SetSite: no DispatcherQueue available");
 }
 
 static void RoseTapRunTapBody(std::function<void()> body)
@@ -176,16 +187,21 @@ static void RoseTapRunTapBody(std::function<void()> body)
 	}).detach();
 }
 
-static void RoseTapRunOnUiThread(const std::function<void()>& work)
+// Blocking is deliberate and safe here in a way it is not the other way round: this is a worker
+// waiting on the UI thread, never the UI thread waiting on itself. The thread-id check is what makes
+// that true rather than hoped for.
+static bool RoseTapRunOnUiThread(const std::function<void()>& work)
 {
-	// Blocking is deliberate and safe here in a way it is not the other way round: this is the worker
-	// waiting on the UI thread, never the UI thread waiting on itself.
-	const HANDLE done = g_uiQueue ? CreateEventW(nullptr, TRUE, FALSE, nullptr) : nullptr;
-	if (!done)
+	if (::GetCurrentThreadId() == g_uiThreadId)
 	{
 		work();
-		return;
+		return true;
 	}
+
+	if (!g_uiQueue) return false;
+
+	const HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	if (!done) return false;
 
 	const bool enqueued = g_uiQueue.TryEnqueue([&work, done]()
 	{
@@ -193,19 +209,11 @@ static void RoseTapRunOnUiThread(const std::function<void()>& work)
 		SetEvent(done);
 	});
 
-	if (enqueued)
-	{
-		WaitForSingleObject(done, INFINITE);
-	}
-	else
-	{
-		// A queue that will not take work is a shutting-down app. Doing it here will mostly fail, but
-		// failing loudly beats a request the host waits fifteen seconds for and is never told about.
-		Log(L"the UI thread's DispatcherQueue refused the work; running it here instead");
-		work();
-	}
+	if (enqueued) WaitForSingleObject(done, INFINITE);
+	else Log(L"the UI thread's DispatcherQueue refused the work");
 
 	CloseHandle(done);
+	return enqueued;
 }
 
 // The two layers that need the aliases and the class id above: the overlay is written against the

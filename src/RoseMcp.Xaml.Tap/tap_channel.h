@@ -33,6 +33,11 @@
 static std::atomic<long> g_lockCount{ 0 };
 static std::wstring g_workDir;
 
+// The pipe the host is listening on, when it named one in the initialization data (#50). Empty
+// against a host that did not, which is what keeps an older host working while the two channels
+// overlap.
+static std::wstring g_pipeName;
+
 // The host's number for the request being served, echoed into everything written back so the host
 // can tell a file this request produced from one left behind by the last (#57).
 //
@@ -119,6 +124,102 @@ static std::string Utf8(const std::wstring& text)
 	std::string out(static_cast<size_t>(size), '\0');
 	WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
 	return out;
+}
+
+// The host end of the channel #50 replaces the files with. Global for the same reason g_workDir is:
+// the provider is handed its configuration once, at SetSite.
+static HANDLE g_pipe = INVALID_HANDLE_VALUE;
+static std::thread g_pipeThread;
+static std::atomic<bool> g_pipeStop{ false };
+
+// One length-prefixed UTF-8 message, which is the whole framing. Every message through the folder
+// made its own encoding decision and the record shows the cost twice: a wofstream narrowing UTF-16
+// to ANSI so a tree parsed as zero elements, and commands.tsv needing UTF-8-without-BOM because the
+// reader was narrow. One frame format removes the category.
+static bool WriteFrame(const std::string& payload)
+{
+	if (g_pipe == INVALID_HANDLE_VALUE) return false;
+
+	const unsigned int length = static_cast<unsigned int>(payload.size());
+	unsigned char header[4] = {
+		static_cast<unsigned char>(length & 0xFF),
+		static_cast<unsigned char>((length >> 8) & 0xFF),
+		static_cast<unsigned char>((length >> 16) & 0xFF),
+		static_cast<unsigned char>((length >> 24) & 0xFF),
+	};
+
+	DWORD written = 0;
+	if (!::WriteFile(g_pipe, header, 4, &written, nullptr) || written != 4) return false;
+	if (length == 0) return true;
+
+	written = 0;
+	return ::WriteFile(g_pipe, payload.data(), length, &written, nullptr) && written == length;
+}
+
+// Connects to the pipe the host named in the initialization data and greets it.
+//
+// Connecting *to* a pipe is the easy direction across an AppContainer boundary -- the finicky case
+// is creating one from inside the sandbox. The host grants this app's SIDs on the pipe exactly as it
+// already grants them on the folder, so this is an ordinary CreateFileW.
+//
+// The path is a raw string literal because the escaped form of a pipe path is unreadable and this
+// one has already been got wrong once.
+static void ConnectPipe()
+{
+	if (g_pipeName.empty() || g_pipe != INVALID_HANDLE_VALUE) return;
+
+	const std::wstring path = LR"(\\.\pipe\)" + g_pipeName;
+	g_pipe = ::CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+	if (g_pipe == INVALID_HANDLE_VALUE)
+	{
+		Log(L"pipe: could not open " + path + L" (GetLastError=" + std::to_wstring(::GetLastError()) + L")");
+		return;
+	}
+
+	Log(L"pipe: connected to " + path);
+	if (!WriteFrame("hello from the provider")) Log(L"pipe: connected but could not write the greeting");
+}
+
+static std::wstring FromUtf8(const std::string& text)
+{
+	if (text.empty()) return std::wstring();
+	const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0);
+	std::wstring out(static_cast<size_t>(size), L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size);
+	return out;
+}
+
+// The other half of the framing: read exactly what the length says, or fail. A short read is not a
+// smaller message, it is a broken one, and treating it as the former is how a channel starts
+// answering the wrong question.
+static bool ReadExactly(void* buffer, DWORD length)
+{
+	auto* at = static_cast<unsigned char*>(buffer);
+	DWORD done = 0;
+	while (done < length)
+	{
+		DWORD got = 0;
+		if (!::ReadFile(g_pipe, at + done, length - done, &got, nullptr) || got == 0) return false;
+		done += got;
+	}
+
+	return true;
+}
+
+static bool ReadFrame(std::string& payload)
+{
+	if (g_pipe == INVALID_HANDLE_VALUE) return false;
+
+	unsigned char header[4] = {};
+	if (!ReadExactly(header, 4)) return false;
+
+	const unsigned int length = static_cast<unsigned int>(header[0])
+		| (static_cast<unsigned int>(header[1]) << 8)
+		| (static_cast<unsigned int>(header[2]) << 16)
+		| (static_cast<unsigned int>(header[3]) << 24);
+
+	payload.assign(length, '\0');
+	return length == 0 || ReadExactly(payload.data(), length);
 }
 
 // A tab or newline in a type or name would break the row-per-element snapshot; keep every field on

@@ -12,6 +12,21 @@
 // genuine identity here, since it is what the host's injection names and what two providers must not
 // share.
 
+// The provider instance the reader serves from, and a lock over it.
+//
+// This is not bookkeeping, it is the correctness of the whole channel: InitializeXamlDiagnosticsEx
+// builds a *new* provider on every injection, each with its own node list. The reader thread outlives
+// any one of them, so a captured `this` would go on answering from the tree the first injection saw
+// -- which is exactly how a removal came back as still present, and is a use-after-free the moment an
+// old instance is released. It serves whichever instance is current, holding a reference to it.
+class RoseTap;
+static std::mutex g_activeMutex;
+static RoseTap* g_active = nullptr;
+
+// Declared here and defined after RoseTap, because SetSite calls them and they need the whole class.
+static void SetActiveTap(RoseTap* tap);
+static void StartPipeReader();
+
 class RoseTap final : public IObjectWithSite, public IVisualTreeServiceCallback
 {
 public:
@@ -74,8 +89,40 @@ public:
 			return FAILED(initHr) ? initHr : E_UNEXPECTED;
 		}
 
-		g_workDir.assign(initData, SysStringLen(initData));
+		std::wstring data(initData, SysStringLen(initData));
 		SysFreeString(initData);
+
+		// "<work dir>|<pipe name>", the pipe name optional while the two channels overlap (#50).
+		// Split on '|' because it cannot occur in a Windows path, so the work dir cannot contain one
+		// and an older host that sends no pipe name still parses as exactly itself.
+		const size_t bar = data.find(L'|');
+		if (bar == std::wstring::npos)
+		{
+			g_workDir = data;
+		}
+		else
+		{
+			g_workDir = data.substr(0, bar);
+			g_pipeName = data.substr(bar + 1);
+		}
+
+		// The UI thread, taken from the diagnostics site rather than from whichever thread we happen
+		// to be on. Two things need it and they need it differently: the pipe reader is a background
+		// thread that has to get onto the UI thread to touch XAML at all (#50), and the tap body has
+		// to get back onto it after advising off it (#76). GetDispatcher is the documented route and
+		// works from anywhere, which asking the current thread does not.
+		//
+		// What comes back is framework-shaped -- a CoreDispatcher on UWP, a DispatcherQueue on WinUI
+		// 3 -- so the provider adopts it and the rest of this file only ever says "run this there".
+		::IInspectable* rawDispatcher = nullptr;
+		if (FAILED(m_diagnostics->GetDispatcher(&rawDispatcher))) rawDispatcher = nullptr;
+
+		// Called even with nothing to give, because it also records *which* thread this is. That is
+		// what lets "run this on the UI thread" answer correctly from the injected path, which is
+		// already there, and from the reader thread, which is not.
+		RoseTapCaptureDispatcher(rawDispatcher);
+
+		ConnectPipe();
 
 		m_diagnostics->QueryInterface(__uuidof(IVisualTreeService), reinterpret_cast<void**>(&m_tree));
 		if (!m_tree)
@@ -103,7 +150,6 @@ public:
 		// and drops it the moment Launch returns; normally AdviseVisualTreeChange is what takes a
 		// lasting reference, so returning before advising leaves nothing owning us, and the body would
 		// then run against a destroyed object -- which it did, reading a thread id that was never set.
-		RoseTapCaptureUiThread();
 		AddRef();
 		RoseTapRunTapBody([this, request]()
 		{
@@ -164,7 +210,26 @@ public:
 			{
 				// Checked before the arming verb below, and named without a space after "select" so the
 				// two cannot be confused: arming parses its tokens as flags, and a handle is not one.
-				Overlay().SelectByHandle(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
+				const bool selected = Overlay().SelectByHandle(
+					static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
+
+				// Answered either way, on a marker of its own. selection.ready is only written when
+				// there is a selection to record, so a handle resolving to nothing left the host
+				// waiting out its whole timeout for a refusal it could have had at once (#89).
+				WriteMarker(L"selecthandle.ready", selected ? L"selected" : L"none");
+			}
+			else if (request == L"idle")
+			{
+				// The toolbar's Idle button, reachable from the agent. Arming and disarming are one
+				// switch with two positions, and only one of them had a verb: an agent could arm
+				// select mode and then had no way out of it, because the overlay's capture layer is
+				// only torn down here and picking an element by handle does not go through the click
+				// path that ends it. That left a modal, pointer-capturing overlay over the app with
+				// nothing but a human click to lift it. Clearing the pick is a separate act and stays
+				// separate -- armed and picked are two pieces of state, and collapsing them would take
+				// away "clear this and let me pick again".
+				Overlay().EndSelect();
+				WriteMarker(L"idle.ready", L"idle");
 			}
 			else if (request == L"deselect")
 			{
@@ -203,6 +268,43 @@ public:
 			// behind, including a tree or properties read that touches the mode not at all.
 			Overlay().RefreshState();
 		});
+
+		// This instance is the one the reader should answer from now on, and only then is it safe to
+		// have a reader at all.
+		SetActiveTap(this);
+		StartPipeReader();
+	}
+
+	/// <summary>
+	/// One request off the pipe, answered. An empty reply means "not served here", which is what lets
+	/// the pipe carry one verb at a time while the rest still go through the files (#50).
+	/// </summary>
+	std::string Serve(const std::wstring& request)
+	{
+		if (request == L"tree")
+		{
+			size_t written = 0;
+			std::string rows;
+			if (!RoseTapRunOnUiThread([&] { rows = TreeSnapshotRows(written); })) return std::string();
+
+			Log(L"pipe: served tree with " + std::to_wstring(written) + L" element(s)");
+			return rows;
+		}
+
+		if (request.rfind(L"properties ", 0) == 0)
+		{
+			// Same parse as the injected path: a trailing " all" asks for the framework defaults too.
+			const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
+			const InstanceHandle handle = static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10));
+
+			std::string reply;
+			if (!RoseTapRunOnUiThread([&] { reply = PropertiesReply(handle, includeDefaults); })) return std::string();
+
+			return reply;
+		}
+
+		Log(L"pipe: no handler for '" + request + L"', falling back to the files");
+		return std::string();
 	}
 
 	HRESULT STDMETHODCALLTYPE GetSite(REFIID riid, void** ppv) override
@@ -250,11 +352,43 @@ private:
 	// The diagnostics UI layer it lives on is not enumerated by AdviseVisualTreeChange on the versions
 	// tested -- the count is identical before and after the toolbar goes up -- so this is a guard against
 	// a framework that does enumerate it, not a fix for one that does.
+	// The snapshot's rows, UTF-8, newline-separated. Separated from writing them so the same bytes
+	// can go down the pipe (#50) or into tree.tsv, rather than one of the two being built a second
+	// way and drifting -- the address column is exactly the sort of thing that would drift.
+	std::string TreeSnapshotRows(size_t& written)
+	{
+		const auto excluded = OverlaySubtree();
+
+		// Each element's address, computed once for the whole snapshot rather than per row. It is
+		// reported because it is the only way to address an element the markup never named, and an
+		// unnamed element is the ordinary case for a click that lands inside a template.
+		const auto paths = ComputePaths();
+
+		std::string rows;
+		written = 0;
+
+		for (const auto& node : m_nodes)
+		{
+			if (excluded.count(node.Handle)) continue;
+
+			const auto address = paths.find(node.Handle);
+			const std::wstring path = address != paths.end() ? address->second : std::wstring();
+
+			const std::wstring row = std::to_wstring(node.Handle) + L'\t' + std::to_wstring(node.Parent) + L'\t'
+				+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str())
+				+ L'\t' + Escape(node.File.c_str()) + L'\t' + std::to_wstring(node.Line) + L'\t' + std::to_wstring(node.Column)
+				+ L'\t' + Escape(path.c_str());
+			rows += Utf8(row);
+			rows += '\n';
+			written++;
+		}
+
+		return rows;
+	}
+
 	void WriteTreeSnapshot()
 	{
 		if (g_workDir.empty()) return;
-
-		const auto excluded = OverlaySubtree();
 
 		const std::wstring finalPath = g_workDir + L"\\tree.tsv";
 		const std::wstring tempPath = finalPath + L".tmp";
@@ -267,25 +401,7 @@ private:
 				return;
 			}
 
-			// Each element's address, computed once for the whole snapshot rather than per row. It is
-			// reported because it is the only way to address an element the markup never named, and
-			// an unnamed element is the ordinary case for a click that lands inside a template.
-			const auto paths = ComputePaths();
-
-			for (const auto& node : m_nodes)
-			{
-				if (excluded.count(node.Handle)) continue;
-
-				const auto address = paths.find(node.Handle);
-				const std::wstring path = address != paths.end() ? address->second : std::wstring();
-
-				const std::wstring row = std::to_wstring(node.Handle) + L'\t' + std::to_wstring(node.Parent) + L'\t'
-					+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str())
-					+ L'\t' + Escape(node.File.c_str()) + L'\t' + std::to_wstring(node.Line) + L'\t' + std::to_wstring(node.Column)
-					+ L'\t' + Escape(path.c_str());
-				file << Utf8(row) << '\n';
-				written++;
-			}
+			file << TreeSnapshotRows(written);
 		}
 
 		_wremove(finalPath.c_str());
@@ -459,9 +575,15 @@ private:
 		return true;
 	}
 
-	void WriteProperties(InstanceHandle handle, bool includeDefaults)
+	// The property rows, into whatever sink the caller has. An std::ostream rather than a file, so
+	// the same builder serves properties.tsv and the pipe reply (#50) -- one builder, because two
+	// would drift and the provenance column is exactly what would drift.
+	//
+	// Returns false when the property chain could not be read at all, which the caller reports
+	// differently from "read it and there was nothing".
+	bool EmitProperties(std::ostream& file, InstanceHandle handle, bool includeDefaults, unsigned int& written)
 	{
-		if (g_workDir.empty()) return;
+		written = 0;
 
 		unsigned int sourceCount = 0;
 		unsigned int valueCount = 0;
@@ -471,8 +593,7 @@ private:
 		if (FAILED(hr))
 		{
 			Log(L"GetPropertyValuesChain(" + std::to_wstring(handle) + L") failed hr=0x" + Hex(hr));
-			WriteMarker(L"properties.ready", L"error");
-			return;
+			return false;
 		}
 
 		std::wstring elementType;
@@ -491,17 +612,7 @@ private:
 			}
 		}
 
-		const std::wstring finalPath = g_workDir + L"\\properties.tsv";
-		const std::wstring tempPath = finalPath + L".tmp";
-		unsigned int written = 0;
 		{
-			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
-			if (!file)
-			{
-				Log(L"could not open properties.tsv.tmp for writing");
-				return;
-			}
-
 			const std::wstring elementRow = L"E\t" + Escape(elementType.c_str()) + L'\t' + Escape(elementFile.c_str())
 				+ L'\t' + std::to_wstring(elementLine) + L'\t' + std::to_wstring(elementColumn);
 			file << Utf8(elementRow) << '\n';
@@ -586,6 +697,45 @@ private:
 			}
 		}
 
+		FreePropertyChain(sources, sourceCount, values, valueCount);
+		return true;
+	}
+
+	// The same rows as a string, for the pipe. A leading status line so "could not read the chain" is
+	// distinguishable from "read it and there were no rows", which the marker file said with the word
+	// "error" and a reply of nothing at all could not.
+	std::string PropertiesReply(InstanceHandle handle, bool includeDefaults)
+	{
+		std::ostringstream rows;
+		unsigned int written = 0;
+		if (!EmitProperties(rows, handle, includeDefaults, written)) return "error\n";
+
+		Log(L"pipe: served " + std::to_wstring(written) + L" propert(y/ies) for handle " + std::to_wstring(handle));
+		return "ok\n" + rows.str();
+	}
+
+	void WriteProperties(InstanceHandle handle, bool includeDefaults)
+	{
+		if (g_workDir.empty()) return;
+
+		const std::wstring finalPath = g_workDir + L"\\properties.tsv";
+		const std::wstring tempPath = finalPath + L".tmp";
+		unsigned int written = 0;
+		{
+			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
+			if (!file)
+			{
+				Log(L"could not open properties.tsv.tmp for writing");
+				return;
+			}
+
+			if (!EmitProperties(file, handle, includeDefaults, written))
+			{
+				WriteMarker(L"properties.ready", L"error");
+				return;
+			}
+		}
+
 		_wremove(finalPath.c_str());
 		if (_wrename(tempPath.c_str(), finalPath.c_str()) != 0)
 		{
@@ -595,8 +745,6 @@ private:
 
 		WriteMarker(L"properties.ready", std::to_wstring(written));
 		Log(L"wrote properties.tsv with " + std::to_wstring(written) + L" propert(y/ies) for handle " + std::to_wstring(handle));
-
-		FreePropertyChain(sources, sourceCount, values, valueCount);
 	}
 
 	// Applies each command from commands.tsv and writes apply.tsv -- one row per command with its
@@ -1523,6 +1671,58 @@ private:
 	// host gave them. Cleared at the start of every batch.
 	std::map<std::wstring, InstanceHandle> m_slots;
 };
+
+// Points the reader at the instance that has just been sited, releasing the one before it. A
+// reference is held for as long as it is the answering instance, so the reader cannot be left with a
+// pointer to a released provider.
+static void SetActiveTap(RoseTap* tap)
+{
+	RoseTap* previous = nullptr;
+	{
+		std::lock_guard<std::mutex> guard(g_activeMutex);
+		previous = g_active;
+		g_active = tap;
+		if (g_active) g_active->AddRef();
+	}
+
+	if (previous) previous->Release();
+}
+
+// The reader thread. One per process, started by the first injection that has a pipe to read, and it
+// outlives every provider instance -- which is why it looks the instance up per request instead of
+// closing over one.
+static void PipeReaderLoop()
+{
+	std::string payload;
+	while (!g_pipeStop.load() && ReadFrame(payload))
+	{
+		RoseTap* serving = nullptr;
+		{
+			std::lock_guard<std::mutex> guard(g_activeMutex);
+			serving = g_active;
+			if (serving) serving->AddRef();
+		}
+
+		std::string reply;
+		if (serving)
+		{
+			reply = serving->Serve(FromUtf8(payload));
+			serving->Release();
+		}
+
+		if (!WriteFrame(reply)) break;
+	}
+
+	Log(L"pipe: reader stopped");
+}
+
+static void StartPipeReader()
+{
+	if (g_pipe == INVALID_HANDLE_VALUE || g_pipeThread.joinable()) return;
+
+	g_pipeThread = std::thread(PipeReaderLoop);
+	Log(L"pipe: reader started");
+}
 
 // A class id as text, for the log. Every handshake before SetSite identifies what it wants by a
 // GUID and by nothing else, so a log line that cannot print one can only say that something

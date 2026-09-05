@@ -107,16 +107,33 @@ static bool RoseTapWatchPointer(
 	return true;
 }
 
-// Where the tap body runs (#76). UWP enumerates the tree inline, on whichever thread advises, and
-// every other diagnostics call is safe from that same thread -- so all three of these are "here,
-// now", and this provider is the reason the seam is shaped as three functions rather than as a
-// thread the shared half always creates. Creating one unconditionally would have moved UWP off a
-// path that has worked since the beginning, to fix a framework it does not share.
+// Where the tap body runs, and how anything gets onto the UI thread from off it.
+//
+// Two pieces of work converge here. UWP enumerates the tree inline on whichever thread advises, so
+// the body needs no thread of its own (#76) -- unlike WinUI 3, which deadlocks if advised from the
+// UI thread. And the pipe reader is a background thread that has to reach the UI thread to touch
+// XAML at all (#50). The dispatcher comes from IXamlDiagnostics::GetDispatcher, which is a xamlOM
+// method rather than a framework one, so the shared half asks for it and only the cast is here: a
+// CoreDispatcher on UWP, a DispatcherQueue on WinUI 3.
 //
 // The contract the shared half relies on: RunTapBody may return before the body has finished, and
 // RunOnUiThread may not.
-static void RoseTapCaptureUiThread()
+static winrt::Windows::UI::Core::CoreDispatcher g_dispatcher{ nullptr };
+static DWORD g_uiThreadId = 0;
+
+static void RoseTapCaptureDispatcher(::IInspectable* raw)
 {
+	// The siting thread, recorded whether or not a dispatcher came with it: SetSite runs on the UI
+	// thread on both frameworks, so this is how the injected path knows it is already there.
+	g_uiThreadId = ::GetCurrentThreadId();
+
+	if (!raw) return;
+
+	winrt::Windows::Foundation::IInspectable dispatcher{ nullptr };
+	winrt::attach_abi(dispatcher, raw); // adopt the ref
+	if (!g_dispatcher) g_dispatcher = dispatcher.try_as<winrt::Windows::UI::Core::CoreDispatcher>();
+
+	Log(g_dispatcher ? L"SetSite: holding the UI dispatcher" : L"SetSite: no CoreDispatcher available");
 }
 
 static void RoseTapRunTapBody(std::function<void()> body)
@@ -124,9 +141,31 @@ static void RoseTapRunTapBody(std::function<void()> body)
 	body();
 }
 
-static void RoseTapRunOnUiThread(const std::function<void()>& work)
+// Blocking on the async action is safe off the UI thread and only there; on it, it would throw, and
+// the thread-id check above means it is never reached from there.
+static bool RoseTapRunOnUiThread(const std::function<void()>& work)
 {
-	work();
+	if (::GetCurrentThreadId() == g_uiThreadId)
+	{
+		work();
+		return true;
+	}
+
+	if (!g_dispatcher) return false;
+
+	try
+	{
+		g_dispatcher.RunAsync(
+			winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,
+			[&work]() { work(); }).get();
+		return true;
+	}
+	catch (...)
+	{
+		// A dispatcher whose window has gone, most likely. The caller answers with an empty frame and
+		// the host falls back to the file channel rather than hanging.
+		return false;
+	}
 }
 
 // The two layers that need the aliases and the class id above: the overlay is written against the

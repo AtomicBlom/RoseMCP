@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Xml.Linq;
 
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -8,14 +7,25 @@ using Microsoft.Extensions.Options;
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
+using static RoseMcp.IntegrationTests.TestToolchain;
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
 /// Integration tests for the live-app debug session. Like the broker tests, these spawn a real host
 /// process, because attach, supervision, and reclaiming are properties of process lifetime -- and the
 /// host attaches a real ICorDebug session to a real .NET process.
+/// <para>
+/// Twenty of these tests drive one registered UWP app, and a packaged app is single-instance: a
+/// second launch by AUMID activates the instance that exists rather than starting one under the
+/// debugger, so two of them running together would have one attach to nothing. They take a lease
+/// from <see cref="UwpProbeApp"/> for exactly that reason, and the eleven tests here that debug an
+/// ordinary .NET child process take none -- they are independent and run in parallel with the rest
+/// of the suite. Serialising the whole class instead is the obvious move and costs 109 seconds:
+/// it stops the class overlapping <em>anything</em>, not just itself.
+/// </para>
 /// </summary>
-public sealed class LiveAppSessionTests
+public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui)
 {
 	/// <summary>
 	/// The first dogfood, end to end: the broker launches a host in the target's architecture, the
@@ -327,15 +337,8 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Launches_and_debugs_the_classic_uwp_probe_app()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-
-		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
@@ -366,7 +369,7 @@ public sealed class LiveAppSessionTests
 		}
 		finally
 		{
-			UnregisterUwpProbeApp();
+			probe.StopApp();
 		}
 	}
 
@@ -379,15 +382,8 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Captures_the_classic_uwp_probe_apps_startup_from_birth()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-
-		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
@@ -419,7 +415,7 @@ public sealed class LiveAppSessionTests
 		}
 		finally
 		{
-			UnregisterUwpProbeApp();
+			probe.StopApp();
 		}
 	}
 
@@ -435,18 +431,15 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Launches_and_debugs_the_unpackaged_winui_probe_app()
 	{
-		var output = BuildWinUiProbeApp(packaged: false);
-		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
-
-		EnsureX64HostBuilt();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: false, cancellationToken);
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
 
 		var target = new LiveAppTarget
 		{
 			Kind = LiveAppTargetKind.LaunchExecutable,
-			ExecutablePath = Path.Combine(output!, "Rose.ProbeApp.WinUi.exe"),
+			ExecutablePath = turn.ExecutablePath,
 			Description = "winui probe (unpackaged)",
 		};
 
@@ -480,44 +473,32 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Launches_and_debugs_the_packaged_winui_probe_app()
 	{
-		var output = BuildWinUiProbeApp(packaged: true);
-		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
-
-		var aumid = RegisterWinUiProbeApp(output!);
-		if (aumid is null) Assert.Skip("The packaged WinUI probe could not be registered (developer mode may be off).");
-
-		EnsureX64HostBuilt();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: true, needsXamlProvider: false, cancellationToken);
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		var target = new LiveAppTarget
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "winui probe (packaged)",
-			};
+			Kind = LiveAppTargetKind.LaunchUwp,
+			AppUserModelId = turn.Aumid,
+			Description = "winui probe (packaged)",
+		};
 
-			var session = await manager.StartAsync(target, cancellationToken);
-			var summary = session.Describe();
-			Assert.True(
-				summary.State == LiveAppSessionState.Ready,
-				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
+		var session = await manager.StartAsync(target, cancellationToken);
+		var summary = session.Describe();
+		Assert.True(
+			summary.State == LiveAppSessionState.Ready,
+			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
-			var marker = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(marker);
+		var marker = await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
+			cancellationToken);
+		Assert.NotNull(marker);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterWinUiProbeApp();
-		}
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 	}
 
 	/// <summary>
@@ -538,19 +519,15 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Reads_the_xaml_tree_of_a_winui_app_it_launched()
 	{
-		var output = BuildWinUiProbeApp(packaged: false);
-		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
-		if (!BuildWinUiXamlProvider()) Assert.Skip("The WinUI XAML provider could not be built (no C++ toolset, or no WindowsAppSDK).");
-
-		EnsureX64HostBuilt();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
 
 		var target = new LiveAppTarget
 		{
 			Kind = LiveAppTargetKind.LaunchExecutable,
-			ExecutablePath = Path.Combine(output!, "Rose.ProbeApp.WinUi.exe"),
+			ExecutablePath = turn.ExecutablePath,
 			Description = "winui xaml probe",
 		};
 
@@ -603,16 +580,12 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Reads_the_xaml_tree_of_a_winui_app_it_attached_to()
 	{
-		var output = BuildWinUiProbeApp(packaged: false);
-		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
-		if (!BuildWinUiXamlProvider()) Assert.Skip("The WinUI XAML provider could not be built (no C++ toolset, or no WindowsAppSDK).");
-
-		EnsureX64HostBuilt();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		// Started outside the session on purpose: nothing about this process was arranged for us.
-		using var child = StartProcess(Path.Combine(output!, "Rose.ProbeApp.WinUi.exe"));
+		using var child = StartProcess(turn.ExecutablePath);
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
 
 		try
 		{
@@ -655,43 +628,14 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Reads_the_live_visual_tree_of_the_classic_uwp_probe()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C, reading only. It asserts on the elements the markup declares, so it neither needs a
+		// slot nor minds one being busy: what it looks for is furniture, and no phase C test edits
+		// anything outside its own slot.
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp xaml probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			var summary = session.Describe();
-			Assert.True(
-				summary.State == LiveAppSessionState.Ready,
-				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
-
-			// Wait until the app is well into running (its timer has ticked once) so the window and its
-			// visual tree are up before we enumerate.
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
-
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
 			Assert.NotEmpty(tree.Nodes);
@@ -713,12 +657,6 @@ public sealed class LiveAppSessionTests
 			var firstPage = await session.ReadXamlTreeAsync(rootName: null, offset: 0, limit: 2, cancellationToken);
 			Assert.Equal(2, firstPage.Nodes.Count);
 			Assert.True(firstPage.Total > 2, $"expected more than a page of nodes; total {firstPage.Total}");
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -731,38 +669,16 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Reads_the_properties_of_a_xaml_element()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C, and one that reads the app's declared furniture rather than building its own. It
+		// has to: half of what it asserts is source info -- which file and line declared the element --
+		// and an element this test created at runtime has none, because nothing declared it. So the
+		// slot goes unused here, and what makes this safe is the other half of the bargain: no phase C
+		// test edits anything outside its own slot.
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp properties probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
-
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			var rootGrid = tree.Nodes.FirstOrDefault(node => node.Name == "RootGrid");
 			var caption = tree.Nodes.FirstOrDefault(node => node.Name == "Caption");
@@ -816,12 +732,6 @@ public sealed class LiveAppSessionTests
 			// The element's own declaration is real, and is where it has always belonged.
 			Assert.Equal("ms-appx:///MainPage.xaml", captionProperties.SourceFile);
 			Assert.Equal(17, captionProperties.SourceLine);
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -842,36 +752,23 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Reads_a_corner_radius_the_framework_renders_as_nothing()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C: builds what it reads in a slot of its own. The values are the ones the shared Pane
+		// carries, but owning the element means this cannot be disturbed by a test editing that one,
+		// and reading it cannot change what such a test sees.
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp corner-radius probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup,
+				turn.MarkupHolding("<Border Background=\"#FF202830\" Padding=\"24\" CornerRadius=\"8\" />"),
+				filePath: null,
 				cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
-			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
+			var subtree = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
+			var pane = subtree.Nodes.FirstOrDefault(node => node.Address == turn.Address("Border[0]"));
 			Assert.NotNull(pane);
 
 			var properties = await session.ReadXamlPropertiesAsync(pane!.Handle, includeDefaults: false, cancellationToken);
@@ -891,7 +788,12 @@ public sealed class LiveAppSessionTests
 			// The other half: something the framework will not render, and cannot be read a second way
 			// because it is protected and not in the projection, says so rather than looking unset.
 			// An empty value that means two different things is how the CornerRadius case hid.
-			var all = await session.ReadXamlPropertiesAsync(tree.Nodes[0].Handle, includeDefaults: true, cancellationToken);
+			// Named rather than taken as the first row: under a shared app the tree's order is not this
+			// test's to rely on, and "whatever came back first" is the sort of assumption that fails
+			// later for a reason nobody connects to this line.
+			var whole = await session.ReadXamlTreeAsync(cancellationToken);
+			var root = whole.Nodes.Single(node => node.Name == "RootGrid");
+			var all = await session.ReadXamlPropertiesAsync(root.Handle, includeDefaults: true, cancellationToken);
 			var unavailable = all.Properties.Where(property => property.ValueUnavailable).ToArray();
 
 			Assert.All(unavailable, property => Assert.Equal(string.Empty, property.Value));
@@ -901,12 +803,6 @@ public sealed class LiveAppSessionTests
 			Assert.DoesNotContain(
 				all.Properties.Where(property => property.ValueType == "Windows.Foundation.String"),
 				property => property.ValueUnavailable);
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -927,15 +823,8 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Names_the_install_location_a_uwp_session_activated()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
@@ -959,7 +848,7 @@ public sealed class LiveAppSessionTests
 			var summary = session.Describe();
 			Assert.NotNull(summary.InstallLocation);
 			Assert.Equal(
-				Path.GetFullPath(layout).TrimEnd(Path.DirectorySeparatorChar),
+				Path.GetFullPath(probe.LayoutDirectory!).TrimEnd(Path.DirectorySeparatorChar),
 				Path.GetFullPath(summary.InstallLocation!).TrimEnd(Path.DirectorySeparatorChar),
 				ignoreCase: true);
 
@@ -981,7 +870,7 @@ public sealed class LiveAppSessionTests
 		}
 		finally
 		{
-			UnregisterUwpProbeApp();
+			probe.StopApp();
 		}
 	}
 
@@ -1008,64 +897,47 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Live_edits_a_property_on_the_uwp_probe()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
-		var oldXaml = File.ReadAllText(xamlPath);
-		var newXaml = oldXaml
-			.Replace("FontSize=\"24\"", "FontSize=\"40\"")
-			.Replace("CornerRadius=\"8\"", "CornerRadius=\"0\"");
-		Assert.DoesNotContain("FontSize=\"40\"", oldXaml);
-		Assert.DoesNotContain("CornerRadius=\"0\"", oldXaml);
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C: both edits land on elements this test built in its own slot, so it neither disturbs
+		// the app's furniture nor depends on that furniture still carrying the values the markup gave
+		// it. The two kinds of value are the point -- a Double and a struct -- not which elements
+		// happen to carry them.
+		const string Before =
+			"<TextBlock Text=\"Rose UWP Probe\" FontSize=\"24\" />"
+				+ "<Border Background=\"#FF202830\" Padding=\"24\" CornerRadius=\"8\" />";
+		const string After =
+			"<TextBlock Text=\"Rose UWP Probe\" FontSize=\"40\" />"
+				+ "<Border Background=\"#FF202830\" Padding=\"24\" CornerRadius=\"0\" />";
+
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp live-edit probe",
-			};
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup, turn.MarkupHolding(Before), filePath: null, cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
-
-			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			var applied = await session.ApplyXamlAsync(
+				turn.MarkupHolding(Before), turn.MarkupHolding(After), filePath: null, cancellationToken);
 			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var edit = applied.Results.FirstOrDefault(result => result.Target == "#Caption" && result.Property == "FontSize");
+			var edit = applied.Results.FirstOrDefault(
+				result => result.Target == turn.Address("TextBlock[0]") && result.Property == "FontSize");
 			Assert.NotNull(edit);
 			Assert.Equal("applied", edit!.Status);
 
 			// The struct-valued edit, which is the one that used to come back "SetProperty failed
 			// 0x80004005" because it had been built as a Double.
-			var radius = applied.Results.FirstOrDefault(result => result.Target == "#Pane" && result.Property == "CornerRadius");
+			var radius = applied.Results.FirstOrDefault(
+				result => result.Target == turn.Address("Border[0]") && result.Property == "CornerRadius");
 			Assert.NotNull(radius);
 			Assert.Equal("applied", radius!.Status);
 
 			Assert.Equal(2, applied.Applied);
 
 			// The live element actually changed: reading its font size back gives the new value.
-			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			var caption = tree.Nodes.First(node => node.Name == "Caption");
+			var tree = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
+			var caption = tree.Nodes.Single(node => node.Address == turn.Address("TextBlock[0]"));
 			var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
 			var fontSize = properties.Properties.FirstOrDefault(property => property.Name == "FontSize");
 			Assert.NotNull(fontSize);
@@ -1074,17 +946,11 @@ public sealed class LiveAppSessionTests
 			// And the struct-valued edit is now read back too, rather than trusted from its status.
 			// It used to be asserted only through "applied", because a CornerRadius came back as an
 			// empty string -- which is #21, and is fixed, so the weaker assertion has no reason left.
-			var pane = tree.Nodes.First(node => node.Name == "Pane");
+			var pane = tree.Nodes.Single(node => node.Address == turn.Address("Border[0]"));
 			var paneProperties = await session.ReadXamlPropertiesAsync(pane.Handle, includeDefaults: false, cancellationToken);
 			var cornerRadius = paneProperties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
 			Assert.NotNull(cornerRadius);
 			Assert.Equal("0,0,0,0", cornerRadius!.Value);
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -1103,71 +969,47 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Live_edits_an_unnamed_element_by_its_address()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+		var cancellationToken = TestContext.Current.CancellationToken;
 
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
-		var oldXaml = File.ReadAllText(xamlPath);
-
-		// The second of the two unnamed Borders, and nothing else in the file.
+		// The second of two unnamed siblings, which is the case this exists for: an element the markup
+		// never named, told from its twin by position under a named anchor. The anchor is this test's
+		// own slot rather than the app's Pair, so the two Borders it counts are the only two there.
 		const string FirstBackground = "#FF3A2A2A";
 		const string SecondBackground = "#FF2A3A2A";
 		const string ChangedBackground = "#FF00FF00";
-		Assert.Contains(SecondBackground, oldXaml);
-		var newXaml = oldXaml.Replace(SecondBackground, ChangedBackground);
+		const string Pair =
+			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />"
+				+ "<Border Background=\"" + SecondBackground + "\" Padding=\"6\" CornerRadius=\"3\" />";
+		const string Changed =
+			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />"
+				+ "<Border Background=\"" + ChangedBackground + "\" Padding=\"6\" CornerRadius=\"3\" />";
 
-		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var session = await manager.StartAsync(
-				new LiveAppTarget
-				{
-					Kind = LiveAppTargetKind.LaunchUwp,
-					AppUserModelId = aumid,
-					Description = "uwp address probe",
-				},
-				cancellationToken);
-
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup, turn.MarkupHolding(Pair), filePath: null, cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
 			// The provider derives an address from the live tree, so this half stands on its own: two
 			// unnamed siblings of one type are told apart by their position under the named anchor.
-			var before = await session.ReadXamlTreeAsync(cancellationToken);
+			var before = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
 			var addresses = before.Nodes.Select(node => node.Address).ToList();
-			Assert.Contains("#Pair/Border[0]", addresses);
-			Assert.Contains("#Pair/Border[1]", addresses);
+			Assert.Contains(turn.Address("Border[0]"), addresses);
+			Assert.Contains(turn.Address("Border[1]"), addresses);
 
-			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			var applied = await session.ApplyXamlAsync(
+				turn.MarkupHolding(Pair), turn.MarkupHolding(Changed), filePath: null, cancellationToken);
 			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var edit = applied.Results.FirstOrDefault(result => result.Target == "#Pair/Border[1]" && result.Property == "Background");
+			var edit = applied.Results.FirstOrDefault(
+				result => result.Target == turn.Address("Border[1]") && result.Property == "Background");
 			Assert.NotNull(edit);
 			Assert.Equal("applied", edit!.Status);
 
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Equal(ChangedBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[1]", cancellationToken));
-			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[0]", cancellationToken));
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
+			Assert.Equal(ChangedBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[1]"), cancellationToken));
+			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[0]"), cancellationToken));
 		}
 	}
 
@@ -1186,76 +1028,56 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Removes_an_element_from_the_live_tree()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
-		var oldXaml = File.ReadAllText(xamlPath);
-
-		// Cut the second of the two unnamed Borders out of the markup, found by its colour rather than
-		// by a copied block of text so that reindenting the fixture cannot quietly stop this matching.
-		const string SecondBorder = "<Border Background=\"#FF2A3A2A\"";
-		const string FirstBackground = "#FF3A2A2A";
-		var start = oldXaml.IndexOf(SecondBorder, StringComparison.Ordinal);
-		Assert.True(start >= 0, "the probe markup no longer holds the second unnamed Border");
-		var close = oldXaml.IndexOf("</Border>", start, StringComparison.Ordinal) + "</Border>".Length;
-		var newXaml = oldXaml.Remove(start, close - start);
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Two unnamed siblings in this test's own slot, and the second one goes. Built here rather than
+		// cut out of the app's markup: a removal is the edit that most needs to be nobody else's, since
+		// the index it resolves against is a position among siblings.
+		//
+		// It used to take the app exclusively as well, because it passed alone and failed in company
+		// reporting the removal applied while both Borders were still there. That was never a
+		// concurrency problem and exclusivity never fixed it, only hid it: the fixture's own slot
+		// cleanup emitted its two removals in document order, the first renumbered the second, and the
+		// slot was handed on still holding an element this test then counted as one of its own. The
+		// ordering is fixed in XamlDiff and the cleanup checks itself now (D36), so a slot is enough.
+		const string FirstBackground = "#FF3A2A2A";
+		const string Pair =
+			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />"
+				+ "<Border Background=\"#FF2A3A2A\" Padding=\"6\" CornerRadius=\"3\" />";
+		const string Survivor =
+			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />";
+
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var session = await manager.StartAsync(
-				new LiveAppTarget
-				{
-					Kind = LiveAppTargetKind.LaunchUwp,
-					AppUserModelId = aumid,
-					Description = "uwp removal probe",
-				},
-				cancellationToken);
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup, turn.MarkupHolding(Pair), filePath: null, cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			var before = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
+			Assert.Equal(2, before.Nodes.Count(node => node.Address == turn.Address("Border[0]") || node.Address == turn.Address("Border[1]")));
 
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
-
-			var before = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Equal(2, before.Nodes.Count(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]"));
-
-			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			var applied = await session.ApplyXamlAsync(
+				turn.MarkupHolding(Pair), turn.MarkupHolding(Survivor), filePath: null, cancellationToken);
 			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
 			var removal = applied.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
 			Assert.NotNull(removal);
-			Assert.Equal("#Pair/Border[1]", removal!.Target);
+			Assert.Equal(turn.Address("Border[1]"), removal!.Target);
 			Assert.Equal("applied", removal.Status);
 
 			// Read back off a fresh enumeration, so this checks the app rather than the provider's own
 			// bookkeeping: every injection builds a new tap and walks the tree again.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			var remaining = tree.Nodes.Where(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]").ToList();
+			var remaining = tree.Nodes
+				.Where(node => node.Address == turn.Address("Border[0]") || node.Address == turn.Address("Border[1]"))
+				.ToList();
 			var survivor = Assert.Single(remaining);
-			Assert.Equal("#Pair/Border[0]", survivor.Address);
+			Assert.Equal(turn.Address("Border[0]"), survivor.Address);
 
 			// And it is the one that was meant to stay.
-			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[0]", cancellationToken));
+			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[0]"), cancellationToken));
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -1273,15 +1095,8 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Adds_removes_and_retypes_in_one_apply()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		var aumid = lease.Aumid;
 
 		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
 		var oldXaml = File.ReadAllText(xamlPath);
@@ -1361,7 +1176,7 @@ public sealed class LiveAppSessionTests
 		}
 		finally
 		{
-			UnregisterUwpProbeApp();
+			probe.StopApp();
 		}
 	}
 
@@ -1375,15 +1190,8 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Sets_an_attached_property_on_the_live_tree()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		var aumid = lease.Aumid;
 
 		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
 		var oldXaml = File.ReadAllText(xamlPath);
@@ -1433,7 +1241,7 @@ public sealed class LiveAppSessionTests
 		}
 		finally
 		{
-			UnregisterUwpProbeApp();
+			probe.StopApp();
 		}
 	}
 
@@ -1453,15 +1261,13 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Replaces_a_keyed_resource_on_the_live_tree()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+		var cancellationToken = TestContext.Current.CancellationToken;
 
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
 
 		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
 		var oldXaml = File.ReadAllText(xamlPath);
@@ -1471,18 +1277,7 @@ public sealed class LiveAppSessionTests
 		Assert.Contains($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", oldXaml);
 		var newXaml = oldXaml.Replace($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", $"x:Key=\"ProbeAccent\" Color=\"{Now}\"");
 
-		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
-		try
 		{
-			var session = await manager.StartAsync(
-				new LiveAppTarget
-				{
-					Kind = LiveAppTargetKind.LaunchUwp,
-					AppUserModelId = aumid,
-					Description = "uwp resource probe",
-				},
-				cancellationToken);
 
 			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
 
@@ -1510,11 +1305,6 @@ public sealed class LiveAppSessionTests
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.Equal(Now, await BackgroundAtAsync(session, tree, "#Themed", cancellationToken));
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -1552,15 +1342,8 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Applies_successive_file_edits_to_the_running_app()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		var aumid = lease.Aumid;
 
 		var sourcePath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
 		var original = File.ReadAllText(sourcePath);
@@ -1643,7 +1426,7 @@ public sealed class LiveAppSessionTests
 		}
 		finally
 		{
-			UnregisterUwpProbeApp();
+			probe.StopApp();
 			if (File.Exists(editable)) File.Delete(editable);
 		}
 	}
@@ -1672,40 +1455,31 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Serves_two_xaml_calls_in_flight_together()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
-		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp concurrency probe",
-			};
 
-			var session = await manager.StartAsync(target, cancellationToken);
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
+		{
+
+			// Counted without the probe's Transient pair, which is the one thing in this app that
+			// changes on its own: it leaves the visual tree and comes back on a five-second cycle, by
+			// design, so that #51 has a removal to watch. Two elements go with it, and this test reads
+			// the tree ten times over several seconds -- so a fixed whole-tree count was a coin flip
+			// against a one-second-in-five window, and it came up 43 and then 41. What this protects is
+			// that a concurrent read is not silently *truncated* (22 elements where the app has 24),
+			// and every stable element being present says that just as well.
+			static int Stable(LiveXamlTree tree) =>
+				tree.Nodes.Count(node => node.Name is not ("Transient" or "TransientCaption"));
 
 			// The answer every concurrent read below has to match. Read on its own, so it is the
 			// uncontended truth about the app rather than one of the results under test.
 			var alone = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.True(alone.Detail is null, $"expected a tree, got detail: {alone.Detail}");
-			var expected = alone.Nodes.Count;
+			var expected = Stable(alone);
 			Assert.True(expected > 1, $"the probe should have more than one element, got {expected}");
 			var caption = alone.Nodes.First(node => node.Name == "Caption");
 
@@ -1718,7 +1492,7 @@ public sealed class LiveAppSessionTests
 				foreach (var tree in trees)
 				{
 					Assert.True(tree.Detail is null, $"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
-					Assert.Equal(expected, tree.Nodes.Count);
+					Assert.Equal(expected, Stable(tree));
 				}
 			}
 
@@ -1730,7 +1504,7 @@ public sealed class LiveAppSessionTests
 				var properties = await propertiesTask;
 
 				Assert.True(tree.Detail is null, $"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
-				Assert.Equal(expected, tree.Nodes.Count);
+				Assert.Equal(expected, Stable(tree));
 
 				Assert.True(properties.Detail is null, $"attempt {attempt}: expected properties, got detail: {properties.Detail}");
 				Assert.Equal(caption.Handle, properties.Handle);
@@ -1742,12 +1516,100 @@ public sealed class LiveAppSessionTests
 				Assert.Contains(properties.Properties, property => property.Name == "Text");
 			}
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}
-		finally
+	}
+
+	/// <summary>
+	/// What a second read of an element's properties reports (#97). Not the behaviour anyone would
+	/// choose -- it is the behaviour there is, pinned so it stops being a surprise.
+	/// <para>
+	/// Reading an element's property chain brings its untouched collection properties into existence,
+	/// and a property that exists is no longer the framework's default. So the second read of a
+	/// <c>TextBlock</c> reports <c>Inlines</c>, <c>TextHighlighters</c> and
+	/// <c>SelectionHighlightColor</c> as <c>Local</c>, with provenance and values as plausible as the
+	/// ones the markup really set. The first read is the accurate one, and it is our own read that
+	/// spoils it -- which also means <c>rose_xaml_properties</c> is declared read-only and is not
+	/// quite, though nothing the app draws changes.
+	/// </para>
+	/// <para>
+	/// Measured before it was documented: the three extras arrive with <c>provenance=Local</c>, so
+	/// there is no source to filter on and the one-line fix does not exist. A <c>Border</c> is stable
+	/// across reads, so this is TextBlock's text properties rather than something general -- which is
+	/// why the assertions below are about shape and not about a fixed list of names.
+	/// </para>
+	/// <para>
+	/// One fix must not be attempted, and it is the tempting one: caching the first read's names and
+	/// filtering later reads to them would hide exactly what the apply-then-read-back loop of #12
+	/// exists to verify, since an applied property need not have appeared in the first read.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task A_second_properties_read_reports_what_reading_the_first_created()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		// Phase C, and the awkward one. The whole assertion is about what the *first* properties read
+		// of an element returns, so it needs an element nothing has read -- and there are two ways to
+		// fail that, not one. Sharing the app's Caption would make it depend on running before every
+		// other test that reads a TextBlock. Building its own in a slot does not work either: an
+		// element created through CreateInstance and AddChild arrives with Inlines already
+		// materialised, so it was never pristine to begin with. Only markup declares an element
+		// nothing has touched, so it reads a declared one that belongs to it alone. The Border it
+		// compares against can be built, because a Border has no collection property to materialise
+		// -- which is the point that test is making.
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			UnregisterUwpProbeApp();
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup,
+				turn.MarkupHolding("<Border Background=\"#FF202830\" Padding=\"24\" CornerRadius=\"8\" />"),
+				filePath: null,
+				cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
+
+			var whole = await session.ReadXamlTreeAsync(cancellationToken);
+			var caption = whole.Nodes.Single(node => node.Name == "PristineText");
+			var pane = whole.Nodes.Single(node => node.Address == turn.Address("Border[0]"));
+
+			// A tree read does not do it -- only a properties read of that element does -- so this
+			// first read of the caption is still the markup's own answer.
+			var first = await NamesOfAsync(session, caption.Handle, cancellationToken);
+			Assert.Equal(["FontSize", "Foreground", "Text"], first);
+
+			var second = await NamesOfAsync(session, caption.Handle, cancellationToken);
+
+			// A superset, never a different set: nothing the markup set may disappear.
+			Assert.All(first, name => Assert.Contains(name, second));
+			Assert.True(second.Count > first.Count, $"expected the second read to grow, got {second.Count}");
+
+			// And the additions are indistinguishable by provenance, which is the finding that
+			// decided against filtering. If this ever fails because an addition arrives as something
+			// other than Local, there is a filter to write and #97 can be fixed properly.
+			var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
+			foreach (var added in second.Except(first))
+			{
+				var property = properties.Properties.Single(candidate => candidate.Name == added);
+				Assert.Equal("Local", property.Provenance);
+			}
+
+			// A Border has no collection property to materialise, so it does not move. This is what
+			// makes the behaviour a property of the element's type rather than of reading as such.
+			var paneFirst = await NamesOfAsync(session, pane.Handle, cancellationToken);
+			var paneSecond = await NamesOfAsync(session, pane.Handle, cancellationToken);
+			Assert.Equal(paneFirst, paneSecond);
 		}
+	}
+
+	/// <summary>The names of one element's set properties, ordered so two reads can be compared.</summary>
+	private static async Task<List<string>> NamesOfAsync(
+		LiveAppSession session,
+		ulong handle,
+		CancellationToken cancellationToken)
+	{
+		var properties = await session.ReadXamlPropertiesAsync(handle, includeDefaults: false, cancellationToken);
+		Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
+
+		return [.. properties.Properties.Select(property => property.Name).Order(StringComparer.Ordinal)];
 	}
 
 	/// <summary>One of the probe caption's live property values, read off the running app.</summary>
@@ -1773,37 +1635,15 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Arms_interactive_select_mode_on_the_classic_uwp_probe()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp select probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
 
 			// Any XAML tool installs the toolbar, and the tree must not report it: it is RoseMCP's UI,
 			// not the app's. Read the tree first so the toolbar is up, then read it again and check.
@@ -1856,11 +1696,15 @@ public sealed class LiveAppSessionTests
 			var afterClearing = await session.ReadXamlSelectionAsync(cancellationToken);
 			Assert.False(afterClearing.Selected);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
+			// Armed is app-wide state this test turned on, so this test turns it off. Clearing the
+			// pick does not disarm, because they are two pieces of state -- and until the shared app
+			// made it matter, nothing here could disarm at all: there was no verb for it, so an agent
+			// that armed select mode left a pointer-capturing overlay on the app that only a person
+			// clicking Idle could lift.
+			var idle = await session.EnterXamlSelectModeAsync(
+				includeAllElements: false, justMyXaml: true, arm: false, cancellationToken);
+			Assert.False(idle.Armed, $"expected select mode to disarm; got: {idle.Detail}");
+
 		}
 	}
 
@@ -1876,37 +1720,15 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Selects_a_xaml_element_by_handle_without_a_click()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp select-by-handle probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
 
 			// The handle comes from the tree, which is the whole route this exists to open.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
@@ -1940,11 +1762,6 @@ public sealed class LiveAppSessionTests
 			Assert.False(cleared.Selected);
 			Assert.Contains("cleared", cleared.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -1955,33 +1772,15 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Refuses_to_select_a_handle_that_is_not_an_element()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
-		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp bad-handle probe",
-			};
 
-			var session = await manager.StartAsync(target, cancellationToken);
-			await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
+		{
 
 			await session.ReadXamlTreeAsync(cancellationToken);
 
@@ -1991,11 +1790,6 @@ public sealed class LiveAppSessionTests
 			Assert.False(selected.Selected);
 			Assert.NotNull(selected.Detail);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -2020,35 +1814,15 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Clears_a_selection_whose_element_leaves_the_tree()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-		if (!BuildXamlProvider()) Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp removal probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
 
 			// Transient is only in the tree for part of its cycle, so finding it is a retry rather than
 			// a single read. Selecting it is the same call, because a select on something with no
@@ -2073,11 +1847,6 @@ public sealed class LiveAppSessionTests
 			Assert.Equal(0ul, after.Handle);
 			Assert.Contains("removed from the visual tree", after.Detail ?? string.Empty, StringComparison.Ordinal);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			UnregisterUwpProbeApp();
 		}
 	}
 
@@ -2403,65 +2172,6 @@ public sealed class LiveAppSessionTests
 		return exe;
 	}
 
-	// The x64 host and target are built on demand for the architecture-shim test, since a normal build
-	// produces only the broker's own RID. On an x64 machine this is a same-arch build; on ARM it is the
-	// emulated-x64 case classic UWP needs.
-	private static void EnsureX64HostBuilt() => EnsureX64Build("src", "RoseMcp.LiveApp", "net10.0-windows", "RoseMcp.LiveApp.exe");
-
-	private static string EnsureX64ProbeTargetBuilt() => EnsureX64Build("tests", "DebugProbeTarget", "net10.0", "DebugProbeTarget.exe");
-
-	// Built once per test run, never merely "found". Skipping the build when the exe already exists is
-	// the obvious optimisation and it is wrong: the win-x64 output is a separate RID build that a normal
-	// `dotnet build` of the solution does not touch, so an existing exe is routinely one source change
-	// out of date -- and the test then exercises yesterday's host and reports a failure that is not
-	// there. MSBuild is incremental, so paying for the check once a run costs almost nothing.
-	private static readonly Dictionary<string, string> X64Builds = [];
-
-	private static string EnsureX64Build(string area, string project, string targetFramework, string exeName)
-	{
-		var root = RepositoryRoot();
-		var configuration = Configuration();
-		var exe = Path.Combine(root, area, project, "bin", configuration, targetFramework, "win-x64", exeName);
-
-		lock (X64Builds)
-		{
-			if (X64Builds.TryGetValue(exe, out var built)) return built;
-
-			var csproj = Path.Combine(root, area, project, $"{project}.csproj");
-			RunDotnet($"build \"{csproj}\" -r win-x64 -c {configuration} --nologo");
-
-			if (!File.Exists(exe)) throw new FileNotFoundException($"The win-x64 build did not produce {exeName}.", exe);
-			X64Builds[exe] = exe;
-			return exe;
-		}
-	}
-
-	private static void RunDotnet(string arguments)
-	{
-		var (exitCode, output) = RunProcess("dotnet", arguments);
-		if (exitCode != 0) throw new InvalidOperationException($"dotnet {arguments} failed:{Environment.NewLine}{output}");
-	}
-
-	private static (int ExitCode, string Output) RunProcess(string fileName, string arguments)
-	{
-		var start = new ProcessStartInfo(fileName, arguments)
-		{
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-			UseShellExecute = false,
-		};
-
-		using var process = Process.Start(start) ?? throw new InvalidOperationException($"{fileName} did not start.");
-		var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-		process.WaitForExit();
-		return (process.ExitCode, output);
-	}
-
-	/// <summary>
-	/// The MSBuild that can build classic UWP, found via vswhere, or null when no such Visual Studio is
-	/// present -- in which case the UWP test skips rather than fails.
-	/// </summary>
-
 	/// <summary>
 	/// Launching a packaged app that is already running is not a launch: the system foregrounds the
 	/// window that exists, no new process appears, and a from-birth debugger waits for a startup that
@@ -2476,14 +2186,8 @@ public sealed class LiveAppSessionTests
 	[Fact]
 	public async Task Refuses_to_launch_a_uwp_app_that_is_already_running()
 	{
-		var msbuild = FindUwpMsBuild();
-		if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
-
-		EnsureX64HostBuilt();
-
-		var layout = BuildUwpProbeApp(msbuild!);
-		var aumid = RegisterUwpProbeApp(layout);
-		if (aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
@@ -2537,7 +2241,7 @@ public sealed class LiveAppSessionTests
 				}
 			}
 
-			UnregisterUwpProbeApp();
+			probe.StopApp();
 		}
 	}
 
@@ -2558,311 +2262,6 @@ public sealed class LiveAppSessionTests
 
 		return false;
 	}
-
-	private static string? FindUwpMsBuild()
-	{
-		var vswhere = Path.Combine(
-			Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-			"Microsoft Visual Studio", "Installer", "vswhere.exe");
-		if (!File.Exists(vswhere)) return null;
-
-		var (exitCode, output) = RunProcess(
-			vswhere,
-			"-latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\\**\\Bin\\MSBuild.exe");
-		if (exitCode != 0) return null;
-
-		var msbuild = output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.EndsWith("MSBuild.exe", StringComparison.OrdinalIgnoreCase));
-		if (msbuild is null || !File.Exists(msbuild)) return null;
-
-		// MSBuild alone is not enough; the classic-UWP C# targets must be installed too.
-		var windowsXaml = Path.Combine(Path.GetDirectoryName(msbuild)!, "..", "..", "..", "MSBuild", "Microsoft", "WindowsXaml");
-		return Directory.Exists(Path.GetFullPath(windowsXaml)) ? msbuild : null;
-	}
-
-	private static string UwpProbeAppDirectory()
-		=> Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic");
-
-	/// <summary>
-	/// Builds the classic UWP probe app Debug|x64 and returns the deployable AppX layout, staged the
-	/// way Visual Studio's deploy stages it.
-	/// </summary>
-	private static string BuildUwpProbeApp(string msbuild)
-	{
-		var csproj = Path.Combine(UwpProbeAppDirectory(), "Rose.ProbeApp.UwpClassic.csproj");
-
-		var restore = RunProcess(msbuild, $"\"{csproj}\" -t:Restore -p:Configuration=Debug -p:Platform=x64 -v:minimal -nologo");
-		if (restore.ExitCode != 0) throw new InvalidOperationException($"UWP restore failed:{Environment.NewLine}{restore.Output}");
-
-		var build = RunProcess(msbuild, $"\"{csproj}\" -t:Build -p:Configuration=Debug -p:Platform=x64 -v:minimal -nologo");
-		if (build.ExitCode != 0) throw new InvalidOperationException($"UWP build failed:{Environment.NewLine}{build.Output}");
-
-		var buildOutput = Path.Combine(UwpProbeAppDirectory(), "bin", "x64", "Debug");
-		return StageUwpProbeLayout(buildOutput);
-	}
-
-	/// <summary>
-	/// Stages the deployable AppX layout the way Visual Studio's deploy does, from the
-	/// .build.appxrecipe MSBuild emits -- because a straight register of the build folder does not
-	/// produce a runnable app. A classic-UWP CoreCLR debug build makes two executables: the managed
-	/// app assembly, and a native CoreCLR apphost under Core\. Only the recipe's layout wires them
-	/// correctly -- the native apphost becomes the package executable, the managed assembly moves under
-	/// entrypoint\, and the CoreCLR System.Runtime.dll (not the desktop-framework one that also sits in
-	/// the build folder) is placed beside them. Register the root manifest instead and Windows hosts
-	/// the managed exe under the desktop .NET Framework CLR, which cannot load CoreCLR's
-	/// System.Private.CoreLib and dies with a BadImageFormatException at host init, before any app code
-	/// runs. MSBuild's Build target emits the recipe but does not stage the layout (these old-style
-	/// projects have no Deploy target), so the staging is done here.
-	/// </summary>
-	private static string StageUwpProbeLayout(string buildOutputDirectory)
-	{
-		var recipePath = Path.Combine(buildOutputDirectory, "Rose.ProbeApp.UwpClassic.build.appxrecipe");
-		if (!File.Exists(recipePath)) throw new InvalidOperationException($"No appxrecipe at {recipePath}; the UWP build did not complete.");
-
-		XNamespace ns = "http://schemas.microsoft.com/developer/msbuild/2003";
-		var recipe = XDocument.Load(recipePath);
-
-		var layoutText = recipe.Descendants(ns + "LayoutDir").FirstOrDefault()?.Value
-			?? throw new InvalidOperationException("The appxrecipe declares no LayoutDir.");
-		var layoutDirectory = Uri.UnescapeDataString(layoutText);
-
-		if (Directory.Exists(layoutDirectory)) Directory.Delete(layoutDirectory, recursive: true);
-		Directory.CreateDirectory(layoutDirectory);
-
-		// Both the manifest and every packaged file carry an Include (the source on disk, MSBuild-escaped)
-		// and a PackagePath (where it lands in the layout).
-		var entries = recipe.Descendants(ns + "AppXManifest").Concat(recipe.Descendants(ns + "AppxPackagedFile"));
-		foreach (var entry in entries)
-		{
-			var source = Uri.UnescapeDataString(entry.Attribute("Include")!.Value);
-			var packagePath = Uri.UnescapeDataString(entry.Element(ns + "PackagePath")!.Value);
-			var destination = Path.Combine(layoutDirectory, packagePath);
-			Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-			File.Copy(source, destination, overwrite: true);
-		}
-
-		return layoutDirectory;
-	}
-
-	/// <summary>
-	/// Builds the native XAML diagnostics provider (x64) with build.ps1. Returns false only when the
-	/// toolchain is genuinely absent, so the caller skips; anything else throws.
-	/// <para>
-	/// That distinction is the point. This used to return false for any non-zero exit and the caller
-	/// skipped with the message "no C++ toolset", which meant a compile error in the provider -- or
-	/// two builds racing over one PDB, which is how it was noticed -- silently skipped the XAML tests
-	/// and left the suite green. A capability quietly not being tested is worse than a red build, and
-	/// looks identical to a machine that simply cannot build it. build.ps1 already separates the two:
-	/// it exits 3 from its own Fail for a missing toolset or SDK, and anything else is a real failure.
-	/// </para>
-	/// </summary>
-	private static bool BuildXamlProvider()
-	{
-		var script = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.Uwp.Tap", "build.ps1");
-		if (!File.Exists(script)) return false;
-
-		var (exitCode, output) = RunProcess(
-			"powershell",
-			$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform x64 -Configuration Debug");
-
-		// 3 is build.ps1's Fail: no MSVC toolset, or no Windows SDK. The only skippable outcome.
-		if (exitCode == 3) return false;
-
-		if (exitCode != 0)
-		{
-			throw new InvalidOperationException(
-				$"Building the XAML provider failed (exit {exitCode}):{Environment.NewLine}{output}");
-		}
-
-		var dll = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.Uwp.Tap", "bin", "x64", "Debug", "RoseMcp.Xaml.Uwp.Tap.dll");
-		if (!File.Exists(dll))
-		{
-			throw new InvalidOperationException($"The XAML provider build reported success but produced no {dll}.");
-		}
-
-		return true;
-	}
-
-	/// <summary>
-	/// Builds the native WinUI 3 XAML diagnostics provider with its own build.ps1. Same contract as
-	/// <see cref="BuildXamlProvider"/>: false only when the machine genuinely cannot build it, so the
-	/// caller skips, and anything else throws.
-	/// <para>
-	/// It can be skippable for one more reason than the UWP provider, and that is the point of
-	/// keeping the two separate. Microsoft.UI.Xaml projections are not in the Windows SDK, so this one
-	/// needs the WindowsAppSDK restored before it can generate them -- a machine that can build the
-	/// UWP tap cannot necessarily build both, and skipping stays per-provider (#76).
-	/// </para>
-	/// </summary>
-	private static bool BuildWinUiXamlProvider()
-	{
-		var script = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.WinUi.Tap", "build.ps1");
-		if (!File.Exists(script)) return false;
-
-		var (exitCode, output) = RunProcess(
-			"powershell",
-			$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform {WinUiProviderPlatform()} -Configuration Debug");
-
-		// 3 is build.ps1's Fail: no MSVC toolset, no Windows SDK, or no WindowsAppSDK to project from.
-		if (exitCode == 3) return false;
-
-		if (exitCode != 0)
-		{
-			throw new InvalidOperationException(
-				$"Building the WinUI XAML provider failed (exit {exitCode}):{Environment.NewLine}{output}");
-		}
-
-		var dll = Path.Combine(
-			RepositoryRoot(), "src", "RoseMcp.Xaml.WinUi.Tap", "bin", WinUiProviderPlatform(), "Debug", "RoseMcp.Xaml.WinUi.Tap.dll");
-		if (!File.Exists(dll))
-		{
-			throw new InvalidOperationException($"The WinUI XAML provider build reported success but produced no {dll}.");
-		}
-
-		return true;
-	}
-
-	/// <summary>
-	/// The platform the WinUI provider is built for. It must match the target, and a WinUI 3 app runs
-	/// natively rather than emulated, so this follows the host rather than being pinned to x64 the way
-	/// the UWP provider is.
-	/// </summary>
-	private static string WinUiProviderPlatform() => RuntimeInformation.ProcessArchitecture switch
-	{
-		System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
-		_ => "x64",
-	};
-
-	private const string UwpProbePackageName = "RoseMcp.ProbeApp.UwpClassic";
-
-	/// <summary>
-	/// Registers the loose UWP layout and returns its AUMID, or null when registration is not permitted
-	/// (developer mode off), so the test can skip rather than fail on an environment limit.
-	/// </summary>
-	private static string? RegisterUwpProbeApp(string layoutDirectory)
-	{
-		var manifest = Path.Combine(layoutDirectory, "AppxManifest.xml");
-		var script =
-			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
-				+ $"$p = Get-AppxPackage '{UwpProbePackageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
-		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
-
-		var pfnLine = output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
-		if (pfnLine is null) return null;
-
-		return $"{pfnLine["PFN: ".Length..].Trim()}!App";
-	}
-
-	private static void UnregisterUwpProbeApp()
-	{
-		RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"Get-AppxPackage '{UwpProbePackageName}' | Remove-AppxPackage -ErrorAction SilentlyContinue\"");
-	}
-
-	private const string WinUiProbePackageName = "RoseMcp.ProbeApp.WinUi";
-
-	private static string WinUiProbeAppDirectory() => Path.Combine(RepositoryRoot(), "tests", "apps", "winui");
-
-	/// <summary>
-	/// The RID the WinUI probe is built for. Unlike classic UWP, which has no ARM64 runtime and is
-	/// debugged x64-emulated, WinUI 3 runs natively -- so the probe matches the host and the live-app
-	/// host needs no architecture shim.
-	/// </summary>
-	private static string WinUiRuntimeIdentifier() => RuntimeInformation.ProcessArchitecture switch
-	{
-		System.Runtime.InteropServices.Architecture.Arm64 => "win-arm64",
-		_ => "win-x64",
-	};
-
-	/// <summary>
-	/// Builds the WinUI 3 probe in one of its two shapes and returns the directory holding the built
-	/// app. Null only when restore fails, which is the environment limit worth skipping on: the app
-	/// needs the WindowsAppSDK from NuGet, and a machine that cannot get it cannot run these tests.
-	/// <para>
-	/// Restore and build are separate calls precisely so those two can be told apart. A build that
-	/// fails *after* a good restore is our own breakage and throws, following the same rule as
-	/// <see cref="BuildXamlProvider"/>: a capability quietly not being tested is worse than a red
-	/// build, and looks identical to a machine that simply cannot build it.
-	/// </para>
-	/// </summary>
-	private static string? BuildWinUiProbeApp(bool packaged)
-	{
-		var project = Path.Combine(WinUiProbeAppDirectory(), "Rose.ProbeApp.WinUi.csproj");
-		var rid = WinUiRuntimeIdentifier();
-		var packagedArgument = packaged ? " -p:ProbePackaged=true" : string.Empty;
-
-		var restore = RunProcess("dotnet", $"restore \"{project}\" -r {rid}{packagedArgument}");
-		if (restore.ExitCode != 0) return null;
-
-		var build = RunProcess(
-			"dotnet",
-			$"build \"{project}\" -r {rid} -c {Configuration()} --no-restore{packagedArgument} -v:minimal -nologo");
-
-		if (build.ExitCode != 0)
-		{
-			throw new InvalidOperationException(
-				$"Building the WinUI probe app failed (exit {build.ExitCode}):{Environment.NewLine}{build.Output}");
-		}
-
-		var bin = Path.Combine(WinUiProbeAppDirectory(), "bin", Configuration());
-		var exe = !Directory.Exists(bin)
-			? null
-			: Directory.EnumerateFiles(bin, "Rose.ProbeApp.WinUi.exe", SearchOption.AllDirectories)
-				.Where(path => path.Contains(rid, StringComparison.OrdinalIgnoreCase))
-				.OrderByDescending(File.GetLastWriteTimeUtc)
-				.FirstOrDefault();
-
-		if (exe is null)
-		{
-			throw new InvalidOperationException($"The WinUI probe build reported success but produced no exe for {rid} under {bin}.");
-		}
-
-		return Path.GetDirectoryName(exe);
-	}
-
-	/// <summary>
-	/// Registers the packaged WinUI layout and returns its AUMID, or null when registration is not
-	/// permitted, so the test can skip rather than fail on an environment limit.
-	/// <para>
-	/// The layout is the build output directory itself: a WinUI 3 desktop build writes AppxManifest.xml
-	/// beside the exe, with none of the staging the classic UWP probe needs, because it has no split
-	/// between a managed assembly and a native CoreCLR apphost.
-	/// </para>
-	/// </summary>
-	private static string? RegisterWinUiProbeApp(string layoutDirectory)
-	{
-		var manifest = Path.Combine(layoutDirectory, "AppxManifest.xml");
-		if (!File.Exists(manifest)) return null;
-
-		var script =
-			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
-				+ $"$p = Get-AppxPackage '{WinUiProbePackageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
-		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
-
-		var pfnLine = output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
-		if (pfnLine is null) return null;
-
-		return $"{pfnLine["PFN: ".Length..].Trim()}!App";
-	}
-
-	private static void UnregisterWinUiProbeApp()
-	{
-		RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"Get-AppxPackage '{WinUiProbePackageName}' | Remove-AppxPackage -ErrorAction SilentlyContinue\"");
-	}
-
-	private static string RepositoryRoot()
-	{
-		var directory = new DirectoryInfo(AppContext.BaseDirectory);
-		while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
-		{
-			directory = directory.Parent;
-		}
-
-		return directory?.FullName ?? throw new InvalidOperationException("Could not locate the repository root from the test binary.");
-	}
-
-	private static string Configuration()
-		=> AppContext.BaseDirectory.Contains($"{Path.DirectorySeparatorChar}Release{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
-			? "Release"
-			: "Debug";
 
 	private static TargetArchitecture ExpectedArchitecture => RuntimeInformation.ProcessArchitecture switch
 	{

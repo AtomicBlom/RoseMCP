@@ -663,3 +663,253 @@ chosen, and an agent that knows the VS feature should recognise this as the same
 
 Earlier entries keep their original wording, as D21 did when D22 superseded half of it. They record
 what was decided when, and the term they used is part of that.
+
+### D33 — The suite's wall clock was one incremental C++ build, run seventeen times (extends D24)
+The integration suite took **770s** on a machine with the UWP and C++ toolchains -- not the "four to
+five minutes" CLAUDE.md claimed, which was measured somewhere the live-app tests skip. Where it went
+was not where reasoning put it. The obvious suspect is the Roslyn side: 162 `FixtureSolution.Copy`
+calls, each paying a real `dotnet restore` and a real design-time build, none of it shared. That
+work is real -- 877s of it -- and it costs **zero wall clock**, because it runs in parallel
+underneath something longer.
+
+`LiveAppSessionTests` was 728.9s of the 770s, and its span was also 728.9s: one class is one xUnit
+collection, so its 31 tests ran strictly serially and everything else finished inside them. 94.7% of
+the suite was one class. Measured, then, per test, with the phases timed on their own:
+
+| repeated every test | cost | calls | total |
+|---|---|---|---|
+| `build.ps1`, the native provider | **23.0s** | 17 | **391s** |
+| `msbuild -t:Build`, the UWP app | 8.1s | 20 | 162s |
+| `msbuild -t:Restore`, the UWP app | 1.4s | 20 | 28s |
+| `Add-AppxPackage` + `Remove-AppxPackage` | 1.1s | 20 | 22s |
+| vswhere, layout stage | 0.2s | 20 | 4s |
+
+`build.ps1` was run three times back to back -- 24.0s, 23.0s, 22.8s. It is 23 seconds *every* time,
+fully warm and incremental, because the cost is re-entering the MSVC toolchain rather than compiling
+anything. Seventeen of those is over half the suite.
+
+D24 had already decided this for the RID builds: once per run, memoised, never merely "found". It was
+never extended to the app build, the provider build, or the registration, and those were the wall
+clock. `UwpProbeApp` is an assembly fixture that does all of it once, lazily -- lazily because an
+assembly fixture is constructed before any test runs, so eager work would make a filtered run of one
+Roslyn test pay for an MSVC build. That alone took the class from 728.9s to **272.7s**.
+
+Three things the numbers corrected, each of which reasoning had wrong.
+
+**`DisableParallelization` on the class is the wrong tool, and it costs 109s.** It reads as "these
+tests do not run in parallel with each other". It means "this class does not run in parallel with
+*anything*": 1 of 210 non-live tests overlapped a live one, so the two halves added -- 268s + 109s --
+rather than overlapping. What actually cannot overlap is two tests driving one app, so that is what
+is serialised, by a `SemaphoreSlim(1,1)` lease in the fixture. The eleven tests here that debug an
+ordinary .NET child process take no lease and join the pool. 205 of 210 now overlap, and the suite
+went to **251s**.
+
+**`MaxThreads` does not bound asynchronous tests.** Dropping it from 12 to 8 made the suite *slower*
+(259s), which is the wrong direction for a contention fix and was the clue. Sampling in-flight tests
+showed 194 running at t=25s against a nominal 12 -- a test that awaits I/O yields its slot, so
+`ParallelMode.All` is effectively unbounded here. The bound that matters is the lease, which is on
+the resource rather than on the scheduler.
+
+**A lease makes reported durations meaningless, and the span is the measure.** A test blocked on the
+lease has already started as far as xUnit is concerned, so the live tests report 88-108s each and
+their sum is nonsense. Run alone, the chain is **186s**, and that is the number to reason about.
+
+What is left is not waste. Twenty app launches at ~7.7s of genuine launch, attach, inject and close
+cannot be removed by tidying, and they cannot overlap while the app is single-instance. The
+suite is now 251s of which 186s is that chain and 65s is contention against it. Getting under two
+minutes needs the per-request re-injection to go, which is #50: every XAML request re-injects the
+provider today because the provider works on the app's UI thread at `SetSite`, and a persistent
+channel makes a tree read a message instead of an injection.
+
+### D34 — The provider channel is a named pipe, and D14's reason for it not being one was wrong (#50, supersedes half of D14)
+D14 chose tab-separated files in an ACL'd folder over a named pipe, because "a named pipe from an
+AppContainer needs a capability-aware ACL and is finicky". The first clause is true. The conclusion
+does not follow, and this settles it by doing it: the host creates the pipe with the same two SIDs it
+already puts on the work folder (`S-1-15-2-1`, `S-1-15-2-2`), passes the name through
+`wszInitializationData` -- the slot that already carried the folder path, so no new plumbing -- and
+the provider opens it with a plain `CreateFileW`. It connected in 37ms on the first attempt.
+
+Two things that make pipes look harder than they are do not apply. The AppContainer loopback
+restriction is about *sockets*; a pipe lives in `\Device\NamedPipe` and is gated by its DACL. And
+"UWP cannot do named pipes" is a certification rule about submitted packages -- an injected
+diagnostics DLL is in nobody's package. The direction is what makes it easy: creating a pipe from
+inside the sandbox is the finicky case, and connecting to one that already grants your SID is not.
+
+**The crux is not the channel, and the card does not mention it.** Every request re-injected because
+the provider does its work inside `SetSite`, and `SetSite` runs on the app's UI thread, which is the
+only thread XAML can be touched from. A pipe alone would not have changed that. What changes it is
+`IXamlDiagnostics::GetDispatcher`: the provider keeps the `CoreDispatcher`, runs a background reader
+on the pipe, and marshals each request back onto the UI thread. A read becomes a message.
+
+**The provider is built afresh on every injection, and a resident reader has to know that.** Found by
+a failing test rather than by reading: an element removed by an apply was still in the tree a
+following read returned. The apply had run in a *new* provider instance and correctly forgotten the
+node from its own list, while the reader thread went on answering from the first instance's list. The
+same bug is a use-after-free the moment an old instance is released, which is worse and was only
+luck. The reader resolves the current instance per request, under a lock, holding a reference.
+
+**No generation number.** Every handshake through the folder was "does this file exist", so the host
+had to stamp a number on the request and have the provider echo it back to tell this answer from the
+last one (#57, #89, D31). A reply read from the pipe the request went out on is this request's answer
+by construction. That whole mechanism, and the class of bug behind it, deletes itself.
+
+**What it is worth, measured, because the estimate was wrong.** A tree read over the pipe is 14-23ms
+against about 115ms for a warm read through the files -- five to eight times, per call, which is what
+an interactive session feels. It was also expected to take most of the live-app suite's time out, and
+it does not: the whole read path on the pipe moved the suite from 186s to 180s. The reason is in the
+numbers that were already there. The three UWP tests that make no XAML calls at all take 6.2-7.3s and
+the ones making several take 7.6-7.9s, so the channel is about 1.2s of a 7.7s test and the other
+6.5s is launching the app, the resume-stub handshake and the ICorDebug attach. "Re-injection makes
+each request slow" is true; "re-injection makes each test slow" was an unexamined substitution for
+it. Getting the suite under two minutes means launching the app fewer times, not talking to it
+faster.
+
+Landed here: the channel, and the read path (`tree`, `properties`) with the files still in place as a
+fallback, so nothing depends on the pipe that cannot fall back to what worked. The write path
+(`apply`), the selection verbs, injecting once per session and deleting the file channel are the rest
+of #50; CLAUDE.md gets its invariant when the migration is finished rather than while two channels
+are live.
+
+### D35 — The live-app suite is phased by what each test can share (extends D33)
+D33 made the twenty UWP tests stop rebuilding the toolchain, and left the thing underneath it: each
+test still launched its own app. A launch costs about 6.5s and the XAML work in a test costs about
+1.2, so a new test cost six times what its own work cost, and the initiative is about to grow probes
+for WinUI, WPF and modern UWP. The point of phasing is the slope, not the intercept.
+
+One app, shared, with three ways to ask for it. What each phase gives up is different, which is why
+"isolation" as a single property was the wrong thing to argue about:
+
+| | asks for | gives up | for |
+|---|---|---|---|
+| A | `TakeAppAsync` | nothing; launches its own | tests where a fresh process *is* the subject |
+| B | `TakeSessionAsync` | the app to itself, serially | state with no owner smaller than the app: the pick, select mode, the resource dictionary |
+| C | `TakeSlotAsync` | shares the app, owns one slot | everything else |
+
+**Slots are named, and that is the whole of why they work.** An element the markup never named is
+addressed by position under its nearest *named* ancestor, so two tests adding children to one
+container renumber each other -- `#Scratch/Border[1]` would mean different elements depending on who
+else was mid-test. Anchored on its own slot, `#Slot3/Border[0]` is stable however busy the app is.
+
+**Phase C turned out to be three kinds, not one**, and the second and third were found by tests
+failing rather than by design:
+
+- *Build what you test.* The majority.
+- *Read what the markup declares.* `Reads_the_properties_of_a_xaml_element` asserts `SourceFile` and
+  `SourceLine`. Nothing declared a slot-built element, so it has no source info at all, and that test
+  can never own what it reads.
+- *Read a dedicated declared element.* The #97 pin asserts what the **first** properties read of an
+  element returns. Sharing the app's Caption made it depend on running before every other test that
+  reads a TextBlock. Building its own did not fix it either: an element created through
+  `CreateInstance` and `AddChild` arrives with `Inlines` already materialised, so it was never
+  pristine. Only markup declares an element nothing has touched, so the probe now carries
+  `PristineText`, owned by that one test.
+
+**Serialised state has to be handed back, and the test that fails to is the one that fails.** A phase
+B turn reads the selection back on release and fails if anything was left selected or armed. It also
+clears up, so one offending test does not cascade -- but it still fails, because cleaning up after a
+test is not the same as it having been clean. That check found, within a minute of being switched on,
+that **select mode could not be disarmed at all**: `EndSelect` existed in the provider but was wired
+only to the toolbar's Idle button and the click path, so an agent that armed select mode had put a
+pointer-capturing layer over the app with nothing but a human click to lift it.
+`rose_xaml_select_mode(arm: false)` is that hole closed.
+
+Three things about the mechanics that cost a run each to learn.
+
+**A fragment is not a document.** The diff parses what it is given as XML, and a fragment lifted out
+of MainPage.xaml carries none of its namespace declarations, so `x:Name` is an undeclared prefix and
+the apply is refused before it starts. The declarations go on the slot fragment's root, where a
+caller cannot forget them.
+
+**Launching a packaged app under a debugger is not reliable on the first attempt** when the previous
+instance has only just gone, and it fails as a `Faulted` session saying the app "may not have
+activated under the debugger" -- the symptom, not the race. The shared session waits for the process
+to actually be gone and retries three times. Killing a process and its package being launchable again
+are different moments.
+
+**One gate, or it is not a gate.** During the migration the unconverted tests kept their own
+semaphore while the converted ones used the phase gate: two independent locks over one
+single-instance app, so an old-style test could launch its own instance while a phase B test was
+using the shared one. A run wedged for fifteen minutes with the host alive and the app gone. Both go
+through one gate now, which the design needs *during* a migration and not only at the end of one.
+
+Left open, deliberately. `Removes_an_element_from_the_live_tree` passes alone and failed in company,
+reporting the removal applied while both elements were still in the tree, so it takes the app
+exclusively as well as owning a slot. Owning a slot was not enough for it and the reason is not yet
+established -- the index being asked of the live collection rather than taken from the diff is the
+obvious suspect. Exclusivity costs the overlap, which was worth almost nothing here because every
+XAML request serialises behind one lock and one UI thread anyway, and keeps the shared launch, which
+is where the time was. That is a fix pending an explanation, not an explanation.
+
+### D36 - A batch of sibling removals has to go out last-first (#11, and it explains D35's loose end)
+D35 shipped a test taking the app exclusively with the note "a fix pending an explanation, not an
+explanation". This is the explanation, and the fix turned out to belong in the product rather than in
+the test.
+
+An unnamed element is addressed by its position among its siblings, and the apply resolves that
+position against the *live* collection at the moment the edit runs. That is deliberate, and the
+existing note says why: an add earlier in the same batch has already moved everything after it. What
+that reasoning missed is that a **removal** moves things too, and moves them the other way. Emitted
+in document order, deleting two adjacent children removed the first and then refused the second:
+
+    RemoveChild #Slot0/Border[0] => applied
+    RemoveChild #Slot0/Border[1] => target not found: no Border[1] here, among 1 element(s) of type Border
+
+Correct arithmetic about a tree that had already moved. `XamlDiff` now emits removals last-first, so
+nothing a later edit names can shift under it, and a unit test pins the order rather than the
+behaviour, because the ordering is the whole of the fix.
+
+**How it hid is the part worth keeping.** The fixture emptied each slot between tests and never
+looked at what the apply reported, so a slot that had held two elements was handed on holding one.
+Slots come off a stack, so the slot just released is the next one out: the residue was picked up
+immediately, by a different test, which counted elements it had not added and failed somewhere else
+entirely. Three symptoms that looked unrelated - a removal reported applied that did not happen, an
+element count off by one, a test that passed alone and failed in company - were one bug seen from
+three places. The fixture now checks that its cleanup worked, off the statuses the apply already
+returns rather than a confirming read, because the same rule that governs a phase B turn governs a
+slot: a resource handed back wrong is a failing test, not a tidiness problem.
+
+**And a suite green once is not a green suite.** D35 was reported on a single run of each. Run twice
+more, main failed 1 and then 2 of its 31 live-app tests - this bug, and two others it had been
+masking. One was a test asserting a whole-tree element count against the probe's Transient pair,
+which leaves the visual tree for one second in every five *by design*, so that #51 has a removal to
+watch; a fixed count over ten reads spanning seconds was a coin flip, and what that test actually
+protects - that a concurrent read is not silently truncated - is said just as well by counting the
+stable elements. The other was `DebugProbeTarget` self-terminating on a 120-second deadline while the
+suite runs longer than that, so the tests asserting their target is still alive were failing on it
+having correctly done what it was told. A timer shorter than the run it bounds fails exactly when the
+machine is busiest, which is when a suite is least able to explain itself. The deadline has to be
+longer than the whole suite rather than longer than one test, and is now ten minutes.
+
+That is the second answer. The first was to delete the deadline and have the target die when its
+stdin closes, the way a worker dies with the broker, so the bound would be the parent's lifetime
+rather than a number guessed in advance -- which is the right shape, and does not work here. Each
+target passes on its own; the nine debugger tests hang as a group, reproducibly, with not one test
+completing. The interaction between a redirected stdin, inherited handles across nine concurrently
+launched children and an `ICorDebug` attach is not understood, and is recorded unexplained rather
+than left out, because the idea is good enough that somebody will have it again. A fixture that can
+hang the suite is worse than the deadline it was replacing -- which is a rule this initiative had
+already written down, and then had to be taught twice.
+
+**A fourth cause, and the one that took the longest to see, because it was the design's own shape.**
+With the other three fixed, a run still failed two slot tests together on "the target's XAML
+diagnostics endpoint did not appear within 20s". Phase C tests overlap on purpose, and each asks the
+fixture for the shared session. After a phase A test has ended the app, several of them arrive at
+that request at once, each correctly observes no app running, and each begins by ending the app
+before launching it -- so the second kills what the first has just launched, and whoever loses holds
+a session whose process is gone. Twenty seconds later the injection reports a missing diagnostics
+endpoint, which describes the corpse and not the killing, and points at the app rather than at the
+fixture. Bringing the app up is the one thing readers do that is not read-only, and it now takes a
+lock of its own, with the readiness question asked again inside it so that the queue behind the first
+launch observes the app rather than tearing it down to build the same one again.
+
+That is the third time in this initiative that one resource has been reached through two paths that
+did not know about each other: two locks over a single-instance app (D35), a fixture and a test both
+emptying one slot (above), and now overlapping readers each relaunching one app. The rule already
+written down -- one gate for everything that touches the app -- is right and keeps being applied one
+layer too high. It is not enough for the *tests* to be sequenced correctly if the thing they queue for
+can be rebuilt by several of them at once.
+
+The method note: a flake rate is a measurement, and measurements need repeats. Reporting a suite
+green off one run is the same error as reasoning about a slowdown instead of profiling it, and it was
+made in the same initiative that had just been corrected for the latter. Four causes, and the first
+run of the day showed one of them.

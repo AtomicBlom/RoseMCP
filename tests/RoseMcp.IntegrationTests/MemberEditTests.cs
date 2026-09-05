@@ -76,8 +76,9 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
-	/// The same shift must not reach inside a string. Its leading whitespace is part of the value,
-	/// and in a raw literal it decides how much is stripped from every line of it.
+	/// The same shift must not reach inside a verbatim string. Its leading whitespace is part of the
+	/// value, and no delimiter rule takes it back out again, so a literal written flush left stays
+	/// flush left however deep the member around it sits.
 	/// </summary>
 	[Fact]
 	public async Task Leaves_the_inside_of_a_multi_line_literal_alone()
@@ -94,19 +95,23 @@ public sealed class MemberEditTests
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		// Verbatim, endings included: a newline inside the literal is part of the value the caller
-		// asked for, so normalising it to the file's CRLF would change what the program says.
-		Assert.Contains("@\"\nflush left on purpose\n\";", text, StringComparison.Ordinal);
+		// The line the literal holds is not indented with the member. Its endings are the file's,
+		// because the code arrived carrying none of its own.
+		Assert.Contains("@\"\r\nflush left on purpose\r\n\";", text, StringComparison.Ordinal);
 	}
 
 	/// <summary>
-	/// Leaving a literal's endings alone is right, and it has a consequence nothing else says: a
-	/// multi-line string written with bare newlines into a CRLF file fails dotnet format, no build
-	/// complains, and the obvious fix changes what the program says. Found three times in one
-	/// session writing this repository's own tool descriptions through these tools.
+	/// A multi-line literal composed for a JSON argument arrives with bare newlines, which in a CRLF
+	/// file fails dotnet format while no build complains and the obvious fix changes what the program
+	/// says. The endings become the file's, and the result says so, because a diff cannot show a
+	/// terminator and this one is part of a string's value.
+	/// <para>
+	/// A caller that writes a carriage return is thinking about endings, and then nothing is touched --
+	/// which is also the way to ask for a bare newline inside a literal on purpose.
+	/// </para>
 	/// </summary>
 	[Fact]
-	public async Task Says_when_a_literal_was_written_with_the_wrong_line_endings()
+	public async Task Rewrites_the_endings_of_a_literal_composed_without_them()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -120,9 +125,14 @@ public sealed class MemberEditTests
 
 		Assert.Contains(
 			bare.Notices,
-			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
+			notice => notice.Contains("Rewrote", StringComparison.Ordinal)
+				&& notice.Contains("line ending(s) in the code supplied", StringComparison.Ordinal));
 
-		// And says nothing when the caller wrote them the way the file does.
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("@\"\r\nline one\r\nline two\r\n\";", text, StringComparison.Ordinal);
+
+		// Supplied with the file's own endings, there is nothing to rewrite and nothing to say.
 		var matching = await EditAsync(session, new MemberEditRequest
 		{
 			Kind = MemberEditKind.Add,
@@ -132,7 +142,7 @@ public sealed class MemberEditTests
 
 		Assert.DoesNotContain(
 			matching.Notices,
-			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
+			notice => notice.Contains("line ending(s) in the code supplied", StringComparison.Ordinal));
 	}
 
 	/// <summary>

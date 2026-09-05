@@ -34,8 +34,24 @@ public static class MemberSyntax
 
 	/// <summary>
 	/// The members <paramref name="code"/> declares, in the order they were written, re-indented for
-	/// a declaration sitting at <paramref name="indent"/>.
+	/// a declaration sitting at <paramref name="indent"/> and written with
+	/// <paramref name="lineEnding"/>.
 	/// </summary>
+	/// <param name="code">The declarations as the caller wrote them.</param>
+	/// <param name="containerKeyword">The keyword of the container they are going into.</param>
+	/// <param name="options">The destination project's parse options.</param>
+	/// <param name="indent">The indentation of the declaration they sit beside.</param>
+	/// <param name="lineEnding">
+	/// The destination file's ending, applied to code whose own endings are all bare LFs -- inside a
+	/// literal as well as outside one. An agent composing C# for a JSON argument writes LF without
+	/// deciding to, and in a CRLF repository the file that produces fails <c>dotnet format</c> while
+	/// no build says anything. Code carrying even one CR LF is left exactly as it arrived, which is
+	/// how to ask for a bare LF inside a literal on purpose. Empty leaves every ending untouched.
+	/// </param>
+	/// <param name="rewritten">
+	/// How many endings were changed, so a caller can say so. It is a change to what a literal says,
+	/// and it must not be silent.
+	/// </param>
 	/// <exception cref="ArgumentException">
 	/// The code does not parse, declares no member, or would put something outside the container.
 	/// </exception>
@@ -43,18 +59,20 @@ public static class MemberSyntax
 		string code,
 		string containerKeyword,
 		ParseOptions? options,
-		string indent = "")
+		string indent = "",
+		string lineEnding = "",
+		Action<int>? rewritten = null)
 	{
 		if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("No code was supplied, so there is nothing to write.");
 
 		var members = ParseWrapped(code, containerKeyword, options);
-		if (indent.Length == 0) return members;
+		if (indent.Length == 0 && lineEnding.Length == 0) return members;
 
 		// Parsed twice, because the indentation cannot be worked out until the code has been
 		// understood: which lines sit inside a multi-line literal decides which of them have to be
 		// left exactly as they arrived. The second parse is of text, in microseconds, against an edit
 		// that is about to compile a project.
-		var shifted = Shift(code, indent, LiteralContinuations(members));
+		var shifted = Shift(code, indent, Literals(members), lineEnding, rewritten);
 
 		return string.Equals(shifted, code, StringComparison.Ordinal)
 			? members
@@ -183,33 +201,73 @@ public static class MemberSyntax
 	/// the baseline first makes the two the same request.
 	/// </para>
 	/// <para>
-	/// Each line keeps the ending it arrived with. Rebuilding them all with one ending would be the
-	/// same mistake this is protecting literals from: the endings inside a verbatim or raw string are
-	/// part of its value, so normalising them here would change what the program says before the
-	/// whitespace pass ever got the chance to leave them alone.
+	/// A verbatim literal's interior is never moved: its whitespace is its value, and there is no
+	/// delimiter rule to take it back out again. A raw literal's is moved with everything else,
+	/// because its value is what remains once the closing delimiter's indentation has been stripped
+	/// from every line -- so shifting the content and the delimiter by the same amount leaves the
+	/// value identical while putting the literal at the indentation of the code around it.
+	/// </para>
+	/// <para>
+	/// Endings are rewritten to <paramref name="lineEnding"/>, literals included, but only when
+	/// every ending in the code is a bare LF. That is a change to what a string says, so what
+	/// licenses it is the caller having said nothing about endings at all: an agent composing C# for
+	/// a tool argument writes LF without deciding to, and the file that produces fails a formatting
+	/// check in a CRLF repository while no build reports anything. A single CR LF anywhere in the
+	/// code says the caller is thinking about endings, and then every one of them is left exactly as
+	/// it arrived -- which is also how to ask for a bare LF inside a literal deliberately.
 	/// </para>
 	/// </summary>
-	private static string Shift(string code, string indent, IReadOnlySet<int> literals)
+	private static string Shift(
+		string code,
+		string indent,
+		Literal literals,
+		string lineEnding,
+		Action<int>? rewritten)
 	{
 		var lines = Split(code);
 		var baseline = Baseline([.. lines.Select(line => line.Content)]);
+		var changed = 0;
+
+		var wanted = lines.All(line => line.Ending is "" or "\n") ? lineEnding : string.Empty;
 
 		var shifted = lines.Select((line, index) =>
 		{
-			if (literals.Contains(index)) return line.Content + line.Ending;
+			var ending = Ending(line.Ending, wanted, ref changed);
+
+			if (literals.Verbatim.Contains(index)) return line.Content + ending;
 
 			var stripped = baseline.Length > 0 && line.Content.StartsWith(baseline, StringComparison.Ordinal)
 				? line.Content[baseline.Length..]
 				: line.Content;
 
 			// The first line's indentation comes from the trivia at the splice point, and padding a
-			// blank line only creates trailing whitespace for the next pass to strip again.
-			var prefixed = index > 0 && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+			// blank line only creates trailing whitespace for the next pass to strip again. A raw
+			// literal's own blank line is padded, because there it is content and the delimiter's
+			// indentation is about to be taken back off it.
+			var content = literals.Raw.Contains(index) || stripped.Trim().Length > 0;
+			var prefixed = index > 0 && content ? indent + stripped : stripped;
 
-			return prefixed + line.Ending;
+			return prefixed + ending;
 		});
 
-		return string.Concat(shifted);
+		var result = string.Concat(shifted);
+
+		if (changed > 0) rewritten?.Invoke(changed);
+
+		return result;
+	}
+
+	/// <summary>
+	/// The ending a line comes out with. A lone LF takes the destination's; anything else is left,
+	/// so a caller that wrote a CR LF pair keeps it even in a file that is otherwise LF.
+	/// </summary>
+	private static string Ending(string arrived, string wanted, ref int changed)
+	{
+		if (wanted.Length == 0 || arrived != "\n" || wanted == "\n") return arrived;
+
+		changed++;
+
+		return wanted;
 	}
 
 	/// <summary>The indentation the code was written at, taken from its first line with content.</summary>
@@ -271,13 +329,20 @@ public static class MemberSyntax
 	}
 
 	/// <summary>
-	/// Lines whose leading whitespace belongs to a string rather than to the layout: every line of a
-	/// multi-line literal after its first. Prefixing one of those changes what the program says, and
-	/// in a raw literal it changes how much is stripped from all of them.
+	/// Lines whose leading whitespace belongs to a string rather than to the layout, told apart by
+	/// what the language does with that whitespace.
+	/// <para>
+	/// In a verbatim literal it is the value, and nothing can take it back out, so those lines are
+	/// left exactly where they are. In a raw literal the closing delimiter's indentation is stripped
+	/// from every line, so moving the whole literal by one amount is invisible to the value -- and
+	/// not moving it leaves a literal written at column zero sitting a level out from the code around
+	/// it, which nothing downstream corrects and no analyzer reports.
+	/// </para>
 	/// </summary>
-	private static IReadOnlySet<int> LiteralContinuations(IReadOnlyList<MemberDeclarationSyntax> members)
+	private static Literal Literals(IReadOnlyList<MemberDeclarationSyntax> members)
 	{
-		var lines = new HashSet<int>();
+		var verbatim = new HashSet<int>();
+		var raw = new HashSet<int>();
 
 		foreach (var member in members)
 		{
@@ -286,16 +351,32 @@ public static class MemberSyntax
 				if (node is not (LiteralExpressionSyntax or InterpolatedStringExpressionSyntax)) continue;
 
 				var span = node.SyntaxTree.GetLineSpan(node.Span);
+				if (span.StartLinePosition.Line == span.EndLinePosition.Line) continue;
 
+				var into = IsRaw(node) ? raw : verbatim;
+
+				// From the line after the opening delimiter through the one carrying the closing one:
+				// a raw literal's terminator sets the indentation stripped from the rest, so it moves
+				// with them or the value changes.
 				for (var line = span.StartLinePosition.Line + 1; line <= span.EndLinePosition.Line; line++)
 				{
-					lines.Add(line - WrapperLines);
+					into.Add(line - WrapperLines);
 				}
 			}
 		}
 
-		return lines;
+		return new Literal(verbatim, raw);
 	}
+
+	/// <summary>
+	/// Whether a multi-line literal is a raw one, read from the delimiter it opens with rather than
+	/// from a syntax flag, because the interpolated and plain forms carry that in different places.
+	/// </summary>
+	private static bool IsRaw(SyntaxNode node) =>
+		node.ToString().TrimStart('$', '@').StartsWith("\"\"\"", StringComparison.Ordinal);
+
+	/// <summary>Which lines of the supplied code sit inside a literal, and of which kind.</summary>
+	private readonly record struct Literal(IReadOnlySet<int> Verbatim, IReadOnlySet<int> Raw);
 
 	private static IReadOnlyList<MemberDeclarationSyntax> Members(BaseTypeDeclarationSyntax wrapper) => wrapper switch
 	{

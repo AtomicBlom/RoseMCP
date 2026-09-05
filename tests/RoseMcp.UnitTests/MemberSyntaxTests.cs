@@ -209,4 +209,87 @@ public sealed class MemberSyntaxTests
 
 	private static IReadOnlyList<MemberDeclarationSyntax> Parse(string code) =>
 		MemberSyntax.Parse(code, "class", null);
+
+	/// <summary>
+	/// A lone LF becomes the destination's ending, inside a raw literal as well as outside one. The
+	/// code arrives as a JSON argument, which carries no carriage return, so keeping what arrived keeps
+	/// an artefact of the transport -- and produces a file dotnet format rejects while no build says
+	/// anything.
+	/// </summary>
+	[Fact]
+	public void Rewrites_a_lone_line_feed_to_the_destination_ending()
+	{
+		var rewritten = 0;
+
+		var members = MemberSyntax.Parse(
+			"public const string Text = \"\"\"\nfirst\nsecond\n\"\"\";\n",
+			"class",
+			options: null,
+			indent: "\t",
+			lineEnding: "\r\n",
+			count => rewritten = count);
+
+		var written = Assert.Single(members).ToFullString();
+
+		Assert.Contains("\"\"\"\r\n\tfirst\r\n\tsecond\r\n\t\"\"\"", written, StringComparison.Ordinal);
+		Assert.Equal(4, rewritten);
+	}
+
+	/// <summary>
+	/// A carriage return the caller wrote deliberately survives, so a file that is otherwise LF can
+	/// still be given a CRLF literal.
+	/// </summary>
+	[Fact]
+	public void Keeps_a_carriage_return_the_caller_supplied()
+	{
+		var rewritten = 0;
+
+		MemberSyntax.Parse(
+			"public const string Text = \"\"\"\r\nfirst\r\n\"\"\";\r\n",
+			"class",
+			options: null,
+			indent: "\t",
+			lineEnding: "\n",
+			count => rewritten = count);
+
+		Assert.Equal(0, rewritten);
+	}
+
+	/// <summary>
+	/// A raw literal moves with the code around it. Its value is what is left once the closing
+	/// delimiter's indentation comes off every line, so shifting content and delimiter together changes
+	/// nothing about what the string says and everything about where it sits.
+	/// </summary>
+	[Fact]
+	public void Indents_a_raw_literal_with_the_member_around_it()
+	{
+		var members = MemberSyntax.Parse(
+			"public const string Text = \"\"\"\nfirst\n\"\"\";\n",
+			"class",
+			options: null,
+			indent: "\t\t");
+
+		var written = Assert.Single(members).ToFullString();
+
+		Assert.Contains("\t\tfirst", written, StringComparison.Ordinal);
+		Assert.Contains("\t\t\"\"\"", written, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A verbatim literal does not move, because its interior whitespace is its value and no delimiter
+	/// rule takes it back out again.
+	/// </summary>
+	[Fact]
+	public void Leaves_a_verbatim_literal_where_it_is()
+	{
+		var members = MemberSyntax.Parse(
+			"public const string Text = @\"first\nsecond\";\n",
+			"class",
+			options: null,
+			indent: "\t\t");
+
+		var written = Assert.Single(members).ToFullString();
+
+		Assert.Contains("\nsecond\"", written, StringComparison.Ordinal);
+	}
 }

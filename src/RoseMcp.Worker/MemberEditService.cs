@@ -72,8 +72,8 @@ public static class MemberEditService
 
 		var written = request.Kind switch
 		{
-			MemberEditKind.Add => await AddAsync(snapshot.Solution, request, cancellationToken),
-			MemberEditKind.ReplaceBody => await ReplaceBodyAsync(snapshot.Solution, request, cancellationToken),
+			MemberEditKind.Add => await AddAsync(snapshot.Solution, request, notices, cancellationToken),
+			MemberEditKind.ReplaceBody => await ReplaceBodyAsync(snapshot.Solution, request, notices, cancellationToken),
 			_ => await ReplaceAsync(snapshot.Solution, request, notices, cancellationToken),
 		};
 
@@ -149,7 +149,9 @@ public static class MemberEditService
 			request.Code,
 			KeywordAround(target.Declaration),
 			target.Document.Project.ParseOptions,
-			IndentAt(text, target.Declaration.SpanStart));
+			IndentAt(text, target.Declaration.SpanStart),
+			Whitespace.Dominant(text),
+			count => notices.Add(RewrittenEndings(count, text)));
 
 		if (parsed.Count != 1)
 		{
@@ -183,6 +185,7 @@ public static class MemberEditService
 	private static async Task<Written> ReplaceBodyAsync(
 		Solution solution,
 		MemberEditRequest request,
+		List<string> notices,
 		CancellationToken cancellationToken)
 	{
 		var target = await DeclarationLocator.FindMemberAsync(solution, request.Symbol, request.FilePath, cancellationToken);
@@ -215,7 +218,9 @@ public static class MemberEditService
 			$"{head} {Body(request.Code)}",
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
-			indent);
+			indent,
+			Whitespace.Dominant(text),
+			count => notices.Add(RewrittenEndings(count, text)));
 
 		if (parsed.Count != 1)
 		{
@@ -244,6 +249,7 @@ public static class MemberEditService
 	private static async Task<Written> AddAsync(
 		Solution solution,
 		MemberEditRequest request,
+		List<string> notices,
 		CancellationToken cancellationToken)
 	{
 		if (request.After is { Length: > 0 } && request.Before is { Length: > 0 })
@@ -276,7 +282,9 @@ public static class MemberEditService
 			request.Code,
 			MemberSyntax.KeywordOf(type),
 			document.Project.ParseOptions,
-			IndentFor(type, text, rules));
+			IndentFor(type, text, rules),
+			lineEnding,
+			count => notices.Add(RewrittenEndings(count, text)));
 
 		GuardDuplicates(type, parsed);
 
@@ -794,4 +802,14 @@ public static class MemberEditService
 		IReadOnlyList<string> Members);
 
 	private sealed record Finished(Solution Solution, int Line, IReadOnlyList<string> Notices);
+
+	/// <summary>
+	/// Says that line endings in the supplied code were changed, because a diff cannot: a terminator
+	/// is not line content, and inside a literal it is part of what the string says.
+	/// </summary>
+	private static string RewrittenEndings(int count, SourceText text) =>
+		$"Rewrote {count} line ending(s) in the code supplied to {LineEndings.Name(Whitespace.Dominant(text))}, "
+			+ "the ending this file uses. A tool argument arrives as a JSON string and cannot carry a "
+			+ "carriage return, so an LF in it says nothing about what was wanted -- but inside a string "
+			+ "literal it is part of the value, which is why this is said rather than left silent.";
 }

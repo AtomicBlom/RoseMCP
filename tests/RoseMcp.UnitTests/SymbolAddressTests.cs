@@ -96,4 +96,62 @@ public sealed class SymbolAddressTests
 	{
 		Assert.Throws<ArgumentException>(() => SymbolAddress.Parse("Log.Write string)"));
 	}
+
+	/// <summary>
+	/// Both constructor spellings, and both leaving the address pointing at the type, since that is
+	/// the name the constructor is declared under.
+	/// </summary>
+	[Theory]
+	[InlineData("RoseMcp.Worker.Whitespace.Whitespace")]
+	[InlineData("RoseMcp.Worker.Whitespace..ctor")]
+	public void Reads_a_constructor_as_its_type(string requested)
+	{
+		var address = SymbolAddress.Parse(requested);
+
+		Assert.Equal(ConstructorKind.Instance, address.Constructor);
+		Assert.Equal("Whitespace", address.Name);
+		Assert.Equal(["RoseMcp", "Worker", "Whitespace"], address.Path);
+	}
+
+	[Fact]
+	public void Reads_a_static_constructor()
+	{
+		var address = SymbolAddress.Parse("RoseMcp.Worker.Whitespace..cctor");
+
+		Assert.Equal(ConstructorKind.Static, address.Constructor);
+		Assert.Equal("Whitespace", address.Name);
+	}
+
+	/// <summary>
+	/// A parameter list picks the overload, and separating it happens before the constructor
+	/// spelling is read, so both halves of Type.Type(int) survive.
+	/// </summary>
+	[Fact]
+	public void Keeps_the_parameter_list_of_a_constructor()
+	{
+		var address = SymbolAddress.Parse("LiveAppSessionTests.LiveAppSessionTests(UwpProbeApp, WinUiProbeApp)");
+
+		Assert.Equal(ConstructorKind.Instance, address.Constructor);
+		Assert.Equal("LiveAppSessionTests", address.Name);
+		Assert.Equal(["UwpProbeApp", "WinUiProbeApp"], address.Parameters);
+	}
+
+	/// <summary>
+	/// An ordinary member is not read as a constructor, however its segments repeat elsewhere in the
+	/// path. Only the last two matching means one, because C# forbids a member sharing the name of
+	/// the type enclosing it.
+	/// </summary>
+	[Theory]
+	[InlineData("RoseMcp.Worker.Whitespace.Shift")]
+	[InlineData("Whitespace.Whitespace.Shift")]
+	public void Leaves_an_ordinary_member_alone(string requested)
+	{
+		Assert.Equal(ConstructorKind.None, SymbolAddress.Parse(requested).Constructor);
+	}
+
+	[Fact]
+	public void Refuses_a_constructor_with_no_type()
+	{
+		Assert.Throws<ArgumentException>(() => SymbolAddress.Parse("..ctor"));
+	}
 }

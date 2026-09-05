@@ -12,9 +12,10 @@ namespace RoseMcp.Worker;
 /// Changes a member's parameters, and everything that has to change with them.
 /// <para>
 /// Renaming exists here because find-and-replace gets a rename wrong. Changing a signature is the
-/// same capability and the same argument, and until now it was done by hand: in one session on this
-/// repository a single optional parameter crossed six layers, each found by grep and edited by text
-/// anchor, and a test call site was missed entirely and surfaced only as CS7036 from a build.
+/// same capability and the same argument, over a harder search: a single optional parameter can
+/// cross six layers of a forwarding chain, and a call site found by grep and edited by text anchor
+/// is one that has to be found at all -- a missed one surfaces as CS7036 from a build, if the
+/// parameter is required, and not at all if it is not.
 /// </para>
 /// <para>
 /// What makes it more than a convenience is the two things a person doing it by hand forgets. The
@@ -52,18 +53,19 @@ public static class ChangeSignatureService
 		var target = await DeclarationLocator.FindSymbolAsync(
 			snapshot.Solution, request.Symbol, request.FilePath, cancellationToken);
 
-		if (target.Symbol is not IMethodSymbol method || target.Declaration is not BaseMethodDeclarationSyntax primary)
+		if (target.Symbol is not IMethodSymbol method || ParameterLists.Of(target.Declaration) is not { } parameters)
 		{
 			throw new ArgumentException(
 				$"{target.Signature} has no parameter list to change. This changes a method, a constructor or an "
 					+ "operator; rose_replace_member writes any other declaration whole.");
 		}
 
+		var primary = target.Declaration;
 		var text = await target.Document.GetTextAsync(cancellationToken);
 		var indent = IndentAt(text, primary.SpanStart);
 
 		var wanted = MemberSyntax.ParseParameters(request.Parameters, target.Document.Project.ParseOptions, indent);
-		var plan = ParameterPlan.For(primary.ParameterList.Parameters, wanted);
+		var plan = ParameterPlan.For(parameters.Parameters, wanted);
 
 		if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);
 
@@ -216,8 +218,8 @@ public static class ChangeSignatureService
 			{
 				cancellationToken.ThrowIfCancellationRequested();
 
-				var node = await reference.GetSyntaxAsync(cancellationToken);
-				if (node is not BaseMethodDeclarationSyntax declaration) continue;
+				var declaration = await reference.GetSyntaxAsync(cancellationToken);
+				if (ParameterLists.Of(declaration) is null) continue;
 				if (solution.GetDocument(reference.SyntaxTree) is not { } document) continue;
 
 				var found = For(document);
@@ -272,13 +274,14 @@ public static class ChangeSignatureService
 	/// </para>
 	/// </summary>
 	private static DeclarationChange ChangeFor(
-		BaseMethodDeclarationSyntax declaration,
+		SyntaxNode declaration,
 		ParameterPlan plan,
 		SeparatedSyntaxList<ParameterSyntax> wanted,
 		bool primary,
 		List<string> notices)
 	{
-		var own = declaration.ParameterList.Parameters;
+		var list = ParameterLists.Of(declaration)!;
+		var own = list.Parameters;
 		var built = new List<ParameterSyntax>(plan.Parameters.Count);
 
 		foreach (var parameter in plan.Parameters)
@@ -312,7 +315,7 @@ public static class ChangeSignatureService
 
 		return new DeclarationChange
 		{
-			Parameters = declaration.ParameterList.WithParameters(
+			Parameters = list.WithParameters(
 				Separated(built, primary ? wanted : own)),
 			Documentation = documentation,
 		};

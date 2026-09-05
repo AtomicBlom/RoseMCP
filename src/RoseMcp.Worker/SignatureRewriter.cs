@@ -38,11 +38,11 @@ public sealed class SignatureRewriter(
 		var visited = base.Visit(node);
 		if (node is null || visited is null) return visited;
 
-		if (declarations.TryGetValue(node.Span, out var change) && visited is BaseMethodDeclarationSyntax declaration)
+		if (declarations.TryGetValue(node.Span, out var change) && ParameterLists.Of(visited) is not null)
 		{
 			// The parameter list carries the annotation rather than the declaration, so the whitespace
 			// pass afterwards owns the lines that were written and not the whole member body.
-			var updated = declaration.WithParameterList(change.Parameters.WithAdditionalAnnotations(marker));
+			var updated = ParameterLists.With(visited, change.Parameters.WithAdditionalAnnotations(marker));
 
 			return change.Documentation is { } documentation ? updated.WithLeadingTrivia(documentation) : updated;
 		}

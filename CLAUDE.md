@@ -760,6 +760,32 @@ Enforced by `.editorconfig` where the analyzer can express them, by review where
   if (isStructuralChange)
   ```
 - `nullable enable`, warnings as errors, latest language version.
+- **Comments are self-contained and present tense.** A comment says what the code does, the
+  invariant a caller relies on, or *why this and not that*. It never says when it was written, what
+  the code was before, or which planning document discussed it.
+  - **No history or schedule.** Not `used to`, `previously`, `no longer`, `for now`, `until now`,
+    `today`, `a later slice`, `lands in`, `comes in a later issue`. Describe the failure the code
+    prevents as a consequence of not having the code, which is timeless, rather than as a past
+    event, which is not. `Nothing used to remove it and the folders accumulated` becomes `the
+    sandbox folder goes when the host does; one that outlives its host accumulates a copy of the
+    provider and a grant to ALL APPLICATION PACKAGES`.
+  - **No decision or milestone numbers** (`D14`, `D36`, `M13`, `§8`). Restate the reason in a
+    sentence, or link the decision page.
+  - **No issue or pull-request numbers unless they name open work the reader has to tolerate** --
+    a transitional state, an accumulation, a pending fix. Then write the number and the fact
+    together: `taps are never unadvised (#68), so this must be idempotent`. A closed issue's number
+    is a tag: drop it and keep the explanation. If the explanation cannot stand without the number,
+    rewrite it until it can.
+  - **Measurements stay only when the code depends on the number** -- a timing behind a constant, a
+    count that made something a lock rather than a documented limitation. "It was measured" with no
+    number is a claim, and a number with no decision hanging on it is a story. Customer paths and
+    repository names are evidence, not reasons.
+  - **Long "why" is welcome**, in the shape "X, because Y", and a non-obvious algorithm or gotcha
+    earns as many lines as it needs. If a paragraph only makes sense against what the code used to
+    do, it is a commit message.
+  - **Public types and members keep an XML summary.** A private member gets one when the reason it
+    exists is not visible from its code. A class summary describes the class as it is, not the slice
+    it began as.
 
 Commit at every milestone boundary and whenever a self-contained piece works. Run `dotnet format`
 first so formatting never shows up as diff noise.

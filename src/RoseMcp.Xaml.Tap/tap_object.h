@@ -54,14 +54,28 @@ public:
 		}
 
 		HRESULT hr = site->QueryInterface(__uuidof(IXamlDiagnostics), reinterpret_cast<void**>(&m_diagnostics));
-		if (FAILED(hr)) return hr;
-
-		BSTR initData = nullptr;
-		if (SUCCEEDED(m_diagnostics->GetInitializationData(&initData)) && initData)
+		if (FAILED(hr))
 		{
-			g_workDir.assign(initData, SysStringLen(initData));
-			SysFreeString(initData);
+			// Said, not just returned: XamlDiagnostics::Launch discards what SetSite gives back, on the
+			// reasoning that the app must keep running either way. So a bare return here is the tap
+			// declining to start and telling nobody, which is the failure this whole file is worst at.
+			Log(L"SetSite: the site is not an IXamlDiagnostics (hr=0x" + Hex(hr) + L")");
+			return hr;
 		}
+
+		// Reported before g_workDir is assigned, deliberately: assigning it moves the log into the
+		// work folder, so a line written afterwards saying the folder is unknown would be written
+		// to the folder it just said it does not know.
+		BSTR initData = nullptr;
+		const HRESULT initHr = m_diagnostics->GetInitializationData(&initData);
+		if (FAILED(initHr) || !initData)
+		{
+			Log(L"SetSite: no initialization data (hr=0x" + Hex(initHr) + L"), so there is no work folder");
+			return FAILED(initHr) ? initHr : E_UNEXPECTED;
+		}
+
+		g_workDir.assign(initData, SysStringLen(initData));
+		SysFreeString(initData);
 
 		m_diagnostics->QueryInterface(__uuidof(IVisualTreeService), reinterpret_cast<void**>(&m_tree));
 		if (!m_tree)
@@ -77,79 +91,118 @@ public:
 		// added, and it presented as a tree read that timed out and blamed the app's diagnostics layer.
 		const std::wstring request = ReadRequest();
 
-		// Enumerate the tree (synchronous callbacks on this thread) to build the snapshot and name
-		// map, then serve the host's request and run any commands. All on the UI thread, where XAML
-		// lives -- which is why each request re-injects rather than being answered off a worker thread.
-		hr = m_tree->AdviseVisualTreeChange(this);
-		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
-		WriteTreeSnapshot();
-
-		// The toolbar is installed once and left there. It goes in after the snapshot so the very first
-		// tree cannot contain it, and the snapshot filters it out of every one after that.
-		Overlay().Install(m_diagnostics);
-
-		// Per-element source info only exists here, where the tree was walked, so it is handed to the
-		// overlay: it is what "just my XAML" decides on, and a click has no other way to learn it.
-		std::map<InstanceHandle, std::wstring> sources;
-		for (const auto& node : m_nodes)
+		// Handed to the provider rather than run here, because where the rest of this may run is the
+		// one thing the two frameworks genuinely disagree about (#76). WinUI 3 dispatches tap creation
+		// onto the UI thread, and its AdviseVisualTreeChange enqueues the walk *back* onto that thread
+		// and then blocks the caller waiting for it, with no check for already being on it -- so
+		// advising from here deadlocks the one thread that can do the work. It presents as no
+		// callbacks, no error and no return, which is why it read for a long time as the framework
+		// ignoring us. UWP enumerates inline on the calling thread and wants no thread at all.
+		//
+		// The AddRef is not bookkeeping. XamlDiagnostics::Launch holds the tap only in a local ComPtr
+		// and drops it the moment Launch returns; normally AdviseVisualTreeChange is what takes a
+		// lasting reference, so returning before advising leaves nothing owning us, and the body would
+		// then run against a destroyed object -- which it did, reading a thread id that was never set.
+		RoseTapCaptureUiThread();
+		AddRef();
+		RoseTapRunTapBody([this, request]()
 		{
-			if (!node.File.empty()) sources[node.Handle] = node.File;
-		}
-
-		Overlay().SetSources(std::move(sources));
-
-		if (request.rfind(L"properties ", 0) == 0)
-		{
-			// "properties <handle>" gives the set (non-default) properties; a trailing " all" includes
-			// the framework defaults too. Filtering defaults out keeps the interesting values from being
-			// pushed past the row cap on an element with hundreds of properties.
-			const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
-			WriteProperties(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10)), includeDefaults);
-		}
-		else if (request.rfind(L"selecthandle ", 0) == 0)
-		{
-			// Checked before the arming verb below, and named without a space after "select" so the
-			// two cannot be confused: arming parses its tokens as flags, and a handle is not one.
-			Overlay().SelectByHandle(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
-		}
-		else if (request == L"deselect")
-		{
-			// The same act as the toolbar button, so the mark and the recorded selection go together
-			// whichever end asks. An agent that has finished with an element, and #51's tree watcher
-			// noticing the element is gone, both want exactly this.
-			Overlay().Deselect();
-		}
-		else if (request == L"apply")
-		{
-			ApplyCommands();
-		}
-		else if (request == L"select" || request.rfind(L"select ", 0) == 0)
-		{
-			// Arming from the agent and arming from the toolbar are the same act; whichever happens,
-			// the overlay writes select.ready and the host reads the pick back the same way.
-			//
-			// Tokenised rather than suffix-matched: "all" asks for elements the framework would not
-			// hit-test (explicit, never the default -- see Beneath), and "nomyxaml" turns off the
-			// preference for the app's own markup. A flag the person set on the toolbar is left alone
-			// unless the request actually mentions it.
-			bool includeAll = false;
-			for (const auto& token : Tokens(request))
-			{
-				if (token == L"all") includeAll = true;
-				else if (token == L"myxaml") Overlay().SetJustMyXaml(true);
-				else if (token == L"nomyxaml") Overlay().SetJustMyXaml(false);
-			}
-
-			Overlay().BeginSelect(includeAll);
-		}
-
-		// Last, and for every request rather than only the ones that change the mode. The state file
-		// is how the host asks what the toolbar is doing, and its answer is only usable if the host
-		// can tell it was written for the question just asked -- so every injection leaves that proof
-		// behind, including a tree or properties read that touches the mode not at all.
-		Overlay().RefreshState();
+			ServeRequest(request);
+			Release();
+		});
 
 		return S_OK;
+	}
+
+	/// <summary>
+	/// One injection's work: walk the tree, then serve the request the host left in the work folder.
+	/// </summary>
+	/// <remarks>
+	/// Split out of SetSite so the two halves can run on different threads, which WinUI 3 requires
+	/// and UWP does not care about. The division is exact rather than cautious: the walk is the only
+	/// thing that must not run on the UI thread, and everything after it must not run anywhere else,
+	/// because the framework dispatches for the walk alone -- "during normal operation it is the
+	/// caller's responsibility to dispatch to the correct thread", in its own words.
+	/// </remarks>
+	void ServeRequest(const std::wstring& request)
+	{
+		// Synchronous callbacks, but not necessarily on this thread: UWP calls back here, WinUI 3 calls
+		// back on the UI thread while this one waits. Either way the walk is done when it returns.
+		const HRESULT hr = m_tree->AdviseVisualTreeChange(this);
+		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
+
+		// Everything past the walk reads or writes live XAML, so it goes back to the thread that owns
+		// it. The snapshot is written there too: it costs nothing beside the rest, and dividing the work
+		// by which individual lines happen to touch an element is how the next edit gets it wrong.
+		RoseTapRunOnUiThread([this, &request]()
+		{
+			WriteTreeSnapshot();
+
+			// The toolbar is installed once and left there. It goes in after the snapshot so the very first
+			// tree cannot contain it, and the snapshot filters it out of every one after that.
+			Overlay().Install(m_diagnostics);
+
+			// Per-element source info only exists here, where the tree was walked, so it is handed to the
+			// overlay: it is what "just my XAML" decides on, and a click has no other way to learn it.
+			std::map<InstanceHandle, std::wstring> sources;
+			for (const auto& node : m_nodes)
+			{
+				if (!node.File.empty()) sources[node.Handle] = node.File;
+			}
+
+			Overlay().SetSources(std::move(sources));
+
+			if (request.rfind(L"properties ", 0) == 0)
+			{
+				// "properties <handle>" gives the set (non-default) properties; a trailing " all" includes
+				// the framework defaults too. Filtering defaults out keeps the interesting values from being
+				// pushed past the row cap on an element with hundreds of properties.
+				const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
+				WriteProperties(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10)), includeDefaults);
+			}
+			else if (request.rfind(L"selecthandle ", 0) == 0)
+			{
+				// Checked before the arming verb below, and named without a space after "select" so the
+				// two cannot be confused: arming parses its tokens as flags, and a handle is not one.
+				Overlay().SelectByHandle(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
+			}
+			else if (request == L"deselect")
+			{
+				// The same act as the toolbar button, so the mark and the recorded selection go together
+				// whichever end asks. An agent that has finished with an element, and #51's tree watcher
+				// noticing the element is gone, both want exactly this.
+				Overlay().Deselect();
+			}
+			else if (request == L"apply")
+			{
+				ApplyCommands();
+			}
+			else if (request == L"select" || request.rfind(L"select ", 0) == 0)
+			{
+				// Arming from the agent and arming from the toolbar are the same act; whichever happens,
+				// the overlay writes select.ready and the host reads the pick back the same way.
+				//
+				// Tokenised rather than suffix-matched: "all" asks for elements the framework would not
+				// hit-test (explicit, never the default -- see Beneath), and "nomyxaml" turns off the
+				// preference for the app's own markup. A flag the person set on the toolbar is left alone
+				// unless the request actually mentions it.
+				bool includeAll = false;
+				for (const auto& token : Tokens(request))
+				{
+					if (token == L"all") includeAll = true;
+					else if (token == L"myxaml") Overlay().SetJustMyXaml(true);
+					else if (token == L"nomyxaml") Overlay().SetJustMyXaml(false);
+				}
+
+				Overlay().BeginSelect(includeAll);
+			}
+
+			// Last, and for every request rather than only the ones that change the mode. The state file
+			// is how the host asks what the toolbar is doing, and its answer is only usable if the host
+			// can tell it was written for the question just asked -- so every injection leaves that proof
+			// behind, including a tree or properties read that touches the mode not at all.
+			Overlay().RefreshState();
+		});
 	}
 
 	HRESULT STDMETHODCALLTYPE GetSite(REFIID riid, void** ppv) override
@@ -1471,6 +1524,16 @@ private:
 	std::map<std::wstring, InstanceHandle> m_slots;
 };
 
+// A class id as text, for the log. Every handshake before SetSite identifies what it wants by a
+// GUID and by nothing else, so a log line that cannot print one can only say that something
+// happened.
+static std::wstring GuidText(REFGUID id)
+{
+	wchar_t buffer[64];
+	const int written = StringFromGUID2(id, buffer, ARRAYSIZE(buffer));
+	return written > 0 ? std::wstring(buffer, static_cast<size_t>(written) - 1) : L"{?}";
+}
+
 class RoseTapFactory final : public IClassFactory
 {
 public:
@@ -1492,6 +1555,9 @@ public:
 
 	HRESULT STDMETHODCALLTYPE CreateInstance(IUnknown* outer, REFIID riid, void** ppv) override
 	{
+		// The interface asked for is worth recording. Both frameworks ask for IObjectWithSite, and a
+		// tap that answered E_NOINTERFACE here would be dropped without a word.
+		Log(L"class factory: CreateInstance for " + GuidText(riid));
 		if (outer) return CLASS_E_NOAGGREGATION;
 		auto* tap = new (std::nothrow) RoseTap();
 		if (!tap) return E_OUTOFMEMORY;
@@ -1515,6 +1581,11 @@ extern "C" HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID rclsid, REFIID riid
 	{
 		return g_factory.QueryInterface(riid, ppv);
 	}
+
+	// Said rather than only returned, because the caller is the framework and it discards the
+	// code. A provider staged under the wrong class id is otherwise indistinguishable from one
+	// that was never asked for.
+	Log(L"DllGetClassObject: refused " + GuidText(rclsid) + L"; this provider serves " + GuidText(CLSID_RoseTap));
 	*ppv = nullptr;
 	return CLASS_E_CLASSNOTAVAILABLE;
 }
@@ -1522,4 +1593,20 @@ extern "C" HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID rclsid, REFIID riid
 extern "C" HRESULT STDAPICALLTYPE DllCanUnloadNow()
 {
 	return g_lockCount == 0 ? S_OK : S_FALSE;
+}
+
+// The first thing the provider can observe about itself, and the reason it exists is #76.
+//
+// The framework loads the tap, creates it, then sites it, and a failure at any of the three is
+// silent by design. Recording the load rather than inferring it puts "loaded but never created"
+// and "never loaded" one line apart, where they were previously a week apart.
+BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
+{
+	if (reason == DLL_PROCESS_ATTACH)
+	{
+		DisableThreadLibraryCalls(instance);
+		Log(L"loaded into pid " + std::to_wstring(GetCurrentProcessId()));
+	}
+
+	return TRUE;
 }

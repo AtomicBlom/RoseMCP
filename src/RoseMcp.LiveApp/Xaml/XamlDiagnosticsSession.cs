@@ -27,12 +27,6 @@ namespace RoseMcp.LiveApp.Xaml;
 /// </summary>
 internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 {
-	// The well-known diagnostics endpoint; anything else makes InitializeXamlDiagnosticsEx return
-	// ERROR_NOT_FOUND (0x80070490). Shared by every stack, unlike everything else that used to sit
-	// beside it here -- the class id, the provider file name and the initialising library are all
-	// per-stack and live on the tap now (#74).
-	private const string EndpointName = "VisualDiagConnection1";
-
 	// HRESULT_FROM_WIN32(ERROR_NOT_FOUND): the well-known diagnostics endpoint is not there yet.
 	private const int ErrorNotFound = unchecked((int)0x80070490);
 
@@ -52,6 +46,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	private XamlTap? _tap;
 
 	private InitializeXamlDiagnosticsEx? _initialise;
+
+	// The XAML framework dll the initialiser is pointed at, resolved from the target, or null where
+	// the framework exports its own initialiser and needs no telling.
+	private string? _diagnosticsPath;
 
 	// The number stamped on the request being served, and echoed back by the provider on everything it
 	// writes. Every handshake here used to be "does this file exist", with the host deleting the marker
@@ -981,7 +979,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var hr = 0;
 		while (true)
 		{
-			hr = _initialise!(EndpointName, (uint)pid, null, stagedProvider, tap.ProviderClsid, workDir);
+			hr = _initialise!(tap.EndpointName, (uint)pid, _diagnosticsPath, stagedProvider, tap.ProviderClsid, workDir);
 			if (hr >= 0) return (workDir, null);
 			if (hr != ErrorNotFound || DateTime.UtcNow >= deadline) break;
 
@@ -1355,12 +1353,18 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	/// <summary>
 	/// Which tap serves this target, resolved from the framework DLLs the process has loaded, with
-	/// the initialiser bound from the library that tap names (#74).
+	/// the initialiser bound from the library that tap names (#74, #76).
 	/// <para>
 	/// Asking first is the whole point. This used to assume UWP in four places, so a WinUI 3 target
 	/// spent twenty seconds waiting for an endpoint that was never going to appear and then blamed
 	/// the app for not being packaged. The fact that settles it is in the module list, and reading it
 	/// costs microseconds.
+	/// </para>
+	/// <para>
+	/// The initialising library is looked up in the target too, rather than loaded by bare name.
+	/// UWP's is a system DLL and either route works; WinUI 3's is in a versioned, per-architecture
+	/// WindowsAppRuntime framework package on no search path this process has, and the target is the
+	/// only thing that knows which copy it is actually running.
 	/// </para>
 	/// </summary>
 	private (XamlTap? Tap, string? Error) ResolveTap(int pid)
@@ -1372,10 +1376,19 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var tap = XamlTaps.For(_stack.Stack);
 		if (tap is null) return (null, $"{XamlTaps.NoTapReason(_stack.Stack)} ({_stack.Reason}).");
 
+		// The target's own copy where it has one, and the bare name otherwise -- which is right for a
+		// system DLL and is the only thing left to try for anything else.
+		var library = XamlStackProbe.ModulePath(pid, tap.InitializeLibrary) ?? tap.InitializeLibrary;
+
+		// Passed through as the tap declares it, which for WinUI 3 is the bare module name rather than
+		// a path. Resolving it to the target's full path looks more careful and is not what the
+		// framework's own samples do.
+		_diagnosticsPath = tap.DiagnosticsModule;
+
 		try
 		{
-			var library = NativeLibrary.Load(tap.InitializeLibrary);
-			var export = NativeLibrary.GetExport(library, nameof(InitializeXamlDiagnosticsEx));
+			var handle = NativeLibrary.Load(library);
+			var export = NativeLibrary.GetExport(handle, nameof(InitializeXamlDiagnosticsEx));
 			_initialise = Marshal.GetDelegateForFunctionPointer<InitializeXamlDiagnosticsEx>(export);
 		}
 		catch (Exception exception)
@@ -1383,7 +1396,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			// Its own failure, and said as one. A framework DLL that will not load is not the same as
 			// a target with no XAML in it, and reporting it as the latter is what sent the last
 			// person looking at their app instead of at their install.
-			return (null, $"Could not bind {nameof(InitializeXamlDiagnosticsEx)} in {tap.InitializeLibrary}: {exception.Message}");
+			return (null, $"Could not bind {nameof(InitializeXamlDiagnosticsEx)} in {library}: {exception.Message}");
 		}
 
 		_tap = tap;

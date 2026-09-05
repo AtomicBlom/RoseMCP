@@ -107,6 +107,28 @@ static bool RoseTapWatchPointer(
 	return true;
 }
 
+// Where the tap body runs (#76). UWP enumerates the tree inline, on whichever thread advises, and
+// every other diagnostics call is safe from that same thread -- so all three of these are "here,
+// now", and this provider is the reason the seam is shaped as three functions rather than as a
+// thread the shared half always creates. Creating one unconditionally would have moved UWP off a
+// path that has worked since the beginning, to fix a framework it does not share.
+//
+// The contract the shared half relies on: RunTapBody may return before the body has finished, and
+// RunOnUiThread may not.
+static void RoseTapCaptureUiThread()
+{
+}
+
+static void RoseTapRunTapBody(std::function<void()> body)
+{
+	body();
+}
+
+static void RoseTapRunOnUiThread(const std::function<void()>& work)
+{
+	work();
+}
+
 // The two layers that need the aliases and the class id above: the overlay is written against the
 // six aliases, and the COM object needs CLSID_RoseTap to answer DllGetClassObject.
 #include "../RoseMcp.Xaml.Tap/tap_overlay.h"

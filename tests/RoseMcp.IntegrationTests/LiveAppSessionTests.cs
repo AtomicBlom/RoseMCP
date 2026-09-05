@@ -521,25 +521,26 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
-	/// A XAML read against a WinUI 3 target is refused immediately and by name (#74).
-	/// <para>
-	/// This is the test the stack work could not have without a WinUI fixture, and it is about the
-	/// shape of a failure rather than a feature. Before, the host assumed UWP, P/Invoked
-	/// InitializeXamlDiagnosticsEx from Windows.UI.Xaml.dll into a process whose framework is
-	/// Microsoft.UI.Xaml, waited twenty seconds for an endpoint that could never appear, and then
-	/// blamed the app for not being packaged -- wrong on both counts it offered, and slow.
-	/// </para>
-	/// <para>
-	/// So the assertions are that it comes back quickly, that it names WinUI, and that it no longer
-	/// says anything about packaging. The timing bound is deliberately loose: it only has to
-	/// distinguish an answer from the twenty-second wait it replaced.
-	/// </para>
+	/// The XAML tree of a WinUI 3 target this session started (#76).
 	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// This was a refusal test until the cause was found, and its inversion is the signal that #76 is
+	/// done -- which is what the refusal's own comment said would happen.
+	/// </para>
+	/// <para>
+	/// What it proves past "a tree came back" is that the shared tap serves a second framework
+	/// unchanged: the same walk, the same snapshot and the same named elements as the UWP probe, out
+	/// of Microsoft.UI.Xaml. The one thing WinUI 3 needed was that the walk not be advised from the
+	/// UI thread, and that lives in the provider seam rather than here.
+	/// </para>
+	/// </remarks>
 	[Fact]
-	public async Task Refuses_a_xaml_read_on_winui_by_naming_the_stack()
+	public async Task Reads_the_xaml_tree_of_a_winui_app_it_launched()
 	{
 		var output = BuildWinUiProbeApp(packaged: false);
 		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
+		if (!BuildWinUiXamlProvider()) Assert.Skip("The WinUI XAML provider could not be built (no C++ toolset, or no WindowsAppSDK).");
 
 		EnsureX64HostBuilt();
 
@@ -550,13 +551,16 @@ public sealed class LiveAppSessionTests
 		{
 			Kind = LiveAppTargetKind.LaunchExecutable,
 			ExecutablePath = Path.Combine(output!, "Rose.ProbeApp.WinUi.exe"),
-			Description = "winui xaml refusal",
+			Description = "winui xaml probe",
 		};
 
 		var session = await manager.StartAsync(target, cancellationToken);
-		Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+		var summary = session.Describe();
+		Assert.True(
+			summary.State == LiveAppSessionState.Ready,
+			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
-		// Well into running, so the refusal cannot be confused with an app that has not built a tree.
+		// Well into running, so an empty tree cannot be an app that has not built one yet.
 		var running = await WaitForEventAsync(
 			session,
 			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
@@ -564,20 +568,82 @@ public sealed class LiveAppSessionTests
 			cancellationToken);
 		Assert.NotNull(running);
 
-		var started = Stopwatch.StartNew();
 		var tree = await session.ReadXamlTreeAsync(cancellationToken);
-		started.Stop();
+		Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+		Assert.NotEmpty(tree.Nodes);
 
-		Assert.NotNull(tree.Detail);
-		Assert.Empty(tree.Nodes);
-		Assert.Contains("WinUI 3", tree.Detail!, StringComparison.OrdinalIgnoreCase);
-		Assert.Contains("Microsoft.WinUI.dll", tree.Detail!, StringComparison.OrdinalIgnoreCase);
-		Assert.DoesNotContain("packaged", tree.Detail!, StringComparison.OrdinalIgnoreCase);
-		Assert.True(
-			started.Elapsed < TimeSpan.FromSeconds(10),
-			$"the refusal should not wait on an endpoint that cannot appear; took {started.Elapsed.TotalSeconds:0.0}s");
+		// The same names the UWP probe declares, because the two apps mirror each other on purpose.
+		foreach (var name in new[] { "RootGrid", "Panel", "Pane", "Counter", "Caption" })
+		{
+			Assert.Contains(tree.Nodes, node => node.Name == name);
+		}
+
+		// Rooting works the same here: a named element's subtree carries its descendants and not its
+		// parent. Asserted on WinUI too because the address grammar is computed from the live tree,
+		// and the live tree is the half that differs between the frameworks.
+		var panelSubtree = await session.ReadXamlTreeAsync("Panel", offset: 0, limit: 0, cancellationToken);
+		Assert.Contains(panelSubtree.Nodes, node => node.Name == "Panel");
+		Assert.Contains(panelSubtree.Nodes, node => node.Name == "Caption");
+		Assert.DoesNotContain(panelSubtree.Nodes, node => node.Name == "RootGrid");
 
 		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+	}
+
+	/// <summary>
+	/// The XAML tree of a WinUI 3 app this session attached to rather than started (#76).
+	/// </summary>
+	/// <remarks>
+	/// The companion to the launched case, and the one that settles the premise both refusals rested
+	/// on. WinUI 3 was believed to need diagnostics enabled from startup, so that attaching could
+	/// never work; it does work, because that belief was inferred from a failure whose real cause was
+	/// a deadlock of our own making. Attaching is also the case an agent actually meets -- the app is
+	/// already running by the time anyone asks about it -- so it is worth its own test rather than
+	/// being assumed to follow from the launched one.
+	/// </remarks>
+	[Fact]
+	public async Task Reads_the_xaml_tree_of_a_winui_app_it_attached_to()
+	{
+		var output = BuildWinUiProbeApp(packaged: false);
+		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
+		if (!BuildWinUiXamlProvider()) Assert.Skip("The WinUI XAML provider could not be built (no C++ toolset, or no WindowsAppSDK).");
+
+		EnsureX64HostBuilt();
+
+		// Started outside the session on purpose: nothing about this process was arranged for us.
+		using var child = StartProcess(Path.Combine(output!, "Rose.ProbeApp.WinUi.exe"));
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		try
+		{
+			// Long enough that the window and its tree are up before anything attaches.
+			await Task.Delay(TimeSpan.FromSeconds(6), cancellationToken);
+
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "winui probe (attached)",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+			Assert.NotEmpty(tree.Nodes);
+
+			foreach (var name in new[] { "RootGrid", "Panel", "Pane", "Counter", "Caption" })
+			{
+				Assert.Contains(tree.Nodes, node => node.Name == name);
+			}
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
 	}
 
 	/// <summary>
@@ -2615,6 +2681,56 @@ public sealed class LiveAppSessionTests
 
 		return true;
 	}
+
+	/// <summary>
+	/// Builds the native WinUI 3 XAML diagnostics provider with its own build.ps1. Same contract as
+	/// <see cref="BuildXamlProvider"/>: false only when the machine genuinely cannot build it, so the
+	/// caller skips, and anything else throws.
+	/// <para>
+	/// It can be skippable for one more reason than the UWP provider, and that is the point of
+	/// keeping the two separate. Microsoft.UI.Xaml projections are not in the Windows SDK, so this one
+	/// needs the WindowsAppSDK restored before it can generate them -- a machine that can build the
+	/// UWP tap cannot necessarily build both, and skipping stays per-provider (#76).
+	/// </para>
+	/// </summary>
+	private static bool BuildWinUiXamlProvider()
+	{
+		var script = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.WinUi.Tap", "build.ps1");
+		if (!File.Exists(script)) return false;
+
+		var (exitCode, output) = RunProcess(
+			"powershell",
+			$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform {WinUiProviderPlatform()} -Configuration Debug");
+
+		// 3 is build.ps1's Fail: no MSVC toolset, no Windows SDK, or no WindowsAppSDK to project from.
+		if (exitCode == 3) return false;
+
+		if (exitCode != 0)
+		{
+			throw new InvalidOperationException(
+				$"Building the WinUI XAML provider failed (exit {exitCode}):{Environment.NewLine}{output}");
+		}
+
+		var dll = Path.Combine(
+			RepositoryRoot(), "src", "RoseMcp.Xaml.WinUi.Tap", "bin", WinUiProviderPlatform(), "Debug", "RoseMcp.Xaml.WinUi.Tap.dll");
+		if (!File.Exists(dll))
+		{
+			throw new InvalidOperationException($"The WinUI XAML provider build reported success but produced no {dll}.");
+		}
+
+		return true;
+	}
+
+	/// <summary>
+	/// The platform the WinUI provider is built for. It must match the target, and a WinUI 3 app runs
+	/// natively rather than emulated, so this follows the host rather than being pinned to x64 the way
+	/// the UWP provider is.
+	/// </summary>
+	private static string WinUiProviderPlatform() => RuntimeInformation.ProcessArchitecture switch
+	{
+		System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
+		_ => "x64",
+	};
 
 	private const string UwpProbePackageName = "RoseMcp.ProbeApp.UwpClassic";
 

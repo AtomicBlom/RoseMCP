@@ -435,6 +435,36 @@ reclaim memory or pick up a rebuilt generator.
   `XamlStackModules` was read off a running process rather than reasoned about, and why the rule
   lives in `Contracts` where a test can reach it: the host is `net10.0-windows` and neither test
   project takes a compile reference on it.
+- **The tree walk is advised from a thread that is not the UI thread, and only on WinUI 3 does that
+  matter.** WinUI dispatches tap creation onto the UI thread, and its `AdviseVisualTreeChange`
+  enqueues the walk *back* onto that thread and then blocks the caller until it finishes
+  (`Advising::RunOnUIThread`, with no check for already being on it) -- so advising from `SetSite`,
+  which is what UWP wants, deadlocks the one thread that can serve the walk. UWP enumerates inline
+  on the calling thread. So the body runs through `RoseTapRunTapBody`, and everything after the walk
+  goes back through `RoseTapRunOnUiThread`, because the framework dispatches for the walk alone --
+  "during normal operation it is the caller's responsibility to dispatch to the correct thread", in
+  its own words. Two things about it are worth keeping. `XamlDiagnostics::Launch` holds the tap only
+  in a local `ComPtr`, so advising is also what takes the framework's lasting reference: returning
+  from `SetSite` before advising destroys the tap and the body then runs against freed memory, which
+  presents as a field reading back a value nothing ever assigned. And the `DispatcherQueue` is
+  captured in `SetSite` rather than looked up in the worker, because that is the one moment the
+  provider is known to be on the UI thread -- `GetForCurrentThread` off it returns null, silently.
+- **A provider that cannot say why it failed to start costs days, and this one could not.** `Log`
+  discarded everything until `SetSite` set the work folder, which is precisely the window in which a
+  tap fails to load, fails to be created, or declines to be sited -- so "the framework ignored us"
+  and "we were never asked" produced identical evidence: none. The deadlock above was read as the
+  former for days on exactly that. It falls back to `%TEMP%` now, and the load, the class-factory
+  request and both of `SetSite`'s silent refusals each say so. The refusals have to be *said* rather
+  than returned, because `XamlDiagnostics::Launch` discards the `HRESULT` on the reasoning that the
+  app must keep running either way. Do not let the pre-`SetSite` path go quiet again.
+- **What WinUI 3 was thought to need, it did not.** It does not need diagnostics enabled from
+  startup, a session that launched the target rather than attaching, the `XamlDiagnostics` value
+  under HKLM, admin, `XAML_DM_*` in the environment, or a packaged app -- every one of those was
+  tried, and Visual Studio needs none of them either, which was the clue that the cause was ours.
+  It does need its own endpoint name (`WinUIVisualDiagConnection1`), `InitializeXamlDiagnosticsEx`
+  out of `Microsoft.Internal.FrameworkUdk.dll` rather than `Microsoft.UI.Xaml.dll`, an **absolute**
+  path to the tap (`DebugTool.cpp` fail-fasts on a relative one), and the threading above. Attaching
+  to a running WinUI 3 app works, and there is a test for it.
 - **A XAML project's generated half is synthesised, and says so.** The markup compiler runs only in a
   real build, so `MSBuildWorkspace` hands us code-behind missing its base type, its `x:Name` fields
   and `InitializeComponent` -- 2030 phantom errors in one project of Drawboard's UWP app.

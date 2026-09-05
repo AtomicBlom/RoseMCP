@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <chrono>
+#include <thread>
 
 static std::atomic<long> g_lockCount{ 0 };
 static std::wstring g_workDir;
@@ -76,6 +77,24 @@ static std::wstring Hex(HRESULT hr)
 
 static std::string Utf8(const std::wstring& text);
 
+// Where the log goes before the work folder is known.
+//
+// The work folder arrives in the initialization data, which arrives in SetSite -- so until then
+// g_workDir is empty and every Log call was discarded. That window is exactly where a provider
+// fails to start, and discarding it made "the framework never sited the tap" and "the tap was
+// never asked for" produce identical evidence: none of any kind. Days went into telling those
+// apart by inference, and one line of log settled it. TEMP is the fallback because every shape of
+// target can write there, AppContainer included, and because finding it needs nothing the host
+// has not told us yet.
+static std::wstring EarlyLogPath()
+{
+	wchar_t buffer[MAX_PATH];
+	const DWORD size = GetTempPathW(MAX_PATH, buffer);
+	if (size == 0 || size > MAX_PATH) return std::wstring();
+
+	return std::wstring(buffer, size) + RoseTapName + L".early.log";
+}
+
 // UTF-8, for the same reason the snapshots are: a wofstream narrows to the ANSI code page, so an
 // element name or a separator outside it lands in the log as a question mark. A diagnostic file that
 // mangles the very names it exists to report is worth the one extra call.
@@ -84,9 +103,10 @@ static void Log(const std::wstring& line)
 	OutputDebugStringW((L"[" + std::wstring(RoseTapName) + L"] " + line + L"\n").c_str());
 
 	std::lock_guard<std::mutex> guard(g_logMutex);
-	if (g_workDir.empty()) return;
+	const std::wstring path = g_workDir.empty() ? EarlyLogPath() : g_workDir + RoseTapLogFile;
+	if (path.empty()) return;
 
-	std::ofstream file(g_workDir + RoseTapLogFile, std::ios::app | std::ios::binary);
+	std::ofstream file(path, std::ios::app | std::ios::binary);
 	if (file) file << Utf8(line) << '\n';
 }
 

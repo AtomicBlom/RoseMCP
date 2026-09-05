@@ -57,6 +57,38 @@ internal static class XamlStackProbe
 	}
 
 	/// <summary>
+	/// Where the target loaded a module from, or null when it has not loaded one by that name.
+	/// <para>
+	/// This is how the initialiser is found (#76). UWP's <c>InitializeXamlDiagnosticsEx</c> is
+	/// exported from Windows.UI.Xaml.dll, a system DLL that loads by bare name; WinUI 3's is exported
+	/// from <c>Microsoft.Internal.FrameworkUdk.dll</c>, which lives in a versioned, per-architecture
+	/// WindowsAppRuntime framework package under Program Files\WindowsApps and is on no search path
+	/// this process has. Asking the target sidesteps all of that and cannot pick the wrong version or
+	/// the wrong architecture, because it returns the file the target itself is running.
+	/// </para>
+	/// <para>
+	/// Not exported from Microsoft.UI.Xaml.dll, which is the obvious guess and was checked: it
+	/// exports eight functions and that is not among them.
+	/// </para>
+	/// </summary>
+	public static string? ModulePath(int processId, string moduleName)
+	{
+		try
+		{
+			using var process = Process.GetProcessById(processId);
+
+			return process.Modules
+				.Cast<ProcessModule>()
+				.FirstOrDefault(module => module.ModuleName.Equals(moduleName, StringComparison.OrdinalIgnoreCase))
+				?.FileName;
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>
 	/// The loaded module names, or empty when they cannot be read -- an exited process, or one of
 	/// another architecture. Both are ordinary here, so failure is silence rather than an exception.
 	/// </summary>

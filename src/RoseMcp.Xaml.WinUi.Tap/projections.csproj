@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Not a project that builds anything. Its whole job is to be restored, so that build.ps1 has the
+    WindowsAppSDK's .winmd files on disk to generate C++/WinRT projections from (#76).
+
+    Microsoft.UI.Xaml projections are not in the Windows SDK the way Windows.UI.Xaml's are, so the
+    WinUI provider cannot be compiled straight against the SDK the way the UWP one is. Something has
+    to acquire the package, and the options were nuget.exe, a packages.config, or this. This wins on
+    two counts: `dotnet` is already required to build anything else here, and central package
+    management means the version stays in step with the one tests/apps/winui builds against instead
+    of drifting in a second place.
+
+    WebView2 is not referenced and does not need to be: Microsoft.UI.Xaml.winmd refers to
+    Microsoft.Web.WebView2.Core.CoreWebView2, so cppwinrt refuses to generate without it, and the
+    WindowsAppSDK brings it in transitively.
+
+    Deliberately not in RoseMcp.slnx, so `dotnet build RoseMcp.slnx` neither builds nor needs it.
+  -->
+  <PropertyGroup>
+    <!-- Overrides the repository-wide net10.0: the WindowsAppSDK has no non-Windows target. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <IsPackable>false</IsPackable>
+    <!-- Nothing here is compiled, and an empty project that insists on a documentation file or
+         treats its own emptiness as a warning would fail for no reason. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+  </ItemGroup>
+
+</Project>

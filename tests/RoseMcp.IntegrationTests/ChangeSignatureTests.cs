@@ -445,4 +445,36 @@ public sealed class ChangeSignatureTests
 
 		Assert.Contains("written by the compiler", thrown.Message, StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// A forwarder is the shape this tool exists for and the one it cannot finish. A new parameter with
+	/// a default breaks nothing, so the forwarder compiles while still passing the old default, and
+	/// every caller of it silently gets the behaviour the change was meant to alter. Listed beside
+	/// forty ordinary call sites, that is what lets a five-deep chain go half-changed.
+	/// </summary>
+	[Fact]
+	public async Task Says_which_unchanged_call_sites_are_forwarders()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.INotifier.Notify(string)", "string message, bool loud = false");
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var forwarder = Assert.Single(
+			result.UnchangedCallSites,
+			site => site.Reason.Contains("whole body of Send", StringComparison.Ordinal));
+
+		Assert.Contains("forwards its own parameters through", forwarder.Reason, StringComparison.Ordinal);
+		Assert.Contains("Change", forwarder.Reason, StringComparison.Ordinal);
+
+		// A method that happens to contain a call is not a forwarder: SendTwice calls it twice and
+		// concatenates, so calling that mechanical would be telling the caller something untrue.
+		Assert.DoesNotContain(
+			result.UnchangedCallSites,
+			site => site.Reason.Contains("whole body of SendTwice", StringComparison.Ordinal));
+	}
 }

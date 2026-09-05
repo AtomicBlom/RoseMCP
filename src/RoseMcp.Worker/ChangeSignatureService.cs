@@ -135,11 +135,17 @@ public static class ChangeSignatureService
 
 	/// <summary>
 	/// The declarations that have to change together: the member, the declaration it overrides or
-	/// implements all the way up, and everything else that overrides or implements those.
+	/// implements all the way up, and everything else that overrides or implements any of those.
 	/// <para>
 	/// Not optional. A virtual method whose override keeps the old parameters does not compile, and
 	/// an interface member whose implementations keep theirs does not either -- so a tool that
 	/// changed only what it was pointed at would break the build every time the member was virtual.
+	/// </para>
+	/// <para>
+	/// Closed transitively rather than one level deep, because the two relations chain. Starting at an
+	/// interface member finds the class that implements it; the override <em>of that class</em> is a
+	/// second step, and stopping after the first leaves it with the old parameters and CS0115 -- a
+	/// build broken by the tool whose whole point is not breaking it.
 	/// </para>
 	/// </summary>
 	private static async Task<IReadOnlyList<IMethodSymbol>> GroupAsync(
@@ -147,28 +153,44 @@ public static class ChangeSignatureService
 		IMethodSymbol method,
 		CancellationToken cancellationToken)
 	{
-		var roots = new List<IMethodSymbol>();
+		var group = new List<IMethodSymbol>();
+		var seen = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+		var pending = new Queue<IMethodSymbol>();
 
-		for (IMethodSymbol? current = method; current is not null; current = current.OverriddenMethod)
+		void Consider(IMethodSymbol candidate)
 		{
-			roots.Add(current);
-			roots.AddRange(InterfaceMembers(current));
+			if (!seen.Add(candidate)) return;
+
+			group.Add(candidate);
+			pending.Enqueue(candidate);
 		}
 
-		var group = new List<IMethodSymbol>(roots);
+		// Upwards first, so the roots are in the group before anything is asked what derives from them.
+		for (IMethodSymbol? current = method; current is not null; current = current.OverriddenMethod)
+		{
+			Consider(current);
 
-		foreach (var root in roots.ToArray())
+			foreach (var declared in InterfaceMembers(current)) Consider(declared);
+		}
+
+		while (pending.Count > 0)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
-			group.AddRange((await SymbolFinder.FindOverridesAsync(root, solution, cancellationToken: cancellationToken))
-				.OfType<IMethodSymbol>());
+			var next = pending.Dequeue();
 
-			group.AddRange((await SymbolFinder.FindImplementationsAsync(root, solution, cancellationToken: cancellationToken))
-				.OfType<IMethodSymbol>());
+			foreach (var over in await SymbolFinder.FindOverridesAsync(next, solution, cancellationToken: cancellationToken))
+			{
+				if (over is IMethodSymbol found) Consider(found);
+			}
+
+			foreach (var implementation in await SymbolFinder.FindImplementationsAsync(next, solution, cancellationToken: cancellationToken))
+			{
+				if (implementation is IMethodSymbol found) Consider(found);
+			}
 		}
 
-		return [.. group.Distinct(SymbolEqualityComparer.Default).OfType<IMethodSymbol>()];
+		return group;
 	}
 
 	/// <summary>
@@ -486,7 +508,8 @@ public static class ChangeSignatureService
 					unchanged.Add(new UnchangedCallSite
 					{
 						Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),
-						Reason = "Nothing needed changing, since every new parameter has a default. Worth a look all "
+						Reason = await ForwarderAsync(solution, location, cancellationToken)
+							?? "Nothing needed changing, since every new parameter has a default. Worth a look all "
 							+ "the same: a caller that goes on taking the default may be one that should not.",
 					});
 				}
@@ -494,6 +517,36 @@ public static class ChangeSignatureService
 		}
 
 		return unchanged;
+	}
+
+	/// <summary>
+	/// The reason to give for a call site that is the whole body of a forwarder, or null where it is
+	/// an ordinary call and the ordinary reason will do.
+	/// <para>
+	/// This is the shape the tool exists for and the one it cannot finish. A new parameter with a
+	/// default breaks nothing, so the forwarder compiles and goes on passing the default -- and every
+	/// caller of it silently gets the behaviour the change was meant to alter. Listing it beside forty
+	/// ordinary call sites is what let a five-deep chain go half-changed.
+	/// </para>
+	/// </summary>
+	private static async Task<string?> ForwarderAsync(
+		Solution solution,
+		Location location,
+		CancellationToken cancellationToken)
+	{
+		if (location.SourceTree is not { } tree) return null;
+
+		var root = await tree.GetRootAsync(cancellationToken);
+		var node = root.FindNode(location.SourceSpan, getInnermostNodeForTie: true);
+
+		if (Forwarders.Around(node) is not { } member) return null;
+
+		var name = member is MethodDeclarationSyntax method ? method.Identifier.Text : "this member";
+
+		return $"It is the whole body of {name}, which forwards its own parameters through. Nothing here "
+			+ "needed changing, and that is the problem: the forwarder compiles while still passing the "
+			+ "old default, so its own callers get the behaviour this change was meant to alter. Change "
+			+ "its signature too, and then whatever calls it.";
 	}
 
 	private static async Task<IReadOnlyList<SourceLocation>> DescribeAsync(

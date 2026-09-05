@@ -61,13 +61,15 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("Arm the interactive selection overlay so the next click in the app picks that element.")]
+	[Description("Arm the interactive selection overlay so the next click in the app picks that element, or disarm it.")]
 	public LiveXamlSelection XamlSelectMode(
 		[Description("Include elements the framework would not hit-test. Off by default.")]
 		bool includeAllElements = false,
 		[Description("Prefer the element declared in the app's own markup over a control template's parts.")]
-		bool justMyXaml = true)
-		=> host.EnterXamlSelectMode(includeAllElements, justMyXaml);
+		bool justMyXaml = true,
+		[Description("False disarms select mode, the same as the toolbar's Idle button.")]
+		bool arm = true)
+		=> host.EnterXamlSelectMode(includeAllElements, justMyXaml, arm);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppXamlSelection,

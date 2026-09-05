@@ -720,3 +720,73 @@ suite is now 251s of which 186s is that chain and 65s is contention against it. 
 minutes needs the per-request re-injection to go, which is #50: every XAML request re-injects the
 provider today because the provider works on the app's UI thread at `SetSite`, and a persistent
 channel makes a tree read a message instead of an injection.
+
+### D35 — The live-app suite is phased by what each test can share (extends D33)
+D33 made the twenty UWP tests stop rebuilding the toolchain, and left the thing underneath it: each
+test still launched its own app. A launch costs about 6.5s and the XAML work in a test costs about
+1.2, so a new test cost six times what its own work cost, and the initiative is about to grow probes
+for WinUI, WPF and modern UWP. The point of phasing is the slope, not the intercept.
+
+One app, shared, with three ways to ask for it. What each phase gives up is different, which is why
+"isolation" as a single property was the wrong thing to argue about:
+
+| | asks for | gives up | for |
+|---|---|---|---|
+| A | `TakeAppAsync` | nothing; launches its own | tests where a fresh process *is* the subject |
+| B | `TakeSessionAsync` | the app to itself, serially | state with no owner smaller than the app: the pick, select mode, the resource dictionary |
+| C | `TakeSlotAsync` | shares the app, owns one slot | everything else |
+
+**Slots are named, and that is the whole of why they work.** An element the markup never named is
+addressed by position under its nearest *named* ancestor, so two tests adding children to one
+container renumber each other -- `#Scratch/Border[1]` would mean different elements depending on who
+else was mid-test. Anchored on its own slot, `#Slot3/Border[0]` is stable however busy the app is.
+
+**Phase C turned out to be three kinds, not one**, and the second and third were found by tests
+failing rather than by design:
+
+- *Build what you test.* The majority.
+- *Read what the markup declares.* `Reads_the_properties_of_a_xaml_element` asserts `SourceFile` and
+  `SourceLine`. Nothing declared a slot-built element, so it has no source info at all, and that test
+  can never own what it reads.
+- *Read a dedicated declared element.* The #97 pin asserts what the **first** properties read of an
+  element returns. Sharing the app's Caption made it depend on running before every other test that
+  reads a TextBlock. Building its own did not fix it either: an element created through
+  `CreateInstance` and `AddChild` arrives with `Inlines` already materialised, so it was never
+  pristine. Only markup declares an element nothing has touched, so the probe now carries
+  `PristineText`, owned by that one test.
+
+**Serialised state has to be handed back, and the test that fails to is the one that fails.** A phase
+B turn reads the selection back on release and fails if anything was left selected or armed. It also
+clears up, so one offending test does not cascade -- but it still fails, because cleaning up after a
+test is not the same as it having been clean. That check found, within a minute of being switched on,
+that **select mode could not be disarmed at all**: `EndSelect` existed in the provider but was wired
+only to the toolbar's Idle button and the click path, so an agent that armed select mode had put a
+pointer-capturing layer over the app with nothing but a human click to lift it.
+`rose_xaml_select_mode(arm: false)` is that hole closed.
+
+Three things about the mechanics that cost a run each to learn.
+
+**A fragment is not a document.** The diff parses what it is given as XML, and a fragment lifted out
+of MainPage.xaml carries none of its namespace declarations, so `x:Name` is an undeclared prefix and
+the apply is refused before it starts. The declarations go on the slot fragment's root, where a
+caller cannot forget them.
+
+**Launching a packaged app under a debugger is not reliable on the first attempt** when the previous
+instance has only just gone, and it fails as a `Faulted` session saying the app "may not have
+activated under the debugger" -- the symptom, not the race. The shared session waits for the process
+to actually be gone and retries three times. Killing a process and its package being launchable again
+are different moments.
+
+**One gate, or it is not a gate.** During the migration the unconverted tests kept their own
+semaphore while the converted ones used the phase gate: two independent locks over one
+single-instance app, so an old-style test could launch its own instance while a phase B test was
+using the shared one. A run wedged for fifteen minutes with the host alive and the app gone. Both go
+through one gate now, which the design needs *during* a migration and not only at the end of one.
+
+Left open, deliberately. `Removes_an_element_from_the_live_tree` passes alone and failed in company,
+reporting the removal applied while both elements were still in the tree, so it takes the app
+exclusively as well as owning a slot. Owning a slot was not enough for it and the reason is not yet
+established -- the index being asked of the live collection rather than taken from the diff is the
+obvious suspect. Exclusivity costs the overlap, which was worth almost nothing here because every
+XAML request serialises behind one lock and one UI thread anyway, and keeps the shared launch, which
+is where the time was. That is a fix pending an explanation, not an explanation.

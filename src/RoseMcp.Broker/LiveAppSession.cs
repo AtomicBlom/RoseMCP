@@ -246,9 +246,18 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	/// <summary>Arms interactive select mode: the next click in the app picks that element.</summary>
 	public Task<LiveXamlSelection> EnterXamlSelectModeAsync(bool includeAllElements, bool justMyXaml, CancellationToken cancellationToken)
+		=> EnterXamlSelectModeAsync(includeAllElements, justMyXaml, arm: true, cancellationToken);
+
+	/// <summary>Arms interactive select mode, or disarms it -- the toolbar's two buttons.</summary>
+	public Task<LiveXamlSelection> EnterXamlSelectModeAsync(bool includeAllElements, bool justMyXaml, bool arm, CancellationToken cancellationToken)
 		=> SendAsync<LiveXamlSelection>(
 			ToolNames.LiveAppXamlSelectMode,
-			new Dictionary<string, object?> { ["includeAllElements"] = includeAllElements, ["justMyXaml"] = justMyXaml },
+			new Dictionary<string, object?>
+			{
+				["includeAllElements"] = includeAllElements,
+				["justMyXaml"] = justMyXaml,
+				["arm"] = arm,
+			},
 			cancellationToken);
 
 	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>

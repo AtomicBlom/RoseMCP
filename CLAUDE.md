@@ -476,17 +476,32 @@ builds and starts real workers, and takes about four minutes (236 tests). `RoseM
 doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 
-Most of those four minutes is one serial chain, and it is worth knowing which: twenty tests drive the
-classic UWP probe app, a packaged app is single-instance, and each needs a real launch, attach,
-inject and close. They take a lease from `UwpProbeApp` so only one runs at a time; everything else
-runs in parallel around them. Two rules keep it that way, both of which cost real time to learn
-(D33). **Toolchain work goes in the assembly fixture, once, never per test** -- building the native
-provider is 23 seconds every time however warm it is, and seventeen tests doing it was over half the
-suite's wall clock. And **serialise the resource, not the class**: `[TestClass(DisableParallelization
-= true)]` reads as "these do not run in parallel with each other" and means "this class does not run
-in parallel with *anything*", which made the suite's two halves add up instead of overlapping.
-`MaxThreads` is no help here either -- a test awaiting I/O yields its slot, so it does not bound
-what is in flight.
+The live-app tests are the expensive part, and they are phased by what each one can share (D33, D35).
+A launch of the UWP probe costs about 6.5 seconds and the XAML work in a test costs about 1.2, so the
+question that decides the suite's growth is what a *new* test costs. Three ways to ask for the app,
+and what each gives up is different -- "isolation" as one property is the wrong thing to reason
+about:
+
+- `TakeAppAsync` launches its own app. For tests where a fresh process is the subject.
+- `TakeSessionAsync` takes the shared app to itself, for state with no owner smaller than the app:
+  the pick, select mode, the resource dictionary. **It must hand the app back unselected and
+  unarmed, and the turn fails the test that does not.**
+- `TakeSlotAsync` shares the app and owns one named slot to build elements in. Most tests.
+
+Slots are *named* because an unnamed element is addressed by position under its nearest named
+ancestor, so two tests filling one container renumber each other's addresses. Three things they
+cannot do: a slot-built element has no source info, because nothing declared it; it is not pristine,
+because creating it materialises collection properties; and a removal needs `exclusive: true`, since
+its index is asked of the live collection.
+
+Four rules hold the whole thing up, each of which cost a run to learn. **Toolchain work goes in the
+assembly fixture, once, never per test** -- the native provider is 23 seconds every time however warm
+it is. **Serialise the resource, not the class**: `[TestClass(DisableParallelization = true)]` reads
+as "not in parallel with each other" and means "not in parallel with *anything*", which made the
+suite's two halves add up instead of overlapping; `MaxThreads` does not bound async tests either.
+**One gate for everything that touches the app** -- two locks over one single-instance app is not two
+locks, it is none. And **a fixture check that can hang is worse than the bug it looks for**: bound it,
+or a failing test becomes a wedged suite.
 
 `dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.

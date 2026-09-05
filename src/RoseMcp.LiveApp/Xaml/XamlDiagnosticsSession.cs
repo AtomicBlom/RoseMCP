@@ -156,6 +156,42 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		lock (_requests) return EnterSelectModeCore(pid, includeAllElements, justMyXaml);
 	}
 
+	/// <summary>
+	/// Disarms select mode, the same act as the toolbar's Idle button.
+	/// <para>
+	/// The other half of a switch that only had one position reachable from here. Arming puts a
+	/// pointer-capturing layer over the app and waits for a click; nothing but that click, or a person
+	/// pressing Idle, took it away again -- selecting by handle does not, because it never goes through
+	/// the click path that ends the mode. An agent that armed and then changed its mind had left the
+	/// app modal with no way back.
+	/// </para>
+	/// <para>
+	/// Clearing the pick stays a separate act. Armed and picked are two pieces of state, and folding
+	/// them together would remove "clear this one and let me pick another", which is the ordinary way
+	/// a person uses the toolbar.
+	/// </para>
+	/// </summary>
+	public LiveXamlSelection ExitSelectMode(int pid)
+	{
+		lock (_requests) return ExitSelectModeCore(pid);
+	}
+
+	private LiveXamlSelection ExitSelectModeCore(int pid)
+	{
+		var (workDir, error) = Inject(pid, "idle");
+		if (error is not null) return new LiveXamlSelection { Detail = error };
+
+		if (!WaitForMarker(Path.Combine(workDir!, "idle.ready"), SnapshotTimeout))
+		{
+			return new LiveXamlSelection { Detail = "The provider was injected but did not report select mode disarmed." };
+		}
+
+		// Answered from the provider's own state rather than from the fact that it acknowledged, for
+		// the same reason arming is: a later rose_xaml_selection reads that state file, and a reply
+		// that merely echoed the request could contradict it with nothing to say which was right.
+		var after = ReadSelectionCore();
+		return after with { Detail = after.Armed ? "Select mode is still armed." : "Select mode is off." };
+	}
 	private LiveXamlSelection EnterSelectModeCore(int pid, bool includeAllElements, bool justMyXaml)
 	{
 		// Tokens rather than flags in the name: the provider parses them, and a request that does not
@@ -920,7 +956,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return (null, $"Could not stage the XAML provider: {exception.Message}");
 		}
 
-		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv" })
+		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv", "idle.ready" })
 		{
 			TryDelete(Path.Combine(workDir, stale));
 		}

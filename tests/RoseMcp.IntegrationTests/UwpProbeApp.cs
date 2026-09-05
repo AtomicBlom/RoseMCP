@@ -1,6 +1,12 @@
 using System.Diagnostics;
 using System.Xml.Linq;
 
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+
+using RoseMcp.Broker;
+using RoseMcp.Contracts;
+
 using static RoseMcp.IntegrationTests.TestToolchain;
 
 namespace RoseMcp.IntegrationTests;
@@ -27,7 +33,7 @@ namespace RoseMcp.IntegrationTests;
 /// test pay for a UWP toolchain build. Nothing here happens until a UWP test asks for an AUMID.
 /// </para>
 /// </summary>
-public sealed class UwpProbeApp : IDisposable
+public sealed class UwpProbeApp : IAsyncDisposable
 {
 	private const string PackageName = "RoseMcp.ProbeApp.UwpClassic";
 
@@ -108,23 +114,22 @@ public sealed class UwpProbeApp : IDisposable
 	/// thing that ends the turn.
 	/// </para>
 	/// </summary>
+	/// <remarks>
+	/// The unconverted shape, kept while tests move to the phases one at a time. It goes through the
+	/// same gate as everything else, and that is not tidiness: a lease of its own would be a second
+	/// lock over one single-instance app, so an old-style test and a phase B test would each believe
+	/// they had it. That is exactly what happened -- a run wedged with the host alive and the app gone,
+	/// because one test launched its own instance while another was using the shared one.
+	/// </remarks>
 	public async Task<Lease> LeaseAsync(bool needsXamlProvider, CancellationToken cancellationToken)
 	{
-		await _oneAtATime.WaitAsync(cancellationToken);
-		try
-		{
-			// Inside the turn, so the build below is never entered by two tests at once and the lock
-			// it takes is never contended -- which matters because it is a synchronous lock held
-			// across a half-minute of MSBuild, and twenty xUnit threads queued on it would be twenty
-			// threads not running Roslyn tests.
-			return new Lease(this, AumidCore(needsXamlProvider));
-		}
-		catch
-		{
-			// Including the skip, which is an exception here. A turn nobody is using must not be kept.
-			_oneAtATime.Release();
-			throw;
-		}
+		var aumid = await EnterAsync(writer: true, needsXamlProvider, cancellationToken);
+
+		// It launches its own app, so the shared one has to go first, exactly as phase A does.
+		await CloseSharedAsync();
+		await StopAppAndWaitAsync();
+
+		return new Lease(this, aumid);
 	}
 
 	/// <summary>
@@ -144,7 +149,443 @@ public sealed class UwpProbeApp : IDisposable
 		public void Dispose()
 		{
 			probe.StopApp();
-			probe._oneAtATime.Release();
+			probe._phases.ReleaseWriter();
+		}
+	}
+
+	// ---- The shared app, and the three ways a test can ask for it -------------------------------
+	//
+	// A launch costs about 6.5 seconds and the XAML work in a test costs about 1.2, so twenty tests
+	// launching twenty apps spend nearly all of their time getting to the point where they can begin.
+	// Sharing one launched app is what makes a new test cost what its own work costs. What each phase
+	// gives up in exchange is different, and worth being precise about, because "isolation" as a
+	// single property is not what is being traded:
+	//
+	//   TakeAppAsync   the app to yourself, launched by you. For tests *about* launching and
+	//                  attaching, where a fresh process is the thing under test. Tears the shared
+	//                  session down first, since a packaged app is single-instance.
+	//   TakeSessionAsync  the shared app to yourself. For state that is global to the app and has no
+	//                  smaller owner: the selection, select mode, the resource dictionary. Serial by
+	//                  construction, and required to hand the app back as it was found.
+	//   TakeSlotAsync  the shared app, plus an empty named container nobody else will touch. For
+	//                  tests that build elements, work on them and take them away. These may overlap
+	//                  each other.
+	//
+	// Overlapping is allowed for slots rather than pursued: every XAML request through one host is
+	// serialised behind XamlDiagnosticsSession's lock (#93), and behind that a single UI thread, so
+	// two slot tests cannot have their XAML work run at the same time however they are scheduled.
+	// What slots actually buy is that sharing the app is *safe*, which is the thing that makes a new
+	// test cheap.
+
+	/// <summary>How many slots the probe's markup declares. Named Slot0..Slot15 under Scratch.</summary>
+	private const int SlotCount = 16;
+
+	private readonly PhaseGate _phases = new();
+	private readonly Stack<int> _freeSlots = new(Enumerable.Range(0, SlotCount).Reverse());
+
+	private LiveAppSessionManager? _sharedManager;
+	private LiveAppSession? _sharedSession;
+
+	/// <summary>
+	/// The app to yourself, launched by the caller (phase A). The shared session is closed first,
+	/// because a packaged app is single-instance and the caller is about to start one.
+	/// </summary>
+	public async Task<AppTurn> TakeAppAsync(bool needsXamlProvider, CancellationToken cancellationToken)
+	{
+		var aumid = await EnterAsync(writer: true, needsXamlProvider, cancellationToken);
+		await CloseSharedAsync();
+		await StopAppAndWaitAsync();
+
+		return new AppTurn(this, aumid);
+	}
+
+	/// <summary>
+	/// The shared app to yourself (phase B), for state with no owner smaller than the app. Releasing
+	/// the turn checks the app was handed back in the state it was found in.
+	/// </summary>
+	public async Task<SessionTurn> TakeSessionAsync(CancellationToken cancellationToken)
+	{
+		await EnterAsync(writer: true, needsXamlProvider: true, cancellationToken);
+
+		return new SessionTurn(this, await SharedSessionAsync(cancellationToken));
+	}
+
+	/// <summary>
+	/// The shared app plus a slot of your own (phase C). The slot is empty on the way in, and the
+	/// turn empties it again on the way out so the next test to hold it finds it as the markup
+	/// declares it.
+	/// </summary>
+	/// <param name="cancellationToken">The calling test's token.</param>
+	/// <param name="exclusive">
+	/// True to take the app to yourself as well as the slot. For an edit whose correctness depends on
+	/// the rest of the tree holding still -- a removal resolves its index against the live collection,
+	/// not against the diff -- where owning the slot is not on its own enough. Slower, so it is asked
+	/// for rather than assumed, and a test that needs it should say why.
+	/// </param>
+	public async Task<SlotTurn> TakeSlotAsync(CancellationToken cancellationToken, bool exclusive = false)
+	{
+		await EnterAsync(writer: exclusive, needsXamlProvider: true, cancellationToken);
+
+		int slot;
+		lock (_gate)
+		{
+			if (_freeSlots.Count == 0)
+			{
+				if (exclusive) _phases.ReleaseWriter();
+				else _phases.ReleaseReader();
+				throw new InvalidOperationException(
+					$"Every one of the {SlotCount} scratch slots is in use. Add more <Grid x:Name=\"SlotN\" /> to "
+						+ "the probe's Scratch panel and raise SlotCount; running out is a fact about how many "
+						+ "tests overlap, not a failure of the test that happened to ask last.");
+			}
+
+			slot = _freeSlots.Pop();
+		}
+
+		return new SlotTurn(this, await SharedSessionAsync(cancellationToken), slot, exclusive);
+	}
+
+	/// <summary>Common entry: make sure everything is built, then take the phase gate.</summary>
+	private async Task<string> EnterAsync(bool writer, bool needsXamlProvider, CancellationToken cancellationToken)
+	{
+		// Built before the gate is taken, and under its own lock, so a half-minute of MSBuild is not
+		// done while holding a gate every other test is queued on.
+		string aumid;
+		await _oneAtATime.WaitAsync(cancellationToken);
+		try
+		{
+			aumid = AumidCore(needsXamlProvider);
+		}
+		finally
+		{
+			_oneAtATime.Release();
+		}
+
+		if (writer) await _phases.EnterWriterAsync(cancellationToken);
+		else await _phases.EnterReaderAsync(cancellationToken);
+
+		return aumid;
+	}
+
+	/// <summary>
+	/// The shared launched app, started on first use and kept for the run.
+	/// <para>
+	/// Re-launched rather than resurrected when it is gone, because a phase A test kills it: that is
+	/// what phase A is for. Checking rather than assuming is what stops the first phase B test after
+	/// a phase A one from failing for a reason that has nothing to do with it.
+	/// </para>
+	/// </summary>
+	private async Task<LiveAppSession> SharedSessionAsync(CancellationToken cancellationToken)
+	{
+		// Ready is the session's opinion of itself and it outlives the app: a phase A test kills the
+		// process, and the session goes on reporting Ready until something asks it to do work. So the
+		// question is asked of the operating system instead, which is the only party that knows.
+		if (_sharedSession is { } existing
+			&& existing.Describe().State == LiveAppSessionState.Ready
+			&& AppIsRunning())
+		{
+			return existing;
+		}
+
+		await CloseSharedAsync();
+		await StopAppAndWaitAsync();
+
+		_sharedManager = new LiveAppSessionManager(
+			Options.Create(new BrokerOptions()),
+			NullLoggerFactory.Instance,
+			NullLogger<LiveAppSessionManager>.Instance);
+
+		// Retried, because launching a packaged app under a debugger is not reliable on the first try
+		// when the previous instance has only just gone: the resume stub fails to connect and the
+		// session comes up Faulted with a message about the app not activating, which describes the
+		// symptom rather than the race. Three attempts, each after the app is confirmed gone.
+		LiveAppSession? session = null;
+		LiveAppSessionSummary? summary = null;
+		for (var attempt = 1; attempt <= 3; attempt++)
+		{
+			session = await _sharedManager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = _aumid!,
+					Description = "shared uwp probe",
+				},
+				cancellationToken);
+
+			summary = session.Describe();
+			if (summary.State == LiveAppSessionState.Ready) break;
+
+			await _sharedManager.CloseAsync(session.SessionId, cancellationToken);
+			await StopAppAndWaitAsync();
+			await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
+			session = null;
+		}
+
+		if (session is null)
+		{
+			throw new InvalidOperationException(
+				$"The shared probe session would not come up Ready after three attempts: {summary?.Detail}");
+		}
+
+		// The app is Ready as soon as the debugger has it, which is before the first frame exists. Its
+		// timer exception is the signal that the tree is up, and every XAML read wants that to have
+		// happened -- waiting once here is what keeps it out of every test.
+		await WaitForFirstTickAsync(session, cancellationToken);
+
+		_sharedSession = session;
+		return session;
+	}
+
+	/// <summary>Whether an instance of the probe app is running right now.</summary>
+	private static bool AppIsRunning()
+	{
+		var running = Process.GetProcessesByName(ProcessName);
+		foreach (var process in running) process.Dispose();
+
+		return running.Length > 0;
+	}
+
+	/// <summary>
+	/// Ends the app and waits for it to actually be gone.
+	/// <para>
+	/// Killing a process and the package being launchable again are not the same moment. Activating
+	/// while the previous instance is still terminating fails, and it fails as a Faulted session with
+	/// nothing in it that says "you were too quick" -- which is exactly how it presented: a phase B
+	/// test blaming the app for coming up Faulted, immediately after a phase A test had ended it.
+	/// </para>
+	/// </summary>
+	private async Task StopAppAndWaitAsync()
+	{
+		StopApp();
+
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+		while (DateTime.UtcNow < deadline)
+		{
+			if (!AppIsRunning()) return;
+			await Task.Delay(100);
+		}
+	}
+	private static async Task WaitForFirstTickAsync(LiveAppSession session, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+		while (DateTime.UtcNow < deadline)
+		{
+			var events = await session.ReadEventsAsync(0, cancellationToken);
+			if (events.Events.Any(entry => entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false)) return;
+
+			await Task.Delay(150, cancellationToken);
+		}
+
+		throw new InvalidOperationException("The shared probe app never reported its first tick, so its tree is not up.");
+	}
+
+	private async Task CloseSharedAsync()
+	{
+		var manager = _sharedManager;
+		_sharedManager = null;
+		_sharedSession = null;
+
+		if (manager is not null) await manager.DisposeAsync();
+	}
+
+	/// <summary>Phase A: the app, launched by the test itself.</summary>
+	public sealed class AppTurn(UwpProbeApp probe, string aumid) : IAsyncDisposable
+	{
+		public string Aumid { get; } = aumid;
+
+		public ValueTask DisposeAsync()
+		{
+			// The app this test started goes with it, so the next shared session starts a fresh one
+			// rather than activating this.
+			probe.StopApp();
+			probe._phases.ReleaseWriter();
+			return ValueTask.CompletedTask;
+		}
+	}
+
+	/// <summary>Phase B: the shared app, to this test alone, handed back as it was found.</summary>
+	public sealed class SessionTurn(UwpProbeApp probe, LiveAppSession session) : IAsyncDisposable
+	{
+		public LiveAppSession Session { get; } = session;
+
+		/// <summary>
+		/// Checks the app was left in the state it was found in, and fails if it was not.
+		/// <para>
+		/// This is the price of a shared app, and it is deliberately paid by the test that broke the
+		/// rule rather than by whichever test runs next. A selection left behind, or select mode left
+		/// armed, is invisible to the test that leaves it and turns the following test's assertion
+		/// into a puzzle about a fixture -- the exact failure that makes people stop trusting a suite.
+		/// So it is checked at the moment it can still be attributed.
+		/// </para>
+		/// </summary>
+		public async ValueTask DisposeAsync()
+		{
+			try
+			{
+				// Bounded, because this runs after the test's own assertions and a check that can hang
+				// turns a failing test into a hanging suite -- which is what it did: fifteen minutes
+				// with no output, against a run that takes three.
+				using var bounded = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+				var left = await Session.ReadXamlSelectionAsync(bounded.Token);
+
+				// Best effort at putting it right, so one offending test does not cascade. It still
+				// fails below: cleaning up after it is not the same as it having been clean.
+				if (left.Selected || left.Armed) await Session.ClearXamlSelectionAsync(bounded.Token);
+
+				Assert.False(
+					left.Selected,
+					$"this test left {left.Name ?? left.Address ?? "an element"} selected. A phase B test holds the "
+						+ "whole app, so it has to hand it back unselected.");
+
+				Assert.False(left.Armed, "this test left select mode armed. Disarm it before the test ends.");
+			}
+			finally
+			{
+				probe._phases.ReleaseWriter();
+			}
+		}
+	}
+
+	/// <summary>Phase C: the shared app, plus one empty slot this test owns.</summary>
+	public sealed class SlotTurn(UwpProbeApp probe, LiveAppSession session, int slot, bool exclusive) : IAsyncDisposable
+	{
+		public LiveAppSession Session { get; } = session;
+
+		/// <summary>The slot's <c>x:Name</c>, which is also the anchor every address in it hangs off.</summary>
+		public string Slot { get; } = $"Slot{slot}";
+
+		// A diff is given markup, not a document, and it parses what it is given as XML. A fragment
+		// lifted out of MainPage.xaml has none of the document's namespace declarations, so x:Name is
+		// an undeclared prefix and the whole apply is refused before it starts. The declarations go on
+		// the fragment root, where they cost nothing and cannot be forgotten by a caller.
+		internal const string NamespacesFor =
+			" xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\""
+				+ " xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"";
+
+		/// <summary>The empty slot as the probe's markup declares it, for the "before" side of a diff.</summary>
+		public string EmptyMarkup => $"<Grid x:Name=\"{Slot}\"{NamespacesFor} />";
+
+		/// <summary>The slot holding <paramref name="children"/>, for the "after" side of a diff.</summary>
+		public string MarkupHolding(string children) => $"<Grid x:Name=\"{Slot}\"{NamespacesFor}>{children}</Grid>";
+
+		/// <summary>An address inside this slot, anchored on its name so nothing outside can move it.</summary>
+		public string Address(string relative) => $"#{Slot}/{relative}";
+
+		public async ValueTask DisposeAsync()
+		{
+			try
+			{
+				// Emptied by the same route a test fills it, so a slot handed on is the slot the
+				// markup declares rather than whatever the last test happened to leave.
+				await probe.EmptySlotAsync(Session, Slot);
+			}
+			finally
+			{
+				lock (probe._gate)
+				{
+					probe._freeSlots.Push(slot);
+				}
+
+				if (exclusive) probe._phases.ReleaseWriter();
+				else probe._phases.ReleaseReader();
+			}
+		}
+	}
+
+	/// <summary>
+	/// Removes everything a test put in its slot, by reading what is actually there rather than by
+	/// replaying what the test said it added. A test that failed half way through added some of its
+	/// elements and not others, and that is exactly when the slot most needs emptying.
+	/// </summary>
+	private async Task EmptySlotAsync(LiveAppSession session, string slot)
+	{
+		var subtree = await session.ReadXamlTreeAsync(slot, offset: 0, limit: 0, CancellationToken.None);
+		var anchor = subtree.Nodes.FirstOrDefault(node => node.Name == slot);
+		if (anchor is null) return;
+
+		var children = subtree.Nodes.Where(node => node.Parent == anchor.Handle).ToList();
+		if (children.Count == 0) return;
+
+		var held = string.Concat(children.Select(child => $"<{Local(child.TypeName)} />"));
+		await session.ApplyXamlAsync(
+			$"<Grid x:Name=\"{slot}\"{SlotTurn.NamespacesFor}>{held}</Grid>",
+			$"<Grid x:Name=\"{slot}\"{SlotTurn.NamespacesFor} />",
+			filePath: null,
+			CancellationToken.None);
+	}
+
+	/// <summary>The local half of a CLR type name, which is what markup and the diff both count by.</summary>
+	private static string Local(string? typeName)
+	{
+		if (string.IsNullOrEmpty(typeName)) return "Border";
+
+		var dot = typeName.LastIndexOf('.');
+		return dot >= 0 && dot < typeName.Length - 1 ? typeName[(dot + 1)..] : typeName;
+	}
+
+	/// <summary>
+	/// Lets phase A and phase B tests have the app to themselves while phase C tests may overlap each
+	/// other. A reader/writer gate rather than one lock, written out here because .NET has no
+	/// asynchronous one and a synchronous lock held across a test would block xUnit's threads.
+	/// </summary>
+	private sealed class PhaseGate
+	{
+		private readonly SemaphoreSlim _turnstile = new(1, 1);
+		private readonly SemaphoreSlim _noReaders = new(1, 1);
+		private readonly Lock _count = new();
+		private int _readers;
+
+		public async Task EnterWriterAsync(CancellationToken cancellationToken)
+		{
+			// The turnstile first, which also stops new readers arriving, then wait for the readers
+			// already inside to leave.
+			await _turnstile.WaitAsync(cancellationToken);
+			try
+			{
+				await _noReaders.WaitAsync(cancellationToken);
+			}
+			catch
+			{
+				_turnstile.Release();
+				throw;
+			}
+		}
+
+		public void ReleaseWriter()
+		{
+			_noReaders.Release();
+			_turnstile.Release();
+		}
+
+		public async Task EnterReaderAsync(CancellationToken cancellationToken)
+		{
+			await _turnstile.WaitAsync(cancellationToken);
+			try
+			{
+				var first = false;
+				lock (_count)
+				{
+					first = ++_readers == 1;
+				}
+
+				// Only the first reader claims the no-readers token; the rest are already covered by
+				// it, which is what lets them run together.
+				if (first) await _noReaders.WaitAsync(cancellationToken);
+			}
+			finally
+			{
+				_turnstile.Release();
+			}
+		}
+
+		public void ReleaseReader()
+		{
+			lock (_count)
+			{
+				if (--_readers > 0) return;
+			}
+
+			_noReaders.Release();
 		}
 	}
 	/// <summary>
@@ -182,8 +623,12 @@ public sealed class UwpProbeApp : IDisposable
 	/// Unregisters the package, once, after every test in the assembly. Nothing to do where no test
 	/// ever asked for it, which is every run on a machine without the UWP tooling.
 	/// </summary>
-	public void Dispose()
+	public async ValueTask DisposeAsync()
 	{
+		// The shared app goes first, because unregistering a package with a debugger attached to it is
+		// the untidy version of the same thing.
+		await CloseSharedAsync();
+
 		lock (_gate)
 		{
 			if (!_registered) return;

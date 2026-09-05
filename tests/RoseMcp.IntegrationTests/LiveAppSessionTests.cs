@@ -337,8 +337,8 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Launches_and_debugs_the_classic_uwp_probe_app()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
@@ -382,8 +382,8 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Captures_the_classic_uwp_probe_apps_startup_from_birth()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
@@ -428,35 +428,14 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Reads_the_live_visual_tree_of_the_classic_uwp_probe()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C, reading only. It asserts on the elements the markup declares, so it neither needs a
+		// slot nor minds one being busy: what it looks for is furniture, and no phase C test edits
+		// anything outside its own slot.
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp xaml probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			var summary = session.Describe();
-			Assert.True(
-				summary.State == LiveAppSessionState.Ready,
-				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
-
-			// Wait until the app is well into running (its timer has ticked once) so the window and its
-			// visual tree are up before we enumerate.
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
-
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
 			Assert.NotEmpty(tree.Nodes);
@@ -478,12 +457,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			var firstPage = await session.ReadXamlTreeAsync(rootName: null, offset: 0, limit: 2, cancellationToken);
 			Assert.Equal(2, firstPage.Nodes.Count);
 			Assert.True(firstPage.Total > 2, $"expected more than a page of nodes; total {firstPage.Total}");
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -496,30 +469,16 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Reads_the_properties_of_a_xaml_element()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C, and one that reads the app's declared furniture rather than building its own. It
+		// has to: half of what it asserts is source info -- which file and line declared the element --
+		// and an element this test created at runtime has none, because nothing declared it. So the
+		// slot goes unused here, and what makes this safe is the other half of the bargain: no phase C
+		// test edits anything outside its own slot.
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp properties probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
-
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			var rootGrid = tree.Nodes.FirstOrDefault(node => node.Name == "RootGrid");
 			var caption = tree.Nodes.FirstOrDefault(node => node.Name == "Caption");
@@ -573,12 +532,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			// The element's own declaration is real, and is where it has always belonged.
 			Assert.Equal("ms-appx:///MainPage.xaml", captionProperties.SourceFile);
 			Assert.Equal(17, captionProperties.SourceLine);
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -599,29 +552,23 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Reads_a_corner_radius_the_framework_renders_as_nothing()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C: builds what it reads in a slot of its own. The values are the ones the shared Pane
+		// carries, but owning the element means this cannot be disturbed by a test editing that one,
+		// and reading it cannot change what such a test sees.
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp corner-radius probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup,
+				turn.MarkupHolding("<Border Background=\"#FF202830\" Padding=\"24\" CornerRadius=\"8\" />"),
+				filePath: null,
 				cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
-			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
+			var subtree = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
+			var pane = subtree.Nodes.FirstOrDefault(node => node.Address == turn.Address("Border[0]"));
 			Assert.NotNull(pane);
 
 			var properties = await session.ReadXamlPropertiesAsync(pane!.Handle, includeDefaults: false, cancellationToken);
@@ -641,7 +588,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			// The other half: something the framework will not render, and cannot be read a second way
 			// because it is protected and not in the projection, says so rather than looking unset.
 			// An empty value that means two different things is how the CornerRadius case hid.
-			var all = await session.ReadXamlPropertiesAsync(tree.Nodes[0].Handle, includeDefaults: true, cancellationToken);
+			// Named rather than taken as the first row: under a shared app the tree's order is not this
+			// test's to rely on, and "whatever came back first" is the sort of assumption that fails
+			// later for a reason nobody connects to this line.
+			var whole = await session.ReadXamlTreeAsync(cancellationToken);
+			var root = whole.Nodes.Single(node => node.Name == "RootGrid");
+			var all = await session.ReadXamlPropertiesAsync(root.Handle, includeDefaults: true, cancellationToken);
 			var unavailable = all.Properties.Where(property => property.ValueUnavailable).ToArray();
 
 			Assert.All(unavailable, property => Assert.Equal(string.Empty, property.Value));
@@ -651,12 +603,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			Assert.DoesNotContain(
 				all.Properties.Where(property => property.ValueType == "Windows.Foundation.String"),
 				property => property.ValueUnavailable);
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -677,8 +623,8 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Names_the_install_location_a_uwp_session_activated()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
@@ -751,56 +697,47 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Live_edits_a_property_on_the_uwp_probe()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
-		var oldXaml = File.ReadAllText(xamlPath);
-		var newXaml = oldXaml
-			.Replace("FontSize=\"24\"", "FontSize=\"40\"")
-			.Replace("CornerRadius=\"8\"", "CornerRadius=\"0\"");
-		Assert.DoesNotContain("FontSize=\"40\"", oldXaml);
-		Assert.DoesNotContain("CornerRadius=\"0\"", oldXaml);
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C: both edits land on elements this test built in its own slot, so it neither disturbs
+		// the app's furniture nor depends on that furniture still carrying the values the markup gave
+		// it. The two kinds of value are the point -- a Double and a struct -- not which elements
+		// happen to carry them.
+		const string Before =
+			"<TextBlock Text=\"Rose UWP Probe\" FontSize=\"24\" />"
+				+ "<Border Background=\"#FF202830\" Padding=\"24\" CornerRadius=\"8\" />";
+		const string After =
+			"<TextBlock Text=\"Rose UWP Probe\" FontSize=\"40\" />"
+				+ "<Border Background=\"#FF202830\" Padding=\"24\" CornerRadius=\"0\" />";
+
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp live-edit probe",
-			};
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup, turn.MarkupHolding(Before), filePath: null, cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
-
-			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			var applied = await session.ApplyXamlAsync(
+				turn.MarkupHolding(Before), turn.MarkupHolding(After), filePath: null, cancellationToken);
 			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var edit = applied.Results.FirstOrDefault(result => result.Target == "#Caption" && result.Property == "FontSize");
+			var edit = applied.Results.FirstOrDefault(
+				result => result.Target == turn.Address("TextBlock[0]") && result.Property == "FontSize");
 			Assert.NotNull(edit);
 			Assert.Equal("applied", edit!.Status);
 
 			// The struct-valued edit, which is the one that used to come back "SetProperty failed
 			// 0x80004005" because it had been built as a Double.
-			var radius = applied.Results.FirstOrDefault(result => result.Target == "#Pane" && result.Property == "CornerRadius");
+			var radius = applied.Results.FirstOrDefault(
+				result => result.Target == turn.Address("Border[0]") && result.Property == "CornerRadius");
 			Assert.NotNull(radius);
 			Assert.Equal("applied", radius!.Status);
 
 			Assert.Equal(2, applied.Applied);
 
 			// The live element actually changed: reading its font size back gives the new value.
-			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			var caption = tree.Nodes.First(node => node.Name == "Caption");
+			var tree = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
+			var caption = tree.Nodes.Single(node => node.Address == turn.Address("TextBlock[0]"));
 			var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
 			var fontSize = properties.Properties.FirstOrDefault(property => property.Name == "FontSize");
 			Assert.NotNull(fontSize);
@@ -809,17 +746,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			// And the struct-valued edit is now read back too, rather than trusted from its status.
 			// It used to be asserted only through "applied", because a CornerRadius came back as an
 			// empty string -- which is #21, and is fixed, so the weaker assertion has no reason left.
-			var pane = tree.Nodes.First(node => node.Name == "Pane");
+			var pane = tree.Nodes.Single(node => node.Address == turn.Address("Border[0]"));
 			var paneProperties = await session.ReadXamlPropertiesAsync(pane.Handle, includeDefaults: false, cancellationToken);
 			var cornerRadius = paneProperties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
 			Assert.NotNull(cornerRadius);
 			Assert.Equal("0,0,0,0", cornerRadius!.Value);
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -838,64 +769,47 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Live_edits_an_unnamed_element_by_its_address()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
+		var cancellationToken = TestContext.Current.CancellationToken;
 
-		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
-		var oldXaml = File.ReadAllText(xamlPath);
-
-		// The second of the two unnamed Borders, and nothing else in the file.
+		// The second of two unnamed siblings, which is the case this exists for: an element the markup
+		// never named, told from its twin by position under a named anchor. The anchor is this test's
+		// own slot rather than the app's Pair, so the two Borders it counts are the only two there.
 		const string FirstBackground = "#FF3A2A2A";
 		const string SecondBackground = "#FF2A3A2A";
 		const string ChangedBackground = "#FF00FF00";
-		Assert.Contains(SecondBackground, oldXaml);
-		var newXaml = oldXaml.Replace(SecondBackground, ChangedBackground);
+		const string Pair =
+			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />"
+				+ "<Border Background=\"" + SecondBackground + "\" Padding=\"6\" CornerRadius=\"3\" />";
+		const string Changed =
+			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />"
+				+ "<Border Background=\"" + ChangedBackground + "\" Padding=\"6\" CornerRadius=\"3\" />";
 
-		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var session = await manager.StartAsync(
-				new LiveAppTarget
-				{
-					Kind = LiveAppTargetKind.LaunchUwp,
-					AppUserModelId = aumid,
-					Description = "uwp address probe",
-				},
-				cancellationToken);
-
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup, turn.MarkupHolding(Pair), filePath: null, cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
 			// The provider derives an address from the live tree, so this half stands on its own: two
 			// unnamed siblings of one type are told apart by their position under the named anchor.
-			var before = await session.ReadXamlTreeAsync(cancellationToken);
+			var before = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
 			var addresses = before.Nodes.Select(node => node.Address).ToList();
-			Assert.Contains("#Pair/Border[0]", addresses);
-			Assert.Contains("#Pair/Border[1]", addresses);
+			Assert.Contains(turn.Address("Border[0]"), addresses);
+			Assert.Contains(turn.Address("Border[1]"), addresses);
 
-			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			var applied = await session.ApplyXamlAsync(
+				turn.MarkupHolding(Pair), turn.MarkupHolding(Changed), filePath: null, cancellationToken);
 			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
-			var edit = applied.Results.FirstOrDefault(result => result.Target == "#Pair/Border[1]" && result.Property == "Background");
+			var edit = applied.Results.FirstOrDefault(
+				result => result.Target == turn.Address("Border[1]") && result.Property == "Background");
 			Assert.NotNull(edit);
 			Assert.Equal("applied", edit!.Status);
 
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Equal(ChangedBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[1]", cancellationToken));
-			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[0]", cancellationToken));
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
+			Assert.Equal(ChangedBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[1]"), cancellationToken));
+			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[0]"), cancellationToken));
 		}
 	}
 
@@ -914,69 +828,57 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Removes_an_element_from_the_live_tree()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
-		var oldXaml = File.ReadAllText(xamlPath);
-
-		// Cut the second of the two unnamed Borders out of the markup, found by its colour rather than
-		// by a copied block of text so that reindenting the fixture cannot quietly stop this matching.
-		const string SecondBorder = "<Border Background=\"#FF2A3A2A\"";
-		const string FirstBackground = "#FF3A2A2A";
-		var start = oldXaml.IndexOf(SecondBorder, StringComparison.Ordinal);
-		Assert.True(start >= 0, "the probe markup no longer holds the second unnamed Border");
-		var close = oldXaml.IndexOf("</Border>", start, StringComparison.Ordinal) + "</Border>".Length;
-		var newXaml = oldXaml.Remove(start, close - start);
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Two unnamed siblings in this test's own slot, and the second one goes. Built here rather than
+		// cut out of the app's markup: a removal is the edit that most needs to be nobody else's, since
+		// the index it resolves against is a position among siblings.
+		//
+		// Exclusive as well as slotted, which owning a slot did not turn out to cover. This passed on
+		// its own and failed in company, reporting the removal applied while both Borders were still
+		// in the tree -- so something about a removal does not survive another test working at the
+		// same time, and the index being asked of the live collection rather than taken from the diff
+		// is the obvious suspect. Taking the app is the honest fix until that is understood: it gives
+		// up the overlap, which was worth almost nothing here, and keeps the shared launch, which is
+		// where the time actually was.
+		const string FirstBackground = "#FF3A2A2A";
+		const string Pair =
+			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />"
+				+ "<Border Background=\"#FF2A3A2A\" Padding=\"6\" CornerRadius=\"3\" />";
+		const string Survivor =
+			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />";
+
+		await using var turn = await probe.TakeSlotAsync(cancellationToken, exclusive: true);
+		var session = turn.Session;
 		{
-			var session = await manager.StartAsync(
-				new LiveAppTarget
-				{
-					Kind = LiveAppTargetKind.LaunchUwp,
-					AppUserModelId = aumid,
-					Description = "uwp removal probe",
-				},
-				cancellationToken);
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup, turn.MarkupHolding(Pair), filePath: null, cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			var before = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
+			Assert.Equal(2, before.Nodes.Count(node => node.Address == turn.Address("Border[0]") || node.Address == turn.Address("Border[1]")));
 
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
-
-			var before = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Equal(2, before.Nodes.Count(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]"));
-
-			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+			var applied = await session.ApplyXamlAsync(
+				turn.MarkupHolding(Pair), turn.MarkupHolding(Survivor), filePath: null, cancellationToken);
 			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
 
 			var removal = applied.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
 			Assert.NotNull(removal);
-			Assert.Equal("#Pair/Border[1]", removal!.Target);
+			Assert.Equal(turn.Address("Border[1]"), removal!.Target);
 			Assert.Equal("applied", removal.Status);
 
 			// Read back off a fresh enumeration, so this checks the app rather than the provider's own
 			// bookkeeping: every injection builds a new tap and walks the tree again.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			var remaining = tree.Nodes.Where(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]").ToList();
+			var remaining = tree.Nodes
+				.Where(node => node.Address == turn.Address("Border[0]") || node.Address == turn.Address("Border[1]"))
+				.ToList();
 			var survivor = Assert.Single(remaining);
-			Assert.Equal("#Pair/Border[0]", survivor.Address);
+			Assert.Equal(turn.Address("Border[0]"), survivor.Address);
 
 			// And it is the one that was meant to stay.
-			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, "#Pair/Border[0]", cancellationToken));
+			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[0]"), cancellationToken));
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -1160,8 +1062,13 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Replaces_a_keyed_resource_on_the_live_tree()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
 
 		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
 		var oldXaml = File.ReadAllText(xamlPath);
@@ -1171,18 +1078,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 		Assert.Contains($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", oldXaml);
 		var newXaml = oldXaml.Replace($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", $"x:Key=\"ProbeAccent\" Color=\"{Now}\"");
 
-		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
-		try
 		{
-			var session = await manager.StartAsync(
-				new LiveAppTarget
-				{
-					Kind = LiveAppTargetKind.LaunchUwp,
-					AppUserModelId = aumid,
-					Description = "uwp resource probe",
-				},
-				cancellationToken);
 
 			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
 
@@ -1210,11 +1106,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			Assert.Equal(Now, await BackgroundAtAsync(session, tree, "#Themed", cancellationToken));
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -1365,27 +1256,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Serves_two_xaml_calls_in_flight_together()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
-		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp concurrency probe",
-			};
 
-			var session = await manager.StartAsync(target, cancellationToken);
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
+		{
 
 			// The answer every concurrent read below has to match. Read on its own, so it is the
 			// uncontended truth about the app rather than one of the results under test.
@@ -1428,11 +1307,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 				Assert.Contains(properties.Properties, property => property.Name == "Text");
 			}
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -1463,31 +1337,30 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task A_second_properties_read_reports_what_reading_the_first_created()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase C, and the awkward one. The whole assertion is about what the *first* properties read
+		// of an element returns, so it needs an element nothing has read -- and there are two ways to
+		// fail that, not one. Sharing the app's Caption would make it depend on running before every
+		// other test that reads a TextBlock. Building its own in a slot does not work either: an
+		// element created through CreateInstance and AddChild arrives with Inlines already
+		// materialised, so it was never pristine to begin with. Only markup declares an element
+		// nothing has touched, so it reads a declared one that belongs to it alone. The Border it
+		// compares against can be built, because a Border has no collection property to materialise
+		// -- which is the point that test is making.
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp second-read probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup,
+				turn.MarkupHolding("<Border Background=\"#FF202830\" Padding=\"24\" CornerRadius=\"8\" />"),
+				filePath: null,
 				cancellationToken);
-			Assert.NotNull(running);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
 
-			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			var caption = tree.Nodes.First(node => node.Name == "Caption");
-			var pane = tree.Nodes.First(node => node.Name == "Pane");
+			var whole = await session.ReadXamlTreeAsync(cancellationToken);
+			var caption = whole.Nodes.Single(node => node.Name == "PristineText");
+			var pane = whole.Nodes.Single(node => node.Address == turn.Address("Border[0]"));
 
 			// A tree read does not do it -- only a properties read of that element does -- so this
 			// first read of the caption is still the markup's own answer.
@@ -1515,12 +1388,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			var paneFirst = await NamesOfAsync(session, pane.Handle, cancellationToken);
 			var paneSecond = await NamesOfAsync(session, pane.Handle, cancellationToken);
 			Assert.Equal(paneFirst, paneSecond);
-
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -1559,29 +1426,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Arms_interactive_select_mode_on_the_classic_uwp_probe()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp select probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
 
 			// Any XAML tool installs the toolbar, and the tree must not report it: it is RoseMCP's UI,
 			// not the app's. Read the tree first so the toolbar is up, then read it again and check.
@@ -1634,11 +1487,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			var afterClearing = await session.ReadXamlSelectionAsync(cancellationToken);
 			Assert.False(afterClearing.Selected);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
+			// Armed is app-wide state this test turned on, so this test turns it off. Clearing the
+			// pick does not disarm, because they are two pieces of state -- and until the shared app
+			// made it matter, nothing here could disarm at all: there was no verb for it, so an agent
+			// that armed select mode left a pointer-capturing overlay on the app that only a person
+			// clicking Idle could lift.
+			var idle = await session.EnterXamlSelectModeAsync(
+				includeAllElements: false, justMyXaml: true, arm: false, cancellationToken);
+			Assert.False(idle.Armed, $"expected select mode to disarm; got: {idle.Detail}");
+
 		}
 	}
 
@@ -1654,29 +1511,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Selects_a_xaml_element_by_handle_without_a_click()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp select-by-handle probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			var running = await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
-			Assert.NotNull(running);
 
 			// The handle comes from the tree, which is the whole route this exists to open.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
@@ -1710,11 +1553,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			Assert.False(cleared.Selected);
 			Assert.Contains("cleared", cleared.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -1725,26 +1563,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Refuses_to_select_a_handle_that_is_not_an_element()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
-		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp bad-handle probe",
-			};
 
-			var session = await manager.StartAsync(target, cancellationToken);
-			await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
+		{
 
 			await session.ReadXamlTreeAsync(cancellationToken);
 
@@ -1754,11 +1581,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			Assert.False(selected.Selected);
 			Assert.NotNull(selected.Detail);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -1783,28 +1605,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Clears_a_selection_whose_element_leaves_the_tree()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
-
-		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;
-		try
+
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
 		{
-			var target = new LiveAppTarget
-			{
-				Kind = LiveAppTargetKind.LaunchUwp,
-				AppUserModelId = aumid,
-				Description = "uwp removal probe",
-			};
-
-			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
-
-			await WaitForEventAsync(
-				session,
-				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
-					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
-				cancellationToken);
 
 			// Transient is only in the tree for part of its cycle, so finding it is a retry rather than
 			// a single read. Selecting it is the same call, because a select on something with no
@@ -1829,11 +1638,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 			Assert.Equal(0ul, after.Handle);
 			Assert.Contains("removed from the visual tree", after.Detail ?? string.Empty, StringComparison.Ordinal);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-		}
-		finally
-		{
-			probe.StopApp();
 		}
 	}
 
@@ -2173,8 +1977,8 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 	[Fact]
 	public async Task Refuses_to_launch_a_uwp_app_that_is_already_running()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
-		var aumid = lease.Aumid;
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
 		var cancellationToken = TestContext.Current.CancellationToken;

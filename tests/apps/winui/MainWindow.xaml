@@ -1,0 +1,64 @@
+<Window
+    x:Class="Rose.ProbeApp.WinUi.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Rose WinUI Probe">
+
+    <!-- Mirrors uwp-classic/MainPage.xaml element for element, and the names are deliberately the
+         same, so an assertion written against one stack can be written against the other by
+         changing only the app it drives. Where the two must differ is above this line: a UWP page
+         is hosted in a Frame on an ambient Window.Current, and a WinUI 3 window is an object the
+         app makes and holds. Everything below is identical. -->
+    <Grid x:Name="RootGrid" Background="#FF101418">
+        <!-- A keyed brush, so a resource edit has a dictionary to land in. Referenced with
+             ThemeResource rather than StaticResource on purpose: StaticResource resolves once when
+             the tree is built, so replacing what the key means would change the dictionary and move
+             nothing on screen. ThemeResource re-evaluates, which is what makes the change observable
+             and therefore testable.
+
+             Declared before the element that uses it, which is not style. XAML resolves both marker
+             extensions at parse time against resources declared earlier, so a resources block placed
+             after its consumer is a forward reference and the app dies on launch. -->
+        <Grid.Resources>
+            <SolidColorBrush x:Key="ProbeAccent" Color="#FF445566" />
+        </Grid.Resources>
+        <StackPanel x:Name="Panel" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+            <Border x:Name="Pane" Background="#FF202830" Padding="24" CornerRadius="8">
+                <TextBlock x:Name="Caption" Text="Rose WinUI Probe" Foreground="#FFE8EEF4" FontSize="24" />
+            </Border>
+            <TextBlock x:Name="Counter" Text="ticks: 0" Foreground="#FF8FA6BF" FontSize="16" HorizontalAlignment="Center" />
+            <!-- Leaves the visual tree and comes back, on a cycle, so a test can watch a removal
+                 happen to something it has selected (#51). Its own element rather than one of the
+                 others because every other test expects those to stay put. -->
+            <Border x:Name="Transient" Background="#FF303A44" Padding="8" CornerRadius="4">
+                <TextBlock x:Name="TransientCaption" Text="comes and goes" Foreground="#FF8FA6BF" FontSize="12" />
+            </Border>
+            <!-- Deliberately unnamed, under a named anchor. Every other element here has an x:Name,
+                 so nothing in this app could exercise the one addressing case that matters most:
+                 an element the markup never named, which is what a click lands on inside any
+                 control template. Two Borders of the same type rather than one, because resolving
+                 *something* is not the test. Telling Border[0] from Border[1] is. -->
+            <StackPanel x:Name="Pair" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                <Border Background="#FF3A2A2A" Padding="6" CornerRadius="3">
+                    <TextBlock Text="first" Foreground="#FF8FA6BF" FontSize="12" />
+                </Border>
+                <Border Background="#FF2A3A2A" Padding="6" CornerRadius="3">
+                    <TextBlock Text="second" Foreground="#FF8FA6BF" FontSize="12" />
+                </Border>
+            </StackPanel>
+            <!-- A Grid with rows, so that an attached property has somewhere to mean something. The
+                 diff has always kept attached properties by their dotted name, which is a different
+                 question from whether the apply side can find one, and nothing here could ask it. -->
+            <Grid x:Name="Rows">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="Attached" Grid.Row="0" Text="attached" Foreground="#FF8FA6BF" FontSize="12" />
+            </Grid>
+            <Border x:Name="Themed" Background="{ThemeResource ProbeAccent}" Padding="4">
+                <TextBlock Text="themed" Foreground="#FF8FA6BF" FontSize="12" />
+            </Border>
+        </StackPanel>
+    </Grid>
+</Window>

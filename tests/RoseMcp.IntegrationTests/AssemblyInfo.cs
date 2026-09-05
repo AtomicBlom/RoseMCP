@@ -7,6 +7,12 @@ using Xunit.v3;
 // on the machine is still removed -- which twenty per-test Remove-AppxPackage calls used to do.
 [assembly: AssemblyFixture(typeof(UwpProbeApp))]
 
+// The WinUI 3 probe gets a fixture of its own rather than sharing the UWP one, so the two sets
+// of live-app tests overlap instead of queueing behind a single gate. They drive different
+// processes and share no package, provider or window, so there is nothing to serialise between
+// them -- only within each.
+[assembly: AssemblyFixture(typeof(WinUiProbeApp))]
+
 // Tests are scheduled across the threads, not collections. Every class here was its own collection
 // and therefore ran its own tests one at a time, so a long class held a thread for its whole length
 // while the others went idle: 1606s of test work came out as 770s of wall clock, a 2.09x return on

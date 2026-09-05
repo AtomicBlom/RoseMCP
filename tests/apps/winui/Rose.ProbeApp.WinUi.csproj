@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A minimal WinUI 3 app used as an integration-test target, mirroring uwp-classic element for
+    element so the two stacks can be asserted against the same way (#106).
+
+    It builds BOTH packaged and unpackaged from one project, selected by ProbePackaged, and both are
+    worth testing because they are genuinely different targets rather than two ways of shipping one.
+    A packaged app runs in an AppContainer with package identity; an unpackaged one runs as an
+    ordinary desktop process with neither. That difference is exactly what the live-app half kept
+    getting wrong (it assumed an AppContainer always, and blamed a failure on the app "not being a
+    packaged app"), so a fixture that could only be one of the two would leave the other assumption
+    untested.
+
+      dotnet build Rose.ProbeApp.WinUi.csproj -r win-x64
+      dotnet build Rose.ProbeApp.WinUi.csproj -r win-x64 -p:ProbePackaged=true
+
+    The packaged build stages a loose layout under bin/.../AppX, registered the same way the UWP
+    probe's is (Add-AppxPackage -Register, no certificate).
+
+    Deliberately NOT in RoseMcp.slnx, for the same reason uwp-classic is not: it needs the
+    WindowsAppSDK, and a machine without it should skip these tests rather than fail the whole
+    solution build. Unlike uwp-classic it is SDK-style, so the tests build it with `dotnet build`
+    rather than full MSBuild.
+
+    Note on this file's prose: XML comments cannot contain a double hyphen, which is this
+    repository's em dash everywhere else. Hence the parentheses.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Rose.ProbeApp.WinUi</RootNamespace>
+    <AssemblyName>Rose.ProbeApp.WinUi</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <!-- The live-app host loads the target's own debugging DLLs into itself, so it has to run as the
+         target's architecture. WinUI 3 runs natively on ARM64, unlike classic UWP, so the probe is
+         built for whichever architecture the test host is (the tests pass -r). -->
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier Condition=" '$(RuntimeIdentifier)' == '' ">win-x64</RuntimeIdentifier>
+    <Platforms>x64;ARM64</Platforms>
+
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Which of the two shapes this build produces. Unpackaged is the default because it is the
+         cheaper one to run: no registration, and no package identity to clean up afterwards. -->
+    <ProbePackaged Condition=" '$(ProbePackaged)' == '' ">false</ProbePackaged>
+    <WindowsPackageType Condition=" '$(ProbePackaged)' != 'true' ">None</WindowsPackageType>
+
+    <!-- No signing: the tests register the loose layout, which needs no certificate, so no .pfx
+         lives in the repository. No .msix either, since registering the layout is enough and is what
+         the UWP probe already does. -->
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <AppxBundle>Never</AppxBundle>
+
+    <!-- XAML code generation produces warnings we do not control, and this folder deliberately does
+         not inherit the repository's warnings-as-errors. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Versions inline: tests/apps/Directory.Packages.props shadows the repository's central
+         package management so these foreign apps manage their own, as their project types expect.
+         Kept in step with the repository root's versions by hand. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
+  </ItemGroup>
+
+  <!-- The manifest and its logos take part only in the packaged build. Left in unconditionally they
+       would be staged beside an unpackaged app that has no use for them, which is harmless but
+       misleading about what that build is. -->
+  <ItemGroup Condition=" '$(ProbePackaged)' == 'true' ">
+    <AppxManifest Include="Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+    <Content Include="Assets\**" />
+  </ItemGroup>
+
+</Project>

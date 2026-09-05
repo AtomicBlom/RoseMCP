@@ -382,6 +382,42 @@ reclaim memory or pick up a rebuilt generator.
   would deadlock that forever. Do not conclude from a passing
   concurrency test that the lock is unnecessary -- the silent failure appeared once in ten, and the
   test was confirmed to fail with the locks removed.
+- **The overlay asks its `XamlRoot`, not its window, and the pointer hook is the only seam left.**
+  `Window.Current` does not exist in WinUI 3, and nine sites wanted three things of it: the extent,
+  the root content, and a size-changed event. `XamlRoot` answers all three *and* exists on UWP since
+  1903, so it is one implementation rather than a per-provider host surface -- worth checking rather
+  than assuming, because the alternative was every line of it written twice. Every `Bounds()` use read
+  only `Width` and `Height`, so `XamlRoot.Size` is a drop-in for a `Rect`. `XamlRoot.Changed` also
+  fires on a scale change, which the window event does not: moving the app to a monitor at a different
+  DPI resizes the XAML content without resizing the window, and the old handler slept through it.
+  <br>
+  What is left is `RoseTapWatchPointer`, which the provider defines before including `tap_overlay.h`,
+  next to the aliases and the CLSID. It installs a **passive** observer of pointer movement for the
+  proximity fade, and two properties are required of it: it must consume nothing, and it must see
+  moves the app has already marked handled. UWP's `CoreWindow` has both. WinUI 3 has no `CoreWindow`,
+  and `InputPointerSource` was *measured* against exactly those two rather than assumed equivalent --
+  41 moves over plain content then 33 over an element whose handler sets `Handled`, and the island's
+  source counted all 74 while the app's own root handler counted the 41 and none of the 33. Losing it
+  costs the fade and nothing else: select mode picks through the full-bleed capture layer and never
+  came through here, so a provider that cannot supply it logs and carries on.
+  <br>
+  Which island to ask is its own trap, and it is not the obvious one. `XamlRoot.ContentIsland` is
+  null on WinUI 3 for the root the overlay anchors on: the framework fills it in only for a
+  XamlIsland-based content root (`XamlRoot_Partial.cpp` asks `GetXamlIslandRootNoRef`), and the
+  diagnostics UI layer is not one. So the fallback is `ContentIsland.FindAllForCurrentThread`, which
+  is valid because this always runs on the UI thread, and the thread owns exactly one island -- so
+  taking the first is not a guess. Both halves were measured: 40 synthetic moves swept across the
+  window arrived as 40. It matters because the failure was silent and cheap-looking -- the marks stop
+  fading and nothing else changes -- which is how it would have outlived several releases, and it is
+  why each of the four steps now says which one gave up rather than the caller reporting only that
+  the fade is off.
+  <br>
+  One overlay, in the root the diagnostics site handed us. A WinUI 3 app can have several windows and
+  the snapshot enumerates all of them, so `SharesRoot` is asked before anything is drawn -- an element
+  elsewhere is *said* to be elsewhere. It used to be told it had "no laid-out bounds", which is a
+  confident wrong answer about an element laid out perfectly well, and `TransformToVisual` across two
+  roots does not fail in a way that says otherwise. Drawing anyway would put the mark at the right
+  coordinates in the wrong window, which is the failure #45 and #51 are already about.
 - **It is a live edit, not a hot reload, and the word is doing work.** Every edit is a property set or
   an `AddChild` against the element objects that exist at that instant; the app's compiled markup is
   untouched, so anything that rebuilds that part of the UI produces the original. "Reload" would
@@ -414,6 +450,61 @@ reclaim memory or pick up a rebuilt generator.
   layer. And `selection.ready` deliberately carries no generation at all, because it records a click,
   which outlives the injection that armed select mode by design -- stamping it would have the read that
   goes looking for it reject its own answer. One file cannot both answer a request and survive one.
+- **Which XAML framework a target is running is asked of the target, and the order of the asking is
+  the trick.** The live half had no idea: it hard-coded UWP in four places -- the
+  `Windows.UI.Xaml.dll` DllImport, the provider file name, the CLSID, and the AppContainer grants --
+  while the stub half asked properly. The cost was not that WinUI 3 failed but *how*: twenty seconds
+  waiting for an endpoint that could never appear, ending in a claim that the app was not packaged,
+  which is wrong twice over since packaging is irrelevant and unpackaged WinUI 3 is ordinary. The
+  answer was in the target's loaded modules the whole time, the way `RuntimeFlavour` already reads
+  them for "is this even CoreCLR". One `XamlStack` names the framework and both halves use it, but
+  they stay separate mechanisms on purpose -- a compilation is not available to a host holding a pid
+  for an app it never built, and the process in front of you settles which of a solution's projects
+  you are actually looking at.
+  <br>
+  `Windows.UI.Xaml.dll` is tested **first**, and that ordering is the whole rule. WinUI 2 is a UWP
+  library that ships a `Microsoft.UI.Xaml.dll` of its own, so a UWP app using it loads both names --
+  and it is a UWP app, whose diagnostics live in `Windows.UI.Xaml.dll`. Matching the Microsoft name
+  first reports WinUI 3 and refuses a target the UWP tap serves perfectly well. The issue proposing
+  this work named `Microsoft.UI.Xaml.dll` as the WinUI 3 signal, and a real WinUI 3 process does load
+  it, so the claim survives inspection and fails on WinUI 2 -- which is why every name in
+  `XamlStackModules` was read off a running process rather than reasoned about, and why the rule
+  lives in `Contracts` where a test can reach it: the host is `net10.0-windows` and neither test
+  project takes a compile reference on it.
+- **The tree walk is advised from a thread that is not the UI thread, and only on WinUI 3 does that
+  matter.** WinUI dispatches tap creation onto the UI thread, and its `AdviseVisualTreeChange`
+  enqueues the walk *back* onto that thread and then blocks the caller until it finishes
+  (`Advising::RunOnUIThread`, with no check for already being on it) -- so advising from `SetSite`,
+  which is what UWP wants, deadlocks the one thread that can serve the walk. UWP enumerates inline
+  on the calling thread. So the body runs through `RoseTapRunTapBody`, and everything after the walk
+  goes back through `RoseTapRunOnUiThread`, because the framework dispatches for the walk alone --
+  "during normal operation it is the caller's responsibility to dispatch to the correct thread", in
+  its own words. Two things about it are worth keeping. `XamlDiagnostics::Launch` holds the tap only
+  in a local `ComPtr`, so advising is also what takes the framework's lasting reference: returning
+  from `SetSite` before advising destroys the tap and the body then runs against freed memory, which
+  presents as a field reading back a value nothing ever assigned. And the way back onto the UI thread
+  is `IXamlDiagnostics::GetDispatcher`, which is a xamlOM method rather than a framework one -- so the
+  shared half asks and only the cast is in the provider, a `CoreDispatcher` on UWP and a
+  `DispatcherQueue` on WinUI 3. Asking the current thread instead answers only while you are already
+  on it, and null everywhere else. That seam is shared with the pipe reader (#50), which needs the
+  same thing from the other direction, and the thread id recorded beside it is what lets one function
+  serve both: already there, run inline; not there, dispatch and wait.
+- **A provider that cannot say why it failed to start costs days, and this one could not.** `Log`
+  discarded everything until `SetSite` set the work folder, which is precisely the window in which a
+  tap fails to load, fails to be created, or declines to be sited -- so "the framework ignored us"
+  and "we were never asked" produced identical evidence: none. The deadlock above was read as the
+  former for days on exactly that. It falls back to `%TEMP%` now, and the load, the class-factory
+  request and both of `SetSite`'s silent refusals each say so. The refusals have to be *said* rather
+  than returned, because `XamlDiagnostics::Launch` discards the `HRESULT` on the reasoning that the
+  app must keep running either way. Do not let the pre-`SetSite` path go quiet again.
+- **What WinUI 3 was thought to need, it did not.** It does not need diagnostics enabled from
+  startup, a session that launched the target rather than attaching, the `XamlDiagnostics` value
+  under HKLM, admin, `XAML_DM_*` in the environment, or a packaged app -- every one of those was
+  tried, and Visual Studio needs none of them either, which was the clue that the cause was ours.
+  It does need its own endpoint name (`WinUIVisualDiagConnection1`), `InitializeXamlDiagnosticsEx`
+  out of `Microsoft.Internal.FrameworkUdk.dll` rather than `Microsoft.UI.Xaml.dll`, an **absolute**
+  path to the tap (`DebugTool.cpp` fail-fasts on a relative one), and the threading above. Attaching
+  to a running WinUI 3 app works, and there is a test for it.
 - **A XAML project's generated half is synthesised, and says so.** The markup compiler runs only in a
   real build, so `MSBuildWorkspace` hands us code-behind missing its base type, its `x:Name` fields
   and `InitializeComponent` -- 2030 phantom errors in one project of Drawboard's UWP app.

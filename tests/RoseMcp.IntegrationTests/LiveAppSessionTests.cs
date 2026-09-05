@@ -25,7 +25,7 @@ namespace RoseMcp.IntegrationTests;
 /// it stops the class overlapping <em>anything</em>, not just itself.
 /// </para>
 /// </summary>
-public sealed class LiveAppSessionTests(UwpProbeApp probe)
+public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui)
 {
 	/// <summary>
 	/// The first dogfood, end to end: the broker launches a host in the target's architecture, the
@@ -502,6 +502,206 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe)
 		finally
 		{
 			probe.StopApp();
+		}
+	}
+
+	/// <summary>
+	/// The WinUI 3 path, unpackaged (#106). An unpackaged WinUI 3 app is an ordinary desktop process
+	/// with no package identity and no AppContainer, which is the shape the live-app half kept getting
+	/// wrong, so it is the one worth proving first.
+	/// <para>
+	/// The debugger needs no WinUI-specific code (#79) -- this is here to keep that true rather than
+	/// to establish it, and to give the seams work (#75) something to run against.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Launches_and_debugs_the_unpackaged_winui_probe_app()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: false, cancellationToken);
+
+		await using var manager = CreateManager();
+
+		var target = new LiveAppTarget
+		{
+			Kind = LiveAppTargetKind.LaunchExecutable,
+			ExecutablePath = turn.ExecutablePath,
+			Description = "winui probe (unpackaged)",
+		};
+
+		var session = await manager.StartAsync(target, cancellationToken);
+		var summary = session.Describe();
+		Assert.True(
+			summary.State == LiveAppSessionState.Ready,
+			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
+
+		var marker = await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
+			cancellationToken);
+		Assert.NotNull(marker);
+
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+	}
+
+	/// <summary>
+	/// The same app, packaged. Worth its own test because packaged and unpackaged are different
+	/// targets rather than two ways of shipping one: this one has package identity and is activated
+	/// by AUMID rather than launched by path.
+	/// <para>
+	/// It is still not in an AppContainer, which is the thing measuring this settled. A packaged WinUI
+	/// 3 app is a packaged *desktop* app -- runFullTrust, Windows.FullTrustApplication -- so packaging
+	/// and sandboxing come apart here in a way they never do for classic UWP, and only the UWP tap
+	/// needs the work folder granted to ALL APPLICATION PACKAGES.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Launches_and_debugs_the_packaged_winui_probe_app()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: true, needsXamlProvider: false, cancellationToken);
+
+		await using var manager = CreateManager();
+
+		var target = new LiveAppTarget
+		{
+			Kind = LiveAppTargetKind.LaunchUwp,
+			AppUserModelId = turn.Aumid,
+			Description = "winui probe (packaged)",
+		};
+
+		var session = await manager.StartAsync(target, cancellationToken);
+		var summary = session.Describe();
+		Assert.True(
+			summary.State == LiveAppSessionState.Ready,
+			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
+
+		var marker = await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
+			cancellationToken);
+		Assert.NotNull(marker);
+
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+	}
+
+	/// <summary>
+	/// The XAML tree of a WinUI 3 target this session started (#76).
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// This was a refusal test until the cause was found, and its inversion is the signal that #76 is
+	/// done -- which is what the refusal's own comment said would happen.
+	/// </para>
+	/// <para>
+	/// What it proves past "a tree came back" is that the shared tap serves a second framework
+	/// unchanged: the same walk, the same snapshot and the same named elements as the UWP probe, out
+	/// of Microsoft.UI.Xaml. The one thing WinUI 3 needed was that the walk not be advised from the
+	/// UI thread, and that lives in the provider seam rather than here.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Reads_the_xaml_tree_of_a_winui_app_it_launched()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		await using var manager = CreateManager();
+
+		var target = new LiveAppTarget
+		{
+			Kind = LiveAppTargetKind.LaunchExecutable,
+			ExecutablePath = turn.ExecutablePath,
+			Description = "winui xaml probe",
+		};
+
+		var session = await manager.StartAsync(target, cancellationToken);
+		var summary = session.Describe();
+		Assert.True(
+			summary.State == LiveAppSessionState.Ready,
+			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
+
+		// Well into running, so an empty tree cannot be an app that has not built one yet.
+		var running = await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
+			cancellationToken);
+		Assert.NotNull(running);
+
+		var tree = await session.ReadXamlTreeAsync(cancellationToken);
+		Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+		Assert.NotEmpty(tree.Nodes);
+
+		// The same names the UWP probe declares, because the two apps mirror each other on purpose.
+		foreach (var name in new[] { "RootGrid", "Panel", "Pane", "Counter", "Caption" })
+		{
+			Assert.Contains(tree.Nodes, node => node.Name == name);
+		}
+
+		// Rooting works the same here: a named element's subtree carries its descendants and not its
+		// parent. Asserted on WinUI too because the address grammar is computed from the live tree,
+		// and the live tree is the half that differs between the frameworks.
+		var panelSubtree = await session.ReadXamlTreeAsync("Panel", offset: 0, limit: 0, cancellationToken);
+		Assert.Contains(panelSubtree.Nodes, node => node.Name == "Panel");
+		Assert.Contains(panelSubtree.Nodes, node => node.Name == "Caption");
+		Assert.DoesNotContain(panelSubtree.Nodes, node => node.Name == "RootGrid");
+
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+	}
+
+	/// <summary>
+	/// The XAML tree of a WinUI 3 app this session attached to rather than started (#76).
+	/// </summary>
+	/// <remarks>
+	/// The companion to the launched case, and the one that settles the premise both refusals rested
+	/// on. WinUI 3 was believed to need diagnostics enabled from startup, so that attaching could
+	/// never work; it does work, because that belief was inferred from a failure whose real cause was
+	/// a deadlock of our own making. Attaching is also the case an agent actually meets -- the app is
+	/// already running by the time anyone asks about it -- so it is worth its own test rather than
+	/// being assumed to follow from the launched one.
+	/// </remarks>
+	[Fact]
+	public async Task Reads_the_xaml_tree_of_a_winui_app_it_attached_to()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		// Started outside the session on purpose: nothing about this process was arranged for us.
+		using var child = StartProcess(turn.ExecutablePath);
+		await using var manager = CreateManager();
+
+		try
+		{
+			// Long enough that the window and its tree are up before anything attaches.
+			await Task.Delay(TimeSpan.FromSeconds(6), cancellationToken);
+
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "winui probe (attached)",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+			Assert.NotEmpty(tree.Nodes);
+
+			foreach (var name in new[] { "RootGrid", "Panel", "Pane", "Counter", "Caption" })
+			{
+				Assert.Contains(tree.Nodes, node => node.Name == name);
+			}
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
 		}
 	}
 

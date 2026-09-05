@@ -721,6 +721,55 @@ minutes needs the per-request re-injection to go, which is #50: every XAML reque
 provider today because the provider works on the app's UI thread at `SetSite`, and a persistent
 channel makes a tree read a message instead of an injection.
 
+### D34 — The provider channel is a named pipe, and D14's reason for it not being one was wrong (#50, supersedes half of D14)
+D14 chose tab-separated files in an ACL'd folder over a named pipe, because "a named pipe from an
+AppContainer needs a capability-aware ACL and is finicky". The first clause is true. The conclusion
+does not follow, and this settles it by doing it: the host creates the pipe with the same two SIDs it
+already puts on the work folder (`S-1-15-2-1`, `S-1-15-2-2`), passes the name through
+`wszInitializationData` -- the slot that already carried the folder path, so no new plumbing -- and
+the provider opens it with a plain `CreateFileW`. It connected in 37ms on the first attempt.
+
+Two things that make pipes look harder than they are do not apply. The AppContainer loopback
+restriction is about *sockets*; a pipe lives in `\Device\NamedPipe` and is gated by its DACL. And
+"UWP cannot do named pipes" is a certification rule about submitted packages -- an injected
+diagnostics DLL is in nobody's package. The direction is what makes it easy: creating a pipe from
+inside the sandbox is the finicky case, and connecting to one that already grants your SID is not.
+
+**The crux is not the channel, and the card does not mention it.** Every request re-injected because
+the provider does its work inside `SetSite`, and `SetSite` runs on the app's UI thread, which is the
+only thread XAML can be touched from. A pipe alone would not have changed that. What changes it is
+`IXamlDiagnostics::GetDispatcher`: the provider keeps the `CoreDispatcher`, runs a background reader
+on the pipe, and marshals each request back onto the UI thread. A read becomes a message.
+
+**The provider is built afresh on every injection, and a resident reader has to know that.** Found by
+a failing test rather than by reading: an element removed by an apply was still in the tree a
+following read returned. The apply had run in a *new* provider instance and correctly forgotten the
+node from its own list, while the reader thread went on answering from the first instance's list. The
+same bug is a use-after-free the moment an old instance is released, which is worse and was only
+luck. The reader resolves the current instance per request, under a lock, holding a reference.
+
+**No generation number.** Every handshake through the folder was "does this file exist", so the host
+had to stamp a number on the request and have the provider echo it back to tell this answer from the
+last one (#57, #89, D31). A reply read from the pipe the request went out on is this request's answer
+by construction. That whole mechanism, and the class of bug behind it, deletes itself.
+
+**What it is worth, measured, because the estimate was wrong.** A tree read over the pipe is 14-23ms
+against about 115ms for a warm read through the files -- five to eight times, per call, which is what
+an interactive session feels. It was also expected to take most of the live-app suite's time out, and
+it does not: the whole read path on the pipe moved the suite from 186s to 180s. The reason is in the
+numbers that were already there. The three UWP tests that make no XAML calls at all take 6.2-7.3s and
+the ones making several take 7.6-7.9s, so the channel is about 1.2s of a 7.7s test and the other
+6.5s is launching the app, the resume-stub handshake and the ICorDebug attach. "Re-injection makes
+each request slow" is true; "re-injection makes each test slow" was an unexamined substitution for
+it. Getting the suite under two minutes means launching the app fewer times, not talking to it
+faster.
+
+Landed here: the channel, and the read path (`tree`, `properties`) with the files still in place as a
+fallback, so nothing depends on the pipe that cannot fall back to what worked. The write path
+(`apply`), the selection verbs, injecting once per session and deleting the file channel are the rest
+of #50; CLAUDE.md gets its invariant when the migration is finished rather than while two channels
+are live.
+
 ### D35 — The live-app suite is phased by what each test can share (extends D33)
 D33 made the twenty UWP tests stop rebuilding the toolchain, and left the thing underneath it: each
 test still launched its own app. A launch costs about 6.5s and the XAML work in a test costs about

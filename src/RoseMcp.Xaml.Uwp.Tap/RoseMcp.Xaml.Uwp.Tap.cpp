@@ -37,6 +37,7 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
+#include <thread>
 #include <cstdlib>
 #include <cmath>
 #include <chrono>
@@ -70,6 +71,11 @@ static const CLSID CLSID_RoseTap =
 
 static std::atomic<long> g_lockCount{ 0 };
 static std::wstring g_workDir;
+
+// The pipe the host is listening on, when it named one in the initialization data (#50). Empty
+// against a host that did not, which is what keeps an older host working while the two channels
+// overlap.
+static std::wstring g_pipeName;
 
 // The host's number for the request being served, echoed into everything written back so the host
 // can tell a file this request produced from one left behind by the last (#57).
@@ -129,6 +135,81 @@ static void Log(const std::wstring& line)
 	if (file) file << Utf8(line) << '\n';
 }
 
+// The host end of the channel #50 replaces the files with. Global for the same reason g_workDir is:
+// the provider is handed its configuration once, at SetSite, on the app's UI thread.
+static HANDLE g_pipe = INVALID_HANDLE_VALUE;
+
+// The app's UI thread, reachable from the pipe reader. This is the piece that makes a resident
+// provider possible at all: XAML can only be touched on this thread, and SetSite already runs there,
+// which is why doing the work inside SetSite -- and therefore re-injecting per request -- was the
+// only shape available before.
+static winrt::Windows::UI::Core::CoreDispatcher g_dispatcher{ nullptr };
+static std::thread g_pipeThread;
+static std::atomic<bool> g_pipeStop{ false };
+
+// The provider instance the reader serves from, and a lock over it.
+//
+// This is not bookkeeping, it is the correctness of the whole channel: InitializeXamlDiagnosticsEx
+// builds a *new* provider on every injection, each with its own node list. The reader thread outlives
+// any one of them, so a captured `this` would go on answering from the tree the first injection saw
+// -- which is exactly how a removal came back as still present, and is a use-after-free the moment an
+// old instance is released. It serves whichever instance is current, holding a reference to it.
+class RoseTap;
+static std::mutex g_activeMutex;
+static RoseTap* g_active = nullptr;
+
+// Declared here and defined after RoseTap, because SetSite calls them and they need the whole class.
+static void SetActiveTap(RoseTap* tap);
+static void StartPipeReader();
+
+// One length-prefixed UTF-8 message, which is the whole framing. Every message through the folder
+// made its own encoding decision and the record shows the cost twice: a wofstream narrowing UTF-16
+// to ANSI so a tree parsed as zero elements, and commands.tsv needing UTF-8-without-BOM because the
+// reader was narrow. One frame format removes the category.
+static bool WriteFrame(const std::string& payload)
+{
+	if (g_pipe == INVALID_HANDLE_VALUE) return false;
+
+	const unsigned int length = static_cast<unsigned int>(payload.size());
+	unsigned char header[4] = {
+		static_cast<unsigned char>(length & 0xFF),
+		static_cast<unsigned char>((length >> 8) & 0xFF),
+		static_cast<unsigned char>((length >> 16) & 0xFF),
+		static_cast<unsigned char>((length >> 24) & 0xFF),
+	};
+
+	DWORD written = 0;
+	if (!::WriteFile(g_pipe, header, 4, &written, nullptr) || written != 4) return false;
+	if (length == 0) return true;
+
+	written = 0;
+	return ::WriteFile(g_pipe, payload.data(), length, &written, nullptr) && written == length;
+}
+
+// Connects to the pipe the host named in the initialization data and greets it.
+//
+// Connecting *to* a pipe is the easy direction across an AppContainer boundary -- the finicky case
+// D14 was thinking of is creating one from inside the sandbox. The host grants this app's SIDs on
+// the pipe exactly as it already grants them on the folder, so this is an ordinary CreateFileW.
+//
+// The path is a raw string literal because the escaped form of a pipe path is unreadable and this
+// one has already been got wrong once.
+static void ConnectPipe()
+{
+	if (g_pipeName.empty() || g_pipe != INVALID_HANDLE_VALUE) return;
+
+	const std::wstring path = LR"(\\.\pipe\)" + g_pipeName;
+	g_pipe = ::CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+	if (g_pipe == INVALID_HANDLE_VALUE)
+	{
+		Log(L"pipe: could not open " + path + L" (GetLastError=" + std::to_wstring(::GetLastError()) + L")");
+		return;
+	}
+
+	Log(L"pipe: connected to " + path);
+	if (!WriteFrame("hello from the provider")) Log(L"pipe: connected but could not write the greeting");
+}
+
 // The snapshot is UTF-8 so the host reads it with one fixed encoding regardless of the app's locale;
 // std::wofstream would narrow to the ANSI code page and lose any non-ASCII name.
 static std::string Utf8(const std::wstring& text)
@@ -138,6 +219,48 @@ static std::string Utf8(const std::wstring& text)
 	std::string out(static_cast<size_t>(size), '\0');
 	WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
 	return out;
+}
+
+static std::wstring FromUtf8(const std::string& text)
+{
+	if (text.empty()) return std::wstring();
+	const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0);
+	std::wstring out(static_cast<size_t>(size), L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size);
+	return out;
+}
+
+// The other half of the framing: read exactly what the length says, or fail. A short read is not a
+// smaller message, it is a broken one, and treating it as the former is how a channel starts
+// answering the wrong question.
+static bool ReadExactly(void* buffer, DWORD length)
+{
+	auto* at = static_cast<unsigned char*>(buffer);
+	DWORD done = 0;
+	while (done < length)
+	{
+		DWORD got = 0;
+		if (!::ReadFile(g_pipe, at + done, length - done, &got, nullptr) || got == 0) return false;
+		done += got;
+	}
+
+	return true;
+}
+
+static bool ReadFrame(std::string& payload)
+{
+	if (g_pipe == INVALID_HANDLE_VALUE) return false;
+
+	unsigned char header[4] = {};
+	if (!ReadExactly(header, 4)) return false;
+
+	const unsigned int length = static_cast<unsigned int>(header[0])
+		| (static_cast<unsigned int>(header[1]) << 8)
+		| (static_cast<unsigned int>(header[2]) << 16)
+		| (static_cast<unsigned int>(header[3]) << 24);
+
+	payload.assign(length, '\0');
+	return length == 0 || ReadExactly(payload.data(), length);
 }
 
 // Where a property's effective value came from -- the bridge from a live value to how it was set.
@@ -1826,9 +1949,40 @@ public:
 		BSTR initData = nullptr;
 		if (SUCCEEDED(m_diagnostics->GetInitializationData(&initData)) && initData)
 		{
-			g_workDir.assign(initData, SysStringLen(initData));
+			std::wstring data(initData, SysStringLen(initData));
 			SysFreeString(initData);
+
+			// "<work dir>|<pipe name>", the pipe name optional while the two channels overlap (#50).
+			// Split on '|' because it cannot occur in a Windows path, so the work dir cannot contain
+			// one and an older host that sends no pipe name still parses as exactly itself.
+			const size_t bar = data.find(L'|');
+			if (bar == std::wstring::npos)
+			{
+				g_workDir = data;
+			}
+			else
+			{
+				g_workDir = data.substr(0, bar);
+				g_pipeName = data.substr(bar + 1);
+			}
 		}
+
+		// The UI thread, kept so the pipe reader can get back onto it. Taken before anything else
+		// needs it, and harmless where the host named no pipe.
+		if (!g_dispatcher)
+		{
+			::IInspectable* rawDispatcher = nullptr;
+			if (SUCCEEDED(m_diagnostics->GetDispatcher(&rawDispatcher)) && rawDispatcher)
+			{
+				winrt::Windows::Foundation::IInspectable dispatcher{ nullptr };
+				winrt::attach_abi(dispatcher, rawDispatcher); // adopt the ref
+				g_dispatcher = dispatcher.try_as<winrt::Windows::UI::Core::CoreDispatcher>();
+			}
+
+			Log(g_dispatcher ? L"SetSite: holding the UI dispatcher" : L"SetSite: no CoreDispatcher available");
+		}
+
+		ConnectPipe();
 
 		m_diagnostics->QueryInterface(__uuidof(IVisualTreeService), reinterpret_cast<void**>(&m_tree));
 		if (!m_tree)
@@ -1933,7 +2087,70 @@ public:
 		// behind, including a tree or properties read that touches the mode not at all.
 		Overlay().RefreshState();
 
+		// This instance is the one the reader should answer from now on, and only then is it safe to
+		// have a reader at all.
+		SetActiveTap(this);
+		StartPipeReader();
+
 		return S_OK;
+	}
+
+	/// Runs work on the app's UI thread and waits for it.
+	///
+	/// This is the piece that makes a resident provider possible. XAML can only be touched on that
+	/// thread; SetSite already runs there, so doing the work inside SetSite was the only way to be on
+	/// it, and that is precisely why every request re-injected. GetDispatcher is the documented way
+	/// back onto it, so a request becomes a message.
+	///
+	/// Blocking on the async action is safe here and only here: the reader is a background thread. On
+	/// the UI thread this would throw, which is the right failure -- it would be a deadlock otherwise.
+	static bool RunOnUi(const std::function<void()>& work)
+	{
+		if (!g_dispatcher) return false;
+
+		try
+		{
+			g_dispatcher.RunAsync(
+				winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,
+				[&work]() { work(); }).get();
+			return true;
+		}
+		catch (...)
+		{
+			// A dispatcher whose window has gone, most likely. The caller answers with an empty
+			// frame and the host falls back to the file channel rather than hanging.
+			return false;
+		}
+	}
+
+	/// One request, answered. An empty reply means "not served here", which is what lets the pipe
+	/// carry one verb at a time while the rest still go through the files.
+	std::string Serve(const std::wstring& request)
+	{
+		if (request == L"tree")
+		{
+			size_t written = 0;
+			std::string rows;
+			if (!RunOnUi([&] { rows = TreeSnapshotRows(written); })) return std::string();
+
+			Log(L"pipe: served tree with " + std::to_wstring(written) + L" element(s)");
+			return rows;
+		}
+
+		if (request.rfind(L"properties ", 0) == 0)
+		{
+			// Same parse as the injected path: a trailing " all" asks for the framework defaults too.
+			const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
+			const InstanceHandle handle = static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10));
+
+			std::string reply;
+			if (!RunOnUi([&] { reply = PropertiesReply(handle, includeDefaults); })) return std::string();
+
+			return reply;
+		}
+
+		Log(L"pipe: no handler for '" + request + L"', falling back to the files");
+		return std::string();
 	}
 
 	HRESULT STDMETHODCALLTYPE GetSite(REFIID riid, void** ppv) override
@@ -1981,11 +2198,43 @@ private:
 	// The diagnostics UI layer it lives on is not enumerated by AdviseVisualTreeChange on the versions
 	// tested -- the count is identical before and after the toolbar goes up -- so this is a guard against
 	// a framework that does enumerate it, not a fix for one that does.
+	// The snapshot's rows, UTF-8, newline-separated. Separated from writing them so the same bytes can
+	// go down the pipe (#50) or into tree.tsv, rather than one of the two being built a second way and
+	// drifting -- the address column is exactly the sort of thing that would drift.
+	std::string TreeSnapshotRows(size_t& written)
+	{
+		const auto excluded = OverlaySubtree();
+
+		// Each element's address, computed once for the whole snapshot rather than per row. It is
+		// reported because it is the only way to address an element the markup never named, and
+		// an unnamed element is the ordinary case for a click that lands inside a template.
+		const auto paths = ComputePaths();
+
+		std::string rows;
+		written = 0;
+
+		for (const auto& node : m_nodes)
+		{
+			if (excluded.count(node.Handle)) continue;
+
+			const auto address = paths.find(node.Handle);
+			const std::wstring path = address != paths.end() ? address->second : std::wstring();
+
+			const std::wstring row = std::to_wstring(node.Handle) + L'\t' + std::to_wstring(node.Parent) + L'\t'
+				+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str())
+				+ L'\t' + Escape(node.File.c_str()) + L'\t' + std::to_wstring(node.Line) + L'\t' + std::to_wstring(node.Column)
+				+ L'\t' + Escape(path.c_str());
+			rows += Utf8(row);
+			rows += '\n';
+			written++;
+		}
+
+		return rows;
+	}
+
 	void WriteTreeSnapshot()
 	{
 		if (g_workDir.empty()) return;
-
-		const auto excluded = OverlaySubtree();
 
 		const std::wstring finalPath = g_workDir + L"\\tree.tsv";
 		const std::wstring tempPath = finalPath + L".tmp";
@@ -1998,25 +2247,7 @@ private:
 				return;
 			}
 
-			// Each element's address, computed once for the whole snapshot rather than per row. It is
-			// reported because it is the only way to address an element the markup never named, and
-			// an unnamed element is the ordinary case for a click that lands inside a template.
-			const auto paths = ComputePaths();
-
-			for (const auto& node : m_nodes)
-			{
-				if (excluded.count(node.Handle)) continue;
-
-				const auto address = paths.find(node.Handle);
-				const std::wstring path = address != paths.end() ? address->second : std::wstring();
-
-				const std::wstring row = std::to_wstring(node.Handle) + L'\t' + std::to_wstring(node.Parent) + L'\t'
-					+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str())
-					+ L'\t' + Escape(node.File.c_str()) + L'\t' + std::to_wstring(node.Line) + L'\t' + std::to_wstring(node.Column)
-					+ L'\t' + Escape(path.c_str());
-				file << Utf8(row) << '\n';
-				written++;
-			}
+			file << TreeSnapshotRows(written);
 		}
 
 		_wremove(finalPath.c_str());
@@ -2190,9 +2421,15 @@ private:
 		return true;
 	}
 
-	void WriteProperties(InstanceHandle handle, bool includeDefaults)
+	// The property rows, into whatever sink the caller has. An std::ostream rather than a file, so the
+	// same builder serves properties.tsv and the pipe reply (#50) -- one builder, because two would
+	// drift and the provenance column is exactly what would drift.
+	//
+	// Returns false when the property chain could not be read at all, which the caller reports
+	// differently from "read it and there was nothing".
+	bool EmitProperties(std::ostream& file, InstanceHandle handle, bool includeDefaults, unsigned int& written)
 	{
-		if (g_workDir.empty()) return;
+		written = 0;
 
 		unsigned int sourceCount = 0;
 		unsigned int valueCount = 0;
@@ -2202,8 +2439,7 @@ private:
 		if (FAILED(hr))
 		{
 			Log(L"GetPropertyValuesChain(" + std::to_wstring(handle) + L") failed hr=0x" + Hex(hr));
-			WriteMarker(L"properties.ready", L"error");
-			return;
+			return false;
 		}
 
 		std::wstring elementType;
@@ -2222,17 +2458,7 @@ private:
 			}
 		}
 
-		const std::wstring finalPath = g_workDir + L"\\properties.tsv";
-		const std::wstring tempPath = finalPath + L".tmp";
-		unsigned int written = 0;
 		{
-			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
-			if (!file)
-			{
-				Log(L"could not open properties.tsv.tmp for writing");
-				return;
-			}
-
 			const std::wstring elementRow = L"E\t" + Escape(elementType.c_str()) + L'\t' + Escape(elementFile.c_str())
 				+ L'\t' + std::to_wstring(elementLine) + L'\t' + std::to_wstring(elementColumn);
 			file << Utf8(elementRow) << '\n';
@@ -2317,6 +2543,45 @@ private:
 			}
 		}
 
+		FreePropertyChain(sources, sourceCount, values, valueCount);
+		return true;
+	}
+
+	// The same rows as a string, for the pipe. A leading status line so "could not read the chain" is
+	// distinguishable from "read it and there were no rows", which the marker file said with the word
+	// "error" and a reply of nothing at all could not.
+	std::string PropertiesReply(InstanceHandle handle, bool includeDefaults)
+	{
+		std::ostringstream rows;
+		unsigned int written = 0;
+		if (!EmitProperties(rows, handle, includeDefaults, written)) return "error\n";
+
+		Log(L"pipe: served " + std::to_wstring(written) + L" propert(y/ies) for handle " + std::to_wstring(handle));
+		return "ok\n" + rows.str();
+	}
+
+	void WriteProperties(InstanceHandle handle, bool includeDefaults)
+	{
+		if (g_workDir.empty()) return;
+
+		const std::wstring finalPath = g_workDir + L"\\properties.tsv";
+		const std::wstring tempPath = finalPath + L".tmp";
+		unsigned int written = 0;
+		{
+			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
+			if (!file)
+			{
+				Log(L"could not open properties.tsv.tmp for writing");
+				return;
+			}
+
+			if (!EmitProperties(file, handle, includeDefaults, written))
+			{
+				WriteMarker(L"properties.ready", L"error");
+				return;
+			}
+		}
+
 		_wremove(finalPath.c_str());
 		if (_wrename(tempPath.c_str(), finalPath.c_str()) != 0)
 		{
@@ -2326,8 +2591,6 @@ private:
 
 		WriteMarker(L"properties.ready", std::to_wstring(written));
 		Log(L"wrote properties.tsv with " + std::to_wstring(written) + L" propert(y/ies) for handle " + std::to_wstring(handle));
-
-		FreePropertyChain(sources, sourceCount, values, valueCount);
 	}
 
 	// Applies each command from commands.tsv and writes apply.tsv -- one row per command with its
@@ -3254,6 +3517,58 @@ private:
 	// host gave them. Cleared at the start of every batch.
 	std::map<std::wstring, InstanceHandle> m_slots;
 };
+
+// Points the reader at the instance that has just been sited, releasing the one before it. A
+// reference is held for as long as it is the answering instance, so the reader cannot be left with a
+// pointer to a released provider.
+static void SetActiveTap(RoseTap* tap)
+{
+	RoseTap* previous = nullptr;
+	{
+		std::lock_guard<std::mutex> guard(g_activeMutex);
+		previous = g_active;
+		g_active = tap;
+		if (g_active) g_active->AddRef();
+	}
+
+	if (previous) previous->Release();
+}
+
+// The reader thread. One per process, started by the first injection that has a pipe to read, and it
+// outlives every provider instance -- which is why it looks the instance up per request instead of
+// closing over one.
+static void PipeReaderLoop()
+{
+	std::string payload;
+	while (!g_pipeStop.load() && ReadFrame(payload))
+	{
+		RoseTap* serving = nullptr;
+		{
+			std::lock_guard<std::mutex> guard(g_activeMutex);
+			serving = g_active;
+			if (serving) serving->AddRef();
+		}
+
+		std::string reply;
+		if (serving)
+		{
+			reply = serving->Serve(FromUtf8(payload));
+			serving->Release();
+		}
+
+		if (!WriteFrame(reply)) break;
+	}
+
+	Log(L"pipe: reader stopped");
+}
+
+static void StartPipeReader()
+{
+	if (g_pipe == INVALID_HANDLE_VALUE || g_pipeThread.joinable()) return;
+
+	g_pipeThread = std::thread(PipeReaderLoop);
+	Log(L"pipe: reader started");
+}
 
 class RoseTapFactory final : public IClassFactory
 {

@@ -478,6 +478,26 @@ reclaim memory or pick up a rebuilt generator.
   `XamlStackModules` was read off a running process rather than reasoned about, and why the rule
   lives in `Contracts` where a test can reach it: the host is `net10.0-windows` and neither test
   project takes a compile reference on it.
+- **UWP on modern .NET needed nothing, and running one is what established that.** A `UseUwp` app on
+  `net10.0-windows` is `Windows.UI.Xaml` in an AppContainer behind an AUMID, so the UWP tap serves it
+  unmodified -- same endpoint, same initialiser out of the framework itself, same `CoreDispatcher`
+  seam, same grants -- and the workspace half stubs its markup and compiles it clean. `XamlStackModules`
+  had *claimed* that since #74 while its own rule says every name in it was read off a running process,
+  and no such process had ever been read. Doing it turned up two things reasoning had not. The process
+  loads `Microsoft.Windows.UI.Xaml.dll` -- the CsWinRT projection, a managed assembly -- beside the
+  framework's own `Windows.UI.Xaml.dll`: a third name in a family of three, the only one that is not a
+  XAML framework, and the one that reads like the WinUI signal. It is passed over only because matching
+  is by whole name, so do not relax that to a prefix or a substring. And the XAML markup compiler runs
+  only under full MSBuild; under `dotnet build` it does not run and does not complain, so the build
+  fails with `CS0103` on `InitializeComponent`, which reads like broken source rather than a missing
+  toolchain and would be diagnosed as a bug in the app.
+  <br>
+  What it does change is architecture, and that is where an old shortcut became a wrong answer. Classic
+  UWP is debuggable only as `Debug|x64` -- every other configuration forces .NET Native -- so pinning
+  UWP launches to x64 cost nothing and said something true. A modern UWP app is CoreCLR in x86, x64 and
+  ARM64 alike, and the standard template leads with x86, so `DetectArchitecture`'s
+  `LaunchUwp => X64` now answers confidently and wrongly for a target it has already activated, and no
+  `win-x86` host is built for it to have been right about (#117).
 - **The tree walk is advised from a thread that is not the UI thread, and only on WinUI 3 does that
   matter.** WinUI dispatches tap creation onto the UI thread, and its `AdviseVisualTreeChange`
   enqueues the walk *back* onto that thread and then blocks the caller until it finishes

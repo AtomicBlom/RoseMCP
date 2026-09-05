@@ -48,6 +48,78 @@ internal static class TestToolchain
 		}
 	}
 
+	/// <summary>
+	/// The native XAML providers built so far this run, by project and platform, so each is built once
+	/// however many fixtures ask for it.
+	/// </summary>
+	private static readonly Dictionary<string, bool> XamlProviders = [];
+
+	private static readonly Lock XamlProviderGate = new();
+
+	/// <summary>
+	/// Builds one native XAML provider with its <c>build.ps1</c>, once a run. False where the machine
+	/// simply cannot -- build.ps1's exit 3, meaning no MSVC toolset or no Windows SDK -- so the calling
+	/// test skips rather than going red on an environment limit.
+	/// <para>
+	/// Only exit 3 is skippable, and that distinction is load-bearing. This once returned false for any
+	/// non-zero exit and the caller skipped saying "no C++ toolset", so a compile error in the provider
+	/// silently skipped the XAML tests and left the suite green. A capability quietly not being tested
+	/// is worse than a red build and looks identical to a machine that cannot build it. build.ps1
+	/// already separates the two: it exits 3 from its own Fail for a missing toolset or SDK, and
+	/// anything else is a real failure.
+	/// </para>
+	/// <para>
+	/// Here rather than on a fixture, and that is the whole point of it. A provider belongs to the
+	/// repository, not to whichever fixture happened to want it first: <see cref="UwpProbeApp"/> and
+	/// <see cref="UwpModernProbeApp"/> inject the <em>same</em> UWP tap, because it is the same XAML
+	/// framework, so with a probe each they ran two <c>cl.exe</c> processes over one output directory
+	/// and the build died on <c>C1041: cannot open program database ... vc140.pdb</c>. Two locks over
+	/// one shared thing is not two locks, it is none -- the rule this repository keeps applying one
+	/// layer too high. The app gates are correctly separate, since those are separate processes; the
+	/// build they share is what needed a gate of its own.
+	/// </para>
+	/// <para>
+	/// The lock is held across the build rather than only around the memo, because serialising the
+	/// answer while racing the work is exactly the bug. A second caller waits out the twenty-odd
+	/// seconds once and then reads the result.
+	/// </para>
+	/// </summary>
+	/// <param name="projectName">The provider's project directory under <c>src</c>.</param>
+	/// <param name="platform">The MSVC platform to build for; it must match the target process.</param>
+	internal static bool EnsureXamlProviderBuilt(string projectName, string platform)
+	{
+		var key = $"{projectName}|{platform}";
+
+		lock (XamlProviderGate)
+		{
+			if (XamlProviders.TryGetValue(key, out var built)) return built;
+
+			var script = Path.Combine(RepositoryRoot(), "src", projectName, "build.ps1");
+			if (!File.Exists(script)) return XamlProviders[key] = false;
+
+			var (exitCode, output) = RunProcess(
+				"powershell",
+				$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform {platform} -Configuration Debug");
+
+			// 3 is build.ps1's Fail: no MSVC toolset, or no Windows SDK. The only skippable outcome.
+			if (exitCode == 3) return XamlProviders[key] = false;
+
+			if (exitCode != 0)
+			{
+				throw new InvalidOperationException(
+					$"Building {projectName} failed (exit {exitCode}):{Environment.NewLine}{output}");
+			}
+
+			var dll = Path.Combine(RepositoryRoot(), "src", projectName, "bin", platform, "Debug", $"{projectName}.dll");
+			if (!File.Exists(dll))
+			{
+				throw new InvalidOperationException($"The {projectName} build reported success but produced no {dll}.");
+			}
+
+			return XamlProviders[key] = true;
+		}
+	}
+
 	internal static void RunDotnet(string arguments)
 	{
 		var (exitCode, output) = RunProcess("dotnet", arguments);

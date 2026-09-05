@@ -13,7 +13,7 @@ they are needed:
 | --- | --- | --- |
 | `uwp-classic/` | Classic UWP (`uap10.0`, `Windows.UI.Xaml`) | present |
 | `winui/` | WinUI 3 (`Microsoft.UI.Xaml`), packaged **and** unpackaged | present |
-| `uwp-modern/` | UWP on modern .NET | planned |
+| `uwp-modern/` | UWP on modern .NET (`UseUwp`, `Windows.UI.Xaml`) | present |
 | `wpf/` | WPF (`net10.0-windows`) | planned |
 
 Classic UWP comes first because it is what the architecture shim and the `Windows.UI.Xaml` diagnostics
@@ -101,6 +101,55 @@ needs none, leaving a world-readable directory in TEMP for every session — so 
 on the tap is genuinely per-stack, not per-packaging. Having both shapes here is what makes that
 checkable rather than argued about.
 
+## Building the modern UWP app
+
+SDK-style, and **`dotnet build` is not enough** — which is the one thing about this project type that
+most looks like it should work. The UWP XAML markup compiler runs only under full MSBuild. Under the
+.NET SDK's it does not run and does not complain, so the build fails with `CS0103` on
+`InitializeComponent` and `CS5001` for a missing entry point, which reads like broken source rather
+than a wrong toolchain. That was measured against a known-good project, not inferred from ours.
+
+Two installs are needed and they are separate: MSBuild from Visual Studio, and the markup compiler
+from the Windows SDK, at `Windows Kits\10\bin\<version>\XamlCompiler\`. The classic probe checks for
+the `WindowsXaml` *targets* under the VS install instead, which is right for a project that imports
+them by path and says nothing about a `UseUwp` one.
+
+```
+"<VS>\MSBuild\Current\Bin\MSBuild.exe" uwp-modern\Rose.ProbeApp.UwpModern.csproj -t:Restore -p:Platform=x64 -p:RuntimeIdentifier=win-x64
+"<VS>\MSBuild\Current\Bin\MSBuild.exe" uwp-modern\Rose.ProbeApp.UwpModern.csproj -t:Build -p:Platform=x64 -p:RuntimeIdentifier=win-x64
+```
+
+Unlike classic UWP there is no staging step at all. The build writes a flat, self-contained folder
+with `AppxManifest.xml` beside a native apphost and `coreclr.dll`, and registering it works directly —
+none of the split-apphost problem that makes the classic layout so awkward:
+
+```
+Add-AppxPackage -Register bin\x64\Debug\net10.0-windows10.0.26100.0\win-x64\AppxManifest.xml
+```
+
+### What it is for, given uwp-classic exists
+
+The app model and the XAML framework are identical — `Windows.UI.Xaml`, an AppContainer, an AUMID —
+and the UWP tap serves both unmodified. What differs is underneath, and none of it is reachable from
+`uwp-classic`:
+
+| | Classic UWP | UWP on modern .NET |
+| --- | --- | --- |
+| Runtime | CoreCLR (`Debug\|x64` only) | CoreCLR, every configuration |
+| Release | .NET Native | NativeAOT |
+| Architectures | x64 debuggable; ARM64 forces .NET Native | x86, x64, ARM64 all CoreCLR |
+| Managed frames | direct | behind a CsWinRT ABI layer |
+| Registration | stage `AppX` from a build recipe | register the build folder |
+
+A modern UWP process also loads `Microsoft.Windows.UI.Xaml.dll` — the CsWinRT projection, a managed
+assembly — beside the framework's own `Windows.UI.Xaml.dll`. That is a third name in a family whose
+other two decide opposite answers, and it is not a XAML framework; `XamlStackModulesTests` covers it.
+
+`<Platforms>` deliberately omits x86, which the project builds perfectly well. The live half cannot
+debug it yet: UWP launches are pinned to x64 and no `win-x86` host is ever built (#117). Adding x86
+would give the suite a target it could build, register and launch, and then fail to attach to for a
+reason that has nothing to do with the app.
+
 ## What the apps contain
 
 Each app has named, inspectable elements for the tree and property tests, and a method the debugger
@@ -119,3 +168,12 @@ test cannot pass against the wrong app.
 The one deliberate structural difference is above the root grid, and it is the substance of #75:
 a UWP page is hosted in a `Frame` on an ambient `Window.Current`, while a WinUI 3 window is an
 object the app constructs and holds, because `Window.Current` does not exist there.
+
+The modern UWP app mirrors `uwp-classic` too, and there the markup is *generated from it* rather than
+written to match — a rename of the namespace and the three exception types, and nothing else. It is
+the same app model and the same XAML framework, so anything that differs between the two is a fact
+about the runtime rather than about the app, which is the only reason it is worth having. Keeping it
+a derivation rather than a copy is what makes that true: an assertion that passes against one and
+fails against the other cannot be blamed on the markup having drifted. Its exceptions are
+`RoseUwpModernProbeException`, `RoseUwpModernTransientRemovedException` and
+`RoseUwpModernStartupException`.

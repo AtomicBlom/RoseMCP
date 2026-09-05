@@ -13,6 +13,11 @@ using Xunit.v3;
 // them -- only within each.
 [assembly: AssemblyFixture(typeof(WinUiProbeApp))]
 
+// And a third, for the same reason again. UWP on modern .NET is the same XAML framework and the same
+// app model as the classic probe, but a different package and a different process -- so the gate it
+// needs is its own. Sharing the classic probe's would serialise two suites that never contend.
+[assembly: AssemblyFixture(typeof(UwpModernProbeApp))]
+
 // Tests are scheduled across the threads, not collections. Every class here was its own collection
 // and therefore ran its own tests one at a time, so a long class held a thread for its whole length
 // while the others went idle: 1606s of test work came out as 770s of wall clock, a 2.09x return on

@@ -35,6 +35,53 @@ public sealed class XamlStackModulesTests
 		"Microsoft.WinUI.dll",
 	];
 
+	/// <summary>
+	/// Observed on a UWP app built for net10.0-windows with <c>UseUwp</c>, launched and read on
+	/// 2026-09-05. The XAML framework is the same OS DLL classic UWP loads; what is new is the
+	/// CsWinRT projection assembly beside it, and coreclr rather than .NET Native.
+	/// </summary>
+	private static readonly string[] ModernUwp =
+	[
+		"ntdll.dll",
+		"coreclr.dll",
+		"hostpolicy.dll",
+		"Microsoft.Windows.UI.Xaml.dll",
+		"Windows.UI.Xaml.dll",
+	];
+
+	/// <summary>
+	/// UWP on modern .NET is UWP, and the interesting part is the module that nearly says otherwise.
+	/// A <c>UseUwp</c> app loads <c>Microsoft.Windows.UI.Xaml.dll</c> -- the CsWinRT projection, a
+	/// managed assembly -- beside the framework's own <c>Windows.UI.Xaml.dll</c>. It is a third name
+	/// in a family of three, it is the only one of them that is not a XAML framework, and it reads at
+	/// a glance like the WinUI signal.
+	/// </summary>
+	[Fact]
+	public void Recognises_uwp_on_modern_dotnet()
+	{
+		var (stack, evidence) = XamlStackModules.Identify(ModernUwp);
+
+		Assert.Equal(XamlStack.Uwp, stack);
+		Assert.Equal(["Windows.UI.Xaml.dll"], evidence);
+	}
+
+	/// <summary>
+	/// The projection assembly on its own decides nothing, and this is the test that stops the
+	/// matcher being loosened. Matching is by whole name: <c>Microsoft.Windows.UI.Xaml.dll</c> is not
+	/// <c>Microsoft.UI.Xaml.dll</c>, so it contributes to no verdict at all. Relax that to a
+	/// substring or a prefix on <c>Microsoft.*.Xaml</c> and a modern UWP app becomes a WinUI 3 one --
+	/// which sends the injection at the wrong endpoint with the wrong initialiser, and the WinUI tap
+	/// then waits twenty seconds for a framework that is not there.
+	/// </summary>
+	[Fact]
+	public void The_uwp_projection_assembly_is_not_the_winui_signal()
+	{
+		var (stack, evidence) = XamlStackModules.Identify(["ntdll.dll", "Microsoft.Windows.UI.Xaml.dll"]);
+
+		Assert.Equal(XamlStack.Unknown, stack);
+		Assert.Empty(evidence);
+	}
+
 	[Fact]
 	public void Recognises_classic_uwp()
 	{

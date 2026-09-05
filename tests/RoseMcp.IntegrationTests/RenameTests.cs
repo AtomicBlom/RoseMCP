@@ -110,9 +110,7 @@ public sealed class RenameTests
 		// Console in Program.cs resolves to System.Console, which lives in a reference assembly.
 		var request = new RenameRequest
 		{
-			FilePath = fixture.Path("Simple", "App", "Program.cs"),
-			Line = 3,
-			Column = 1,
+			Target = new SymbolTarget { FilePath = fixture.Path("Simple", "App", "Program.cs"), Line = 3, Column = 1 },
 			NewName = "Terminal",
 		};
 
@@ -133,9 +131,7 @@ public sealed class RenameTests
 	{
 		var request = new RenameRequest
 		{
-			FilePath = fixture.Path("Simple", "Core", "Calculator.cs"),
-			Line = 7,
-			Column = 20,
+			Target = new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 7, Column = 20 },
 			NewName = newName,
 			Apply = apply,
 			ExpectedRevision = expectedRevision,
@@ -144,5 +140,60 @@ public sealed class RenameTests
 		return session.MutateAsync(
 			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
 			TestContext.Current.CancellationToken);
+	}
+
+	/// <summary>
+	/// A rename by name. Renames arrive in batches more than any other edit, and a position found by
+	/// reading the file is wrong the moment an earlier rename in the same batch lands.
+	/// </summary>
+	[Fact]
+	public async Task Renames_a_symbol_named_rather_than_pointed_at()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var request = new RenameRequest
+		{
+			Target = new SymbolTarget { Symbol = "Core.Calculator.Multiply" },
+			NewName = "Times",
+		};
+
+		var result = await session.MutateAsync(
+			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
+			TestContext.Current.CancellationToken);
+
+		Assert.Equal("Multiply", result.OldName);
+		Assert.True(result.Applied);
+
+		var program = await File.ReadAllTextAsync(
+			fixture.Path("Simple", "App", "Program.cs"), TestContext.Current.CancellationToken);
+
+		Assert.Contains("Times", program, StringComparison.Ordinal);
+		Assert.DoesNotContain("Multiply", program, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Two overloads are two symbols, and renaming the wrong one is a change that compiles. The name
+	/// is refused with both listed rather than resolved to the first.
+	/// </summary>
+	[Fact]
+	public async Task Refuses_a_rename_of_an_ambiguous_name()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var request = new RenameRequest
+		{
+			Target = new SymbolTarget { Symbol = "Library.Greeter.Greet" },
+			NewName = "Hail",
+		};
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => session.MutateAsync(
+				(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
+				TestContext.Current.CancellationToken));
+
+		Assert.Contains("matches 2 declarations", thrown.Message, StringComparison.Ordinal);
+		Assert.Contains("Name the parameter types", thrown.Message, StringComparison.Ordinal);
 	}
 }

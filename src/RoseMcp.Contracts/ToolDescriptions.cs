@@ -17,6 +17,27 @@ namespace RoseMcp.Contracts;
 /// </summary>
 public static class ToolDescriptions
 {
+	/// <summary>
+	/// How the four tools that address one symbol describe their arguments. Shared so the naming
+	/// half cannot be explained on one tool and left off another, which is how a caller learns that
+	/// a position is the only way in.
+	/// </summary>
+	public const string SymbolArgument =
+		"The symbol by name, as Namespace.Type.Member. Add a parameter list to pick an overload, and "
+			+ "Type.Type or Type..ctor for a constructor. Preferred over a position: it needs no grep "
+			+ "first and does not go stale when an earlier edit moves the line.";
+
+	public const string FilePathArgument =
+		"Absolute or solution-relative path to the file. Give it with line and column to point at a "
+			+ "symbol, or on its own to say which file a name is declared in.";
+
+	public const string LineArgument =
+		"One-based line number. Only needed when pointing at a position rather than naming a symbol -- "
+			+ "which is the way to reach a local variable or a parameter, since neither is declared "
+			+ "under a name this can find.";
+
+	public const string ColumnArgument = "One-based column, pointing at the identifier itself.";
+
 	public const string WorkspaceOpen = """
         Starts loading a solution into a warm Roslyn host and returns at once, without waiting for the
         load. Call it when you are about to ask questions about a large one and have something else to
@@ -83,19 +104,24 @@ public static class ToolDescriptions
         """;
 
 	public const string FindReferences = """
-        Every reference to the symbol at a file position, resolved semantically across the whole
-        solution. Unlike a text search this follows overrides, interface implementations and aliases,
-        and will not match comments, strings, or unrelated identifiers that happen to share a name.
-        For the opposite direction -- what implements or overrides this -- use
-        rose_find_implementations.
+        Every reference to a symbol, resolved semantically across the whole solution. Unlike a
+        text search this follows overrides, interface implementations and aliases, and will not
+        match comments, strings, or unrelated identifiers that happen to share a name. Name the
+        symbol as Namespace.Type.Member -- no grep for a line and column first, and no stale
+        position after an edit. A position still reaches a local or a parameter, which is not
+        declared under a name; count the column carefully, because one that lands on a neighbouring
+        identifier answers completely and correctly about a different symbol. For the opposite
+        direction -- what implements or overrides this -- use rose_find_implementations.
         """;
 
 	public const string FindImplementations = """
-        What implements, overrides, or derives from the symbol at a file position -- derived types for
-        a class, implementing types for an interface, overriding members for a virtual or abstract
-        one. Grep cannot answer this at all: an implementation need not mention the interface's name
-        anywhere near the member. The answer says which of those questions was actually answered,
-        since that depends on what the symbol turns out to be.
+        What implements, overrides, or derives from a symbol -- derived types for a class,
+        implementing types for an interface, overriding members for a virtual or abstract one.
+        Grep cannot answer this at all: an implementation need not mention the interface's name
+        anywhere near the member. Name the symbol as Namespace.Type.Member; a position works too,
+        but finding one for a type means a rose_search_symbols call first, which is two calls where
+        a name is one. The answer says which of those questions was actually answered, since that
+        depends on what the symbol turns out to be.
         """;
 
 	public const string SearchSymbols = """
@@ -119,13 +145,15 @@ public static class ToolDescriptions
         """;
 
 	public const string RenameSymbol = """
-        Renames the symbol at a file position everywhere it is used, using Roslyn's renamer, so
-        overrides, interface implementations, partial declarations and cref references all move
-        together -- none of which find-and-replace gets right. Conflicts, where the new name would
-        bind to something else or shadow an existing member, are reported rather than silently
-        applied. Also reports XAML that still names the old identifier and does not change it, since
-        markup is text to the compiler and a broken binding builds and runs. Returns a unified diff
-        of every file changed; pass apply=false to preview.
+        Renames a symbol everywhere it is used, using Roslyn's renamer, so overrides, interface
+        implementations, partial declarations and cref references all move together -- none of which
+        find-and-replace gets right. Name the symbol as Namespace.Type.Member: renames arrive in
+        batches more than any other edit, and a line and column found by reading the file is wrong
+        the moment an earlier rename in the same batch lands. A position still reaches a local or a
+        parameter. Conflicts, where the new name would bind to something else or shadow an existing
+        member, are reported rather than silently applied. Also reports XAML that still names the old
+        identifier and does not change it, since markup is text to the compiler and a broken binding
+        builds and runs. Returns a unified diff of every file changed; pass apply=false to preview.
         """;
 
 	public const string MoveTypeToFile = """

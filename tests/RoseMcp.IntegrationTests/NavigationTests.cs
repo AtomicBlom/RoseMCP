@@ -11,7 +11,7 @@ public sealed class NavigationTests
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolInfoRequest { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 7, Column = 20 },
+			new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 7, Column = 20 },
 			TestContext.Current.CancellationToken);
 
 		Assert.Equal("Multiply", info.Name);
@@ -32,7 +32,7 @@ public sealed class NavigationTests
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolInfoRequest { FilePath = fixture.Path("Simple", "App", "Program.cs"), Line = 4, Column = 30 },
+			new SymbolTarget { FilePath = fixture.Path("Simple", "App", "Program.cs"), Line = 4, Column = 30 },
 			TestContext.Current.CancellationToken);
 
 		Assert.Equal("Multiply", info.Name);
@@ -49,8 +49,15 @@ public sealed class NavigationTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
 
+		var target = new SymbolTarget
+		{
+			FilePath = fixture.Path("Simple", "Core", "Calculator.cs"),
+			Line = 7,
+			Column = 20,
+		};
+
 		var references = await NavigationService.FindReferencesAsync(
-			snapshot, fixture.Path("Simple", "Core", "Calculator.cs"), 7, 20, 200, TestContext.Current.CancellationToken);
+			snapshot, target, 200, TestContext.Current.CancellationToken);
 
 		var reference = Assert.Single(references.References);
 
@@ -69,7 +76,7 @@ public sealed class NavigationTests
 		var error = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
 			() => NavigationService.DescribeAsync(
 				snapshot,
-				new SymbolInfoRequest { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 9999, Column = 1 },
+				new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 9999, Column = 1 },
 				TestContext.Current.CancellationToken));
 
 		// Guessing at a line number should not produce an opaque index error.
@@ -102,7 +109,7 @@ public sealed class NavigationTests
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolInfoRequest { Symbol = "Core.Calculator.Multiply" },
+			new SymbolTarget { Symbol = "Core.Calculator.Multiply" },
 			TestContext.Current.CancellationToken);
 
 		Assert.Equal("Multiply", info.Name);
@@ -124,7 +131,7 @@ public sealed class NavigationTests
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolInfoRequest { Symbol = "Library.Greeter.Greet(string)" },
+			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
 			TestContext.Current.CancellationToken);
 
 		var span = Assert.Single(info.DeclarationSpans);
@@ -148,7 +155,7 @@ public sealed class NavigationTests
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolInfoRequest { Symbol = "Library.Split" },
+			new SymbolTarget { Symbol = "Library.Split" },
 			TestContext.Current.CancellationToken);
 
 		Assert.Equal(2, info.DeclarationSpans.Count);
@@ -169,8 +176,50 @@ public sealed class NavigationTests
 
 		var error = await Assert.ThrowsAsync<ArgumentException>(
 			() => NavigationService.DescribeAsync(
-				snapshot, new SymbolInfoRequest(), TestContext.Current.CancellationToken));
+				snapshot, new SymbolTarget(), TestContext.Current.CancellationToken));
 
 		Assert.Contains("Name the symbol", error.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The same references, reached by name. A position has to be found by reading the file first,
+	/// and a mis-counted column lands on a different identifier and answers completely, correctly and
+	/// about the wrong symbol -- which is silent in a way a write's refusal is not.
+	/// </summary>
+	[Fact]
+	public async Task Finds_references_by_name()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var references = await NavigationService.FindReferencesAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Core.Calculator.Multiply" },
+			200,
+			TestContext.Current.CancellationToken);
+
+		var reference = Assert.Single(references.References);
+
+		Assert.Equal(fixture.Path("Simple", "App", "Program.cs"), reference.FilePath, ignoreCase: true);
+		Assert.Equal(4, reference.Line);
+	}
+
+	/// <summary>
+	/// A name that matches nothing says so, and says what to do about a local or a parameter, which is
+	/// the one thing a name cannot reach.
+	/// </summary>
+	[Fact]
+	public async Task Refuses_a_reference_search_that_names_nothing()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => NavigationService.FindReferencesAsync(
+				snapshot, new SymbolTarget(), 200, TestContext.Current.CancellationToken));
+
+		Assert.Contains("local variable or a parameter", thrown.Message, StringComparison.Ordinal);
 	}
 }

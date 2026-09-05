@@ -28,8 +28,7 @@ public static class RenameService
 
 		progress?.Report("Resolving the symbol", 0);
 
-		var (symbol, _) = await SymbolLocator.ResolveAsync(
-			snapshot.Solution, request.FilePath, request.Line, request.Column, cancellationToken);
+		var symbol = await request.Target.ResolveAsync(snapshot, cancellationToken);
 
 		if (!symbol.Locations.Any(location => location.IsInSource))
 		{

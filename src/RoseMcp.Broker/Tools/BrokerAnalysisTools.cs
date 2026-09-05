@@ -52,10 +52,10 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.SymbolInfo)]
 	public Task<SymbolInfoResult> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The symbol by name, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string? symbol = null,
-		[Description("Path to the file. With line and column, or to narrow a name.")] string? filePath = null,
-		[Description("One-based line number. Only needed when pointing at a position rather than naming a symbol.")] int? line = null,
-		[Description("One-based column, pointing at the identifier itself.")] int? column = null,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(workspace, filePath), ToolNames.SymbolInfo, new()
@@ -76,14 +76,16 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.FindReferences)]
 	public Task<ReferencesResult> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Maximum references to return. Defaults to 200.")] int maxResults = 200,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<ReferencesResult>(WorkspaceHints.From(workspace, filePath), ToolNames.FindReferences, new()
 		{
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -183,10 +185,11 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.RenameSymbol)]
 	public Task<RenameResult> RenameSymbolAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
 		[Description("The new name.")] string newName,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Also rename overloads of the same method.")] bool renameOverloads = false,
 		[Description("Also rename occurrences inside comments.")] bool renameInComments = false,
@@ -196,6 +199,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<RenameResult>(WorkspaceHints.From(workspace, filePath), ToolNames.RenameSymbol, new()
 		{
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -217,14 +221,16 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.FindImplementations)]
 	public Task<ImplementationsResult> FindImplementationsAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Maximum matches to return. Defaults to 200.")] int maxResults = 200,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<ImplementationsResult>(WorkspaceHints.From(workspace, filePath), ToolNames.FindImplementations, new()
 		{
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,

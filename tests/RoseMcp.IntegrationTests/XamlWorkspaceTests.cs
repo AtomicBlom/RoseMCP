@@ -195,9 +195,7 @@ public sealed class XamlWorkspaceTests
 
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot,
-			fixture.Path("XamlStub", "Ui", "Greeter.cs"),
-			16,
-			24,
+			new SymbolTarget { FilePath = fixture.Path("XamlStub", "Ui", "Greeter.cs"), Line = 16, Column = 24 },
 			200,
 			TestContext.Current.CancellationToken);
 
@@ -215,9 +213,7 @@ public sealed class XamlWorkspaceTests
 
 		var implementations = await NavigationService.FindImplementationsAsync(
 			snapshot,
-			fixture.Path("XamlStub", "Ui", "Greeter.cs"),
-			11,
-			9,
+			new SymbolTarget { FilePath = fixture.Path("XamlStub", "Ui", "Greeter.cs"), Line = 11, Column = 9 },
 			200,
 			TestContext.Current.CancellationToken);
 

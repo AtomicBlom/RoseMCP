@@ -76,9 +76,7 @@ public sealed class XamlReferenceTests
 
 		var request = new RenameRequest
 		{
-			FilePath = path,
-			Line = before.Count(character => character == '\n') + 1,
-			Column = index - before.LastIndexOf('\n'),
+			Target = new SymbolTarget { FilePath = path, Line = before.Count(character => character == '\n') + 1, Column = index - before.LastIndexOf('\n') },
 			NewName = "Gadget",
 			Apply = false,
 		};

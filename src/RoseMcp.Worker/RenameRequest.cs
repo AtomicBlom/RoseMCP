@@ -3,11 +3,12 @@ namespace RoseMcp.Worker;
 /// <summary>Options a caller can vary on a rename.</summary>
 public sealed record RenameRequest
 {
-	public required string FilePath { get; init; }
-
-	public required int Line { get; init; }
-
-	public required int Column { get; init; }
+	/// <summary>
+	/// Which symbol to rename, by name or by position. Renames arrive in batches more than any other
+	/// edit, and a position found by reading the file is wrong the moment an earlier one lands -- so
+	/// the name is the spelling that survives a batch.
+	/// </summary>
+	public required SymbolTarget Target { get; init; }
 
 	public required string NewName { get; init; }
 

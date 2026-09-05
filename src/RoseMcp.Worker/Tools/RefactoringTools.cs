@@ -66,10 +66,11 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.RenameSymbol)]
 	public async Task<RenameResult> RenameSymbolAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
 		[Description("The new name.")] string newName,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Also rename overloads of the same method.")] bool renameOverloads = false,
 		[Description("Also rename occurrences inside comments.")] bool renameInComments = false,
@@ -87,9 +88,7 @@ public sealed class RefactoringTools(
 
 		var request = new RenameRequest
 		{
-			FilePath = filePath,
-			Line = line,
-			Column = column,
+			Target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column },
 			NewName = newName,
 			Apply = apply,
 			RenameOverloads = renameOverloads,

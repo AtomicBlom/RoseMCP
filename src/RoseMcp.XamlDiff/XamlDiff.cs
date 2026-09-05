@@ -143,7 +143,14 @@ public static class XamlDiff
 			index++;
 		}
 
-		for (var i = 0; i < oldChildren.Count; i++)
+		// Backwards, and that is the whole of why this loop counts down. An unnamed element is addressed
+		// by its position among its siblings, and the apply resolves that position against the *live*
+		// collection at the moment the edit runs -- so removing a sibling renumbers every sibling after
+		// it. Emitted forwards, deleting two adjacent children removed the first and then failed on the
+		// second with "no Border[1] here, among 1 element(s) of type Border": correct arithmetic about a
+		// tree that had already moved. Removing the last one first leaves every index a later edit still
+		// names untouched, because nothing after it remains to shift.
+		for (var i = oldChildren.Count - 1; i >= 0; i--)
 		{
 			if (usedOld[i]) continue;
 

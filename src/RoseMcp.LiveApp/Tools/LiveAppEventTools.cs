@@ -18,14 +18,17 @@ public sealed class LiveAppEventTools(LiveAppSessionHost host)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description("Buffered debug events with a sequence above the given cursor, and the session's state.")]
-	public LiveDebugEventPage Events(
+	public Task<LiveDebugEventPage> Events(
 		[Description("Return only events whose sequence is greater than this; 0 for everything buffered.")]
 		long after = 0,
 		[Description("Comma-separated event kinds to return; empty for all.")]
 		string? kinds = null,
 		[Description("Maximum events to return in this page.")]
-		int limit = 500)
-		=> host.ReadEvents(after, ParseKinds(kinds), limit);
+		int limit = 500,
+		[Description("Seconds to wait for a matching event before answering; 0 answers at once.")]
+		int waitSeconds = 0,
+		CancellationToken cancellationToken = default)
+		=> host.ReadEventsAsync(after, ParseKinds(kinds), limit, waitSeconds, cancellationToken);
 
 	/// <summary>
 	/// Parses the kind filter, ignoring anything it does not recognise rather than failing the read.

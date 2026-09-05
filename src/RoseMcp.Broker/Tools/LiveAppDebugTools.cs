@@ -160,10 +160,17 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		string? kinds = null,
 		[Description("Maximum events in this page (default 500). Lower it when you only need to see whether something is happening.")]
 		int limit = 500,
+		[Description(
+			"Seconds to wait for a matching event before answering, instead of returning what is there "
+				+ "now. 0 answers at once. Use it with 'kinds' to wait for one thing -- BreakpointHit is "
+				+ "'wait until the target stops' -- rather than calling this in a loop. Capped at 60 so "
+				+ "the call cannot outlive your own timeout; a wait that ends empty has lost nothing, "
+				+ "since events are buffered and the same cursor picks up whatever arrives next.")]
+		int waitSeconds = 0,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReadEventsAsync(after, kinds, limit, cancellationToken);
+		return await session.ReadEventsAsync(after, kinds, limit, waitSeconds, cancellationToken);
 	}
 
 	[McpServerTool(

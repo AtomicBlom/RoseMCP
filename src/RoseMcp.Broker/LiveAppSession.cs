@@ -171,13 +171,31 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	/// <summary>Reads the host's buffered debug events after the given cursor.</summary>
 	public Task<LiveDebugEventPage> ReadEventsAsync(long after, CancellationToken cancellationToken)
-		=> ReadEventsAsync(after, null, 500, cancellationToken);
+		=> ReadEventsAsync(after, null, 500, 0, cancellationToken);
 
 	/// <summary>Reads a page, narrowed to certain event kinds and capped in size.</summary>
 	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string? kinds, int limit, CancellationToken cancellationToken)
+		=> ReadEventsAsync(after, kinds, limit, 0, cancellationToken);
+
+	/// <summary>
+	/// Reads a page, first waiting up to <paramref name="waitSeconds"/> for one event to be in it.
+	/// <para>
+	/// The wait happens in the host, which is the only place that knows when an event arrives, so this
+	/// is an ordinary call that takes a while -- and it rides <c>SendAsync</c>, which cancels the far
+	/// side before abandoning the wait. That ordering matters more here than anywhere else: a wait of
+	/// half a minute abandoned locally would leave the host holding a reader for the rest of it.
+	/// </para>
+	/// </summary>
+	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string? kinds, int limit, int waitSeconds, CancellationToken cancellationToken)
 		=> SendAsync<LiveDebugEventPage>(
 			ToolNames.LiveAppEvents,
-			new Dictionary<string, object?> { ["after"] = after, ["kinds"] = kinds, ["limit"] = limit },
+			new Dictionary<string, object?>
+			{
+				["after"] = after,
+				["kinds"] = kinds,
+				["limit"] = limit,
+				["waitSeconds"] = waitSeconds,
+			},
 			cancellationToken);
 
 	public Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, string? condition, CancellationToken cancellationToken)

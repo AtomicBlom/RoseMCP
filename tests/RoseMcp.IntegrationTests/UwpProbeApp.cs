@@ -206,8 +206,21 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	public async Task<AppTurn> TakeAppAsync(bool needsXamlProvider, CancellationToken cancellationToken)
 	{
 		var aumid = await EnterAsync(writer: true, needsXamlProvider, cancellationToken);
-		await CloseSharedAsync();
-		await StopAppAndWaitAsync();
+
+		// Everything between taking the gate and handing back a turn has to give the gate back if it
+		// throws. Only the turn's disposal releases it otherwise, and a turn that was never returned is
+		// never disposed -- so one launch that will not come up Ready stops being one failed test and
+		// becomes a suite with no output, which is the shape that is hardest to read.
+		try
+		{
+			await CloseSharedAsync();
+			await StopAppAndWaitAsync();
+		}
+		catch
+		{
+			_phases.ReleaseWriter();
+			throw;
+		}
 
 		return new AppTurn(this, aumid);
 	}
@@ -220,7 +233,15 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	{
 		await EnterAsync(writer: true, needsXamlProvider: true, cancellationToken);
 
-		return new SessionTurn(this, await SharedSessionAsync(cancellationToken));
+		try
+		{
+			return new SessionTurn(this, await SharedSessionAsync(cancellationToken));
+		}
+		catch
+		{
+			_phases.ReleaseWriter();
+			throw;
+		}
 	}
 
 	/// <summary>
@@ -259,7 +280,24 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			slot = _freeSlots.Pop();
 		}
 
-		return new SlotTurn(this, await SharedSessionAsync(cancellationToken), slot, exclusive);
+		try
+		{
+			return new SlotTurn(this, await SharedSessionAsync(cancellationToken), slot, exclusive);
+		}
+		catch
+		{
+			// The slot goes back as well as the gate. A slot leaked here is not fatal on its own -- there
+			// are sixteen -- but it is silent, and it turns "the app would not start" into "every one of
+			// the 16 scratch slots is in use" several tests later, which names the wrong problem.
+			lock (_gate)
+			{
+				_freeSlots.Push(slot);
+			}
+
+			if (exclusive) _phases.ReleaseWriter();
+			else _phases.ReleaseReader();
+			throw;
+		}
 	}
 
 	/// <summary>Common entry: make sure everything is built, then take the phase gate.</summary>

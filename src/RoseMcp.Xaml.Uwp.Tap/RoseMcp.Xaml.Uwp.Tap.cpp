@@ -1877,7 +1877,24 @@ public:
 		{
 			// Checked before the arming verb below, and named without a space after "select" so the
 			// two cannot be confused: arming parses its tokens as flags, and a handle is not one.
-			Overlay().SelectByHandle(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
+			const bool selected = Overlay().SelectByHandle(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
+
+			// Answered either way, on a marker of its own. selection.ready is only written when there
+			// is a selection to record, so a handle resolving to nothing left the host waiting out its
+			// whole timeout for a refusal it could have had at once (#89).
+			WriteMarker(L"selecthandle.ready", selected ? L"selected" : L"none");
+		}
+		else if (request == L"idle")
+		{
+			// The toolbar's Idle button, reachable from the agent. Arming and disarming are one switch
+			// with two positions, and only one of them had a verb: an agent could arm select mode and
+			// then had no way out of it, because the overlay's capture layer is only torn down here and
+			// picking an element by handle does not go through the click path that ends it. That left
+			// a modal, pointer-capturing overlay over the app with nothing but a human click to lift
+			// it. Clearing the pick is a separate act and stays separate -- armed and picked are two
+			// pieces of state, and collapsing them would take away "clear this and let me pick again".
+			Overlay().EndSelect();
+			WriteMarker(L"idle.ready", L"idle");
 		}
 		else if (request == L"deselect")
 		{

@@ -555,10 +555,16 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 				+ "back to the framework's own pick when nothing under the click came from the app. Turn it "
 				+ "off to select template internals.")]
 		bool justMyXaml = true,
+		[Description(
+			"False disarms select mode instead of arming it, the same as the toolbar's Idle button. "
+				+ "Arming lays a pointer-capturing layer over the app and waits for a click, and picking "
+				+ "by handle does not take it away -- so disarm when you have finished, or the person "
+				+ "using the app is left in a mode they did not ask for.")]
+		bool arm = true,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.EnterXamlSelectModeAsync(includeAllElements, justMyXaml, cancellationToken);
+		return await session.EnterXamlSelectModeAsync(includeAllElements, justMyXaml, arm, cancellationToken);
 	}
 
 	[McpServerTool(

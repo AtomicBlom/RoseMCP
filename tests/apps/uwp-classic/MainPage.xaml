@@ -49,6 +49,50 @@
             <Border x:Name="Themed" Background="{ThemeResource ProbeAccent}" Padding="4">
                 <TextBlock Text="themed" Foreground="#FF8FA6BF" FontSize="12" />
             </Border>
+            <!-- Scratch space: one empty, named slot per test that needs elements of its own.
+                 Everything above is shared furniture that several tests read and one or two edit, so
+                 a test wanting to add, remove or retype something has to either take the whole app
+                 for itself or tread on its neighbours. A slot is the third option: the test builds
+                 what it needs inside its own slot, works on it, and empties it again.
+
+                 Named slots rather than one shared container, and that is the whole point of them.
+                 An element the markup never named is addressed by position under its nearest named
+                 ancestor, so two tests adding children to one parent would renumber each other's
+                 addresses: #Scratch/Border[1] would mean a different element depending on who else
+                 is mid-test. Anchored at its own slot, #Slot3/Border[0] means the same element
+                 however busy the rest of the app is.
+
+                 (No double dashes anywhere in here. XAML runs these through an XML parser, which
+                 rejects them, and the failure arrives as a markup compiler error rather than
+                 anything that mentions comments.) -->
+            <!-- Owned by A_second_properties_read_reports_what_reading_the_first_created, and read by
+                 nothing else. That test asserts what the *first* properties read of an element
+                 returns, so it needs one nothing has read: reading a TextBlock brings its collection
+                 properties into existence, and after that the first read has already happened.
+
+                 It cannot use a slot for this. An element built at runtime through CreateInstance and
+                 AddChild already has Inlines materialised by the time it is in the tree, so a built
+                 TextBlock is not pristine either. Only markup declares an element nothing has
+                 touched, so the pristine one has to be declared, and to be nobody else's. -->
+            <TextBlock x:Name="PristineText" Text="pristine" Foreground="#FF8FA6BF" FontSize="14" />
+            <VariableSizedWrapGrid x:Name="Scratch" Orientation="Horizontal" MaximumRowsOrColumns="4">
+                <Grid x:Name="Slot0" />
+                <Grid x:Name="Slot1" />
+                <Grid x:Name="Slot2" />
+                <Grid x:Name="Slot3" />
+                <Grid x:Name="Slot4" />
+                <Grid x:Name="Slot5" />
+                <Grid x:Name="Slot6" />
+                <Grid x:Name="Slot7" />
+                <Grid x:Name="Slot8" />
+                <Grid x:Name="Slot9" />
+                <Grid x:Name="Slot10" />
+                <Grid x:Name="Slot11" />
+                <Grid x:Name="Slot12" />
+                <Grid x:Name="Slot13" />
+                <Grid x:Name="Slot14" />
+                <Grid x:Name="Slot15" />
+            </VariableSizedWrapGrid>
         </StackPanel>
     </Grid>
 </Page>

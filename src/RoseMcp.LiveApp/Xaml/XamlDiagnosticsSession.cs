@@ -156,6 +156,42 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		lock (_requests) return EnterSelectModeCore(pid, includeAllElements, justMyXaml);
 	}
 
+	/// <summary>
+	/// Disarms select mode, the same act as the toolbar's Idle button.
+	/// <para>
+	/// The other half of a switch that only had one position reachable from here. Arming puts a
+	/// pointer-capturing layer over the app and waits for a click; nothing but that click, or a person
+	/// pressing Idle, took it away again -- selecting by handle does not, because it never goes through
+	/// the click path that ends the mode. An agent that armed and then changed its mind had left the
+	/// app modal with no way back.
+	/// </para>
+	/// <para>
+	/// Clearing the pick stays a separate act. Armed and picked are two pieces of state, and folding
+	/// them together would remove "clear this one and let me pick another", which is the ordinary way
+	/// a person uses the toolbar.
+	/// </para>
+	/// </summary>
+	public LiveXamlSelection ExitSelectMode(int pid)
+	{
+		lock (_requests) return ExitSelectModeCore(pid);
+	}
+
+	private LiveXamlSelection ExitSelectModeCore(int pid)
+	{
+		var (workDir, error) = Inject(pid, "idle");
+		if (error is not null) return new LiveXamlSelection { Detail = error };
+
+		if (!WaitForMarker(Path.Combine(workDir!, "idle.ready"), SnapshotTimeout))
+		{
+			return new LiveXamlSelection { Detail = "The provider was injected but did not report select mode disarmed." };
+		}
+
+		// Answered from the provider's own state rather than from the fact that it acknowledged, for
+		// the same reason arming is: a later rose_xaml_selection reads that state file, and a reply
+		// that merely echoed the request could contradict it with nothing to say which was right.
+		var after = ReadSelectionCore();
+		return after with { Detail = after.Armed ? "Select mode is still armed." : "Select mode is off." };
+	}
 	private LiveXamlSelection EnterSelectModeCore(int pid, bool includeAllElements, bool justMyXaml)
 	{
 		// Tokens rather than flags in the name: the provider parses them, and a request that does not
@@ -278,15 +314,28 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var (workDir, error) = Inject(pid, $"selecthandle {handle}");
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
-		// The provider writes the selection files and nothing else, so waiting on selection.ready is
-		// the confirmation -- and it is the same file a click produces, which is what keeps one read
-		// path for both routes.
-		if (!WaitForMarker(Path.Combine(workDir!, "selection.ready"), SnapshotTimeout))
+		// A marker of its own, and the difference is fifteen seconds (#89). This used to wait on
+		// selection.ready, reasoning that the provider writes the selection files and nothing else --
+		// true, and that is the problem: it writes them only when it has a selection to record. A
+		// handle naming something that is not an element, or something since gone from the tree,
+		// produced no file at all, so the refusal arrived as a snapshot timeout. One file cannot both
+		// answer a request and survive one, which is the same lesson selection.ready taught from the
+		// other side. A "no" now costs what a "yes" costs.
+		var readyFile = Path.Combine(workDir!, "selecthandle.ready");
+		if (!WaitForMarker(readyFile, SnapshotTimeout))
 		{
 			return new LiveXamlSelection
 			{
-				Detail = $"The provider was injected but did not select handle {handle}. It may name something that "
-					+ "is not an element, or something no longer in the tree; rose_xaml_tree lists what is.",
+				Detail = $"The provider was injected but did not answer about handle {handle}.",
+			};
+		}
+
+		if (Verdict(readyFile) != "selected")
+		{
+			return new LiveXamlSelection
+			{
+				Detail = $"Handle {handle} was not selected. It may name something that is not an element, or "
+					+ "something no longer in the tree; rose_xaml_tree lists what is.",
 			};
 		}
 
@@ -907,7 +956,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return (null, $"Could not stage the XAML provider: {exception.Message}");
 		}
 
-		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv" })
+		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv", "idle.ready" })
 		{
 			TryDelete(Path.Combine(workDir, stale));
 		}
@@ -926,7 +975,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			foreach (var stale in new[]
 			{
-				"select.ready", "selection.tsv", "selection.ready", "deselect.ready", "selection.gone",
+				"select.ready", "selection.tsv", "selection.ready", "selecthandle.ready", "deselect.ready", "selection.gone",
 			})
 			{
 				TryDelete(Path.Combine(workDir, stale));

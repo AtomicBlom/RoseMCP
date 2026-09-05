@@ -11,23 +11,27 @@ using RoseMcp.XamlDiff;
 namespace RoseMcp.LiveApp.Xaml;
 
 /// <summary>
-/// Injects the RoseMcp.Xaml.Uwp.Tap diagnostics provider into the target and reads back what it reports (#2/#3).
-/// <c>InitializeXamlDiagnosticsEx</c> (exported from Windows.UI.Xaml.dll) loads the provider into the
-/// app by pid; the two ends exchange tab-separated files through a working folder this side stages and
-/// grants the app's AppContainer rights to, since the provider runs sandboxed and cannot read Program
-/// Files or write arbitrary paths. The provider must match the target's architecture, which is this
-/// host's architecture -- an x64 provider for a classic UWP app emulated on ARM64.
+/// Injects a XAML diagnostics provider into the target and reads back what it reports (#2/#3).
+/// <c>InitializeXamlDiagnosticsEx</c> loads the provider into the app by pid; the two ends exchange
+/// tab-separated files through a working folder this side stages. The provider must match the
+/// target's architecture, which is this host's architecture -- an x64 provider for a classic UWP app
+/// emulated on ARM64.
+/// <para>
+/// Which provider, which library exports the initialiser, which class id, and whether that folder
+/// needs AppContainer grants are all asked of the target rather than assumed (#74). They were four
+/// separate hard-codings of UWP, and their cost was not that WinUI 3 failed -- it is that it failed
+/// after a twenty-second wait, blaming the app for not being packaged. <see cref="XamlStackProbe"/>
+/// reads the framework DLLs the process has loaded and <see cref="XamlTaps"/> maps the answer to a
+/// tap, so a stack with no provider is refused immediately and by name.
+/// </para>
 /// </summary>
 internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 {
-	// Must match CLSID_RoseTap in RoseMcp.Xaml.Uwp.Tap.cpp.
-	private static readonly Guid ProviderClsid = new("7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6");
-
 	// The well-known diagnostics endpoint; anything else makes InitializeXamlDiagnosticsEx return
-	// ERROR_NOT_FOUND (0x80070490).
+	// ERROR_NOT_FOUND (0x80070490). Shared by every stack, unlike everything else that used to sit
+	// beside it here -- the class id, the provider file name and the initialising library are all
+	// per-stack and live on the tap now (#74).
 	private const string EndpointName = "VisualDiagConnection1";
-
-	private const string ProviderFileName = "RoseMcp.Xaml.Uwp.Tap.dll";
 
 	// HRESULT_FROM_WIN32(ERROR_NOT_FOUND): the well-known diagnostics endpoint is not there yet.
 	private const int ErrorNotFound = unchecked((int)0x80070490);
@@ -39,6 +43,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private string? _workDir;
 	private string? _stagedProvider;
+
+	// Which XAML framework the target turned out to be, and the tap serving it. Resolved once and
+	// kept: a session has exactly one target process, so the stack cannot change underneath it, and
+	// re-reading the module list on every request would pay for an answer that cannot have moved.
+	private XamlStackDetection? _stack;
+
+	private XamlTap? _tap;
+
+	private InitializeXamlDiagnosticsEx? _initialise;
 
 	// The number stamped on the request being served, and echoed back by the provider on everything it
 	// writes. Every handshake here used to be "does this file exist", with the host deleting the marker
@@ -889,17 +902,20 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// </summary>
 	private (string? WorkDir, string? Error) Inject(int pid, string request, IReadOnlyList<string>? commands = null)
 	{
-		var provider = ResolveProviderPath();
+		var (tap, tapError) = ResolveTap(pid);
+		if (tap is null) return (null, tapError);
+
+		var provider = ResolveProviderPath(tap);
 		if (provider is null)
 		{
-			return (null, $"The XAML provider ({ProviderFileName}) was not found for this host's architecture; build src/RoseMcp.Xaml.Uwp.Tap for {ProviderPlatform()}.");
+			return (null, $"The XAML provider ({tap.ProviderFileName}) was not found for this host's architecture; build src/{tap.ProviderProjectName} for {ProviderPlatform()}.");
 		}
 
 		string workDir;
 		string stagedProvider;
 		try
 		{
-			(workDir, stagedProvider) = StageSandboxFolder(provider);
+			(workDir, stagedProvider) = StageSandboxFolder(tap, provider);
 		}
 		catch (Exception exception)
 		{
@@ -958,15 +974,14 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// Retried, because the common failure here is transient and the old message called it fatal.
 		// The XAML diagnostics endpoint does not exist until the framework has built a tree, so a
 		// session that has only just attached -- which is exactly when an agent asks -- gets
-		// ERROR_NOT_FOUND for a second or two. A caller told "the target may have no XAML UI or not be
-		// a packaged app" about a packaged XAML app concludes the tool does not work on their app, and
-		// stops. It was reported that way from a real session: the same call twelve seconds later
-		// returned 629 nodes.
+		// ERROR_NOT_FOUND for a second or two. A caller told "the target may have no XAML UI" about a
+		// XAML app concludes the tool does not work on their app, and stops. It was reported that way
+		// from a real session: the same call twelve seconds later returned 629 nodes.
 		var deadline = DateTime.UtcNow + EndpointTimeout;
 		var hr = 0;
 		while (true)
 		{
-			hr = InitializeXamlDiagnosticsEx(EndpointName, (uint)pid, null, stagedProvider, ProviderClsid, workDir);
+			hr = _initialise!(EndpointName, (uint)pid, null, stagedProvider, tap.ProviderClsid, workDir);
 			if (hr >= 0) return (workDir, null);
 			if (hr != ErrorNotFound || DateTime.UtcNow >= deadline) break;
 
@@ -976,16 +991,21 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// Two failures, said apart. ERROR_NOT_FOUND after waiting is the endpoint never appearing,
 		// which is what "no XAML UI" actually looks like; anything else is its own HRESULT and should
 		// not be explained away as a missing UI.
+		//
+		// It no longer offers "or is not a packaged app". That was wrong twice over: packaging has
+		// nothing to do with whether the endpoint appears, and unpackaged WinUI 3 is an ordinary
+		// supported shape. The stack is known by the time this runs, so the message can name it
+		// rather than guess at causes.
 		var detail = hr == ErrorNotFound
 			? $"The target's XAML diagnostics endpoint did not appear within {EndpointTimeout.TotalSeconds:0}s "
-				+ $"(0x{ErrorNotFound:x8}). A XAML app that is still starting can take a moment; if it "
-				+ "persists, the target has no XAML UI or is not a packaged app."
+				+ $"(0x{ErrorNotFound:x8}). It was detected as {_stack!.Stack} because {_stack.Reason}. A XAML "
+				+ "app that is still starting can take a moment; if it persists, the target has no XAML UI."
 			: $"InitializeXamlDiagnosticsEx failed (0x{hr:x8}).";
 
 		return (null, detail);
 	}
 
-	private (string WorkDir, string StagedProvider) StageSandboxFolder(string provider)
+	private (string WorkDir, string StagedProvider) StageSandboxFolder(XamlTap tap, string provider)
 	{
 		// Stage once per session and reuse: the first injection loads the provider DLL into the target,
 		// which holds the file open, so a later injection cannot overwrite it -- and need not, since it
@@ -1019,15 +1039,22 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// test; it can only be reached now because the folder above is cleared first, which is why
 		// the two halves of this fix have to land together. One file copy per session is nothing
 		// beside injecting into a process.
-		var stagedProvider = Path.Combine(workDir, ProviderFileName);
+		var stagedProvider = Path.Combine(workDir, tap.ProviderFileName);
 		File.Copy(provider, stagedProvider, overwrite: true);
 
 		// ALL APPLICATION PACKAGES (S-1-15-2-1) and ALL RESTRICTED APPLICATION PACKAGES (S-1-15-2-2):
 		// Modify grants read+execute to load the DLL and read commands, and write for the provider's
 		// snapshot and log. Without this the sandboxed provider cannot touch the folder at all.
-		foreach (var sid in new[] { "*S-1-15-2-1", "*S-1-15-2-2" })
+		//
+		// Asked of the tap rather than done always (#74). An unpackaged WinUI 3 app is not in an
+		// AppContainer and needs none of it, and granting anyway would leave a world-readable
+		// directory in TEMP for every session, for nothing.
+		if (tap.NeedsAppContainerGrants)
 		{
-			Icacls(workDir, $"/grant {sid}:(OI)(CI)(M)");
+			foreach (var sid in new[] { "*S-1-15-2-1", "*S-1-15-2-2" })
+			{
+				Icacls(workDir, $"/grant {sid}:(OI)(CI)(M)");
+			}
 		}
 
 		_workDir = workDir;
@@ -1327,26 +1354,63 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Finds the provider DLL for this host's architecture: an explicit override, a published layout
-	/// beside the host (<c>xaml-provider/&lt;rid&gt;</c>), or the repo build output. Null when none is
-	/// present, so the caller can report it rather than fault.
+	/// Which tap serves this target, resolved from the framework DLLs the process has loaded, with
+	/// the initialiser bound from the library that tap names (#74).
+	/// <para>
+	/// Asking first is the whole point. This used to assume UWP in four places, so a WinUI 3 target
+	/// spent twenty seconds waiting for an endpoint that was never going to appear and then blamed
+	/// the app for not being packaged. The fact that settles it is in the module list, and reading it
+	/// costs microseconds.
+	/// </para>
 	/// </summary>
-	private static string? ResolveProviderPath()
+	private (XamlTap? Tap, string? Error) ResolveTap(int pid)
+	{
+		if (_tap is not null && _initialise is not null) return (_tap, null);
+
+		_stack ??= XamlStackProbe.Detect(pid);
+
+		var tap = XamlTaps.For(_stack.Stack);
+		if (tap is null) return (null, $"{XamlTaps.NoTapReason(_stack.Stack)} ({_stack.Reason}).");
+
+		try
+		{
+			var library = NativeLibrary.Load(tap.InitializeLibrary);
+			var export = NativeLibrary.GetExport(library, nameof(InitializeXamlDiagnosticsEx));
+			_initialise = Marshal.GetDelegateForFunctionPointer<InitializeXamlDiagnosticsEx>(export);
+		}
+		catch (Exception exception)
+		{
+			// Its own failure, and said as one. A framework DLL that will not load is not the same as
+			// a target with no XAML in it, and reporting it as the latter is what sent the last
+			// person looking at their app instead of at their install.
+			return (null, $"Could not bind {nameof(InitializeXamlDiagnosticsEx)} in {tap.InitializeLibrary}: {exception.Message}");
+		}
+
+		_tap = tap;
+		return (tap, null);
+	}
+
+	/// <summary>
+	/// Finds the tap's provider DLL for this host's architecture: an explicit override, a published
+	/// layout beside the host (<c>xaml-provider/&lt;rid&gt;</c>), or the repo build output. Null when
+	/// none is present, so the caller can report it rather than fault.
+	/// </summary>
+	private static string? ResolveProviderPath(XamlTap tap)
 	{
 		var configured = Environment.GetEnvironmentVariable("ROSEMCP_XAML_PROVIDER");
 		if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return Path.GetFullPath(configured);
 
 		var rid = RuntimeInformation.RuntimeIdentifier;
-		var alongside = Path.Combine(AppContext.BaseDirectory, "xaml-provider", rid, ProviderFileName);
+		var alongside = Path.Combine(AppContext.BaseDirectory, "xaml-provider", rid, tap.ProviderFileName);
 		if (File.Exists(alongside)) return alongside;
 
 		var repositoryRoot = FindRepositoryRoot();
 		if (repositoryRoot is null) return null;
 
-		var providerBin = Path.Combine(repositoryRoot, "src", "RoseMcp.Xaml.Uwp.Tap", "bin", ProviderPlatform());
+		var providerBin = Path.Combine(repositoryRoot, "src", tap.ProviderProjectName, "bin", ProviderPlatform());
 		if (!Directory.Exists(providerBin)) return null;
 
-		return Directory.EnumerateFiles(providerBin, ProviderFileName, SearchOption.AllDirectories)
+		return Directory.EnumerateFiles(providerBin, tap.ProviderFileName, SearchOption.AllDirectories)
 			.OrderByDescending(File.GetLastWriteTimeUtc)
 			.FirstOrDefault();
 	}
@@ -1369,8 +1433,14 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		return directory?.FullName;
 	}
 
-	[DllImport("Windows.UI.Xaml.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
-	private static extern int InitializeXamlDiagnosticsEx(
+	/// <summary>
+	/// <c>InitializeXamlDiagnosticsEx</c> as a delegate rather than a <c>DllImport</c>, because the
+	/// library exporting it is per-stack (#74): UWP's is Windows.UI.Xaml.dll, and WinUI 3's is the
+	/// WindowsAppSDK's own Microsoft.UI.Xaml.dll, which is not even on the default search path. A
+	/// DllImport attribute can name exactly one library, which is the hard-coding this removes.
+	/// </summary>
+	[UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode)]
+	private delegate int InitializeXamlDiagnosticsEx(
 		string endPointName,
 		uint pid,
 		string? wszDllXamlDiagnostics,

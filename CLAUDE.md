@@ -389,6 +389,27 @@ reclaim memory or pick up a rebuilt generator.
   layer. And `selection.ready` deliberately carries no generation at all, because it records a click,
   which outlives the injection that armed select mode by design -- stamping it would have the read that
   goes looking for it reject its own answer. One file cannot both answer a request and survive one.
+- **Which XAML framework a target is running is asked of the target, and the order of the asking is
+  the trick.** The live half had no idea: it hard-coded UWP in four places -- the
+  `Windows.UI.Xaml.dll` DllImport, the provider file name, the CLSID, and the AppContainer grants --
+  while the stub half asked properly. The cost was not that WinUI 3 failed but *how*: twenty seconds
+  waiting for an endpoint that could never appear, ending in a claim that the app was not packaged,
+  which is wrong twice over since packaging is irrelevant and unpackaged WinUI 3 is ordinary. The
+  answer was in the target's loaded modules the whole time, the way `RuntimeFlavour` already reads
+  them for "is this even CoreCLR". One `XamlStack` names the framework and both halves use it, but
+  they stay separate mechanisms on purpose -- a compilation is not available to a host holding a pid
+  for an app it never built, and the process in front of you settles which of a solution's projects
+  you are actually looking at.
+  <br>
+  `Windows.UI.Xaml.dll` is tested **first**, and that ordering is the whole rule. WinUI 2 is a UWP
+  library that ships a `Microsoft.UI.Xaml.dll` of its own, so a UWP app using it loads both names --
+  and it is a UWP app, whose diagnostics live in `Windows.UI.Xaml.dll`. Matching the Microsoft name
+  first reports WinUI 3 and refuses a target the UWP tap serves perfectly well. The issue proposing
+  this work named `Microsoft.UI.Xaml.dll` as the WinUI 3 signal, and a real WinUI 3 process does load
+  it, so the claim survives inspection and fails on WinUI 2 -- which is why every name in
+  `XamlStackModules` was read off a running process rather than reasoned about, and why the rule
+  lives in `Contracts` where a test can reach it: the host is `net10.0-windows` and neither test
+  project takes a compile reference on it.
 - **A XAML project's generated half is synthesised, and says so.** The markup compiler runs only in a
   real build, so `MSBuildWorkspace` hands us code-behind missing its base type, its `x:Name` fields
   and `InitializeComponent` -- 2030 phantom errors in one project of Drawboard's UWP app.

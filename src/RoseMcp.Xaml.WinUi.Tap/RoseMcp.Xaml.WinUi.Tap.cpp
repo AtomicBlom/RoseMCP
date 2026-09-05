@@ -109,10 +109,25 @@ static bool RoseTapWatchPointer(
 		return false;
 	}
 
-	const auto island = root.ContentIsland();
+	auto island = root.ContentIsland();
 	if (!island)
 	{
-		Log(L"pointer: the XamlRoot has no ContentIsland");
+		// XamlRoot.ContentIsland answers only for a XamlIsland-based content root -- XamlRoot_Partial.cpp
+		// asks GetContentRootNoRef()->GetXamlIslandRootNoRef() and returns null otherwise -- and the
+		// diagnostics UI layer this anchors on does not report one. The islands the thread owns are the
+		// same content reached another way, and this always runs on the UI thread, so asking is valid.
+		// Measured rather than assumed, twice over: the thread owns exactly one island, so taking the
+		// first is not a guess, and a sweep of 40 synthetic moves across the window was observed as 40
+		// through the source acquired from it. Before this fallback the seam went quiet on every WinUI
+		// target and cost only the fade, which is the kind of silence that survives for months.
+		const auto owned = winrt::Microsoft::UI::Content::ContentIsland::FindAllForCurrentThread();
+		Log(L"pointer: the XamlRoot has no ContentIsland; the thread owns " + std::to_wstring(owned.size()));
+		if (owned.size() > 0) island = owned[0];
+	}
+
+	if (!island)
+	{
+		Log(L"pointer: no ContentIsland to observe");
 		return false;
 	}
 

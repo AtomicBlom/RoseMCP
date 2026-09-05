@@ -401,6 +401,17 @@ reclaim memory or pick up a rebuilt generator.
   costs the fade and nothing else: select mode picks through the full-bleed capture layer and never
   came through here, so a provider that cannot supply it logs and carries on.
   <br>
+  Which island to ask is its own trap, and it is not the obvious one. `XamlRoot.ContentIsland` is
+  null on WinUI 3 for the root the overlay anchors on: the framework fills it in only for a
+  XamlIsland-based content root (`XamlRoot_Partial.cpp` asks `GetXamlIslandRootNoRef`), and the
+  diagnostics UI layer is not one. So the fallback is `ContentIsland.FindAllForCurrentThread`, which
+  is valid because this always runs on the UI thread, and the thread owns exactly one island -- so
+  taking the first is not a guess. Both halves were measured: 40 synthetic moves swept across the
+  window arrived as 40. It matters because the failure was silent and cheap-looking -- the marks stop
+  fading and nothing else changes -- which is how it would have outlived several releases, and it is
+  why each of the four steps now says which one gave up rather than the caller reporting only that
+  the fade is off.
+  <br>
   One overlay, in the root the diagnostics site handed us. A WinUI 3 app can have several windows and
   the snapshot enumerates all of them, so `SharesRoot` is asked before anything is drawn -- an element
   elsewhere is *said* to be elsewhere. It used to be told it had "no laid-out bounds", which is a

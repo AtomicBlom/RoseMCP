@@ -1,0 +1,17 @@
+<Application
+    x:Class="Rose.ProbeApp.WinUi.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- WinUI 3 ships no default styles until this is merged, unlike UWP where they are
+                     built into the framework. The probe's own elements (Grid, StackPanel, Border,
+                     TextBlock) would render without it, but a fixture that differs from a real app
+                     in its resource setup is a fixture that stops predicting real apps. It adds no
+                     visual-tree elements, so the tree assertions are unaffected. -->
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

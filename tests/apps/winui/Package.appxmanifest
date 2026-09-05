@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The packaged half of the WinUI 3 probe. Used only when the project is built with
+  ProbePackaged=true; the unpackaged build ignores it entirely.
+
+  Shaped as a desktop package rather than the UWP probe's universal one, which is the substance of
+  the difference: Windows.Desktop rather than Windows.Universal, an entry point resolved by the
+  tooling rather than a named managed class, and runFullTrust, which is what a packaged desktop app
+  has and a UWP app does not. It still runs with package identity, which is the half that matters
+  here, because that is what decides whether the provider's work folder needs granting.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity Name="RoseMcp.ProbeApp.WinUi" Publisher="CN=RoseMcp" Version="1.0.0.0" />
+
+  <Properties>
+    <DisplayName>Rose WinUI Probe</DisplayName>
+    <PublisherDisplayName>RoseMcp</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+        DisplayName="Rose WinUI Probe"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        Description="A minimal WinUI 3 app for RoseMCP live-app integration tests."
+        BackgroundColor="transparent">
+        <uap:DefaultTile />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+</Package>

@@ -424,6 +424,163 @@ public sealed class LiveAppSessionTests
 	}
 
 	/// <summary>
+	/// The WinUI 3 path, unpackaged (#106). An unpackaged WinUI 3 app is an ordinary desktop process
+	/// with no package identity and no AppContainer, which is the shape the live-app half kept getting
+	/// wrong, so it is the one worth proving first.
+	/// <para>
+	/// The debugger needs no WinUI-specific code (#79) -- this is here to keep that true rather than
+	/// to establish it, and to give the seams work (#75) something to run against.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Launches_and_debugs_the_unpackaged_winui_probe_app()
+	{
+		var output = BuildWinUiProbeApp(packaged: false);
+		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
+
+		EnsureX64HostBuilt();
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		var target = new LiveAppTarget
+		{
+			Kind = LiveAppTargetKind.LaunchExecutable,
+			ExecutablePath = Path.Combine(output!, "Rose.ProbeApp.WinUi.exe"),
+			Description = "winui probe (unpackaged)",
+		};
+
+		var session = await manager.StartAsync(target, cancellationToken);
+		var summary = session.Describe();
+		Assert.True(
+			summary.State == LiveAppSessionState.Ready,
+			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
+
+		var marker = await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
+			cancellationToken);
+		Assert.NotNull(marker);
+
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+	}
+
+	/// <summary>
+	/// The same app, packaged. Worth its own test because packaged and unpackaged are different
+	/// targets rather than two ways of shipping one: this one has package identity and is activated
+	/// by AUMID rather than launched by path.
+	/// <para>
+	/// It is still not in an AppContainer, which is the thing measuring this settled. A packaged WinUI
+	/// 3 app is a packaged *desktop* app -- runFullTrust, Windows.FullTrustApplication -- so packaging
+	/// and sandboxing come apart here in a way they never do for classic UWP, and only the UWP tap
+	/// needs the work folder granted to ALL APPLICATION PACKAGES.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Launches_and_debugs_the_packaged_winui_probe_app()
+	{
+		var output = BuildWinUiProbeApp(packaged: true);
+		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
+
+		var aumid = RegisterWinUiProbeApp(output!);
+		if (aumid is null) Assert.Skip("The packaged WinUI probe could not be registered (developer mode may be off).");
+
+		EnsureX64HostBuilt();
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = aumid,
+				Description = "winui probe (packaged)",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			var summary = session.Describe();
+			Assert.True(
+				summary.State == LiveAppSessionState.Ready,
+				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
+
+			var marker = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
+				cancellationToken);
+			Assert.NotNull(marker);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			UnregisterWinUiProbeApp();
+		}
+	}
+
+	/// <summary>
+	/// A XAML read against a WinUI 3 target is refused immediately and by name (#74).
+	/// <para>
+	/// This is the test the stack work could not have without a WinUI fixture, and it is about the
+	/// shape of a failure rather than a feature. Before, the host assumed UWP, P/Invoked
+	/// InitializeXamlDiagnosticsEx from Windows.UI.Xaml.dll into a process whose framework is
+	/// Microsoft.UI.Xaml, waited twenty seconds for an endpoint that could never appear, and then
+	/// blamed the app for not being packaged -- wrong on both counts it offered, and slow.
+	/// </para>
+	/// <para>
+	/// So the assertions are that it comes back quickly, that it names WinUI, and that it no longer
+	/// says anything about packaging. The timing bound is deliberately loose: it only has to
+	/// distinguish an answer from the twenty-second wait it replaced.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Refuses_a_xaml_read_on_winui_by_naming_the_stack()
+	{
+		var output = BuildWinUiProbeApp(packaged: false);
+		if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
+
+		EnsureX64HostBuilt();
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		var target = new LiveAppTarget
+		{
+			Kind = LiveAppTargetKind.LaunchExecutable,
+			ExecutablePath = Path.Combine(output!, "Rose.ProbeApp.WinUi.exe"),
+			Description = "winui xaml refusal",
+		};
+
+		var session = await manager.StartAsync(target, cancellationToken);
+		Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+		// Well into running, so the refusal cannot be confused with an app that has not built a tree.
+		var running = await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
+			cancellationToken);
+		Assert.NotNull(running);
+
+		var started = Stopwatch.StartNew();
+		var tree = await session.ReadXamlTreeAsync(cancellationToken);
+		started.Stop();
+
+		Assert.NotNull(tree.Detail);
+		Assert.Empty(tree.Nodes);
+		Assert.Contains("WinUI 3", tree.Detail!, StringComparison.OrdinalIgnoreCase);
+		Assert.Contains("Microsoft.WinUI.dll", tree.Detail!, StringComparison.OrdinalIgnoreCase);
+		Assert.DoesNotContain("packaged", tree.Detail!, StringComparison.OrdinalIgnoreCase);
+		Assert.True(
+			started.Elapsed < TimeSpan.FromSeconds(10),
+			$"the refusal should not wait on an endpoint that cannot appear; took {started.Elapsed.TotalSeconds:0.0}s");
+
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+	}
+
+	/// <summary>
 	/// The XAML track's first vertical (#2/#3, seed of #9): launch the classic UWP probe, inject the
 	/// diagnostics provider, and read its live visual tree. Proves the provider builds, injects into the
 	/// AppContainer, enumerates on the UI thread, and reports the tree back through the host to the
@@ -2482,6 +2639,97 @@ public sealed class LiveAppSessionTests
 	private static void UnregisterUwpProbeApp()
 	{
 		RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"Get-AppxPackage '{UwpProbePackageName}' | Remove-AppxPackage -ErrorAction SilentlyContinue\"");
+	}
+
+	private const string WinUiProbePackageName = "RoseMcp.ProbeApp.WinUi";
+
+	private static string WinUiProbeAppDirectory() => Path.Combine(RepositoryRoot(), "tests", "apps", "winui");
+
+	/// <summary>
+	/// The RID the WinUI probe is built for. Unlike classic UWP, which has no ARM64 runtime and is
+	/// debugged x64-emulated, WinUI 3 runs natively -- so the probe matches the host and the live-app
+	/// host needs no architecture shim.
+	/// </summary>
+	private static string WinUiRuntimeIdentifier() => RuntimeInformation.ProcessArchitecture switch
+	{
+		System.Runtime.InteropServices.Architecture.Arm64 => "win-arm64",
+		_ => "win-x64",
+	};
+
+	/// <summary>
+	/// Builds the WinUI 3 probe in one of its two shapes and returns the directory holding the built
+	/// app. Null only when restore fails, which is the environment limit worth skipping on: the app
+	/// needs the WindowsAppSDK from NuGet, and a machine that cannot get it cannot run these tests.
+	/// <para>
+	/// Restore and build are separate calls precisely so those two can be told apart. A build that
+	/// fails *after* a good restore is our own breakage and throws, following the same rule as
+	/// <see cref="BuildXamlProvider"/>: a capability quietly not being tested is worse than a red
+	/// build, and looks identical to a machine that simply cannot build it.
+	/// </para>
+	/// </summary>
+	private static string? BuildWinUiProbeApp(bool packaged)
+	{
+		var project = Path.Combine(WinUiProbeAppDirectory(), "Rose.ProbeApp.WinUi.csproj");
+		var rid = WinUiRuntimeIdentifier();
+		var packagedArgument = packaged ? " -p:ProbePackaged=true" : string.Empty;
+
+		var restore = RunProcess("dotnet", $"restore \"{project}\" -r {rid}{packagedArgument}");
+		if (restore.ExitCode != 0) return null;
+
+		var build = RunProcess(
+			"dotnet",
+			$"build \"{project}\" -r {rid} -c {Configuration()} --no-restore{packagedArgument} -v:minimal -nologo");
+
+		if (build.ExitCode != 0)
+		{
+			throw new InvalidOperationException(
+				$"Building the WinUI probe app failed (exit {build.ExitCode}):{Environment.NewLine}{build.Output}");
+		}
+
+		var bin = Path.Combine(WinUiProbeAppDirectory(), "bin", Configuration());
+		var exe = !Directory.Exists(bin)
+			? null
+			: Directory.EnumerateFiles(bin, "Rose.ProbeApp.WinUi.exe", SearchOption.AllDirectories)
+				.Where(path => path.Contains(rid, StringComparison.OrdinalIgnoreCase))
+				.OrderByDescending(File.GetLastWriteTimeUtc)
+				.FirstOrDefault();
+
+		if (exe is null)
+		{
+			throw new InvalidOperationException($"The WinUI probe build reported success but produced no exe for {rid} under {bin}.");
+		}
+
+		return Path.GetDirectoryName(exe);
+	}
+
+	/// <summary>
+	/// Registers the packaged WinUI layout and returns its AUMID, or null when registration is not
+	/// permitted, so the test can skip rather than fail on an environment limit.
+	/// <para>
+	/// The layout is the build output directory itself: a WinUI 3 desktop build writes AppxManifest.xml
+	/// beside the exe, with none of the staging the classic UWP probe needs, because it has no split
+	/// between a managed assembly and a native CoreCLR apphost.
+	/// </para>
+	/// </summary>
+	private static string? RegisterWinUiProbeApp(string layoutDirectory)
+	{
+		var manifest = Path.Combine(layoutDirectory, "AppxManifest.xml");
+		if (!File.Exists(manifest)) return null;
+
+		var script =
+			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
+				+ $"$p = Get-AppxPackage '{WinUiProbePackageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
+		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
+
+		var pfnLine = output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
+		if (pfnLine is null) return null;
+
+		return $"{pfnLine["PFN: ".Length..].Trim()}!App";
+	}
+
+	private static void UnregisterWinUiProbeApp()
+	{
+		RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"Get-AppxPackage '{WinUiProbePackageName}' | Remove-AppxPackage -ErrorAction SilentlyContinue\"");
 	}
 
 	private static string RepositoryRoot()

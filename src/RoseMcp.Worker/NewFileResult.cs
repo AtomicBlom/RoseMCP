@@ -25,5 +25,11 @@ public sealed record NewFileResult
 	/// </summary>
 	public required IReadOnlyList<string> NotInTheBuild { get; init; }
 
+	/// <summary>
+	/// The tracking changes absorbing worked out. Applied by the caller in the same step that takes
+	/// the snapshot above, never as the walk goes.
+	/// </summary>
+	public required DiskTrackerUpdate Tracker { get; init; }
+
 	public bool AnythingChanged => Added.Count > 0 || StructuralChange;
 }

@@ -145,6 +145,60 @@ public sealed class StalenessTests
 	}
 
 	/// <summary>
+	/// A reload that throws leaves the tracking table describing the snapshot still in hand.
+	/// <para>
+	/// The sweep works out that a source file changed and that a project file changed, and the second
+	/// of those is what sends the barrier round a reload. Recording the sweep's stamps as it goes
+	/// would leave every one of them equal to disk against a snapshot that predates both changes, so
+	/// the read after the failure finds nothing to do and serves it -- a confident answer about code
+	/// that is not there, which is the failure the barrier exists to rule out. The reload is made to
+	/// fail by holding the solution file open exclusively, which is the first thing a load reads.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Absorbs_the_change_on_the_next_read_when_a_reload_throws()
+	{
+		await using var scope = await OpenAsync("Simple", "Simple.sln");
+
+		await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+
+		await File.WriteAllTextAsync(
+			scope.Fixture.Path("Simple", "Core", "Calculator.cs"),
+			"namespace Core;" + Environment.NewLine
+				+ "public static class Calculator { public static int Tripled(int a) => a * 3; }",
+			TestContext.Current.CancellationToken);
+
+		// The project file is what forces a reload. A source edit on its own is patched into the
+		// snapshot and never reaches one, so it could not show this.
+		var projectFile = scope.Fixture.Path("Simple", "Core", "Core.csproj");
+		var projectText = await File.ReadAllTextAsync(projectFile, TestContext.Current.CancellationToken);
+		await File.WriteAllTextAsync(
+			projectFile,
+			projectText.Replace("<Nullable>enable</Nullable>", "<Nullable>enable</Nullable>" + Environment.NewLine
+				+ "    <DefineConstants>$(DefineConstants);RELOADED</DefineConstants>"),
+			TestContext.Current.CancellationToken);
+
+		using (new FileStream(scope.Fixture.SolutionPath, FileMode.Open, FileAccess.Read, FileShare.None))
+		{
+			await Assert.ThrowsAnyAsync<IOException>(
+				() => scope.Session.ReadAsync(TestContext.Current.CancellationToken));
+		}
+
+		var after = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var calculator = after.Solution.Projects
+			.SelectMany(project => project.Documents)
+			.Single(document => document.Name == "Calculator.cs");
+
+		var source = (await calculator.GetTextAsync(TestContext.Current.CancellationToken)).ToString();
+		Assert.Contains("Tripled", source, StringComparison.Ordinal);
+
+		// And the structural half of the same sweep survived too.
+		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
+		Assert.Contains("RELOADED", core.ParseOptions!.PreprocessorSymbolNames);
+	}
+
+	/// <summary>
 	/// Reads must be ordered behind mutations, not merely serialised with them. A read issued after
 	/// a mutation is queued has to observe that mutation.
 	/// </summary>

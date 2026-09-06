@@ -26,13 +26,19 @@ public static class BodyEdit
 	private const int Listed = 5;
 
 	/// <summary>
-	/// The body with <paramref name="find"/> replaced, matched on the token stream so indentation,
-	/// line endings and comments cannot cause a miss.
+	/// The body with <paramref name="find"/> replaced, matched on the token stream so indentation and
+	/// line endings cannot cause a miss.
+	/// <para>
+	/// A comment is trivia rather than a token, so the matching cannot see one at all: an anchor
+	/// carrying a comment would match on the code around it, leave the comment in the file where it is,
+	/// and splice a replacement underneath it. An anchor carrying one is refused for that reason, which
+	/// is the only place the token stream being the unit of matching is a limit rather than the point.
+	/// </para>
 	/// </summary>
 	/// <param name="body">The body as it stands, from the file.</param>
 	/// <param name="find">The code to look for, as C#.</param>
 	/// <param name="replace">What to put in its place. Empty removes the matched code.</param>
-	/// <exception cref="ArgumentException">Nothing matched, or more than one thing did.</exception>
+	/// <exception cref="ArgumentException">Nothing matched, more than one thing did, or find carries a comment.</exception>
 	public static string Anchored(string body, string find, string replace)
 	{
 		if (string.IsNullOrWhiteSpace(find))
@@ -47,6 +53,15 @@ public static class BodyEdit
 			throw new ArgumentException(
 				$"'{find.Trim()}' is only whitespace or a comment, and matching is on the tokens. Include the "
 					+ "code you mean to change.");
+		}
+
+		if (Comment(find) is { } comment)
+		{
+			throw new ArgumentException(
+				$"find carries a comment ('{comment}'), and matching is on the tokens -- a comment is trivia, so "
+					+ "it matches nothing while the code around it matches, and the replacement then lands under "
+					+ "the comment already in the file rather than over it. Anchor on the code alone; to change "
+					+ "the comment as well, pass the whole body with code.");
 		}
 
 		var present = Tokens(body);
@@ -141,6 +156,17 @@ public static class BodyEdit
 			.. SyntaxFactory.ParseTokens(code)
 				.Where(token => !token.IsKind(SyntaxKind.EndOfFileToken) && token.Span.Length > 0),
 		];
+
+	/// <summary>
+	/// The first comment in the code, or null where it carries none. Trivia rather than a token, so
+	/// nothing the matching does can see it.
+	/// </summary>
+	private static string? Comment(string code) =>
+		SyntaxFactory.ParseTokens(code)
+			.SelectMany(token => token.LeadingTrivia.Concat(token.TrailingTrivia))
+			.Where(MemberSyntax.IsComment)
+			.Select(trivia => First(trivia.ToString()))
+			.FirstOrDefault();
 
 	/// <summary>
 	/// The replacement laid out for where it lands: the baseline the caller wrote it at taken off

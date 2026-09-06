@@ -4,8 +4,6 @@ using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
-using ModelContextProtocol;
-
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
@@ -346,7 +344,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.Equal(unfiltered.NextCursor, hitsOnly.NextCursor);
 
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.
-			var nonsense = await Assert.ThrowsAsync<McpException>(
+			var nonsense = await Assert.ThrowsAsync<InvalidOperationException>(
 				() => session.ReadEventsAsync(0, ["NotAKind"], limit: 500, cancellationToken));
 
 			Assert.Contains("Unknown event kind 'NotAKind'", nonsense.Message, StringComparison.Ordinal);

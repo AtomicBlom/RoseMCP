@@ -462,7 +462,7 @@ public sealed class BrokerTests
 			ToolNames.AddMember,
 			new Dictionary<string, object?>
 			{
-				["type"] = "Library.Greeter",
+				["symbol"] = "Library.Greeter",
 				["code"] = "public int Doubled => Count * 2;",
 				["after"] = "Count",
 			},
@@ -583,7 +583,7 @@ public sealed class BrokerTests
 			ToolNames.AddMember,
 			new Dictionary<string, object?>
 			{
-				["type"] = "Library.Greeter",
+				["symbol"] = "Library.Greeter",
 				["code"] = "public string Encoded() => Encoding.UTF8.EncodingName;",
 				["usings"] = new[] { "System.Text" },
 			},

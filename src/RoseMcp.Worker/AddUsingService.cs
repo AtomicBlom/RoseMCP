@@ -24,19 +24,13 @@ public static class AddUsingService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		if (request.ExpectedRevision is { } expected && expected != snapshot.Revision)
-		{
-			throw new InvalidOperationException(
-				$"The workspace is at revision {snapshot.Revision}, not the expected {expected}. "
-					+ "Something changed underneath this request; re-read and try again.");
-		}
+		snapshot.RefuseIfMoved(request.ExpectedRevision);
 
 		if (request.Namespaces.Count == 0) throw new ArgumentException("Name at least one namespace to import.");
 
 		progress?.Report($"Reading {Path.GetFileName(request.FilePath)}", 0);
 
-		var document = SymbolLocator.FindDocument(snapshot.Solution, request.FilePath)
-			?? throw new ArgumentException($"No document in the solution matches '{request.FilePath}'.");
+		var document = SymbolLocator.RequireDocument(snapshot.Solution, request.FilePath);
 
 		var root = await document.GetSyntaxRootAsync(cancellationToken);
 		var model = await document.GetSemanticModelAsync(cancellationToken);

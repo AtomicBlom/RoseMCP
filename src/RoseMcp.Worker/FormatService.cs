@@ -25,12 +25,7 @@ public static class FormatService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		if (request.ExpectedRevision is { } expected && expected != snapshot.Revision)
-		{
-			throw new InvalidOperationException(
-				$"The workspace is at revision {snapshot.Revision}, not the expected {expected}. "
-					+ "Something changed underneath this request; re-read and try again.");
-		}
+		snapshot.RefuseIfMoved(request.ExpectedRevision);
 
 		if (request.FilePaths.Count == 0) throw new ArgumentException("Name at least one file to format.");
 
@@ -66,7 +61,7 @@ public static class FormatService
 
 		foreach (var path in missing)
 		{
-			notices.Add($"No document in the solution matches '{path}', so it was not formatted.");
+			notices.Add($"No project in this solution compiles '{path}', so it was not formatted.");
 		}
 
 		if (request.RemoveUnusedUsings && formatted.Count > 0)

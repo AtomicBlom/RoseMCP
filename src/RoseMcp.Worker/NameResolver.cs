@@ -40,8 +40,7 @@ public static class NameResolver
 		if (name.Length == 0) throw new ArgumentException("Name something to resolve.");
 
 		var document = request.FilePath is { Length: > 0 } path
-			? SymbolLocator.FindDocument(snapshot.Solution, path)
-				?? throw new ArgumentException($"No document in the solution matches '{path}'.")
+			? SymbolLocator.RequireDocument(snapshot.Solution, path)
 			: null;
 
 		// The file's own project, when there is one. A namespace only helps if the project already

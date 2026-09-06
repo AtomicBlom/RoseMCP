@@ -77,8 +77,7 @@ public static partial class OutlineService
 		bool includeInherited,
 		CancellationToken cancellationToken)
 	{
-		var document = SymbolLocator.FindDocument(snapshot.Solution, filePath)
-			?? throw new ArgumentException($"No document in the solution matches '{filePath}'.");
+		var document = SymbolLocator.RequireDocument(snapshot.Solution, filePath);
 
 		var model = await document.GetSemanticModelAsync(cancellationToken);
 		var root = await document.GetSyntaxRootAsync(cancellationToken);

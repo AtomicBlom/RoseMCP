@@ -27,17 +27,11 @@ public static class MoveTypeService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		if (request.ExpectedRevision is { } expected && expected != snapshot.Revision)
-		{
-			throw new InvalidOperationException(
-				$"The workspace is at revision {snapshot.Revision}, not the expected {expected}. "
-					+ "Something changed underneath this request; re-read and try again.");
-		}
+		snapshot.RefuseIfMoved(request.ExpectedRevision);
 
 		progress?.Report($"Locating {request.Symbol}", 0);
 
-		var document = SymbolLocator.FindDocument(snapshot.Solution, request.FilePath)
-			?? throw new ArgumentException($"No document in the solution matches '{request.FilePath}'.");
+		var document = SymbolLocator.RequireDocument(snapshot.Solution, request.FilePath);
 
 		var sourcePath = document.FilePath ?? request.FilePath;
 
@@ -125,7 +119,9 @@ public static class MoveTypeService
 		{
 			throw new InvalidOperationException(
 				$"{file} declares '{bare}' {matches.Length} times -- partial declarations, or the same name at "
-					+ "different arities. Moving one of them is ambiguous, so do it by hand.");
+					+ "different arities. Which one to move is not something a name settles, so nothing was "
+					+ "written: rose_replace_member can write one declaration into a file rose_add_file has "
+					+ "created, and rose_delete_member takes it out of this one.");
 		}
 
 		var available = all.Count == 0
@@ -223,7 +219,9 @@ public static class MoveTypeService
 		if (File.Exists(targetPath))
 		{
 			throw new InvalidOperationException(
-				$"{targetPath} already exists. Pick a target that does not, or move the type there by hand.");
+				$"{targetPath} already exists. Pass targetPath naming a file that does not, or write the "
+					+ "declaration into the existing one with rose_replace_member and take it out of this file "
+					+ "with rose_delete_member.");
 		}
 
 		if (SymbolLocator.FindDocument(solution, targetPath) is not null)
@@ -272,7 +270,8 @@ public static class MoveTypeService
 
 		throw new InvalidOperationException(
 			$"'{NameOf(moving)}' in {Path.GetFileName(sourcePath)} is mixed up with preprocessor directives. "
-				+ "Moving it could change what is compiled, so do this one by hand.");
+				+ "Moving it could change what is compiled, so nothing was written: rose_add_file, "
+				+ "rose_replace_member and rose_delete_member do it in steps you can read the diff of.");
 	}
 
 	/// <summary>

@@ -235,8 +235,8 @@ public static class ToolDescriptions
         the code is parsed first and refused if it does not parse, it lands with a blank line around
         it and the repository's own indentation, and a member the type already declares is refused
         instead of written as a duplicate the compiler would reject. It returns the errors the
-        addition introduced, so there is no build in the loop. A using directive is not a member and
-        is not added; add one yourself if the new code needs an import.
+        addition introduced, so there is no build in the loop. Imports the new code needs are
+        worked out and added; pass usings to name one explicitly.
         """;
 
 	public const string ChangeSignature = """

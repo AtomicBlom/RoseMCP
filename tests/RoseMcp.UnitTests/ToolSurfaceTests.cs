@@ -121,6 +121,47 @@ public sealed class ToolSurfaceTests
 		ToolNames.LiveAppXamlSelectElement,
 	];
 
+	/// <summary>
+	/// The tools that may declare themselves read-only. The SDK defines that as having "no side
+	/// effects beyond computational resource usage", and clients use it to skip asking the user, so
+	/// the hint is a promise made on the user's behalf rather than a description of the return type.
+	/// <para>
+	/// A list rather than an assertion per tool, so a new tool cannot arrive annotated read-only
+	/// without somebody adding it here and saying why. rose_workspace_open starts a worker process
+	/// that loads a gigabyte of solution and rose_debug_attach attaches a debugger to another process;
+	/// both were on this list and neither belongs on it.
+	/// </para>
+	/// <para>
+	/// rose_xaml_properties is here and is not quite honest about it: reading an element's properties
+	/// materialises the collection ones, so a second read reports them as set. Nothing the app draws
+	/// changes, and the tool says so itself (#97).
+	/// </para>
+	/// </summary>
+	private static readonly string[] ReadOnly =
+	[
+		ToolNames.BuildFreshness,
+		ToolNames.DebugEvaluate,
+		ToolNames.DebugEvents,
+		ToolNames.DebugList,
+		ToolNames.DebugListBreakpoints,
+		ToolNames.DebugListTracepoints,
+		ToolNames.Diagnostics,
+		ToolNames.FindImplementations,
+		ToolNames.FindReferences,
+		ToolNames.ListCodeFixes,
+		ToolNames.ListGeneratedDocuments,
+		ToolNames.Outline,
+		ToolNames.ProjectGraph,
+		ToolNames.ReadGeneratedDocument,
+		ToolNames.ResolveName,
+		ToolNames.SearchSymbols,
+		ToolNames.SymbolInfo,
+		ToolNames.WorkspaceStatus,
+		ToolNames.XamlProperties,
+		ToolNames.XamlSelection,
+		ToolNames.XamlTree,
+	];
+
 	[Fact]
 	public void The_broker_offers_exactly_the_listed_tools()
 	{
@@ -162,6 +203,37 @@ public sealed class ToolSurfaceTests
 	public void The_two_halves_of_the_surface_are_disjoint()
 	{
 		Assert.Empty(Roslyn.Intersect(LiveApp, StringComparer.Ordinal));
+	}
+
+	/// <summary>
+	/// Which tools promise to have no side effects, asserted against the list rather than trusted. A
+	/// client skips confirmation on the strength of the hint, so one on a tool that starts a process
+	/// or attaches a debugger spends the user's consent without asking for it.
+	/// </summary>
+	[Fact]
+	public void Only_the_listed_tools_call_themselves_read_only()
+	{
+		var advertised = Advertised().ToHashSet(StringComparer.Ordinal);
+		var claimed = Sorted(ReadOnlyAdvertised());
+
+		Assert.Equal(Sorted(ReadOnly.Where(advertised.Contains)), claimed);
+	}
+
+	/// <summary>The advertised tools whose annotations say they have no side effects.</summary>
+	private static string[] ReadOnlyAdvertised()
+	{
+		var services = new ServiceCollection();
+		services.AddRoseMcpBroker();
+
+		using var provider = services.BuildServiceProvider();
+
+		return
+		[
+			.. provider.GetServices<McpServerTool>()
+				.Select(tool => tool.ProtocolTool)
+				.Where(tool => tool.Annotations?.ReadOnlyHint == true)
+				.Select(tool => tool.Name),
+		];
 	}
 
 	/// <summary>

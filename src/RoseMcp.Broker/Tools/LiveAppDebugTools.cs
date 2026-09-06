@@ -21,7 +21,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	[McpServerTool(
 		Name = ToolNames.DebugAttach,
 		Title = "Attach a debugger to a process",
-		ReadOnly = true,
+		ReadOnly = false,
+		Destructive = false,
 		Idempotent = false,
 		OpenWorld = true,
 		UseStructuredContent = true)]
@@ -417,8 +418,9 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "-- an argument or local name, then .field into the object graph (e.g. state.Inner.Count). It "
 			+ "reads fields directly from memory and runs none of the debuggee's own code, so it never hangs "
 			+ "or changes the target; property getters and method calls are deliberately not evaluated. Only "
-			+ "valid while stopped. Local names need a PDB; arguments are always named. Returns the value and "
-			+ "its type, or an error explaining why it did not resolve.")]
+			+ "valid while stopped. Locals are local_0, local_1 and so on in slot order -- a breakpoint's "
+			+ "recorded frame names them -- and arguments are named. Returns the value and its type, or an "
+			+ "error explaining why it did not resolve.")]
 	public async Task<LiveEvaluation> EvaluateAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description("A field-access expression, e.g. this.field or state.Inner.Count.")] string expression,

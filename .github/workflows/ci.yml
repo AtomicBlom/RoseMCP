@@ -1,10 +1,12 @@
 name: CI
 
-# Build, check formatting, and run the fast (unit) tests on every pull request and on main. The
-# solution has net10.0-windows projects (the live-app host, the tray), so this must run on Windows.
-# The integration suite loads real solutions and drives design-time builds, real debugger sessions,
-# and -- for the XAML and UWP tests -- toolchains that are not present on a hosted runner (those
-# tests skip themselves), so it stays the local pre-commit gate rather than a CI job for now.
+# Build, check formatting, and run the tests on every pull request and on main. The solution has
+# net10.0-windows projects (the live-app host, the tray), so this must run on Windows.
+#
+# The integration suite is split from the unit one by what it needs rather than by what it is: the
+# tests in LiveAppSessionTests drive real debugger sessions and, for the XAML ones, C++ and UWP
+# toolchains a hosted runner does not have, so they run locally. Everything else needs only the .NET
+# SDK, and that is most of the suite -- and the only guard on most of the invariants in CLAUDE.md.
 on:
   # Only main. A branch with a pull request open would otherwise run this twice for one
   # change -- once for the push and once for the pull request -- which doubles the wait and
@@ -63,6 +65,48 @@ jobs:
 
       - name: Unit tests
         run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj --configuration Debug --no-build
+
+  # The integration tests that need only the .NET SDK. Its own job rather than a step in the one
+  # above, so it runs alongside the unit tests instead of after them; the second build is the price.
+  #
+  # LiveAppSessionTests is excluded whole. Its debugger tests would run here, but its XAML ones want
+  # a C++ toolset, the Windows App SDK and developer mode, and they answer a missing toolchain by
+  # skipping -- which reads as a pass. Excluding the class says what is not covered; skips say it
+  # quietly and only to whoever opens the log.
+  #
+  # Expect this to be slow rather than merely long: #39 records that these tests share no workspace
+  # fixtures, so the solution loads contend for a runner with four cores where the developer box has
+  # twelve. The timeout is the cap, not the target.
+  integration:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore RoseMcp.slnx
+
+      - name: Build
+        run: dotnet build RoseMcp.slnx --configuration Debug --no-restore
+
+      # The test project is an executable, which is how the class filter is reachable at all: -class-
+      # is the xunit v3 runner's own exclusion flag and dotnet test does not forward it.
+      - name: Integration tests, excluding the live-app suite
+        run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe -class- 'RoseMcp.IntegrationTests.LiveAppSessionTests'
 
   # The half of this repository that ships for Linux, built and tested there. Not the whole solution:
   # the tray is WinUI and the debug host is ICorDebug, so `dotnet build RoseMcp.slnx` cannot succeed

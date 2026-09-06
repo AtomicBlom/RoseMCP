@@ -57,7 +57,11 @@ public static class NavigationService
 		int maxResults,
 		CancellationToken cancellationToken)
 	{
-		var symbol = await target.ResolveAsync(snapshot, cancellationToken);
+		// Metadata included: who calls ILogger.LogInformation in this solution is a question about this
+		// solution's source, and refusing it because nothing here declares the member answers a narrower
+		// question than the one asked. The definitions come back empty, since a metadata symbol has no
+		// source location, and the references are the answer.
+		var symbol = await target.ResolveAsync(snapshot, cancellationToken, includeMetadata: true);
 		var found = await SymbolFinder.FindReferencesAsync(symbol, snapshot.Solution, cancellationToken);
 
 		var definitions = new List<SourceLocation>();
@@ -112,7 +116,10 @@ public static class NavigationService
 		int maxResults,
 		CancellationToken cancellationToken)
 	{
-		var symbol = await target.ResolveAsync(snapshot, cancellationToken);
+		// Metadata included, and this is where it earns most: what in this solution implements
+		// IDisposable or derives from Exception is a question about source, asked of a type no project
+		// here declares, and it is the ordinary shape of the question rather than an edge of it.
+		var symbol = await target.ResolveAsync(snapshot, cancellationToken, includeMetadata: true);
 		var solution = snapshot.Solution;
 		var found = new List<ISymbol>();
 		string relationship;

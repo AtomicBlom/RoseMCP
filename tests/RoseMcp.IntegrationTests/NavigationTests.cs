@@ -112,6 +112,32 @@ public sealed class NavigationTests
 		Assert.Contains("Whatsoever", error.Message, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// Who uses a type from a referenced assembly is a question about this solution's source, so
+	/// refusing it because nothing here declares the type answers a narrower question than the one
+	/// asked. The definitions come back empty -- a metadata symbol has no source location, which is
+	/// what tells the caller there is nothing to edit -- and the uses are the answer.
+	/// </summary>
+	[Fact]
+	public async Task Finds_the_uses_of_a_type_that_lives_in_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var result = await NavigationService.FindReferencesAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Console" },
+			200,
+			TestContext.Current.CancellationToken);
+
+		Assert.Empty(result.Definitions);
+		Assert.Equal(2, result.TotalCount);
+		Assert.All(
+			result.References,
+			location => Assert.EndsWith("Program.cs", location.FilePath, StringComparison.OrdinalIgnoreCase));
+	}
+
 	[Fact]
 	public async Task Finds_references_across_project_boundaries()
 	{

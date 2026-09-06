@@ -48,6 +48,29 @@ public sealed class ImplementationTests
 	}
 
 	/// <summary>
+	/// What in this solution derives from a type in a referenced assembly is a question about source
+	/// asked of a symbol no project here declares, and it is the ordinary shape of the question rather
+	/// than an edge of it. The base names an assembly and the answers name files.
+	/// </summary>
+	[Fact]
+	public async Task Finds_what_derives_from_a_type_that_lives_in_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var result = await NavigationService.FindImplementationsAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Object" },
+			200,
+			TestContext.Current.CancellationToken);
+
+		Assert.Contains("derived", result.Relationship, StringComparison.Ordinal);
+		Assert.Contains("Circle", result.Matches.Select(match => match.Name));
+		Assert.Contains("Square", result.Matches.Select(match => match.Name));
+	}
+
+	/// <summary>
 	/// A class asks a different question from an interface, and the answer says which one it answered
 	/// -- so a caller who pointed at the wrong thing can tell, rather than reading an empty list as
 	/// "nothing implements this".

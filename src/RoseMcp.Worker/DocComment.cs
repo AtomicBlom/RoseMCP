@@ -40,11 +40,13 @@ public static class DocComment
 		string lineEnding)
 	{
 		var written = Lines(comment, indent, lineEnding);
-		var kept = WithoutDocumentation(leading, lineEnding);
+		var (above, below) = Around(leading, lineEnding);
 
-		// The comment goes above everything else that survived, because that is where a declaration
-		// puts one: attributes sit between the documentation and the member itself.
-		return SyntaxFactory.ParseLeadingTrivia(written + kept);
+		// The new comment goes exactly where the old one was, which is what keeps a blank line above the
+		// member above it and a licence header or region directive over the top of both. Writing the
+		// comment first and everything else after moves all of that underneath, so the member reads as
+		// joined to whatever precedes it and separated from its own documentation.
+		return SyntaxFactory.ParseLeadingTrivia(above + written + below);
 	}
 
 	/// <summary>
@@ -113,27 +115,36 @@ public static class DocComment
 	}
 
 	/// <summary>
-	/// Everything in the leading trivia except the documentation comment and the indentation that
-	/// belonged to it.
+	/// The leading trivia either side of the documentation comment, as text, so a new one can go
+	/// exactly where the old one was.
 	/// <para>
-	/// A licence header, a region directive or an ordinary comment above the member all mean
-	/// something to a reader or to another tool, and none of them is what was asked to change.
+	/// Everything above stays above and everything below stays below. A licence header, a region
+	/// directive or an ordinary comment above the member all mean something to a reader or to another
+	/// tool, and so does the blank line that separates the member from the one before it -- none of
+	/// them is what was asked to change, and moving any of them under the new comment leaves the
+	/// member joined to what precedes it and separated from its own documentation.
+	/// </para>
+	/// <para>
+	/// With no comment to replace, the split is immediately above the declaration's own indentation.
+	/// That last trivia line is what the parser reads the declaration's column from, so it has to stay
+	/// below or the member lands at column zero.
 	/// </para>
 	/// </summary>
-	private static string WithoutDocumentation(SyntaxTriviaList leading, string lineEnding)
+	private static (string Above, string Below) Around(SyntaxTriviaList leading, string lineEnding)
 	{
-		var text = leading.ToFullString().Replace("\r\n", "\n", StringComparison.Ordinal);
-		var kept = new List<string>();
+		var lines = leading.ToFullString().Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
 
-		foreach (var line in text.Split('\n'))
-		{
-			if (line.TrimStart().StartsWith(Marker, StringComparison.Ordinal)) continue;
+		var first = Array.FindIndex(lines, IsDocumentation);
+		var last = Array.FindLastIndex(lines, IsDocumentation);
 
-			kept.Add(line);
-		}
+		if (first < 0) (first, last) = (lines.Length - 1, lines.Length - 2);
 
-		// The last entry is the indentation of the declaration itself, which the parser reads as
-		// trivia and which has to survive or the member lands at column zero.
-		return string.Join(lineEnding, kept);
+		var above = first == 0 ? string.Empty : string.Join(lineEnding, lines.Take(first)) + lineEnding;
+
+		return (above, string.Join(lineEnding, lines.Skip(last + 1)));
 	}
+
+	/// <summary>One line of a documentation comment, told from any other trivia line by its marker.</summary>
+	private static bool IsDocumentation(string line) =>
+		line.TrimStart().StartsWith(Marker, StringComparison.Ordinal);
 }

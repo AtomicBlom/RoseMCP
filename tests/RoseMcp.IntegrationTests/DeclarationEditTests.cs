@@ -78,6 +78,55 @@ public sealed class DeclarationEditTests
 	}
 
 	/// <summary>
+	/// The blank line separating a member from the one above it stays above the comment. Writing the
+	/// new comment first and everything that survived after it moves that line underneath, which
+	/// leaves every replaced comment joined to the member above and separated from the declaration it
+	/// documents -- a change to the whole neighbourhood from a call that promised to touch a sentence,
+	/// and one nothing reports.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_the_blank_line_above_a_comment_where_it_was()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await CommentAsync(session, "Library.Greeter.Greet(string)", "The greeting for one name, shouted.");
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains(
+			"public int Count { get; set; }\r\n"
+				+ "\r\n"
+				+ "\t/// <summary>The greeting for one name, shouted.</summary>\r\n"
+				+ "\tpublic string Greet(string name)",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The same where there was no comment to replace: it goes immediately above the declaration,
+	/// under the blank line rather than over it.
+	/// </summary>
+	[Fact]
+	public async Task Puts_a_new_comment_under_the_blank_line_above_the_member()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await CommentAsync(session, "Library.Greeter.Count", "How many greetings have gone out.");
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains(
+			"public int PrefixLength => _prefix.Length;\r\n"
+				+ "\r\n"
+				+ "\t/// <summary>How many greetings have gone out.</summary>\r\n"
+				+ "\tpublic int Count { get; set; }",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// XML that opens a tag it never closes is CS1570, a build error where the analyzers are turned
 	/// up. Refused before the file is opened, so nothing is written.
 	/// </summary>

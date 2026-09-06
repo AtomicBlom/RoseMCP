@@ -18,7 +18,7 @@ public sealed class ImplementationTests
 		var (line, column) = At(path, "IShape");
 
 		var result = await NavigationService.FindImplementationsAsync(
-			snapshot, path, line, column, 200, TestContext.Current.CancellationToken);
+			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current.CancellationToken);
 
 		Assert.Contains("implementing", result.Relationship, StringComparison.Ordinal);
 		Assert.Contains("Circle", result.Matches.Select(match => match.Name));
@@ -39,7 +39,7 @@ public sealed class ImplementationTests
 		var (line, column) = At(path, "Area();");
 
 		var result = await NavigationService.FindImplementationsAsync(
-			snapshot, path, line, column, 200, TestContext.Current.CancellationToken);
+			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current.CancellationToken);
 
 		Assert.Equal(2, result.Matches.Count);
 		Assert.All(result.Matches, match => Assert.Equal("Area", match.Name));
@@ -63,7 +63,7 @@ public sealed class ImplementationTests
 		var (line, column) = At(path, "Square(double side)");
 
 		var result = await NavigationService.FindImplementationsAsync(
-			snapshot, path, line, column, 200, TestContext.Current.CancellationToken);
+			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current.CancellationToken);
 
 		Assert.Contains("derived", result.Relationship, StringComparison.Ordinal);
 		Assert.Empty(result.Matches);
@@ -81,7 +81,7 @@ public sealed class ImplementationTests
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolInfoRequest { FilePath = path, Line = line, Column = column },
+			new SymbolTarget { FilePath = path, Line = line, Column = column },
 			TestContext.Current.CancellationToken);
 
 		var implemented = Assert.Single(info.BaseDefinitions);
@@ -105,5 +105,26 @@ public sealed class ImplementationTests
 		var lastBreak = before.LastIndexOf('\n');
 
 		return (before.Count(character => character == '\n') + 1, index - lastBreak);
+	}
+
+	/// <summary>
+	/// The same search by name. Pointing at a type meant finding a position for it first, which is a
+	/// rose_search_symbols call before the question can even be asked -- two calls where a name is one.
+	/// </summary>
+	[Fact]
+	public async Task Finds_implementations_by_name()
+	{
+		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var result = await NavigationService.FindImplementationsAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Shapes.IShape" },
+			200,
+			TestContext.Current.CancellationToken);
+
+		Assert.Contains("implementing", result.Relationship, StringComparison.Ordinal);
+		Assert.Contains("Circle", result.Matches.Select(match => match.Name));
 	}
 }

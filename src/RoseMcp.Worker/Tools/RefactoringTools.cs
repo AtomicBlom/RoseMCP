@@ -66,10 +66,11 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.RenameSymbol)]
 	public async Task<RenameResult> RenameSymbolAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
 		[Description("The new name.")] string newName,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Also rename overloads of the same method.")] bool renameOverloads = false,
 		[Description("Also rename occurrences inside comments.")] bool renameInComments = false,
@@ -87,9 +88,7 @@ public sealed class RefactoringTools(
 
 		var request = new RenameRequest
 		{
-			FilePath = filePath,
-			Line = line,
-			Column = column,
+			Target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column },
 			NewName = newName,
 			Apply = apply,
 			RenameOverloads = renameOverloads,
@@ -192,6 +191,7 @@ public sealed class RefactoringTools(
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
@@ -205,6 +205,7 @@ public sealed class RefactoringTools(
 				FilePath = filePath,
 				Apply = apply,
 				Verify = verify,
+				VerifyScope = ScopeOf(verifyScope),
 				ExpectedRevision = expectedRevision,
 			},
 			cancellationToken);
@@ -221,11 +222,15 @@ public sealed class RefactoringTools(
 	public Task<MemberEditResult> ReplaceBodyAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The body: statements, a block in braces, or => expression;.")] string code,
+		[Description("The body: statements, a block in braces, or => expression;. Leave it off when using find, and pass just the statements to insert when using position.")] string? code = null,
+		[Description("Code to find inside this body and replace, matched on the tokens so indentation and line endings do not matter. Cheaper than re-emitting a long body for a one-line change; refused if it matches nothing or more than one thing.")] string? find = null,
+		[Description("What to put in place of find. Empty removes the matched code.")] string? replace = null,
+		[Description("start or end, to insert code rather than replace the body. end means before a closing return or throw, since anything after one is unreachable.")] string? position = null,
 		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
@@ -234,11 +239,15 @@ public sealed class RefactoringTools(
 			{
 				Kind = MemberEditKind.ReplaceBody,
 				Symbol = symbol,
-				Code = code,
+				Code = code ?? string.Empty,
+				Find = find,
+				Replace = replace,
+				Position = PositionOf(position),
 				Usings = usings ?? [],
 				FilePath = filePath,
 				Apply = apply,
 				Verify = verify,
+				VerifyScope = ScopeOf(verifyScope),
 				ExpectedRevision = expectedRevision,
 			},
 			cancellationToken);
@@ -262,6 +271,7 @@ public sealed class RefactoringTools(
 		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
@@ -277,6 +287,7 @@ public sealed class RefactoringTools(
 				FilePath = filePath,
 				Apply = apply,
 				Verify = verify,
+				VerifyScope = ScopeOf(verifyScope),
 				ExpectedRevision = expectedRevision,
 			},
 			cancellationToken);
@@ -382,5 +393,272 @@ public sealed class RefactoringTools(
 			(snapshot, token) => MemberEditService.EditAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.MoveMember,
+		Title = "Move a member to another type",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.MoveMember)]
+	public async Task<MemberEditResult> MoveMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member to move, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The type it moves into, as Namespace.Type.")] string targetType,
+		[Description("qualify to write the new type in front of every call, or usingStatic to import it in each calling file. Defaults to qualify.")] string callSites = "qualify",
+		[Description("Which file, when the member is declared in more than one -- a partial type.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the move broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var request = new MoveMemberRequest
+		{
+			Symbol = symbol,
+			TargetType = targetType,
+			CallSites = StyleOf(callSites),
+			FilePath = filePath,
+			Apply = apply,
+			Verify = verify,
+			VerifyScope = ScopeOf(verifyScope),
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await RunAsync(
+			progress,
+			(session, snapshot, working, token) => MoveMemberService.MoveAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	/// <summary>
+	/// What the caller asked to happen to the call sites. An unrecognised name is refused rather than
+	/// taken as either: the two produce different files, and guessing would produce the one they did
+	/// not ask for.
+	/// </summary>
+	private static CallSiteStyle StyleOf(string? requested)
+	{
+		if (string.IsNullOrWhiteSpace(requested)) return CallSiteStyle.Qualify;
+
+		if (Enum.TryParse<CallSiteStyle>(requested, ignoreCase: true, out var style)) return style;
+
+		throw new ArgumentException($"'{requested}' is not a call-site style. Use qualify or usingStatic.");
+	}
+
+	[McpServerTool(
+		Name = ToolNames.DeleteMember,
+		Title = "Remove a member",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.DeleteMember)]
+	public Task<MemberEditResult> DeleteMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the removal broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default) =>
+		EditAsync(
+			progress,
+			new MemberEditRequest
+			{
+				Kind = MemberEditKind.Delete,
+				Symbol = symbol,
+				FilePath = filePath,
+				Apply = apply,
+				Verify = verify,
+				VerifyScope = ScopeOf(verifyScope),
+				ExpectedRevision = expectedRevision,
+			},
+			cancellationToken);
+
+	[McpServerTool(
+		Name = ToolNames.AddFile,
+		Title = "Create a C# file",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddFile)]
+	public async Task<AddFileResult> AddFileAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Where the file goes. Absolute, or relative to the solution.")] string filePath,
+		[Description("The C#: a whole file, or just the declarations, in which case a namespace is added.")] string code,
+		[Description("Namespaces to import on top of whatever the code turns out to need.")] string[]? usings = null,
+		[Description("Which project compiles it, where the path is inside more than one project's directory.")] string? project = null,
+		[Description("Work out the namespaces the code needs and add the ones with a single answer. Defaults to true.")] bool resolveUsings = true,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the file broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new AddFileRequest
+		{
+			FilePath = filePath,
+			Code = code,
+			Usings = usings ?? [],
+			Project = project,
+			ResolveUsings = resolveUsings,
+			Apply = apply,
+			Verify = verify,
+			VerifyScope = ScopeOf(verifyScope),
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => AddFileService.AddAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.ReplaceDocComment,
+		Title = "Replace a documentation comment",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceDocComment)]
+	public async Task<MemberEditResult> ReplaceDocCommentAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The comment: plain text taken as the summary, or the whole thing as XML.")] string comment,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var request = new DeclarationEditRequest
+		{
+			Symbol = symbol,
+			Comment = comment,
+			FilePath = filePath,
+			Apply = apply,
+			Verify = verify,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await RunAsync(
+			progress,
+			(session, snapshot, working, token) => DeclarationEditService.ReplaceDocCommentAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.SetAttribute,
+		Title = "Add, replace or remove an attribute",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.SetAttribute)]
+	public async Task<MemberEditResult> SetAttributeAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The attribute as it appears in source, brackets optional: Obsolete(\"use Parse\").")] string attribute,
+		[Description("set, add, or remove. Defaults to set, which replaces the one of that name and refuses where there are several.")] string action = "set",
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		var request = new DeclarationEditRequest
+		{
+			Symbol = symbol,
+			Attribute = attribute,
+			Action = ActionOf(action),
+			FilePath = filePath,
+			Apply = apply,
+			Verify = verify,
+			VerifyScope = ScopeOf(verifyScope),
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await RunAsync(
+			progress,
+			(session, snapshot, working, token) => DeclarationEditService.SetAttributeAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	/// <summary>
+	/// The queue, the progress split and the session, which every declaration edit needs and none of
+	/// them varies.
+	/// </summary>
+	private async Task<MemberEditResult> RunAsync(
+		IProgress<ProgressNotificationValue> progress,
+		Func<WorkspaceSession, WorkspaceSnapshot, IWorkProgress, CancellationToken, Task<MutationResult<MemberEditResult>>> work,
+		CancellationToken cancellationToken)
+	{
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		return await session.MutateAsync(
+			(snapshot, token) => work(session, snapshot, working, token), cancellationToken);
+	}
+
+	/// <summary>
+	/// The action a caller named, or Set where they named nothing. An unrecognised one is refused
+	/// rather than taken as Set, which would replace an attribute a caller meant to add.
+	/// </summary>
+	private static AttributeAction ActionOf(string? requested)
+	{
+		if (string.IsNullOrWhiteSpace(requested)) return AttributeAction.Set;
+
+		if (Enum.TryParse<AttributeAction>(requested, ignoreCase: true, out var action)) return action;
+
+		throw new ArgumentException($"'{requested}' is not an action. Use set, add, or remove.");
+	}
+
+	/// <summary>
+	/// Where a caller asked to insert, or null where they asked for none. An unrecognised name is
+	/// refused rather than taken as one end: inserting at the wrong end of a body compiles.
+	/// </summary>
+	private static BodyPosition? PositionOf(string? requested)
+	{
+		if (string.IsNullOrWhiteSpace(requested)) return null;
+
+		if (Enum.TryParse<BodyPosition>(requested, ignoreCase: true, out var position)) return position;
+
+		throw new ArgumentException($"'{requested}' is not a position. Use start or end.");
+	}
+
+	/// <summary>
+	/// The scope a caller named, or Auto where they named nothing. A name that is not one of the four
+	/// is refused rather than taken as Auto: falling back silently would say the edit was checked
+	/// against dependents when it was not, which is the one thing a verification must never do.
+	/// </summary>
+	private static VerifyScope ScopeOf(string? requested)
+	{
+		if (string.IsNullOrWhiteSpace(requested)) return VerifyScope.Auto;
+
+		if (Enum.TryParse<VerifyScope>(requested, ignoreCase: true, out var scope)) return scope;
+
+		throw new ArgumentException(
+			$"'{requested}' is not a verification scope. Use auto, file, dependents, or solution.");
 	}
 }

@@ -52,10 +52,11 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.SymbolInfo)]
 	public Task<SymbolInfoResult> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The symbol by name, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string? symbol = null,
-		[Description("Path to the file. With line and column, or to narrow a name.")] string? filePath = null,
-		[Description("One-based line number. Only needed when pointing at a position rather than naming a symbol.")] int? line = null,
-		[Description("One-based column, pointing at the identifier itself.")] int? column = null,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
+		[Description("Also return the declaration's own source text, so understanding a member does not end in a file read.")] bool includeSource = false,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(workspace, filePath), ToolNames.SymbolInfo, new()
@@ -64,6 +65,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
+			["includeSource"] = includeSource,
 		}, cancellationToken, progress);
 
 	[McpServerTool(
@@ -76,14 +78,16 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.FindReferences)]
 	public Task<ReferencesResult> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Maximum references to return. Defaults to 200.")] int maxResults = 200,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<ReferencesResult>(WorkspaceHints.From(workspace, filePath), ToolNames.FindReferences, new()
 		{
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -108,6 +112,46 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		{
 			["query"] = query,
 			["maxResults"] = maxResults,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
+		Name = ToolNames.Outline,
+		Title = "Outline a type or a file",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.Outline)]
+	public Task<OutlineResult> OutlineAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The type, as Namespace.Type. One of this and filePath.")] string? type = null,
+		[Description("The file to outline. One of this and type; also narrows a partial type to one of its files.")] string? filePath = null,
+		[Description("Also list what the base classes contribute. Off by default.")] bool includeInherited = false,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<OutlineResult>(WorkspaceHints.From(workspace, filePath), ToolNames.Outline, new()
+		{
+			["type"] = type,
+			["filePath"] = filePath,
+			["includeInherited"] = includeInherited,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
+		Name = ToolNames.ProjectGraph,
+		Title = "How the projects depend on each other",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ProjectGraph)]
+	public Task<ProjectGraphResult> ProjectGraphAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<ProjectGraphResult>(WorkspaceHints.From(workspace), ToolNames.ProjectGraph, new()
+		{
+			["project"] = project,
 		}, cancellationToken, progress);
 
 	[McpServerTool(
@@ -183,10 +227,11 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.RenameSymbol)]
 	public Task<RenameResult> RenameSymbolAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
 		[Description("The new name.")] string newName,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Also rename overloads of the same method.")] bool renameOverloads = false,
 		[Description("Also rename occurrences inside comments.")] bool renameInComments = false,
@@ -196,6 +241,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<RenameResult>(WorkspaceHints.From(workspace, filePath), ToolNames.RenameSymbol, new()
 		{
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -217,14 +263,16 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.FindImplementations)]
 	public Task<ImplementationsResult> FindImplementationsAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Maximum matches to return. Defaults to 200.")] int maxResults = 200,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<ImplementationsResult>(WorkspaceHints.From(workspace, filePath), ToolNames.FindImplementations, new()
 		{
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -347,6 +395,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
@@ -358,6 +407,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,
+			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
@@ -373,11 +423,15 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	public Task<MemberEditResult> ReplaceBodyAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The body: statements, a block in braces, or => expression;.")] string code,
+		[Description("The body: statements, a block in braces, or => expression;. Leave it off when using find, and pass just the statements to insert when using position.")] string? code = null,
+		[Description("Code to find inside this body and replace, matched on the tokens so indentation and line endings do not matter. Cheaper than re-emitting a long body for a one-line change; refused if it matches nothing or more than one thing.")] string? find = null,
+		[Description("What to put in place of find. Empty removes the matched code.")] string? replace = null,
+		[Description("start or end, to insert code rather than replace the body. end means before a closing return or throw, since anything after one is unreachable.")] string? position = null,
 		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
 		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
@@ -385,10 +439,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		{
 			["symbol"] = symbol,
 			["code"] = code,
+			["find"] = find,
+			["replace"] = replace,
+			["position"] = position,
 			["usings"] = usings,
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,
+			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
@@ -411,6 +469,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
 		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
 		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
 		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
@@ -424,6 +483,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,
+			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
@@ -500,6 +560,165 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["namespaces"] = namespaces,
 			["apply"] = apply,
 			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.MoveMember,
+		Title = "Move a member to another type",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.MoveMember)]
+	public Task<MemberEditResult> MoveMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member to move, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The type it moves into, as Namespace.Type.")] string targetType,
+		[Description("qualify to write the new type in front of every call, or usingStatic to import it in each calling file. Defaults to qualify.")] string callSites = "qualify",
+		[Description("Which file, when the member is declared in more than one -- a partial type.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the move broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.MoveMember, new()
+		{
+			["symbol"] = symbol,
+			["targetType"] = targetType,
+			["callSites"] = callSites,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["verifyScope"] = verifyScope,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.DeleteMember,
+		Title = "Remove a member",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.DeleteMember)]
+	public Task<MemberEditResult> DeleteMemberAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the removal broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.DeleteMember, new()
+		{
+			["symbol"] = symbol,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["verifyScope"] = verifyScope,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.AddFile,
+		Title = "Create a C# file",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.AddFile)]
+	public Task<AddFileResult> AddFileAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Where the file goes. Absolute, or relative to the solution.")] string filePath,
+		[Description("The C#: a whole file, or just the declarations, in which case a namespace is added.")] string code,
+		[Description("Namespaces to import on top of whatever the code turns out to need.")] string[]? usings = null,
+		[Description("Which project compiles it, where the path is inside more than one project's directory.")] string? project = null,
+		[Description("Work out the namespaces the code needs and add the ones with a single answer. Defaults to true.")] bool resolveUsings = true,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the file broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<AddFileResult>(WorkspaceHints.From(workspace, filePath), ToolNames.AddFile, new()
+		{
+			["filePath"] = filePath,
+			["code"] = code,
+			["usings"] = usings,
+			["project"] = project,
+			["resolveUsings"] = resolveUsings,
+			["apply"] = apply,
+			["verify"] = verify,
+			["verifyScope"] = verifyScope,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.ReplaceDocComment,
+		Title = "Replace a documentation comment",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplaceDocComment)]
+	public Task<MemberEditResult> ReplaceDocCommentAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The comment: plain text taken as the summary, or the whole thing as XML.")] string comment,
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.ReplaceDocComment, new()
+		{
+			["symbol"] = symbol,
+			["comment"] = comment,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
+		Name = ToolNames.SetAttribute,
+		Title = "Add, replace or remove an attribute",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.SetAttribute)]
+	public Task<MemberEditResult> SetAttributeAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
+		[Description("The attribute as it appears in source, brackets optional: Obsolete(\"use Parse\").")] string attribute,
+		[Description("set, add, or remove. Defaults to set, which replaces the one of that name and refuses where there are several.")] string action = "set",
+		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
+		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
+		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
+		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(WorkspaceHelp)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.SetAttribute, new()
+		{
+			["symbol"] = symbol,
+			["attribute"] = attribute,
+			["action"] = action,
+			["filePath"] = filePath,
+			["apply"] = apply,
+			["verify"] = verify,
+			["verifyScope"] = verifyScope,
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 

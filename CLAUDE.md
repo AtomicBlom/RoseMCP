@@ -229,7 +229,14 @@ reclaim memory or pick up a rebuilt generator.
   out of the file, and the span it is copied from begins *after* the indentation of its first line,
   so a wrapped parameter list read that way looks written at column zero and every continuation
   came out a level deep. Nothing downstream corrects it and nothing complains, so the signature
-  drifted on a change that promised to touch only the body.
+  drifted on a change that promised to touch only the body. That composition also puts two
+  coordinate systems in one string, and one baseline cannot be read off both: the signature is
+  indented for the file it came out of, while the body carries whatever the caller wrote it at.
+  Taking the signature's indentation off the body strips a level from every line the caller wrapped
+  by hand and nothing from the statements those lines belong to, so a wrapped call lands flat
+  against its own statement -- again silently, since a continuation line is not a statement and the
+  formatter has no rule that puts it back. The copied half is therefore named as copied and exempted
+  from the pass, and what the caller wrote is what sets the baseline.
 - **The line endings inside a string literal are content, and this was measured.** A raw literal
   written with CRLF and the same one written with LF are different strings -- the compiler says so,
   which is worth knowing because it is tempting to assume raw literals normalise and they do not. So
@@ -668,16 +675,34 @@ reaching for it is cheaper than that reflex. Three things carry that, in descend
    ## C# navigation and refactoring
 
    Use the Roslyn-backed `rose_*` MCP tools rather than grep or find-and-replace for C# in
-   this repo: `rose_find_references` for usages, `rose_rename_symbol` for renames,
-   `rose_diagnostics` to check code compiles. To change code in a file that already exists,
-   `rose_replace_member`, `rose_replace_body` and `rose_add_member` address a member by name,
-   refuse code that does not parse, format what they write, and report what the edit broke --
-   so there is no build in the edit loop. `rose_change_signature` adds, removes or retypes a
-   parameter across every override, implementation and call site at once. Pass `usings` on any
-   of those when the code needs an import, or `rose_add_using` for code written another way; where
-   you cannot say which namespace a name needs, `rose_resolve_name` searches for it and refuses to
-   guess between two. Before running anything out of `bin`, `rose_build_freshness` says whether it
-   is this code. Source-generated code is only readable via `rose_list_generated_documents` /
+   this repo. Every one of them addresses code by name -- `Namespace.Type.Member`, with a
+   parameter list for an overload -- so nothing needs a line and column found by grepping
+   first, and nothing goes stale when an earlier edit moves a line.
+
+   Reading: `rose_outline` for what a type or a file contains, `rose_symbol_info` with
+   `includeSource` for one member and its code, `rose_find_references` for usages (grouped by
+   the member each is inside), `rose_find_implementations` for the other direction,
+   `rose_project_graph` for what depends on what. None of these ends in a file read, which
+   matters: once the file is open the next edit goes through a text tool.
+
+   Writing: `rose_add_file` starts a new file, in the right project, with the namespace its
+   folder implies and the imports its code needs. `rose_replace_member`, `rose_add_member` and
+   `rose_delete_member` change a member; `rose_replace_body` changes one, and takes `find` and
+   `replace` for a change too small to re-emit the whole body for, or `position` to insert at
+   one end. `rose_replace_doc_comment` and `rose_set_attribute` change the prose and the
+   attributes without touching the code. `rose_change_signature` adds, removes or retypes a
+   parameter across every override, implementation and call site at once, and
+   `rose_move_member` moves one between types with its call sites. All of them refuse code
+   that does not parse, format what they write, and report what the edit broke -- so there is
+   no build in the edit loop.
+
+   Imports are worked out for you: a written member's unresolved names are looked up and the
+   unambiguous ones imported, with the rest reported as a choice rather than guessed at. Pass
+   `usings` to be explicit, `rose_add_using` for code written another way, and
+   `rose_resolve_name` to search for a namespace without committing to one.
+
+   Before running anything out of `bin`, `rose_build_freshness` says whether it is this code.
+   Source-generated code is only readable via `rose_list_generated_documents` /
    `rose_read_generated_document`.
    ```
 
@@ -760,6 +785,32 @@ Enforced by `.editorconfig` where the analyzer can express them, by review where
   if (isStructuralChange)
   ```
 - `nullable enable`, warnings as errors, latest language version.
+- **Comments are self-contained and present tense.** A comment says what the code does, the
+  invariant a caller relies on, or *why this and not that*. It never says when it was written, what
+  the code was before, or which planning document discussed it.
+  - **No history or schedule.** Not `used to`, `previously`, `no longer`, `for now`, `until now`,
+    `today`, `a later slice`, `lands in`, `comes in a later issue`. Describe the failure the code
+    prevents as a consequence of not having the code, which is timeless, rather than as a past
+    event, which is not. `Nothing used to remove it and the folders accumulated` becomes `the
+    sandbox folder goes when the host does; one that outlives its host accumulates a copy of the
+    provider and a grant to ALL APPLICATION PACKAGES`.
+  - **No decision or milestone numbers** (`D14`, `D36`, `M13`, `§8`). Restate the reason in a
+    sentence, or link the decision page.
+  - **No issue or pull-request numbers unless they name open work the reader has to tolerate** --
+    a transitional state, an accumulation, a pending fix. Then write the number and the fact
+    together: `taps are never unadvised (#68), so this must be idempotent`. A closed issue's number
+    is a tag: drop it and keep the explanation. If the explanation cannot stand without the number,
+    rewrite it until it can.
+  - **Measurements stay only when the code depends on the number** -- a timing behind a constant, a
+    count that made something a lock rather than a documented limitation. "It was measured" with no
+    number is a claim, and a number with no decision hanging on it is a story. Customer paths and
+    repository names are evidence, not reasons.
+  - **Long "why" is welcome**, in the shape "X, because Y", and a non-obvious algorithm or gotcha
+    earns as many lines as it needs. If a paragraph only makes sense against what the code used to
+    do, it is a commit message.
+  - **Public types and members keep an XML summary.** A private member gets one when the reason it
+    exists is not visible from its code. A class summary describes the class as it is, not the slice
+    it began as.
 
 Commit at every milestone boundary and whenever a self-contained piece works. Run `dotnet format`
 first so formatting never shows up as diff noise.

@@ -17,6 +17,34 @@ namespace RoseMcp.Contracts;
 /// </summary>
 public static class ToolDescriptions
 {
+	/// <summary>
+	/// How the four tools that address one symbol describe their arguments. Shared so the naming
+	/// half cannot be explained on one tool and left off another, which is how a caller learns that
+	/// a position is the only way in.
+	/// </summary>
+	public const string SymbolArgument =
+		"The symbol by name, as Namespace.Type.Member. Add a parameter list to pick an overload, and "
+			+ "Type.Type or Type..ctor for a constructor. Preferred over a position: it needs no grep "
+			+ "first and does not go stale when an earlier edit moves the line.";
+
+	public const string FilePathArgument =
+		"Absolute or solution-relative path to the file. Give it with line and column to point at a "
+			+ "symbol, or on its own to say which file a name is declared in.";
+
+	public const string LineArgument =
+		"One-based line number. Only needed when pointing at a position rather than naming a symbol -- "
+			+ "which is the way to reach a local variable or a parameter, since neither is declared "
+			+ "under a name this can find.";
+
+	public const string ColumnArgument = "One-based column, pointing at the identifier itself.";
+
+	public const string VerifyScopeArgument =
+		"How much to compile when verifying: auto, file, dependents, or solution. Defaults to auto, "
+			+ "which compiles the file's own projects for a body change or an effectively private "
+			+ "member and their dependents otherwise -- a public member added, reshaped or removed "
+			+ "breaks its dependents by construction. Narrowing it to file is faster and says in the "
+			+ "result which dependents nobody looked at.";
+
 	public const string WorkspaceOpen = """
         Starts loading a solution into a warm Roslyn host and returns at once, without waiting for the
         load. Call it when you are about to ask questions about a large one and have something else to
@@ -83,19 +111,24 @@ public static class ToolDescriptions
         """;
 
 	public const string FindReferences = """
-        Every reference to the symbol at a file position, resolved semantically across the whole
-        solution. Unlike a text search this follows overrides, interface implementations and aliases,
-        and will not match comments, strings, or unrelated identifiers that happen to share a name.
-        For the opposite direction -- what implements or overrides this -- use
-        rose_find_implementations.
+        Every reference to a symbol, resolved semantically across the whole solution. Unlike a
+        text search this follows overrides, interface implementations and aliases, and will not
+        match comments, strings, or unrelated identifiers that happen to share a name. Name the
+        symbol as Namespace.Type.Member -- no grep for a line and column first, and no stale
+        position after an edit. A position still reaches a local or a parameter, which is not
+        declared under a name; count the column carefully, because one that lands on a neighbouring
+        identifier answers completely and correctly about a different symbol. For the opposite
+        direction -- what implements or overrides this -- use rose_find_implementations.
         """;
 
 	public const string FindImplementations = """
-        What implements, overrides, or derives from the symbol at a file position -- derived types for
-        a class, implementing types for an interface, overriding members for a virtual or abstract
-        one. Grep cannot answer this at all: an implementation need not mention the interface's name
-        anywhere near the member. The answer says which of those questions was actually answered,
-        since that depends on what the symbol turns out to be.
+        What implements, overrides, or derives from a symbol -- derived types for a class,
+        implementing types for an interface, overriding members for a virtual or abstract one.
+        Grep cannot answer this at all: an implementation need not mention the interface's name
+        anywhere near the member. Name the symbol as Namespace.Type.Member; a position works too,
+        but finding one for a type means a rose_search_symbols call first, which is two calls where
+        a name is one. The answer says which of those questions was actually answered, since that
+        depends on what the symbol turns out to be.
         """;
 
 	public const string SearchSymbols = """
@@ -119,13 +152,15 @@ public static class ToolDescriptions
         """;
 
 	public const string RenameSymbol = """
-        Renames the symbol at a file position everywhere it is used, using Roslyn's renamer, so
-        overrides, interface implementations, partial declarations and cref references all move
-        together -- none of which find-and-replace gets right. Conflicts, where the new name would
-        bind to something else or shadow an existing member, are reported rather than silently
-        applied. Also reports XAML that still names the old identifier and does not change it, since
-        markup is text to the compiler and a broken binding builds and runs. Returns a unified diff
-        of every file changed; pass apply=false to preview.
+        Renames a symbol everywhere it is used, using Roslyn's renamer, so overrides, interface
+        implementations, partial declarations and cref references all move together -- none of which
+        find-and-replace gets right. Name the symbol as Namespace.Type.Member: renames arrive in
+        batches more than any other edit, and a line and column found by reading the file is wrong
+        the moment an earlier rename in the same batch lands. A position still reaches a local or a
+        parameter. Conflicts, where the new name would bind to something else or shadow an existing
+        member, are reported rather than silently applied. Also reports XAML that still names the old
+        identifier and does not change it, since markup is text to the compiler and a broken binding
+        builds and runs. Returns a unified diff of every file changed; pass apply=false to preview.
         """;
 
 	public const string MoveTypeToFile = """
@@ -180,12 +215,18 @@ public static class ToolDescriptions
 
 	public const string ReplaceBody = """
         Replaces a member's body and nothing else: the signature that comes out is the one that was
-        there, copied rather than rewritten, so it cannot drift. Takes statements, a block in
-        braces, or => expression;, and a member can switch between the last two without saying so.
-        Use this rather than a line-range edit, which is the usual way a member gets broken --
-        splicing a body against line numbers that have moved drops a brace or a modifier, and the
-        damage is found at the next build. Refuses if the code does not parse, formats what it
-        writes, and returns the errors the edit introduced.
+        there, copied rather than rewritten, so it cannot drift. Three ways to say what the body
+        becomes, and exactly one of them per call. code takes the whole body -- statements, a block
+        in braces, or => expression;, and a member can switch between the last two without saying
+        so. find and replace change part of it, matched on the tokens inside this one member, so
+        indentation and line endings cannot cause a miss and a one-line change costs one line rather
+        than the whole body; nothing or more than one match is refused. position (start or end) with
+        code inserts instead of replacing, and end means before a closing return or throw, since
+        anything after one is unreachable. Use any of them rather than a line-range edit, which is
+        the usual way a member gets broken -- splicing against line numbers that have moved drops a
+        brace or a modifier, and the damage is found at the next build. Whichever payload arrives,
+        what is written is a whole body: it is parsed first, refused if it does not parse, formatted,
+        and the errors it introduced come back.
         """;
 
 	public const string AddMember = """
@@ -241,6 +282,91 @@ public static class ToolDescriptions
         that needs the import -- same work, no second call. This is for code that arrived some other
         way. It reports what it added, what was already covered and why, and how many errors the
         import resolved.
+        """;
+
+	public const string MoveMember = """
+        Moves a static member from one type to another and takes its call sites with it, in one
+        change. Use this rather than adding it to the new type and deleting it from the old: those
+        are two writes, and a failure between them leaves the member declared twice. The call sites
+        are the part that gets forgotten -- callSites=qualify writes the new type in front of each
+        one, callSites=usingStatic adds a using static to each calling file and leaves the calls as
+        they are, and the choice is made once here rather than once per file. The declaration moves
+        exactly as written, documentation comment and attributes included, reindented for where it
+        lands. Instance members are refused: moving one changes what 'this' means inside it and every
+        call site would need a receiver it has no reason to have to hand.
+        """;
+
+	public const string Outline = """
+        What a type or a file declares: every member with its full signature, kind, accessibility,
+        whether it is abstract or static, and the first line of its documentation. Name a type or
+        give a file path -- one of the two. Use it instead of reading the file to find out what is in
+        it, which is the read that comes before most edits and the one that puts the file in front of
+        you: once it is open, the edit goes through a text tool and none of the rest of this is worth
+        reaching for. The signatures are the compiler's, so implementing an interface can be written
+        from this alone, and each member says where it is, so the next call names a file without
+        searching. Members a generator wrote are marked, since there is no file to edit for those.
+        Pass includeInherited to get what the base classes contribute too.
+        """;
+
+	public const string ProjectGraph = """
+        How the solution's projects depend on each other: what each one references, everything that
+        transitively references it, its framework, its output assembly, and whether it is a test
+        project. Two questions this answers that nothing else does -- where a new type is allowed to
+        live, and how far a change to a public member reaches. The second is the transitive list, and
+        working it out by opening project files gets it wrong, because the set that breaks is
+        everything depending on the project rather than everything naming the member.
+        """;
+
+	public const string DeleteMember = """
+        Removes a member from a type, addressed by name, taking its documentation comment and its
+        attributes with it. Use this rather than cutting a line range: the span is resolved from the
+        compilation instead of counted by hand, so it cannot take a brace or a modifier with it, and
+        a region opened above the member and closed below it comes out balanced rather than as
+        CS1024. It refuses an ambiguous name instead of removing one of two overloads, which is the
+        deletion with no symptom at all -- it compiles, and the behaviour that was meant to change
+        did not. Deleting something still referenced is allowed and reported: the call sites come
+        back as the errors the removal introduced, in the same call, checked across the projects
+        that depend on this one when the member was visible to them.
+        """;
+
+	public const string AddFile = """
+        Creates a C# file: in the project whose directory contains the path, with the namespace the
+        folder implies, in the repository's own tabs, braces, line endings and final newline, and
+        with the imports the code needs worked out and added. Use this rather than writing the file
+        with a text tool, which is what starts most work and so is the earliest place a session
+        stops being able to ask semantic questions: a file written outside the workspace leaves it
+        mid-edit, and from there every read is worth less than a build. It parses the code before
+        placing anything, so a refusal writes nothing, and it refuses a path that already exists
+        rather than overwriting it. Pass just the declarations and a file-scoped namespace is added;
+        pass a whole file and its own namespace is kept, with a notice when that disagrees with the
+        folder, since IDE0130 is a build error where it is turned up. It says which project claimed
+        the file -- and says so loudly when that project lists the files it compiles rather than
+        globbing them, because then the file exists, looks compiled, and is not.
+        """;
+
+	public const string ReplaceDocComment = """
+        Replaces a declaration's documentation comment, addressed by name, without touching the code
+        under it. Use this rather than rose_replace_member or a text edit when only the prose is
+        changing: composing a whole member to change one sentence is a trade nobody takes, and once
+        the file is open in an editor the code half goes through the editor too. Pass the summary as
+        plain text or the whole comment as XML; it emits /// in the file's own indentation and line
+        endings, keeps a licence header or region directive above it, and refuses XML that does not
+        parse, which would otherwise land as CS1570. It compiles afterwards and reports what changed,
+        because a comment can break a build: a param tag for a parameter that is gone is CS1572 and a
+        parameter with no tag is CS1573, wherever a documentation file is generated.
+        """;
+
+	public const string SetAttribute = """
+        Adds, replaces or removes one attribute on a declaration, addressed by the declaration's name
+        and the attribute's. Use this rather than splicing text into the brackets: the attribute is
+        parsed first and refused if it does not parse, it lands in a list of its own below the
+        documentation comment, and removing the last attribute in a bracket takes the brackets with
+        it rather than leaving an empty pair that does not compile. action=set replaces the one
+        attribute of that name and refuses when the declaration carries several -- four InlineData
+        attributes is the ordinary shape of a test, and replacing the first would compile while
+        changing the wrong case. action=add puts another one on; action=remove takes one away.
+        Obsolete and ObsoleteAttribute are the same attribute here. It compiles afterwards, and does
+        so across the dependents, since an attribute is visible to everything that uses the member.
         """;
 
 	public const string ResolveName = """

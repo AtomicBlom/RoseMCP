@@ -42,4 +42,15 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 
 	/// <summary>False for metadata symbols, which cannot be edited.</summary>
 	public required bool IsFromSource { get; init; }
+
+	/// <summary>
+	/// The declaration's own source text, when it was asked for. One entry per declaration, so a
+	/// partial comes back in the several pieces it is written in.
+	/// <para>
+	/// Here so that understanding a member does not end in a file read. Reading the file is what puts
+	/// the file in front of the caller, and the next edit then goes through a text tool -- which is
+	/// the moment every other tool here stops being worth reaching for.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<string> Source { get; init; } = [];
 }

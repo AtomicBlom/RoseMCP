@@ -24,6 +24,16 @@ public sealed record SymbolAddress
 {
 	private const string Global = "global::";
 
+	/// <summary>
+	/// The CLR's constructor spellings, longest first so <c>..cctor</c> is not read as <c>..ctor</c>
+	/// with a stray c in front of it.
+	/// </summary>
+	private static readonly (string Suffix, ConstructorKind Kind)[] Spellings =
+	[
+		("..cctor", ConstructorKind.Static),
+		("..ctor", ConstructorKind.Instance),
+	];
+
 	/// <summary>What the caller wrote, for repeating back in an error.</summary>
 	public required string Requested { get; init; }
 
@@ -43,6 +53,13 @@ public sealed record SymbolAddress
 	/// </summary>
 	public IReadOnlyList<string>? Parameters { get; init; }
 
+	/// <summary>
+	/// Which constructor this names, if any. When it names one, <see cref="Name"/> and
+	/// <see cref="Path"/> address the <em>type</em>, since that is the name the constructor is
+	/// declared under and the one a declaration search can find.
+	/// </summary>
+	public ConstructorKind Constructor { get; init; }
+
 	public static SymbolAddress Parse(string requested)
 	{
 		var text = (requested ?? string.Empty).Trim();
@@ -55,9 +72,9 @@ public sealed record SymbolAddress
 		if (text.StartsWith(Global, StringComparison.Ordinal)) text = text[Global.Length..];
 
 		var (head, parameters) = SplitOffParameters(text);
-		var path = Segments(head);
+		var (typePath, constructor) = SplitOffConstructor(head, requested!);
 
-		if (path.Count == 0)
+		if (typePath.Length == 0)
 		{
 			throw new ArgumentException($"'{requested}' names no symbol. Write it as Namespace.Type.Member.");
 		}
@@ -65,17 +82,37 @@ public sealed record SymbolAddress
 		return new SymbolAddress
 		{
 			Requested = requested!.Trim(),
-			Name = path[^1],
-			Path = path,
+			Name = typePath[^1],
+			Path = typePath,
 			Parameters = parameters,
+			Constructor = constructor,
 		};
 	}
 
 	/// <summary>True when <paramref name="symbol"/> is one this address could be naming.</summary>
-	public bool Matches(ISymbol symbol) =>
-		string.Equals(symbol.Name, Name, StringComparison.Ordinal)
+	public bool Matches(ISymbol symbol)
+	{
+		if (Constructor != ConstructorKind.None) return ConstructorMatches(symbol);
+
+		return string.Equals(symbol.Name, Name, StringComparison.Ordinal)
 			&& QualificationMatches(symbol)
 			&& ParametersMatch(symbol);
+	}
+
+	/// <summary>
+	/// A constructor is matched through its containing type, because that is what carries the name
+	/// the caller wrote. The symbol's own name is <c>.ctor</c>, which no address spells directly.
+	/// </summary>
+	private bool ConstructorMatches(ISymbol symbol)
+	{
+		var wanted = Constructor == ConstructorKind.Static ? MethodKind.StaticConstructor : MethodKind.Constructor;
+
+		if (symbol is not IMethodSymbol method || method.MethodKind != wanted) return false;
+
+		return string.Equals(method.ContainingType.Name, Name, StringComparison.Ordinal)
+			&& QualificationMatches(method.ContainingType)
+			&& ParametersMatch(method);
+	}
 
 	/// <summary>
 	/// The symbol's own path, outermost first, as this address spells one: names only, so neither
@@ -153,6 +190,49 @@ public sealed record SymbolAddress
 			.Replace(Global, string.Empty, StringComparison.Ordinal);
 
 	/// <summary>
+	/// Takes a constructor spelling off the end of a name and returns the path to the type it
+	/// constructs.
+	/// <para>
+	/// Two spellings, because both are the natural first guess from somewhere. <c>Type..ctor</c> is
+	/// what the CLR calls it and what a stack trace shows; <c>Type.Type</c> is what C# writes, and
+	/// it cannot mean anything else, since a member may not share the name of the type enclosing it.
+	/// Accepting neither costs more than it looks: a constructor is where a parameter is added most
+	/// often, and the failure is a refusal saying nothing is declared there, which reads as the name
+	/// being wrong rather than as the spelling being unsupported.
+	/// </para>
+	/// </summary>
+	private static (string[] TypePath, ConstructorKind Constructor) SplitOffConstructor(
+		string head,
+		string requested)
+	{
+		foreach (var (suffix, kind) in Spellings)
+		{
+			if (!head.EndsWith(suffix, StringComparison.Ordinal)) continue;
+
+			var path = Segments(head[..^suffix.Length]);
+
+			if (path.Length == 0)
+			{
+				throw new ArgumentException(
+					$"'{requested}' names a constructor with no type. Write it as Namespace.Type{suffix}.");
+			}
+
+			return (path, kind);
+		}
+
+		var segments = Segments(head);
+
+		// A member may not share the name of the type enclosing it, so a repeated last segment is a
+		// constructor and cannot be read as anything else.
+		var repeats = segments.Length >= 2
+			&& string.Equals(segments[^1], segments[^2], StringComparison.Ordinal);
+
+		return repeats
+			? (segments[..^1], ConstructorKind.Instance)
+			: (segments, ConstructorKind.None);
+	}
+
+	/// <summary>
 	/// Splits a trailing parameter list off the name, matching from the right so a parameter that is
 	/// itself generic or a function type does not end the list early.
 	/// </summary>
@@ -217,7 +297,7 @@ public sealed record SymbolAddress
 	/// <c>Cache.Add</c> name the same member, and only one of them can be written without knowing
 	/// how the declaration spells its type parameters.
 	/// </summary>
-	private static IReadOnlyList<string> Segments(string head)
+	private static string[] Segments(string head)
 	{
 		var builder = new StringBuilder(head.Length);
 		var depth = 0;

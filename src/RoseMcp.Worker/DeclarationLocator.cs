@@ -118,7 +118,9 @@ public static class DeclarationLocator
 		var named = (await SymbolFinder.FindSourceDeclarationsAsync(
 			solution, address.Name, ignoreCase: false, cancellationToken)).ToArray();
 
-		var matching = named
+		var candidates = address.Constructor == ConstructorKind.None ? named : WithConstructors(named);
+
+		var matching = candidates
 			.Where(symbol => (!typesOnly || symbol is INamedTypeSymbol) && address.Matches(symbol))
 			.ToArray();
 
@@ -177,6 +179,22 @@ public static class DeclarationLocator
 		};
 	}
 
+	/// <summary>
+	/// The types a name search found, plus every constructor they declare.
+	/// <para>
+	/// A constructor is declared under the name of its type, so that is what a name search returns
+	/// for one. Expanding here rather than searching for <c>.ctor</c> keeps the search independent
+	/// of how the declaration index spells a name the language never writes.
+	/// </para>
+	/// </summary>
+	private static ISymbol[] WithConstructors(IReadOnlyList<ISymbol> named) =>
+		[
+			.. named,
+			.. named.OfType<INamedTypeSymbol>()
+				.SelectMany(type => type.Constructors)
+				.Where(constructor => !constructor.IsImplicitlyDeclared),
+		];
+
 	/// <summary>What the search found, and how to say that it was not enough.</summary>
 	private sealed record Found
 	{
@@ -223,6 +241,11 @@ public static class DeclarationLocator
 					+ "names by pattern and by abbreviation and returns the qualified name this argument wants.");
 		}
 
+		if (matching.Count == 0 && address.Constructor != ConstructorKind.None)
+		{
+			return NoConstructor(address, named);
+		}
+
 		if (matching.Count == 0)
 		{
 			var qualified = named
@@ -259,6 +282,54 @@ public static class DeclarationLocator
 		return new ArgumentException(
 			$"{Quote(address.Requested)} is declared in source-generated code{places}, which is not on disk and "
 				+ "would be regenerated on the next compilation. Change the generator, or what it reads, instead.");
+	}
+
+	/// <summary>
+	/// Why a constructor address found nothing, which is three different situations wearing one
+	/// error. The type may not be there at all; it may be there with a constructor the compiler
+	/// wrote, which is not in the file and cannot be edited; or it may declare constructors that
+	/// take other parameters.
+	/// </summary>
+	private static ArgumentException NoConstructor(SymbolAddress address, IReadOnlyList<ISymbol> named)
+	{
+		var types = named
+			.OfType<INamedTypeSymbol>()
+			.Where(type => string.Equals(type.Name, address.Name, StringComparison.Ordinal))
+			.ToArray();
+
+		if (types.Length == 0)
+		{
+			return new ArgumentException(
+				$"No type called {Quote(address.Name)} is declared in this solution, so {Quote(address.Requested)} "
+					+ "names no constructor.");
+		}
+
+		if (address.Constructor == ConstructorKind.Static)
+		{
+			return new ArgumentException($"{Quote(address.Name)} declares no static constructor.");
+		}
+
+		var declared = types.SelectMany(type => type.Constructors)
+			.Where(constructor => !constructor.IsImplicitlyDeclared)
+			.ToArray();
+
+		if (declared.Length == 0)
+		{
+			return new ArgumentException(
+				$"{Quote(address.Name)} declares no constructor. The parameterless one it has is written by the "
+					+ "compiler rather than by the file, so there is nothing here to change. Add one with "
+					+ "rose_add_member.");
+		}
+
+		var signatures = declared
+			.Select(constructor => constructor.ToDisplayString(SymbolSignature.Format))
+			.Distinct(StringComparer.Ordinal)
+			.Order(StringComparer.Ordinal)
+			.ToArray();
+
+		return new ArgumentException(
+			$"No constructor of {Quote(address.Name)} takes those parameter types. It declares "
+				+ $"{Summarise(signatures)}.");
 	}
 
 	private static ArgumentException Ambiguous(

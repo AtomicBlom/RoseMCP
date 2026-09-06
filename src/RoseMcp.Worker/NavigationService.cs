@@ -10,10 +10,11 @@ public static class NavigationService
 {
 	public static async Task<SymbolInfoResult> DescribeAsync(
 		WorkspaceSnapshot snapshot,
-		SymbolInfoRequest request,
-		CancellationToken cancellationToken)
+		SymbolTarget request,
+		CancellationToken cancellationToken,
+		bool includeSource = false)
 	{
-		var symbol = await ResolveAsync(snapshot, request, cancellationToken);
+		var symbol = await request.ResolveAsync(snapshot, cancellationToken);
 
 		var declarations = new List<SourceLocation>();
 		foreach (var location in symbol.Locations.Where(location => location.IsInSource))
@@ -41,50 +42,18 @@ public static class NavigationService
 
 			// A symbol from metadata has no source locations, which is also why it cannot be renamed.
 			IsFromSource = declarations.Count > 0,
+
+			Source = includeSource ? await SourceOfAsync(symbol, cancellationToken) : [],
 		};
-	}
-
-	/// <summary>
-	/// The symbol the request names, however it named it. A request that says neither is an error
-	/// rather than a default: guessing which of the two was meant would answer about some other
-	/// symbol entirely, and answering confidently about the wrong symbol is the failure worth the
-	/// most trouble to avoid.
-	/// </summary>
-	private static async Task<ISymbol> ResolveAsync(
-		WorkspaceSnapshot snapshot,
-		SymbolInfoRequest request,
-		CancellationToken cancellationToken)
-	{
-		if (request.IsByName)
-		{
-			var target = await DeclarationLocator.FindSymbolAsync(
-				snapshot.Solution, request.Symbol!, request.FilePath, cancellationToken);
-
-			return target.Symbol;
-		}
-
-		if (!request.IsByPosition)
-		{
-			throw new ArgumentException(
-				"Name the symbol, as Namespace.Type.Member, or give filePath with line and column. "
-					+ "A name needs no position and does not go stale when the file is edited.");
-		}
-
-		var (symbol, _) = await SymbolLocator.ResolveAsync(
-			snapshot.Solution, request.FilePath!, request.Line!.Value, request.Column!.Value, cancellationToken);
-
-		return symbol;
 	}
 
 	public static async Task<ReferencesResult> FindReferencesAsync(
 		WorkspaceSnapshot snapshot,
-		string filePath,
-		int line,
-		int column,
+		SymbolTarget target,
 		int maxResults,
 		CancellationToken cancellationToken)
 	{
-		var (symbol, _) = await SymbolLocator.ResolveAsync(snapshot.Solution, filePath, line, column, cancellationToken);
+		var symbol = await target.ResolveAsync(snapshot, cancellationToken);
 		var found = await SymbolFinder.FindReferencesAsync(symbol, snapshot.Solution, cancellationToken);
 
 		var definitions = new List<SourceLocation>();
@@ -135,13 +104,11 @@ public static class NavigationService
 	/// </summary>
 	public static async Task<ImplementationsResult> FindImplementationsAsync(
 		WorkspaceSnapshot snapshot,
-		string filePath,
-		int line,
-		int column,
+		SymbolTarget target,
 		int maxResults,
 		CancellationToken cancellationToken)
 	{
-		var (symbol, _) = await SymbolLocator.ResolveAsync(snapshot.Solution, filePath, line, column, cancellationToken);
+		var symbol = await target.ResolveAsync(snapshot, cancellationToken);
 		var solution = snapshot.Solution;
 		var found = new List<ISymbol>();
 		string relationship;
@@ -196,6 +163,17 @@ public static class NavigationService
 	{
 		var bases = new List<ISymbol>();
 
+		// A type's bases are the same question one level up, and were previously answered only for a
+		// member -- so asking what a class derives from returned nothing at all.
+		if (symbol is INamedTypeSymbol named)
+		{
+			if (named.BaseType is { SpecialType: not SpecialType.System_Object } super) bases.Add(super);
+
+			bases.AddRange(named.Interfaces);
+
+			return [.. bases.Distinct(SymbolEqualityComparer.Default)];
+		}
+
 		var overridden = symbol switch
 		{
 			IMethodSymbol method => method.OverriddenMethod,
@@ -215,6 +193,29 @@ public static class NavigationService
 		}
 
 		return [.. bases.Distinct(SymbolEqualityComparer.Default)];
+	}
+
+	/// <summary>
+	/// The text of every declaration of a symbol, straight out of the tree it was parsed from.
+	/// <para>
+	/// The full span rather than the span alone, so the documentation comment and the attributes come
+	/// with the member -- they are what a reader wanted the source for as often as the code is.
+	/// </para>
+	/// </summary>
+	private static async Task<IReadOnlyList<string>> SourceOfAsync(ISymbol symbol, CancellationToken cancellationToken)
+	{
+		var written = new List<string>();
+
+		foreach (var reference in symbol.DeclaringSyntaxReferences)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			var node = await reference.GetSyntaxAsync(cancellationToken);
+
+			written.Add(node.ToFullString().Trim());
+		}
+
+		return written;
 	}
 
 	private static async Task<IReadOnlyList<SymbolMatch>> DescribeAllAsync(

@@ -201,8 +201,9 @@ public sealed class ResolveNameTests
 	}
 
 	/// <summary>
-	/// Why this is worth building rather than left to the caller: the namespace arrives with the
-	/// error, in the result of the write that caused it, off a compilation built anyway.
+	/// The namespace arrives with the error, in the result of the write that caused it, off a
+	/// compilation built anyway. With resolveUsings off the import is reported rather than added, which
+	/// is the shape a caller wanting to place it themselves asks for.
 	/// </summary>
 	[Fact]
 	public async Task Names_the_import_in_the_result_of_the_write_that_needed_it()
@@ -215,6 +216,7 @@ public sealed class ResolveNameTests
 			Kind = MemberEditKind.Add,
 			Symbol = "Library.Greeter",
 			Code = "public string Encoded() => Encoding.UTF8.EncodingName;",
+			ResolveUsings = false,
 		});
 
 		Assert.True(result.Applied);

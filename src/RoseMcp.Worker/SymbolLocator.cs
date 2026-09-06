@@ -136,6 +136,8 @@ public static class SymbolLocator
 		var span = location.GetLineSpan();
 		var preview = await PreviewAsync(location, cancellationToken);
 
+		var document = location.SourceTree is { } tree ? solution.GetDocument(tree) : null;
+
 		return new SourceLocation
 		{
 			FilePath = span.Path,
@@ -143,8 +145,46 @@ public static class SymbolLocator
 			Column = span.StartLinePosition.Character + 1,
 			Preview = preview,
 			GeneratedHintName = await GeneratedHintNameAsync(solution, location, cancellationToken),
+			ContainingMember = await ContainingMemberAsync(location, cancellationToken),
+			Project = document?.Project.Name,
+			IsTestProject = document is not null && TestProjects.IsTest(document.Project),
 		};
 	}
+
+	/// <summary>
+	/// The member a location sits inside, as a signature, or the type where it is not inside a member
+	/// -- a field initialiser or a base list is still somewhere, and saying which type beats saying
+	/// nothing.
+	/// </summary>
+	private static async Task<string?> ContainingMemberAsync(Location location, CancellationToken cancellationToken)
+	{
+		if (location.SourceTree is not { } tree) return null;
+
+		var root = await tree.GetRootAsync(cancellationToken);
+		var node = root.FindNode(location.SourceSpan, getInnermostNodeForTie: true);
+
+		for (var current = node; current is not null; current = current.Parent)
+		{
+			if (current is BaseTypeDeclarationSyntax type) return type.Identifier.Text;
+			if (current is not MemberDeclarationSyntax member) continue;
+
+			return NameOf(member) ?? member.Kind().ToString();
+		}
+
+		return null;
+	}
+
+	/// <summary>The identifier a member declaration goes by, where it has one.</summary>
+	private static string? NameOf(MemberDeclarationSyntax member) => member switch
+	{
+		MethodDeclarationSyntax method => method.Identifier.Text,
+		ConstructorDeclarationSyntax constructor => constructor.Identifier.Text,
+		PropertyDeclarationSyntax property => property.Identifier.Text,
+		EventDeclarationSyntax @event => @event.Identifier.Text,
+		BaseFieldDeclarationSyntax field => field.Declaration.Variables.FirstOrDefault()?.Identifier.Text,
+		DelegateDeclarationSyntax @delegate => @delegate.Identifier.Text,
+		_ => null,
+	};
 
 	private static async Task<string?> PreviewAsync(Location location, CancellationToken cancellationToken)
 	{

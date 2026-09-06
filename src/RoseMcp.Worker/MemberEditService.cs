@@ -51,6 +51,13 @@ public static class MemberEditService
 	/// </summary>
 	private static readonly string[] Unresolved = ["CS0246", "CS0103", "CS0234"];
 
+	/// <summary>
+	/// How many distinct unresolved names an import is looked up for. An edit that introduces forty
+	/// has gone wrong in a way no import list will fix, and forty searches would make reporting that
+	/// failure slower than the failure.
+	/// </summary>
+	private const int Looked = 5;
+
 	public static async Task<MutationResult<MemberEditResult>> EditAsync(
 		WorkspaceSnapshot snapshot,
 		DiagnosticsService diagnostics,
@@ -72,8 +79,9 @@ public static class MemberEditService
 
 		var written = request.Kind switch
 		{
-			MemberEditKind.Add => await AddAsync(snapshot.Solution, request, cancellationToken),
-			MemberEditKind.ReplaceBody => await ReplaceBodyAsync(snapshot.Solution, request, cancellationToken),
+			MemberEditKind.Add => await AddAsync(snapshot.Solution, request, notices, cancellationToken),
+			MemberEditKind.Delete => await DeleteAsync(snapshot.Solution, request, cancellationToken),
+			MemberEditKind.ReplaceBody => await ReplaceBodyAsync(snapshot.Solution, request, notices, cancellationToken),
 			_ => await ReplaceAsync(snapshot.Solution, request, notices, cancellationToken),
 		};
 
@@ -90,21 +98,40 @@ public static class MemberEditService
 		if (outcome.ChangedFiles.Count == 0) notices.Add("The file already said exactly that, so nothing changed.");
 
 		var verification = Verification.NotRun;
+		var solution = finished.Solution;
+		var path = written.Document.FilePath!;
 
 		// A preview is verified too: what an edit would break is the question a preview is asking.
 		if (request.Verify && outcome.ChangedFiles.Count > 0)
 		{
 			progress?.Report("Compiling to see what the edit did", 70);
 
-			var path = written.Document.FilePath!;
+			var scope = EditVerification.ScopeFor(solution, path, written.Reaches, request.VerifyScope);
 
 			verification = await EditVerification.RunAsync(
-				diagnostics,
-				snapshot.Solution,
-				finished.Solution,
-				EditVerification.ProjectsHolding(finished.Solution, path),
-				path,
-				cancellationToken);
+				diagnostics, snapshot.Solution, solution, scope, path, cancellationToken);
+
+			// Only where something did not bind, so an edit whose imports were right or unneeded pays
+			// nothing for this and the one that needed it pays the compile it would have paid at the
+			// next build.
+			var wanted = request.ResolveUsings && verification.Introduced.Any(entry => MissingImports.IsUnresolved(entry.Id));
+
+			if (wanted)
+			{
+				progress?.Report("Working out which namespaces the code needs", 80);
+
+				solution = await ResolveImportsAsync(
+					snapshot, solution, written, path, verification.Introduced, notices, cancellationToken);
+
+				if (!ReferenceEquals(solution, finished.Solution))
+				{
+					outcome = await SolutionWriter.ApplyAsync(
+						snapshot.Solution, solution, request.Apply, noteSelfWrite, cancellationToken);
+
+					verification = await EditVerification.RunAsync(
+						diagnostics, snapshot.Solution, solution, scope, path, cancellationToken);
+				}
+			}
 		}
 
 		notices.AddRange(finished.Notices);
@@ -124,11 +151,15 @@ public static class MemberEditService
 			ResolvedDiagnosticCount = verification.ResolvedCount,
 			TotalErrorCount = verification.TotalCount,
 			ProjectsChecked = verification.Projects,
+			DependentsNotChecked = request.Verify && outcome.ChangedFiles.Count > 0
+				? EditVerification.SkippedDependents(
+					finished.Solution, written.Document.FilePath!, written.Reaches, request.VerifyScope)
+				: [],
 			ChangedFiles = outcome.ChangedFiles,
 			Notices = notices,
 		};
 
-		var changed = request.Apply && outcome.ChangedFiles.Count > 0 ? finished.Solution : null;
+		var changed = request.Apply && outcome.ChangedFiles.Count > 0 ? solution : null;
 
 		return new MutationResult<MemberEditResult>(result, changed);
 	}
@@ -149,7 +180,9 @@ public static class MemberEditService
 			request.Code,
 			KeywordAround(target.Declaration),
 			target.Document.Project.ParseOptions,
-			IndentAt(text, target.Declaration.SpanStart));
+			IndentAt(text, target.Declaration.SpanStart),
+			Whitespace.Dominant(text),
+			count => notices.Add(RewrittenEndings(count, text)));
 
 		if (parsed.Count != 1)
 		{
@@ -166,8 +199,64 @@ public static class MemberEditService
 			root.ReplaceNode(target.Declaration, replacement),
 			marker,
 			target.Signature,
-			[.. NamesOf(parsed[0])]);
+			[.. NamesOf(parsed[0])],
+			target.Symbol);
 	}
+
+	/// <summary>
+	/// Takes a member out, with its documentation comment and its attributes, leaving the blank lines
+	/// around it as one.
+	/// <para>
+	/// The only write that is safe semantically and nothing else: what makes a deletion wrong is
+	/// invisible to a text edit. It is referenced somewhere, which the compile afterwards answers. It
+	/// is one of several partial declarations, or an override whose base is abstract, so removing it
+	/// breaks somewhere else entirely. Its documentation comment goes with it, or the next member
+	/// inherits a summary describing something that is gone.
+	/// </para>
+	/// <para>
+	/// The directives are the part a splice cannot get right. A member whose leading trivia opens a
+	/// region and whose trailing trivia closes it leaves the file with CS1024 or CS1028 if the pair is
+	/// cut in half, so removal keeps whatever is unbalanced and lets the region close around nothing.
+	/// </para>
+	/// </summary>
+	private static async Task<Written> DeleteAsync(
+		Solution solution,
+		MemberEditRequest request,
+		CancellationToken cancellationToken)
+	{
+		var target = await DeclarationLocator.FindMemberAsync(solution, request.Symbol, request.FilePath, cancellationToken);
+
+		GuardSharedDeclaration(target);
+
+		if (target.Declaration.Parent is not { } parent)
+		{
+			throw new ArgumentException(
+				$"{target.Signature} is not inside anything, so there is nothing to remove it from.");
+		}
+
+		var root = await RootOf(target.Document, cancellationToken);
+
+		var without = parent.RemoveNode(
+			target.Declaration,
+			SyntaxRemoveOptions.KeepNoTrivia | SyntaxRemoveOptions.KeepUnbalancedDirectives)
+			?? throw new InvalidOperationException($"Removing {target.Signature} left nothing to write.");
+
+		// Annotating the container rather than the member, because the member is what has gone. It is
+		// what the formatting passes are pointed at, so they stay off the rest of the file.
+		var marker = new SyntaxAnnotation();
+
+		return new Written(
+			target.Document,
+			root.ReplaceNode(parent, without.WithAdditionalAnnotations(marker)),
+			marker,
+			target.Signature,
+			[NameOfDeclaration(target.Declaration)],
+			target.Symbol);
+	}
+
+	/// <summary>The name a removed declaration went by, for reporting what was taken out.</summary>
+	private static string NameOfDeclaration(MemberDeclarationSyntax declaration) =>
+		NamesOf(declaration).FirstOrDefault() ?? declaration.Kind().ToString();
 
 	/// <summary>
 	/// Replaces a body by rebuilding the member from its own signature text and the supplied body,
@@ -183,6 +272,7 @@ public static class MemberEditService
 	private static async Task<Written> ReplaceBodyAsync(
 		Solution solution,
 		MemberEditRequest request,
+		List<string> notices,
 		CancellationToken cancellationToken)
 	{
 		var target = await DeclarationLocator.FindMemberAsync(solution, request.Symbol, request.FilePath, cancellationToken);
@@ -210,12 +300,23 @@ public static class MemberEditService
 		// formatter has no rule about where a wrapped list sits, so nothing downstream puts it back.
 		// The signature then drifts on a change that promised to touch only the body.
 		var head = indent + text.ToString(TextSpan.FromBounds(declaration.SpanStart, bodyStart)).TrimEnd();
+		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, notices);
 
+		// The head is named as copied, which exempts it from the re-indentation the body needs. The
+		// two halves arrive in different coordinate systems -- the signature indented for the file it
+		// came out of, the body at whatever baseline the caller happened to write it at -- and one
+		// baseline read off both takes a level from the lines the caller wrapped by hand and none
+		// from the statements they belong to, landing a wrapped call flat against its own statement.
+		// It is the same trap as the line above, arriving from the other side, and nothing catches
+		// it: a continuation line is not a statement, so the formatter has no rule that puts it back.
 		var parsed = MemberSyntax.Parse(
-			$"{head} {Body(request.Code)}",
+			$"{head} {Body(written)}",
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
-			indent);
+			indent,
+			Whitespace.Dominant(text),
+			count => notices.Add(RewrittenEndings(count, text)),
+			copied: head);
 
 		if (parsed.Count != 1)
 		{
@@ -238,12 +339,68 @@ public static class MemberEditService
 			root.ReplaceNode(declaration, replacement),
 			marker,
 			target.Signature,
-			[.. NamesOf(declaration)]);
+			[.. NamesOf(declaration)],
+			Reaches: null);
 	}
+
+	/// <summary>
+	/// The body to write, from whichever of the three payloads the caller sent.
+	/// <para>
+	/// Three because re-emitting a sixty-line body to change one line is what sends a caller back to a
+	/// text anchor: the granularity is right and the payload is expensive. All three end here, as a
+	/// whole body, so what reaches disk has been parsed and formatted either way.
+	/// </para>
+	/// </summary>
+	private static string BodyFor(
+		MemberDeclarationSyntax declaration,
+		string signature,
+		SourceText text,
+		int bodyStart,
+		MemberEditRequest request,
+		List<string> notices)
+	{
+		var payloads = (request.Code.Length > 0 ? 1 : 0)
+			+ (request.Find is { Length: > 0 } ? 1 : 0)
+			+ (request.Position is not null ? 1 : 0);
+
+		if (request.Position is not null && request.Code.Length > 0) payloads--;
+
+		if (payloads == 0)
+		{
+			throw new ArgumentException(
+				"Nothing to write. Pass code with the whole body, find and replace to change part of it, or "
+					+ "position with code to insert at one end.");
+		}
+
+		if (payloads > 1)
+		{
+			throw new ArgumentException(
+				"Pass one of code, find and replace, or position with code -- they are three ways of saying what "
+					+ "the body becomes, and more than one leaves it ambiguous.");
+		}
+
+		if (request.Find is { Length: > 0 } find)
+		{
+			var body = text.ToString(TextSpan.FromBounds(bodyStart, declaration.Span.End)).TrimEnd(';', ' ', '\t');
+
+			return BodyEdit.Anchored(body, find, request.Replace ?? string.Empty);
+		}
+
+		if (request.Position is not { } position) return request.Code;
+
+		if (BodyBlock(declaration) is not { } block) throw BodyEdit.NoStatements(signature);
+
+		return BodyEdit.Inserted(declaration, block, request.Code, position == BodyPosition.Start, notices);
+	}
+
+	/// <summary>The block a member is written with, or null where it has an expression body instead.</summary>
+	private static BlockSyntax? BodyBlock(MemberDeclarationSyntax declaration) =>
+		declaration is BaseMethodDeclarationSyntax method ? method.Body : null;
 
 	private static async Task<Written> AddAsync(
 		Solution solution,
 		MemberEditRequest request,
+		List<string> notices,
 		CancellationToken cancellationToken)
 	{
 		if (request.After is { Length: > 0 } && request.Before is { Length: > 0 })
@@ -276,7 +433,9 @@ public static class MemberEditService
 			request.Code,
 			MemberSyntax.KeywordOf(type),
 			document.Project.ParseOptions,
-			IndentFor(type, text, rules));
+			IndentFor(type, text, rules),
+			lineEnding,
+			count => notices.Add(RewrittenEndings(count, text)));
 
 		GuardDuplicates(type, parsed);
 
@@ -308,7 +467,8 @@ public static class MemberEditService
 			root.ReplaceNode(type, updated),
 			marker,
 			target.Signature,
-			[.. parsed.SelectMany(NamesOf)]);
+			[.. parsed.SelectMany(NamesOf)],
+			target.Symbol);
 	}
 
 	/// <summary>
@@ -352,6 +512,40 @@ public static class MemberEditService
 		}
 
 		return written with { Root = insertion.Root };
+	}
+
+	/// <summary>
+	/// Works out what would import the names the edit left unresolved, adds the ones with a single
+	/// answer, and reports the rest.
+	/// <para>
+	/// The half <see cref="MissingImports"/> stops short of. Reporting the namespace and leaving the
+	/// caller to add it is a round trip at exactly the moment they were promised there would not be
+	/// one: the code was just written by this tool, and it does not compile.
+	/// </para>
+	/// </summary>
+	private static async Task<Solution> ResolveImportsAsync(
+		WorkspaceSnapshot snapshot,
+		Solution solution,
+		Written written,
+		string path,
+		IReadOnlyList<DiagnosticEntry> introduced,
+		List<string> notices,
+		CancellationToken cancellationToken)
+	{
+		var imports = await ResolvedImports.ForAsync(
+			new WorkspaceSnapshot { Solution = solution, Revision = snapshot.Revision },
+			introduced,
+			path,
+			Looked,
+			cancellationToken);
+
+		notices.AddRange(imports.Added);
+		notices.AddRange(imports.Ambiguous);
+		notices.AddRange(imports.Unresolved);
+
+		return imports.AnythingToAdd
+			? await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, cancellationToken)
+			: solution;
 	}
 
 	/// <summary>
@@ -791,7 +985,19 @@ public static class MemberEditService
 		SyntaxNode Root,
 		SyntaxAnnotation Marker,
 		string Symbol,
-		IReadOnlyList<string> Members);
+		IReadOnlyList<string> Members,
+		ISymbol? Reaches);
 
 	private sealed record Finished(Solution Solution, int Line, IReadOnlyList<string> Notices);
+
+	/// <summary>
+	/// Says that line endings in the supplied code were changed, because a diff cannot: a terminator
+	/// is not line content, and inside a literal it is part of what the string says.
+	/// </summary>
+	private static string RewrittenEndings(int count, SourceText text) =>
+		$"Rewrote {count} line ending(s) in the code supplied to {LineEndings.Name(Whitespace.Dominant(text))}, "
+			+ "the ending this file uses. Every ending in it was a bare LF, which is what composing C# for "
+			+ "a tool argument produces without anyone deciding to -- but inside a string literal an "
+			+ "ending is part of the value, which is why this is said rather than left silent. Write one "
+			+ "CR LF anywhere in the code to keep every ending exactly as it arrived.";
 }

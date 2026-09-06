@@ -1,3 +1,5 @@
+using RoseMcp.Contracts;
+
 namespace RoseMcp.Worker;
 
 /// <summary>Which declaration to write, and what to write into it.</summary>
@@ -14,9 +16,27 @@ public sealed record MemberEditRequest
 	/// <summary>
 	/// The C# to write. A whole declaration for <see cref="MemberEditKind.Replace"/> and
 	/// <see cref="MemberEditKind.Add"/>; statements, a block, or <c>=&gt; expression;</c> for
-	/// <see cref="MemberEditKind.ReplaceBody"/>.
+	/// <see cref="MemberEditKind.ReplaceBody"/>. Empty for <see cref="MemberEditKind.Delete"/>,
+	/// which writes nothing.
 	/// </summary>
-	public required string Code { get; init; }
+	public string Code { get; init; } = string.Empty;
+
+	/// <summary>
+	/// Code to find inside the body, for a change too small to be worth re-emitting the whole thing
+	/// for. Matched on the token stream, so indentation and line endings cannot cause a miss, and
+	/// only inside the one member the name resolved to. Zero matches or several is a refusal.
+	/// </summary>
+	public string? Find { get; init; }
+
+	/// <summary>What to put in place of <see cref="Find"/>. Empty removes the matched code.</summary>
+	public string? Replace { get; init; }
+
+	/// <summary>
+	/// Where to insert <see cref="Code"/> instead of replacing the body: the top of the block, or the
+	/// end of it -- which means before a closing return or throw, since anything after one is
+	/// unreachable.
+	/// </summary>
+	public BodyPosition? Position { get; init; }
 
 	/// <summary>
 	/// Namespaces the written code needs imported, ensured in the same file and the same call.
@@ -29,6 +49,19 @@ public sealed record MemberEditRequest
 	/// </para>
 	/// </summary>
 	public IReadOnlyList<string> Usings { get; init; } = [];
+
+	/// <summary>
+	/// Work out what would import the names the edit leaves unresolved, and add the ones with a
+	/// single answer.
+	/// <para>
+	/// On by default. The compilation that finds those names has just been built to say what the
+	/// edit broke, so the search is a lookup rather than work, and it runs only where something
+	/// failed to bind -- an edit whose imports were right or unneeded pays nothing. What is not
+	/// added is a name with more than one candidate: the wrong import compiles and binds to the
+	/// wrong type, so those come back as a choice.
+	/// </para>
+	/// </summary>
+	public bool ResolveUsings { get; init; } = true;
 
 	/// <summary>
 	/// Which file, when the name alone does not settle it -- a partial type, or a partial member.
@@ -55,6 +88,14 @@ public sealed record MemberEditRequest
 	/// compilation rather than a build.
 	/// </summary>
 	public bool Verify { get; init; } = true;
+
+	/// <summary>
+	/// How much to compile. <see cref="VerifyScope.Auto"/> reads it off the edit -- the file's own
+	/// projects for a body change or an effectively private member, their dependents otherwise --
+	/// which is the only setting that is right without the caller working out what a member's
+	/// accessibility implies about who breaks.
+	/// </summary>
+	public VerifyScope VerifyScope { get; init; } = VerifyScope.Auto;
 
 	/// <summary>
 	/// Fail rather than apply if the workspace has moved past this revision. Matters when more than

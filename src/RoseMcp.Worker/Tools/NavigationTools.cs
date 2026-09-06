@@ -21,9 +21,10 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.FindImplementations)]
 	public async Task<ImplementationsResult> FindImplementationsAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Maximum matches to return. Defaults to 200.")] int maxResults = 200,
 		CancellationToken cancellationToken = default)
 	{
@@ -32,8 +33,10 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 
 		var snapshot = await host.ReadAsync(cancellationToken);
 
+		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
+
 		return await NavigationService.FindImplementationsAsync(
-			snapshot, filePath, line, column, maxResults <= 0 ? 200 : maxResults, cancellationToken);
+			snapshot, target, maxResults <= 0 ? 200 : maxResults, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -46,10 +49,11 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.SymbolInfo)]
 	public async Task<SymbolInfoResult> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The symbol by name, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string? symbol = null,
-		[Description("Absolute or solution-relative path to the file. With line and column, or to narrow a name.")] string? filePath = null,
-		[Description("One-based line number. Only needed when pointing at a position rather than naming a symbol.")] int? line = null,
-		[Description("One-based column, pointing at the identifier itself.")] int? column = null,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
+		[Description("Also return the declaration's own source text, so understanding a member does not end in a file read.")] bool includeSource = false,
 		CancellationToken cancellationToken = default)
 	{
 		// Describing one symbol is instant. The only wait worth reporting is the workspace itself,
@@ -60,8 +64,9 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 
 		return await NavigationService.DescribeAsync(
 			snapshot,
-			new SymbolInfoRequest { Symbol = symbol, FilePath = filePath, Line = line, Column = column },
-			cancellationToken);
+			new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column },
+			cancellationToken,
+			includeSource);
 	}
 
 	[McpServerTool(
@@ -74,9 +79,10 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.FindReferences)]
 	public async Task<ReferencesResult> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative path to the file.")] string filePath,
-		[Description("One-based line number.")] int line,
-		[Description("One-based column, pointing at the identifier itself.")] int column,
+		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.LineArgument)] int? line = null,
+		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Maximum references to return. Defaults to 200.")] int maxResults = 200,
 		CancellationToken cancellationToken = default)
 	{
@@ -85,13 +91,15 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 
 		var snapshot = await host.ReadAsync(cancellationToken);
 
+		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
+
 		// Reported without a percentage, deliberately. Roslyn's reference search offers no progress
 		// and cannot say up front how much of the solution it will visit, so an honest "working on
 		// it" beats a number that would be invented here.
-		working.Report($"Searching the solution for references to {Path.GetFileName(filePath)}:{line}");
+		working.Report($"Searching the solution for references to {target.Describe()}");
 
 		return await NavigationService.FindReferencesAsync(
-			snapshot, filePath, line, column, maxResults <= 0 ? 200 : maxResults, cancellationToken);
+			snapshot, target, maxResults <= 0 ? 200 : maxResults, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -148,5 +156,47 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		};
 
 		return await NameResolver.ResolveAsync(snapshot, request, cancellationToken, working);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.Outline,
+		Title = "Outline a type or a file",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.Outline)]
+	public async Task<OutlineResult> OutlineAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("The type, as Namespace.Type. One of this and filePath.")] string? type = null,
+		[Description("The file to outline. One of this and type; also narrows a partial type to one of its files.")] string? filePath = null,
+		[Description("Also list what the base classes contribute. Off by default.")] bool includeInherited = false,
+		CancellationToken cancellationToken = default)
+	{
+		using var following = sharedWork.Follow(WorkProgress.For(progress));
+
+		var snapshot = await host.ReadAsync(cancellationToken);
+
+		return await OutlineService.OutlineAsync(snapshot, type, filePath, includeInherited, cancellationToken);
+	}
+
+	[McpServerTool(
+		Name = ToolNames.ProjectGraph,
+		Title = "How the projects depend on each other",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ProjectGraph)]
+	public async Task<ProjectGraphResult> ProjectGraphAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
+		CancellationToken cancellationToken = default)
+	{
+		using var following = sharedWork.Follow(WorkProgress.For(progress));
+
+		var snapshot = await host.ReadAsync(cancellationToken);
+
+		return ProjectGraphService.Describe(snapshot, project);
 	}
 }

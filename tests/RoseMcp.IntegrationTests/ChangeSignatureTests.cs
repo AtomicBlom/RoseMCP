@@ -356,4 +356,125 @@ public sealed class ChangeSignatureTests
 
 	private static Task<string> ReadAsync(FixtureSolution fixture, string file) =>
 		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current.CancellationToken);
+
+	/// <summary>
+	/// A constructor is where a parameter is added most often, and its declaration carries a name the
+	/// language and the runtime spell differently. Both spellings reach it.
+	/// </summary>
+	[Theory]
+	[InlineData("Library.Assembled.Assembled(string)")]
+	[InlineData("Library.Assembled..ctor(string)")]
+	public async Task Changes_a_constructor_addressed_either_way(string symbol)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, symbol, "string name, int count = 1");
+
+		Assert.True(result.Applied);
+		Assert.True(result.Verified);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Equal(0, result.TotalErrorCount);
+
+		var text = await ReadAsync(fixture, "Constructed.cs");
+
+		Assert.Contains("public Assembled(string name, int count = 1)", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A primary constructor's parameters are written on the type, so its only declaration is the type
+	/// declaration. Nothing about that is visible in the symbol, which is a method like any other, and
+	/// treating "not a method declaration" as "no parameter list" refuses the ordinary modern shape.
+	/// </summary>
+	[Fact]
+	public async Task Changes_a_primary_constructor_declared_on_the_type()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Composed.Composed(string)", "string name, int count = 1");
+
+		Assert.True(result.Applied);
+		Assert.True(result.Verified);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Equal(0, result.TotalErrorCount);
+
+		var text = await ReadAsync(fixture, "Constructed.cs");
+
+		Assert.Contains("public sealed class Composed(string name, int count = 1)", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A required parameter breaks every call site that does not pass it, and the call site is in
+	/// another file. What comes back names it rather than leaving it to a build.
+	/// </summary>
+	[Fact]
+	public async Task Rewrites_a_construction_in_another_file()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Assembled.Assembled(string)", "string name, int count", ["count=1"]);
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		Assert.Contains(
+			result.UpdatedCallSites,
+			site => site.FilePath.EndsWith("Builds.cs", StringComparison.OrdinalIgnoreCase));
+
+		var text = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Builds.cs"), TestContext.Current.CancellationToken);
+
+		Assert.Contains("new Assembled(\"one\", 1)", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A type with no constructor of its own has one the compiler writes, which is not in the file. The
+	/// refusal says that rather than reporting the name as unknown.
+	/// </summary>
+	[Fact]
+	public async Task Refuses_a_constructor_the_compiler_wrote()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Greeter.Greeter()", "int count"));
+
+		Assert.Contains("written by the compiler", thrown.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A forwarder is the shape this tool exists for and the one it cannot finish. A new parameter with
+	/// a default breaks nothing, so the forwarder compiles while still passing the old default, and
+	/// every caller of it silently gets the behaviour the change was meant to alter. Listed beside
+	/// forty ordinary call sites, that is what lets a five-deep chain go half-changed.
+	/// </summary>
+	[Fact]
+	public async Task Says_which_unchanged_call_sites_are_forwarders()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.INotifier.Notify(string)", "string message, bool loud = false");
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var forwarder = Assert.Single(
+			result.UnchangedCallSites,
+			site => site.Reason.Contains("whole body of Send", StringComparison.Ordinal));
+
+		Assert.Contains("forwards its own parameters through", forwarder.Reason, StringComparison.Ordinal);
+		Assert.Contains("Change", forwarder.Reason, StringComparison.Ordinal);
+
+		// A method that happens to contain a call is not a forwarder: SendTwice calls it twice and
+		// concatenates, so calling that mechanical would be telling the caller something untrue.
+		Assert.DoesNotContain(
+			result.UnchangedCallSites,
+			site => site.Reason.Contains("whole body of SendTwice", StringComparison.Ordinal));
+	}
 }

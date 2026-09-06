@@ -50,15 +50,37 @@ public static class ServiceCollectionExtensions
 		  implementations, partial declarations and cref references together, reports conflicts,
 		  and returns a diff. It also reports XAML that still names the old identifier, which it
 		  does not change: markup is text to the compiler, so a broken binding builds and runs.
-		- Writing code into a file that already exists: rose_replace_member, rose_replace_body and
-		  rose_add_member, not a text edit. They address a member by name, parse what you give them
-		  before the file is touched and refuse if it does not parse, write through the repository's
-		  own .editorconfig, and then compile and tell you what the edit broke. That last part is
-		  the point: it takes the build out of the edit loop. A name also does not go stale the way
-		  a line number does the moment an earlier edit lands. Writing a whole new file is still
-		  your own job; what these are for is editing inside one.
-		- When code you write needs an import: pass usings to the same call that writes it, rather
-		  than editing the import block afterwards. rose_add_using does the same for code that
+		- Reading code before you change it: rose_outline for what a type or a file contains, and
+		  rose_symbol_info with includeSource for one member and its code. Not a file read -- once
+		  the file is open, the next edit goes through a text tool and none of this is worth
+		  reaching for.
+		- Starting a new file: rose_add_file, not a text write. It puts the file in the project
+		  whose directory contains the path, gives it the namespace its folder implies, writes it in
+		  the repository's own tabs and line endings, works out the imports its code needs, and
+		  refuses a path that already exists. Writing a C# file outside the workspace leaves it
+		  permanently mid-edit, which is the earliest point a session stops being able to ask any of
+		  these questions usefully.
+		- Writing code into a file that already exists: rose_replace_member, rose_add_member,
+		  rose_delete_member and rose_replace_body, not a text edit. They address a member by name,
+		  parse what you give them before the file is touched and refuse if it does not parse, write
+		  through the repository's own .editorconfig, and then compile and tell you what the edit
+		  broke. That last part is the point: it takes the build out of the edit loop. A name also
+		  does not go stale the way a line number does the moment an earlier edit lands.
+		- Changing part of a body: rose_replace_body with find and replace, rather than re-emitting
+		  sixty lines to change one. The anchor is matched on the tokens inside the one member you
+		  named, so spacing does not matter, and nothing or more than one match is refused. position
+		  with code inserts at one end instead.
+		- Changing a documentation comment or an attribute: rose_replace_doc_comment and
+		  rose_set_attribute, not a whole-member rewrite and not a text edit. Composing a
+		  declaration to change a sentence is a trade nobody takes, and the editor then takes the
+		  code half too.
+		- Moving a member between types: rose_move_member, not an add and a delete. It is one change
+		  rather than two, and it decides what happens to the call sites once instead of once per
+		  file.
+		- Imports for code you write: worked out for you. A write compiles what it wrote, looks up
+		  the names that did not bind, and imports the ones with a single answer -- the rest come back
+		  as a choice, because the wrong import compiles and binds to the wrong type. Pass usings to
+		  the same call to be explicit, rather than editing the import block afterwards. rose_add_using does the same for code that
 		  arrived some other way. Either way it goes where the file's own ordering puts it, and one
 		  already in scope -- from a global using, an implicit using, or the namespace the file is
 		  in -- is reported rather than added, because adding it again is a build error too. Where

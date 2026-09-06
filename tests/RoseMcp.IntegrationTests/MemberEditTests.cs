@@ -76,8 +76,9 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
-	/// The same shift must not reach inside a string. Its leading whitespace is part of the value,
-	/// and in a raw literal it decides how much is stripped from every line of it.
+	/// The same shift must not reach inside a verbatim string. Its leading whitespace is part of the
+	/// value, and no delimiter rule takes it back out again, so a literal written flush left stays
+	/// flush left however deep the member around it sits.
 	/// </summary>
 	[Fact]
 	public async Task Leaves_the_inside_of_a_multi_line_literal_alone()
@@ -94,19 +95,23 @@ public sealed class MemberEditTests
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		// Verbatim, endings included: a newline inside the literal is part of the value the caller
-		// asked for, so normalising it to the file's CRLF would change what the program says.
-		Assert.Contains("@\"\nflush left on purpose\n\";", text, StringComparison.Ordinal);
+		// The line the literal holds is not indented with the member. Its endings are the file's,
+		// because the code arrived carrying none of its own.
+		Assert.Contains("@\"\r\nflush left on purpose\r\n\";", text, StringComparison.Ordinal);
 	}
 
 	/// <summary>
-	/// Leaving a literal's endings alone is right, and it has a consequence nothing else says: a
-	/// multi-line string written with bare newlines into a CRLF file fails dotnet format, no build
-	/// complains, and the obvious fix changes what the program says. Found three times in one
-	/// session writing this repository's own tool descriptions through these tools.
+	/// A multi-line literal composed for a JSON argument arrives with bare newlines, which in a CRLF
+	/// file fails dotnet format while no build complains and the obvious fix changes what the program
+	/// says. The endings become the file's, and the result says so, because a diff cannot show a
+	/// terminator and this one is part of a string's value.
+	/// <para>
+	/// A caller that writes a carriage return is thinking about endings, and then nothing is touched --
+	/// which is also the way to ask for a bare newline inside a literal on purpose.
+	/// </para>
 	/// </summary>
 	[Fact]
-	public async Task Says_when_a_literal_was_written_with_the_wrong_line_endings()
+	public async Task Rewrites_the_endings_of_a_literal_composed_without_them()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -120,9 +125,14 @@ public sealed class MemberEditTests
 
 		Assert.Contains(
 			bare.Notices,
-			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
+			notice => notice.Contains("Rewrote", StringComparison.Ordinal)
+				&& notice.Contains("line ending(s) in the code supplied", StringComparison.Ordinal));
 
-		// And says nothing when the caller wrote them the way the file does.
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("@\"\r\nline one\r\nline two\r\n\";", text, StringComparison.Ordinal);
+
+		// Supplied with the file's own endings, there is nothing to rewrite and nothing to say.
 		var matching = await EditAsync(session, new MemberEditRequest
 		{
 			Kind = MemberEditKind.Add,
@@ -132,7 +142,7 @@ public sealed class MemberEditTests
 
 		Assert.DoesNotContain(
 			matching.Notices,
-			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
+			notice => notice.Contains("line ending(s) in the code supplied", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -599,6 +609,43 @@ public sealed class MemberEditTests
 			StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// A hand-wrapped call inside a replaced body keeps its continuation level, whatever indentation
+	/// the caller wrote it at.
+	/// <para>
+	/// The mirror image of the signature trap above, and the more expensive one, because the body is
+	/// what this tool exists to change. A continuation line is not a statement, so Roslyn's formatter
+	/// has no rule that puts one back, and neither IDE0055 nor dotnet format has an opinion about a
+	/// wrapped argument list -- so the code comes out a level short of its neighbours and every build
+	/// passes. The three spellings are one request: the caller's own baseline cannot decide where the
+	/// code lands.
+	/// </para>
+	/// </summary>
+	[Theory]
+	[InlineData(0)]
+	[InlineData(1)]
+	[InlineData(2)]
+	public async Task Keeps_a_wrapped_call_in_a_body_a_level_in(int written)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var baseline = new string('\t', written);
+
+		var code = $"{baseline}return string.Concat(\n{baseline}\tfirst,\n{baseline}\tsecond,\n{baseline}\tthird);";
+
+		var result = await EditAsync(session, Request(MemberEditKind.ReplaceBody, "Library.Wrapped.Join", code));
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		Assert.Contains(
+			"\t{\r\n\t\treturn string.Concat(\r\n\t\t\tfirst,\r\n\t\t\tsecond,\r\n\t\t\tthird);\r\n\t}",
+			text,
+			StringComparison.Ordinal);
+	}
+
 	private static Task<MemberEditResult> ReplaceAsync(WorkspaceSession session, string symbol, string code) =>
 		EditAsync(session, Request(MemberEditKind.Replace, symbol, code));
 
@@ -617,4 +664,423 @@ public sealed class MemberEditTests
 
 	private static Task<string> ReadAsync(FixtureSolution fixture, string file) =>
 		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current.CancellationToken);
+
+	/// <summary>
+	/// A public member reshaped breaks its dependents by construction, so the projects that reference
+	/// this one are compiled too. Checking only the file's own would report a clean edit at exactly the
+	/// moment it is not one -- which is the confident-answer-to-a-different-question this whole surface
+	/// is built to avoid.
+	/// </summary>
+	[Fact]
+	public async Task Compiles_the_dependents_of_a_public_member()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Core.Calculator.Multiply",
+			Code = "public static int Multiply(int left, int right, int scale) => left * right * scale;",
+		});
+
+		Assert.Contains("App", result.ProjectsChecked);
+		Assert.Contains(
+			result.IntroducedDiagnostics,
+			entry => entry.FilePath!.EndsWith("Program.cs", StringComparison.OrdinalIgnoreCase));
+		Assert.Empty(result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// Narrowing the scope by hand is allowed and is not silent: the same edit reports nothing wrong,
+	/// and says which dependents nobody looked at. Reporting no introduced errors without that is a
+	/// clean bill of health for half the question.
+	/// </summary>
+	[Fact]
+	public async Task Names_the_dependents_a_narrowed_scope_skipped()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Core.Calculator.Multiply",
+			Code = "public static int Multiply(int left, int right, int scale) => left * right * scale;",
+			VerifyScope = VerifyScope.File,
+		});
+
+		Assert.DoesNotContain("App", result.ProjectsChecked);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Contains("App", result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// A private member cannot be seen outside the projects holding it however the edit reshapes it,
+	/// so the wide scope is not paid for. Effective accessibility, not declared: a public member of a
+	/// private nested type is private too.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_private_member_in_its_own_projects()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Core.Calculator.Twice",
+			Code = "private static int Twice(int value, int times) => value * times;",
+		});
+
+		Assert.Equal(["Core"], result.ProjectsChecked);
+		Assert.Empty(result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// A body cannot be seen outside at all: the signature that comes out is the one that was there,
+	/// copied rather than rewritten, so nothing downstream can be looking at anything different.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_body_change_in_its_own_projects()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Core.Calculator.Multiply",
+			Code = "=> right * left;",
+		});
+
+		Assert.Equal(["Core"], result.ProjectsChecked);
+	}
+
+	/// <summary>
+	/// A member edit resolves its own imports too, off the compilation that was already built to say
+	/// what the edit broke. Reporting the namespace and stopping is a round trip at the moment the
+	/// caller was promised there would not be one.
+	/// </summary>
+	[Fact]
+	public async Task Imports_what_a_written_member_turned_out_to_need()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public byte[] Bytes() => Encoding.UTF8.GetBytes(_prefix);",
+		});
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Contains(result.Notices, notice => notice.Contains("imported System.Text", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("using System.Text;", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Two candidates is a choice the caller has to make. Nothing is imported, and the reason is said
+	/// rather than left as a bare unresolved name, which would send them off to write a type that
+	/// already exists twice.
+	/// </summary>
+	[Fact]
+	public async Task Reports_rather_than_chooses_between_two_namespaces()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public string Colour() => Palette.Name;",
+		});
+
+		Assert.Contains(
+			result.Notices,
+			notice => notice.Contains("Palette is in 2 namespaces", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.DoesNotContain("using Library.Left;", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A private helper with nothing referencing it, which is the case that made this a gap: an unused
+	/// private is IDE0051, a build error in this repository, and removing it meant finding a line range
+	/// and cutting text in a session whose whole point was not doing that.
+	/// </summary>
+	[Fact]
+	public async Task Removes_a_member_with_its_documentation_comment()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Library.Regioned.Thrice",
+		});
+
+		Assert.True(result.Applied);
+		Assert.True(result.Verified);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Equal(["Thrice"], result.Members);
+
+		var text = await ReadAsync(fixture, "Regioned.cs");
+
+		Assert.DoesNotContain("Thrice", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("Trebles it", text, StringComparison.Ordinal);
+		Assert.Contains("Twice", text, StringComparison.Ordinal);
+
+		// The region survives, balanced. Cutting a line range takes one half of a pair and leaves the
+		// file with CS1024 or CS1028, which is the class of failure this exists to remove.
+		Assert.Contains("#region Helpers", text, StringComparison.Ordinal);
+		Assert.Contains("#endregion", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("\r\n\r\n\r\n", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Removing something still referenced is allowed -- the callers may be going too -- and the call
+	/// sites come back as the errors it introduced rather than at the next build.
+	/// </summary>
+	[Fact]
+	public async Task Reports_what_a_removal_broke_across_the_dependents()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Core.Calculator.Multiply",
+		});
+
+		Assert.True(result.Applied);
+		Assert.Contains("App", result.ProjectsChecked);
+		Assert.Contains(
+			result.IntroducedDiagnostics,
+			entry => entry.FilePath!.EndsWith("Program.cs", StringComparison.OrdinalIgnoreCase));
+		Assert.Empty(result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// An ambiguous name is refused rather than resolved. Removing one of two overloads is the deletion
+	/// with no symptom: it compiles, and the behaviour that was meant to change did not.
+	/// </summary>
+	[Fact]
+	public async Task Refuses_to_remove_an_ambiguous_name()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Greeter.cs");
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => EditAsync(session, new MemberEditRequest
+			{
+				Kind = MemberEditKind.Delete,
+				Symbol = "Library.Greeter.Greet",
+			}));
+
+		Assert.Contains("matches 2 declarations", thrown.Message, StringComparison.Ordinal);
+		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+	}
+
+	/// <summary>The named overload goes and the other stays.</summary>
+	[Fact]
+	public async Task Removes_the_overload_the_parameter_list_names()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Library.Greeter.Greet(string, string)",
+		});
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.DoesNotContain("string title", text, StringComparison.Ordinal);
+		Assert.Contains("public string Greet(string name)", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Removing the only member of a type leaves a type, not a syntax error. The braces collapse onto
+	/// something that now needs different formatting, which is one of the things a text edit gets wrong.
+	/// </summary>
+	[Fact]
+	public async Task Removes_the_last_member_of_a_type()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Library.IShape.Area",
+		});
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var text = await ReadAsync(fixture, "Kinds.cs");
+
+		Assert.Contains("public interface IShape", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("double Area()", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A one-token change without re-emitting the body. Anchoring inside a member already resolved by
+	/// name keeps the ambiguity surface to one body, and what reaches disk is still a whole body,
+	/// parsed and formatted.
+	/// </summary>
+	[Fact]
+	public async Task Changes_part_of_a_body_by_anchor()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Greet(string)",
+			Find = "$\"{_prefix}, {name}!\"",
+			Replace = "$\"{_prefix}, dear {name}!\"",
+		});
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("dear {name}", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The anchor is matched on the tokens, so indentation and line endings cannot cause a miss -- a
+	/// real way a text edit fails in a repository whose files disagree about either.
+	/// </summary>
+	[Fact]
+	public async Task Matches_an_anchor_whose_spacing_is_not_the_files()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Find = "return    text . ToUpperInvariant ( ) ;",
+			Replace = "return text.ToLowerInvariant();",
+		});
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("ToLowerInvariant", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>An anchor that matches nothing changes nothing and says what to do about it.</summary>
+	[Fact]
+	public async Task Refuses_an_anchor_that_matches_nothing()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Greeter.cs");
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => EditAsync(session, new MemberEditRequest
+			{
+				Kind = MemberEditKind.ReplaceBody,
+				Symbol = "Library.Greeter.Shout",
+				Find = "return text.Trim();",
+				Replace = "return text;",
+			}));
+
+		Assert.Contains("does not contain", thrown.Message, StringComparison.Ordinal);
+		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+	}
+
+	/// <summary>
+	/// Inserting at the end means before a closing return, because anything after one is unreachable
+	/// and CS0162 -- and the result says so rather than leaving the caller to notice.
+	/// </summary>
+	[Fact]
+	public async Task Inserts_before_a_closing_return()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Position = BodyPosition.End,
+			Code = "text = text.Trim();",
+		});
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Contains(
+			result.Notices,
+			notice => notice.Contains("before the closing return", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+		var trimmed = text.IndexOf("text = text.Trim();", StringComparison.Ordinal);
+		var returned = text.IndexOf("return text.ToUpperInvariant();", StringComparison.Ordinal);
+
+		Assert.True(trimmed > 0 && trimmed < returned);
+	}
+
+	/// <summary>An expression body has no statement list, and the refusal says what to pass instead.</summary>
+	[Fact]
+	public async Task Refuses_to_insert_into_an_expression_body()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => EditAsync(session, new MemberEditRequest
+			{
+				Kind = MemberEditKind.ReplaceBody,
+				Symbol = "Library.Greeter.Greet(string, string)",
+				Position = BodyPosition.Start,
+				Code = "var x = 1;",
+			}));
+
+		Assert.Contains("has an expression body", thrown.Message, StringComparison.Ordinal);
+		Assert.Contains("Pass code with the whole body", thrown.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>Two ways of saying what the body becomes is ambiguous, and refused rather than ranked.</summary>
+	[Fact]
+	public async Task Refuses_two_payloads_at_once()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => EditAsync(session, new MemberEditRequest
+			{
+				Kind = MemberEditKind.ReplaceBody,
+				Symbol = "Library.Greeter.Shout",
+				Code = "return text;",
+				Find = "text.ToUpperInvariant()",
+				Replace = "text",
+			}));
+
+		Assert.Contains("Pass one of code", thrown.Message, StringComparison.Ordinal);
+	}
 }

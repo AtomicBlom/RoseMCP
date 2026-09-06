@@ -102,6 +102,10 @@ public sealed class AddUsingTests
 
 	/// <summary>
 	/// The import earns its keep: the errors it resolves are counted, in the same call that added it.
+	/// <para>
+	/// The member is written with resolveUsings off, so the file is left in the state this tool exists
+	/// for -- code that arrived some other way and needs an import it has not got.
+	/// </para>
 	/// </summary>
 	[Fact]
 	public async Task Reports_the_errors_the_import_resolved()
@@ -115,6 +119,7 @@ public sealed class AddUsingTests
 			Kind = MemberEditKind.Add,
 			Symbol = "Library.Greeter",
 			Code = "public string Encoded() => Encoding.UTF8.EncodingName;",
+			ResolveUsings = false,
 		});
 
 		var result = await AddAsync(session, fixture, "Greeter.cs", ["System.Text"]);

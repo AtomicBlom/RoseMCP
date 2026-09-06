@@ -29,20 +29,44 @@ internal static class TestToolchain
 
 	internal static string EnsureX64ProbeTargetBuilt() => EnsureX64Build("tests", "DebugProbeTarget", "net10.0", "DebugProbeTarget.exe");
 
-	internal static string EnsureX64Build(string area, string project, string targetFramework, string exeName)
+	internal static string EnsureX64Build(string area, string project, string targetFramework, string exeName) =>
+		EnsureRidBuild("win-x64", area, project, targetFramework, exeName);
+
+	internal static void EnsureX86HostBuilt() =>
+		EnsureRidBuild("win-x86", "src", "RoseMcp.LiveApp", "net10.0-windows", "RoseMcp.LiveApp.exe");
+
+	internal static string EnsureX86ProbeTargetBuilt() =>
+		EnsureRidBuild("win-x86", "tests", "DebugProbeTarget", "net10.0", "DebugProbeTarget.exe");
+
+	/// <summary>
+	/// One project built for one runtime identifier, once a run.
+	/// <para>
+	/// The runtime identifier is a parameter because x64 is no longer the only architecture worth
+	/// proving. An install ships an x86 host wherever it ships an x64 one, and x86 is not a legacy
+	/// case here -- it is the default platform of the modern UWP template, so it is what an ordinary
+	/// new app is built and registered as. Until something builds an x86 target and attaches to it,
+	/// nothing says that host works.
+	/// </para>
+	/// </summary>
+	internal static string EnsureRidBuild(
+		string rid,
+		string area,
+		string project,
+		string targetFramework,
+		string exeName)
 	{
 		var root = RepositoryRoot();
 		var configuration = Configuration();
-		var exe = Path.Combine(root, area, project, "bin", configuration, targetFramework, "win-x64", exeName);
+		var exe = Path.Combine(root, area, project, "bin", configuration, targetFramework, rid, exeName);
 
 		lock (X64Builds)
 		{
 			if (X64Builds.TryGetValue(exe, out var built)) return built;
 
 			var csproj = Path.Combine(root, area, project, $"{project}.csproj");
-			RunDotnet($"build \"{csproj}\" -r win-x64 -c {configuration} --nologo");
+			RunDotnet($"build \"{csproj}\" -r {rid} -c {configuration} --nologo");
 
-			if (!File.Exists(exe)) throw new FileNotFoundException($"The win-x64 build did not produce {exeName}.", exe);
+			if (!File.Exists(exe)) throw new FileNotFoundException($"The {rid} build did not produce {exeName}.", exe);
 			X64Builds[exe] = exe;
 			return exe;
 		}

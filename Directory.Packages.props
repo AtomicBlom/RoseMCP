@@ -27,6 +27,7 @@
     <PackageVersion Include="ClrDebug" Version="0.4.2" />
     <PackageVersion Include="Microsoft.Diagnostics.DbgShim.win-arm64" Version="9.0.661903" />
     <PackageVersion Include="Microsoft.Diagnostics.DbgShim.win-x64" Version="9.0.661903" />
+    <PackageVersion Include="Microsoft.Diagnostics.DbgShim.win-x86" Version="9.0.661903" />
   </ItemGroup>
 
   <ItemGroup Label="Tray (Windows only)">

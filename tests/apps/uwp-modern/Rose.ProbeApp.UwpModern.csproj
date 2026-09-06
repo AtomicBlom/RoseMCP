@@ -39,13 +39,14 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
 
-    <!-- x64 and arm64 only, and the omission is deliberate rather than an oversight. A modern UWP
-         app builds x86 perfectly well and runs CoreCLR there, but the live-app half cannot debug it
-         yet: UWP launches are pinned to x64 and no win-x86 host is ever built (#117). Adding x86
-         here would produce a target the suite could build, register and launch, and then fail to
-         attach to for a reason that has nothing to do with the app. -->
-    <Platforms>x64;arm64</Platforms>
-    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <!-- All three, now that an x86 target is known to debug. The omission used to be deliberate:
+         UWP launches were pinned to x64 and no win-x86 host was built, so an x86 app would build,
+         register and launch and then fail to attach for a reason that had nothing to do with it.
+         The architecture is read from the package identity now, and the x86 host carries its own
+         dbgshim.dll, which is what an x86 attach test established. x86 is the default platform of
+         the modern UWP template, so it is the shape an ordinary new app arrives in. -->
+    <Platforms>x86;x64;arm64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
 
     <!-- No signing: the tests register the loose build layout, which needs no certificate, so no
          .pfx lives in the repository. -->

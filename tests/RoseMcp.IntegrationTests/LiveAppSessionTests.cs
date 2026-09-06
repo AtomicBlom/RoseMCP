@@ -488,6 +488,75 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>
+	/// The same shim on x86, which shipped a host and nothing that used one.
+	/// </summary>
+	/// <remarks>
+	/// An install carries an x86 host on every machine, ARM64 and x64 alike, and until this nothing
+	/// built an x86 target or attached to one -- so the claim that an x86 target debugs rested on the
+	/// host merely being published. x86 is not a legacy case here either: it is the default platform
+	/// of the modern UWP project template, so it is what an ordinary new app is built as.
+	/// <para>
+	/// A plain console target rather than the UWP probe, deliberately. What is unproven is ICorDebug
+	/// through an x86 host, and a packaged app adds registration, activation and an AppContainer to a
+	/// question that is about none of them.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Attaches_to_an_x86_target()
+	{
+		EnsureX86HostBuilt();
+		var x86Target = EnsureX86ProbeTargetBuilt();
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProcess(x86Target);
+
+		try
+		{
+			await Task.Delay(1500, cancellationToken);
+
+			if (child.HasExited)
+			{
+				Assert.Skip($"The x86 probe target exited (code {child.ExitCode}); the x86 .NET runtime is not available here.");
+			}
+
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "x86 probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			var summary = session.Describe();
+
+			Assert.True(
+				summary.State == LiveAppSessionState.Ready,
+				$"expected Ready, got {summary.State}: {summary.Detail} (host arch {summary.Architecture}, host pid {summary.HostProcessId})");
+
+			Assert.Equal(TargetArchitecture.X86, summary.Architecture);
+
+			// Attaching is not the claim; debugging is. The target throws on a cycle, so a first-chance
+			// exception arriving through the x86 host is the whole of what was unproven.
+			var marker = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
+				cancellationToken);
+
+			Assert.NotNull(marker);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// The UWP path end to end (#4 UWP): build the classic UWP probe app, register it, and have the
 	/// broker put it in debug mode, activate it, and attach -- through the x64 host, since classic UWP
 	/// runs x64 emulated on ARM64 -- then capture the exception its Tick throws. Skips where the UWP

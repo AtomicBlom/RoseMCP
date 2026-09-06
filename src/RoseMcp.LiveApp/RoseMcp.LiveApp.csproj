@@ -24,9 +24,13 @@
 
   <ItemGroup Label="ICorDebug">
     <PackageReference Include="ClrDebug" />
-    <!-- Both RID packages are referenced; the one matching this host's RID copies dbgshim.dll. -->
+    <!-- One per architecture an install ships a host for; only the one matching this host's RID
+         copies its dbgshim.dll, and the host is published per RID. Without the x86 one the x86
+         host launches, reports its architecture, and then faults on the first attach with no
+         dbgshim.dll beside it (a host that ships everywhere and cannot debug anything). -->
     <PackageReference Include="Microsoft.Diagnostics.DbgShim.win-arm64" />
     <PackageReference Include="Microsoft.Diagnostics.DbgShim.win-x64" />
+    <PackageReference Include="Microsoft.Diagnostics.DbgShim.win-x86" />
   </ItemGroup>
 
   <ItemGroup>

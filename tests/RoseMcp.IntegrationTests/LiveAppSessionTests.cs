@@ -838,6 +838,100 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>
+	/// Reading and editing properties on WinUI 3 (#115), which nothing covered.
+	/// </summary>
+	/// <remarks>
+	/// The WinUI tests asserted the tree and stopped there, so every property path was exercised on
+	/// UWP only -- and two places in the shared header spelled <c>Windows.UI.Xaml</c> as a literal.
+	/// A CornerRadius is the one that shows: XAML diagnostics renders the struct as an empty string
+	/// on both frameworks, and the rescue that reads it off the element compared the declared type
+	/// against the UWP name, so on WinUI 3 it never fired and the property read back empty. Empty is
+	/// indistinguishable from unset, which is why this went unnoticed: the answer looked like a
+	/// framework quirk rather than a wrong comparison.
+	/// <para>
+	/// The apply half is here for the same reason. It is the seam the toolbar that never drew lived
+	/// behind: everything inspectable said yes while the screen said no, because no WinUI provider
+	/// was ever exercised past the tree.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Reads_and_edits_properties_on_a_winui_app()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+		await using var manager = CreateManager();
+
+		try
+		{
+			await Task.Delay(TimeSpan.FromSeconds(6), cancellationToken);
+
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "winui probe (properties)",
+				},
+				cancellationToken);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
+			var caption = tree.Nodes.FirstOrDefault(node => node.Name == "Caption");
+
+			Assert.NotNull(pane);
+			Assert.NotNull(caption);
+
+			var properties = await session.ReadXamlPropertiesAsync(pane!.Handle, includeDefaults: false, cancellationToken);
+
+			Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
+
+			// The markup sets CornerRadius="8" on Pane. The framework stringifies it as nothing, so a
+			// value here is the rescue firing -- and the rescue only fires if it recognises the type
+			// under its Microsoft.UI.Xaml name.
+			var cornerRadius = properties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
+
+			Assert.NotNull(cornerRadius);
+			Assert.False(
+				string.IsNullOrEmpty(cornerRadius!.Value),
+				"CornerRadius came back empty, which is the shared header comparing against the UWP type name.");
+
+			// A property the framework does stringify, to show the empty one above is not simply how
+			// this element reads.
+			var padding = properties.Properties.FirstOrDefault(property => property.Name == "Padding");
+
+			Assert.NotNull(padding);
+			Assert.False(string.IsNullOrEmpty(padding!.Value));
+
+			// And the apply half: a property edit lands and reads back.
+			var markup = Path.Combine(TestToolchain.RepositoryRoot(), "tests", "apps", "winui", "MainWindow.xaml");
+			var before = await File.ReadAllTextAsync(markup, cancellationToken);
+			var after = before.Replace("Text=\"Rose WinUI Probe\"", "Text=\"edited on winui\"", StringComparison.Ordinal);
+
+			Assert.NotEqual(before, after);
+
+			var edit = await session.ApplyXamlAsync(before, after, filePath: null, cancellationToken);
+
+			Assert.True(edit.Detail is null, $"expected the edit to apply, got detail: {edit.Detail}");
+			Assert.Equal(1, edit.Applied);
+			Assert.All(edit.Results, result => Assert.Equal("applied", result.Status));
+
+			var afterwards = await session.ReadXamlPropertiesAsync(caption!.Handle, includeDefaults: false, cancellationToken);
+			var text = afterwards.Properties.FirstOrDefault(property => property.Name == "Text");
+
+			Assert.NotNull(text);
+			Assert.Equal("edited on winui", text!.Value);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// A UWP app on modern .NET, launched from birth and debugged (#117).
 	/// </summary>
 	/// <remarks>

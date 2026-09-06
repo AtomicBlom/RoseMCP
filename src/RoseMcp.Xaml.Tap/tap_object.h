@@ -493,7 +493,8 @@ private:
 	///
 	/// Reads a CornerRadius off the element itself, because XAML diagnostics renders it as nothing.
 	///
-	/// Both are structs, both are set by the same markup, and only one comes back with a value:
+	/// Both are structs, both are set by the same markup, and only one comes back with a value --
+	/// spelled here as UWP reports it, where WinUI 3 says Microsoft.UI.Xaml:
 	///
 	///     {"name":"Padding",      "value":"24,24,24,24", "valueType":"Windows.UI.Xaml.Thickness"}
 	///     {"name":"CornerRadius", "value":"",            "valueType":"Windows.UI.Xaml.CornerRadius"}
@@ -690,7 +691,7 @@ private:
 					: (value.Type ? value.Type : L"");
 
 				const bool emptyButNotNull = !isNull && !valueText[0];
-				if (emptyButNotNull && std::wcscmp(declaredType, L"Windows.UI.Xaml.CornerRadius") == 0
+				if (emptyButNotNull && std::wcscmp(declaredType, RoseTapXamlRoot L"CornerRadius") == 0
 					&& RenderCornerRadius(handle, rendered))
 				{
 					valueText = rendered.c_str();
@@ -955,8 +956,8 @@ private:
 		}
 
 		for (const auto* space : {
-			L"Windows.UI.Xaml.Controls.", L"Windows.UI.Xaml.Shapes.",
-			L"Windows.UI.Xaml.Media.", L"Windows.UI.Xaml." })
+			RoseTapXamlRoot L"Controls.", RoseTapXamlRoot L"Shapes.",
+			RoseTapXamlRoot L"Media.", RoseTapXamlRoot })
 		{
 			const std::wstring qualified = std::wstring(space) + typeName;
 			if (std::find(candidates.begin(), candidates.end(), qualified) != candidates.end()) continue;

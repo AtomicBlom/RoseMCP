@@ -61,6 +61,12 @@ namespace xinput = winrt::Windows::UI::Xaml::Input;
 namespace xshapes = winrt::Windows::UI::Xaml::Shapes;
 namespace ximaging = winrt::Windows::UI::Xaml::Media::Imaging;
 
+// The same root as a string, for the two places that compare a CLR type name rather than a type.
+// The live tree reports names, not types, so a namespace alias cannot help there -- and a literal
+// spelled one framework's way reads back empty on the other, which looks like a framework quirk
+// rather than a wrong comparison.
+#define RoseTapXamlRoot L"Windows.UI.Xaml."
+
 // UWP has one window, so IXamlDiagnostics::GetUiLayer() names the only layer there is and the
 // per-XamlRoot API WinUI 3 needs does not exist here. Declining is the whole implementation.
 static bool RoseTapGetUiLayerForRoot(IXamlDiagnostics*, InstanceHandle, ::IInspectable**)

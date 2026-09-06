@@ -22,7 +22,7 @@ public sealed class LiveAppEventTools(LiveAppSessionHost host)
 		[Description(ToolDescriptions.AfterSequenceArgument)]
 		long after = 0,
 		[Description(ToolDescriptions.EventKindsArgument)]
-		string? kinds = null,
+		string[]? kinds = null,
 		[Description(ToolDescriptions.MaxEventsArgument)]
 		int limit = 500,
 		[Description(ToolDescriptions.WaitSecondsArgument)]

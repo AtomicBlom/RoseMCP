@@ -10,7 +10,7 @@ public sealed record MoveTypeRequest
 	/// because splitting a file is something a caller decides after reading it, when the names are
 	/// what it has to hand.
 	/// </summary>
-	public required string TypeName { get; init; }
+	public required string Symbol { get; init; }
 
 	/// <summary>Where to put it. Defaults to a file named after the type, beside the source.</summary>
 	public string? TargetPath { get; init; }

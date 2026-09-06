@@ -60,20 +60,26 @@ public static class ArgumentValues
 	/// <summary>
 	/// The event kinds a page is filtered to, or null for no filter.
 	/// <para>
-	/// Every name has to parse. Dropping one silently is the worst of the four defaults this class
-	/// exists to remove: a freshly started app produces hundreds of ModuleLoaded events, so a
-	/// misspelt filter does not merely answer a different question, it answers it at a size that
-	/// buries the one event the caller was waiting for.
+	/// Every name has to parse. Dropping one silently is the worst of the defaults this class exists
+	/// to remove: a freshly started app produces hundreds of ModuleLoaded events, so a misspelt filter
+	/// does not merely answer a different question, it answers it at a size that buries the one event
+	/// the caller was waiting for.
+	/// </para>
+	/// <para>
+	/// A list rather than comma-separated text, because the rest of the surface passes a list of
+	/// anything there can be several of and one CSV among six arrays is a thing a caller has to
+	/// remember rather than read. An entry carrying commas is still split, so the spelling that was
+	/// there goes on working.
 	/// </para>
 	/// </summary>
 	/// <exception cref="ArgumentException">One of the names is not an event kind.</exception>
-	public static IReadOnlyCollection<LiveDebugEventKind>? EventKinds(string? kinds)
+	public static IReadOnlyCollection<LiveDebugEventKind>? EventKinds(IReadOnlyList<string>? kinds)
 	{
-		if (string.IsNullOrWhiteSpace(kinds)) return null;
+		if (kinds is null || kinds.Count == 0) return null;
 
 		var parsed = new HashSet<LiveDebugEventKind>();
 
-		foreach (var name in kinds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+		foreach (var name in kinds.SelectMany(Names))
 		{
 			if (!Enum.TryParse<LiveDebugEventKind>(name, ignoreCase: true, out var kind))
 			{
@@ -85,4 +91,8 @@ public static class ArgumentValues
 
 		return parsed.Count == 0 ? null : parsed;
 	}
+
+	/// <summary>The names one entry carries, which is usually one and may be a comma-separated list.</summary>
+	private static IEnumerable<string> Names(string? entry) =>
+		entry?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
 }

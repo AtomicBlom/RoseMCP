@@ -100,10 +100,13 @@ public static class ToolDescriptions
 
 	public const string SingleFilePathArgument = "Absolute or solution-relative path to the file.";
 
-	public const string DiagnosticScopeArgument = "document, project, or solution. Defaults to solution.";
+	public const string DiagnosticFilePathArgument =
+		"One file to analyse. Giving it is what says the scope is that document.";
 
-	public const string DiagnosticTargetArgument =
-		"File path for document scope, or project name for project scope.";
+	public const string DiagnosticProjectArgument =
+		"One project to analyse, by name or path. Giving it is what says the scope is that project.";
+
+	public const string DiagnosticScopeArgument = "document, project, or solution. Defaults to solution.";
 
 	public const string MinimumSeverityArgument =
 		"Lowest severity to report: hidden, info, warning, or error. Defaults to warning.";
@@ -151,12 +154,21 @@ public static class ToolDescriptions
 
 	public const string FixScopeFilePathArgument = "A file in the scope to fix; the fix has to start somewhere.";
 
-	public const string FixScopeArgument = "document, project, or solution. Defaults to document.";
+	/// <summary>
+	/// Defaults to document, where <c>rose_diagnostics</c>' scope defaults to solution -- the same
+	/// name and the same values at opposite ends of the range, which is worth saying rather than
+	/// leaving to be discovered. Reading the whole solution is cheap and answers a question the caller
+	/// probably has; rewriting every occurrence in it is a change they have to have asked for.
+	/// </summary>
+	public const string FixScopeArgument =
+		"document, project, or solution. Defaults to document -- narrower than rose_diagnostics, since "
+			+ "this one writes.";
 
 	public const string RemoveUnusedUsingsArgument =
 		"Also drop using directives the file does not need. Off by default.";
 
-	public const string TypeNameArgument = "Name of the type to move out, without type parameters.";
+	public const string MovedTypeArgument =
+		"The type to move out, as Namespace.Type. Type arguments and qualification are ignored.";
 
 	public const string AddToTypeArgument = "The type to add to, as Namespace.Type.";
 
@@ -207,7 +219,8 @@ public static class ToolDescriptions
 		"Also return the declaration's own source text, so understanding a member does not end in a file "
 			+ "read.";
 
-	public const string OutlineTypeArgument = "The type, as Namespace.Type. One of this and filePath.";
+	public const string OutlineTypeArgument =
+		"The type, as Namespace.Type. One of this and filePath.";
 
 	public const string OutlineFilePathArgument =
 		"The file to outline. One of this and type; also narrows a partial type to one of its files.";
@@ -285,8 +298,15 @@ public static class ToolDescriptions
 		"Maximum events in this page (default 500). Lower it when you only need to see whether something "
 			+ "is happening.";
 
+	/// <summary>
+	/// The debugger's location grammar, said to be the one the rest of the surface uses. It is the
+	/// same <c>Namespace.Type.Method</c> a <c>symbol</c> argument takes, with an assembly prefix for
+	/// the case the debugger cannot infer -- and nothing said so, so a caller who had just addressed
+	/// the same method by name for an edit had no reason to think this took the same string.
+	/// </summary>
 	public const string TracepointLocationArgument =
-		"Method to trace, as [Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.";
+		"The method to trace, as the same Namespace.Type.Method the rose_* tools take, with Assembly! "
+			+ "in front where the assembly name is not the namespace's first segment.";
 
 	public const string LogMessageArgument =
 		"Optional message logged on each hit (literal text; expression interpolation comes later).";
@@ -297,7 +317,8 @@ public static class ToolDescriptions
 	public const string TracepointIdArgument = "The tracepoint id returned by rose_debug_add_tracepoint.";
 
 	public const string BreakpointLocationArgument =
-		"Method to break on, as [Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.";
+		"The method to break on, as the same Namespace.Type.Method the rose_* tools take, with "
+			+ "Assembly! in front where the assembly name is not the namespace's first segment.";
 
 	public const string AutoContinueSecondsArgument =
 		"Seconds a hit is held before the target auto-continues on its own; default 30.";
@@ -323,8 +344,8 @@ public static class ToolDescriptions
 		"The new XAML to apply, when it is markup rather than a file. Pass oldXaml with it.";
 
 	public const string EventKindsArgument =
-		"Comma-separated event kinds to return; omit for all. The cursor still advances over what is "
-			+ "filtered out, and 'skipped' says how many those were.";
+		"Event kinds to return; omit for all. The cursor still advances over what is filtered out, and "
+			+ "'skipped' says how many those were. A name that is not a kind is refused.";
 
 	public const string TracepointConditionArgument =
 		"Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, "

@@ -149,7 +149,7 @@ public sealed class RefactoringTools(
 	public async Task<MoveTypeResult> MoveTypeToFileAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SplitFilePathArgument)] string filePath,
-		[Description(ToolDescriptions.TypeNameArgument)] string typeName,
+		[Description(ToolDescriptions.MovedTypeArgument)] string symbol,
 		[Description(ToolDescriptions.TargetPathArgument)] string? targetPath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -163,7 +163,7 @@ public sealed class RefactoringTools(
 		var request = new MoveTypeRequest
 		{
 			FilePath = filePath,
-			TypeName = typeName,
+			Symbol = symbol,
 			TargetPath = targetPath,
 			Apply = apply,
 			ExpectedRevision = expectedRevision,
@@ -263,7 +263,7 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.AddMember)]
 	public Task<MemberEditResult> AddMemberAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.AddToTypeArgument)] string type,
+		[Description(ToolDescriptions.AddToTypeArgument)] string symbol,
 		[Description(ToolDescriptions.MembersCodeArgument)] string code,
 		[Description(ToolDescriptions.UsingsArgument)] string[]? usings = null,
 		[Description(ToolDescriptions.AfterArgument)] string? after = null,
@@ -279,7 +279,7 @@ public sealed class RefactoringTools(
 			new MemberEditRequest
 			{
 				Kind = MemberEditKind.Add,
-				Symbol = type,
+				Symbol = symbol,
 				Code = code,
 				Usings = usings ?? [],
 				After = after,

@@ -91,8 +91,9 @@ public sealed class AnalysisTools(
 	[Description(ToolDescriptions.Diagnostics)]
 	public async Task<DiagnosticsResult> DiagnosticsAsync(
 		IProgress<ProgressNotificationValue> progress,
+		[Description(ToolDescriptions.DiagnosticFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.DiagnosticProjectArgument)] string? project = null,
 		[Description(ToolDescriptions.DiagnosticScopeArgument)] string? scope = null,
-		[Description(ToolDescriptions.DiagnosticTargetArgument)] string? target = null,
 		[Description(ToolDescriptions.MinimumSeverityArgument)] string? minimumSeverity = null,
 		[Description(ToolDescriptions.IncludeAnalyzersArgument)] bool includeAnalyzers = false,
 		[Description(ToolDescriptions.MaxDiagnosticsArgument)] int maxResults = 200,
@@ -101,19 +102,21 @@ public sealed class AnalysisTools(
 		var (waiting, working) = WorkProgress.Split(progress);
 		using var following = sharedWork.Follow(waiting);
 
+		// Read before the workspace, so a contradictory call is refused without paying for a load.
+		var wanted = DiagnosticTarget.From(filePath, project, scope);
+
 		var snapshot = await host.ReadAsync(cancellationToken);
 
 		var request = new DiagnosticsRequest
 		{
-			Scope = ArgumentValues.Scope(scope),
-			Target = target,
+			Scope = wanted.Scope,
+			Target = wanted.Target,
 			MinimumSeverity = ParseSeverity(minimumSeverity),
 			IncludeAnalyzers = includeAnalyzers,
 			MaxResults = maxResults <= 0 ? 200 : maxResults,
 		};
 
-		return await diagnostics.AnalyseAsync(
-			snapshot, request, cancellationToken, working);
+		return await diagnostics.AnalyseAsync(snapshot, request, cancellationToken, working);
 	}
 
 	[McpServerTool(

@@ -21,21 +21,28 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.Diagnostics)]
 	public Task<DiagnosticsResult> DiagnosticsAsync(
 		IProgress<ProgressNotificationValue> progress,
+		[Description(ToolDescriptions.DiagnosticFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.DiagnosticProjectArgument)] string? project = null,
 		[Description(ToolDescriptions.DiagnosticScopeArgument)] string? scope = null,
-		[Description(ToolDescriptions.DiagnosticTargetArgument)] string? target = null,
 		[Description(ToolDescriptions.MinimumSeverityArgument)] string? minimumSeverity = null,
 		[Description(ToolDescriptions.IncludeAnalyzersArgument)] bool includeAnalyzers = false,
 		[Description(ToolDescriptions.MaxDiagnosticsArgument)] int maxResults = 200,
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<DiagnosticsResult>(WorkspaceHints.From(workspace, target), ToolNames.Diagnostics, new()
-		{
-			["scope"] = scope,
-			["target"] = target,
-			["minimumSeverity"] = minimumSeverity,
-			["includeAnalyzers"] = includeAnalyzers,
-			["maxResults"] = maxResults,
-		}, cancellationToken, progress);
+		ForwardAsync<DiagnosticsResult>(
+			WorkspaceHints.From(workspace, filePath, project),
+			ToolNames.Diagnostics,
+			new()
+			{
+				["filePath"] = filePath,
+				["project"] = project,
+				["scope"] = scope,
+				["minimumSeverity"] = minimumSeverity,
+				["includeAnalyzers"] = includeAnalyzers,
+				["maxResults"] = maxResults,
+			},
+			cancellationToken,
+			progress);
 
 	[McpServerTool(
 		Name = ToolNames.SymbolInfo,
@@ -125,14 +132,14 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.Outline)]
 	public Task<OutlineResult> OutlineAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.OutlineTypeArgument)] string? type = null,
+		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<OutlineResult>(WorkspaceHints.From(workspace, filePath), ToolNames.Outline, new()
 		{
-			["type"] = type,
+			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["includeInherited"] = includeInherited,
 		}, cancellationToken, progress);
@@ -364,7 +371,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	public Task<MoveTypeResult> MoveTypeToFileAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SplitFilePathArgument)] string filePath,
-		[Description(ToolDescriptions.TypeNameArgument)] string typeName,
+		[Description(ToolDescriptions.MovedTypeArgument)] string symbol,
 		[Description(ToolDescriptions.TargetPathArgument)] string? targetPath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
@@ -373,7 +380,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		ForwardAsync<MoveTypeResult>(WorkspaceHints.From(workspace, filePath), ToolNames.MoveTypeToFile, new()
 		{
 			["filePath"] = filePath,
-			["typeName"] = typeName,
+			["symbol"] = symbol,
 			["targetPath"] = targetPath,
 			["apply"] = apply,
 			["expectedRevision"] = expectedRevision,
@@ -462,7 +469,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.AddMember)]
 	public Task<MemberEditResult> AddMemberAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.AddToTypeArgument)] string type,
+		[Description(ToolDescriptions.AddToTypeArgument)] string symbol,
 		[Description(ToolDescriptions.MembersCodeArgument)] string code,
 		[Description(ToolDescriptions.UsingsArgument)] string[]? usings = null,
 		[Description(ToolDescriptions.AfterArgument)] string? after = null,
@@ -476,7 +483,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<MemberEditResult>(WorkspaceHints.From(workspace, filePath), ToolNames.AddMember, new()
 		{
-			["type"] = type,
+			["symbol"] = symbol,
 			["code"] = code,
 			["usings"] = usings,
 			["after"] = after,

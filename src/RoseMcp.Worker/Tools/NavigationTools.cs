@@ -177,7 +177,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.Outline)]
 	public async Task<OutlineResult> OutlineAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.OutlineTypeArgument)] string? type = null,
+		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
 		CancellationToken cancellationToken = default)
@@ -186,7 +186,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 
 		var snapshot = await host.ReadAsync(cancellationToken);
 
-		return await OutlineService.OutlineAsync(snapshot, type, filePath, includeInherited, cancellationToken);
+		return await OutlineService.OutlineAsync(snapshot, symbol, filePath, includeInherited, cancellationToken);
 	}
 
 	[McpServerTool(

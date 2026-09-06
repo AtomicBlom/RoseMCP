@@ -42,7 +42,7 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 		IWorkProgress? progress = null)
 	{
 		var notices = new List<string>(snapshot.Notices);
-		var projects = SelectProjects(snapshot.Solution, request, notices);
+		var projects = SelectProjects(snapshot.Solution, request);
 
 		var collected = new List<DiagnosticEntry>();
 		var analysed = 0;
@@ -241,39 +241,49 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 			&& string.Equals(Path.GetFullPath(path), Path.GetFullPath(request.Target), StringComparison.OrdinalIgnoreCase);
 	}
 
-	private static IReadOnlyList<Project> SelectProjects(Solution solution, DiagnosticsRequest request, List<string> notices)
+	/// <summary>
+	/// The projects a request covers.
+	/// <para>
+	/// A file or project name that matches nothing is refused rather than widened to the solution. The
+	/// wide answer is the shape of failure this whole surface is built against: it comes back clean and
+	/// complete, for a question fourteen projects larger than the one asked, and a caller who mistyped
+	/// a path reads it as an answer about that path. A refusal naming what it looked for costs one call.
+	/// </para>
+	/// </summary>
+	/// <exception cref="ArgumentException">Nothing in the solution matches the file or project named.</exception>
+	private static IReadOnlyList<Project> SelectProjects(Solution solution, DiagnosticsRequest request)
 	{
-		if (request.Scope == DiagnosticScope.Solution) return [.. solution.Projects];
-
-		if (string.IsNullOrWhiteSpace(request.Target))
+		if (request.Scope == DiagnosticScope.Solution || request.Target is not { Length: > 0 } target)
 		{
-			notices.Add($"No target given for {request.Scope} scope; analysing the whole solution instead.");
 			return [.. solution.Projects];
 		}
 
 		if (request.Scope == DiagnosticScope.Project)
 		{
 			var byName = solution.Projects
-				.Where(project => string.Equals(project.Name, request.Target, StringComparison.OrdinalIgnoreCase)
-					|| PathMatches(project.FilePath, request.Target))
+				.Where(project => string.Equals(project.Name, target, StringComparison.OrdinalIgnoreCase)
+					|| PathMatches(project.FilePath, target))
 				.ToArray();
 
 			if (byName.Length > 0) return byName;
 
-			notices.Add($"No project matched '{request.Target}'; analysing the whole solution instead.");
-			return [.. solution.Projects];
+			throw new ArgumentException(
+				$"No project in this solution is called '{target}'. It has "
+					+ $"{string.Join(", ", solution.Projects.Select(project => project.Name).Order(StringComparer.Ordinal))}.");
 		}
 
-		// Document scope: analyse the projects that contain the file. A file shared by several
-		// projects, or multi-targeted, legitimately belongs to more than one.
+		// Document scope: analyse the projects that compile the file. A file shared by several projects,
+		// or multi-targeted, legitimately belongs to more than one.
 		var owners = solution.Projects
-			.Where(project => project.Documents.Any(document => PathMatches(document.FilePath, request.Target)))
+			.Where(project => project.Documents.Any(document => PathMatches(document.FilePath, target)))
 			.ToArray();
 
 		if (owners.Length > 0) return owners;
 
-		notices.Add($"No project contains '{request.Target}'; analysing the whole solution instead.");
-		return [.. solution.Projects];
+		throw new ArgumentException(
+			$"No project in this solution compiles '{target}'. If the file is new it appears on the next call, "
+				+ "once a project's globs include it; if another solution compiles it, pass workspace. Leave "
+				+ "filePath off to analyse the whole solution.");
 	}
 
 	private static bool PathMatches(string? candidate, string target)

@@ -4,6 +4,8 @@ using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
+using ModelContextProtocol;
+
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
@@ -172,7 +174,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 			var clock = System.Diagnostics.Stopwatch.StartNew();
 			var waited = await session.ReadEventsAsync(
-				caughtUp.NextCursor, nameof(LiveDebugEventKind.ExceptionFirstChance), 50, 30, cancellationToken);
+				caughtUp.NextCursor, [nameof(LiveDebugEventKind.ExceptionFirstChance)], 50, 30, cancellationToken);
 			clock.Stop();
 
 			Assert.NotEmpty(waited.Events);
@@ -213,7 +215,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 			var clock = System.Diagnostics.Stopwatch.StartNew();
 			var waited = await session.ReadEventsAsync(
-				caughtUp.NextCursor, nameof(LiveDebugEventKind.BreakpointHit), 50, 2, cancellationToken);
+				caughtUp.NextCursor, [nameof(LiveDebugEventKind.BreakpointHit)], 50, 2, cancellationToken);
 			clock.Stop();
 
 			Assert.Empty(waited.Events);
@@ -334,7 +336,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.Contains(unfiltered.Events, entry => entry.Kind == LiveDebugEventKind.ModuleLoaded);
 			Assert.Equal(0, unfiltered.Skipped);
 
-			var hitsOnly = await session.ReadEventsAsync(0, "BreakpointHit", limit: 500, cancellationToken);
+			var hitsOnly = await session.ReadEventsAsync(0, ["BreakpointHit"], limit: 500, cancellationToken);
 			Assert.NotEmpty(hitsOnly.Events);
 			Assert.All(hitsOnly.Events, entry => Assert.Equal(LiveDebugEventKind.BreakpointHit, entry.Kind));
 
@@ -344,8 +346,10 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.Equal(unfiltered.NextCursor, hitsOnly.NextCursor);
 
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.
-			var nonsense = await session.ReadEventsAsync(0, "NotAKind", limit: 500, cancellationToken);
-			Assert.Equal(unfiltered.Events.Count, nonsense.Events.Count);
+			var nonsense = await Assert.ThrowsAsync<McpException>(
+				() => session.ReadEventsAsync(0, ["NotAKind"], limit: 500, cancellationToken));
+
+			Assert.Contains("Unknown event kind 'NotAKind'", nonsense.Message, StringComparison.Ordinal);
 
 			var remaining = await session.RemoveTracepointAsync(tracepoint.Id, cancellationToken);
 			Assert.Empty(remaining.Tracepoints);

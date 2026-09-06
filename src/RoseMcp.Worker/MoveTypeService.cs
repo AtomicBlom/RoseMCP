@@ -34,7 +34,7 @@ public static class MoveTypeService
 					+ "Something changed underneath this request; re-read and try again.");
 		}
 
-		progress?.Report($"Locating {request.TypeName}", 0);
+		progress?.Report($"Locating {request.Symbol}", 0);
 
 		var document = SymbolLocator.FindDocument(snapshot.Solution, request.FilePath)
 			?? throw new ArgumentException($"No document in the solution matches '{request.FilePath}'.");
@@ -47,7 +47,7 @@ public static class MoveTypeService
 		}
 
 		var text = await document.GetTextAsync(cancellationToken);
-		var moving = Select(root, request.TypeName, sourcePath);
+		var moving = Select(root, request.Symbol, sourcePath);
 		var siblings = Siblings(moving);
 
 		if (siblings.Count == 1) throw OnlyType(moving, sourcePath);
@@ -109,8 +109,10 @@ public static class MoveTypeService
 	/// </summary>
 	private static MemberDeclarationSyntax Select(CompilationUnitSyntax root, string typeName, string sourcePath)
 	{
-		var name = typeName.Trim();
-		var bare = name.Contains('<', StringComparison.Ordinal) ? name[..name.IndexOf('<', StringComparison.Ordinal)] : name;
+		// Read through the same grammar every other symbol argument uses, so a caller who took the
+		// address out of one answer can pass it here: it drops type arguments and any qualification,
+		// and what is left is the identifier a top-level declaration in this file carries.
+		var bare = SymbolAddress.Parse(typeName).Name;
 
 		var all = TopLevelTypes(root);
 		var matches = all.Where(member => NameOf(member) == bare).ToArray();

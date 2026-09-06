@@ -240,7 +240,7 @@ public sealed class MoveTypeTests
 		var request = new MoveTypeRequest
 		{
 			FilePath = fixture.Path("MultiType", "Shapes", file),
-			TypeName = typeName,
+			Symbol = typeName,
 			TargetPath = targetPath,
 			Apply = apply,
 		};

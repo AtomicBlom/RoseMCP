@@ -78,12 +78,12 @@ namespace Rose.ProbeApp.UwpClassic
         /// </summary>
         private void RemoveTransient()
         {
-            if (this.transient == null || !this.Panel.Children.Contains(this.transient))
+            if (this.transient == null || !this.ChurnStack.Children.Contains(this.transient))
             {
                 return;
             }
 
-            this.Panel.Children.Remove(this.transient);
+            this.ChurnStack.Children.Remove(this.transient);
 
             try
             {
@@ -103,12 +103,15 @@ namespace Rose.ProbeApp.UwpClassic
         /// </summary>
         private void RestoreTransient()
         {
-            if (this.transient == null || this.Panel.Children.Contains(this.transient))
+            if (this.transient == null || this.ChurnStack.Children.Contains(this.transient))
             {
                 return;
             }
 
-            this.Panel.Children.Add(this.transient);
+            // At the front, not appended. Appending leaves Transient second after its first return,
+            // and then Anchor never moves again -- which is the one thing this cycle exists to make
+            // happen. Inserting keeps Anchor the second child forever, so it shuffles 32px every time.
+            this.ChurnStack.Children.Insert(0, this.transient);
         }
     }
 

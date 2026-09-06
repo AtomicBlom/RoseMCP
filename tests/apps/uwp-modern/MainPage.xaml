@@ -17,11 +17,29 @@
                 <TextBlock x:Name="Caption" Text="Rose Modern UWP Probe" Foreground="#FFE8EEF4" FontSize="24" />
             </Border>
             <TextBlock x:Name="Counter" Text="ticks: 0" Foreground="#FF8FA6BF" FontSize="16" HorizontalAlignment="Center" />
-            <!-- Leaves the visual tree and comes back, on a cycle, so a test can watch a removal
-                 happen to something it has selected (#51). Its own element rather than one of the
-                 others because every other test expects those to stay put. -->
-            <Border x:Name="Transient" Background="#FF303A44" Padding="8" CornerRadius="4">
-                <TextBlock x:Name="TransientCaption" Text="comes and goes" Foreground="#FF8FA6BF" FontSize="12" />
+            <!-- The churn, and it is deliberately contained. Transient leaves the visual tree and comes
+                 back on a cycle, so a test can watch a removal happen to something it has selected
+                 (#51). Removing it straight out of Panel also moved everything below it, which makes
+                 this app useless for judging anything positional: the pixel lens and the selection
+                 outline are both things you check by looking at where they are, against a layout that
+                 will not sit still.
+
+                 A fixed-height host keeps the churn local. Transient going takes Anchor 32px up with
+                 it, which is a genuine re-layout of a genuine element (so the mark following its
+                 element is still exercised), and nothing outside this box moves at all.
+
+                 (No double dashes in here. XAML runs comments through an XML parser, which rejects
+                 them, and the failure arrives as a markup compiler error that does not mention
+                 comments.) -->
+            <Border x:Name="Churn" Height="64" Background="#FF1A2028" CornerRadius="4">
+                <StackPanel x:Name="ChurnStack" Orientation="Vertical">
+                    <Border x:Name="Transient" Height="32" Background="#FF303A44" Padding="8" CornerRadius="4">
+                        <TextBlock x:Name="TransientCaption" Text="comes and goes" Foreground="#FF8FA6BF" FontSize="12" />
+                    </Border>
+                    <Border x:Name="Anchor" Height="32" Background="#FF2A3440" Padding="8" CornerRadius="4">
+                        <TextBlock x:Name="AnchorCaption" Text="stays, shuffles" Foreground="#FF8FA6BF" FontSize="12" />
+                    </Border>
+                </StackPanel>
             </Border>
             <!-- Deliberately unnamed, under a named anchor. Every other element here has an x:Name,
                  so nothing in this app could exercise the one addressing case that matters most:

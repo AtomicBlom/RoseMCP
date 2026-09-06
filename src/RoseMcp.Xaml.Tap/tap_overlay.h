@@ -1,9 +1,9 @@
 #pragma once
 
-// The resident in-app toolbar, written entirely against six namespace aliases rather than against
+// The resident in-app toolbar, written entirely against seven namespace aliases rather than against
 // either XAML root directly. That is what makes one source serve both frameworks: the provider
-// defines xaml, xcontrols, xmedia, xanim, xinput and xshapes for the stack it binds to, and nothing
-// below this line names Windows.UI.Xaml or Microsoft.UI.Xaml at all.
+// defines xaml, xcontrols, xmedia, xanim, xinput, xshapes and ximaging for the stack it binds to, and
+// nothing below this line names Windows.UI.Xaml or Microsoft.UI.Xaml at all.
 //
 // Deliberately not self-contained, and it cannot be. It is included after the provider has set up its
 // projections, its aliases and its CLSID, because a header that pulled in one framework's projections
@@ -27,6 +27,18 @@
 // UI instead of reporting it as part of the app's.
 static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
 
+// Set true to stop the toolbar hiding itself from the tree, so RoseMCP's own tools can be pointed at
+// RoseMCP's own UI. Off in anything anyone else runs: the toolbar is not part of the app, and
+// reporting it as though it were is exactly the noise the filter exists to remove.
+//
+// It is here rather than being a line somebody comments out, because the question it answers comes up
+// whenever the overlay misbehaves and the alternative is expensive: a log statement per theory, each
+// costing a rebuild and a relaunch, and each reporting only the fields somebody thought to print. With
+// the filter off, rose_xaml_tree and rose_xaml_properties answer about the toolbar exactly as they do
+// about the app -- every property with its provenance, which is what separates a value that was set
+// from one that is merely the framework's default.
+static constexpr bool RoseTapShowOverlayInTree = false;
+
 // Segoe MDL2 Assets codepoints. Kept named and in one place because they are unreadable inline and a
 // wrong one renders as a hollow box rather than failing, so they have to be easy to check and swap --
 // and worth checking against the font's own character map, which is how two glyphs that are simply
@@ -38,6 +50,11 @@ static const wchar_t* const IconIdle = L"\xE8B0";   // Cursor -- a plain arrow p
 static const wchar_t* const IconHide = L"\xE76B";   // ChevronLeft
 static const wchar_t* const IconMyXaml = L"\xE943"; // Code -- braces, for "just my XAML"
 static const wchar_t* const IconDeselect = L"\xE711"; // Cancel -- a plain cross, for clearing the pick
+static const wchar_t* const IconZoom = L"\xE71E";     // Zoom -- a plain magnifier, for entering the mode
+static const wchar_t* const IconZoomIn = L"\xE8A3";   // ZoomIn -- magnifier with a plus
+static const wchar_t* const IconZoomOut = L"\xE71F";  // ZoomOut -- magnifier with a minus
+static const wchar_t* const IconPixels = L"\xE7A8";   // GridView -- a lattice, for the pixel lens
+static const wchar_t* const IconScale = L"\xE740";    // FullScreen -- arrows out, for scaling the app itself
 
 // The resident in-app toolbar (#18). Installed on the diagnostics UI layer at the first injection and
 // left there for the life of the app, because the point of it is that a person can arm select mode
@@ -59,17 +76,47 @@ class RoseOverlay
 {
 public:
 	// Idempotent: the second and later injections find the toolbar already there and leave it alone.
-	void Install(IXamlDiagnostics* diagnostics)
+	void Install(IXamlDiagnostics* diagnostics, const std::vector<InstanceHandle>& appElements = {})
 	{
 		if (m_root || !diagnostics) return;
 
 		try
 		{
+			// The layer for the root the app is actually showing, where the framework distinguishes
+			// them, and the only layer there is where it does not.
+			//
+			// GetUiLayer takes no argument, and on WinUI 3 that is the bug rather than a convenience:
+			// its own documentation says IXamlDiagnostics2 exists to replace "IXamlDiagnostics APIs
+			// that assume there is only one window". A desktop app can have several XamlRoots, and the
+			// layer that comes back without naming one lays out at the right size, reports Visible,
+			// holds its child -- and is never painted. Nothing about it can be inspected to discover
+			// that, which is what made this expensive to find.
 			::IInspectable* rawLayer = nullptr;
-			if (FAILED(diagnostics->GetUiLayer(&rawLayer)) || !rawLayer)
+			const auto rootHandle = XamlRootHandle(diagnostics, appElements);
+			const bool perRoot = RoseTapGetUiLayerForRoot(diagnostics, rootHandle, &rawLayer);
+
+			// The fallback is a branch of its own and not another rung of this ladder. Written as a
+			// chain of else-ifs, the two lines that merely *describe* what happened came before the one
+			// that fetches the layer, so on UWP -- where there is no per-root layer but the root handle
+			// resolves perfectly well -- it reported which path it was taking and then took neither.
+			// The overlay never installed and select mode stopped arming.
+			if (perRoot)
 			{
-				Log(L"overlay: GetUiLayer returned nothing");
-				return;
+				Log(L"overlay: using the diagnostics layer for the app's own XamlRoot");
+			}
+			else
+			{
+				if (!rootHandle && !appElements.empty())
+				{
+					Log(L"overlay: could not resolve the app's XamlRoot from "
+						+ std::to_wstring(appElements.size()) + L" candidate element(s)");
+				}
+
+				if (FAILED(diagnostics->GetUiLayer(&rawLayer)) || !rawLayer)
+				{
+					Log(L"overlay: GetUiLayer returned nothing");
+					return;
+				}
 			}
 
 			winrt::Windows::Foundation::IInspectable layerObject{ nullptr };
@@ -100,6 +147,58 @@ public:
 			Log(std::wstring(L"overlay: install failed: ") + error.message().c_str());
 			m_root = nullptr;
 		}
+	}
+
+	// The handle of the XamlRoot the app's elements belong to, which is what GetUiLayerForXamlRoot
+	// wants.
+	//
+	// Asked of elements the tree walk already enumerated, because those are the ones known to be in the
+	// app's own tree. Asking our own layer would be circular -- it is the layer whose root is in
+	// question -- and that circularity is why an earlier check reported "roots shared" whatever was
+	// true.
+	//
+	// Several candidates rather than one, because the first node enumerated is not a UIElement: on
+	// WinUI 3 it is the DesktopWindowXamlSource that hosts the tree, which has no XamlRoot to give.
+	// Taking the first handle and trusting it silently fell back to the layer that is never drawn.
+	InstanceHandle XamlRootHandle(IXamlDiagnostics* diagnostics, const std::vector<InstanceHandle>& candidates) const
+	{
+		if (!diagnostics) return 0;
+
+		for (const auto candidate : candidates)
+		{
+			if (!candidate) continue;
+
+			try
+			{
+				::IInspectable* rawElement = nullptr;
+				if (FAILED(diagnostics->GetIInspectableFromHandle(candidate, &rawElement)) || !rawElement) continue;
+
+				winrt::Windows::Foundation::IInspectable element{ nullptr };
+				winrt::attach_abi(element, rawElement);
+
+				const auto asUiElement = element.try_as<xaml::UIElement>();
+				if (!asUiElement) continue;
+
+				const auto root = asUiElement.XamlRoot();
+				if (!root) continue;
+
+				InstanceHandle handle = 0;
+				const auto rootInspectable = root.as<winrt::Windows::Foundation::IInspectable>();
+				if (FAILED(diagnostics->GetHandleFromIInspectable(
+					reinterpret_cast<::IInspectable*>(winrt::get_abi(rootInspectable)), &handle)))
+				{
+					continue;
+				}
+
+				if (handle) return handle;
+			}
+			catch (winrt::hresult_error const&)
+			{
+				// A handle that will not resolve is simply not the one; try the next.
+			}
+		}
+
+		return 0;
 	}
 
 	bool Installed() const { return static_cast<bool>(m_root); }
@@ -141,7 +240,11 @@ public:
 	// One place, because the two conditions are independent and either can change without the other.
 	void RefreshPanelFade()
 	{
-		m_panelFade.To(m_operations.empty() && !m_overPanel ? PanelFar : PanelNear);
+		// Zoom counts as an operation for this purpose even though nothing asked for it: it is a mode
+		// somebody is working in, and a toolbar carrying the factor and the colour readout is no use
+		// at half opacity while the pointer is out in the app, which is exactly where it has to be.
+		const bool busy = !m_operations.empty() || m_overPanel || m_zoom != Zoom::Off;
+		m_panelFade.To(busy ? PanelNear : PanelFar);
 	}
 
 	// Arms select mode. Returns whether it is armed, so the host can confirm rather than assume --
@@ -388,6 +491,18 @@ private:
 	// Long enough to read as a fade rather than a flicker, short enough not to lag the pointer.
 	static constexpr int FadeMilliseconds = 160;
 
+	// How far the toolbar sits from the edge it is anchored to.
+	static constexpr double EdgeMargin = 16.0;
+
+	// The lens, in device pixels, so it is a whole number of them at every factor: 192 divides by
+	// every power of two up to 32, which is what keeps each source pixel an exact square block.
+	static constexpr int LensDevicePixels = 192;
+
+	// Roughly twelve captures a second. Fast enough to follow an animating app, and slow enough that
+	// the readback is a fraction of a frame rather than a tax on one -- and it is a rate limit, not a
+	// queue: a capture still in flight when the timer fires is simply skipped.
+	static constexpr int LensIntervalMs = 80;
+
 	// The badge sits this far above the element it captions. Shared with the proximity test, which
 	// has to treat the caption as part of the selection.
 	static constexpr double BadgeHeight = 18.0;
@@ -423,6 +538,20 @@ private:
 		// because it has a size of its own. Only the full-bleed capture layer collapsed, so select mode
 		// armed, showed no tint, and never saw a single pointer event.
 		Resize();
+
+		// Two layers, and the split is what lets the marks follow a scaled app.
+		//
+		// The outlines and badges are drawn at coordinates read out of the app, so when the app is
+		// scaled they are wrong until they are scaled the same way -- a picked element kept its mark
+		// sitting where the element used to be. They cannot simply be given the transform one by one:
+		// each is positioned by Canvas.Left, and a RenderTransform on an element scales about that
+		// element rather than about the canvas origin, which is a different mapping. A canvas of their
+		// own takes the app's transform whole and every mark on it lands where its element did.
+		//
+		// The toolbar and the lens stay on the untransformed layer above, because a toolbar that grows
+		// to 32x is not a toolbar.
+		m_marks = xcontrols::Canvas();
+		m_root.Children().Append(m_marks);
 
 		m_canvas = xcontrols::Canvas();
 		m_root.Children().Append(m_canvas);
@@ -470,9 +599,43 @@ private:
 		m_panel.Opacity(PanelFar);
 		m_canvas.Children().Append(m_panel);
 
-		const auto bounds = Extent();
-		m_dragLeft = bounds.Width > 220.0 ? bounds.Width - 200.0 : 16.0;
-		m_dragTop = 16.0;
+		// Centred at the top, and measured rather than guessed. This used to be
+		// `bounds.Width - 200`, a constant standing in for the panel's width -- which is not known
+		// when the toolbar is built, because nothing has been measured yet and ActualWidth is still
+		// zero. That also defeats Place()'s clamp, whose upper bound is computed from the same zero.
+		// So the guess was load-bearing, and it stopped being true the moment a button was added: the
+		// panel hung off the right edge, far enough on some windows to be invisible rather than merely
+		// awkward. Nothing here may depend on knowing the panel's width in advance.
+		m_dragTop = EdgeMargin;
+		m_dragLeft = Extent().Width / 2.0;
+
+		// Which is why the real placement waits for a measurement. SizeChanged is the first moment the
+		// panel has a width, and it fires again whenever it grows -- the zoom row appearing, a mode
+		// changing a glyph -- so it is also what keeps a growing panel on screen.
+		m_panel.SizeChanged(
+			[this](winrt::Windows::Foundation::IInspectable const&, xaml::SizeChangedEventArgs const&)
+			{
+				if (!m_reportedGeometry)
+				{
+					m_reportedGeometry = true;
+					LogGeometry();
+				}
+
+				// Centred once, on the first measurement, and never again. Re-centring on every size
+				// change is what made the toolbar jump: the zoom row is wider than the row above it,
+				// so turning the mode on moved every button in the first row sideways, under whichever
+				// one the pointer was reaching for. Keeping the left edge fixed lets the panel grow
+				// down and to the right around a first row that stays where it is.
+				if (!m_placed)
+				{
+					m_placed = true;
+					CentreAtTop();
+					return;
+				}
+
+				Place();
+			});
+
 		Place();
 		Chrome();
 
@@ -509,7 +672,37 @@ private:
 			L"Deselect -- clear the picked element and its mark",
 			[this] { Deselect(); });
 		m_bar.Children().Append(m_deselectButton);
-		m_bar.Children().Append(Chip(Glyph(IconHide, 12.0), L"Hide", [this] { Collapse(true); }));
+
+		m_zoomButton = Chip(
+			Glyph(IconZoom, 12.0),
+			L"Magnify -- scale the app, or inspect its pixels and read the colour under the pointer",
+			[this] { ToggleZoom(); });
+		m_bar.Children().Append(m_zoomButton);
+
+		// Hide sits at the right edge rather than packed against its neighbours, so the slack that
+		// appears when the zoom row makes the panel wider falls between the two groups instead of
+		// trailing off the end. m_bar keeps the left group; the Grid is what stretches.
+		// Two columns, and they are not optional: children of a Grid with no ColumnDefinitions all
+		// occupy the same cell, so the strip and Hide were drawn on top of one another and the last
+		// chips could not be clicked at all. The star column is the slack that appears when the zoom
+		// row makes the panel wider, and it sits between the groups rather than after them.
+		auto row = xcontrols::Grid();
+
+		auto stretchy = xcontrols::ColumnDefinition();
+		stretchy.Width(xaml::GridLength{ 1.0, xaml::GridUnitType::Star });
+		auto snug = xcontrols::ColumnDefinition();
+		snug.Width(xaml::GridLength{ 0.0, xaml::GridUnitType::Auto });
+		row.ColumnDefinitions().Append(stretchy);
+		row.ColumnDefinitions().Append(snug);
+
+		m_bar.HorizontalAlignment(xaml::HorizontalAlignment::Left);
+		xcontrols::Grid::SetColumn(m_bar, 0);
+		row.Children().Append(m_bar);
+
+		auto hide = Chip(Glyph(IconHide, 12.0), L"Hide", [this] { Collapse(true); });
+		hide.Margin(xaml::Thickness{ 0, 3, 4, 3 });
+		xcontrols::Grid::SetColumn(hide, 1);
+		row.Children().Append(hide);
 
 		// Collapsed is the grip on its own, in the same panel, so folding away changes nothing else.
 		m_thumb = xcontrols::Border();
@@ -528,10 +721,77 @@ private:
 				Collapse(false);
 			});
 
+		// The zoom controls go in a row of their own, under the first, and that is not a layout
+		// preference. The rule this toolbar already follows is that a control which comes and goes
+		// moves the ones beside it, over somebody else's application -- which is why Deselect is
+		// disabled rather than hidden. Four more chips in the first row would widen the toolbar
+		// permanently for a mode almost nobody is in; a second row that appears underneath leaves
+		// every button in the first row exactly where it was.
+		m_rows = xcontrols::StackPanel();
+		m_rows.Orientation(xcontrols::Orientation::Vertical);
+		m_rows.Children().Append(row);
+		m_rows.Children().Append(BuildZoomRow());
+
 		auto content = xcontrols::Grid();
-		content.Children().Append(m_bar);
+		content.Children().Append(m_rows);
 		content.Children().Append(m_thumb);
 		return content;
+	}
+
+	// Zoom factor, mode, and the colour under the pointer. Hidden until the mode is on.
+	xaml::UIElement BuildZoomRow()
+	{
+		m_zoomRow = xcontrols::StackPanel();
+		m_zoomRow.Orientation(xcontrols::Orientation::Horizontal);
+		m_zoomRow.Spacing(4);
+		m_zoomRow.Padding(xaml::Thickness{ 4, 0, 4, 3 });
+
+		// Takes no space until the mode is on. Reserving its height permanently was the first attempt
+		// and it is worse: it makes every app carry a double-height toolbar for a mode almost nobody
+		// is in. What must not move when it appears is the row above it, and that is a placement
+		// question rather than a sizing one -- see CentreAtTop.
+		m_zoomRow.Visibility(xaml::Visibility::Collapsed);
+
+		m_scaleButton = Chip(
+			Glyph(IconScale, 12.0),
+			L"Scale the app itself -- a render transform on the live content, so text and vectors stay sharp",
+			[this] { SetZoomMode(Zoom::Transform); });
+		m_pixelButton = Chip(
+			Glyph(IconPixels, 12.0),
+			L"Pixel lens -- a nearest-neighbour magnifier that follows the pointer, leaving the app untouched",
+			[this] { SetZoomMode(Zoom::Lens); });
+		m_zoomOutButton = Chip(Glyph(IconZoomOut, 12.0), L"Zoom out", [this] { ZoomBy(-1); });
+		m_zoomInButton = Chip(Glyph(IconZoomIn, 12.0), L"Zoom in", [this] { ZoomBy(1); });
+
+		m_zoomRow.Children().Append(m_scaleButton);
+		m_zoomRow.Children().Append(m_pixelButton);
+		m_zoomRow.Children().Append(m_zoomOutButton);
+		m_zoomRow.Children().Append(m_zoomInButton);
+
+		m_factorLabel = Label(L"4x", 11.0, 0xC8, nullptr);
+		m_factorLabel.MinWidth(26);
+		m_zoomRow.Children().Append(m_factorLabel);
+
+		// The colour swatch and its hex, side by side. The swatch matters as much as the digits: six
+		// hex characters are hard to tell apart at a glance and a filled square is not.
+		m_swatch = xshapes::Rectangle();
+		m_swatch.Width(12);
+		m_swatch.Height(12);
+		m_swatch.RadiusX(2);
+		m_swatch.RadiusY(2);
+		m_swatch.Stroke(Brush(0xFF, 0x53, 0x53, 0x63));
+		m_swatch.StrokeThickness(1);
+		m_swatch.Fill(Brush(0x00, 0x00, 0x00, 0x00));
+		m_swatch.VerticalAlignment(xaml::VerticalAlignment::Center);
+		m_zoomRow.Children().Append(m_swatch);
+
+		// Monospaced, because a proportional hex string changes width as the pointer moves and the
+		// whole row then jitters under the cursor.
+		m_hexLabel = Label(L"--", 11.0, 0xE8, L"Consolas");
+		m_hexLabel.MinWidth(64);
+		m_zoomRow.Children().Append(m_hexLabel);
+
+		return m_zoomRow;
 	}
 
 	// The mark, drawn rather than embedded. It is the same rhodonea rose as the app icon --
@@ -758,7 +1018,7 @@ private:
 
 		box.Children().Append(rose);
 
-		m_canvas.Children().Append(box);
+		m_marks.Children().Append(box);
 		return box;
 	}
 
@@ -773,7 +1033,7 @@ private:
 		badge.CornerRadius(xaml::CornerRadius{ 2, 2, 2, 2 });
 		badge.Padding(xaml::Thickness{ 4, 1, 4, 2 });
 		badge.Child(Label(L"", 11.0, 0xF0, nullptr));
-		m_canvas.Children().Append(badge);
+		m_marks.Children().Append(badge);
 		return badge;
 	}
 
@@ -786,6 +1046,10 @@ private:
 				const auto translation = e.Delta().Translation;
 				m_dragLeft += translation.X;
 				m_dragTop += translation.Y;
+
+				// Once it has been put somewhere on purpose, it stays there: the toolbar re-centres
+				// itself as it grows only while nobody has expressed an opinion about where it goes.
+				m_dragged = true;
 				Place();
 				e.Handled(true);
 			});
@@ -816,8 +1080,101 @@ private:
 		if (!m_panel) return;
 
 		const auto bounds = Extent();
-		xcontrols::Canvas::SetLeft(m_panel, Clamp(m_dragLeft, 0.0, bounds.Width - m_panel.ActualWidth()));
-		xcontrols::Canvas::SetTop(m_panel, Clamp(m_dragTop, 0.0, bounds.Height - m_panel.ActualHeight()));
+
+		// The upper bounds are floored at zero rather than trusted. A panel wider than its window --
+		// a narrow window, or the zoom row on a small one -- makes the far edge negative, and a range
+		// whose top is below its bottom is not a range: clamping into it puts the toolbar somewhere
+		// neither end asked for. Pinned at the near edge is the answer that degrades sensibly.
+		const double right = (std::max)(0.0, bounds.Width - m_panel.ActualWidth());
+		const double bottom = (std::max)(0.0, bounds.Height - m_panel.ActualHeight());
+
+		xcontrols::Canvas::SetLeft(m_panel, Clamp(m_dragLeft, 0.0, right));
+		xcontrols::Canvas::SetTop(m_panel, Clamp(m_dragTop, 0.0, bottom));
+	}
+
+	// The default home: centred on the top edge. Called from the panel's own SizeChanged, because
+	// that is the first moment its width is a fact rather than an assumption.
+	void CentreAtTop()
+	{
+		if (!m_panel) return;
+
+		const auto bounds = Extent();
+		const double width = m_panel.ActualWidth();
+
+		m_dragLeft = width > 0.0 ? (bounds.Width - width) / 2.0 : bounds.Width / 2.0;
+		m_dragTop = EdgeMargin;
+		Place();
+	}
+
+	// Everything that decides whether the toolbar can be seen, in one line, once, after a layout pass.
+	//
+	// "Installed" is not "visible" and on WinUI 3 the two have already come apart: the install line
+	// reported a toolbar on a correctly-sized layer that nothing was drawing. Guessing at the reason
+	// from here costs a rebuild and a relaunch per guess, so it is cheaper to have the app say which
+	// of size, position, opacity and visibility is the one that is wrong -- for the overlay, and for
+	// the layer it was handed, which is the thing this code does not own.
+	void LogGeometry()
+	{
+		try
+		{
+			const auto extent = Extent();
+
+			std::wstring line = L"overlay: geometry window "
+				+ std::to_wstring(static_cast<int>(extent.Width)) + L"x"
+				+ std::to_wstring(static_cast<int>(extent.Height));
+
+			if (m_layer)
+			{
+				line += L" | layer " + std::to_wstring(static_cast<int>(m_layer.ActualWidth())) + L"x"
+					+ std::to_wstring(static_cast<int>(m_layer.ActualHeight()))
+					+ L" vis=" + std::to_wstring(static_cast<int>(m_layer.Visibility()))
+					+ L" opacity=" + std::to_wstring(m_layer.Opacity())
+					+ L" children=" + std::to_wstring(m_layer.Children().Size());
+			}
+
+			if (m_root)
+			{
+				line += L" | root " + std::to_wstring(static_cast<int>(m_root.ActualWidth())) + L"x"
+					+ std::to_wstring(static_cast<int>(m_root.ActualHeight()))
+					+ L" vis=" + std::to_wstring(static_cast<int>(m_root.Visibility()))
+					+ L" opacity=" + std::to_wstring(m_root.Opacity());
+			}
+
+			if (m_panel)
+			{
+				line += L" | panel " + std::to_wstring(static_cast<int>(m_panel.ActualWidth())) + L"x"
+					+ std::to_wstring(static_cast<int>(m_panel.ActualHeight()))
+					+ L" at " + std::to_wstring(static_cast<int>(xcontrols::Canvas::GetLeft(m_panel)))
+					+ L"," + std::to_wstring(static_cast<int>(xcontrols::Canvas::GetTop(m_panel)))
+					+ L" vis=" + std::to_wstring(static_cast<int>(m_panel.Visibility()))
+					+ L" opacity=" + std::to_wstring(m_panel.Opacity());
+			}
+
+			// Whether the layer we were handed belongs to the same content root as the app.
+			//
+			// Everything above can say "laid out, sized, visible" and still describe something nobody
+			// can see, because laying out and being presented are different questions and a XAML tree
+			// answers only the first. Two content roots in one window is the way they come apart: the
+			// overlay measures and arranges perfectly inside a root that is not the one on screen.
+			// Worth asking directly rather than inferring, since the alternative is a rebuild per
+			// theory.
+			const auto content = AppContent();
+			if (content && m_layer)
+			{
+				const auto layerRoot = m_layer.XamlRoot();
+				const auto contentRoot = content.XamlRoot();
+				const bool same = layerRoot && contentRoot && layerRoot == contentRoot;
+				line += std::wstring(L" | roots ") + (same ? L"shared" : L"DIFFERENT")
+					+ L" (layer=" + (layerRoot ? L"yes" : L"null")
+					+ L" content=" + (contentRoot ? L"yes" : L"null") + L")";
+			}
+
+			Log(line);
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Log(std::wstring(L"overlay: could not read its own geometry: ") + error.message().c_str());
+		}
 	}
 
 	void Collapse(bool collapsed)
@@ -836,6 +1193,543 @@ private:
 		Log(std::wstring(L"overlay: just-my-XAML ") + (m_justMyXaml ? L"on" : L"off"));
 	}
 
+	// Magnification, in two kinds, because they answer different questions and neither substitutes
+	// for the other.
+	//
+	// Transform scales the app's own content with a render transform. It stays live and stays sharp:
+	// text is re-rendered at the new size rather than resampled, so it is the one to read fine
+	// typography or a vector at. It is also a change to somebody else's tree -- reversible, and
+	// restored exactly, but real while it is on, and the app is awkward to click through at 8x.
+	//
+	// Lens leaves the app completely alone and magnifies a *capture* of it, replicating whole pixels
+	// so what you see is the pixel grid the app actually produced. That is the one to answer "what
+	// colour is that, exactly" and "is this edge one pixel or two" with, and it is why the hex
+	// readout lives with it rather than with the transform: a scaled render has no pixels to name.
+	//
+	// XAML offers no help with the second. WPF has RenderOptions.BitmapScalingMode; UWP and WinUI
+	// have no bitmap scaling mode at all -- the only InterpolationMode either exposes is
+	// ColorInterpolationMode on a gradient brush -- so a ScaleTransform on an Image always filters
+	// and would smear exactly the thing being looked at. Replicating the pixels by hand is not a
+	// workaround for that, it is the only way to get it, and it costs one buffer walk over a region
+	// a few thousand pixels big.
+	enum class Zoom
+	{
+		Off,
+		Transform,
+		Lens,
+	};
+
+	void ToggleZoom()
+	{
+		SetZoomMode(m_zoom == Zoom::Off ? Zoom::Lens : Zoom::Off);
+	}
+
+	void SetZoomMode(Zoom mode)
+	{
+		if (m_zoom == mode) return;
+
+		// Leaving transform mode has to put the app back before anything else happens; leaving lens
+		// mode has to stop the timer, or a capture keeps running over an app nobody is inspecting.
+		if (m_zoom == Zoom::Transform) ClearTransform();
+		if (m_zoom == Zoom::Lens) StopLens();
+
+		m_zoom = mode;
+
+		if (m_zoom == Zoom::Transform) ApplyTransform();
+		if (m_zoom == Zoom::Lens) StartLens();
+
+		if (m_zoomRow)
+		{
+			m_zoomRow.Visibility(m_zoom == Zoom::Off ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
+		}
+
+		if (m_lens && m_zoom != Zoom::Lens) m_lens.Visibility(xaml::Visibility::Collapsed);
+
+		Chrome();
+		Place();
+		Log(L"overlay: zoom " + ZoomName(m_zoom) + L" at " + std::to_wstring(m_zoomFactor) + L"x");
+	}
+
+	static std::wstring ZoomName(Zoom mode)
+	{
+		switch (mode)
+		{
+			case Zoom::Transform: return L"transform";
+			case Zoom::Lens: return L"lens";
+			default: return L"off";
+		}
+	}
+
+	// Powers of two, and not merely for tidiness: at a whole factor every source pixel becomes an
+	// exact square block, so the lens shows the app's pixel grid rather than a moire of it. A
+	// fractional factor puts some source pixels in a 3-wide column and its neighbour in a 4-wide one,
+	// which reads as the app having uneven strokes it does not have.
+	void ZoomBy(int step)
+	{
+		const int previous = m_zoomFactor;
+
+		if (step > 0 && m_zoomFactor < 32) m_zoomFactor *= 2;
+		if (step < 0 && m_zoomFactor > 2) m_zoomFactor /= 2;
+		if (m_zoomFactor == previous) return;
+
+		if (m_factorLabel) m_factorLabel.Text(std::to_wstring(m_zoomFactor) + L"x");
+		if (m_zoom == Zoom::Transform) ApplyTransform();
+		if (m_zoom == Zoom::Lens) UpdateLens();
+	}
+
+	// The app's own content, which is deliberately not the root. The overlay sits on the diagnostics
+	// UI layer -- a panel the framework hands out through GetUiLayer, beside the app's content rather
+	// than inside it -- so rendering the content element captures the app and not this toolbar.
+	// Rendering the root instead would put the toolbar inside its own lens.
+	xaml::UIElement AppContent() const
+	{
+		try
+		{
+			const auto root = Root();
+			if (!root) return nullptr;
+			return root.Content().try_as<xaml::UIElement>();
+		}
+		catch (winrt::hresult_error const&)
+		{
+			return nullptr;
+		}
+	}
+
+	// What the transform mode scales. One element today -- the app's content -- but a list, because
+	// the transform is saved and restored per element and a single saved slot is what made an earlier
+	// version restore only the last thing it touched.
+	std::vector<xaml::UIElement> ScaleTargets() const
+	{
+		std::vector<xaml::UIElement> targets;
+		if (const auto content = AppContent()) targets.push_back(content);
+
+		// The marks go with it, or a picked element's outline stays where the element was before the
+		// app moved under it.
+		if (m_marks) targets.push_back(m_marks);
+
+		return targets;
+	}
+
+	void ApplyTransform()
+	{
+		const auto targets = ScaleTargets();
+		if (targets.empty())
+		{
+			Log(L"overlay: zoom found no app content to scale");
+			return;
+		}
+
+		try
+		{
+			// Saved on the way in, restored on the way out, rather than cleared. An app is free to
+			// have a transform of its own, and setting that to null on exit would be a change nobody
+			// asked for -- and one that would outlive the mode that made it.
+			if (!m_transformSaved)
+			{
+				for (const auto& target : targets)
+				{
+					m_saved.push_back({ target, target.RenderTransform(), target.RenderTransformOrigin() });
+				}
+
+				m_transformSaved = true;
+			}
+
+			for (const auto& target : targets)
+			{
+				auto scale = xmedia::ScaleTransform();
+				scale.ScaleX(static_cast<double>(m_zoomFactor));
+				scale.ScaleY(static_cast<double>(m_zoomFactor));
+				target.RenderTransform(scale);
+			}
+
+			UpdateTransformOrigin();
+		}
+		catch (winrt::hresult_error const& error)
+		{
+			Log(std::wstring(L"overlay: could not scale the app: ") + error.message().c_str());
+		}
+	}
+
+	// Keeps the point under the pointer where it is, which is what makes the scaled app navigable:
+	// a render transform grows its element about its origin, so putting the origin under the cursor
+	// means moving the cursor pans rather than flings.
+	//
+	// It has to follow the pointer, and that was the whole bug. Set once when the mode was entered,
+	// the origin was wherever the pointer happened to be at the moment of the *click that turned the
+	// mode on* -- which is on the toolbar, because that is what was being clicked. Worse, when the
+	// pointer is outside the window it reads (-1, -1) and clamped to (0, 0), so the app scaled about
+	// its top-left corner and at 4x every part of it was off screen. An unknown pointer must leave
+	// the origin alone rather than resolve to a corner.
+	//
+	// Normalised against the content's own size, not the window's: RenderTransformOrigin is a
+	// fraction of the element, and an element that does not fill the window would otherwise anchor
+	// somewhere the pointer is not.
+	void UpdateTransformOrigin()
+	{
+		if (m_zoom != Zoom::Transform) return;
+
+		const auto bounds = Extent();
+		const bool known = m_pointer.X >= 0.0f && m_pointer.Y >= 0.0f
+			&& m_pointer.X < bounds.Width && m_pointer.Y < bounds.Height;
+		if (!known) return;
+
+		try
+		{
+			for (const auto& target : ScaleTargets())
+			{
+				double width = bounds.Width;
+				double height = bounds.Height;
+				if (const auto framed = target.try_as<xaml::FrameworkElement>())
+				{
+					if (framed.ActualWidth() > 0.0) width = framed.ActualWidth();
+					if (framed.ActualHeight() > 0.0) height = framed.ActualHeight();
+				}
+
+				const double x = width > 0.0 ? Clamp(m_pointer.X / width, 0.0, 1.0) : 0.5;
+				const double y = height > 0.0 ? Clamp(m_pointer.Y / height, 0.0, 1.0) : 0.5;
+				target.RenderTransformOrigin(
+					winrt::Windows::Foundation::Point{ static_cast<float>(x), static_cast<float>(y) });
+			}
+		}
+		catch (winrt::hresult_error const&)
+		{
+		}
+	}
+
+	void ClearTransform()
+	{
+		if (!m_transformSaved) return;
+
+		m_transformSaved = false;
+
+		for (const auto& saved : m_saved)
+		{
+			try
+			{
+				saved.Element.RenderTransform(saved.Transform);
+				saved.Element.RenderTransformOrigin(saved.Origin);
+			}
+			catch (winrt::hresult_error const&)
+			{
+				// An element that has since left the tree is not ours to put back.
+			}
+		}
+
+		m_saved.clear();
+	}
+
+	void StartLens()
+	{
+		if (!m_lens) BuildLens();
+
+		if (!m_lensTimer)
+		{
+			m_lensTimer = xaml::DispatcherTimer();
+			m_lensTimer.Interval(std::chrono::milliseconds(LensIntervalMs));
+			m_lensTimer.Tick(
+				[this](winrt::Windows::Foundation::IInspectable const&, winrt::Windows::Foundation::IInspectable const&)
+				{
+					try
+					{
+						CaptureFrame();
+					}
+					catch (winrt::hresult_error const&)
+					{
+						// Runs forever over somebody else's app. Never throw out of it.
+					}
+				});
+		}
+
+		m_lensTimer.Start();
+		CaptureFrame();
+	}
+
+	void StopLens()
+	{
+		if (m_lensTimer) m_lensTimer.Stop();
+
+		// Dropped rather than kept. A stale frame is worse than none: it would answer the next
+		// question about a window that has since moved on, and answer it confidently.
+		m_pixels.clear();
+		m_pixelsWidth = 0;
+		m_pixelsHeight = 0;
+
+		if (m_lens) m_lens.Visibility(xaml::Visibility::Collapsed);
+		if (m_hexLabel) m_hexLabel.Text(L"--");
+		if (m_swatch) m_swatch.Fill(Brush(0x00, 0x00, 0x00, 0x00));
+	}
+
+	void BuildLens()
+	{
+		m_lensImage = xcontrols::Image();
+
+		m_lens = xcontrols::Border();
+		m_lens.BorderBrush(Accent());
+		m_lens.BorderThickness(xaml::Thickness{ 1, 1, 1, 1 });
+		m_lens.CornerRadius(xaml::CornerRadius{ 2, 2, 2, 2 });
+		m_lens.Background(Brush(0xFF, 0x1C, 0x1C, 0x22));
+		m_lens.Visibility(xaml::Visibility::Collapsed);
+
+		// Never takes input, or the thing it is magnifying stops receiving the pointer that is
+		// driving it.
+		m_lens.IsHitTestVisible(false);
+
+		// The pixel the hex is quoting, outlined in the accent so the two cannot be read apart.
+		//
+		// A magnified lens with no marker leaves "which of these blocks is under the cursor" to be
+		// guessed, and at 4x the guess is wrong as often as not -- the readout then looks like it is
+		// lagging or sampling somewhere else. Outlining exactly one source pixel is also what makes
+		// the magnification legible as pixels rather than as a blurry crop.
+		m_pixelBox = xshapes::Rectangle();
+		m_pixelBox.Stroke(Accent());
+		m_pixelBox.StrokeThickness(1.0);
+		m_pixelBox.Fill(Brush(0x00, 0x00, 0x00, 0x00));
+		m_pixelBox.HorizontalAlignment(xaml::HorizontalAlignment::Left);
+		m_pixelBox.VerticalAlignment(xaml::VerticalAlignment::Top);
+		m_pixelBox.IsHitTestVisible(false);
+
+		auto stack = xcontrols::Grid();
+		stack.Children().Append(m_lensImage);
+		stack.Children().Append(m_pixelBox);
+
+		m_lens.Child(stack);
+		m_canvas.Children().Append(m_lens);
+	}
+
+	// One readback of the app, on a timer, and never two at once.
+	//
+	// RenderAsync is a GPU readback, so a second one queued behind the first buys nothing and costs
+	// a frame; m_capturingFrame is what makes the timer a rate limit rather than a backlog. It also
+	// means a slow app simply captures less often instead of falling further behind.
+	//
+	// Split across three methods for one reason, and it is not style. A completion handler runs on a
+	// pool thread, and RenderTargetBitmap is a DependencyObject: reading PixelWidth off that thread
+	// is a wrong-thread call, and merely *capturing* the bitmap in the handler is worse, because the
+	// lambda is destroyed there and takes the last reference with it. Releasing a XAML object off the
+	// UI thread is how this crashed the app a few seconds after the mode was switched on, with the
+	// last line in the log being the one that says the mode is on. So the handlers below capture
+	// nothing but `this` and a bool, and every line that touches XAML runs through
+	// RoseTapRunOnUiThread. The bitmap and the operation are members so neither is owned by a lambda.
+	void CaptureFrame()
+	{
+		if (m_zoom != Zoom::Lens || m_capturingFrame) return;
+
+		const auto content = AppContent();
+		if (!content) return;
+
+		try
+		{
+			m_capturingFrame = true;
+			m_lensBitmap = ximaging::RenderTargetBitmap();
+			m_lensBitmap.RenderAsync(content).Completed(
+				[this](winrt::Windows::Foundation::IAsyncAction const&, winrt::Windows::Foundation::AsyncStatus status)
+				{
+					const bool rendered = status == winrt::Windows::Foundation::AsyncStatus::Completed;
+					RoseTapRunOnUiThread([this, rendered] { OnRendered(rendered); });
+				});
+		}
+		catch (winrt::hresult_error const&)
+		{
+			m_capturingFrame = false;
+		}
+	}
+
+	// On the UI thread, which is where the bitmap may be asked anything at all.
+	void OnRendered(bool rendered)
+	{
+		if (!rendered || m_zoom != Zoom::Lens || !m_lensBitmap)
+		{
+			m_capturingFrame = false;
+			return;
+		}
+
+		try
+		{
+			m_pixelsWidth = m_lensBitmap.PixelWidth();
+			m_pixelsHeight = m_lensBitmap.PixelHeight();
+
+			m_lensPixels = m_lensBitmap.GetPixelsAsync();
+			m_lensPixels.Completed(
+				[this](auto const&, winrt::Windows::Foundation::AsyncStatus status)
+				{
+					const bool got = status == winrt::Windows::Foundation::AsyncStatus::Completed;
+					RoseTapRunOnUiThread([this, got] { OnPixels(got); });
+				});
+		}
+		catch (winrt::hresult_error const&)
+		{
+			m_capturingFrame = false;
+		}
+	}
+
+	// Also on the UI thread. The buffer itself is agile, but it is read here anyway so that the whole
+	// capture path has exactly one thread in it and nothing has to be reasoned about twice.
+	void OnPixels(bool got)
+	{
+		m_capturingFrame = false;
+		if (!got || m_zoom != Zoom::Lens || !m_lensPixels) return;
+
+		try
+		{
+			const auto buffer = m_lensPixels.GetResults();
+			m_pixels.resize(buffer.Length());
+
+			auto reader = winrt::Windows::Storage::Streams::DataReader::FromBuffer(buffer);
+			reader.ReadBytes(winrt::array_view<uint8_t>(m_pixels.data(), m_pixels.data() + m_pixels.size()));
+
+			UpdateLens();
+		}
+		catch (winrt::hresult_error const&)
+		{
+			m_pixels.clear();
+		}
+	}
+
+	// Draws the lens from the last capture, and reads the colour under the pointer out of the same
+	// buffer. The two are one operation on purpose: the hex is simply the middle pixel of what the
+	// lens is showing, so they can never disagree about what is under the cursor.
+	void UpdateLens()
+	{
+		if (m_zoom != Zoom::Lens || !m_lens || m_pixels.empty() || m_pixelsWidth <= 0) return;
+
+		const auto bounds = Extent();
+		const bool inside = m_pointer.X >= 0.0f && m_pointer.Y >= 0.0f
+			&& m_pointer.X < bounds.Width && m_pointer.Y < bounds.Height;
+		if (!inside)
+		{
+			m_lens.Visibility(xaml::Visibility::Collapsed);
+			return;
+		}
+
+		// The capture is in device pixels and the pointer in DIPs. The ratio is measured rather than
+		// assumed to be the rasterization scale: a capture is whatever size the framework chose for
+		// it, and moving the window to a monitor at another DPI changes that without changing the
+		// pointer's units.
+		const double perDipX = bounds.Width > 0 ? m_pixelsWidth / bounds.Width : 1.0;
+		const double perDipY = bounds.Height > 0 ? m_pixelsHeight / bounds.Height : 1.0;
+
+		const int centreX = static_cast<int>(m_pointer.X * perDipX);
+		const int centreY = static_cast<int>(m_pointer.Y * perDipY);
+
+		// How many source pixels the lens covers, and the block each becomes.
+		const int span = LensDevicePixels / m_zoomFactor;
+		const int originX = centreX - span / 2;
+		const int originY = centreY - span / 2;
+
+		auto target = ximaging::WriteableBitmap(LensDevicePixels, LensDevicePixels);
+		auto access = target.PixelBuffer().as<::Windows::Storage::Streams::IBufferByteAccess>();
+		uint8_t* out = nullptr;
+		if (FAILED(access->Buffer(&out)) || !out) return;
+
+		// The replication itself, which is the whole of "nearest neighbour": every destination pixel
+		// takes the source pixel it lands on, with no blending between them, so a one-pixel line
+		// stays one block wide and a colour boundary stays a boundary.
+		for (int y = 0; y < LensDevicePixels; ++y)
+		{
+			const int sourceY = originY + y / m_zoomFactor;
+			for (int x = 0; x < LensDevicePixels; ++x)
+			{
+				const int sourceX = originX + x / m_zoomFactor;
+				uint8_t* pixel = out + (static_cast<size_t>(y) * LensDevicePixels + x) * 4;
+
+				// Outside the capture is drawn as the panel's own dark, so the lens says where the
+				// window ends rather than repeating its edge pixel outwards.
+				if (sourceX < 0 || sourceY < 0 || sourceX >= m_pixelsWidth || sourceY >= m_pixelsHeight)
+				{
+					pixel[0] = 0x22; pixel[1] = 0x1C; pixel[2] = 0x1C; pixel[3] = 0xFF;
+					continue;
+				}
+
+				const size_t offset = (static_cast<size_t>(sourceY) * m_pixelsWidth + sourceX) * 4;
+				if (offset + 3 >= m_pixels.size()) continue;
+
+				pixel[0] = m_pixels[offset + 0];
+				pixel[1] = m_pixels[offset + 1];
+				pixel[2] = m_pixels[offset + 2];
+				pixel[3] = m_pixels[offset + 3];
+			}
+		}
+
+		target.Invalidate();
+		m_lensImage.Source(target);
+
+		// Sized so one bitmap pixel lands on one device pixel. Left to XAML's own layout it would be
+		// scaled by the rasterization scale and resampled -- which is exactly the filtering this whole
+		// path exists to avoid, reintroduced at the last step.
+		const double dips = LensDevicePixels / (perDipX > 0.0 ? perDipX : 1.0);
+		m_lensImage.Width(dips);
+		m_lensImage.Height(dips);
+
+		// The marker sits over the block the centre source pixel became, which is where the sample was
+		// taken: span/2 blocks in, each block a factor of device pixels wide.
+		if (m_pixelBox)
+		{
+			const double perDevice = perDipX > 0.0 ? perDipX : 1.0;
+			const double block = m_zoomFactor / perDevice;
+			const double offset = (span / 2) * m_zoomFactor / perDevice;
+
+			m_pixelBox.Width(block);
+			m_pixelBox.Height(block);
+			m_pixelBox.Margin(xaml::Thickness{ offset, offset, 0, 0 });
+		}
+
+		PlaceLens(dips);
+		ShowColourAt(centreX, centreY);
+		m_lens.Visibility(xaml::Visibility::Visible);
+	}
+
+	// Beside the pointer, and flipped to whichever side has room, so the lens never sits under the
+	// cursor it is following or hangs off the edge of the window.
+	void PlaceLens(double size)
+	{
+		const auto bounds = Extent();
+		const double gap = 18.0;
+
+		double left = m_pointer.X + gap;
+		if (left + size > bounds.Width) left = m_pointer.X - gap - size;
+
+		double top = m_pointer.Y + gap;
+		if (top + size > bounds.Height) top = m_pointer.Y - gap - size;
+
+		xcontrols::Canvas::SetLeft(m_lens, Clamp(left, 0.0, (std::max)(0.0, bounds.Width - size)));
+		xcontrols::Canvas::SetTop(m_lens, Clamp(top, 0.0, (std::max)(0.0, bounds.Height - size)));
+	}
+
+	// The colour under the pointer, as a swatch and as hex. BGRA is the order the capture comes in,
+	// which is not the order it is written in -- getting that backwards produces a plausible colour
+	// with red and blue swapped, and the only way to notice is to point it at something you already
+	// know the value of.
+	void ShowColourAt(int x, int y)
+	{
+		if (!m_hexLabel || !m_swatch) return;
+
+		if (x < 0 || y < 0 || x >= m_pixelsWidth || y >= m_pixelsHeight)
+		{
+			m_hexLabel.Text(L"--");
+			return;
+		}
+
+		const size_t offset = (static_cast<size_t>(y) * m_pixelsWidth + x) * 4;
+		if (offset + 3 >= m_pixels.size()) return;
+
+		const uint8_t blue = m_pixels[offset + 0];
+		const uint8_t green = m_pixels[offset + 1];
+		const uint8_t red = m_pixels[offset + 2];
+		const uint8_t alpha = m_pixels[offset + 3];
+
+		wchar_t hex[16] = {};
+		swprintf_s(hex, L"#%02X%02X%02X", red, green, blue);
+		m_hexLabel.Text(hex);
+		m_swatch.Fill(Brush(0xFF, red, green, blue));
+
+		// Said only when it is not the obvious answer: almost every pixel of a drawn window is
+		// opaque, so a permanent alpha column would be noise, and a transparent one is worth knowing.
+		if (alpha != 0xFF)
+		{
+			m_hexLabel.Text(std::wstring(hex) + L" a" + std::to_wstring(static_cast<int>(alpha)));
+		}
+	}
+
 
 	// Which mode is current, said in the toolbar itself: the active button wears the accent, the
 	// inactive one the panel's own grey. Just-my-XAML is a toggle rather than a mode, so it is lit
@@ -851,6 +1745,15 @@ private:
 		// Deselect is an action rather than a mode, so it never wears the accent -- only whether
 		// there is anything for it to do.
 		if (m_deselectButton) m_deselectButton.IsEnabled(m_hasSelection);
+
+		if (m_zoomButton) m_zoomButton.Background(m_zoom == Zoom::Off ? Idle() : Accent());
+		if (m_scaleButton) m_scaleButton.Background(m_zoom == Zoom::Transform ? Accent() : Idle());
+		if (m_pixelButton) m_pixelButton.Background(m_zoom == Zoom::Lens ? Accent() : Idle());
+
+		// The ends of the range are said by disabling, not by silently doing nothing: a button that
+		// responds to a click by leaving everything as it was reads as broken rather than as bounded.
+		if (m_zoomInButton) m_zoomInButton.IsEnabled(m_zoomFactor < 32);
+		if (m_zoomOutButton) m_zoomOutButton.IsEnabled(m_zoomFactor > 2);
 	}
 
 	/// Whether an element was declared in the app's own markup.
@@ -1075,6 +1978,17 @@ private:
 	{
 		m_pointer = point;
 
+		// Redrawn from the frame already in hand rather than by capturing another. A pointer move is
+		// hundreds of events a second and a readback is a GPU round trip; the timer is what decides
+		// how fresh the pixels are, and this is what decides which of them are on screen. The two are
+		// deliberately separate, so sweeping the pointer across the window costs a buffer walk and
+		// nothing else.
+		if (m_zoom == Zoom::Lens) UpdateLens();
+
+		// The scaled app follows the pointer too, by moving the point it grows about rather than by
+		// redrawing anything.
+		if (m_zoom == Zoom::Transform) UpdateTransformOrigin();
+
 		const bool overSelection = m_hasSelection && Contains(m_selectionRect, point);
 		if (overSelection != m_overSelection)
 		{
@@ -1218,6 +2132,68 @@ private:
 	}
 
 	// Moves an outline and its badge onto an element, or hides both when there is nothing to show.
+	// Follows the picked element when the app re-lays out, which is not the same event as the element
+	// changing size.
+	//
+	// The mark is drawn at coordinates read out of the app once, and an app that moves the element
+	// afterwards leaves it behind -- pointing confidently at empty space. The probe does this to
+	// itself every few seconds: a sibling leaves the panel, everything below it slides up, and nothing
+	// about the picked element changed except where it is. SizeChanged cannot see that, because the
+	// element was not resized; LayoutUpdated can, because it fires for the pass that moved it.
+	//
+	// It fires for every layout pass in the tree, so it is subscribed only while something is picked,
+	// and it does one TransformToVisual when it fires. That is affordable in a way that recomputing on
+	// every pointer move would not be -- which is the reason this was left alone until now.
+	void WatchSelectionLayout(xaml::UIElement const& element)
+	{
+		if (m_selectedElement && m_layoutToken.value)
+		{
+			m_selectedElement.LayoutUpdated(m_layoutToken);
+			m_layoutToken = {};
+		}
+
+		m_selectedElement = element ? element.try_as<xaml::FrameworkElement>() : nullptr;
+		if (!m_selectedElement) return;
+
+		m_layoutToken = m_selectedElement.LayoutUpdated(
+			[this](winrt::Windows::Foundation::IInspectable const&, winrt::Windows::Foundation::IInspectable const&)
+			{
+				if (!m_hasSelection || !m_selectedElement) return;
+
+				// Re-entrant by construction, and it has to be stopped twice over.
+				//
+				// LayoutUpdated fires for every layout pass in the tree, and moving the outline is
+				// itself a layout pass -- so redrawing from this handler schedules the handler again.
+				// The comparison below is what breaks that cycle, and it must compare like with like:
+				// comparing raw bounds against m_selectionRect, which carries the badge, never matched,
+				// so every pass redrew and scheduled another until the app went down with it.
+				if (m_updatingSelection) return;
+
+				try
+				{
+					winrt::Windows::Foundation::Rect rect{};
+					if (!Bounds(m_selectedElement, rect)) return;
+
+					const auto withBadge = WithBadge(rect);
+					if (withBadge.X == m_selectionRect.X && withBadge.Y == m_selectionRect.Y
+						&& withBadge.Width == m_selectionRect.Width && withBadge.Height == m_selectionRect.Height)
+					{
+						return;
+					}
+
+					m_updatingSelection = true;
+					ShowBox(m_selectBox, m_selectBadge, m_selectedElement, Describe(m_selectedElement));
+					m_selectionRect = withBadge;
+					m_updatingSelection = false;
+				}
+				catch (winrt::hresult_error const&)
+				{
+					// An element mid-removal is #51's problem, not this one's.
+					m_updatingSelection = false;
+				}
+			});
+	}
+
 	bool ShowBox(
 		xcontrols::Grid const& box,
 		xcontrols::Border const& badge,
@@ -1332,6 +2308,7 @@ private:
 			if (const auto element = Beneath(point, rect))
 			{
 				m_selectedHandle = Record(element, point);
+				WatchSelectionLayout(element);
 
 				// The picked element keeps its outline after select mode ends: that persistent mark is
 				// the evidence of what "the selected element" now means, for the person and the agent.
@@ -1358,6 +2335,7 @@ private:
 	{
 		const bool had = m_hasSelection;
 
+		WatchSelectionLayout(nullptr);
 		ShowBox(m_selectBox, m_selectBadge, nullptr, std::wstring());
 		m_hasSelection = false;
 		m_overSelection = false;
@@ -1564,8 +2542,15 @@ private:
 
 	IXamlDiagnostics* m_diagnostics = nullptr;
 	xcontrols::Panel m_layer{ nullptr };
+
+	// Set only where the diagnostics UI layer is not drawn; null everywhere else, so the two hosting
+	// routes cannot both be half-taken.
 	xcontrols::Grid m_root{ nullptr };
 	xcontrols::Canvas m_canvas{ nullptr };
+
+	// The outlines and badges, on their own layer so they can be scaled with the app while the
+	// toolbar above them is not.
+	xcontrols::Canvas m_marks{ nullptr };
 	xcontrols::Border m_panel{ nullptr };
 	xcontrols::Grid m_capture{ nullptr };
 	xcontrols::StackPanel m_bar{ nullptr };
@@ -1591,6 +2576,14 @@ private:
 	// Which element is selected, so a removal can be recognised. The handle and not the name:
 	// a Remove callback carries an empty Name, measured, so matching on one would never fire.
 	InstanceHandle m_selectedHandle = 0;
+
+	// The picked element itself, held so its mark can be re-measured when the app moves it, and the
+	// subscription that says when to.
+	xaml::FrameworkElement m_selectedElement{ nullptr };
+	winrt::event_token m_layoutToken{};
+
+	// Guards the redraw against the layout pass it causes.
+	bool m_updatingSelection = false;
 	// The last place the pointer was seen, in window coordinates. Kept because a selection can be
 	// made at a moment when there is no pointer event to read it from.
 	winrt::Windows::Foundation::Point m_pointer{ -1.0f, -1.0f };
@@ -1598,6 +2591,16 @@ private:
 	bool m_overPanel = false;
 	double m_dragLeft = 16.0;
 	double m_dragTop = 16.0;
+
+	// Whether the toolbar has been put somewhere on purpose. Until it has, it re-centres itself as it
+	// grows; afterwards it stays where it was put and is only kept inside the window.
+	bool m_dragged = false;
+
+	// One geometry report per app, not one per layout pass.
+	bool m_reportedGeometry = false;
+
+	// Whether the toolbar has had its one and only automatic placement.
+	bool m_placed = false;
 	bool m_selecting = false;
 	std::set<Operation> m_operations;
 
@@ -1609,6 +2612,49 @@ private:
 	bool m_includeAllElements = false;
 	bool m_justMyXaml = true;
 	std::map<InstanceHandle, std::wstring> m_sources;
+
+	// Magnification.
+	xcontrols::StackPanel m_rows{ nullptr };
+	xcontrols::StackPanel m_zoomRow{ nullptr };
+	xcontrols::Button m_zoomButton{ nullptr };
+	xcontrols::Button m_scaleButton{ nullptr };
+	xcontrols::Button m_pixelButton{ nullptr };
+	xcontrols::Button m_zoomInButton{ nullptr };
+	xcontrols::Button m_zoomOutButton{ nullptr };
+	xcontrols::TextBlock m_factorLabel{ nullptr };
+	xcontrols::TextBlock m_hexLabel{ nullptr };
+	xshapes::Rectangle m_swatch{ nullptr };
+	xcontrols::Border m_lens{ nullptr };
+	xcontrols::Image m_lensImage{ nullptr };
+	xshapes::Rectangle m_pixelBox{ nullptr };
+	xaml::DispatcherTimer m_lensTimer{ nullptr };
+
+	// Members rather than lambda captures, deliberately: a completion handler runs on a pool thread
+	// and is destroyed there, so a XAML object captured into one is released off the UI thread.
+	ximaging::RenderTargetBitmap m_lensBitmap{ nullptr };
+	winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::Storage::Streams::IBuffer> m_lensPixels{ nullptr };
+	Zoom m_zoom = Zoom::Off;
+	int m_zoomFactor = 4;
+
+	// The last capture, in device pixels, BGRA8. Only ever touched on the UI thread: the readback
+	// completes on a pool thread and hands its bytes over through RoseTapRunOnUiThread rather than
+	// storing them there, so nothing here needs a lock.
+	std::vector<uint8_t> m_pixels;
+	int m_pixelsWidth = 0;
+	int m_pixelsHeight = 0;
+	bool m_capturingFrame = false;
+
+	// What the app's root had before the transform mode replaced it, so leaving restores rather than
+	// clears. The flag and not a null check: null is a legitimate thing to have saved.
+	struct SavedTransform
+	{
+		xaml::UIElement Element{ nullptr };
+		xmedia::Transform Transform{ nullptr };
+		winrt::Windows::Foundation::Point Origin{};
+	};
+
+	std::vector<SavedTransform> m_saved;
+	bool m_transformSaved = false;
 };
 
 // Leaked deliberately: see the note on RoseOverlay. Only ever touched on the app's UI thread.

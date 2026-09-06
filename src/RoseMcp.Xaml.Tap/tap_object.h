@@ -186,7 +186,16 @@ public:
 
 			// The toolbar is installed once and left there. It goes in after the snapshot so the very first
 			// tree cannot contain it, and the snapshot filters it out of every one after that.
-			Overlay().Install(m_diagnostics);
+			//
+			// Handed the elements out of the walk, because WinUI 3 asks which XamlRoot a diagnostics
+			// layer is wanted for and the only reliable answer is an element already known to be in the
+			// app's tree. All of them, not the first: the node the enumeration starts from is the host
+			// object rather than a UIElement, so it has no XamlRoot to give.
+			std::vector<InstanceHandle> candidates;
+			candidates.reserve(m_nodes.size());
+			for (const auto& node : m_nodes) candidates.push_back(node.Handle);
+
+			Overlay().Install(m_diagnostics, candidates);
 
 			// Per-element source info only exists here, where the tree was walked, so it is handed to the
 			// overlay: it is what "just my XAML" decides on, and a click has no other way to learn it.
@@ -421,6 +430,11 @@ private:
 	std::set<InstanceHandle> OverlaySubtree() const
 	{
 		std::set<InstanceHandle> excluded;
+
+		// Flipping RoseTapShowOverlayInTree stops the toolbar hiding itself, so the tree and property
+		// tools can be pointed at RoseMCP's own UI. See its declaration for why it exists.
+		if (RoseTapShowOverlayInTree) return excluded;
+
 		for (const auto& node : m_nodes)
 		{
 			if (node.Name == OverlayRootName) excluded.insert(node.Handle);

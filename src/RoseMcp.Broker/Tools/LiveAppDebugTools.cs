@@ -21,8 +21,6 @@ namespace RoseMcp.Broker.Tools;
 [McpServerToolType]
 public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 {
-	private const string SessionHelp = "The session id returned by rose_debug_attach.";
-
 	[McpServerTool(
 		Name = ToolNames.DebugAttach,
 		Title = "Attach a debugger to a process",
@@ -37,7 +35,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "and module loads are captured for rose_debug_events to read. Local, same-user processes "
 			+ "only. Returns the session id to pass to rose_debug_events and rose_debug_detach.")]
 	public async Task<LiveAppSessionSummary> AttachAsync(
-		[Description("The process id to attach to. Must be a local process owned by the current user.")]
+		[Description(ToolDescriptions.ProcessIdArgument)]
 		int processId,
 		CancellationToken cancellationToken = default)
 	{
@@ -78,8 +76,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "breakpoints once it is running the way you would after an attach. Returns the session id for "
 			+ "rose_debug_events and rose_debug_detach. Detaching leaves it running.")]
 	public async Task<LiveAppSessionSummary> LaunchAsync(
-		[Description("Path to a local .NET executable (.exe).")] string executablePath,
-		[Description("Optional command-line arguments.")] string? arguments = null,
+		[Description(ToolDescriptions.ExecutablePathArgument)] string executablePath,
+		[Description(ToolDescriptions.LaunchArgumentsArgument)] string? arguments = null,
 		CancellationToken cancellationToken = default)
 	{
 		if (!File.Exists(executablePath)) throw new McpException($"No executable at {executablePath}.");
@@ -120,7 +118,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "runs x64 emulated, is debugged through the x64 host automatically. The app must already be "
 			+ "deployed. Detaching leaves it running and lifts debug mode. Returns the session id.")]
 	public async Task<LiveAppSessionSummary> LaunchUwpAsync(
-		[Description("The app user-model id, e.g. MyApp_1a2b3c4d5e6f7!App.")] string appUserModelId,
+		[Description(ToolDescriptions.AppUserModelIdArgument)] string appUserModelId,
 		CancellationToken cancellationToken = default)
 	{
 		var target = new LiveAppTarget
@@ -159,19 +157,14 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "SessionNotice, ProcessCreated, ProcessExited, ModuleLoaded, ThreadCreated, ThreadExited, "
 			+ "ExceptionFirstChance, ExceptionUnhandled, LogMessage, BreakpointHit, StepComplete.")]
 	public async Task<LiveDebugEventPage> EventsAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("Return only events whose sequence is greater than this; 0 for everything buffered.")]
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.AfterSequenceArgument)]
 		long after = 0,
-		[Description("Comma-separated event kinds to return; omit for all. The cursor still advances over what is filtered out, and 'skipped' says how many those were.")]
+		[Description(ToolDescriptions.EventKindsArgument)]
 		string? kinds = null,
-		[Description("Maximum events in this page (default 500). Lower it when you only need to see whether something is happening.")]
+		[Description(ToolDescriptions.MaxEventsArgument)]
 		int limit = 500,
-		[Description(
-			"Seconds to wait for a matching event before answering, instead of returning what is there "
-				+ "now. 0 answers at once. Use it with 'kinds' to wait for one thing -- BreakpointHit is "
-				+ "'wait until the target stops' -- rather than calling this in a loop. Capped at 60 so "
-				+ "the call cannot outlive your own timeout; a wait that ends empty has lost nothing, "
-				+ "since events are buffered and the same cursor picks up whatever arrives next.")]
+		[Description(ToolDescriptions.WaitSecondsArgument)]
 		int waitSeconds = 0,
 		CancellationToken cancellationToken = default)
 	{
@@ -193,7 +186,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "than reporting success if the debugger could not be detached, since that is the one outcome "
 			+ "where the target is at risk.")]
 	public async Task<string> DetachAsync(
-		[Description(SessionHelp)] string sessionId,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		// Held before the close, because closing forgets it, and its answer to "did the detach
@@ -243,14 +236,14 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "statements and rebuilding, which needs a source edit and a restart to see anything. It binds "
 			+ "when the method's module is loaded, so an as-yet-unloaded module reads back as not bound.")]
 	public async Task<LiveTracepoint> AddTracepointAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("Method to trace, as [Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.")]
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.TracepointLocationArgument)]
 		string location,
-		[Description("Optional message logged on each hit (literal text; expression interpolation comes later).")]
+		[Description(ToolDescriptions.LogMessageArgument)]
 		string? logMessage = null,
-		[Description("Optional: log only every Nth hit to thin a hot path; every hit is still counted.")]
+		[Description(ToolDescriptions.LogEveryNthHitArgument)]
 		int? logEveryNthHit = null,
-		[Description("Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, e.g. count >= 100. Only simple value compares; expressions need eval.")]
+		[Description(ToolDescriptions.TracepointConditionArgument)]
 		string? condition = null,
 		CancellationToken cancellationToken = default)
 	{
@@ -271,7 +264,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "loaded, or whose method name did not resolve, stays unbound and reports why rather than "
 			+ "failing loudly.")]
 	public async Task<LiveTracepointList> ListTracepointsAsync(
-		[Description(SessionHelp)] string sessionId,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -291,8 +284,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "have seen what you needed, rather than leaving a hot-path log running for the life of the "
 			+ "session; removing an id that is already gone is harmless and simply returns the current set.")]
 	public async Task<LiveTracepointList> RemoveTracepointAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("The tracepoint id returned by rose_debug_add_tracepoint.")] string tracepointId,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.TracepointIdArgument)] string tracepointId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -314,12 +307,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "(default 30s) fires so an unattended stop cannot wedge the app -- so read the events and "
 			+ "continue promptly. For non-invasive logging that never pauses, prefer rose_debug_add_tracepoint.")]
 	public async Task<LiveBreakpoint> SetBreakpointAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("Method to break on, as [Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.")]
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.BreakpointLocationArgument)]
 		string location,
-		[Description("Seconds a hit is held before the target auto-continues on its own; default 30.")]
+		[Description(ToolDescriptions.AutoContinueSecondsArgument)]
 		int? autoContinueSeconds = null,
-		[Description("Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, e.g. id == 42. Only simple value compares; expressions need eval.")]
+		[Description(ToolDescriptions.BreakpointConditionArgument)]
 		string? condition = null,
 		CancellationToken cancellationToken = default)
 	{
@@ -340,7 +333,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "since one whose module has not loaded, or whose method name did not resolve, stays unbound "
 			+ "and reports why rather than failing loudly.")]
 	public async Task<LiveBreakpointList> ListBreakpointsAsync(
-		[Description(SessionHelp)] string sessionId,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -360,8 +353,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "you needed so execution stops passing through that method; removing one the target is "
 			+ "currently held at does not itself resume -- call rose_debug_continue for that.")]
 	public async Task<LiveBreakpointList> RemoveBreakpointAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("The breakpoint id returned by rose_debug_set_breakpoint.")] string breakpointId,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.BreakpointIdArgument)] string breakpointId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -380,7 +373,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "have read the stop and its stack from rose_debug_events; it is a no-op if nothing is "
 			+ "currently stopped, which is safe to call speculatively.")]
 	public async Task<string> ContinueAsync(
-		[Description(SessionHelp)] string sessionId,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -402,8 +395,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "fresh stack and locals. It is a no-op if nothing is currently stopped. Line granularity "
 			+ "needs a PDB; without one, a step lands at the runtime's own step boundaries.")]
 	public async Task<string> StepAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("in, over, or out.")] string mode = "over",
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.StepModeArgument)] string mode = "over",
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -427,8 +420,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "recorded frame names them -- and arguments are named. Returns the value and its type, or an "
 			+ "error explaining why it did not resolve.")]
 	public async Task<LiveEvaluation> EvaluateAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("A field-access expression, e.g. this.field or state.Inner.Count.")] string expression,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -450,10 +443,10 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "with no XAML UI, or when the provider is not built, the result carries a detail and no nodes "
 			+ "rather than failing. Use it to see the live tree of an app started with rose_debug_launch_uwp.")]
 	public async Task<LiveXamlTree> XamlTreeAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("Root the tree at this named element's subtree; omit for the whole tree.")] string? rootName = null,
-		[Description("Skip this many nodes, for paging a large tree.")] int offset = 0,
-		[Description("Return at most this many nodes; 0 for all. Total says how many matched.")] int limit = 0,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.XamlRootNameArgument)] string? rootName = null,
+		[Description(ToolDescriptions.XamlOffsetArgument)] int offset = 0,
+		[Description(ToolDescriptions.XamlLimitArgument)] int limit = 0,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -479,12 +472,9 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "TextHighlighters and SelectionHighlightColor. The first read of an element is the accurate "
 			+ "one; do not treat properties that appear between two reads as something an edit did.")]
 	public async Task<LiveXamlProperties> XamlPropertiesAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("The element handle from rose_xaml_tree.")] ulong handle,
-		[Description(
-			"Include the framework defaults, not only what the framework reports as set. Note that those "
-				+ "are not quite the same question as what the XAML sets: a property the framework "
-				+ "materialises while being inspected counts as set from then on.")]
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.XamlHandleArgument)] ulong handle,
+		[Description(ToolDescriptions.IncludeDefaultsArgument)]
 		bool includeDefaults = false,
 		CancellationToken cancellationToken = default)
 	{
@@ -519,16 +509,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "cannot carry an x:Name. An edit reported as failed is not retried by the next apply -- "
 			+ "re-sending one that adds an element would add a second copy of it.")]
 	public async Task<LiveXamlApplyResult> XamlApplyAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description(
-			"The XAML file to apply. What it holds now is diffed against what this session last sent to "
-				+ "the app, so an edit-and-apply loop needs only this.")]
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.XamlFilePathArgument)]
 		string? filePath = null,
-		[Description(
-			"The previous XAML. Only needed for the first apply of a file this session has not seen "
-				+ "before, or with newXaml for markup that is not on disk.")]
+		[Description(ToolDescriptions.XamlOldMarkupArgument)]
 		string? oldXaml = null,
-		[Description("The new XAML to apply, when it is markup rather than a file. Pass oldXaml with it.")]
+		[Description(ToolDescriptions.XamlNewMarkupArgument)]
 		string? newXaml = null,
 		CancellationToken cancellationToken = default)
 	{
@@ -554,26 +540,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "to a templated child or up to the container without arming again; each handle feeds "
 			+ "rose_xaml_properties and rose_xaml_apply directly.")]
 	public async Task<LiveXamlSelection> XamlSelectModeAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description(
-			"Also pick elements the framework would not route a click to -- an empty Grid with no "
-				+ "Background, something with IsHitTestVisible false. Off by default, because such an "
-				+ "element can cover the whole window and shadow everything the user can actually click. "
-				+ "Turn it on only to inspect an invisible host deliberately.")]
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.IncludeAllElementsArgument)]
 		bool includeAllElements = false,
-		[Description(
-			"Prefer the element the app's own XAML declares over a control template's parts, the way "
-				+ "Visual Studio's Just My XAML does. On by default: a click on a button means the button "
-				+ "the developer wrote, not whichever templated child is topmost. Decided on the element's "
-				+ "source -- ms-appx: is the app's markup, ms-resource: is the framework's -- and it falls "
-				+ "back to the framework's own pick when nothing under the click came from the app. Turn it "
-				+ "off to select template internals.")]
+		[Description(ToolDescriptions.JustMyXamlArgument)]
 		bool justMyXaml = true,
-		[Description(
-			"False disarms select mode instead of arming it, the same as the toolbar's Idle button. "
-				+ "Arming lays a pointer-capturing layer over the app and waits for a click, and picking "
-				+ "by handle does not take it away -- so disarm when you have finished, or the person "
-				+ "using the app is left in a mode they did not ask for.")]
+		[Description(ToolDescriptions.ArmArgument)]
 		bool arm = true,
 		CancellationToken cancellationToken = default)
 	{
@@ -599,7 +571,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "targetable. If nobody has picked yet it says so, and whether select mode is armed, so it is "
 			+ "safe to poll while waiting for the user.")]
 	public async Task<LiveXamlSelection> XamlSelectionAsync(
-		[Description(SessionHelp)] string sessionId,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -623,7 +595,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "either leave a mark over nothing or report a selection nobody can see. It reports whether "
 			+ "there was anything to clear, so it is safe to call when you are not sure.")]
 	public async Task<LiveXamlSelection> XamlDeselectAsync(
-		[Description(SessionHelp)] string sessionId,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
@@ -649,8 +621,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "outwards, so you can go up to the container you actually meant without asking again. "
 			+ "Each handle feeds rose_xaml_properties and rose_xaml_apply directly.")]
 	public async Task<LiveXamlSelection> XamlSelectElementAsync(
-		[Description(SessionHelp)] string sessionId,
-		[Description("The element's handle, from rose_xaml_tree.")] ulong handle,
+		[Description(ToolDescriptions.SessionArgument)] string sessionId,
+		[Description(ToolDescriptions.XamlHandleArgument)] ulong handle,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);

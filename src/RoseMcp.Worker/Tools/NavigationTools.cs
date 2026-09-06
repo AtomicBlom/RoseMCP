@@ -25,7 +25,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
-		[Description("Maximum matches to return. Defaults to 200.")] int maxResults = 200,
+		[Description(ToolDescriptions.MaxImplementationsArgument)] int maxResults = 200,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, _) = WorkProgress.Split(progress);
@@ -53,7 +53,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
-		[Description("Also return the declaration's own source text, so understanding a member does not end in a file read.")] bool includeSource = false,
+		[Description(ToolDescriptions.IncludeSourceArgument)] bool includeSource = false,
 		CancellationToken cancellationToken = default)
 	{
 		// Describing one symbol is instant. The only wait worth reporting is the workspace itself,
@@ -83,10 +83,10 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
-		[Description("Maximum references to return. Defaults to 200.")] int maxResults = 200,
-		[Description("Return where it is declared and how many uses there are, without listing them.")] bool definitionsOnly = false,
-		[Description("Only references compiled by this project.")] string? project = null,
-		[Description("Give each location its line of source. On by default; off is much smaller.")] bool includePreviews = true,
+		[Description(ToolDescriptions.MaxReferencesArgument)] int maxResults = 200,
+		[Description(ToolDescriptions.DefinitionsOnlyArgument)] bool definitionsOnly = false,
+		[Description(ToolDescriptions.ReferenceProjectArgument)] string? project = null,
+		[Description(ToolDescriptions.IncludePreviewsArgument)] bool includePreviews = true,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -121,8 +121,8 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.SearchSymbols)]
 	public async Task<SymbolSearchResult> SearchSymbolsAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Name or abbreviation to search for.")] string query,
-		[Description("Maximum matches to return. Defaults to 50.")] int maxResults = 50,
+		[Description(ToolDescriptions.SearchQueryArgument)] string query,
+		[Description(ToolDescriptions.MaxSearchMatchesArgument)] int maxResults = 50,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -144,10 +144,10 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.ResolveName)]
 	public async Task<NameResolutionResult> ResolveNameAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The name as the code spells it: Encoding, List<int>, or Encoding.UTF8.")] string name,
-		[Description("The file it is used in. Scopes the search to what that project can reach, and is the only way to know what is in scope there already.")] string? filePath = null,
-		[Description("How many type arguments the use site supplies, where the name is not written with them.")] int? arity = null,
-		[Description("Maximum candidates to return. Defaults to 20.")] int maxResults = 20,
+		[Description(ToolDescriptions.ResolveNameArgument)] string name,
+		[Description(ToolDescriptions.ResolveFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ArityArgument)] int? arity = null,
+		[Description(ToolDescriptions.MaxCandidatesArgument)] int maxResults = 20,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -177,9 +177,9 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.Outline)]
 	public async Task<OutlineResult> OutlineAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The type, as Namespace.Type. One of this and filePath.")] string? type = null,
-		[Description("The file to outline. One of this and type; also narrows a partial type to one of its files.")] string? filePath = null,
-		[Description("Also list what the base classes contribute. Off by default.")] bool includeInherited = false,
+		[Description(ToolDescriptions.OutlineTypeArgument)] string? type = null,
+		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
 		CancellationToken cancellationToken = default)
 	{
 		using var following = sharedWork.Follow(WorkProgress.For(progress));
@@ -199,7 +199,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	[Description(ToolDescriptions.ProjectGraph)]
 	public async Task<ProjectGraphResult> ProjectGraphAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		CancellationToken cancellationToken = default)
 	{
 		using var following = sharedWork.Follow(WorkProgress.For(progress));

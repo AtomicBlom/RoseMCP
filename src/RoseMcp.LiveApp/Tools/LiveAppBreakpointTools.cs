@@ -20,9 +20,9 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Set a stopping breakpoint at a method by name; it holds the target on hit until continued.")]
 	public LiveBreakpoint Set(
-		[Description("[Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.")] string location,
-		[Description("Seconds to hold before auto-continuing; default 30.")] int? autoContinueSeconds = null,
-		[Description("Optional condition (name OP literal) gating each hit.")] string? condition = null)
+		[Description(ToolDescriptions.BreakpointLocationArgument)] string location,
+		[Description(ToolDescriptions.AutoContinueSecondsArgument)] int? autoContinueSeconds = null,
+		[Description(ToolDescriptions.BreakpointConditionArgument)] string? condition = null)
 		=> host.SetBreakpoint(location, autoContinueSeconds, condition);
 
 	[McpServerTool(
@@ -45,8 +45,8 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Remove a stopping breakpoint by id, returning the remaining set.")]
 	public LiveBreakpointList Remove(
-		[Description("The breakpoint id from set.")] string id)
-		=> host.RemoveBreakpoint(id);
+		[Description(ToolDescriptions.BreakpointIdArgument)] string breakpointId)
+		=> host.RemoveBreakpoint(breakpointId);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppContinue,
@@ -69,7 +69,7 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Step a target held at a breakpoint: \"in\", \"over\", or \"out\".")]
 	public LiveContinueResult Step(
-		[Description("in, over, or out.")] string mode)
+		[Description(ToolDescriptions.StepModeArgument)] string mode)
 		=> host.Step(mode);
 
 	[McpServerTool(
@@ -81,6 +81,6 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Evaluate a field-access expression against the stopped frame; runs no debuggee code.")]
 	public LiveEvaluation Evaluate(
-		[Description("A field-access expression, e.g. name or name.field.field.")] string expression)
+		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression)
 		=> host.Evaluate(expression);
 }

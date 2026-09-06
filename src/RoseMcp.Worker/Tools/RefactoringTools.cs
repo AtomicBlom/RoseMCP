@@ -26,12 +26,12 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.ApplyCodeFix)]
 	public async Task<CodeFixResult> ApplyCodeFixAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The diagnostic id to fix, for example CA1822.")] string diagnosticId,
-		[Description("A file in the scope to fix; the fix has to start somewhere.")] string filePath,
-		[Description("document, project, or solution. Defaults to document.")] string scope = "document",
-		[Description("Which fix, when the diagnostic offers several. Matched against the fix titles.")] string? fixTitle = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.DiagnosticIdArgument)] string diagnosticId,
+		[Description(ToolDescriptions.FixScopeFilePathArgument)] string filePath,
+		[Description(ToolDescriptions.FixScopeArgument)] string scope = "document",
+		[Description(ToolDescriptions.FixTitleArgument)] string? fixTitle = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -66,16 +66,16 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.RenameSymbol)]
 	public async Task<RenameResult> RenameSymbolAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The new name.")] string newName,
+		[Description(ToolDescriptions.NewNameArgument)] string newName,
 		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Also rename overloads of the same method.")] bool renameOverloads = false,
-		[Description("Also rename occurrences inside comments.")] bool renameInComments = false,
-		[Description("Also rename occurrences inside string literals.")] bool renameInStrings = false,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.RenameOverloadsArgument)] bool renameOverloads = false,
+		[Description(ToolDescriptions.RenameInCommentsArgument)] bool renameInComments = false,
+		[Description(ToolDescriptions.RenameInStringsArgument)] bool renameInStrings = false,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		// A rename is the longest thing a client can ask for and the only one that writes, so it is
@@ -113,10 +113,10 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.FormatDocuments)]
 	public async Task<FormatResult> FormatAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative paths of the files to format.")] string[] filePaths,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Also drop using directives the file does not need. Off by default.")] bool removeUnusedUsings = false,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.FormatFilePathsArgument)] string[] filePaths,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.RemoveUnusedUsingsArgument)] bool removeUnusedUsings = false,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -148,11 +148,11 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.MoveTypeToFile)]
 	public async Task<MoveTypeResult> MoveTypeToFileAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative path to the file to split.")] string filePath,
-		[Description("Name of the type to move out, without type parameters.")] string typeName,
-		[Description("Where to put it. Defaults to <typeName>.cs beside the source file.")] string? targetPath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.SplitFilePathArgument)] string filePath,
+		[Description(ToolDescriptions.TypeNameArgument)] string typeName,
+		[Description(ToolDescriptions.TargetPathArgument)] string? targetPath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -185,14 +185,14 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.ReplaceMember)]
 	public Task<MemberEditResult> ReplaceMemberAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The whole declaration, attributes and documentation comment included.")] string code,
-		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
-		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.MemberArgument)] string symbol,
+		[Description(ToolDescriptions.DeclarationCodeArgument)] string code,
+		[Description(ToolDescriptions.UsingsArgument)] string[]? usings = null,
+		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
 			progress,
@@ -221,17 +221,17 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.ReplaceBody)]
 	public Task<MemberEditResult> ReplaceBodyAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The body: statements, a block in braces, or => expression;. Leave it off when using find, and pass just the statements to insert when using position.")] string? code = null,
-		[Description("Code to find inside this body and replace, matched on the tokens so indentation and line endings do not matter. Cheaper than re-emitting a long body for a one-line change; refused if it matches nothing or more than one thing.")] string? find = null,
-		[Description("What to put in place of find. Empty removes the matched code.")] string? replace = null,
-		[Description("start or end, to insert code rather than replace the body. end means before a closing return or throw, since anything after one is unreachable.")] string? position = null,
-		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
-		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.MemberArgument)] string symbol,
+		[Description(ToolDescriptions.BodyCodeArgument)] string? code = null,
+		[Description(ToolDescriptions.FindArgument)] string? find = null,
+		[Description(ToolDescriptions.ReplaceArgument)] string? replace = null,
+		[Description(ToolDescriptions.PositionArgument)] string? position = null,
+		[Description(ToolDescriptions.UsingsArgument)] string[]? usings = null,
+		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
 			progress,
@@ -263,16 +263,16 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.AddMember)]
 	public Task<MemberEditResult> AddMemberAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The type to add to, as Namespace.Type.")] string type,
-		[Description("One or more whole declarations.")] string code,
-		[Description("Namespaces the code needs imported, ensured in the same file. One already in scope is reported, not added.")] string[]? usings = null,
-		[Description("Put them after this member, by name.")] string? after = null,
-		[Description("Put them before this member, by name.")] string? before = null,
-		[Description("Which file, when the type is partial and declared in more than one.")] string? filePath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.AddToTypeArgument)] string type,
+		[Description(ToolDescriptions.MembersCodeArgument)] string code,
+		[Description(ToolDescriptions.UsingsArgument)] string[]? usings = null,
+		[Description(ToolDescriptions.AfterArgument)] string? after = null,
+		[Description(ToolDescriptions.BeforeArgument)] string? before = null,
+		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
 			progress,
@@ -303,13 +303,13 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.ChangeSignature)]
 	public async Task<SignatureChangeResult> ChangeSignatureAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The parameters it should have, written as they would go between the parentheses.")] string parameters,
-		[Description("What to pass at existing call sites for a new parameter with no default, as name=expression.")] string[]? arguments = null,
-		[Description("Which file, when the member is declared in more than one -- a partial.")] string? filePath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile the solution afterwards and report what the change broke. Defaults to true.")] bool verify = true,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.MemberArgument)] string symbol,
+		[Description(ToolDescriptions.ParametersArgument)] string parameters,
+		[Description(ToolDescriptions.ArgumentsArgument)] string[]? arguments = null,
+		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifySolutionArgument)] bool verify = true,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		// The longest of the write operations by some distance: it finds every reference in the
@@ -347,11 +347,11 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.AddUsing)]
 	public async Task<UsingResult> AddUsingAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative path to the file.")] string filePath,
-		[Description("Namespaces to ensure, as System.Text or using System.Text;.")] string[] namespaces,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the import resolved. Defaults to true.")] bool verify = true,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.SingleFilePathArgument)] string filePath,
+		[Description(ToolDescriptions.NamespacesArgument)] string[] namespaces,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -406,14 +406,14 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.MoveMember)]
 	public async Task<MemberEditResult> MoveMemberAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The member to move, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The type it moves into, as Namespace.Type.")] string targetType,
-		[Description("qualify to write the new type in front of every call, or usingStatic to import it in each calling file. Defaults to qualify.")] string callSites = "qualify",
-		[Description("Which file, when the member is declared in more than one -- a partial type.")] string? filePath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the move broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.MoveMemberArgument)] string symbol,
+		[Description(ToolDescriptions.TargetTypeArgument)] string targetType,
+		[Description(ToolDescriptions.CallSitesArgument)] string callSites = "qualify",
+		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		var request = new MoveMemberRequest
@@ -460,12 +460,12 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.DeleteMember)]
 	public Task<MemberEditResult> DeleteMemberAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The member, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the removal broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.MemberArgument)] string symbol,
+		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default) =>
 		EditAsync(
 			progress,
@@ -492,15 +492,15 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.AddFile)]
 	public async Task<AddFileResult> AddFileAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Where the file goes. Absolute, or relative to the solution.")] string filePath,
-		[Description("The C#: a whole file, or just the declarations, in which case a namespace is added.")] string code,
-		[Description("Namespaces to import on top of whatever the code turns out to need.")] string[]? usings = null,
-		[Description("Which project compiles it, where the path is inside more than one project's directory.")] string? project = null,
-		[Description("Work out the namespaces the code needs and add the ones with a single answer. Defaults to true.")] bool resolveUsings = true,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the file broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.NewFilePathArgument)] string filePath,
+		[Description(ToolDescriptions.FileCodeArgument)] string code,
+		[Description(ToolDescriptions.ExtraUsingsArgument)] string[]? usings = null,
+		[Description(ToolDescriptions.NewFileProjectArgument)] string? project = null,
+		[Description(ToolDescriptions.ResolveUsingsArgument)] bool resolveUsings = true,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -538,12 +538,12 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.ReplaceDocComment)]
 	public async Task<MemberEditResult> ReplaceDocCommentAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The comment: plain text taken as the summary, or the whole thing as XML.")] string comment,
-		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.DeclarationArgument)] string symbol,
+		[Description(ToolDescriptions.CommentArgument)] string comment,
+		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		var request = new DeclarationEditRequest
@@ -574,14 +574,14 @@ public sealed class RefactoringTools(
 	[Description(ToolDescriptions.SetAttribute)]
 	public async Task<MemberEditResult> SetAttributeAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.")] string symbol,
-		[Description("The attribute as it appears in source, brackets optional: Obsolete(\"use Parse\").")] string attribute,
-		[Description("set, add, or remove. Defaults to set, which replaces the one of that name and refuses where there are several.")] string action = "set",
-		[Description("Which file, when the name is declared in more than one -- a partial type or member.")] string? filePath = null,
-		[Description("Write the change. False returns the diff without touching disk. Defaults to true.")] bool apply = true,
-		[Description("Compile afterwards and report what the edit broke. Defaults to true.")] bool verify = true,
+		[Description(ToolDescriptions.DeclarationArgument)] string symbol,
+		[Description(ToolDescriptions.AttributeArgument)] string attribute,
+		[Description(ToolDescriptions.AttributeActionArgument)] string action = "set",
+		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
 		[Description(ToolDescriptions.VerifyScopeArgument)] string? verifyScope = null,
-		[Description("Fail rather than apply if the workspace has moved past this revision.")] long? expectedRevision = null,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
 		var request = new DeclarationEditRequest

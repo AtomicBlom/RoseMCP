@@ -45,6 +45,335 @@ public static class ToolDescriptions
 			+ "breaks its dependents by construction. Narrowing it to file is faster and says in the "
 			+ "result which dependents nobody looked at.";
 
+	/// <summary>
+	/// The workspace argument, on nearly every tool. It was 258 characters and appeared thirty times
+	/// -- 21% of every <c>inputSchema</c> byte on the wire, spending the caller's context on an
+	/// argument they are being told to leave out. The clause it drops, about a directory holding
+	/// several solutions, is already in the error the broker returns when that happens, which is the
+	/// only moment it is worth reading.
+	/// </summary>
+	public const string WorkspaceArgument =
+		"Solution, project or file path that picks the workspace. Usually omitted: inferred from the "
+			+ "other arguments or the working directory.";
+
+	/// <summary>Which live-app session, on every tool that works against one.</summary>
+	public const string SessionArgument = "The session id returned by rose_debug_attach.";
+
+	/// <summary>
+	/// The arguments themselves, from here rather than from each host's own copy.
+	/// <para>
+	/// Both hosts declared their own, and eight had drifted -- in every case the worker's said more
+	/// and the broker's, the one an MCP client actually reads, said less: whether a solution-relative
+	/// path is accepted was stated only on the side no client can see. One constant per argument is
+	/// what a parity test can assert; two copies are what it found.
+	/// </para>
+	/// </summary>
+	public const string ApplyArgument =
+		"Write the change. False returns the diff without touching disk. Defaults to true.";
+
+	public const string ExpectedRevisionArgument =
+		"Fail rather than apply if the workspace has moved past this revision.";
+
+	public const string VerifyArgument =
+		"Compile afterwards and report what the change broke and what it resolved. Defaults to true.";
+
+	public const string VerifySolutionArgument =
+		"Compile the whole solution afterwards and report what the change broke. Defaults to true.";
+
+	public const string MemberArgument =
+		"The member, as Namespace.Type.Member. Add a parameter list to pick an overload.";
+
+	public const string DeclarationArgument =
+		"The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.";
+
+	public const string PartialFilePathArgument =
+		"Which file, when the name is declared in more than one -- a partial type or member.";
+
+	public const string UsingsArgument =
+		"Namespaces the code needs imported, ensured in the same file. One already in scope is reported, "
+			+ "not added.";
+
+	public const string ProjectFilterArgument = "Limit to one project by name. Defaults to the whole solution.";
+
+	public const string ProjectOrPathFilterArgument =
+		"Limit to one project by name or path. Defaults to every project.";
+
+	public const string SingleFilePathArgument = "Absolute or solution-relative path to the file.";
+
+	public const string DiagnosticScopeArgument = "document, project, or solution. Defaults to solution.";
+
+	public const string DiagnosticTargetArgument =
+		"File path for document scope, or project name for project scope.";
+
+	public const string MinimumSeverityArgument =
+		"Lowest severity to report: hidden, info, warning, or error. Defaults to warning.";
+
+	public const string IncludeAnalyzersArgument =
+		"Run analyzers as well as the compiler. Much slower over a whole solution; off by default.";
+
+	public const string MaxDiagnosticsArgument = "Maximum diagnostics to return. Defaults to 200.";
+
+	public const string MaxReferencesArgument = "Maximum references to return. Defaults to 200.";
+
+	public const string DefinitionsOnlyArgument =
+		"Return where it is declared and how many uses there are, without listing them.";
+
+	public const string ReferenceProjectArgument = "Only references compiled by this project.";
+
+	public const string IncludePreviewsArgument =
+		"Give each location its line of source. On by default; off is much smaller.";
+
+	public const string MaxImplementationsArgument = "Maximum matches to return. Defaults to 200.";
+
+	public const string SearchQueryArgument = "Name or abbreviation to search for.";
+
+	public const string MaxSearchMatchesArgument = "Maximum matches to return. Defaults to 50.";
+
+	public const string IncludeInheritedArgument = "Also list what the base classes contribute. Off by default.";
+
+	public const string ArityArgument =
+		"How many type arguments the use site supplies, where the name is not written with them.";
+
+	public const string MaxCandidatesArgument = "Maximum candidates to return. Defaults to 20.";
+
+	public const string HintNameArgument =
+		"Hint name of the generated document, for example Widget.Greeting.g.cs.";
+
+	public const string NewNameArgument = "The new name.";
+
+	public const string RenameOverloadsArgument = "Also rename overloads of the same method.";
+
+	public const string RenameInCommentsArgument = "Also rename occurrences inside comments.";
+
+	public const string RenameInStringsArgument = "Also rename occurrences inside string literals.";
+
+	public const string DiagnosticIdArgument = "The diagnostic id to fix, for example CA1822.";
+
+	public const string FixScopeFilePathArgument = "A file in the scope to fix; the fix has to start somewhere.";
+
+	public const string FixScopeArgument = "document, project, or solution. Defaults to document.";
+
+	public const string RemoveUnusedUsingsArgument =
+		"Also drop using directives the file does not need. Off by default.";
+
+	public const string TypeNameArgument = "Name of the type to move out, without type parameters.";
+
+	public const string AddToTypeArgument = "The type to add to, as Namespace.Type.";
+
+	public const string MembersCodeArgument = "One or more whole declarations.";
+
+	public const string AfterArgument = "Put them after this member, by name.";
+
+	public const string BeforeArgument = "Put them before this member, by name.";
+
+	public const string ParametersArgument =
+		"The parameters it should have, written as they would go between the parentheses.";
+
+	public const string ArgumentsArgument =
+		"What to pass at existing call sites for a new parameter with no default, as name=expression.";
+
+	public const string NamespacesArgument = "Namespaces to ensure, as System.Text or using System.Text;.";
+
+	public const string MoveMemberArgument =
+		"The member to move, as Namespace.Type.Member. Add a parameter list to pick an overload.";
+
+	public const string TargetTypeArgument = "The type it moves into, as Namespace.Type.";
+
+	public const string NewFilePathArgument = "Where the file goes. Absolute, or relative to the solution.";
+
+	public const string ExtraUsingsArgument =
+		"Namespaces to import on top of whatever the code turns out to need.";
+
+	public const string NewFileProjectArgument =
+		"Which project compiles it, where the path is inside more than one project's directory.";
+
+	public const string ResolveUsingsArgument =
+		"Work out the namespaces the code needs and add the ones with a single answer. Defaults to true.";
+
+	public const string CommentArgument =
+		"The comment: plain text taken as the summary, or the whole thing as XML.";
+
+	public const string AttributeActionArgument =
+		"set, add, or remove. Defaults to set, which replaces the one of that name and refuses where "
+			+ "there are several.";
+
+	public const string ConfigurationArgument = "MSBuild configuration to load under, for example Debug-2027.";
+
+	public const string PlatformArgument = "MSBuild platform to load under, for example x64.";
+
+	public const string PropertiesArgument = "Further MSBuild properties, each as Name=Value.";
+
+	public const string IncludeSourceArgument =
+		"Also return the declaration's own source text, so understanding a member does not end in a file "
+			+ "read.";
+
+	public const string OutlineTypeArgument = "The type, as Namespace.Type. One of this and filePath.";
+
+	public const string OutlineFilePathArgument =
+		"The file to outline. One of this and type; also narrows a partial type to one of its files.";
+
+	public const string ResolveNameArgument =
+		"The name as the code spells it: Encoding, List<int>, or Encoding.UTF8.";
+
+	public const string ResolveFilePathArgument =
+		"The file it is used in. Scopes the search to what that project can reach, and is the only way to "
+			+ "know what is in scope there already.";
+
+	public const string FormatFilePathsArgument = "Absolute or solution-relative paths of the files to format.";
+
+	public const string SplitFilePathArgument = "Absolute or solution-relative path to the file to split.";
+
+	public const string TargetPathArgument =
+		"Where to put it. Defaults to <typeName>.cs beside the source file.";
+
+	public const string DeclarationCodeArgument =
+		"The whole declaration, attributes and documentation comment included.";
+
+	public const string ReplaceArgument = "What to put in place of find. Empty removes the matched code.";
+
+	public const string PositionArgument =
+		"start or end, to insert code rather than replace the body. end means before a closing return or "
+			+ "throw, since anything after one is unreachable.";
+
+	public const string CallSitesArgument =
+		"qualify to write the new type in front of every call, or usingStatic to import it in each "
+			+ "calling file. Defaults to qualify.";
+
+	public const string FileCodeArgument =
+		"The C#: a whole file, or just the declarations, in which case a namespace is added.";
+
+	public const string FixTitleArgument =
+		"Which fix, when the diagnostic offers several. Matched against the fix titles; the first offered "
+			+ "runs when it is omitted.";
+
+	public const string BodyCodeArgument =
+		"The body: statements, a block in braces, or => expression;. Leave it off when using find, and "
+			+ "pass just the statements to insert when using position.";
+
+	public const string FindArgument =
+		"Code to find inside this body and replace, matched on the tokens so indentation and line endings "
+			+ "do not matter. A comment in it is refused, since the matching cannot see one.";
+
+	public const string AttributeArgument =
+		"The attribute as it appears in source, brackets optional: Obsolete(\"use Parse\").";
+
+
+
+
+	/// <summary>
+	/// The live-app arguments, cited by the broker's tools and by the host's alike.
+	/// <para>
+	/// Four layers spelled each of these: the broker declared it, the session forwarded it, the host
+	/// declared it again and the session object took it. <c>justMyXaml</c> had two descriptions, one
+	/// on each declaring end, and nothing said they should agree -- so a caller reading the broker's
+	/// and a maintainer reading the host's were told different things about the same argument.
+	/// </para>
+	/// </summary>
+	public const string ProcessIdArgument =
+		"The process id to attach to. Must be a local process owned by the current user.";
+
+	public const string ExecutablePathArgument = "Path to a local .NET executable (.exe).";
+
+	public const string LaunchArgumentsArgument = "Optional command-line arguments.";
+
+	public const string AppUserModelIdArgument = "The app user-model id, e.g. MyApp_1a2b3c4d5e6f7!App.";
+
+	public const string AfterSequenceArgument =
+		"Return only events whose sequence is greater than this; 0 for everything buffered.";
+
+	public const string MaxEventsArgument =
+		"Maximum events in this page (default 500). Lower it when you only need to see whether something "
+			+ "is happening.";
+
+	public const string TracepointLocationArgument =
+		"Method to trace, as [Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.";
+
+	public const string LogMessageArgument =
+		"Optional message logged on each hit (literal text; expression interpolation comes later).";
+
+	public const string LogEveryNthHitArgument =
+		"Optional: log only every Nth hit to thin a hot path; every hit is still counted.";
+
+	public const string TracepointIdArgument = "The tracepoint id returned by rose_debug_add_tracepoint.";
+
+	public const string BreakpointLocationArgument =
+		"Method to break on, as [Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.";
+
+	public const string AutoContinueSecondsArgument =
+		"Seconds a hit is held before the target auto-continues on its own; default 30.";
+
+	public const string BreakpointIdArgument = "The breakpoint id returned by rose_debug_set_breakpoint.";
+
+	public const string StepModeArgument = "in, over, or out.";
+
+	public const string EvaluateExpressionArgument =
+		"A field-access expression, e.g. this.field or state.Inner.Count.";
+
+	public const string XamlRootNameArgument =
+		"Root the tree at this named element's subtree; omit for the whole tree.";
+
+	public const string XamlOffsetArgument = "Skip this many nodes, for paging a large tree.";
+
+	public const string XamlLimitArgument =
+		"Return at most this many nodes; 0 for all. Total says how many matched.";
+
+	public const string XamlHandleArgument = "The element handle from rose_xaml_tree.";
+
+	public const string XamlNewMarkupArgument =
+		"The new XAML to apply, when it is markup rather than a file. Pass oldXaml with it.";
+
+	public const string EventKindsArgument =
+		"Comma-separated event kinds to return; omit for all. The cursor still advances over what is "
+			+ "filtered out, and 'skipped' says how many those were.";
+
+	public const string TracepointConditionArgument =
+		"Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, "
+			+ "e.g. count >= 100. Only simple value compares; expressions need eval.";
+
+	public const string BreakpointConditionArgument =
+		"Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, "
+			+ "e.g. id == 42. Only simple value compares; expressions need eval.";
+
+	public const string WaitSecondsArgument =
+		"Seconds to wait for a matching event before answering, instead of returning what is there "
+			+ "now. 0 answers at once. Use it with 'kinds' to wait for one thing -- BreakpointHit is "
+			+ "'wait until the target stops' -- rather than calling this in a loop. Capped at 60 so "
+			+ "the call cannot outlive your own timeout; a wait that ends empty has lost nothing, "
+			+ "since events are buffered and the same cursor picks up whatever arrives next.";
+
+	public const string IncludeDefaultsArgument =
+		"Include the framework defaults, not only what the framework reports as set. Note that those "
+			+ "are not quite the same question as what the XAML sets: a property the framework "
+			+ "materialises while being inspected counts as set from then on.";
+
+	public const string XamlFilePathArgument =
+		"The XAML file to apply. What it holds now is diffed against what this session last sent to "
+			+ "the app, so an edit-and-apply loop needs only this.";
+
+	public const string XamlOldMarkupArgument =
+		"The previous XAML. Only needed for the first apply of a file this session has not seen "
+			+ "before, or with newXaml for markup that is not on disk.";
+
+	public const string IncludeAllElementsArgument =
+		"Also pick elements the framework would not route a click to -- an empty Grid with no "
+			+ "Background, something with IsHitTestVisible false. Off by default, because such an "
+			+ "element can cover the whole window and shadow everything the user can actually click. "
+			+ "Turn it on only to inspect an invisible host deliberately.";
+
+	public const string JustMyXamlArgument =
+		"Prefer the element the app's own XAML declares over a control template's parts, the way "
+			+ "Visual Studio's Just My XAML does. On by default: a click on a button means the button "
+			+ "the developer wrote, not whichever templated child is topmost. Decided on the element's "
+			+ "source -- ms-appx: is the app's markup, ms-resource: is the framework's -- and it falls "
+			+ "back to the framework's own pick when nothing under the click came from the app. Turn it "
+			+ "off to select template internals.";
+
+	public const string ArmArgument =
+		"False disarms select mode instead of arming it, the same as the toolbar's Idle button. "
+			+ "Arming lays a pointer-capturing layer over the app and waits for a click, and picking "
+			+ "by handle does not take it away -- so disarm when you have finished, or the person "
+			+ "using the app is left in a mode they did not ask for.";
+
 	public const string WorkspaceOpen = """
         Starts loading a solution into a warm Roslyn host and returns at once, without waiting for the
         load. Call it when you are about to ask questions about a large one and have something else to

@@ -217,7 +217,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public Task<LiveTracepointList> RemoveTracepointAsync(string id, CancellationToken cancellationToken)
 		=> SendAsync<LiveTracepointList>(
 			ToolNames.LiveAppRemoveTracepoint,
-			new Dictionary<string, object?> { ["id"] = id },
+			new Dictionary<string, object?> { ["tracepointId"] = id },
 			cancellationToken);
 
 	public Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
@@ -232,7 +232,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public Task<LiveBreakpointList> RemoveBreakpointAsync(string id, CancellationToken cancellationToken)
 		=> SendAsync<LiveBreakpointList>(
 			ToolNames.LiveAppRemoveBreakpoint,
-			new Dictionary<string, object?> { ["id"] = id },
+			new Dictionary<string, object?> { ["breakpointId"] = id },
 			cancellationToken);
 
 	public async Task<bool> ContinueAsync(CancellationToken cancellationToken)

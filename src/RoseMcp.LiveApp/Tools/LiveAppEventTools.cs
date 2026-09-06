@@ -19,13 +19,13 @@ public sealed class LiveAppEventTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Buffered debug events with a sequence above the given cursor, and the session's state.")]
 	public Task<LiveDebugEventPage> Events(
-		[Description("Return only events whose sequence is greater than this; 0 for everything buffered.")]
+		[Description(ToolDescriptions.AfterSequenceArgument)]
 		long after = 0,
-		[Description("Comma-separated event kinds to return; empty for all.")]
+		[Description(ToolDescriptions.EventKindsArgument)]
 		string? kinds = null,
-		[Description("Maximum events to return in this page.")]
+		[Description(ToolDescriptions.MaxEventsArgument)]
 		int limit = 500,
-		[Description("Seconds to wait for a matching event before answering; 0 answers at once.")]
+		[Description(ToolDescriptions.WaitSecondsArgument)]
 		int waitSeconds = 0,
 		CancellationToken cancellationToken = default)
 		=> host.ReadEventsAsync(after, ParseKinds(kinds), limit, waitSeconds, cancellationToken);

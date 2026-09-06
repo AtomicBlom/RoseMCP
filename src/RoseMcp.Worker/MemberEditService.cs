@@ -900,10 +900,10 @@ public static class MemberEditService
 	{
 		foreach (var line in Whitespace.LiteralsDisagreeingWith(root, text, rules, span))
 		{
-			yield return $"The multi-line string at line {line} was written with line endings the file does not "
-				+ "use. They were left exactly as supplied, because the endings inside a literal are part of "
-				+ "the string -- but dotnet format will ask for them to change, and changing them changes the "
-				+ "value. Write it with the file's own endings.";
+			yield return $"This file now fails dotnet format, and no build will report it: the multi-line string "
+				+ $"at line {line} was written with line endings the file does not use. They were left exactly "
+				+ "as supplied, because the endings inside a literal are part of the string and rewriting them "
+				+ "changes the value. Write it with the file's own endings.";
 		}
 	}
 

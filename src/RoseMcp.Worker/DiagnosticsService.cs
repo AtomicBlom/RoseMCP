@@ -103,11 +103,14 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 	{
 		var version = await project.GetDependentSemanticVersionAsync(cancellationToken);
 
-		if (_cache.TryGetValue(project.Id, out var cached)
-			&& cached.Version == version
-			&& (cached.IncludedAnalyzers || !includeAnalyzers))
+		var current = _cache.TryGetValue(project.Id, out var cached) && cached.Version == version
+			? cached
+			: null;
+
+		if (current is not null)
 		{
-			return cached.Diagnostics;
+			if (!includeAnalyzers) return current.Compiler;
+			if (current.Analyzer is { } already) return current.Compiler.AddRange(already);
 		}
 
 		Interlocked.Increment(ref _compilationsAnalysed);
@@ -119,15 +122,17 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 			return [];
 		}
 
-		var diagnostics = compilation.GetDiagnostics(cancellationToken);
+		var compiler = current?.Compiler ?? compilation.GetDiagnostics(cancellationToken);
 
-		if (includeAnalyzers)
-		{
-			diagnostics = diagnostics.AddRange(await RunAnalyzersAsync(project, compilation, notices, cancellationToken));
-		}
+		// Analyzers already run for this version are kept rather than dropped, so a compiler-only
+		// request passing through does not make the next request that wants them pay for the run again.
+		var analyzer = includeAnalyzers
+			? await RunAnalyzersAsync(project, compilation, notices, cancellationToken)
+			: current?.Analyzer;
 
-		_cache[project.Id] = new CacheEntry(version, includeAnalyzers, diagnostics);
-		return diagnostics;
+		_cache[project.Id] = new CacheEntry(version, compiler, analyzer);
+
+		return includeAnalyzers && analyzer is { } ran ? compiler.AddRange(ran) : compiler;
 	}
 
 	private async Task<ImmutableArray<Diagnostic>> RunAnalyzersAsync(
@@ -278,5 +283,19 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 		return string.Equals(Path.GetFullPath(candidate), Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase);
 	}
 
-	private sealed record CacheEntry(VersionStamp Version, bool IncludedAnalyzers, ImmutableArray<Diagnostic> Diagnostics);
+	/// <summary>
+	/// One project's diagnostics at one semantic version, with the two halves kept apart.
+	/// <para>
+	/// Apart because a compiler-only request must be answered without the analyzer half and without
+	/// recomputing it. Answering it with a richer cached list makes the reply depend on what something
+	/// else asked for earlier, and EditVerification computes a before-and-after delta from exactly
+	/// these lists -- so one pass hitting such an entry and the other missing it reports analyzer
+	/// errors as resolved by an edit that never touched them. Collapsing them into one list instead
+	/// costs a full analyzer run every time a compiler-only request lands between two that want them.
+	/// </para>
+	/// </summary>
+	private sealed record CacheEntry(
+		VersionStamp Version,
+		ImmutableArray<Diagnostic> Compiler,
+		ImmutableArray<Diagnostic>? Analyzer);
 }

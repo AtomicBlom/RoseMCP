@@ -136,6 +136,8 @@ public static class AddUsingService
 			yield break;
 		}
 
+		foreach (var notice in verification.Notices) yield return notice;
+
 		if (verification.ResolvedCount > 0)
 		{
 			yield return $"{verification.ResolvedCount} error(s) went away.";

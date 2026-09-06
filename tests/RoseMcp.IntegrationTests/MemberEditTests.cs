@@ -692,6 +692,57 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// A repository that escalates a style rule to an error fails its build on a diagnostic no compiler
+	/// pass produces. Verifying without analyzers therefore reports clean on an edit that does not
+	/// build, which breaks the one promise a caller cannot check without the build this exists to
+	/// replace: that the result names the errors the edit introduced.
+	/// <para>
+	/// The copy stands in for such a repository. Turning IDE0005 up in the checked-in fixture instead
+	/// would put an unused import between every other test here and its assertion.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Reports_an_analyzer_error_the_edit_introduced()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.AppendAllTextAsync(
+			fixture.Path("Members", ".editorconfig"),
+			Environment.NewLine + "dotnet_diagnostic.IDE0005.severity = error" + Environment.NewLine,
+			TestContext.Current.CancellationToken);
+
+		// Both properties are needed: the first is what puts the code-style analyzers in front of the
+		// compiler at all, and IDE0005 stays quiet without the second, since a using directive can be
+		// needed by a documentation comment alone.
+		var project = fixture.Path("Members", "Library", "Library.csproj");
+		var projectText = await File.ReadAllTextAsync(project, TestContext.Current.CancellationToken);
+		await File.WriteAllTextAsync(
+			project,
+			projectText.Replace(
+				"<ImplicitUsings>enable</ImplicitUsings>",
+				"<ImplicitUsings>enable</ImplicitUsings>"
+					+ Environment.NewLine + "    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>"
+					+ Environment.NewLine + "    <GenerateDocumentationFile>true</GenerateDocumentationFile>"),
+			TestContext.Current.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		// Formatted holds the file's only use of System.Globalization, so a body without CultureInfo
+		// leaves the import unused and the project no longer builds.
+		var result = await ReplaceAsync(
+			session,
+			"Library.Imports.Formatted(double)",
+			"public static string Formatted(double value) => value.ToString();");
+
+		Assert.True(result.Applied);
+
+		Assert.Contains(result.IntroducedDiagnostics, entry => entry.Id == "IDE0005");
+
+		// And the result says where they ran, so a caller can tell a clean answer from an unasked one.
+		Assert.Contains(result.Notices, notice => notice.Contains("Analyzers ran in Library", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// Narrowing the scope by hand is allowed and is not silent: the same edit reports nothing wrong,
 	/// and says which dependents nobody looked at. Reporting no introduced errors without that is a
 	/// clean bill of health for half the question.

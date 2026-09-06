@@ -772,6 +772,8 @@ public static class MemberEditService
 			yield break;
 		}
 
+		foreach (var notice in verification.Notices) yield return notice;
+
 		var compiled = string.Join(", ", verification.Projects);
 
 		if (verification.Introduced.Count > Listed)

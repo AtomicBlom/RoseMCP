@@ -26,6 +26,19 @@ public sealed record Verification
 	public IReadOnlyList<string> Projects { get; init; } = [];
 
 	/// <summary>
+	/// The projects whose analyzers ran, which is where an IDE0055 or an IDE0005 comes from. A subset
+	/// of <see cref="Projects"/>: the analyzers are run where the edit wrote, and everything else in
+	/// scope is compiled without them.
+	/// </summary>
+	public IReadOnlyList<string> AnalyzedProjects { get; init; } = [];
+
+	/// <summary>
+	/// What the verification itself has to say, as opposed to what it found. Written here rather than
+	/// by each write tool so a tool added later cannot promise a check that did not happen.
+	/// </summary>
+	public IReadOnlyList<string> Notices { get; init; } = [];
+
+	/// <summary>
 	/// What would import the names that did not resolve, one line each.
 	/// <para>
 	/// Computed here rather than by each caller so a write tool added later cannot forget it. The

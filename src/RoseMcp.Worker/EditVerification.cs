@@ -16,10 +16,17 @@ namespace RoseMcp.Worker;
 /// costs a second compilation and turns the answer from a haystack into a sentence.
 /// </para>
 /// <para>
-/// Only the projects that hold the edited file are compiled. Everything that references them could
-/// also break -- which is exactly what a signature change does -- but compiling a whole solution
-/// twice on every member edit would cost more than the build this exists to avoid, so the projects
-/// checked are named in the answer and rose_diagnostics covers the rest.
+/// Which projects are compiled is <see cref="ScopeFor"/>'s decision, and it is bounded by what the
+/// edit can reach rather than by the solution: compiling everything twice on every member edit would
+/// cost more than the build this exists to avoid. Whatever it chose is named in the answer, and the
+/// dependents a narrower scope left out are named too.
+/// </para>
+/// <para>
+/// Analyzers run in the projects the edit actually wrote to, and only there. A repository that
+/// escalates IDE0055 or IDE0005 to an error fails its build on a diagnostic no compiler pass
+/// produces, so a verification without them would report clean on an edit that does not build --
+/// and the rest of the scope would double the cost of the slowest thing this server does. The answer
+/// says which projects had them.
 /// </para>
 /// </summary>
 public static class EditVerification
@@ -46,8 +53,10 @@ public static class EditVerification
 	{
 		if (projects.Count == 0) return Verification.NotRun;
 
-		var was = await ErrorsAsync(diagnostics, before, projects, cancellationToken);
-		var now = await ErrorsAsync(diagnostics, after, projects, cancellationToken);
+		var analyzed = ChangedProjects(before, after, projects);
+
+		var was = await ErrorsAsync(diagnostics, before, projects, analyzed, cancellationToken);
+		var now = await ErrorsAsync(diagnostics, after, projects, analyzed, cancellationToken);
 
 		var (introduced, resolved) = Delta(was, now);
 		var ordered = Ordered(introduced, nearest);
@@ -59,12 +68,67 @@ public static class EditVerification
 			ResolvedCount = resolved,
 			TotalCount = now.Count,
 			Projects = projects,
+			AnalyzedProjects = analyzed,
+			Notices = [.. AnalyzerNotices(projects, analyzed)],
 
 			// Asked here rather than by each write tool, so the one thing a caller wants next after
 			// "this name does not resolve" arrives with the error rather than a call later.
 			Suggestions = await MissingImports.SuggestAsync(
 				new WorkspaceSnapshot { Solution = after, Revision = 0 }, ordered, cancellationToken),
 		};
+	}
+
+	/// <summary>
+	/// The projects in scope whose documents the edit actually changed, which is where its own analyzer
+	/// diagnostics can appear.
+	/// <para>
+	/// Taken from the two solutions rather than from the path the caller named, because an edit is not
+	/// always one file: a signature change writes to every override and implementation, and a move
+	/// writes to two files that may be in two projects. Intersected with the scope so this never
+	/// compiles a project the caller narrowed away.
+	/// </para>
+	/// </summary>
+	private static IReadOnlyList<string> ChangedProjects(
+		Solution before,
+		Solution after,
+		IReadOnlyList<string> projects)
+	{
+		var names = new HashSet<string>(StringComparer.Ordinal);
+
+		foreach (var change in after.GetChanges(before).GetProjectChanges())
+		{
+			var wrote = change.GetChangedDocuments().Any() || change.GetAddedDocuments().Any();
+
+			if (wrote && after.GetProject(change.ProjectId) is { } project) names.Add(project.Name);
+		}
+
+		return [.. projects.Where(names.Contains).Order(StringComparer.Ordinal)];
+	}
+
+	/// <summary>
+	/// What the caller has to know about the analyzer half, because the answer is worth less without
+	/// it: a repository that escalates IDE0055 or IDE0005 to an error fails its build on a diagnostic
+	/// no compiler pass produces, and "compiles clean" would be a confident answer to a narrower
+	/// question than the one asked.
+	/// </summary>
+	private static IEnumerable<string> AnalyzerNotices(
+		IReadOnlyList<string> projects,
+		IReadOnlyList<string> analyzed)
+	{
+		if (analyzed.Count == 0)
+		{
+			yield return "Analyzers did not run, so a rule this repository escalates to an error -- IDE0055 on "
+				+ "formatting, IDE0005 on an unused import -- would fail the build without appearing here.";
+
+			yield break;
+		}
+
+		var rest = projects.Except(analyzed, StringComparer.Ordinal).ToArray();
+
+		yield return rest.Length == 0
+			? $"Analyzers ran in {string.Join(", ", analyzed)}, so a rule escalated to an error is included."
+			: $"Analyzers ran in {string.Join(", ", analyzed)}, where the edit wrote. "
+				+ $"{string.Join(", ", rest)} had the compiler only, so an analyzer rule broken there is not in this answer.";
 	}
 
 	/// <summary>
@@ -213,15 +277,23 @@ public static class EditVerification
 	/// <para>
 	/// Errors only because a warning is not a broken edit -- except where the repository says it is,
 	/// and there the compilation reports its warnings as errors already, so this needs no setting of
-	/// its own to follow. Every one of them because the delta is computed from these two lists, and
-	/// a list truncated at the usual two hundred would make the comparison say whatever the cut-off
-	/// happened to drop.
+	/// its own to follow. That is what makes the analyzer pass worth running at this severity: a
+	/// project that escalates IDE0055 or IDE0005 fails its build on one, and the compiler produces
+	/// neither. Every one of them because the delta is computed from these two lists, and a list
+	/// truncated at the usual two hundred would make the comparison say whatever the cut-off happened
+	/// to drop.
+	/// </para>
+	/// <para>
+	/// Analyzers run only in <paramref name="withAnalyzers"/>. The same set is used for both passes,
+	/// so a diagnostic cannot appear in one and not the other for a reason that has nothing to do with
+	/// the edit.
 	/// </para>
 	/// </summary>
 	private static async Task<IReadOnlyList<DiagnosticEntry>> ErrorsAsync(
 		DiagnosticsService diagnostics,
 		Solution solution,
 		IReadOnlyList<string> projects,
+		IReadOnlyList<string> withAnalyzers,
 		CancellationToken cancellationToken)
 	{
 		var snapshot = new WorkspaceSnapshot { Solution = solution, Revision = 0 };
@@ -236,6 +308,7 @@ public static class EditVerification
 					Scope = DiagnosticScope.Project,
 					Target = project,
 					MinimumSeverity = DiagnosticSeverity.Error,
+					IncludeAnalyzers = withAnalyzers.Contains(project, StringComparer.Ordinal),
 					MaxResults = int.MaxValue,
 				},
 				cancellationToken);

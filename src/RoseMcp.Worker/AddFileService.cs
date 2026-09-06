@@ -423,6 +423,8 @@ public static class AddFileService
 
 		if (!verification.Ran) yield break;
 
+		foreach (var notice in verification.Notices) yield return notice;
+
 		var compiled = string.Join(", ", verification.Projects);
 
 		yield return verification.Introduced.Count == 0

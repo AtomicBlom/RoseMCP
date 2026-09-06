@@ -38,12 +38,15 @@ public static class ToolDescriptions
 
 	public const string ColumnArgument = "One-based column, pointing at the identifier itself.";
 
+	/// <summary>
+	/// auto compiles the file's own projects for a body change or an effectively private member, and
+	/// their dependents otherwise -- a public member added, reshaped or removed breaks its dependents
+	/// by construction. The reasoning is here rather than in the argument text, which a caller reads
+	/// only to decide whether to narrow it.
+	/// </summary>
 	public const string VerifyScopeArgument =
-		"How much to compile when verifying: auto, file, dependents, or solution. Defaults to auto, "
-			+ "which compiles the file's own projects for a body change or an effectively private "
-			+ "member and their dependents otherwise -- a public member added, reshaped or removed "
-			+ "breaks its dependents by construction. Narrowing it to file is faster and says in the "
-			+ "result which dependents nobody looked at.";
+		"How much to compile: auto, file, dependents, or solution. Defaults to auto. Narrowing it to "
+			+ "file is faster and the result names the dependents nobody looked at.";
 
 	/// <summary>
 	/// The workspace argument, on nearly every tool. It was 258 characters and appeared thirty times
@@ -369,12 +372,13 @@ public static class ToolDescriptions
 		"Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, "
 			+ "e.g. id == 42. Only simple value compares; expressions need eval.";
 
+	/// <summary>
+	/// Capped at 60 so the call cannot outlive the caller's own timeout, and a wait that ends empty
+	/// has lost nothing: events are buffered and the same cursor picks up whatever arrives next.
+	/// </summary>
 	public const string WaitSecondsArgument =
-		"Seconds to wait for a matching event before answering, instead of returning what is there "
-			+ "now. 0 answers at once. Use it with 'kinds' to wait for one thing -- BreakpointHit is "
-			+ "'wait until the target stops' -- rather than calling this in a loop. Capped at 60 so "
-			+ "the call cannot outlive your own timeout; a wait that ends empty has lost nothing, "
-			+ "since events are buffered and the same cursor picks up whatever arrives next.";
+		"Seconds to wait for a matching event rather than returning what is there now; 0 answers at "
+			+ "once. Use it with kinds to wait for one thing instead of polling. Capped at 60.";
 
 	public const string IncludeDefaultsArgument =
 		"Include the framework defaults, not only what the framework reports as set. Note that those "
@@ -389,25 +393,33 @@ public static class ToolDescriptions
 		"The previous XAML. Only needed for the first apply of a file this session has not seen "
 			+ "before, or with newXaml for markup that is not on disk.";
 
+	/// <summary>
+	/// Off by default because such an element -- an empty Grid with no Background, something with
+	/// IsHitTestVisible false -- can cover the whole window and shadow everything the user can
+	/// actually click.
+	/// </summary>
 	public const string IncludeAllElementsArgument =
-		"Also pick elements the framework would not route a click to -- an empty Grid with no "
-			+ "Background, something with IsHitTestVisible false. Off by default, because such an "
-			+ "element can cover the whole window and shadow everything the user can actually click. "
-			+ "Turn it on only to inspect an invisible host deliberately.";
+		"Also pick elements the framework would not route a click to. Off by default; turn it on only "
+			+ "to inspect an invisible host deliberately.";
 
+	/// <summary>
+	/// Decided on the element's source -- ms-appx: is the app's markup, ms-resource: the framework's
+	/// -- and it falls back to the framework's own pick when nothing under the click came from the
+	/// app. That mechanism is in the doc comment rather than in the argument text, which a caller
+	/// reads to decide whether to pass it.
+	/// </summary>
 	public const string JustMyXamlArgument =
 		"Prefer the element the app's own XAML declares over a control template's parts, the way "
-			+ "Visual Studio's Just My XAML does. On by default: a click on a button means the button "
-			+ "the developer wrote, not whichever templated child is topmost. Decided on the element's "
-			+ "source -- ms-appx: is the app's markup, ms-resource: is the framework's -- and it falls "
-			+ "back to the framework's own pick when nothing under the click came from the app. Turn it "
-			+ "off to select template internals.";
+			+ "Visual Studio's Just My XAML does. On by default. Off selects template internals.";
 
+	/// <summary>
+	/// Arming lays a pointer-capturing layer over the app and waits for a click, and picking by
+	/// handle does not take it away -- so a session that never disarms leaves the person using the app
+	/// in a mode they did not ask for.
+	/// </summary>
 	public const string ArmArgument =
 		"False disarms select mode instead of arming it, the same as the toolbar's Idle button. "
-			+ "Arming lays a pointer-capturing layer over the app and waits for a click, and picking "
-			+ "by handle does not take it away -- so disarm when you have finished, or the person "
-			+ "using the app is left in a mode they did not ask for.";
+			+ "Disarm when you have finished: arming captures the pointer until something does.";
 
 	public const string WorkspaceOpen = """
 		Starts loading a solution and returns within about a second, without waiting for the load.
@@ -421,24 +433,22 @@ public static class ToolDescriptions
 		""";
 
 	public const string WorkspaceStatus = """
-		Reports what is loaded and whether its answers can be trusted: per-project load state,
-		document and source-generated document counts, what restore did, and any reason the workspace
-		is degraded. Check this first when answers look wrong, because a degraded workspace returns
-		plausible but incomplete results rather than errors. It also reports the MSBuild
-		configuration and platform in use and the ones the solution declares -- worth checking when a
-		whole solution looks broken, since a configuration the solution does not define resolves no
-		references at all and reports thousands of errors about System.Object being undefined instead
-		of about the cause.
+		What state a solution's workspace is in and whether its answers can be trusted: the projects
+		loaded, the MSBuild configuration it chose, the restore, load diagnostics, and degradedReasons
+		-- each with its fix -- when they cannot. Ask it when answers look wrong rather than assuming
+		the code is. Thousands of errors about System.Object being undefined means the solution loaded
+		under a configuration it does not declare, which rose_workspace_reload takes; a project whose
+		design-time build failed answers unreliably and is named. It waits for the load, unlike
+		rose_workspace_open.
 		""";
 
 	public const string WorkspaceReload = """
-		Restarts the worker process for a workspace. Ordinary edits are picked up automatically and
-		need no reload; this exists for the two cases that cannot be handled any other way. One is
-		rebuilding an analyzer or source generator, since assembly loading is one-way and a process
-		that loaded the old build can never see the new one. The other is loading under different
-		MSBuild properties -- a configuration or platform is fixed when the workspace opens, so
-		changing it is a restart. rose_workspace_status reports which are in use and what else the
-		solution declares.
+		Restarts a solution's Roslyn host from scratch. Rarely needed -- edits by other tools are
+		absorbed on the next call -- but it is the only way to pick up a rebuilt analyzer or source
+		generator, since an assembly once loaded cannot be unloaded from a process. Also how to change
+		the MSBuild configuration a solution loaded under, which is the fix when everything reports
+		System.Object undefined. It costs a full design-time build, so use it for those and not to
+		refresh state.
 		""";
 
 	public const string WorkspaceClose = """
@@ -471,24 +481,24 @@ public static class ToolDescriptions
 		""";
 
 	public const string FindReferences = """
-		Every reference to a symbol, resolved semantically across the whole solution. Unlike a
-		text search this follows overrides, interface implementations and aliases, and will not
-		match comments, strings, or unrelated identifiers that happen to share a name. Name the
-		symbol as Namespace.Type.Member -- no grep for a line and column first, and no stale
-		position after an edit. A position still reaches a local or a parameter, which is not
-		declared under a name; count the column carefully, because one that lands on a neighbouring
-		identifier answers completely and correctly about a different symbol. For the opposite
-		direction -- what implements or overrides this -- use rose_find_implementations.
+		Every reference to a symbol, resolved semantically across the solution. Unlike a text search
+		this follows overrides, interface implementations and aliases, and will not match comments,
+		strings or unrelated identifiers that share a name. Name the symbol as Namespace.Type.Member;
+		a position still reaches a local or a parameter, and needs the column on the identifier itself,
+		since one on a neighbour answers completely and correctly about a different symbol. Each hit
+		names the member it sits inside, which turns a flat list into "used by these six methods". A
+		large answer narrows three ways: definitionsOnly for the count alone, project for one project,
+		includePreviews=false to drop the line of source. For the opposite direction, use
+		rose_find_implementations.
 		""";
 
 	public const string FindImplementations = """
-		What implements, overrides, or derives from a symbol -- derived types for a class,
-		implementing types for an interface, overriding members for a virtual or abstract one.
-		Grep cannot answer this at all: an implementation need not mention the interface's name
-		anywhere near the member. Name the symbol as Namespace.Type.Member; a position works too,
-		but finding one for a type means a rose_search_symbols call first, which is two calls where
-		a name is one. The answer says which of those questions was actually answered, since that
-		depends on what the symbol turns out to be.
+		What implements, overrides or derives from a symbol -- derived types for a class, implementing
+		types for an interface, overriding members for a virtual or abstract one. Grep cannot answer
+		this at all: an implementation need not mention the interface's name anywhere near the member.
+		Name the symbol as Namespace.Type.Member, which also works for a type in a referenced assembly,
+		so "what here implements IDisposable" is one call. The answer says which of those three
+		questions it actually answered, since that depends on what the symbol turns out to be.
 		""";
 
 	public const string SearchSymbols = """
@@ -567,31 +577,27 @@ public static class ToolDescriptions
 		Writes over one member -- a method, property, field, constructor, or a whole type -- addressed
 		by name rather than by line and column. Use it instead of a text edit: the code is parsed as a
 		declaration first and the call refuses without touching the file if it does not parse, and what
-		it writes is formatted to the repository's own .editorconfig, so the indentation and line
-		endings cannot be wrong either. A name also does not go stale the way a line number does the
-		moment an earlier edit lands. The documentation comment above the declaration is kept unless
-		the code supplies one, and so are attributes the code leaves off, with a notice -- dropping one
-		silently takes the member out of whatever it enrolled it in. A name matching two overloads is
-		refused rather than guessed at. It then compiles: the file's own projects for a body change,
-		their dependents as well when the edit reshapes something visible outside them, with the
-		analyzers where it wrote, and the errors it introduced come back -- so edit and check is one
-		call rather than an edit and a build.
+		it writes is formatted to the repository's own .editorconfig. A name also does not go stale the
+		way a line number does the moment an earlier edit lands. The documentation comment is kept
+		unless the code supplies one, and so are attributes the code leaves off, with a notice --
+		dropping one silently takes the member out of whatever it enrolled it in. A name matching two
+		overloads is refused. It then compiles: the file's own projects for a body change, their
+		dependents too when the edit reshapes something visible outside them, with the analyzers where
+		it wrote -- so edit and check is one call rather than an edit and a build.
 		""";
 
 	public const string ReplaceBody = """
 		Replaces a member's body and nothing else: the signature that comes out is the one that was
 		there, copied rather than rewritten, so it cannot drift. Use it rather than a line-range edit,
-		which is the usual way a member gets broken -- splicing against line numbers that have moved
-		drops a brace or a modifier, and the damage is found at the next build. Three ways to say what
-		the body becomes, exactly one per call. code takes the whole body: statements, a block in
-		braces, or => expression;, and a member can switch between the last two without saying so. find
-		and replace change part of it, matched on the tokens inside this one member, so indentation and
-		line endings cannot cause a miss and a one-line change costs one line; nothing or more than one
-		match is refused, and so is a comment in find, since matching cannot see one. position (start or
-		end) with code inserts instead, and end means before a closing return or throw, since anything
-		after one is unreachable. Whichever arrives, what is written is a whole body: parsed first,
-		refused if it does not parse, formatted, then compiled so the result says what broke. A property
-		with accessors or an abstract member has no single body and is refused.
+		which is the usual way a member gets broken -- splicing against moved line numbers drops a
+		brace, and the damage is found at the next build. Three payloads, exactly one per call. code is
+		the whole body: statements, a block, or => expression;, and a member may switch between the last
+		two. find and replace change part of it, matched on the tokens inside this one member, so
+		indentation cannot cause a miss and a one-line change costs one line; nothing, more than one
+		match, or a comment in find is refused, since matching cannot see a comment. position (start or
+		end) with code inserts, and end means before a closing return or throw. Whichever arrives, what
+		is written is a whole body: parsed, refused if it does not parse, formatted, then compiled. A
+		property with accessors or an abstract member is refused.
 		""";
 
 	public const string AddMember = """
@@ -612,24 +618,19 @@ public static class ToolDescriptions
 		so a build tells you about the wrong half. Give the full parameter list as it should read
 		between the parentheses; what changed is worked out from it. Existing parameters cannot be
 		reordered, since an argument's meaning at a call site is not always recoverable from its
-		position. A new one can go anywhere and needs a default or an arguments entry. Call sites
-		left unchanged are listed with the reason, including those that still compile because a new
-		parameter has a default -- a forwarder still passing the old default is the bug that hides. A
-		param tag left out of step is CS1572 or CS1573: a warning, and an error where warnings are.
-		Verified by compiling the whole solution.
+		position. A new one needs a default or an arguments entry. Call sites left unchanged are listed
+		with the reason, including those that still compile because a new parameter has a default -- a
+		forwarder still passing the old default is the bug that hides. Verified against the whole
+		solution.
 		""";
 
 	public const string BuildFreshness = """
-		Whether each project's build output is newer than the sources it was built from -- the
-		question a green build does not answer. Ask this before running anything out of bin or obj:
-		a test, a debug host, a generator, a tool. Taking an artefact's existence for its currency is
-		how a test comes to run last week's binary and report a failure describing a change that was
-		already made, and in that case the solution compiled perfectly, so nothing about a build
-		would have said so. It needs no build of its own: the design-time build already knows every
-		project's output path and every file it compiles, so this is a file timestamp comparison and
-		answers immediately. It reports the output path, when it was written, the newest source and
-		how many are newer -- and says nothing about whether the code is correct, which is
-		rose_diagnostics.
+		Whether each project's build output is newer than the sources it was built from, and which
+		files are newer if not. Ask it before running anything out of bin -- a test, a tool, a
+		generator -- because a green build a few edits ago does not answer the question, and a stale
+		assembly presents as a test failing for a reason that has nothing to do with the change. It
+		compares timestamps only, so it cannot tell whether the last build succeeded; a project with no
+		output at all is reported as never built.
 		""";
 
 	public const string AddUsing = """
@@ -658,23 +659,22 @@ public static class ToolDescriptions
 
 	public const string Outline = """
 		What a type or a file declares: every member with its full signature, kind, accessibility,
-		whether it is abstract or static, and the first line of its documentation. Name a type or
-		give a file path -- one of the two. Use it instead of reading the file to find out what is in
-		it, which is the read that comes before most edits and the one that puts the file in front of
-		you: once it is open, the edit goes through a text tool and none of the rest of this is worth
-		reaching for. The signatures are the compiler's, so implementing an interface can be written
-		from this alone, and each member says where it is, so the next call names a file without
-		searching. Members a generator wrote are marked, since there is no file to edit for those.
-		Pass includeInherited to get what the base classes contribute too.
+		whether it is abstract or static, where it is, and the first line of its documentation. Name a
+		type or give a file path -- one of the two. Use it instead of reading the file to find out what
+		is in it, which is the read that comes before most edits and the one that puts the file in front
+		of you: once it is open, the edit goes through a text tool. The signatures are the compiler's,
+		so an interface implementation can be written from this alone. Members a generator wrote are
+		marked, since there is no file to edit for those. Pass includeInherited for what the base
+		classes contribute.
 		""";
 
 	public const string ProjectGraph = """
 		How the solution's projects depend on each other: what each one references, everything that
-		transitively references it, its framework, its output assembly, and whether it is a test
+		transitively references it, its framework, where its output goes, and whether it is a test
 		project. Two questions this answers that nothing else does -- where a new type is allowed to
 		live, and how far a change to a public member reaches. The second is the transitive list, and
-		working it out by opening project files gets it wrong, because the set that breaks is
-		everything depending on the project rather than everything naming the member.
+		reading project files gets it wrong, because what breaks is everything depending on the project
+		rather than everything naming the member.
 		""";
 
 	public const string DeleteMember = """
@@ -691,42 +691,41 @@ public static class ToolDescriptions
 
 	public const string AddFile = """
 		Creates a C# file: in the project whose directory contains the path, with the namespace the
-		folder implies, in the repository's own tabs, braces, line endings and final newline, and
-		with the imports the code needs worked out and added. Use this rather than writing the file
-		with a text tool, which is what starts most work and so is the earliest place a session
-		stops being able to ask semantic questions: a file written outside the workspace leaves it
-		mid-edit, and from there every read is worth less than a build. It parses the code before
-		placing anything, so a refusal writes nothing, and it refuses a path that already exists
-		rather than overwriting it. Pass just the declarations and a file-scoped namespace is added;
-		pass a whole file and its own namespace is kept, with a notice when that disagrees with the
-		folder, since IDE0130 is a build error where it is turned up. It says which project claimed
-		the file -- and says so loudly when that project lists the files it compiles rather than
-		globbing them, because then the file exists, looks compiled, and is not.
+		folder implies, in the repository's own tabs, braces, line endings and final newline, and with
+		the imports the code needs worked out and added. Use it rather than writing the file with a text
+		tool -- that is what starts most work, and so the earliest place a session stops being able to
+		ask semantic questions at all. It parses the code before placing anything, so a refusal writes
+		nothing, and it refuses a path that already exists rather than overwriting it. Pass just the
+		declarations and a file-scoped namespace is added; pass a whole file and its own namespace is
+		kept, with a notice when that disagrees with the folder, since IDE0130 is a build error where it
+		is turned up. It says which project claimed the file -- loudly when that project lists the files
+		it compiles rather than globbing them, because then the file exists, looks compiled, and is not.
 		""";
 
 	public const string ReplaceDocComment = """
 		Replaces a declaration's documentation comment, addressed by name, without touching the code
-		under it. Use this rather than rose_replace_member or a text edit when only the prose is
-		changing: composing a whole member to change one sentence is a trade nobody takes, and once
-		the file is open in an editor the code half goes through the editor too. Pass the summary as
-		plain text or the whole comment as XML; it emits /// in the file's own indentation and line
-		endings, keeps a licence header or region directive above it, and refuses XML that does not
-		parse, which would otherwise land as CS1570. It compiles afterwards and reports what changed,
-		because a comment can break a build: a param tag for a parameter that is gone is CS1572 and a
-		parameter with no tag is CS1573, wherever a documentation file is generated.
+		under it. Use it rather than rose_replace_member or a text edit when only the prose is
+		changing: composing a whole member to change one sentence is a trade nobody takes, and once the
+		file is open in an editor the code half goes through the editor too. Pass the summary as plain
+		text or the whole comment as XML; it emits /// in the file's own indentation and line endings,
+		goes exactly where the old comment was so a blank line above the member and a licence header
+		stay where they are, and refuses XML that does not parse, which would otherwise land as CS1570.
+		It compiles afterwards, because a comment can break a build: a param tag for a parameter that
+		is gone is CS1572 and a parameter with no tag is CS1573, wherever documentation is generated.
 		""";
 
 	public const string SetAttribute = """
 		Adds, replaces or removes one attribute on a declaration, addressed by the declaration's name
-		and the attribute's. Use this rather than splicing text into the brackets: the attribute is
+		and the attribute's. Use it rather than splicing text into the brackets: the attribute is
 		parsed first and refused if it does not parse, it lands in a list of its own below the
-		documentation comment, and removing the last attribute in a bracket takes the brackets with
-		it rather than leaving an empty pair that does not compile. action=set replaces the one
-		attribute of that name and refuses when the declaration carries several -- four InlineData
-		attributes is the ordinary shape of a test, and replacing the first would compile while
-		changing the wrong case. action=add puts another one on; action=remove takes one away.
-		Obsolete and ObsoleteAttribute are the same attribute here. It compiles afterwards, and does
-		so across the dependents, since an attribute is visible to everything that uses the member.
+		documentation comment and indented for where it goes, and removing the last attribute in a
+		bracket takes the brackets with it rather than leaving an empty pair that does not compile.
+		action=set replaces the one attribute of that name and refuses when the declaration carries
+		several -- four InlineData attributes is the ordinary shape of a test, and replacing the first
+		would compile while changing the wrong case. action=add puts another one on; action=remove
+		takes one away, and refuses if it is not there. Obsolete and ObsoleteAttribute are the same
+		attribute here. It compiles across the dependents, since an attribute is visible to everything
+		that uses the member.
 		""";
 
 	public const string ResolveName = """

@@ -149,13 +149,13 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		UseStructuredContent = true)]
 	[Description(
 		"Debug events captured since a cursor: first-chance and unhandled exceptions, Debugger.Log "
-			+ "messages, and module loads. Pass the returned nextCursor as 'after' next time to get only "
-			+ "what is new. If your cursor is below oldestAvailable, the buffer dropped events between "
-			+ "them. Filter with 'kinds' -- a freshly started app produces hundreds of ModuleLoaded "
-			+ "events, and asking for LogMessage or ExceptionFirstChance alone is the difference between "
-			+ "a readable answer and one that has to be written to a file: "
-			+ "SessionNotice, ProcessCreated, ProcessExited, ModuleLoaded, ThreadCreated, ThreadExited, "
-			+ "ExceptionFirstChance, ExceptionUnhandled, LogMessage, BreakpointHit, StepComplete.")]
+			+ "messages, module loads, breakpoint hits and step completions. Pass the returned "
+			+ "nextCursor as 'after' next time to get only what is new; a cursor below "
+			+ "oldestAvailable means the buffer dropped events between them. Filter with 'kinds' -- a "
+			+ "freshly started app produces hundreds of ModuleLoaded events, and asking for LogMessage "
+			+ "or ExceptionFirstChance alone is the difference between a readable answer and one that "
+			+ "has to be written to a file. Use waitSeconds with kinds to wait for one thing, such as "
+			+ "BreakpointHit, rather than calling this in a loop.")]
 	public async Task<LiveDebugEventPage> EventsAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.AfterSequenceArgument)]
@@ -412,13 +412,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Evaluate a simple expression against a target held at a breakpoint or step: a field-access chain "
-			+ "-- an argument or local name, then .field into the object graph (e.g. state.Inner.Count). It "
-			+ "reads fields directly from memory and runs none of the debuggee's own code, so it never hangs "
-			+ "or changes the target; property getters and method calls are deliberately not evaluated. Only "
-			+ "valid while stopped. Locals are local_0, local_1 and so on in slot order -- a breakpoint's "
-			+ "recorded frame names them -- and arguments are named. Returns the value and its type, or an "
-			+ "error explaining why it did not resolve.")]
+		"Evaluates a field-access chain against a target held at a breakpoint or a step: an argument "
+			+ "or local name, then .field into the object graph. It reads fields from memory and runs "
+			+ "none of the debuggee's own code, so it never hangs or changes the target -- property "
+			+ "getters and method calls are deliberately not evaluated. Only valid while stopped. "
+			+ "Locals are local_0, local_1 and so on in slot order, which a breakpoint's recorded frame "
+			+ "names; arguments are named. Returns the value and its type, or why it did not resolve.")]
 	public async Task<LiveEvaluation> EvaluateAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression,
@@ -436,12 +435,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Read a snapshot of a running app's live XAML visual tree. It injects a diagnostics provider into "
-			+ "the target and enumerates the tree on the app's UI thread, returning a flat list of elements "
-			+ "-- each with a stable handle, its parent handle and child index (rebuild the tree from those), "
-			+ "its type, and its x:Name when it has one. The target must be a XAML app (UWP/WinUI); for one "
-			+ "with no XAML UI, or when the provider is not built, the result carries a detail and no nodes "
-			+ "rather than failing. Use it to see the live tree of an app started with rose_debug_launch_uwp.")]
+		"Reads a snapshot of a running app's live XAML visual tree: a flat list of elements, each with "
+			+ "a stable handle, its parent handle and child index to rebuild the tree from, its type, "
+			+ "its x:Name where it has one, and an address that names it even where it has not. It "
+			+ "injects a diagnostics provider into the target and enumerates on the app's UI thread. "
+			+ "The target must be a XAML app (UWP or WinUI); one with no XAML UI, or a build with no "
+			+ "provider, comes back with a detail and no nodes rather than failing.")]
 	public async Task<LiveXamlTree> XamlTreeAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.XamlRootArgument)] string? root = null,
@@ -461,16 +460,15 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Read one element's XAML properties, given the handle from rose_xaml_tree. Each property comes "
-			+ "with its value, type, and provenance -- Local (set on the element), Style, Inherited, "
-			+ "Animation, Default, and so on -- so you can tell what the XAML actually sets from framework "
-			+ "defaults; when the app carries source info, each also carries the file and line that set it. "
-			+ "Set (non-default) properties only by default; pass includeDefaults for the full set. This is "
-			+ "the bridge from a live element to its XAML source. One caveat, and it is measured: reading an "
-			+ "element brings its untouched collection properties into existence, so a second read of the "
-			+ "same element reports a few more as Local than the first -- on a TextBlock, Inlines, "
-			+ "TextHighlighters and SelectionHighlightColor. The first read of an element is the accurate "
-			+ "one; do not treat properties that appear between two reads as something an edit did.")]
+		"Reads one element's XAML properties. Each comes with its value, type and provenance -- Local, "
+			+ "Style, Inherited, Animation, Default -- so what the markup sets can be told from a "
+			+ "framework default, and with the file and line that set it where the app carries source "
+			+ "info. This is the bridge from a live element to its XAML source. Set properties only by "
+			+ "default; includeDefaults gives the full set. One caveat, and it is measured: reading an "
+			+ "element brings its untouched collection properties into existence, so a second read "
+			+ "reports a few more as Local than the first -- on a TextBlock, Inlines, TextHighlighters "
+			+ "and SelectionHighlightColor. The first read is the accurate one; do not treat properties "
+			+ "that appear between two reads as something an edit did.")]
 	public async Task<LiveXamlProperties> XamlPropertiesAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.XamlElementArgument)] string element,
@@ -492,23 +490,18 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Live-edit a running XAML app -- what Visual Studio calls XAML Hot Reload: apply what a XAML "
-			+ "file now holds to the running app's visual tree, no relaunch, as many times as you like. "
-			+ "Pass filePath -- the file you have just edited -- and "
-			+ "the session diffs it against what it last sent to that app, so the loop is edit, apply, "
-			+ "edit, apply, with nothing to carry between the calls. The first call for a file records a "
-			+ "baseline and applies nothing, because what the running app was built from is not something "
-			+ "this side can reconstruct: call it once before you start editing, or pass oldXaml with "
-			+ "filePath to apply that first change too. Property changes, added elements, removed elements "
-			+ "and changed resources all apply -- a colour, a size, a piece of text, a whole new element "
-			+ "with its own children, a brush in a resource dictionary -- on any element the diff can "
-			+ "address, named or not. An element with no x:Name is addressed by the path rose_xaml_tree "
-			+ "and rose_xaml_selection report as its address, so a click inside a control template is "
-			+ "targetable. For markup that is not on disk, pass oldXaml and newXaml instead of filePath. "
-			+ "Read the notes as well as the results: they name the edits it worked out but does not "
-			+ "apply, such as adding or removing a resource, and the fact that an element added live "
-			+ "cannot carry an x:Name. An edit reported as failed is not retried by the next apply -- "
-			+ "re-sending one that adds an element would add a second copy of it.")]
+		"Applies a XAML file's current text to the running app's visual tree, no relaunch -- what "
+			+ "Visual Studio calls XAML Hot Reload. Pass filePath; the session diffs it against what it "
+			+ "last sent, so the loop is edit, apply, edit, apply. Reach for it instead of rebuilding and "
+			+ "relaunching to see a layout or a colour change. The first call for a file records a "
+			+ "baseline and applies nothing: make it before editing, or pass oldXaml with filePath. "
+			+ "Property changes, added and removed elements and changed resources all apply, to named "
+			+ "and unnamed elements alike -- an unnamed one by the address rose_xaml_tree and "
+			+ "rose_xaml_selection report. For markup not on disk, pass oldXaml and newXaml. Read the "
+			+ "notes: they list edits worked out but not applied, and a failed edit is not retried by "
+			+ "the next apply, since re-sending an added element would add a second copy. The change "
+			+ "lives on the objects in the tree rather than in the app's markup, so it is gone if the "
+			+ "app rebuilds that part of the UI.")]
 	public async Task<LiveXamlApplyResult> XamlApplyAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.XamlFilePathArgument)]
@@ -532,14 +525,14 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Arm select mode on a running XAML app: the next click in the app picks that element instead of "
-			+ "reaching the app. Use it to get a visual path to an element -- ask the user to click the one "
-			+ "they mean, then call rose_xaml_selection to find out which it was. The user can also arm it "
-			+ "themselves from RoseMCP's in-app toolbar, so a user who says \"look at the element I selected\" "
-			+ "may already have picked one: call rose_xaml_selection first and only arm if nothing is there. "
-			+ "The selection carries the whole stack under the click, topmost first, so you can walk down "
-			+ "to a templated child or up to the container without arming again; each handle feeds "
-			+ "rose_xaml_properties and rose_xaml_apply directly.")]
+		"Arms select mode on a running XAML app: the next click picks that element instead of reaching "
+			+ "the app. Use it to get at an element by asking the user to click the one they mean, then "
+			+ "rose_xaml_selection for which it was. Read the selection first -- the user can arm it "
+			+ "themselves from the in-app toolbar, so \"look at the element I selected\" may already have "
+			+ "an answer waiting. The selection carries the whole stack under the click, topmost first, "
+			+ "so you can walk down to a templated child or up to the container without arming again. "
+			+ "Arming lays a pointer-capturing layer over the app, so disarm with arm=false when you "
+			+ "have finished.")]
 	public async Task<LiveXamlSelection> XamlSelectModeAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.IncludeAllElementsArgument)]
@@ -562,15 +555,13 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Read the element the user picked by clicking it in the app -- whether they armed select mode from "
-			+ "RoseMCP's in-app toolbar or you armed it with rose_xaml_select_mode. Returns its type, its "
-			+ "x:Name when it has one, the stable handle, and its address. Pass the handle to "
-			+ "rose_xaml_properties to see what the XAML sets on it, and use the address as the element's "
-			+ "identity in rose_xaml_apply's diff to change it -- the address works whether or not the markup "
-			+ "named it, which matters because a click usually lands on an unnamed part of a template. Every "
-			+ "candidate in the stack carries one too, so choosing an ancestor still leaves something "
-			+ "targetable. If nobody has picked yet it says so, and whether select mode is armed, so it is "
-			+ "safe to poll while waiting for the user.")]
+		"Reads the element the user picked by clicking it in the running app, with the whole stack "
+			+ "under that click, topmost first -- a click usually lands on an unnamed part of a "
+			+ "template, so the container above it is often what was meant. Each carries a handle and an "
+			+ "address, either of which rose_xaml_properties and rose_xaml_apply take. Read it before "
+			+ "asking the user to point at anything: they can arm select mode themselves from the "
+			+ "in-app toolbar, so an answer may already be waiting. Nothing picked reads as empty "
+			+ "rather than failing.")]
 	public async Task<LiveXamlSelection> XamlSelectionAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
@@ -588,13 +579,10 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Clear the picked element: both the recorded selection and the mark RoseMCP draws over it in the "
-			+ "running app. Use it when you are done with an element, since the mark is deliberately "
-			+ "persistent -- it stays until something replaces it, which is what makes \"the selected "
-			+ "element\" mean something to you and the user at once, and also means the user is left "
-			+ "looking at it. The two halves always go together: clearing one and not the other would "
-			+ "either leave a mark over nothing or report a selection nobody can see. It reports whether "
-			+ "there was anything to clear, so it is safe to call when you are not sure.")]
+		"Clears the picked element and the mark drawn over the running app, and disarms select mode. "
+			+ "Call it when you have finished with a selection: the mark stays on screen until "
+			+ "something clears it, and a person left looking at it has no way to know the tool is done "
+			+ "with it.")]
 	public async Task<LiveXamlSelection> XamlDeselectAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
@@ -612,15 +600,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Select an element by the handle rose_xaml_tree gave it, with no click involved. Use this to "
-			+ "pick an element structurally -- by type, by x:Name, by the source file its markup came "
-			+ "from -- instead of asking the user to click it, and use it when a click cannot reach the "
-			+ "element at all: a slider is the known case, because what a click resolves to is the "
-			+ "framework's answer and it is sometimes not the element anybody meant. It marks the "
-			+ "element in the running app exactly as a click would, so the user can see what you picked, "
-			+ "and it returns the same stack a click does -- the element first, then its ancestors "
-			+ "outwards, so you can go up to the container you actually meant without asking again. "
-			+ "Each handle feeds rose_xaml_properties and rose_xaml_apply directly.")]
+		"Selects one element without a click, reaching what a click cannot: something behind another "
+			+ "element, or a part of a template a person cannot hit. Takes a handle, an x:Name as "
+			+ "#name, or the address rose_xaml_tree reports, and answers with the same shape "
+			+ "rose_xaml_selection does, so the two are interchangeable from there on. It marks the "
+			+ "element in the app, so the user can see what was picked. A name matching several "
+			+ "elements is refused rather than one of them chosen.")]
 	public async Task<LiveXamlSelection> XamlSelectElementAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.XamlElementArgument)] string element,

@@ -11,7 +11,9 @@
                exe cannot be overwritten -- so this costs an /mcp reconnect and a solution reload.
 
       package  Build the release artifacts, one archive per runtime. Windows gets a zip carrying the
-               broker, the worker, the tray and both live-app debug hosts. Linux gets a tar.gz with
+               broker, the worker, the tray, and a live-app debug host for every architecture that
+               machine can execute -- which is not the same set for each, since ARM64 emulates x64
+               and x86 while x64 emulates only x86. Linux gets a tar.gz with
                the broker and the worker only -- the tray is WinUI and the debug host is ICorDebug,
                so neither has a Linux build to ship. tar rather than zip because a zip records no
                Unix permission bits, and an apphost without +x is "permission denied" on unpack;
@@ -145,54 +147,116 @@ function Publish-Tree
     Invoke-Dotnet @('publish', "$repo/src/RoseMcp.Tray", '-c', 'Release', '-r', $Rid,
         '--self-contained', 'false', '-o', "$Into/tray") "RoseMcp.Tray ($Rid)"
 
-    Publish-LiveAppHosts -Into $Into
+    Publish-LiveAppHosts -Into $Into -Rid $Rid
+}
+
+function Get-LiveAppRuntimes
+{
+    <#
+        The live-app hosts an install for $Rid needs, which is exactly the set of architectures that
+        machine can execute.
+
+        ICorDebug offers no cross-architecture path, so the host must match the *target* process rather
+        than the broker -- but which targets can exist at all is a property of the machine, and the
+        relationship is asymmetric. ARM64 Windows runs ARM64 natively and emulates x64 and x86, so all
+        three are reachable there and all three ship. An x64 machine runs x64 and, through WOW64, x86;
+        it cannot execute an ARM64 binary under any emulation, so an ARM64 host in an x64 install is
+        weight nothing can load -- and building it drags in the MSVC ARM64 cross-toolset, which is why
+        an ordinary x64 deploy used to warn about a provider no target on that machine could ever want.
+
+        x86 is not a legacy case here. It is the default platform of the modern UWP project template,
+        so it is the architecture an ordinary new UWP app is built and registered as.
+    #>
+    param([string] $Rid)
+
+    switch ($Rid)
+    {
+        'win-arm64' { return @('win-arm64', 'win-x64', 'win-x86') }
+        'win-x64' { return @('win-x64', 'win-x86') }
+        default { return @($Rid) }
+    }
 }
 
 function Publish-LiveAppHosts
 {
     <#
-        The debug host is published for every architecture, not just the broker's, because it has to
-        match the *target* process rather than the broker: an ARM64 machine still needs an x64 host to
-        debug a classic UWP app, which runs emulated. ICorDebug offers no cross-architecture path, so
-        this is not an optimisation to skip -- without the x64 host, debugging a packaged app on ARM64
-        fails with nothing to fall back on.
-
         The layout is the one LiveAppHostLauncher looks for: live-app/<rid> beside the broker, with
-        each host's native XAML provider under xaml-provider/<rid> beside that host.
+        each host's native XAML providers under xaml-provider/<rid> beside that host.
     #>
-    param([string] $Into)
+    param([string] $Into, [string] $Rid)
 
-    foreach ($hostRid in 'win-x64', 'win-arm64')
+    foreach ($hostRid in Get-LiveAppRuntimes -Rid $Rid)
     {
         $hostDir = "$Into/live-app/$hostRid"
         Invoke-Dotnet @('publish', "$repo/src/RoseMcp.LiveApp", '-c', 'Release', '-r', $hostRid,
             '--self-contained', 'false', '-o', $hostDir) "RoseMcp.LiveApp ($hostRid)"
 
-        Copy-XamlProvider -Rid $hostRid -HostDir $hostDir -Required:$xamlProviderRequired
+        Copy-XamlProviders -Rid $hostRid -HostDir $hostDir -Required:$xamlProviderRequired
+    }
+}
+
+function Get-ProviderPlatform
+{
+    param([string] $Rid)
+
+    switch ($Rid)
+    {
+        'win-arm64' { return 'arm64' }
+        'win-x86' { return 'x86' }
+        default { return 'x64' }
+    }
+}
+
+function Copy-XamlProviders
+{
+    <#
+        Both native taps, for one host architecture.
+
+        Two, because which one serves a target is decided by the XAML framework that target runs, and
+        a provider built for one cannot serve the other: UWP's diagnostics are reached through
+        Windows.UI.Xaml.dll on the VisualDiagConnection1 endpoint, WinUI 3's through the
+        WindowsAppRuntime's FrameworkUdk on its own. Shipping only the UWP tap left every WinUI 3
+        target without XAML inspection or live editing, with nothing in the install to say why.
+    #>
+    param([string] $Rid, [string] $HostDir, [switch] $Required)
+
+    foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
+    {
+        Copy-XamlProvider -Project $project -Rid $Rid -HostDir $HostDir -Required:$Required
     }
 }
 
 function Copy-XamlProvider
 {
     <#
-        The provider is native C++ and is injected into the target, so it matches the target's
-        architecture exactly. It needs the MSVC toolset, which a machine that only publishes managed
-        code will not have -- so a missing toolset is a warning and the debugger ships without XAML
-        inspection, rather than the whole deploy failing over a capability the user may not want.
+        A provider is native C++ and is injected into the target, so it matches the target's
+        architecture exactly. It needs the MSVC toolset for that architecture, which a machine that
+        only publishes managed code will not have -- so a missing toolset is a warning and the debugger
+        ships without XAML inspection, rather than the whole deploy failing over a capability the user
+        may not want. For a package it is fatal, because a release that quietly ships without it is
+        indistinguishable from a product bug.
     #>
-    param([string] $Rid, [string] $HostDir, [switch] $Required)
+    param([string] $Project, [string] $Rid, [string] $HostDir, [switch] $Required)
 
-    $platform = if ($Rid -eq 'win-arm64') { 'arm64' } else { 'x64' }
-    $build = "$repo/src/RoseMcp.Xaml.Uwp.Tap/build.ps1"
-    $dll = "$repo/src/RoseMcp.Xaml.Uwp.Tap/bin/$platform/Release/RoseMcp.Xaml.Uwp.Tap.dll"
+    $platform = Get-ProviderPlatform -Rid $Rid
+    $build = "$repo/src/$Project/build.ps1"
+    $dll = "$repo/src/$Project/bin/$platform/Release/$Project.dll"
 
-    Write-Host "  building the XAML provider ($platform)"
+    Write-Host "  building $Project ($platform)"
     & pwsh -NoProfile -File $build -Platform $platform -Configuration Release *> $null
+    $exitCode = $LASTEXITCODE
 
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dll))
+    # Clear it deliberately. A warned-and-continued failure otherwise leaves $LASTEXITCODE set, and
+    # nothing after this point is a native command that would replace it -- so the script inherits the
+    # failed build's code and exits non-zero after promoting perfectly well. A deploy that says it
+    # failed while the install is live is worse than the missing provider it was warning about, because
+    # anything automating it believes the deploy.
+    $global:LASTEXITCODE = 0
+
+    if ($exitCode -ne 0 -or -not (Test-Path $dll))
     {
-        $message = "the XAML provider could not be built for $platform; XAML inspection and hot " +
-            "reload will be unavailable for $Rid targets."
+        $message = "$Project could not be built for $platform; XAML inspection and live editing will " +
+            "be unavailable for $Rid targets."
 
         if ($Required) { throw $message }
 
@@ -203,7 +267,7 @@ function Copy-XamlProvider
     $into = "$HostDir/xaml-provider/$Rid"
     New-Item -ItemType Directory -Force -Path $into | Out-Null
     Copy-Item $dll $into -Force
-    Write-Host "  xaml provider ($platform) -> $into"
+    Write-Host "  $Project ($platform) -> $into"
 }
 
 function Get-PeMachine
@@ -240,7 +304,8 @@ function Get-PeMachine
 function Assert-WindowsPackage
 {
     <#
-        Every win-* package must carry both debug hosts and both native XAML providers, and each
+        Every win-* package must carry a debug host for each architecture its machine can execute,
+        both native XAML providers for each of those, and each
         provider must actually be built for the architecture its folder claims.
 
         This exists because the failure it catches is silent. Copy-XamlProvider warns and returns
@@ -254,35 +319,44 @@ function Assert-WindowsPackage
     #>
     param([string] $Stage, [string] $Rid)
 
-    $expected = @{ 'win-x64' = 0x8664; 'win-arm64' = 0xAA64 }
+    $expected = @{ 'win-x86' = 0x014C; 'win-x64' = 0x8664; 'win-arm64' = 0xAA64 }
+    $hostRids = Get-LiveAppRuntimes -Rid $Rid
+    $checked = 0
 
-    foreach ($hostRid in 'win-x64', 'win-arm64')
+    foreach ($hostRid in $hostRids)
     {
         $hostExe = "$Stage/live-app/$hostRid/RoseMcp.LiveApp.exe"
         if (-not (Test-Path $hostExe)) { throw "$Rid package is missing $hostExe" }
 
-        $dll = "$Stage/live-app/$hostRid/xaml-provider/$hostRid/RoseMcp.Xaml.Uwp.Tap.dll"
-        if (-not (Test-Path $dll))
+        foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
         {
-            throw "$Rid package is missing the XAML provider at $dll. XAML inspection and hot reload " +
-                "would be unavailable for $hostRid targets, and nothing else would say so. On a build " +
-                "agent this is usually the MSVC ARM64 cross-toolset not being installed."
-        }
+            $dll = "$Stage/live-app/$hostRid/xaml-provider/$hostRid/$project.dll"
+            if (-not (Test-Path $dll))
+            {
+                throw "$Rid package is missing the XAML provider at $dll. XAML inspection and live " +
+                    "editing would be unavailable for $hostRid targets, and nothing else would say " +
+                    "so. On a build agent this is usually a missing MSVC cross-toolset for that " +
+                    "architecture."
+            }
 
-        $machine = Get-PeMachine $dll
-        if ($machine -ne $expected[$hostRid])
-        {
-            # Parenthesised before -f on purpose: -f binds tighter than +, so formatting a
-            # concatenation without these brackets formats only the last piece of it and leaves
-            # the placeholders in the rest sitting there as literal text.
-            throw (("$Rid package has the wrong XAML provider for {0}: {1} reports machine " +
-                "0x{2:X4}, expected 0x{3:X4}. It would be injected into a target of the other " +
-                "architecture.") -f
-                $hostRid, $dll, $machine, $expected[$hostRid])
+            $machine = Get-PeMachine $dll
+            if ($machine -ne $expected[$hostRid])
+            {
+                # Parenthesised before -f on purpose: -f binds tighter than +, so formatting a
+                # concatenation without these brackets formats only the last piece of it and leaves
+                # the placeholders in the rest sitting there as literal text.
+                throw (("$Rid package has the wrong XAML provider for {0}: {1} reports machine " +
+                    "0x{2:X4}, expected 0x{3:X4}. It would be injected into a target of the other " +
+                    "architecture.") -f
+                    $hostRid, $dll, $machine, $expected[$hostRid])
+            }
+
+            $checked++
         }
     }
 
-    Write-Host "  layout checked: both debug hosts and both XAML providers present and correctly built"
+    Write-Host ("  layout checked: {0} debug host(s) ({1}) and {2} XAML provider(s), all correctly built" -f
+        $hostRids.Count, ($hostRids -join ', '), $checked)
 }
 
 function Stop-Tray

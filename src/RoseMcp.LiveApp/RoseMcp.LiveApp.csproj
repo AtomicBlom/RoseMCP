@@ -6,9 +6,13 @@
          so it targets net10.0-windows (which satisfies the platform-compatibility analyzer without any
          extra runtime dependency, since it uses neither WinForms nor WPF). -->
     <TargetFramework>net10.0-windows</TargetFramework>
-    <!-- Publishable per-RID: the broker launches the host in the target's architecture (win-arm64
-         for modern .NET here, win-x64 for classic UWP under emulation). -->
-    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <!-- Publishable per-RID: the broker launches the host in the *target's* architecture, because
+         ICorDebug offers no cross-architecture path. All three, because all three are reachable:
+         win-x86 is the default platform of the modern UWP project template and runs under WOW64 on
+         x64 and under emulation on ARM64, and win-x64 is what a classic UWP app runs as on an ARM64
+         machine. Which of them a given install actually needs is decided by what its machine can
+         execute, in deploy.ps1. -->
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <!-- ClrDebug's LibraryImport-generated marshalling needs it. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

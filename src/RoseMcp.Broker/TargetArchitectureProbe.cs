@@ -56,6 +56,134 @@ public static class TargetArchitectureProbe
 		}
 	}
 
+	/// <summary>
+	/// The architecture a packaged app will run as, read from its package identity rather than
+	/// assumed, so the host is chosen before anything is activated.
+	/// <para>
+	/// Asking is not a refinement here, it is the difference between working and not. Classic UWP is
+	/// debuggable only as <c>Debug|x64</c> -- every other configuration forces .NET Native, which has
+	/// no CoreCLR for ICorDebug to attach to -- so assuming x64 was true of every UWP target that
+	/// could be debugged at all. A UWP app on modern .NET is CoreCLR in x86, x64 and ARM64 alike, and
+	/// the standard project template leads with x86, so the assumption now names the wrong host for
+	/// an ordinary target. What made that expensive is the order: activation happens first, so the
+	/// app is running by the time the mismatched host fails to find a runtime in it, and the error
+	/// blames the target rather than the choice made before it started.
+	/// </para>
+	/// <para>
+	/// The architecture is the third field of the package full name
+	/// (<c>Name_Version_Arch_ResourceId_PublisherHash</c>), which is the identity Windows itself
+	/// registered rather than anything read out of a file that may have been rebuilt since. A family
+	/// with several registered packages prefers the machine's own architecture, because that is the
+	/// one Windows activates; <c>neutral</c> names no architecture and is left Unknown, which falls
+	/// back to the broker's own.
+	/// </para>
+	/// </summary>
+	/// <param name="appUserModelId">The AUMID, as <c>PackageFamilyName!AppId</c>.</param>
+	public static TargetArchitecture ForPackage(string appUserModelId)
+	{
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return TargetArchitecture.Unknown;
+
+		var separator = appUserModelId.IndexOf('!');
+		var family = separator < 0 ? appUserModelId : appUserModelId[..separator];
+		if (family.Length == 0) return TargetArchitecture.Unknown;
+
+		var native = RuntimeInformation.OSArchitecture switch
+		{
+			Architecture.Arm64 => TargetArchitecture.Arm64,
+			Architecture.X86 => TargetArchitecture.X86,
+			_ => TargetArchitecture.X64,
+		};
+
+		var fallback = TargetArchitecture.Unknown;
+		foreach (var fullName in PackageFullNames(family))
+		{
+			var architecture = ArchitectureFromFullName(fullName);
+			if (architecture == TargetArchitecture.Unknown) continue;
+			if (architecture == native) return architecture;
+			if (fallback == TargetArchitecture.Unknown) fallback = architecture;
+		}
+
+		return fallback;
+	}
+
+	/// <summary>
+	/// The architecture named by a package full name, or Unknown for a name that does not carry one.
+	/// A package name cannot contain an underscore, so the five fields split cleanly.
+	/// </summary>
+	public static TargetArchitecture ArchitectureFromFullName(string packageFullName)
+	{
+		var parts = packageFullName.Split('_');
+		if (parts.Length != 5) return TargetArchitecture.Unknown;
+
+		return parts[2].ToLowerInvariant() switch
+		{
+			"x86" => TargetArchitecture.X86,
+			"x64" => TargetArchitecture.X64,
+			"arm64" => TargetArchitecture.Arm64,
+
+			// "arm" is 32-bit ARM and "neutral" names no architecture at all; neither has a host here.
+			_ => TargetArchitecture.Unknown,
+		};
+	}
+
+	/// <summary>
+	/// The full names of every registered package in a family, or empty when there are none and when
+	/// they cannot be read -- this runs before a session starts and must not become the thing that
+	/// stops one.
+	/// </summary>
+	private static IReadOnlyList<string> PackageFullNames(string familyName)
+	{
+		uint count = 0;
+		uint bufferLength = 0;
+
+		var result = FindPackagesByPackageFamily(
+			familyName, PackageFilterHead, ref count, IntPtr.Zero, ref bufferLength, IntPtr.Zero, IntPtr.Zero);
+		if (result != ErrorInsufficientBuffer || count == 0) return [];
+
+		var names = Marshal.AllocHGlobal((int)count * IntPtr.Size);
+		var buffer = Marshal.AllocHGlobal((int)bufferLength * sizeof(char));
+
+		try
+		{
+			result = FindPackagesByPackageFamily(
+				familyName, PackageFilterHead, ref count, names, ref bufferLength, buffer, IntPtr.Zero);
+			if (result != 0) return [];
+
+			var fullNames = new List<string>((int)count);
+			for (var index = 0; index < count; index++)
+			{
+				var name = Marshal.PtrToStringUni(Marshal.ReadIntPtr(names, index * IntPtr.Size));
+				if (name is not null) fullNames.Add(name);
+			}
+
+			return fullNames;
+		}
+		catch (Exception)
+		{
+			return [];
+		}
+		finally
+		{
+			Marshal.FreeHGlobal(names);
+			Marshal.FreeHGlobal(buffer);
+		}
+	}
+
+	/// <summary>PACKAGE_FILTER_HEAD: the packages themselves, not their resource or optional bundles.</summary>
+	private const uint PackageFilterHead = 0x00000010;
+
+	private const int ErrorInsufficientBuffer = 122;
+
+	[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+	private static extern int FindPackagesByPackageFamily(
+		string packageFamilyName,
+		uint packageFilters,
+		ref uint count,
+		IntPtr packageFullNames,
+		ref uint bufferLength,
+		IntPtr buffer,
+		IntPtr packageProperties);
+
 	public static TargetArchitecture ForProcess(int processId)
 	{
 		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return TargetArchitecture.Unknown;

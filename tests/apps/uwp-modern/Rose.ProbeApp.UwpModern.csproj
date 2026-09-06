@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A minimal UWP-on-modern-.NET app (UseUwp) used as an integration-test target, mirroring
+    uwp-classic element for element so the two runtimes under one XAML framework can be asserted
+    against the same way.
+
+    It is the same app model and the same XAML framework as uwp-classic (Windows.UI.Xaml, an
+    AppContainer, an AUMID) on a different runtime: CoreCLR in Debug rather than the classic
+    project's CoreCLR-or-.NET-Native split, and a CsWinRT projection rather than the old winmd
+    references. That is the whole reason it earns a fixture of its own. The parts of the live-app
+    half that could differ are the runtime and the architecture, and neither is visible from
+    uwp-classic, which can only ever be Debug x64.
+
+    Toolchain: SDK-style, but `dotnet build` is NOT enough. The UWP XAML markup compiler runs only
+    under full MSBuild, and under `dotnet build` it silently does not run at all: the build fails
+    with CS0103 on InitializeComponent and CS5001 for a missing Main, which reads like broken source
+    rather than a wrong toolchain. Measured against a known-good project, not inferred. So this is
+    built with msbuild.exe like uwp-classic, and skipped where that toolchain is absent.
+
+      "<VS>\MSBuild\Current\Bin\MSBuild.exe" Rose.ProbeApp.UwpModern.csproj -t:Restore -p:Platform=x64
+      "<VS>\MSBuild\Current\Bin\MSBuild.exe" Rose.ProbeApp.UwpModern.csproj -t:Build -p:Platform=x64
+
+    Unlike uwp-classic there is no split apphost and no appxrecipe staging: the build writes a flat,
+    self-contained layout with AppxManifest.xml beside a native apphost and coreclr.dll, and
+    Add-AppxPackage -Register takes that folder directly.
+
+    Deliberately NOT in RoseMcp.slnx, for the same reason the other two target apps are not.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.18362.0</TargetPlatformMinVersion>
+    <RootNamespace>Rose.ProbeApp.UwpModern</RootNamespace>
+    <AssemblyName>Rose.ProbeApp.UwpModern</AssemblyName>
+    <UseUwp>true</UseUwp>
+    <DefaultLanguage>en-US</DefaultLanguage>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <!-- x64 and arm64 only, and the omission is deliberate rather than an oversight. A modern UWP
+         app builds x86 perfectly well and runs CoreCLR there, but the live-app half cannot debug it
+         yet: UWP launches are pinned to x64 and no win-x86 host is ever built (#117). Adding x86
+         here would produce a target the suite could build, register and launch, and then fail to
+         attach to for a reason that has nothing to do with the app. -->
+    <Platforms>x64;arm64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+
+    <!-- No signing: the tests register the loose build layout, which needs no certificate, so no
+         .pfx lives in the repository. -->
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <AppxBundle>Never</AppxBundle>
+
+    <!-- XAML code generation produces warnings we do not control, and this folder deliberately does
+         not inherit the repository's warnings-as-errors. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AppxManifest Include="Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+    <Content Include="Assets\**" />
+  </ItemGroup>
+
+</Project>

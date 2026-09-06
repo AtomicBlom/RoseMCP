@@ -45,8 +45,6 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	/// </summary>
 	private readonly Dictionary<bool, string?> _built = [];
 
-	private bool _providerProbed;
-	private bool _providerBuilt;
 	private bool _registered;
 	private string? _aumid;
 
@@ -110,41 +108,11 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Builds the native provider once a run. False where the machine simply cannot, which is
-	/// build.ps1's exit 3, so the calling test skips rather than going red on an environment limit.
+	/// Builds the native provider once a run, through the shared gate. A different tap from the two
+	/// UWP fixtures' -- WinUI 3's diagnostics live in a different framework DLL behind a different
+	/// endpoint -- so it contends with them for nothing but the gate itself.
 	/// </summary>
-	private bool ProviderBuilt()
-	{
-		if (_providerProbed) return _providerBuilt;
-
-		_providerProbed = true;
-
-		var script = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.WinUi.Tap", "build.ps1");
-		if (!File.Exists(script)) return false;
-
-		var (exitCode, output) = RunProcess(
-			"powershell",
-			$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform {ProviderPlatform()} -Configuration Debug");
-
-		// 3 is build.ps1's Fail: no MSVC toolset, no Windows SDK, or no WindowsAppSDK to project from.
-		if (exitCode == 3) return false;
-
-		if (exitCode != 0)
-		{
-			throw new InvalidOperationException(
-				$"Building the WinUI XAML provider failed (exit {exitCode}):{Environment.NewLine}{output}");
-		}
-
-		var dll = Path.Combine(
-			RepositoryRoot(), "src", "RoseMcp.Xaml.WinUi.Tap", "bin", ProviderPlatform(), "Debug", "RoseMcp.Xaml.WinUi.Tap.dll");
-		if (!File.Exists(dll))
-		{
-			throw new InvalidOperationException($"The WinUI XAML provider build reported success but produced no {dll}.");
-		}
-
-		_providerBuilt = true;
-		return true;
-	}
+	private static bool ProviderBuilt() => EnsureXamlProviderBuilt("RoseMcp.Xaml.WinUi.Tap", ProviderPlatform());
 
 	/// <summary>
 	/// The platform the provider is built for. It must match the target, and a WinUI 3 app runs

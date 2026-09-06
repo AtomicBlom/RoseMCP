@@ -53,8 +53,6 @@ public sealed class UwpProbeApp : IAsyncDisposable
 
 	private bool _msBuildProbed;
 	private string? _msBuild;
-	private bool _providerProbed;
-	private bool _providerBuilt;
 	private bool _registered;
 	private string? _aumid;
 	private string? _layoutDirectory;
@@ -767,49 +765,16 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Builds the native XAML diagnostics provider (x64) with build.ps1. Returns false only when the
-	/// toolchain is genuinely absent, so the caller skips; anything else throws.
+	/// Builds the native provider once a run, through the shared gate. Pinned to x64: classic UWP has
+	/// no ARM64 runtime and is debugged emulated, so the provider injected into it is always the x64
+	/// one whatever the machine is.
 	/// <para>
-	/// That distinction is the point. This used to return false for any non-zero exit and the caller
-	/// skipped with the message "no C++ toolset", which meant a compile error in the provider -- or
-	/// two builds racing over one PDB, which is how it was noticed -- silently skipped the XAML tests
-	/// and left the suite green. A capability quietly not being tested is worse than a red build, and
-	/// looks identical to a machine that simply cannot build it. build.ps1 already separates the two:
-	/// it exits 3 from its own Fail for a missing toolset or SDK, and anything else is a real failure.
-	/// </para>
-	/// <para>
-	/// Building it once also removes that PDB race by construction rather than by luck.
+	/// Shared rather than owned, because <see cref="UwpModernProbeApp"/> injects the same tap into a
+	/// different app and the two fixtures run in parallel by design. Building it here was correct
+	/// while this was the only fixture that wanted it.
 	/// </para>
 	/// </summary>
-	private bool ProviderBuilt()
-	{
-		if (_providerProbed) return _providerBuilt;
-		_providerProbed = true;
-
-		var script = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.Uwp.Tap", "build.ps1");
-		if (!File.Exists(script)) return false;
-
-		var (exitCode, output) = RunProcess(
-			"powershell",
-			$"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\" -Platform x64 -Configuration Debug");
-
-		// 3 is build.ps1's Fail: no MSVC toolset, or no Windows SDK. The only skippable outcome.
-		if (exitCode == 3) return false;
-
-		if (exitCode != 0)
-		{
-			throw new InvalidOperationException(
-				$"Building the XAML provider failed (exit {exitCode}):{Environment.NewLine}{output}");
-		}
-
-		var dll = Path.Combine(RepositoryRoot(), "src", "RoseMcp.Xaml.Uwp.Tap", "bin", "x64", "Debug", "RoseMcp.Xaml.Uwp.Tap.dll");
-		if (!File.Exists(dll))
-		{
-			throw new InvalidOperationException($"The XAML provider build reported success but produced no {dll}.");
-		}
-
-		return _providerBuilt = true;
-	}
+	private static bool ProviderBuilt() => EnsureXamlProviderBuilt("RoseMcp.Xaml.Uwp.Tap", "x64");
 
 	private static string AppDirectory() => Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic");
 

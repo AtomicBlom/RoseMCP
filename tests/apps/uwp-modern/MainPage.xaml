@@ -1,0 +1,98 @@
+<Page
+    x:Class="Rose.ProbeApp.UwpModern.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid x:Name="RootGrid" Background="#FF101418">
+        <!-- A keyed brush, so a resource edit has a dictionary to land in. Referenced with
+             ThemeResource rather than StaticResource on purpose: StaticResource resolves once when
+             the tree is built, so replacing what the key means would change the dictionary and move
+             nothing on screen. ThemeResource re-evaluates, which is what makes the change observable
+             and therefore testable. -->
+        <Grid.Resources>
+            <SolidColorBrush x:Key="ProbeAccent" Color="#FF445566" />
+        </Grid.Resources>
+        <StackPanel x:Name="Panel" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+            <Border x:Name="Pane" Background="#FF202830" Padding="24" CornerRadius="8">
+                <TextBlock x:Name="Caption" Text="Rose Modern UWP Probe" Foreground="#FFE8EEF4" FontSize="24" />
+            </Border>
+            <TextBlock x:Name="Counter" Text="ticks: 0" Foreground="#FF8FA6BF" FontSize="16" HorizontalAlignment="Center" />
+            <!-- Leaves the visual tree and comes back, on a cycle, so a test can watch a removal
+                 happen to something it has selected (#51). Its own element rather than one of the
+                 others because every other test expects those to stay put. -->
+            <Border x:Name="Transient" Background="#FF303A44" Padding="8" CornerRadius="4">
+                <TextBlock x:Name="TransientCaption" Text="comes and goes" Foreground="#FF8FA6BF" FontSize="12" />
+            </Border>
+            <!-- Deliberately unnamed, under a named anchor. Every other element here has an x:Name,
+                 so nothing in this app could exercise the one addressing case that matters most:
+                 an element the markup never named, which is what a click lands on inside any
+                 control template. Two Borders of the same type rather than one, because resolving
+                 *something* is not the test. Telling Border[0] from Border[1] is. -->
+            <StackPanel x:Name="Pair" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                <Border Background="#FF3A2A2A" Padding="6" CornerRadius="3">
+                    <TextBlock Text="first" Foreground="#FF8FA6BF" FontSize="12" />
+                </Border>
+                <Border Background="#FF2A3A2A" Padding="6" CornerRadius="3">
+                    <TextBlock Text="second" Foreground="#FF8FA6BF" FontSize="12" />
+                </Border>
+            </StackPanel>
+            <!-- A Grid with rows, so that an attached property has somewhere to mean something. The
+                 diff has always kept attached properties by their dotted name, which is a different
+                 question from whether the apply side can find one, and nothing here could ask it. -->
+            <Grid x:Name="Rows">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="Attached" Grid.Row="0" Text="attached" Foreground="#FF8FA6BF" FontSize="12" />
+            </Grid>
+            <Border x:Name="Themed" Background="{ThemeResource ProbeAccent}" Padding="4">
+                <TextBlock Text="themed" Foreground="#FF8FA6BF" FontSize="12" />
+            </Border>
+            <!-- Scratch space: one empty, named slot per test that needs elements of its own.
+                 Everything above is shared furniture that several tests read and one or two edit, so
+                 a test wanting to add, remove or retype something has to either take the whole app
+                 for itself or tread on its neighbours. A slot is the third option: the test builds
+                 what it needs inside its own slot, works on it, and empties it again.
+
+                 Named slots rather than one shared container, and that is the whole point of them.
+                 An element the markup never named is addressed by position under its nearest named
+                 ancestor, so two tests adding children to one parent would renumber each other's
+                 addresses: #Scratch/Border[1] would mean a different element depending on who else
+                 is mid-test. Anchored at its own slot, #Slot3/Border[0] means the same element
+                 however busy the rest of the app is.
+
+                 (No double dashes anywhere in here. XAML runs these through an XML parser, which
+                 rejects them, and the failure arrives as a markup compiler error rather than
+                 anything that mentions comments.) -->
+            <!-- Owned by A_second_properties_read_reports_what_reading_the_first_created, and read by
+                 nothing else. That test asserts what the *first* properties read of an element
+                 returns, so it needs one nothing has read: reading a TextBlock brings its collection
+                 properties into existence, and after that the first read has already happened.
+
+                 It cannot use a slot for this. An element built at runtime through CreateInstance and
+                 AddChild already has Inlines materialised by the time it is in the tree, so a built
+                 TextBlock is not pristine either. Only markup declares an element nothing has
+                 touched, so the pristine one has to be declared, and to be nobody else's. -->
+            <TextBlock x:Name="PristineText" Text="pristine" Foreground="#FF8FA6BF" FontSize="14" />
+            <VariableSizedWrapGrid x:Name="Scratch" Orientation="Horizontal" MaximumRowsOrColumns="4">
+                <Grid x:Name="Slot0" />
+                <Grid x:Name="Slot1" />
+                <Grid x:Name="Slot2" />
+                <Grid x:Name="Slot3" />
+                <Grid x:Name="Slot4" />
+                <Grid x:Name="Slot5" />
+                <Grid x:Name="Slot6" />
+                <Grid x:Name="Slot7" />
+                <Grid x:Name="Slot8" />
+                <Grid x:Name="Slot9" />
+                <Grid x:Name="Slot10" />
+                <Grid x:Name="Slot11" />
+                <Grid x:Name="Slot12" />
+                <Grid x:Name="Slot13" />
+                <Grid x:Name="Slot14" />
+                <Grid x:Name="Slot15" />
+            </VariableSizedWrapGrid>
+        </StackPanel>
+    </Grid>
+</Page>

@@ -42,11 +42,16 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
           restore-keys: nuget-${{ runner.os }}-
-      # Both Windows packages are built on one x64 runner, so the arm64 XAML provider comes from the
+      # Both Windows packages are built on one x64 runner, so the arm64 XAML providers come from the
       # MSVC ARM64 *cross*-toolset -- a separate installer component from the x64 one. Added rather
       # than assumed, so it cannot vanish when windows-latest moves. If this step is wrong the
       # release job fails; if it were merely absent, Assert-WindowsPackage in deploy.ps1 fails
       # instead. Either way the artifact is not published without the provider, which is #64.
+      #
+      # x86 needs no step of its own: it ships in the same C++ workload as x64. It is still part of
+      # every Windows package, because an install carries a debug host for each architecture its
+      # machine can execute and both x64 and ARM64 machines can execute x86. So the win-arm64 zip
+      # carries three hosts and the win-x64 zip two, with both taps for each.
       - name: Install the MSVC ARM64 cross-toolset
         if: runner.os == 'Windows'
         shell: pwsh

@@ -53,6 +53,9 @@ static const wchar_t* const RoseTapLogFile = L"\\rosemcp.xaml.winui.tap.log";
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h> // Storyboard and DoubleAnimation, for the proximity fades
 #include <winrt/Microsoft.UI.Xaml.Shapes.h> // Rectangle and Path, for the outlines and the mark
+#include <winrt/Microsoft.UI.Xaml.Media.Imaging.h> // RenderTargetBitmap and WriteableBitmap, for the magnifier
+#include <winrt/Windows.Storage.Streams.h>         // IBuffer, which is how pixels come back
+#include <robuffer.h> // IBufferByteAccess: the only way to write into a WriteableBitmap's buffer
 #include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Microsoft.UI.Input.h>   // InputPointerSource, which is what replaces CoreWindow
 #include <winrt/Microsoft.UI.Content.h> // ContentIsland, which is what it is asked of
@@ -64,6 +67,51 @@ namespace xmedia = winrt::Microsoft::UI::Xaml::Media;
 namespace xanim = winrt::Microsoft::UI::Xaml::Media::Animation;
 namespace xinput = winrt::Microsoft::UI::Xaml::Input;
 namespace xshapes = winrt::Microsoft::UI::Xaml::Shapes;
+namespace ximaging = winrt::Microsoft::UI::Xaml::Media::Imaging;
+
+// The WinUI-only half of getting a diagnostics layer that is actually drawn.
+//
+// IXamlDiagnostics::GetUiLayer() takes no argument, and its documentation says why that is a problem
+// here: IXamlDiagnostics2 exists to add "XamlRoot-based APIs to replace IXamlDiagnostics APIs that
+// assume there is only one window". A WinUI 3 desktop app can have several XamlRoots, so a layer
+// asked for without naming one is not necessarily the layer belonging to the root on screen -- and
+// the one it returns lays out at the right size, reports Visible, holds its child, and is never
+// painted. Every property says yes and the screen says no, which is what makes this worth a comment.
+//
+// Declared here rather than by including xamlom.winui.h, to match how xamlOM.h's interfaces are
+// already reached and to avoid putting a WindowsAppSDK include path into a build that otherwise needs
+// none. Two methods, of which one is used; the IID is the header's.
+MIDL_INTERFACE("523A35EE-EB38-4AE6-A3E1-5B7D0D547BD0")
+IXamlDiagnostics2 : public IUnknown
+{
+public:
+	virtual HRESULT STDMETHODCALLTYPE GetUiLayerForXamlRoot(
+		InstanceHandle instanceHandle,
+		IInspectable** ppLayer) = 0;
+
+	virtual HRESULT STDMETHODCALLTYPE HitTestForXamlRoot(
+		InstanceHandle instanceHandle,
+		RECT rect,
+		unsigned int* pCount,
+		InstanceHandle** ppInstanceHandles) = 0;
+};
+
+// The diagnostics layer for one XamlRoot, or false where this framework has no such notion.
+static bool RoseTapGetUiLayerForRoot(
+	IXamlDiagnostics* diagnostics, InstanceHandle rootHandle, ::IInspectable** layer)
+{
+	if (!diagnostics || !rootHandle || !layer) return false;
+
+	IXamlDiagnostics2* two = nullptr;
+	if (FAILED(diagnostics->QueryInterface(__uuidof(IXamlDiagnostics2), reinterpret_cast<void**>(&two))) || !two)
+	{
+		return false;
+	}
+
+	const HRESULT hr = two->GetUiLayerForXamlRoot(rootHandle, layer);
+	two->Release();
+	return SUCCEEDED(hr) && *layer;
+}
 
 // {2af9a655-49a7-43ee-b6fc-ff579688d311}
 //

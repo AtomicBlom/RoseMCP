@@ -46,6 +46,9 @@ static const wchar_t* const RoseTapLogFile = L"\\rosemcp.xaml.uwp.tap.log";
 #include <winrt/Windows.UI.Xaml.Media.h>
 #include <winrt/Windows.UI.Xaml.Media.Animation.h> // Storyboard and DoubleAnimation, for the proximity fades
 #include <winrt/Windows.UI.Xaml.Shapes.h> // Rectangle and Path, for the outlines and the mark
+#include <winrt/Windows.UI.Xaml.Media.Imaging.h> // RenderTargetBitmap and WriteableBitmap, for the magnifier
+#include <winrt/Windows.Storage.Streams.h>       // IBuffer, which is how pixels come back
+#include <robuffer.h> // IBufferByteAccess: the only way to write into a WriteableBitmap's buffer
 #include <winrt/Windows.UI.Core.h>        // WindowSizeChangedEventArgs
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.Xaml.Input.h>
@@ -56,6 +59,14 @@ namespace xmedia = winrt::Windows::UI::Xaml::Media;
 namespace xanim = winrt::Windows::UI::Xaml::Media::Animation;
 namespace xinput = winrt::Windows::UI::Xaml::Input;
 namespace xshapes = winrt::Windows::UI::Xaml::Shapes;
+namespace ximaging = winrt::Windows::UI::Xaml::Media::Imaging;
+
+// UWP has one window, so IXamlDiagnostics::GetUiLayer() names the only layer there is and the
+// per-XamlRoot API WinUI 3 needs does not exist here. Declining is the whole implementation.
+static bool RoseTapGetUiLayerForRoot(IXamlDiagnostics*, InstanceHandle, ::IInspectable**)
+{
+	return false;
+}
 
 // {7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6}
 static const CLSID CLSID_RoseTap =

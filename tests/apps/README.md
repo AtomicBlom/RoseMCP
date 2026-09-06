@@ -165,6 +165,14 @@ beyond that is a finding rather than a detail. Its exceptions are `RoseWinUiProb
 `RoseWinUiTransientRemovedException` and `RoseWinUiStartupException`, named apart from UWP's so a
 test cannot pass against the wrong app.
 
+The churn is contained rather than loose. `Transient` still leaves the visual tree and comes back on a
+cycle, so #51 has a removal to watch, but it does that inside `Churn` — a fixed 64-high host holding
+`ChurnStack`, with `Anchor` beneath it. Removing `Transient` straight out of `Panel` moved everything
+below it, which made the app useless for judging anything positional: the pixel lens and the selection
+outline are both checked by looking at where they are, against a layout that would not sit still. It is
+re-inserted at the *front* rather than appended, or it would settle into second place after its first
+return and `Anchor` would stop moving — which is the one thing the cycle exists to cause.
+
 The one deliberate structural difference is above the root grid, and it is the substance of #75:
 a UWP page is hosted in a `Frame` on an ambient `Window.Current`, while a WinUI 3 window is an
 object the app constructs and holds, because `Window.Current` does not exist there.

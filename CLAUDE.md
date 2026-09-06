@@ -389,6 +389,57 @@ reclaim memory or pick up a rebuilt generator.
   would deadlock that forever. Do not conclude from a passing
   concurrency test that the lock is unnecessary -- the silent failure appeared once in ten, and the
   test was confirmed to fail with the locks removed.
+- **A diagnostics UI layer is asked for by XamlRoot, and on WinUI 3 the one-argument call is the wrong
+  one.** `IXamlDiagnostics::GetUiLayer` takes no argument, and its own documentation says why that is a
+  problem: `IXamlDiagnostics2` exists to add "XamlRoot-based APIs to replace IXamlDiagnostics APIs that
+  assume there is only one window". A WinUI 3 desktop app can have several XamlRoots, so a layer asked
+  for without naming one is not necessarily the layer for the root on screen -- and the one it returns
+  lays out at the right size, reports `Visible`, opacity 1, holds its child, and is never painted.
+  Every property that can be inspected says yes while the screen says no, which is why no amount of
+  poking at the layer could find it: the answer was `GetUiLayerForXamlRoot`, on an interface nothing
+  here had heard of. The handle it wants is the app's XamlRoot, resolved from an element the tree walk
+  already enumerated -- and it must be *an element*, because the first node enumerated is the
+  `DesktopWindowXamlSource` hosting the tree, which is not a `UIElement` and has no XamlRoot to give.
+  <br>
+  The toolbar was invisible on WinUI 3 from the day it shipped, and two independent blind spots kept it
+  that way: the WinUI tests assert the tree and the properties but never that the adorner renders, and
+  no WinUI provider was ever deployed, so nobody was in a position to look. Do not reach for a `Popup`
+  or for the app's own content panel instead. Both were tried: a popup opened from the tap fail-fasts,
+  which leaves no exception for a local catch *or* for an attached debugger, and hosting in the app's
+  content puts an element in somebody else's tree and drags the toolbar into any transform applied to
+  it. Both were treating the symptom.
+  <br>
+  The same wrong root was behind more than the toolbar. `Extent()` and the content the transform scales
+  both read through the layer's `XamlRoot`, and the pointer seam's "the XamlRoot has no ContentIsland"
+  complaint disappeared the moment the right one was used -- so the proximity fade had been quietly
+  broken by the same cause. And beware the shape of the check that hid it: comparing the layer's
+  XamlRoot against the XamlRoot of content fetched *from that same layer's XamlRoot* is circular, and
+  reported "shared" no matter what was true.
+- **The magnifier replicates pixels by hand, because XAML will not.** WPF has
+  `RenderOptions.BitmapScalingMode`; UWP and WinUI have no bitmap scaling mode at all -- the only
+  `InterpolationMode` either exposes is `ColorInterpolationMode` on a gradient brush -- so a
+  `ScaleTransform` on an `Image` always filters and would smear exactly what is being inspected. So a
+  capture is taken with `RenderTargetBitmap`, read as BGRA8, and replicated block by block into a
+  `WriteableBitmap` sized so one bitmap pixel lands on one *device* pixel; left to XAML's layout it
+  would be scaled by the rasterization scale and resampled, reintroducing the filtering at the last
+  step. The hex readout is the centre pixel of that same buffer, so the swatch and the lens cannot
+  disagree about what is under the cursor.
+  <br>
+  Nothing in the capture path may touch XAML off the UI thread. `RenderTargetBitmap` is a
+  `DependencyObject`: reading `PixelWidth` in a completion handler is a wrong-thread call, and merely
+  *capturing* the bitmap in that handler is worse, because the lambda is destroyed on the pool thread
+  and takes the last reference with it. That crashed the app seconds after the mode was switched on,
+  with the last line in the log being the one that says the mode is on. The handlers carry nothing but
+  `this` and a bool; the bitmap and the pixel operation are members so no lambda owns them.
+  <br>
+  The transform mode's origin has to follow the pointer, and must never resolve to a corner. Set once
+  when the mode was entered, it anchored wherever the pointer was during the click that turned the mode
+  on -- which is on the toolbar -- and when the pointer is outside the window it reads (-1, -1) and
+  clamps to (0, 0), so the app scaled about its top-left and at 4x nothing was on screen at all. An
+  unknown pointer leaves the origin alone. The marks scale with it, on a canvas of their own: they are
+  drawn at coordinates read out of the app, so an app that has been scaled leaves them behind, and they
+  cannot each take the transform individually because each is positioned by `Canvas.Left` and a render
+  transform scales about its own element rather than the canvas origin.
 - **The overlay asks its `XamlRoot`, not its window, and the pointer hook is the only seam left.**
   `Window.Current` does not exist in WinUI 3, and nine sites wanted three things of it: the extent,
   the root content, and a size-changed event. `XamlRoot` answers all three *and* exists on UWP since

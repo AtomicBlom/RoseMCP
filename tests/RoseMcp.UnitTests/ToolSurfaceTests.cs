@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Broker;
@@ -217,6 +219,59 @@ public sealed class ToolSurfaceTests
 		var claimed = Sorted(ReadOnlyAdvertised());
 
 		Assert.Equal(Sorted(ReadOnly.Where(advertised.Contains)), claimed);
+	}
+
+	/// <summary>
+	/// What the listing carries after the trim. The output schemas were a third of the wire and hold
+	/// no prose at all, so a model that read one would learn field names and nothing about what they
+	/// mean; the carriage returns come from raw string literals in CRLF files and at least one client
+	/// passes them to the model verbatim.
+	/// </summary>
+	[Fact]
+	public void The_listing_carries_no_output_schema_and_no_carriage_return()
+	{
+		foreach (var tool in Listed())
+		{
+			Assert.Null(tool.OutputSchema);
+			Assert.DoesNotContain('\r', tool.Description ?? string.Empty);
+			Assert.DoesNotContain("\\r", tool.InputSchema.GetRawText(), StringComparison.Ordinal);
+		}
+	}
+
+	/// <summary>
+	/// And that the trim is wired into the listing rather than only available to be called. The two
+	/// assertions are separate because a filter registered without doing the work and work available
+	/// but never applied are different failures and neither implies the other.
+	/// </summary>
+	[Fact]
+	public void The_listing_passes_through_a_filter()
+	{
+		var services = new ServiceCollection();
+		services.AddRoseMcpBroker();
+
+		using var provider = services.BuildServiceProvider();
+
+		var options = provider.GetRequiredService<IOptions<McpServerOptions>>().Value;
+
+		Assert.NotEmpty(options.Filters.Request.ListToolsFilters);
+	}
+
+	/// <summary>
+	/// The tools as a client is sent them, which is not what the registration holds: the SDK generates
+	/// an output schema per tool and the trim takes it back off on the way out.
+	/// </summary>
+	private static Tool[] Listed()
+	{
+		var services = new ServiceCollection();
+		services.AddRoseMcpBroker();
+
+		using var provider = services.BuildServiceProvider();
+
+		var tools = provider.GetServices<McpServerTool>().Select(tool => tool.ProtocolTool).ToArray();
+
+		foreach (var tool in tools) ToolListing.Trim(tool);
+
+		return tools;
 	}
 
 	/// <summary>The advertised tools whose annotations say they have no side effects.</summary>

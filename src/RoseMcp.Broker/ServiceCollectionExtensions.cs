@@ -224,7 +224,8 @@ public static class ServiceCollectionExtensions
 
 		return builder
 			.WithCallOrigin()
-			.WithToolErrorMessages();
+			.WithToolErrorMessages()
+			.WithLeanListing();
 	}
 
 	/// <summary>
@@ -288,5 +289,19 @@ public static class ServiceCollectionExtensions
 			{
 				throw new McpException(exception.Message, exception);
 			}
+		}));
+
+	/// <summary>
+	/// Applies <see cref="ToolListing.Trim"/> at the one place every listing passes through, so no tool
+	/// can be added that skips it.
+	/// </summary>
+	private static IMcpServerBuilder WithLeanListing(this IMcpServerBuilder builder) =>
+		builder.WithRequestFilters(filters => filters.AddListToolsFilter(next => async (context, cancellationToken) =>
+		{
+			var result = await next(context, cancellationToken);
+
+			foreach (var tool in result.Tools) ToolListing.Trim(tool);
+
+			return result;
 		}));
 }

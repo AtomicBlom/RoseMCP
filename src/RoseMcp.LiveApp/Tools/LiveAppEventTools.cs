@@ -28,24 +28,5 @@ public sealed class LiveAppEventTools(LiveAppSessionHost host)
 		[Description(ToolDescriptions.WaitSecondsArgument)]
 		int waitSeconds = 0,
 		CancellationToken cancellationToken = default)
-		=> host.ReadEventsAsync(after, ParseKinds(kinds), limit, waitSeconds, cancellationToken);
-
-	/// <summary>
-	/// Parses the kind filter, ignoring anything it does not recognise rather than failing the read.
-	/// A misspelt kind that emptied the filter would silently widen the answer instead of narrowing
-	/// it, so an unrecognised name is dropped and the ones that parsed still apply; a filter that
-	/// parses to nothing at all is treated as no filter, which is what an empty string means anyway.
-	/// </summary>
-	private static IReadOnlyCollection<LiveDebugEventKind>? ParseKinds(string? kinds)
-	{
-		if (string.IsNullOrWhiteSpace(kinds)) return null;
-
-		var parsed = new HashSet<LiveDebugEventKind>();
-		foreach (var name in kinds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-		{
-			if (Enum.TryParse<LiveDebugEventKind>(name, ignoreCase: true, out var kind)) parsed.Add(kind);
-		}
-
-		return parsed.Count == 0 ? null : parsed;
-	}
+		=> host.ReadEventsAsync(after, ArgumentValues.EventKinds(kinds), limit, waitSeconds, cancellationToken);
 }

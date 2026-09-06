@@ -308,10 +308,18 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// <summary>
 	/// Steps the held thread: <c>in</c> into calls, <c>over</c> them, or <c>out</c> of the current
 	/// frame. It resumes the target so the step runs; a StepComplete callback then holds it again at
-	/// the new location. Returns false when nothing is currently stopped.
+	/// the new location. Returns false when nothing is currently stopped, and refuses a mode that is
+	/// none of the three rather than stepping over: a step moves the target, so treating a typo as the
+	/// common case moves it somewhere nobody asked and reports success.
 	/// </summary>
+	/// <exception cref="ArgumentException">The mode is not in, over or out.</exception>
 	public bool Step(string mode)
 	{
+		// Parsed before the lock and before the try below, which turns anything thrown inside it into
+		// a plain false -- and "nothing was stopped to step" is the one answer a caller who mistyped
+		// the mode must not get.
+		var direction = ArgumentValues.Step(mode);
+
 		lock (_gate)
 		{
 			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited) return false;
@@ -319,18 +327,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			try
 			{
 				var stepper = _stoppedThread.CreateStepper();
-				switch (mode.Trim().ToLowerInvariant())
-				{
-					case "out":
-						stepper.StepOut();
-						break;
-					case "in":
-						stepper.Step(bStepIn: true);
-						break;
-					default: // "over"
-						stepper.Step(bStepIn: false);
-						break;
-				}
+				if (direction == StepDirection.Out) stepper.StepOut();
+				else stepper.Step(bStepIn: direction == StepDirection.In);
 			}
 			catch (Exception exception)
 			{

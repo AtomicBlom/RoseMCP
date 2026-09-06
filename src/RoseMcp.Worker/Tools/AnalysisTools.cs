@@ -105,7 +105,7 @@ public sealed class AnalysisTools(
 
 		var request = new DiagnosticsRequest
 		{
-			Scope = ParseScope(scope),
+			Scope = ArgumentValues.Scope(scope),
 			Target = target,
 			MinimumSeverity = ParseSeverity(minimumSeverity),
 			IncludeAnalyzers = includeAnalyzers,
@@ -159,18 +159,13 @@ public sealed class AnalysisTools(
 		return await GeneratedDocumentService.ReadAsync(snapshot, hintName, project, cancellationToken);
 	}
 
-	private static DiagnosticScope ParseScope(string? scope) => scope?.ToLowerInvariant() switch
-	{
-		"document" or "file" => DiagnosticScope.Document,
-		"project" => DiagnosticScope.Project,
-		_ => DiagnosticScope.Solution,
-	};
-
 	private static DiagnosticSeverity ParseSeverity(string? severity) => severity?.ToLowerInvariant() switch
 	{
 		"hidden" => DiagnosticSeverity.Hidden,
 		"info" or "information" => DiagnosticSeverity.Info,
 		"error" => DiagnosticSeverity.Error,
-		_ => DiagnosticSeverity.Warning,
+		null or "" => DiagnosticSeverity.Warning,
+		"warning" => DiagnosticSeverity.Warning,
+		_ => throw ArgumentValues.Unknown("minimumSeverity", severity, "hidden", "info", "warning", "error"),
 	};
 }

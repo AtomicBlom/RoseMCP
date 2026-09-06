@@ -491,6 +491,19 @@ private:
 	// Long enough to read as a fade rather than a flicker, short enough not to lag the pointer.
 	static constexpr int FadeMilliseconds = 160;
 
+	// How much white a chip takes under the pointer, and under a press.
+	static constexpr double HoverWash = 0.14;
+	static constexpr double PressWash = 0.26;
+
+	// What a chip that cannot be clicked looks like. The Button template's disabled brushes are made
+	// transparent along with the rest of it, so this is the only thing separating a chip that is off
+	// from one that is merely idle.
+	static constexpr double DisabledFade = 0.5;
+
+	// The chip, sized once and stated here rather than repeated at each of the places that has to
+	// agree with it: the button, the Border that colours it, and the wash over that.
+	static constexpr double ChipSize = 24.0;
+
 	// How far the toolbar sits from the edge it is anchored to.
 	static constexpr double EdgeMargin = 16.0;
 
@@ -951,24 +964,140 @@ private:
 	// reachable, and the toolbar stays out of the way of the app it is sitting on.
 	xcontrols::Button Chip(xaml::UIElement const& content, const wchar_t* tip, std::function<void()> action)
 	{
+		// The chip paints itself, and the Button template paints nothing.
+		//
+		// Setting Background on a Button colours the *Normal* state only: PointerOver and Pressed come
+		// from ButtonBackgroundPointerOver and ButtonBackgroundPressed, which are the system's brushes
+		// for the system's palette. On a dark toolbar that reads as the button jumping to a foreign
+		// shade the moment the pointer touches it, and sweeping across a row interleaves each button's
+		// transition with its neighbour's -- which is the flicker, and no amount of choosing a better
+		// Background fixes it, because the states in question never consult it.
+		//
+		// So every state brush is made transparent and the colour lives on a Border we own. Hover and
+		// press are a white wash over it at two opacities rather than three separate colours, which is
+		// what keeps them correct when Chrome recolours the chip underneath: the wash does not need to
+		// know what it is washing over.
+		auto fill = xcontrols::Border();
+		fill.Background(Idle());
+		fill.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
+
+		auto glow = xcontrols::Border();
+		glow.Background(Brush(0xFF, 0xFF, 0xFF, 0xFF));
+		glow.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
+		glow.Opacity(0.0);
+		glow.IsHitTestVisible(false);
+
+		// Sized explicitly, because a Button does not stretch its content: HorizontalContentAlignment
+		// is Center, so a Grid handed to Content sizes itself to the glyph inside it. The colour then
+		// shrinks to the glyph and the chip loses the inset that made it look like a button at all --
+		// which is not visible in any property, only on screen. The template used to paint the button's
+		// own root and so was full size for free; painting our own Border means saying the size.
+		auto stack = xcontrols::Grid();
+		stack.Width(ChipSize);
+		stack.Height(ChipSize);
+		stack.Children().Append(fill);
+		stack.Children().Append(glow);
+		stack.Children().Append(content);
+
 		auto button = xcontrols::Button();
-		button.Content(content);
+		button.Content(stack);
+
+		// How Chrome finds the two Borders it has to reach, since the Button's own Background no longer
+		// means anything: the fill to recolour, and the wash to clear when the chip is disabled out
+		// from under the pointer.
+		button.Tag(fill);
+		stack.Tag(glow);
+
+		Neutralise(button);
 
 		// Square, and explicitly so: a Button sized by its padding comes out a few pixels wider than
 		// tall with an icon in it, and three of those in a row is the thing that looks unconsidered.
 		button.Padding(xaml::Thickness{ 0, 0, 0, 0 });
-		button.Width(24);
-		button.Height(24);
+		button.Width(ChipSize);
+		button.Height(ChipSize);
+		button.HorizontalContentAlignment(xaml::HorizontalAlignment::Stretch);
+		button.VerticalContentAlignment(xaml::VerticalAlignment::Stretch);
 		button.MinWidth(0);
 		button.MinHeight(0);
-		button.Background(Idle());
 		button.BorderThickness(xaml::Thickness{ 0, 0, 0, 0 });
 		button.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
 		button.VerticalAlignment(xaml::VerticalAlignment::Center);
 		xcontrols::ToolTipService::SetToolTip(button, winrt::box_value(winrt::hstring{ tip }));
+
+		// Set outright rather than animated. A fade would be prettier and is what was there before, in
+		// effect, via the template's transitions -- and the whole complaint is that those do not settle
+		// when the pointer crosses several buttons faster than they run.
+		button.PointerEntered([glow](auto const&, auto const&) { glow.Opacity(HoverWash); });
+		button.PointerExited([glow](auto const&, auto const&) { glow.Opacity(0.0); });
+		button.PointerPressed([glow](auto const&, auto const&) { glow.Opacity(PressWash); });
+		button.PointerReleased([glow](auto const&, auto const&) { glow.Opacity(HoverWash); });
+
+		// Losing capture is the case a hover-out does not cover: press, drag off, release elsewhere.
+		// Without this the chip stays lit at the pressed wash with the pointer somewhere else entirely.
+		button.PointerCaptureLost([glow](auto const&, auto const&) { glow.Opacity(0.0); });
+
 		button.Click(
 			[action](winrt::Windows::Foundation::IInspectable const&, xaml::RoutedEventArgs const&) { action(); });
 		return button;
+	}
+
+	// Makes the Button template paint nothing at all, in every state, so the chip's own Border is the
+	// only thing on screen. Overridden on the button rather than in the panel's resources, so this
+	// cannot reach anything the app owns.
+	static void Neutralise(xcontrols::Button const& button)
+	{
+		static const wchar_t* const keys[] = {
+			L"ButtonBackground",
+			L"ButtonBackgroundPointerOver",
+			L"ButtonBackgroundPressed",
+			L"ButtonBackgroundDisabled",
+			L"ButtonBorderBrush",
+			L"ButtonBorderBrushPointerOver",
+			L"ButtonBorderBrushPressed",
+			L"ButtonBorderBrushDisabled",
+		};
+
+		const auto clear = Brush(0x00, 0x00, 0x00, 0x00);
+		for (const auto key : keys)
+		{
+			button.Resources().Insert(winrt::box_value(winrt::hstring{ key }), clear);
+		}
+	}
+
+	// Recolours a chip. The Button's Background is not it: the colour is on the Border behind the
+	// glyph, which is what Chip put in the Tag.
+	static void Paint(xcontrols::Button const& button, xmedia::Brush const& brush)
+	{
+		if (!button) return;
+		if (const auto fill = button.Tag().try_as<xcontrols::Border>()) fill.Background(brush);
+	}
+
+	// Enables or disables a chip, and says so on screen in the same breath.
+	//
+	// Control::IsEnabledChanged is the seam this looks like it wants and it does not fire here.
+	// IsEnabled is coerced -- an element is disabled if any ancestor is, so the effective value is
+	// computed by a walk over the subtree -- and setting it while the toolbar is still being
+	// assembled records the value without raising anything. The chip then reports IsEnabled false
+	// and draws at full strength: a button that looks live and answers nothing, which is the state
+	// it is least excusable to be in. So the visual is set beside the state rather than in reply to
+	// it, and there is one place that can be got wrong instead of one per chip.
+	//
+	// Clearing the wash is the other half. A disabled element receives no pointer input at all, so
+	// no PointerExited ever arrives, and Deselect disables itself on the very click that operates
+	// it -- leaving it wearing the hover wash with the pointer long gone.
+	static void Enable(xcontrols::Button const& button, bool enabled)
+	{
+		if (!button) return;
+
+		button.IsEnabled(enabled);
+
+		const auto stack = button.Content().try_as<xcontrols::Grid>();
+		if (!stack) return;
+
+		stack.Opacity(enabled ? 1.0 : DisabledFade);
+		if (enabled) return;
+
+		if (const auto glow = stack.Tag().try_as<xcontrols::Border>()) glow.Opacity(0.0);
 	}
 
 	// Two strokes, not one: the accent rose, with a dark companion sitting a pixel outside it.
@@ -1177,11 +1306,19 @@ private:
 		}
 	}
 
+	// What folds away is everything that is not the grip, and the unit is the rows stack rather than
+	// the strip of chips inside the first row. Hide sits beside that strip rather than in it, so that
+	// the slack from a wider second row falls between the two groups -- and the zoom row sits under
+	// it. Folding the strip alone therefore left both of them drawn over the thumb: a chip floating on
+	// the grip, and a row of zoom controls under a toolbar that is supposed to be gone.
+	//
+	// The modes themselves keep running. Collapsing is a request to see the app under the toolbar, not
+	// to undo the magnification that is the reason for looking.
 	void Collapse(bool collapsed)
 	{
-		if (!m_bar || !m_thumb) return;
+		if (!m_rows || !m_thumb) return;
 
-		m_bar.Visibility(collapsed ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
+		m_rows.Visibility(collapsed ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
 		m_thumb.Visibility(collapsed ? xaml::Visibility::Visible : xaml::Visibility::Collapsed);
 	}
 
@@ -1738,22 +1875,22 @@ private:
 	{
 		if (!m_idleButton || !m_selectButton) return;
 
-		m_idleButton.Background(m_selecting ? Idle() : Accent());
-		m_selectButton.Background(m_selecting ? Accent() : Idle());
-		if (m_myXamlButton) m_myXamlButton.Background(m_justMyXaml ? Accent() : Idle());
+		Paint(m_idleButton, m_selecting ? Idle() : Accent());
+		Paint(m_selectButton, m_selecting ? Accent() : Idle());
+		Paint(m_myXamlButton, m_justMyXaml ? Accent() : Idle());
 
 		// Deselect is an action rather than a mode, so it never wears the accent -- only whether
 		// there is anything for it to do.
-		if (m_deselectButton) m_deselectButton.IsEnabled(m_hasSelection);
+		Enable(m_deselectButton, m_hasSelection);
 
-		if (m_zoomButton) m_zoomButton.Background(m_zoom == Zoom::Off ? Idle() : Accent());
-		if (m_scaleButton) m_scaleButton.Background(m_zoom == Zoom::Transform ? Accent() : Idle());
-		if (m_pixelButton) m_pixelButton.Background(m_zoom == Zoom::Lens ? Accent() : Idle());
+		Paint(m_zoomButton, m_zoom == Zoom::Off ? Idle() : Accent());
+		Paint(m_scaleButton, m_zoom == Zoom::Transform ? Accent() : Idle());
+		Paint(m_pixelButton, m_zoom == Zoom::Lens ? Accent() : Idle());
 
 		// The ends of the range are said by disabling, not by silently doing nothing: a button that
 		// responds to a click by leaving everything as it was reads as broken rather than as bounded.
-		if (m_zoomInButton) m_zoomInButton.IsEnabled(m_zoomFactor < 32);
-		if (m_zoomOutButton) m_zoomOutButton.IsEnabled(m_zoomFactor > 2);
+		Enable(m_zoomInButton, m_zoomFactor < 32);
+		Enable(m_zoomOutButton, m_zoomFactor > 2);
 	}
 
 	/// Whether an element was declared in the app's own markup.

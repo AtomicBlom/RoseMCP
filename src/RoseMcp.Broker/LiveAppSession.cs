@@ -181,7 +181,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 		=> ReadEventsAsync(after, null, 500, 0, cancellationToken);
 
 	/// <summary>Reads a page, narrowed to certain event kinds and capped in size.</summary>
-	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string? kinds, int limit, CancellationToken cancellationToken)
+	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string[]? kinds, int limit, CancellationToken cancellationToken)
 		=> ReadEventsAsync(after, kinds, limit, 0, cancellationToken);
 
 	/// <summary>
@@ -193,7 +193,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// half a minute abandoned locally would leave the host holding a reader for the rest of it.
 	/// </para>
 	/// </summary>
-	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string? kinds, int limit, int waitSeconds, CancellationToken cancellationToken)
+	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string[]? kinds, int limit, int waitSeconds, CancellationToken cancellationToken)
 		=> SendAsync<LiveDebugEventPage>(
 			ToolNames.LiveAppEvents,
 			new Dictionary<string, object?>
@@ -326,6 +326,11 @@ public sealed class LiveAppSession : IAsyncDisposable
 		// Not CallToolAsync: it abandons the wait without telling the host, which then finishes the
 		// work anyway. The same reasoning as the worker's SendAsync.
 		var result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress: null, cancellationToken);
+
+		// Asked before the structured content, because a host that refused a call returns none -- so the
+		// reason it refused was being replaced by "returned no structured content", which names the
+		// consequence and not the cause.
+		if (ForwardedError.Message(result) is { } failed) throw new InvalidOperationException(failed);
 
 		if (result.StructuredContent is null)
 		{

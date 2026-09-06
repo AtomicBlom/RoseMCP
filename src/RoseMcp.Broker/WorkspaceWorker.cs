@@ -376,13 +376,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 		if (result.IsError == true)
 		{
-			var message = string.Join(
-				Environment.NewLine,
-				result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(block => block.Text));
-
-			throw new InvalidOperationException(string.IsNullOrWhiteSpace(message)
-				? $"The worker for {SolutionPath} reported an error running {tool}."
-				: message);
+			throw new InvalidOperationException(
+				ForwardedError.Message(result) ?? $"The worker for {SolutionPath} reported an error running {tool}.");
 		}
 
 		if (result.StructuredContent is null)

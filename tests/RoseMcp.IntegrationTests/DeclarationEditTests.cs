@@ -168,6 +168,36 @@ public sealed class DeclarationEditTests
 	}
 
 	/// <summary>
+	/// An attribute whose argument list the caller wrapped keeps that shape and lands at the
+	/// declaration's own level. Roslyn's formatter has no rule about where a wrapped list sits, so an
+	/// attribute composed at column zero stays at column zero under a declaration several levels in --
+	/// and neither IDE0055 nor dotnet format has an opinion about it either, so nothing says so.
+	/// </summary>
+	[Theory]
+	[InlineData(0)]
+	[InlineData(2)]
+	public async Task Keeps_the_shape_of_a_wrapped_attribute(int written)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var baseline = new string('\t', written);
+
+		var attribute = $"{baseline}Obsolete(\n{baseline}\t\"use Greet\",\n{baseline}\terror: false)";
+
+		var result = await AttributeAsync(session, "Library.Greeter.Greet(string)", attribute, AttributeAction.Add);
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains(
+			"\t[Obsolete(\r\n\t\t\"use Greet\",\r\n\t\terror: false)]\r\n\tpublic string Greet(string name)",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// Replacing one of several attributes of a name would compile and change the wrong case, which
 	/// is the failure with no symptom. It is refused, and the refusal lists what it found.
 	/// </summary>

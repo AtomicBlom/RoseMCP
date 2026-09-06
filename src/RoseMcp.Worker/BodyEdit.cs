@@ -180,7 +180,7 @@ public static class BodyEdit
 	/// </para>
 	/// </summary>
 	private static string Placed(string replace, string indent) =>
-		replace.Length == 0 ? replace : MemberSyntax.Reindented(replace, indent, LiteralLines(replace));
+		replace.Length == 0 ? replace : MemberSyntax.Reindented(replace, indent);
 
 	/// <summary>
 	/// The indentation of the line the match starts on, whether or not the match starts the line.
@@ -196,53 +196,6 @@ public static class BodyEdit
 		var line = body[lineStart..];
 
 		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
-	}
-
-	/// <summary>
-	/// Which lines of the code sit inside a literal spanning more than one of them, counted from zero.
-	/// <para>
-	/// Leading whitespace there is the value in a verbatim literal and decides how much is stripped
-	/// from a raw one, so re-indenting one such line and not another changes what the program says
-	/// rather than how it reads. Left exactly as they arrived here; the pass over the whole member
-	/// afterwards knows which kind each is and moves a raw literal with the code around it.
-	/// </para>
-	/// <para>
-	/// A token spanning two lines is a literal by construction -- an identifier, a keyword and a
-	/// punctuator each fit on one, and a comment is trivia rather than a token.
-	/// </para>
-	/// </summary>
-	private static IReadOnlySet<int> LiteralLines(string code)
-	{
-		var lines = new HashSet<int>();
-
-		foreach (var token in Tokens(code))
-		{
-			var start = LineOf(code, token.SpanStart);
-			var end = LineOf(code, token.Span.End - 1);
-
-			// From the line after the opening delimiter through the one carrying the closing one: a raw
-			// literal's terminator sets the indentation taken off the rest, so it stays with them.
-			for (var line = start + 1; line <= end; line++) lines.Add(line);
-		}
-
-		return lines;
-	}
-
-	/// <summary>Which line an offset falls on, counted from zero, with CR, LF and CR LF all endings.</summary>
-	private static int LineOf(string code, int offset)
-	{
-		var line = 0;
-
-		for (var index = 0; index < offset && index < code.Length; index++)
-		{
-			if (code[index] is not ('\n' or '\r')) continue;
-
-			line++;
-
-			if (code[index] == '\r' && index + 1 < code.Length && code[index + 1] == '\n') index++;
-		}
-
-		return line;
 	}
 
 	/// <summary>Every index in <paramref name="present"/> where <paramref name="wanted"/> starts.</summary>

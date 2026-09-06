@@ -146,21 +146,27 @@ public static class MemberSyntax
 	/// </para>
 	/// <para>
 	/// The first line keeps neither, because it is spliced at a point that already carries the
-	/// indentation of the line it lands on.
+	/// indentation of the line it lands on. The lines of a multi-line literal keep both: leading
+	/// whitespace there is the value in a verbatim literal and decides how much is stripped from a raw
+	/// one, so moving one such line and not another changes what the program says rather than how it
+	/// reads. Found here rather than asked of the caller, since a caller who forgets does not find out.
 	/// </para>
 	/// </summary>
 	/// <param name="code">The fragment as the caller wrote it.</param>
 	/// <param name="indent">The indentation of the code it is going beside.</param>
-	/// <param name="untouched">
-	/// Lines whose leading whitespace belongs to a string rather than to the layout. Moving one line of
-	/// a multi-line literal and not another changes what the program says rather than how it reads.
-	/// </param>
-	public static string Reindented(string code, string indent, IReadOnlySet<int> untouched)
+	public static string Reindented(string code, string indent)
 	{
 		var lines = Split(code);
 		var baseline = Baseline([.. lines.Select(line => line.Content)]);
 
 		if (baseline.Length == 0 && indent.Length == 0) return code;
+
+		var untouched = LiteralLines(code);
+
+		// Which line is the first is asked of the content rather than of the index, because a fragment
+		// that opens with a line break has its baseline on the second line and belongs at the splice
+		// point all the same. Indenting it as a continuation puts the whole fragment a level out.
+		var first = lines.ToList().FindIndex(line => line.Content.Trim().Length > 0);
 
 		var shifted = lines.Select((line, index) =>
 		{
@@ -171,7 +177,7 @@ public static class MemberSyntax
 				: line.Content;
 
 			// Padding a blank line only makes trailing whitespace for the next pass to strip again.
-			var prefixed = index > 0 && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+			var prefixed = index > first && stripped.Trim().Length > 0 ? indent + stripped : stripped;
 
 			return prefixed + line.Ending;
 		});
@@ -508,5 +514,51 @@ public static class MemberSyntax
 
 		return new ArgumentException(
 			$"The code does not parse, so nothing was written. {string.Join("; ", described)}{more}{hint}");
+	}
+
+	/// <summary>
+	/// Which lines of the code sit inside a literal spanning more than one of them, counted from zero.
+	/// <para>
+	/// Leading whitespace there is the value in a verbatim literal and decides how much is stripped
+	/// from a raw one, so re-indenting one such line and not another changes what the program says
+	/// rather than how it reads, and nothing downstream reports it.
+	/// </para>
+	/// <para>
+	/// A token spanning two lines is a literal by construction -- an identifier, a keyword and a
+	/// punctuator each fit on one, and a comment is trivia rather than a token.
+	/// </para>
+	/// </summary>
+	private static IReadOnlySet<int> LiteralLines(string code)
+	{
+		var lines = new HashSet<int>();
+
+		foreach (var token in SyntaxFactory.ParseTokens(code))
+		{
+			var start = LineOf(code, token.SpanStart);
+			var end = LineOf(code, token.Span.End - 1);
+
+			// From the line after the opening delimiter through the one carrying the closing one: a raw
+			// literal's terminator sets the indentation taken off the rest, so it stays with them.
+			for (var line = start + 1; line <= end; line++) lines.Add(line);
+		}
+
+		return lines;
+	}
+
+	/// <summary>Which line an offset falls on, counted from zero, with CR, LF and CR LF all endings.</summary>
+	private static int LineOf(string code, int offset)
+	{
+		var line = 0;
+
+		for (var index = 0; index < offset && index < code.Length; index++)
+		{
+			if (code[index] is not ('\n' or '\r')) continue;
+
+			line++;
+
+			if (code[index] == '\r' && index + 1 < code.Length && code[index + 1] == '\n') index++;
+		}
+
+		return line;
 	}
 }

@@ -42,6 +42,76 @@ public sealed class NavigationTests
 			ignoreCase: true);
 	}
 
+	/// <summary>
+	/// A type from a referenced assembly is in every compilation this worker holds, so refusing to
+	/// describe it because nothing in the solution declares it answers a narrower question than the one
+	/// asked -- and sends the caller to a decompiler for something the compilation had to hand.
+	/// </summary>
+	[Fact]
+	public async Task Describes_a_type_that_lives_in_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.StringBuilder" },
+			TestContext.Current.CancellationToken);
+
+		Assert.Equal("StringBuilder", info.Name);
+		Assert.Equal("NamedType", info.Kind);
+		Assert.Equal("System.Text", info.Namespace);
+
+		// No file to point at, and the assembly said in its place: the two together are what tell a
+		// caller this is not something it can edit.
+		Assert.False(info.IsFromSource);
+		Assert.Empty(info.Declarations);
+		Assert.NotNull(info.ContainingAssembly);
+	}
+
+	/// <summary>
+	/// A member of a metadata type, which is the half a caller reaches for after the type: the last
+	/// segment is looked up on the type the rest of the name resolves to.
+	/// </summary>
+	[Fact]
+	public async Task Describes_a_member_of_a_type_that_lives_in_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.Encoding.UTF8" },
+			TestContext.Current.CancellationToken);
+
+		Assert.Equal("UTF8", info.Name);
+		Assert.Equal("Property", info.Kind);
+		Assert.Contains("Encoding", info.ContainingType, StringComparison.Ordinal);
+		Assert.False(info.IsFromSource);
+	}
+
+	/// <summary>
+	/// A name nothing carries anywhere still refuses, and with the refusal the source search wrote:
+	/// falling back to metadata must not turn "nothing is called that" into a vaguer error.
+	/// </summary>
+	[Fact]
+	public async Task Still_refuses_a_name_that_is_in_neither_source_nor_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var error = await Assert.ThrowsAsync<SymbolNotFoundException>(() =>
+			NavigationService.DescribeAsync(
+				snapshot,
+				new SymbolTarget { Symbol = "Nowhere.At.All.Whatsoever" },
+				TestContext.Current.CancellationToken));
+
+		Assert.Contains("Whatsoever", error.Message, StringComparison.Ordinal);
+	}
+
 	[Fact]
 	public async Task Finds_references_across_project_boundaries()
 	{

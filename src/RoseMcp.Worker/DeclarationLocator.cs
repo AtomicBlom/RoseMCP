@@ -236,7 +236,7 @@ public static class DeclarationLocator
 	{
 		if (named.Count == 0)
 		{
-			return new ArgumentException(
+			return new SymbolNotFoundException(
 				$"Nothing in the solution is called {Quote(address.Name)}. Ask rose_search_symbols, which matches "
 					+ "names by pattern and by abbreviation and returns the qualified name this argument wants.");
 		}

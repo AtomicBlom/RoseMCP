@@ -567,7 +567,9 @@ public sealed class MemberEditTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var missing = await Assert.ThrowsAsync<ArgumentException>(() => ReplaceAsync(
+		// Its own type, and the only refusal here that has one: a read may answer this one from metadata
+		// instead, where nothing may answer a name that is in source somewhere other than where asked.
+		var missing = await Assert.ThrowsAsync<SymbolNotFoundException>(() => ReplaceAsync(
 			session, "Library.Greeter.Salute", "public string Salute() => _prefix;"));
 
 		Assert.Contains("Nothing in the solution is called 'Salute'", missing.Message, StringComparison.Ordinal);

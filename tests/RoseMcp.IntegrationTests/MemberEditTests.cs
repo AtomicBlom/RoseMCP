@@ -743,6 +743,91 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// Dropping an attribute the caller never saw leaves valid C# that compiles and verifies clean
+	/// while the member has quietly left whatever the attribute enrolled it in -- an [McpServerTool]
+	/// off the surface, a [Fact] out of the run. There is no symptom until something is missing
+	/// somewhere else, so the old attributes are kept and named.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_the_attributes_a_replacement_does_not_declare()
+	{
+		using var fixture = await AttributedGreeterAsync();
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ReplaceAsync(
+			session,
+			"Library.Greeter.Shout(string)",
+			"private static string Shout(string text)\n{\n\treturn text.ToUpperInvariant() + \"!\";\n}");
+
+		Assert.True(result.Applied);
+
+		var after = await ReadAsync(fixture, "Greeter.cs");
+
+		// Comment above attribute above declaration, each on its own line at the file's indentation:
+		// the comment is content the caller did not supply, and the attribute is now the first token.
+		Assert.Contains(
+			"\t/// <summary>Louder.</summary>\r\n\t[Obsolete(\"Shout is going away.\")]\r\n\tprivate static string Shout(string text)",
+			after,
+			StringComparison.Ordinal);
+
+		Assert.Contains("ToUpperInvariant() + \"!\"", after, StringComparison.Ordinal);
+
+		// Named rather than counted, so a caller can tell whether the one it cares about survived.
+		Assert.Contains(result.Notices, notice => notice.Contains("[Obsolete]", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// The other half of the rule, and the way a caller removes one: attributes in the code are the
+	/// attributes written, so replacing them or leaving them off is a decision the caller can make.
+	/// </summary>
+	[Fact]
+	public async Task Takes_the_attributes_a_replacement_declares()
+	{
+		using var fixture = await AttributedGreeterAsync();
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ReplaceAsync(
+			session,
+			"Library.Greeter.Shout(string)",
+			"[Obsolete(\"Use Announce instead.\")]\nprivate static string Shout(string text) => text.ToUpperInvariant();");
+
+		Assert.True(result.Applied);
+
+		var after = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("[Obsolete(\"Use Announce instead.\")]", after, StringComparison.Ordinal);
+		Assert.DoesNotContain("Shout is going away.", after, StringComparison.Ordinal);
+		Assert.DoesNotContain(result.Notices, notice => notice.Contains("Kept [Obsolete]", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A copy of the Members fixture whose Shout carries a documentation comment and an attribute.
+	/// Written into the copy rather than into the checked-in fixture, which every test counting its
+	/// members would see. Both, because the two share one piece of trivia: a declaration's
+	/// documentation comment sits above the first of its attributes, so carrying attributes over moves
+	/// which token the comment is attached to.
+	/// </summary>
+	private static async Task<FixtureSolution> AttributedGreeterAsync()
+	{
+		var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		var greeter = fixture.Path("Members", "Library", "Greeter.cs");
+		var text = await File.ReadAllTextAsync(greeter, TestContext.Current.CancellationToken);
+
+		await File.WriteAllTextAsync(
+			greeter,
+			text.Replace(
+				"\tprivate static string Shout(string text)",
+				"\t/// <summary>Louder.</summary>\r\n"
+					+ "\t[Obsolete(\"Shout is going away.\")]\r\n"
+					+ "\tprivate static string Shout(string text)",
+				StringComparison.Ordinal),
+			TestContext.Current.CancellationToken);
+
+		return fixture;
+	}
+
+	/// <summary>
 	/// Narrowing the scope by hand is allowed and is not silent: the same edit reports nothing wrong,
 	/// and says which dependents nobody looked at. Reporting no introduced errors without that is a
 	/// clean bill of health for half the question.

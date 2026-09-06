@@ -621,8 +621,13 @@ public static class MemberEditService
 		MemberDeclarationSyntax existing,
 		List<string> notices)
 	{
+		// Read before the attributes are carried over, because a declaration that has attributes keeps
+		// its documentation comment above the first of them: the member's leading trivia is whichever
+		// token comes first, and that changes under this call.
 		var supplied = WithoutLeadingBlanks(replacement.GetLeadingTrivia());
 		var existingTrivia = existing.GetLeadingTrivia();
+
+		replacement = WithCarriedAttributes(replacement, existing, notices);
 
 		if (!supplied.Any(MemberSyntax.IsComment))
 		{
@@ -637,6 +642,43 @@ public static class MemberEditService
 
 		return replacement.WithLeadingTrivia(
 			existingTrivia.TakeWhile(trivia => !MemberSyntax.IsComment(trivia)).Concat(supplied));
+	}
+
+	/// <summary>
+	/// The attributes to write, on the documentation comment's rule: the replacement's when it declares
+	/// any, and the old ones kept with a notice when it declares none.
+	/// <para>
+	/// The same reasoning with a sharper edge. A caller who never read the file cannot have meant to
+	/// remove an attribute it did not know was there, and dropping one leaves valid C# that compiles
+	/// and verifies clean while the member has quietly left whatever the attribute enrolled it in -- a
+	/// tool off the MCP surface, a test out of the run. A caller who does mean to remove one writes the
+	/// attributes it wants, or asks rose_set_attribute.
+	/// </para>
+	/// </summary>
+	private static MemberDeclarationSyntax WithCarriedAttributes(
+		MemberDeclarationSyntax replacement,
+		MemberDeclarationSyntax existing,
+		List<string> notices)
+	{
+		if (replacement.AttributeLists.Count > 0 || existing.AttributeLists.Count == 0) return replacement;
+
+		var names = existing.AttributeLists
+			.SelectMany(list => list.Attributes)
+			.Select(attribute => $"[{attribute.Name}]");
+
+		notices.Add($"Kept {string.Join(", ", names)} on the declaration, since the code supplied no "
+			+ "attributes. Write the ones you want in the code to replace them, or ask rose_set_attribute "
+			+ "to remove one.");
+
+		// Stripped of the trivia they carried in the old file. The first of them held the declaration's
+		// documentation comment and indentation, and both belong to whichever token ends up first here,
+		// which the caller sets afterwards. Elastic markers leave the layout to the formatter.
+		var carried = SyntaxFactory.List(existing.AttributeLists
+			.Select(list => list
+				.WithLeadingTrivia(SyntaxFactory.ElasticMarker)
+				.WithTrailingTrivia(SyntaxFactory.ElasticMarker)));
+
+		return replacement.WithLeadingTrivia().WithAttributeLists(carried);
 	}
 
 	/// <summary>

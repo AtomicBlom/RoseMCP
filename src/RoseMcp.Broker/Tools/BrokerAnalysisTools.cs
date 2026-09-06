@@ -83,6 +83,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Maximum references to return. Defaults to 200.")] int maxResults = 200,
+		[Description("Return where it is declared and how many uses there are, without listing them.")] bool definitionsOnly = false,
+		[Description("Only references compiled by this project.")] string? project = null,
+		[Description("Give each location its line of source. On by default; off is much smaller.")] bool includePreviews = true,
 		[Description(WorkspaceHelp)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<ReferencesResult>(WorkspaceHints.From(workspace, filePath), ToolNames.FindReferences, new()
@@ -92,6 +95,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["line"] = line,
 			["column"] = column,
 			["maxResults"] = maxResults,
+			["definitionsOnly"] = definitionsOnly,
+			["project"] = project,
+			["includePreviews"] = includePreviews,
 		}, cancellationToken, progress);
 
 	[McpServerTool(

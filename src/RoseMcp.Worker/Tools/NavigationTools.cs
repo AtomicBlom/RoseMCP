@@ -84,6 +84,9 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description("Maximum references to return. Defaults to 200.")] int maxResults = 200,
+		[Description("Return where it is declared and how many uses there are, without listing them.")] bool definitionsOnly = false,
+		[Description("Only references compiled by this project.")] string? project = null,
+		[Description("Give each location its line of source. On by default; off is much smaller.")] bool includePreviews = true,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -99,7 +102,13 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		working.Report($"Searching the solution for references to {target.Describe()}");
 
 		return await NavigationService.FindReferencesAsync(
-			snapshot, target, maxResults <= 0 ? 200 : maxResults, cancellationToken);
+			snapshot,
+			target,
+			maxResults <= 0 ? 200 : maxResults,
+			cancellationToken,
+			definitionsOnly,
+			project,
+			includePreviews);
 	}
 
 	[McpServerTool(

@@ -1,3 +1,5 @@
+using RoseMcp.Contracts;
+
 namespace RoseMcp.IntegrationTests;
 
 public sealed class NavigationTests
@@ -137,6 +139,83 @@ public sealed class NavigationTests
 			result.References,
 			location => Assert.EndsWith("Program.cs", location.FilePath, StringComparison.OrdinalIgnoreCase));
 	}
+
+	/// <summary>
+	/// The three ways to ask for less, measured as sizes rather than asserted as flags. A widely used
+	/// member answers at a size nothing can read, and maxResults is no answer to it: it drops
+	/// references while the previews on the ones it keeps are most of the payload. Each narrowing has
+	/// to be smaller than the full answer or it is not one.
+	/// </summary>
+	[Fact]
+	public async Task Narrows_a_large_answer_three_ways()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var target = new SymbolTarget { Symbol = "Core.Calculator.Add" };
+
+		var full = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current.CancellationToken);
+
+		Assert.NotEmpty(full.References);
+		Assert.All(full.References, location => Assert.NotNull(location.Preview));
+
+		var plain = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current.CancellationToken, includePreviews: false);
+
+		// The count and the places are the same answer; only the lines of source are gone.
+		Assert.Equal(full.TotalCount, plain.TotalCount);
+		Assert.Equal(full.References.Count, plain.References.Count);
+		Assert.All(plain.References, location => Assert.Null(location.Preview));
+		Assert.All(plain.References, location => Assert.NotNull(location.ContainingMember));
+		Assert.True(Size(plain) < Size(full));
+
+		var counted = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current.CancellationToken, definitionsOnly: true);
+
+		Assert.Empty(counted.References);
+		Assert.NotEmpty(counted.Definitions);
+		Assert.Equal(full.TotalCount, counted.TotalCount);
+		Assert.True(counted.Truncated);
+		Assert.True(Size(counted) < Size(plain));
+
+		var scoped = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current.CancellationToken, project: "Core");
+
+		// Add is called from App and never from the project declaring it, so narrowing to Core empties
+		// the list while the symbol goes on being used -- which the caller can tell apart only because
+		// naming a project the solution does not have is refused instead.
+		Assert.Empty(scoped.References);
+		Assert.All(full.References, location => Assert.Equal("App", location.Project));
+	}
+
+	/// <summary>
+	/// A project name the solution does not carry is refused rather than filtered on. An empty list
+	/// reads exactly like a symbol nobody uses, and that is the answer that invites a deletion.
+	/// </summary>
+	[Fact]
+	public async Task Refuses_to_narrow_to_a_project_that_is_not_there()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+			NavigationService.FindReferencesAsync(
+				snapshot,
+				new SymbolTarget { Symbol = "Core.Calculator.Add" },
+				200,
+				TestContext.Current.CancellationToken,
+				project: "Kernel"));
+
+		Assert.Contains("Kernel", error.Message, StringComparison.Ordinal);
+		Assert.Contains("Core", error.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>How big an answer is on the wire, which is the thing the narrowing exists to change.</summary>
+	private static int Size(ReferencesResult result) =>
+		System.Text.Json.JsonSerializer.Serialize(result, ContractJson.Options).Length;
 
 	[Fact]
 	public async Task Finds_references_across_project_boundaries()

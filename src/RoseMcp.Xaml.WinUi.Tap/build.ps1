@@ -13,7 +13,7 @@
 # on ARM64, unlike classic UWP, so the arm64 provider is load-bearing here rather than a nicety.
 [CmdletBinding()]
 param(
-    [ValidateSet('x64', 'arm64')]
+    [ValidateSet('x86', 'x64', 'arm64')]
     [string]$Platform = 'x64',
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug'

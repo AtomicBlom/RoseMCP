@@ -7,7 +7,7 @@
 # the Windows SDK is not present, so callers can skip rather than fail.
 [CmdletBinding()]
 param(
-    [ValidateSet('x64', 'arm64')]
+    [ValidateSet('x86', 'x64', 'arm64')]
     [string]$Platform = 'x64',
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug'

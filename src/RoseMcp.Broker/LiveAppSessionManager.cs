@@ -146,17 +146,35 @@ public sealed class LiveAppSessionManager(
 	}
 
 	/// <summary>
-	/// Which architecture to launch the host as. For an attach it is the target process's own; for a
-	/// launched executable it is read from the executable's PE header; a classic UWP app is x64 (there
-	/// is no ARM64 UWP runtime). Unknown falls back to the broker's own architecture in the launcher.
+	/// Which architecture to launch the host as. Every case asks rather than assumes: an attach reads
+	/// the target process, a launched executable its PE header, and a packaged app its registered
+	/// package identity. Unknown falls back to the broker's own architecture in the launcher.
 	/// </summary>
 	private TargetArchitecture DetectArchitecture(LiveAppTarget target) => target switch
 	{
 		{ Kind: LiveAppTargetKind.AttachProcess, ProcessId: { } pid } => TargetArchitectureProbe.ForProcess(pid),
 		{ Kind: LiveAppTargetKind.LaunchExecutable, ExecutablePath: { } path } => TargetArchitectureProbe.ForExecutable(path),
-		{ Kind: LiveAppTargetKind.LaunchUwp } => TargetArchitecture.X64,
+		{ Kind: LiveAppTargetKind.LaunchUwp, AppUserModelId: { } aumid } => UwpArchitecture(aumid),
 		_ => TargetArchitecture.Unknown,
 	};
+
+	/// <summary>
+	/// The architecture to debug a packaged app as: what its package identity says, and x64 when that
+	/// says nothing.
+	/// <para>
+	/// The fallback is x64 rather than Unknown because Unknown means the broker's own architecture,
+	/// and for this one target kind that is the wrong guess on the machine where it matters. A package
+	/// registered as <c>neutral</c> carries no architecture of its own, and a modern UWP app always
+	/// carries one -- so neutral means classic UWP, which has no ARM64 runtime and runs x64 under
+	/// emulation. Falling through to the broker's architecture would pick an ARM64 host for it on an
+	/// ARM64 machine, which is the one thing the old hard-coded x64 got right.
+	/// </para>
+	/// </summary>
+	private static TargetArchitecture UwpArchitecture(string appUserModelId)
+	{
+		var architecture = TargetArchitectureProbe.ForPackage(appUserModelId);
+		return architecture == TargetArchitecture.Unknown ? TargetArchitecture.X64 : architecture;
+	}
 
 	private static string NewSessionId() => "session-" + Guid.NewGuid().ToString("N")[..8];
 

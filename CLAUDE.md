@@ -498,6 +498,30 @@ reclaim memory or pick up a rebuilt generator.
   ARM64 alike, and the standard template leads with x86, so `DetectArchitecture`'s
   `LaunchUwp => X64` now answers confidently and wrongly for a target it has already activated, and no
   `win-x86` host is built for it to have been right about (#117).
+- **An install carries a debug host for every architecture its machine can execute, and that set is
+  not symmetric.** ICorDebug has no cross-architecture path, so the host matches the *target* process
+  rather than the broker -- but which targets can exist is a fact about the machine. ARM64 Windows
+  runs ARM64 and emulates x64 and x86, so all three ship there. An x64 machine runs x64 and, through
+  WOW64, x86; it cannot execute an ARM64 binary under any emulation, so an ARM64 host in an x64
+  install is weight nothing can load. Publishing both architectures everywhere looked symmetrical and
+  was half wrong: it made every x64 deploy build an ARM64 provider it had no cross-toolset for, and
+  warn about a capability no target on that machine could have wanted -- a warning that then leaked a
+  non-zero `$LASTEXITCODE` into a successful promote, so the deploy reported failure while the install
+  was live. `Get-LiveAppRuntimes` is the one place that says which hosts an install needs.
+  <br>
+  x86 is in both lists because it is not a legacy case: it is the default platform of the modern UWP
+  project template, so it is what an ordinary new UWP app is built and registered as. And each host
+  gets **both** taps, because which one serves a target is decided by the framework that target runs
+  and a provider built for one cannot serve the other. Shipping only the UWP tap left every WinUI 3
+  target without XAML inspection, with nothing in the install to say why -- which is the failure
+  `Assert-WindowsPackage` exists to make loud, so it checks both providers for every host.
+  <br>
+  A missing toolset is a warning on a laptop and a failure on CI, and those are the same rule rather
+  than two: `build.ps1` exits 3 for "this machine has no toolset for it", which a developer machine
+  may legitimately hit, while a build agent is the machine that is supposed to have every toolset. So
+  `promote` warns, `package` refuses, and CI builds all six combinations and fails on any non-zero
+  exit -- because nothing else in CI compiles a line of the C++, and the first thing to notice used to
+  be a release failing to package, after the tag was already cut.
 - **The tree walk is advised from a thread that is not the UI thread, and only on WinUI 3 does that
   matter.** WinUI dispatches tap creation onto the UI thread, and its `AdviseVisualTreeChange`
   enqueues the walk *back* onto that thread and then blocks the caller until it finishes

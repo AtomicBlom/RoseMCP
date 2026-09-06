@@ -7,6 +7,10 @@ name: CI
 # tests in LiveAppSessionTests drive real debugger sessions and, for the XAML ones, C++ and UWP
 # toolchains a hosted runner does not have, so they run locally. Everything else needs only the .NET
 # SDK, and that is most of the suite -- and the only guard on most of the invariants in CLAUDE.md.
+#
+# The native XAML providers get a job of their own, because they are the one part of this repository
+# the solution build never touches: both taps can be broken with `dotnet build` green, and nothing
+# else here would notice.
 on:
   # Only main. A branch with a pull request open would otherwise run this twice for one
   # change -- once for the push and once for the pull request -- which doubles the wait and
@@ -107,6 +111,67 @@ jobs:
       # is the xunit v3 runner's own exclusion flag and dotnet test does not forward it.
       - name: Integration tests, excluding the live-app suite
         run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe -class- 'RoseMcp.IntegrationTests.LiveAppSessionTests'
+
+  # The native XAML providers, for every architecture a shipped install can carry.
+  #
+  # Its own job because nothing else here compiles a line of the C++: the taps are built by their own
+  # build.ps1 rather than by the solution, so `dotnet build` is green with both of them broken. Before
+  # this, the first thing to notice was the release job failing to package -- which is the worst place
+  # to find out, since it is after the tag is cut and the fix means cutting another.
+  #
+  # A missing toolset is exit 3 from build.ps1's own Fail, which lets a developer machine skip with a
+  # warning. Here every non-zero exit is a failure, which is the whole point of the job: an agent that
+  # cannot build the ARM64 provider must say so rather than quietly produce an install that has no
+  # XAML inspection for half the targets it claims to serve.
+  xaml-providers:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # x86 and x64 come with the C++ workload; ARM64 is a separate component. Added rather than
+      # assumed, so it cannot vanish when windows-latest moves. This mirrors release.yml, which needs
+      # the same toolset to package the win-arm64 artifact.
+      - name: Install the MSVC ARM64 cross-toolset
+        shell: pwsh
+        run: |
+          $installerDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vs = & "$installerDir\vswhere.exe" -latest -products * -property installationPath
+          if (-not $vs) { throw 'no Visual Studio installation on this runner' }
+
+          $process = Start-Process -FilePath "$installerDir\vs_installer.exe" -Wait -PassThru -ArgumentList @(
+            'modify', '--installPath', "`"$vs`"", '--quiet', '--norestart', '--nocache',
+            '--add', 'Microsoft.VisualStudio.Component.VC.Tools.ARM64')
+
+          if ($process.ExitCode -notin 0, 3010) { throw "vs_installer exited $($process.ExitCode)" }
+
+      - name: Build every provider for every architecture
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
+          {
+              foreach ($platform in 'x86', 'x64', 'arm64')
+              {
+                  Write-Host "::group::$project ($platform)"
+                  & ./src/$project/build.ps1 -Platform $platform -Configuration Release
+                  $code = $LASTEXITCODE
+                  Write-Host '::endgroup::'
+
+                  # 3 is "this machine has no toolset for it", which is a skip on a laptop and a
+                  # failure here -- the runner is the machine that is supposed to have every toolset.
+                  if ($code -ne 0) { $failed += "$project ($platform) exited $code" }
+              }
+          }
+
+          # Every combination is attempted before failing, so one run names all of them rather than
+          # stopping at the first and hiding the rest behind a re-run.
+          if ($failed) { throw ("providers failed to build:`n  " + ($failed -join "`n  ")) }
 
   # The half of this repository that ships for Linux, built and tested there. Not the whole solution:
   # the tray is WinUI and the debug host is ICorDebug, so `dotnet build RoseMcp.slnx` cannot succeed

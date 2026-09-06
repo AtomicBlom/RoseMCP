@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,23 +21,23 @@ public sealed class LiveAppSessionManager(
 	ILoggerFactory loggerFactory,
 	ILogger<LiveAppSessionManager> logger) : IAsyncDisposable
 {
-	private readonly Dictionary<string, LiveAppSession> _sessions = new(StringComparer.Ordinal);
+	/// <summary>
+	/// The open sessions, by session id.
+	/// <para>
+	/// Concurrent because the readers and the writer are not the same caller: Find runs on every debug
+	/// tool call while StartAsync may be inserting, and a plain Dictionary read against a concurrent
+	/// write is documented to throw or to corrupt its table. The gate below is a different guarantee --
+	/// it makes a close atomic with the host teardown it entails.
+	/// </para>
+	/// </summary>
+	private readonly ConcurrentDictionary<string, LiveAppSession> _sessions = new(StringComparer.Ordinal);
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 
 	/// <summary>What every session is doing, keyed by session id.</summary>
 	public ActivityLog Activities { get; } = new();
 
-	public IReadOnlyList<LiveAppSession> Sessions
-	{
-		get
-		{
-			lock (_sessions)
-			{
-				return [.. _sessions.Values];
-			}
-		}
-	}
+	public IReadOnlyList<LiveAppSession> Sessions => [.. _sessions.Values];
 
 	/// <summary>One row per open session; the same model backs any UI and GET /admin/sessions.</summary>
 	public IReadOnlyList<LiveAppSessionSummary> Describe() => [.. Sessions.Select(session => session.Describe())];
@@ -77,14 +79,7 @@ public sealed class LiveAppSessionManager(
 	/// </summary>
 	public LiveAppSession? Find(string sessionId)
 	{
-		LiveAppSession? session;
-
-		lock (_sessions)
-		{
-			session = _sessions.GetValueOrDefault(sessionId);
-		}
-
-		if (session is null) return null;
+		if (!_sessions.TryGetValue(sessionId, out var session)) return null;
 
 		return Owns(session) ? session : null;
 	}
@@ -138,7 +133,7 @@ public sealed class LiveAppSessionManager(
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
-			if (!_sessions.Remove(sessionId, out var session)) return false;
+			if (!_sessions.TryRemove(sessionId, out var session)) return false;
 
 			await session.DisposeAsync();
 			Activities.Forget(sessionId);
@@ -172,10 +167,7 @@ public sealed class LiveAppSessionManager(
 			await session.DisposeAsync();
 		}
 
-		lock (_sessions)
-		{
-			_sessions.Clear();
-		}
+		_sessions.Clear();
 
 		_gate.Dispose();
 	}

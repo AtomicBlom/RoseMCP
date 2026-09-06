@@ -1708,7 +1708,7 @@ static void SetActiveTap(RoseTap* tap)
 static void PipeReaderLoop()
 {
 	std::string payload;
-	while (!g_pipeStop.load() && ReadFrame(payload))
+	while (ReadFrame(payload))
 	{
 		RoseTap* serving = nullptr;
 		{
@@ -1720,21 +1720,48 @@ static void PipeReaderLoop()
 		std::string reply;
 		if (serving)
 		{
-			reply = serving->Serve(FromUtf8(payload));
+			// Serve reaches XAML, which throws. Uncaught it leaves a std::thread function by
+			// exception, and that is std::terminate inside the app being inspected -- so a bad
+			// request would take the target down rather than come back as a failed one.
+			try
+			{
+				reply = serving->Serve(FromUtf8(payload));
+			}
+			catch (...)
+			{
+				reply.clear();
+				Log(L"pipe: serving a request threw; answering empty");
+			}
+
 			serving->Release();
 		}
 
 		if (!WriteFrame(reply)) break;
 	}
 
+	// The handle goes with the loop and the flag goes back down, which is what lets a later
+	// injection call ConnectPipe again. Leaving either set disables the pipe for the life of the
+	// process, and every request after the first disconnect takes the file path without saying so.
+	if (g_pipe != INVALID_HANDLE_VALUE)
+	{
+		::CloseHandle(g_pipe);
+		g_pipe = INVALID_HANDLE_VALUE;
+	}
+
+	g_pipeRunning.store(false);
+
 	Log(L"pipe: reader stopped");
 }
 
+// Started at most once at a time, and startable again after a disconnect. The thread is detached
+// rather than kept joinable: nothing here ever joins it, and a joinable std::thread reaching static
+// destruction is std::terminate.
 static void StartPipeReader()
 {
-	if (g_pipe == INVALID_HANDLE_VALUE || g_pipeThread.joinable()) return;
+	if (g_pipe == INVALID_HANDLE_VALUE) return;
+	if (g_pipeRunning.exchange(true)) return;
 
-	g_pipeThread = std::thread(PipeReaderLoop);
+	std::thread(PipeReaderLoop).detach();
 	Log(L"pipe: reader started");
 }
 

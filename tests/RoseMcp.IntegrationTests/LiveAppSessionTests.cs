@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
+using Microsoft.Extensions.Logging;
+
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -756,6 +758,78 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			}
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A second session over an app a first session has already inspected and let go of.
+	/// </summary>
+	/// <remarks>
+	/// The scenario an agent meets whenever it comes back to an app it looked at earlier, and nothing
+	/// covered it. The provider cannot be unloaded, so the second attach meets a target that already
+	/// has one loaded, with the first session's channel torn down under it.
+	/// <para>
+	/// What this does <em>not</em> prove is that the provider's pipe reader can be restarted, which is
+	/// the repair the C++ side of this change makes. Each host shadow-copies its own provider, so the
+	/// second session loads a separate module with its own globals and never reaches the path where a
+	/// reader has already stopped; the test passes with that repair and without it, which was
+	/// established by reverting it and running this again rather than assumed. Reaching it would mean
+	/// dropping the pipe under a live session, and the pipe belongs to the host process.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Reads_the_xaml_tree_again_after_the_first_session_closed_the_pipe()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+
+		try
+		{
+			await Task.Delay(TimeSpan.FromSeconds(6), cancellationToken);
+
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "winui probe (attached twice)",
+			};
+
+			// Each manager owns its own pipe, so disposing the first is what takes the channel away
+			// under a provider that goes on running.
+			var firstLogs = new RecordingLoggerFactory();
+
+			await using (var first = CreateManager(firstLogs))
+			{
+				var session = await first.StartAsync(target, cancellationToken);
+				var tree = await session.ReadXamlTreeAsync(cancellationToken);
+
+				Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+				Assert.Contains(tree.Nodes, node => node.Name == "RootGrid");
+				Assert.Contains(firstLogs.Lines, line => line.Contains("provider connected on", StringComparison.Ordinal));
+				Assert.True(await first.CloseAsync(session.SessionId, cancellationToken));
+			}
+
+			var secondLogs = new RecordingLoggerFactory();
+
+			await using var second = CreateManager(secondLogs);
+
+			var again = await second.StartAsync(target, cancellationToken);
+			var reread = await again.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.True(reread.Detail is null, $"expected a tree on the second session, got detail: {reread.Detail}");
+			Assert.Contains(reread.Nodes, node => node.Name == "RootGrid");
+
+			// The provider connects for the second session as well, rather than the session falling
+			// back to the work folder without saying so.
+			Assert.Contains(secondLogs.Lines, line => line.Contains("provider connected on", StringComparison.Ordinal));
+
+			Assert.True(await second.CloseAsync(again.SessionId, cancellationToken));
 		}
 		finally
 		{
@@ -2563,8 +2637,60 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		_ => TargetArchitecture.Unknown,
 	};
 
-	private static LiveAppSessionManager CreateManager() => new(
+	private static LiveAppSessionManager CreateManager(ILoggerFactory? logs = null) => new(
 		Options.Create(new BrokerOptions()),
-		NullLoggerFactory.Instance,
+		logs ?? NullLoggerFactory.Instance,
 		NullLogger<LiveAppSessionManager>.Instance);
+
+	/// <summary>
+	/// A logger factory that keeps every message, for the assertions that can only be made about which
+	/// path the work took rather than about the answer it produced.
+	/// <para>
+	/// The XAML channel is the case in point: the pipe and the work folder return the same tree, so a
+	/// test that asserts the tree passes whichever served it. What separates them is a sentence in the
+	/// log.
+	/// </para>
+	/// </summary>
+	private sealed class RecordingLoggerFactory : ILoggerFactory
+	{
+		private readonly List<string> _lines = [];
+
+		public IReadOnlyList<string> Lines
+		{
+			get
+			{
+				lock (_lines) return [.. _lines];
+			}
+		}
+
+		public void AddProvider(ILoggerProvider provider)
+		{
+		}
+
+		public ILogger CreateLogger(string categoryName) => new Recorder(_lines);
+
+		public void Dispose()
+		{
+		}
+
+		private sealed class Recorder(List<string> lines) : ILogger
+		{
+			public IDisposable? BeginScope<TState>(TState state)
+				where TState : notnull => null;
+
+			public bool IsEnabled(LogLevel logLevel) => true;
+
+			public void Log<TState>(
+				LogLevel logLevel,
+				EventId eventId,
+				TState state,
+				Exception? exception,
+				Func<TState, Exception?, string> formatter)
+			{
+				var line = formatter(state, exception);
+
+				lock (lines) lines.Add(line);
+			}
+		}
+	}
 }

@@ -609,6 +609,43 @@ public sealed class MemberEditTests
 			StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// A hand-wrapped call inside a replaced body keeps its continuation level, whatever indentation
+	/// the caller wrote it at.
+	/// <para>
+	/// The mirror image of the signature trap above, and the more expensive one, because the body is
+	/// what this tool exists to change. A continuation line is not a statement, so Roslyn's formatter
+	/// has no rule that puts one back, and neither IDE0055 nor dotnet format has an opinion about a
+	/// wrapped argument list -- so the code comes out a level short of its neighbours and every build
+	/// passes. The three spellings are one request: the caller's own baseline cannot decide where the
+	/// code lands.
+	/// </para>
+	/// </summary>
+	[Theory]
+	[InlineData(0)]
+	[InlineData(1)]
+	[InlineData(2)]
+	public async Task Keeps_a_wrapped_call_in_a_body_a_level_in(int written)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var baseline = new string('\t', written);
+
+		var code = $"{baseline}return string.Concat(\n{baseline}\tfirst,\n{baseline}\tsecond,\n{baseline}\tthird);";
+
+		var result = await EditAsync(session, Request(MemberEditKind.ReplaceBody, "Library.Wrapped.Join", code));
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		Assert.Contains(
+			"\t{\r\n\t\treturn string.Concat(\r\n\t\t\tfirst,\r\n\t\t\tsecond,\r\n\t\t\tthird);\r\n\t}",
+			text,
+			StringComparison.Ordinal);
+	}
+
 	private static Task<MemberEditResult> ReplaceAsync(WorkspaceSession session, string symbol, string code) =>
 		EditAsync(session, Request(MemberEditKind.Replace, symbol, code));
 

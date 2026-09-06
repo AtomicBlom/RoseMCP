@@ -302,13 +302,21 @@ public static class MemberEditService
 		var head = indent + text.ToString(TextSpan.FromBounds(declaration.SpanStart, bodyStart)).TrimEnd();
 		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, notices);
 
+		// The head is named as copied, which exempts it from the re-indentation the body needs. The
+		// two halves arrive in different coordinate systems -- the signature indented for the file it
+		// came out of, the body at whatever baseline the caller happened to write it at -- and one
+		// baseline read off both takes a level from the lines the caller wrapped by hand and none
+		// from the statements they belong to, landing a wrapped call flat against its own statement.
+		// It is the same trap as the line above, arriving from the other side, and nothing catches
+		// it: a continuation line is not a statement, so the formatter has no rule that puts it back.
 		var parsed = MemberSyntax.Parse(
 			$"{head} {Body(written)}",
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
 			indent,
 			Whitespace.Dominant(text),
-			count => notices.Add(RewrittenEndings(count, text)));
+			count => notices.Add(RewrittenEndings(count, text)),
+			copied: head);
 
 		if (parsed.Count != 1)
 		{
@@ -988,7 +996,8 @@ public static class MemberEditService
 	/// </summary>
 	private static string RewrittenEndings(int count, SourceText text) =>
 		$"Rewrote {count} line ending(s) in the code supplied to {LineEndings.Name(Whitespace.Dominant(text))}, "
-			+ "the ending this file uses. A tool argument arrives as a JSON string and cannot carry a "
-			+ "carriage return, so an LF in it says nothing about what was wanted -- but inside a string "
-			+ "literal it is part of the value, which is why this is said rather than left silent.";
+			+ "the ending this file uses. Every ending in it was a bare LF, which is what composing C# for "
+			+ "a tool argument produces without anyone deciding to -- but inside a string literal an "
+			+ "ending is part of the value, which is why this is said rather than left silent. Write one "
+			+ "CR LF anywhere in the code to keep every ending exactly as it arrived.";
 }

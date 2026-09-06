@@ -229,7 +229,14 @@ reclaim memory or pick up a rebuilt generator.
   out of the file, and the span it is copied from begins *after* the indentation of its first line,
   so a wrapped parameter list read that way looks written at column zero and every continuation
   came out a level deep. Nothing downstream corrects it and nothing complains, so the signature
-  drifted on a change that promised to touch only the body.
+  drifted on a change that promised to touch only the body. That composition also puts two
+  coordinate systems in one string, and one baseline cannot be read off both: the signature is
+  indented for the file it came out of, while the body carries whatever the caller wrote it at.
+  Taking the signature's indentation off the body strips a level from every line the caller wrapped
+  by hand and nothing from the statements those lines belong to, so a wrapped call lands flat
+  against its own statement -- again silently, since a continuation line is not a statement and the
+  formatter has no rule that puts it back. The copied half is therefore named as copied and exempted
+  from the pass, and what the caller wrote is what sets the baseline.
 - **The line endings inside a string literal are content, and this was measured.** A raw literal
   written with CRLF and the same one written with LF are different strings -- the compiler says so,
   which is worth knowing because it is tempting to assume raw literals normalise and they do not. So

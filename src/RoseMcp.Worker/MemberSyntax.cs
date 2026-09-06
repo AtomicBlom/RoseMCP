@@ -52,6 +52,13 @@ public static class MemberSyntax
 	/// How many endings were changed, so a caller can say so. It is a change to what a literal says,
 	/// and it must not be silent.
 	/// </param>
+	/// <param name="copied">
+	/// The leading part of <paramref name="code"/> that came out of the file rather than from the
+	/// caller -- the signature, where only a body is being replaced. It is already indented for
+	/// where it sits and already carries the file's endings, so it is left alone and the caller's
+	/// baseline is read from what follows it. Without that, the signature's indentation is taken as
+	/// the body's and a hand-wrapped call inside the body comes out flat against its own statement.
+	/// </param>
 	/// <exception cref="ArgumentException">
 	/// The code does not parse, declares no member, or would put something outside the container.
 	/// </exception>
@@ -61,7 +68,8 @@ public static class MemberSyntax
 		ParseOptions? options,
 		string indent = "",
 		string lineEnding = "",
-		Action<int>? rewritten = null)
+		Action<int>? rewritten = null,
+		string copied = "")
 	{
 		if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("No code was supplied, so there is nothing to write.");
 
@@ -72,7 +80,7 @@ public static class MemberSyntax
 		// understood: which lines sit inside a multi-line literal decides which of them have to be
 		// left exactly as they arrived. The second parse is of text, in microseconds, against an edit
 		// that is about to compile a project.
-		var shifted = Shift(code, indent, Literals(members), lineEnding, rewritten);
+		var shifted = Shift(code, indent, Literals(members), lineEnding, rewritten, Copied(code, copied));
 
 		return string.Equals(shifted, code, StringComparison.Ordinal)
 			? members
@@ -201,6 +209,17 @@ public static class MemberSyntax
 	/// the baseline first makes the two the same request.
 	/// </para>
 	/// <para>
+	/// The first <paramref name="copied"/> lines are exempt from all of it, and that exemption is
+	/// what makes replacing a body safe. A body replacement composes a signature copied out of the
+	/// file with a body the caller wrote, and the two arrive in different coordinate systems: the
+	/// signature is already indented for where it sits, while the body carries whatever baseline the
+	/// caller happened to write it at. One baseline taken off both strips a level from every line
+	/// the caller wrapped by hand and nothing from the lines they did not, which lands a wrapped
+	/// call flat against its own statement. Nothing downstream notices: a continuation line is not a
+	/// statement, so the formatter has no rule that puts it back, and no analyzer has an opinion
+	/// about where a wrapped argument list sits.
+	/// </para>
+	/// <para>
 	/// A verbatim literal's interior is never moved: its whitespace is its value, and there is no
 	/// delimiter rule to take it back out again. A raw literal's is moved with everything else,
 	/// because its value is what remains once the closing delimiter's indentation has been stripped
@@ -209,12 +228,14 @@ public static class MemberSyntax
 	/// </para>
 	/// <para>
 	/// Endings are rewritten to <paramref name="lineEnding"/>, literals included, but only when
-	/// every ending in the code is a bare LF. That is a change to what a string says, so what
-	/// licenses it is the caller having said nothing about endings at all: an agent composing C# for
-	/// a tool argument writes LF without deciding to, and the file that produces fails a formatting
-	/// check in a CRLF repository while no build reports anything. A single CR LF anywhere in the
-	/// code says the caller is thinking about endings, and then every one of them is left exactly as
-	/// it arrived -- which is also how to ask for a bare LF inside a literal deliberately.
+	/// every ending the caller wrote is a bare LF -- the copied lines are not asked, since their
+	/// endings came out of the file and would answer on behalf of a caller who said nothing. That is
+	/// a change to what a string says, so what licenses it is the caller having said nothing about
+	/// endings at all: an agent composing C# for a tool argument writes LF without deciding to, and
+	/// the file that produces fails a formatting check in a CRLF repository while no build reports
+	/// anything. A single CR LF anywhere in the code says the caller is thinking about endings, and
+	/// then every one of them is left exactly as it arrived -- which is also how to ask for a bare
+	/// LF inside a literal deliberately.
 	/// </para>
 	/// </summary>
 	private static string Shift(
@@ -222,16 +243,22 @@ public static class MemberSyntax
 		string indent,
 		Literal literals,
 		string lineEnding,
-		Action<int>? rewritten)
+		Action<int>? rewritten,
+		int copied)
 	{
 		var lines = Split(code);
-		var baseline = Baseline([.. lines.Select(line => line.Content)]);
+		var written = lines.Skip(copied).ToArray();
+		var baseline = Baseline([.. written.Select(line => line.Content)]);
 		var changed = 0;
 
-		var wanted = lines.All(line => line.Ending is "" or "\n") ? lineEnding : string.Empty;
+		var wanted = written.All(line => line.Ending is "" or "\n") ? lineEnding : string.Empty;
 
 		var shifted = lines.Select((line, index) =>
 		{
+			// A copied line is already where it belongs and carries the file's own ending, so both
+			// halves of this pass would only move it away from its neighbours.
+			if (index < copied) return line.Content + line.Ending;
+
 			var ending = Ending(line.Ending, wanted, ref changed);
 
 			if (literals.Verbatim.Contains(index)) return line.Content + ending;
@@ -281,6 +308,26 @@ public static class MemberSyntax
 		}
 
 		return string.Empty;
+	}
+
+	/// <summary>
+	/// How many lines at the top of the code came out of the file rather than from the caller.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">
+	/// The code does not begin with what was said to have been copied out of the file, so the count
+	/// would exempt the wrong lines and move ones the file had already placed.
+	/// </exception>
+	private static int Copied(string code, string copied)
+	{
+		if (copied.Length == 0) return 0;
+
+		if (!code.StartsWith(copied, StringComparison.Ordinal))
+		{
+			throw new InvalidOperationException(
+				"The code does not begin with the part said to have been copied out of the file.");
+		}
+
+		return Split(copied).Count;
 	}
 
 	/// <summary>

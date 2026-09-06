@@ -304,8 +304,15 @@ public static class MemberEditService
 		// from the statements they belong to, landing a wrapped call flat against its own statement.
 		// It is the same trap as the line above, arriving from the other side, and nothing catches
 		// it: a continuation line is not a statement, so the formatter has no rule that puts it back.
+		// An initialiser goes back as an expression and a semicolon; a body is wrapped in braces or
+		// left behind its arrow. Sharing the rebuild is what keeps the copied-signature promise on
+		// both: what comes out in front of the "=" is the text that was in front of it.
+		var rebuilt = IsInitialiser(declaration)
+			? $"{head} {written.Trim()};"
+			: $"{head} {Body(written)}";
+
 		var parsed = MemberSyntax.Parse(
-			$"{head} {Body(written)}",
+			rebuilt,
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
 			indent,
@@ -378,7 +385,7 @@ public static class MemberEditService
 		{
 			var body = text.ToString(TextSpan.FromBounds(bodyStart, declaration.Span.End)).TrimEnd(';', ' ', '\t');
 
-			return BodyEdit.Anchored(body, find, request.Replace ?? string.Empty);
+			return BodyEdit.Anchored(body, find, request.Replace ?? string.Empty, request.IncludeTrivia);
 		}
 
 		if (request.Position is not { } position) return request.Code;
@@ -445,7 +452,7 @@ public static class MemberEditService
 
 		for (var position = 0; position < parsed.Count; position++)
 		{
-			prepared.Add(Prepared(
+			prepared.Add(MemberSyntax.Prepared(
 				parsed[position],
 				blankBefore: position > 0 || index > 0,
 				blankAfter: position == parsed.Count - 1 && !followerIsSeparated,
@@ -619,7 +626,7 @@ public static class MemberEditService
 		// Read before the attributes are carried over, because a declaration that has attributes keeps
 		// its documentation comment above the first of them: the member's leading trivia is whichever
 		// token comes first, and that changes under this call.
-		var supplied = WithoutLeadingBlanks(replacement.GetLeadingTrivia());
+		var supplied = MemberSyntax.WithoutLeadingBlanks(replacement.GetLeadingTrivia());
 		var existingTrivia = existing.GetLeadingTrivia();
 
 		replacement = WithCarriedAttributes(replacement, existing, notices);
@@ -674,50 +681,6 @@ public static class MemberEditService
 				.WithTrailingTrivia(SyntaxFactory.ElasticMarker)));
 
 		return replacement.WithLeadingTrivia().WithAttributeLists(carried);
-	}
-
-	/// <summary>
-	/// A member as it will read in the file: indented for where it is going, separated from its
-	/// neighbours by a blank line, ending its own line, and marked so the formatter and the
-	/// whitespace pass know which lines are new.
-	/// <para>
-	/// The indentation goes on as leading trivia rather than being left to the formatter, and that is
-	/// what makes this path behave like the replace path. Given a member whose first line is already
-	/// indented, the formatter leaves the lines it has no rule about -- a wrapped parameter list --
-	/// exactly where they are, which is where the shift put them. Given one with no leading
-	/// whitespace it recomputes the indentation itself, and then the shift and the formatter both
-	/// apply, and every wrapped line lands a level too deep. Measured: writing this very method
-	/// through the tool put its attribute arguments at three tabs.
-	/// </para>
-	/// <para>
-	/// The blank line is added here rather than left to the formatter, which reindents and moves
-	/// braces but never inserts one between members -- so a member appended without it lands flush
-	/// against the one above.
-	/// </para>
-	/// </summary>
-	private static MemberDeclarationSyntax Prepared(
-		MemberDeclarationSyntax member,
-		bool blankBefore,
-		bool blankAfter,
-		string lineEnding,
-		string indent,
-		SyntaxAnnotation marker)
-	{
-		var newLine = SyntaxFactory.EndOfLine(lineEnding);
-
-		IEnumerable<SyntaxTrivia> leading = WithoutLeadingBlanks(member.GetLeadingTrivia());
-
-		if (indent.Length > 0) leading = [SyntaxFactory.Whitespace(indent), .. leading];
-		if (blankBefore) leading = [newLine, .. leading];
-
-		var trailing = member.GetTrailingTrivia();
-		if (trailing.Count == 0 || !trailing.Last().IsKind(SyntaxKind.EndOfLineTrivia)) trailing = trailing.Add(newLine);
-		if (blankAfter) trailing = trailing.Add(newLine);
-
-		return member
-			.WithLeadingTrivia(leading)
-			.WithTrailingTrivia(trailing)
-			.WithAdditionalAnnotations(marker);
 	}
 
 	/// <summary>
@@ -849,22 +812,49 @@ public static class MemberEditService
 	}
 
 	/// <summary>
-	/// Where the body starts, or nothing when the member has no single body to replace. A property
-	/// with accessors has one body each and an abstract method has none, and both are better said
-	/// than guessed at.
+	/// Where the part this tool replaces begins, or null for a declaration that has no such part.
+	/// <para>
+	/// An initialiser counts, and that is the whole of what makes a string constant reachable. Every
+	/// tool description in this repository is the body of one, and changing a sentence in one had no
+	/// tool at all: <c>rose_replace_member</c> re-emits the whole declaration, which for a fifty-line
+	/// description means retyping fifty lines to change one. Only a declaration with a single variable
+	/// qualifies, because <c>int a = 1, b = 2;</c> has two initialisers and naming either of them would
+	/// have to pick.
+	/// </para>
 	/// </summary>
 	private static int? BodyStart(MemberDeclarationSyntax declaration) => declaration switch
 	{
 		BaseMethodDeclarationSyntax method => ((SyntaxNode?)method.Body ?? method.ExpressionBody)?.SpanStart,
 		PropertyDeclarationSyntax { ExpressionBody: { } arrow } => arrow.SpanStart,
+		PropertyDeclarationSyntax { Initializer: { } initializer } => initializer.Value.SpanStart,
 		IndexerDeclarationSyntax { ExpressionBody: { } arrow } => arrow.SpanStart,
+		BaseFieldDeclarationSyntax field => Initialiser(field)?.SpanStart,
 		_ => null,
+	};
+
+	/// <summary>
+	/// The single initialised variable's value, or null where there is not exactly one to name.
+	/// </summary>
+	private static ExpressionSyntax? Initialiser(BaseFieldDeclarationSyntax field) =>
+		field.Declaration.Variables is [{ Initializer: { } initializer }] ? initializer.Value : null;
+
+	/// <summary>
+	/// True where what is being replaced is an initialiser rather than a body, so it goes back as an
+	/// expression and a semicolon instead of being wrapped in braces or behind an arrow.
+	/// </summary>
+	private static bool IsInitialiser(MemberDeclarationSyntax declaration) => declaration switch
+	{
+		PropertyDeclarationSyntax { ExpressionBody: null, Initializer: not null } => true,
+		BaseFieldDeclarationSyntax => true,
+		_ => false,
 	};
 
 	private static string WhyNoBody(MemberDeclarationSyntax declaration) => declaration switch
 	{
 		BasePropertyDeclarationSyntax { AccessorList: not null } => " -- it has accessors, and each one has a body of its own",
-		BaseFieldDeclarationSyntax => " -- a field has an initialiser rather than a body",
+		BaseFieldDeclarationSyntax { Declaration.Variables.Count: > 1 } =>
+			" -- it declares more than one variable, so naming it does not say which initialiser to write",
+		BaseFieldDeclarationSyntax => " -- it has no initialiser to replace",
 		BaseMethodDeclarationSyntax => " -- it is abstract, extern, or one half of a partial",
 		BaseTypeDeclarationSyntax => " -- it is a type",
 		_ => string.Empty,
@@ -944,10 +934,10 @@ public static class MemberEditService
 	{
 		foreach (var line in Whitespace.LiteralsDisagreeingWith(root, text, rules, span))
 		{
-			yield return $"The multi-line string at line {line} was written with line endings the file does not "
-				+ "use. They were left exactly as supplied, because the endings inside a literal are part of "
-				+ "the string -- but dotnet format will ask for them to change, and changing them changes the "
-				+ "value. Write it with the file's own endings.";
+			yield return $"This file now fails dotnet format, and no build will report it: the multi-line string "
+				+ $"at line {line} was written with line endings the file does not use. They were left exactly "
+				+ "as supplied, because the endings inside a literal are part of the string and rewriting them "
+				+ "changes the value. Write it with the file's own endings.";
 		}
 	}
 
@@ -957,12 +947,6 @@ public static class MemberEditService
 	/// </summary>
 	private static bool StartsBlank(MemberDeclarationSyntax member) =>
 		member.GetLeadingTrivia() is [var first, ..] && first.IsKind(SyntaxKind.EndOfLineTrivia);
-
-	private static IReadOnlyList<SyntaxTrivia> WithoutLeadingBlanks(SyntaxTriviaList trivia) =>
-		[
-			.. trivia.SkipWhile(candidate =>
-				candidate.Kind() is SyntaxKind.WhitespaceTrivia or SyntaxKind.EndOfLineTrivia),
-		];
 
 	/// <summary>
 	/// What a declaration is called, which for a field is every variable it declares. Used both to

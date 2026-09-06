@@ -135,6 +135,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
+		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
+		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<OutlineResult>(WorkspaceHints.From(workspace, filePath), ToolNames.Outline, new()
@@ -142,6 +144,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["includeInherited"] = includeInherited,
+			["includeDocumentation"] = includeDocumentation,
+			["includeSignatures"] = includeSignatures,
 		}, cancellationToken, progress);
 
 	[McpServerTool(
@@ -434,6 +438,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description(ToolDescriptions.BodyCodeArgument)] string? code = null,
 		[Description(ToolDescriptions.FindArgument)] string? find = null,
 		[Description(ToolDescriptions.ReplaceArgument)] string? replace = null,
+		[Description(ToolDescriptions.IncludeTriviaArgument)] bool includeTrivia = false,
 		[Description(ToolDescriptions.PositionArgument)] string? position = null,
 		[Description(ToolDescriptions.UsingsArgument)] string[]? usings = null,
 		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
@@ -449,6 +454,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["code"] = code,
 			["find"] = find,
 			["replace"] = replace,
+			["includeTrivia"] = includeTrivia,
 			["position"] = position,
 			["usings"] = usings,
 			["filePath"] = filePath,
@@ -711,6 +717,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description(ToolDescriptions.DeclarationArgument)] string symbol,
 		[Description(ToolDescriptions.AttributeArgument)] string attribute,
 		[Description(ToolDescriptions.AttributeActionArgument)] string action = "set",
+		[Description(ToolDescriptions.AttributeParameterArgument)] string? parameter = null,
 		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
 		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
@@ -723,6 +730,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["symbol"] = symbol,
 			["attribute"] = attribute,
 			["action"] = action,
+			["parameter"] = parameter,
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,

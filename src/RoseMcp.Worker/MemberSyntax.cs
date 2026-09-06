@@ -101,8 +101,64 @@ public static class MemberSyntax
 	};
 
 	/// <summary>
+	/// A member as it will read in the file: indented for where it is going, optionally separated
+	/// from its neighbours by a blank line, ending its own line, and marked so the formatter and the
+	/// whitespace pass know which lines are new.
+	/// <para>
+	/// The indentation goes on as leading trivia rather than being left to the formatter, and every
+	/// path that inserts a member has to do it. Given a member whose first line is already indented,
+	/// the formatter leaves the lines it has no rule about -- a wrapped parameter list -- exactly
+	/// where they are, which is where the shift put them. Given one with no leading whitespace it
+	/// recomputes the indentation itself, and then the shift and the formatter both apply, and every
+	/// wrapped line lands a level too deep. Measured twice, on the two paths that insert: writing this
+	/// very method through the tool put its attribute arguments at three tabs, and moving a signature
+	/// wrapped two levels in landed it at four.
+	/// </para>
+	/// <para>
+	/// The blank line is added here rather than left to the formatter, which reindents and moves
+	/// braces but never inserts one between members -- so a member appended without it lands flush
+	/// against the one above.
+	/// </para>
+	/// </summary>
+	public static MemberDeclarationSyntax Prepared(
+		MemberDeclarationSyntax member,
+		bool blankBefore,
+		bool blankAfter,
+		string lineEnding,
+		string indent,
+		SyntaxAnnotation marker)
+	{
+		var newLine = SyntaxFactory.EndOfLine(lineEnding);
+
+		IEnumerable<SyntaxTrivia> leading = WithoutLeadingBlanks(member.GetLeadingTrivia());
+
+		if (indent.Length > 0) leading = [SyntaxFactory.Whitespace(indent), .. leading];
+		if (blankBefore) leading = [newLine, .. leading];
+
+		var trailing = member.GetTrailingTrivia();
+		if (trailing.Count == 0 || !trailing.Last().IsKind(SyntaxKind.EndOfLineTrivia)) trailing = trailing.Add(newLine);
+		if (blankAfter) trailing = trailing.Add(newLine);
+
+		return member
+			.WithLeadingTrivia(leading)
+			.WithTrailingTrivia(trailing)
+			.WithAdditionalAnnotations(marker);
+	}
+
+	/// <summary>
+	/// The trivia with the blank lines and indentation at the front of it dropped, so what is left
+	/// begins at the first thing the member actually says.
+	/// </summary>
+	public static IReadOnlyList<SyntaxTrivia> WithoutLeadingBlanks(SyntaxTriviaList trivia) =>
+		[
+			.. trivia.SkipWhile(candidate =>
+				candidate.Kind() is SyntaxKind.WhitespaceTrivia or SyntaxKind.EndOfLineTrivia),
+		];
+
+	/// <summary>
 	/// The parameters <paramref name="text"/> declares, taken as what goes between the parentheses,
-	/// with any lines it wraps onto indented for a declaration sitting at <paramref name="indent"/>.
+	/// with any lines it wraps onto indented one level in from a declaration sitting at
+	/// <paramref name="indent"/>.
 	/// <para>
 	/// Source text rather than a structured list, because it is what someone writing C# already
 	/// knows how to write, and it carries for free everything a structured shape would have to
@@ -111,18 +167,34 @@ public static class MemberSyntax
 	/// nothing is written.
 	/// </para>
 	/// <para>
-	/// The indentation is added rather than replaced, unlike a member's, because every line of a
-	/// parameter list is a continuation: there is no first line at column zero to take a baseline
-	/// from, so what the caller writes is read as relative to the declaration and the declaration's
-	/// own indentation goes in front of it.
+	/// A wrapped line sits one level in from the declaration rather than level with it, because a
+	/// continuation is not a sibling of the signature. The declaration's own indentation alone lands
+	/// the list flush under the member it belongs to, and nothing downstream moves it: a continuation
+	/// line is not a statement, so Roslyn's formatter has no rule about where it sits, and neither
+	/// IDE0055 nor <c>dotnet format</c> has an opinion either.
+	/// </para>
+	/// <para>
+	/// The baseline the caller wrote comes off before that goes on, which is the rule a whole member
+	/// goes through. A list written flat, one indented relative to itself, and one already indented
+	/// for the destination are one request, and only removing the baseline first makes them so.
 	/// </para>
 	/// </summary>
+	/// <param name="text">The parameters as the caller wrote them.</param>
+	/// <param name="options">The destination project's parse options.</param>
+	/// <param name="indent">The indentation of the declaration the list belongs to.</param>
+	/// <param name="indentUnit">
+	/// One level of indentation in the destination file, added to <paramref name="indent"/> to place
+	/// every wrapped line. Empty leaves the list exactly as it arrived.
+	/// </param>
 	public static SeparatedSyntaxList<ParameterSyntax> ParseParameters(
 		string text,
 		ParseOptions? options,
-		string indent = "")
+		string indent = "",
+		string indentUnit = "")
 	{
-		var list = SyntaxFactory.ParseParameterList($"({ShiftContinuations(text, indent)})", options: options);
+		var list = SyntaxFactory.ParseParameterList(
+			$"({ShiftContinuations(text, indentUnit.Length == 0 ? string.Empty : indent + indentUnit)})",
+			options: options);
 
 		var errors = list.GetDiagnostics()
 			.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
@@ -411,18 +483,39 @@ public static class MemberSyntax
 	}
 
 	/// <summary>
-	/// Every line but the first with <paramref name="indent"/> in front of it. Blank lines are left
-	/// blank, since padding one only makes trailing whitespace for the next pass to strip.
+	/// Every line but the first re-indented to <paramref name="continuation"/>: the baseline the
+	/// caller wrote the wrapped lines at taken off, that put on.
+	/// <para>
+	/// The baseline is read from the first wrapped line rather than from the first line of all,
+	/// because a parameter list opens after the parenthesis and its first line carries no
+	/// indentation of its own to measure. Reading it there is what makes a list written flat, one
+	/// indented relative to itself, and one already indented for the destination the same request,
+	/// rather than three answers a level apart with nothing downstream to say which was meant.
+	/// </para>
+	/// <para>
+	/// Blank lines are left blank, since padding one only makes trailing whitespace for the next
+	/// pass to strip again.
+	/// </para>
 	/// </summary>
-	private static string ShiftContinuations(string text, string indent)
+	private static string ShiftContinuations(string text, string continuation)
 	{
-		if (indent.Length == 0) return text;
+		if (continuation.Length == 0) return text;
 
 		var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+		var baseline = Baseline(lines.Skip(1).ToArray());
 
 		return string.Join(
 			"\n",
-			lines.Select((line, index) => index == 0 || line.Trim().Length == 0 ? line : indent + line));
+			lines.Select((line, index) =>
+			{
+				if (index == 0 || line.Trim().Length == 0) return line;
+
+				var stripped = baseline.Length > 0 && line.StartsWith(baseline, StringComparison.Ordinal)
+					? line[baseline.Length..]
+					: line;
+
+				return continuation + stripped;
+			}));
 	}
 
 	/// <summary>

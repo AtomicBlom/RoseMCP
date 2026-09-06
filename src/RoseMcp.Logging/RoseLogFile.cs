@@ -27,13 +27,27 @@ public static partial class RoseLogFile
 
 	/// <summary>
 	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{component}. Nested under its own "Logs" folder,
-	/// separate from the install root that now shares the same vendor/product parent, so a deploy
+	/// separate from the install root that shares the same vendor/product parent, so a deploy
 	/// publishing over the install never touches a session's log files. The root is a parameter so
 	/// a test can point it somewhere disposable rather than at the machine's real profile.
+	/// <para>
+	/// An empty answer from the environment is turned into a real path rather than passed on.
+	/// <see cref="Environment.GetFolderPath(Environment.SpecialFolder)"/> returns an empty string
+	/// where the account running the process has no profile loaded, and
+	/// <see cref="Path.Combine(string, string)"/> then yields a *relative* path -- so the logs are
+	/// written under whatever directory the client happened to start the process in, and an install
+	/// appears to have no Logs folder at all rather than reporting anything (#111). Falling back to
+	/// the temp directory keeps them somewhere findable and keeps the shape identical.
+	/// </para>
 	/// </summary>
 	public static string DirectoryFor(string component, string? localAppData = null)
 	{
-		var root = localAppData ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+		var configured = localAppData is { Length: > 0 }
+			? localAppData
+			: Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+		var root = configured.Length > 0 ? configured : Path.GetTempPath();
+
 		return Path.Combine(root, "BinaryVibrance", "RoseMCP", "Logs", component);
 	}
 

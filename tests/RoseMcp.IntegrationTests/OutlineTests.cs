@@ -15,7 +15,13 @@ public sealed class OutlineTests
 		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
-			snapshot, "Library.Greeter", filePath: null, includeInherited: false, TestContext.Current.CancellationToken);
+			snapshot,
+			"Library.Greeter",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: true,
+			includeSignatures: true,
+			TestContext.Current.CancellationToken);
 
 		var type = Assert.Single(result.Types);
 
@@ -36,6 +42,71 @@ public sealed class OutlineTests
 	}
 
 	/// <summary>
+	/// The names alone, for the case the outline is worst at: a large type, where the signatures and
+	/// the documentation are most of the answer and neither is what the caller is looking for. Two
+	/// switches rather than one, because a caller who wants to know what a member is for and one who
+	/// wants to know what it takes are asking different questions.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_out_the_documentation_and_signatures_when_asked_to()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Greeter",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current.CancellationToken);
+
+		var type = Assert.Single(result.Types);
+
+		// What is left is what a search through a large type needs: the names, and where they are.
+		Assert.Null(type.Summary);
+		Assert.All(type.Members, member => Assert.Null(member.Signature));
+		Assert.All(type.Members, member => Assert.Null(member.Summary));
+		Assert.Contains(type.Members, member => member.Name == "Greet");
+		Assert.All(type.Members, member => Assert.NotEmpty(member.Kind));
+		Assert.Contains(type.Members, member => member.Location is not null);
+	}
+
+	/// <summary>
+	/// The two switches are independent, so asking for one does not silently bring the other. Both
+	/// default to on, which is what every existing caller gets.
+	/// </summary>
+	[Theory]
+	[InlineData(true, false)]
+	[InlineData(false, true)]
+	public async Task Answers_each_detail_switch_on_its_own(bool documentation, bool signatures)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Greeter",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: documentation,
+			includeSignatures: signatures,
+			TestContext.Current.CancellationToken);
+
+		// PrefixLength rather than Greet: it is declared once, so the name identifies it whether or not
+		// the signature that would otherwise tell the overloads apart is in the answer.
+		var member = Assert.Single(
+			Assert.Single(result.Types).Members,
+			candidate => candidate.Name == "PrefixLength");
+
+		Assert.Equal(signatures, member.Signature is not null);
+		Assert.Equal(documentation, member.Summary is not null);
+	}
+
+	/// <summary>
 	/// An interface outline is what implementing it needs: the members are abstract and the
 	/// signatures are complete.
 	/// </summary>
@@ -47,7 +118,13 @@ public sealed class OutlineTests
 		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
-			snapshot, "Library.IShape", filePath: null, includeInherited: false, TestContext.Current.CancellationToken);
+			snapshot,
+			"Library.IShape",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: true,
+			includeSignatures: true,
+			TestContext.Current.CancellationToken);
 
 		var type = Assert.Single(result.Types);
 
@@ -75,6 +152,8 @@ public sealed class OutlineTests
 			type: null,
 			fixture.Path("Members", "Library", "Kinds.cs"),
 			includeInherited: false,
+			includeDocumentation: true,
+			includeSignatures: true,
 			TestContext.Current.CancellationToken);
 
 		Assert.Equal(["Library.IShape", "Library.Colour", "Library.Empty"], result.Types.Select(type => type.Name));
@@ -95,7 +174,13 @@ public sealed class OutlineTests
 
 		await Assert.ThrowsAsync<ArgumentException>(
 			() => OutlineService.OutlineAsync(
-				snapshot, type, path, includeInherited: false, TestContext.Current.CancellationToken));
+				snapshot,
+				type,
+				path,
+				includeInherited: false,
+				includeDocumentation: true,
+				includeSignatures: true,
+				TestContext.Current.CancellationToken));
 	}
 
 	/// <summary>

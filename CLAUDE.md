@@ -674,12 +674,12 @@ Deploy over the running instance, or build release zips:
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
 Tests are split by what they cost. `RoseMcp.UnitTests` runs no MSBuild and starts no child process:
-305 tests in about a second, so it is worth running on every change. It does touch disk, in the
-handful of tests that write a temp file to prove a path is read the way the code says.
-`RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time builds
-and starts real workers -- 308 tests, of which the 270 needing only the .NET SDK run in about two
-minutes while the 38 in `LiveAppSessionTests` take considerably longer. `RoseMcp.TestSupport` holds
-the doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
+373 tests in under two seconds, so it is worth running on every change. It does touch disk, in the
+handful of tests that write a temp file or stage a directory layout to prove a path is read the way
+the code says. `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real
+design-time builds and starts real workers -- 355 tests in about four and a half minutes, of which
+the 44 in `LiveAppSessionTests` are most of the wall clock. `RoseMcp.TestSupport` holds the doubles
+both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 
 The live-app tests are the expensive part, and they are phased by what each one can share (D33, D35).

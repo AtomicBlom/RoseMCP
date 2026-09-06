@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
+using Microsoft.Extensions.Logging;
+
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -341,7 +343,20 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			// The two things that make a filter usable rather than a trap: it says how much it passed
 			// over, and its cursor has moved past that -- so paging with it does not re-read forever.
 			Assert.True(hitsOnly.Skipped > 0, "the filter should report the events it passed over");
-			Assert.Equal(unfiltered.NextCursor, hitsOnly.NextCursor);
+
+			// Asserted about content rather than by comparing the two cursors (#124). The target goes on
+			// emitting between the two reads, so the numbers legitimately differ and the comparison raced
+			// about one run in three -- while saying nothing about the property that matters, which is
+			// that paging with the filtered cursor moves forward instead of re-reading.
+			var lastRead = hitsOnly.Events[^1].Sequence;
+
+			Assert.True(
+				hitsOnly.NextCursor > lastRead,
+				$"the filtered cursor ({hitsOnly.NextCursor}) should be past the last event it returned ({lastRead})");
+
+			var nextPage = await session.ReadEventsAsync(hitsOnly.NextCursor, ["BreakpointHit"], limit: 500, cancellationToken);
+
+			Assert.DoesNotContain(nextPage.Events, entry => entry.Sequence <= lastRead);
 
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.
 			var nonsense = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -461,6 +476,75 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
 				cancellationToken);
+			Assert.NotNull(marker);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited);
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// The same shim on x86, which shipped a host and nothing that used one.
+	/// </summary>
+	/// <remarks>
+	/// An install carries an x86 host on every machine, ARM64 and x64 alike, and until this nothing
+	/// built an x86 target or attached to one -- so the claim that an x86 target debugs rested on the
+	/// host merely being published. x86 is not a legacy case here either: it is the default platform
+	/// of the modern UWP project template, so it is what an ordinary new app is built as.
+	/// <para>
+	/// A plain console target rather than the UWP probe, deliberately. What is unproven is ICorDebug
+	/// through an x86 host, and a packaged app adds registration, activation and an AppContainer to a
+	/// question that is about none of them.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Attaches_to_an_x86_target()
+	{
+		EnsureX86HostBuilt();
+		var x86Target = EnsureX86ProbeTargetBuilt();
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProcess(x86Target);
+
+		try
+		{
+			await Task.Delay(1500, cancellationToken);
+
+			if (child.HasExited)
+			{
+				Assert.Skip($"The x86 probe target exited (code {child.ExitCode}); the x86 .NET runtime is not available here.");
+			}
+
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "x86 probe",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			var summary = session.Describe();
+
+			Assert.True(
+				summary.State == LiveAppSessionState.Ready,
+				$"expected Ready, got {summary.State}: {summary.Detail} (host arch {summary.Architecture}, host pid {summary.HostProcessId})");
+
+			Assert.Equal(TargetArchitecture.X86, summary.Architecture);
+
+			// Attaching is not the claim; debugging is. The target throws on a cycle, so a first-chance
+			// exception arriving through the x86 host is the whole of what was unproven.
+			var marker = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
+				cancellationToken);
+
 			Assert.NotNull(marker);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
@@ -733,8 +817,9 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 		try
 		{
-			// Long enough that the window and its tree are up before anything attaches.
-			await Task.Delay(TimeSpan.FromSeconds(6), cancellationToken);
+			// Waits for the window rather than for a fixed six seconds, so a probe that died at startup
+			// says so instead of being attached to (#129).
+			await WaitForProbeWindowAsync(child, cancellationToken);
 
 			var target = new LiveAppTarget
 			{
@@ -754,6 +839,172 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			{
 				Assert.Contains(tree.Nodes, node => node.Name == name);
 			}
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A second session over an app a first session has already inspected and let go of.
+	/// </summary>
+	/// <remarks>
+	/// The scenario an agent meets whenever it comes back to an app it looked at earlier, and nothing
+	/// covered it. The provider cannot be unloaded, so the second attach meets a target that already
+	/// has one loaded, with the first session's channel torn down under it.
+	/// <para>
+	/// What this does <em>not</em> prove is that the provider's pipe reader can be restarted, which is
+	/// the repair the C++ side of this change makes. Each host shadow-copies its own provider, so the
+	/// second session loads a separate module with its own globals and never reaches the path where a
+	/// reader has already stopped; the test passes with that repair and without it, which was
+	/// established by reverting it and running this again rather than assumed. Reaching it would mean
+	/// dropping the pipe under a live session, and the pipe belongs to the host process.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Reads_the_xaml_tree_again_after_the_first_session_closed_the_pipe()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+
+		try
+		{
+			await WaitForProbeWindowAsync(child, cancellationToken);
+
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "winui probe (attached twice)",
+			};
+
+			// Each manager owns its own pipe, so disposing the first is what takes the channel away
+			// under a provider that goes on running.
+			var firstLogs = new RecordingLoggerFactory();
+
+			await using (var first = CreateManager(firstLogs))
+			{
+				var session = await first.StartAsync(target, cancellationToken);
+				var tree = await session.ReadXamlTreeAsync(cancellationToken);
+
+				Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+				Assert.Contains(tree.Nodes, node => node.Name == "RootGrid");
+				Assert.Contains(firstLogs.Lines, line => line.Contains("provider connected on", StringComparison.Ordinal));
+				Assert.True(await first.CloseAsync(session.SessionId, cancellationToken));
+			}
+
+			var secondLogs = new RecordingLoggerFactory();
+
+			await using var second = CreateManager(secondLogs);
+
+			var again = await second.StartAsync(target, cancellationToken);
+			var reread = await again.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.True(reread.Detail is null, $"expected a tree on the second session, got detail: {reread.Detail}");
+			Assert.Contains(reread.Nodes, node => node.Name == "RootGrid");
+
+			// The provider connects for the second session as well, rather than the session falling
+			// back to the work folder without saying so.
+			Assert.Contains(secondLogs.Lines, line => line.Contains("provider connected on", StringComparison.Ordinal));
+
+			Assert.True(await second.CloseAsync(again.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// Reading and editing properties on WinUI 3 (#115), which nothing covered.
+	/// </summary>
+	/// <remarks>
+	/// The WinUI tests asserted the tree and stopped there, so every property path was exercised on
+	/// UWP only -- and two places in the shared header spelled <c>Windows.UI.Xaml</c> as a literal.
+	/// A CornerRadius is the one that shows: XAML diagnostics renders the struct as an empty string
+	/// on both frameworks, and the rescue that reads it off the element compared the declared type
+	/// against the UWP name, so on WinUI 3 it never fired and the property read back empty. Empty is
+	/// indistinguishable from unset, which is why this went unnoticed: the answer looked like a
+	/// framework quirk rather than a wrong comparison.
+	/// <para>
+	/// The apply half is here for the same reason. It is the seam the toolbar that never drew lived
+	/// behind: everything inspectable said yes while the screen said no, because no WinUI provider
+	/// was ever exercised past the tree.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Reads_and_edits_properties_on_a_winui_app()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+		await using var manager = CreateManager();
+
+		try
+		{
+			await WaitForProbeWindowAsync(child, cancellationToken);
+
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "winui probe (properties)",
+				},
+				cancellationToken);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
+			var caption = tree.Nodes.FirstOrDefault(node => node.Name == "Caption");
+
+			Assert.NotNull(pane);
+			Assert.NotNull(caption);
+
+			var properties = await session.ReadXamlPropertiesAsync(pane!.Handle, includeDefaults: false, cancellationToken);
+
+			Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
+
+			// The markup sets CornerRadius="8" on Pane. The framework stringifies it as nothing, so a
+			// value here is the rescue firing -- and the rescue only fires if it recognises the type
+			// under its Microsoft.UI.Xaml name.
+			var cornerRadius = properties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
+
+			Assert.NotNull(cornerRadius);
+			Assert.False(
+				string.IsNullOrEmpty(cornerRadius!.Value),
+				"CornerRadius came back empty, which is the shared header comparing against the UWP type name.");
+
+			// A property the framework does stringify, to show the empty one above is not simply how
+			// this element reads.
+			var padding = properties.Properties.FirstOrDefault(property => property.Name == "Padding");
+
+			Assert.NotNull(padding);
+			Assert.False(string.IsNullOrEmpty(padding!.Value));
+
+			// And the apply half: a property edit lands and reads back.
+			var markup = Path.Combine(TestToolchain.RepositoryRoot(), "tests", "apps", "winui", "MainWindow.xaml");
+			var before = await File.ReadAllTextAsync(markup, cancellationToken);
+			var after = before.Replace("Text=\"Rose WinUI Probe\"", "Text=\"edited on winui\"", StringComparison.Ordinal);
+
+			Assert.NotEqual(before, after);
+
+			var edit = await session.ApplyXamlAsync(before, after, filePath: null, cancellationToken);
+
+			Assert.True(edit.Detail is null, $"expected the edit to apply, got detail: {edit.Detail}");
+			Assert.Equal(1, edit.Applied);
+			Assert.All(edit.Results, result => Assert.Equal("applied", result.Status));
+
+			var afterwards = await session.ReadXamlPropertiesAsync(caption!.Handle, includeDefaults: false, cancellationToken);
+			var text = afterwards.Properties.FirstOrDefault(property => property.Name == "Text");
+
+			Assert.NotNull(text);
+			Assert.Equal("edited on winui", text!.Value);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}
@@ -2456,6 +2707,44 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		return Process.Start(start) ?? throw new InvalidOperationException($"Could not start {path}.");
 	}
 
+	/// <summary>
+	/// Waits for a launched probe to have a window, and says exactly what happened when it does not.
+	/// </summary>
+	/// <remarks>
+	/// Replaces a bare six-second sleep, which was wrong in both directions. It waited six seconds on
+	/// a machine that was ready in one, and on a machine where the app died at startup it waited the
+	/// same six and then attached to nothing -- so a WinUI probe that failed to bootstrap the Windows
+	/// App Runtime under load presented as a test hanging or failing on an attach, with the actual
+	/// cause two layers down and no message anywhere (#129).
+	/// <para>
+	/// An app that exits is a fact about this machine rather than about the change under test, so it
+	/// skips with the exit code rather than failing. An app that is up but slow costs only the time it
+	/// actually needs.
+	/// </para>
+	/// </remarks>
+	private static async Task WaitForProbeWindowAsync(Process child, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+
+		while (DateTime.UtcNow < deadline)
+		{
+			if (child.HasExited)
+			{
+				Assert.Skip(
+					$"The probe app exited with code {child.ExitCode} before it could be attached to, which on WinUI "
+						+ "is usually the Windows App Runtime failing to bootstrap.");
+			}
+
+			child.Refresh();
+
+			if (child.MainWindowHandle != nint.Zero) return;
+
+			await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+		}
+
+		Assert.Skip("The probe app did not open a window within 30 seconds.");
+	}
+
 	private static string ProbeTargetPath()
 	{
 		var exe = Path.Combine(RepositoryRoot(), "tests", "DebugProbeTarget", "bin", Configuration(), "net10.0", "DebugProbeTarget.exe");
@@ -2563,8 +2852,60 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		_ => TargetArchitecture.Unknown,
 	};
 
-	private static LiveAppSessionManager CreateManager() => new(
+	private static LiveAppSessionManager CreateManager(ILoggerFactory? logs = null) => new(
 		Options.Create(new BrokerOptions()),
-		NullLoggerFactory.Instance,
+		logs ?? NullLoggerFactory.Instance,
 		NullLogger<LiveAppSessionManager>.Instance);
+
+	/// <summary>
+	/// A logger factory that keeps every message, for the assertions that can only be made about which
+	/// path the work took rather than about the answer it produced.
+	/// <para>
+	/// The XAML channel is the case in point: the pipe and the work folder return the same tree, so a
+	/// test that asserts the tree passes whichever served it. What separates them is a sentence in the
+	/// log.
+	/// </para>
+	/// </summary>
+	private sealed class RecordingLoggerFactory : ILoggerFactory
+	{
+		private readonly List<string> _lines = [];
+
+		public IReadOnlyList<string> Lines
+		{
+			get
+			{
+				lock (_lines) return [.. _lines];
+			}
+		}
+
+		public void AddProvider(ILoggerProvider provider)
+		{
+		}
+
+		public ILogger CreateLogger(string categoryName) => new Recorder(_lines);
+
+		public void Dispose()
+		{
+		}
+
+		private sealed class Recorder(List<string> lines) : ILogger
+		{
+			public IDisposable? BeginScope<TState>(TState state)
+				where TState : notnull => null;
+
+			public bool IsEnabled(LogLevel logLevel) => true;
+
+			public void Log<TState>(
+				LogLevel logLevel,
+				EventId eventId,
+				TState state,
+				Exception? exception,
+				Func<TState, Exception?, string> formatter)
+			{
+				var line = formatter(state, exception);
+
+				lock (lines) lines.Add(line);
+			}
+		}
+	}
 }

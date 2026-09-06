@@ -50,8 +50,12 @@ public sealed record OutlinedMember
 {
 	public required string Name { get; init; }
 
-	/// <summary>The full signature, so an implementer can be written from this alone.</summary>
-	public required string Signature { get; init; }
+	/// <summary>
+	/// The full signature, so an implementer can be written from this alone. Absent where the caller
+	/// asked for the outline without signatures, which is the one way to ask a large type what it
+	/// contains without paying for every parameter list in it.
+	/// </summary>
+	public string? Signature { get; init; }
 
 	public required string Kind { get; init; }
 

@@ -196,6 +196,29 @@ public sealed class FormatServiceTests
 	}
 
 	/// <summary>
+	/// The half a notice on its own does not fix. With nothing else to change, the result said every
+	/// file was already formatted in the same breath as saying <c>dotnet format</c> would reject one
+	/// of them, and a caller who reads the headline stops there -- which is the whole failure #35 is
+	/// about, restated by the tool that was supposed to have removed it.
+	/// </summary>
+	[Fact]
+	public async Task Does_not_call_a_file_formatted_when_dotnet_format_will_reject_it()
+	{
+		using var fixture = Prepare(out _);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Simple", "Core", "Literal.cs");
+		await File.WriteAllTextAsync(path, WithLfInsideALiteral, TestContext.Current.CancellationToken);
+
+		var result = await FormatAsync(session, [path]);
+		var notices = string.Join(" ", result.Notices);
+
+		Assert.Empty(result.ChangedFiles);
+		Assert.DoesNotContain("Every file was already formatted", notices, StringComparison.Ordinal);
+		Assert.Contains("dotnet format", notices, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// The other half: a literal written with the file's own endings must not be warned about, or
 	/// the notice fires on every file holding a multi-line string and stops being read.
 	/// </summary>

@@ -69,6 +69,12 @@ namespace xinput = winrt::Microsoft::UI::Xaml::Input;
 namespace xshapes = winrt::Microsoft::UI::Xaml::Shapes;
 namespace ximaging = winrt::Microsoft::UI::Xaml::Media::Imaging;
 
+// The same root as a string, for the two places that compare a CLR type name rather than a type.
+// The live tree reports names, not types, so a namespace alias cannot help there -- and a literal
+// spelled one framework's way reads back empty on the other, which looks like a framework quirk
+// rather than a wrong comparison.
+#define RoseTapXamlRoot L"Microsoft.UI.Xaml."
+
 // The WinUI-only half of getting a diagnostics layer that is actually drawn.
 //
 // IXamlDiagnostics::GetUiLayer() takes no argument, and its documentation says why that is a problem
@@ -268,7 +274,23 @@ static bool RoseTapRunOnUiThread(const std::function<void()>& work)
 
 	const bool enqueued = g_uiQueue.TryEnqueue([&work, done]()
 	{
-		work();
+		// The event is signalled whatever happens, because the caller is blocked on it with no
+		// timeout. Everything dispatched here makes XAML calls that can throw, and a throw that
+		// skipped the signal would leave the pipe reader waiting for the life of the process --
+		// which presents as the app having stopped answering rather than as a failed request.
+		try
+		{
+			work();
+		}
+		catch (const winrt::hresult_error& error)
+		{
+			Log(L"the work dispatched to the UI thread threw hresult " + std::to_wstring(error.code().value));
+		}
+		catch (...)
+		{
+			Log(L"the work dispatched to the UI thread threw");
+		}
+
 		SetEvent(done);
 	});
 

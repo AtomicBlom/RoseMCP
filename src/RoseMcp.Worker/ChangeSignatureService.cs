@@ -59,7 +59,11 @@ public static class ChangeSignatureService
 		var text = await target.Document.GetTextAsync(cancellationToken);
 		var indent = IndentAt(text, primary.SpanStart);
 
-		var wanted = MemberSyntax.ParseParameters(request.Parameters, target.Document.Project.ParseOptions, indent);
+		var wanted = MemberSyntax.ParseParameters(
+			request.Parameters,
+			target.Document.Project.ParseOptions,
+			indent,
+			Whitespace.RulesFor(target.Document.Project, primary.SyntaxTree, text).IndentUnit);
 		var plan = ParameterPlan.For(parameters.Parameters, wanted);
 
 		if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);

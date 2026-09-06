@@ -412,6 +412,66 @@ public sealed class BrokerTests
 	}
 
 	/// <summary>
+	/// A cancelled call is cancelled through the broker rather than only abandoned by the caller.
+	/// </summary>
+	/// <remarks>
+	/// Nothing referenced <see cref="CancellableToolCall"/> or cancelled a worker call, so the whole
+	/// mechanism was unprotected -- including the ordering it exists for, which is sending the
+	/// cancellation before abandoning the wait. <c>McpClient.CallToolAsync</c> honours a token by giving
+	/// up locally and never telling the far side, which is what that class was written to replace.
+	/// <para>
+	/// What this asserts is that the path runs and the outcome is recorded as cancelled, and that the
+	/// worker is usable straight afterwards rather than wedged. What it does <em>not</em> assert is the
+	/// timing the invariant is really about -- that the worker stops work sooner -- because that needs
+	/// an operation slow enough for the difference to exceed the noise, and the fixture solutions are
+	/// deliberately small. A timing assertion over them would pass either way.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Cancelling_a_call_cancels_it_at_the_broker_and_leaves_the_worker_usable()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		// Loaded first, so what gets cancelled below is the analysis rather than the load behind it.
+		await manager.CallAsync<WorkspaceStatusReport>(
+			WorkspaceHints.From(fixture.SolutionPath),
+			ToolNames.WorkspaceStatus,
+			new Dictionary<string, object?>(),
+			retryIfWorkerDied: true,
+			cancellationToken);
+
+		using var cancelling = new CancellationTokenSource();
+
+		var slow = manager.CallAsync<DiagnosticsResult>(
+			WorkspaceHints.From(fixture.SolutionPath),
+			ToolNames.Diagnostics,
+			new Dictionary<string, object?> { ["scope"] = "solution", ["includeAnalyzers"] = true },
+			retryIfWorkerDied: false,
+			cancelling.Token);
+
+		await cancelling.CancelAsync();
+
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => slow);
+
+		Assert.Contains(
+			manager.Activities.Recent(fixture.SolutionPath),
+			activity => activity.Operation == ToolNames.Diagnostics && activity.Outcome == ActivityOutcome.Cancelled);
+
+		// And the worker answers the next question, rather than the cancellation having taken it with it.
+		var afterwards = await manager.CallAsync<WorkspaceStatusReport>(
+			WorkspaceHints.From(fixture.SolutionPath),
+			ToolNames.WorkspaceStatus,
+			new Dictionary<string, object?>(),
+			retryIfWorkerDied: false,
+			cancellationToken);
+
+		Assert.Equal(WorkspaceState.Loaded, afterwards.State);
+	}
+
+	/// <summary>
 	/// The write tools, driven the way a client drives them: through the broker, by argument name,
 	/// into a real worker process.
 	/// <para>

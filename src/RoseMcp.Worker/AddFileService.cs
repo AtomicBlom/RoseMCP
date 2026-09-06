@@ -295,8 +295,13 @@ public static class AddFileService
 		IReadOnlyList<string> usings,
 		Project project)
 	{
+		// The caller's own text, never NormalizeWhitespace. That regenerates every piece of trivia in
+		// the file from scratch, which loses in one operation the blank lines between using groups,
+		// between members and inside a body, the wrapping of a chained call, and the spacing inside a
+		// documentation tag -- none of which any rule here has an opinion about. What the repository
+		// does enforce is applied afterwards by the formatter and the whitespace pass.
 		var body = unit.Members.OfType<BaseNamespaceDeclarationSyntax>().Any()
-			? unit.NormalizeWhitespace().ToFullString()
+			? unit.ToFullString()
 			: WithNamespace(unit, space);
 
 		var imports = usings
@@ -316,16 +321,26 @@ public static class AddFileService
 	/// <summary>
 	/// The declarations under a file-scoped namespace, which is what this repository's convention
 	/// and IDE0161 both ask for and what every modern SDK template writes.
+	/// <para>
+	/// Sliced out of the caller's own text rather than rebuilt from the parsed pieces. Re-joining
+	/// the usings with one newline and the members with two produces a file that reads plausibly and
+	/// has lost every blank line the caller put between using groups and inside a body -- structure
+	/// somebody wrote on purpose, and which nothing downstream can put back because nothing
+	/// downstream knows it was there. Only the join between the two halves is decided here, since
+	/// that is the part being introduced.
+	/// </para>
 	/// </summary>
 	private static string WithNamespace(CompilationUnitSyntax unit, string space)
 	{
-		var head = unit.Usings.Count == 0
-			? string.Empty
-			: string.Join("\n", unit.Usings.Select(directive => directive.ToString())) + "\n\n";
+		var text = unit.ToFullString();
+		var split = unit.Usings.Count == 0 ? 0 : unit.Usings[^1].FullSpan.End;
 
-		var members = string.Join("\n\n", unit.Members.Select(member => member.ToFullString().Trim()));
+		var head = text[..split].TrimEnd();
+		var body = text[split..].Trim();
 
-		return $"{head}namespace {space};\n\n{members}\n";
+		var imports = head.Length == 0 ? string.Empty : $"{head}\n\n";
+
+		return body.Length == 0 ? $"{imports}namespace {space};\n" : $"{imports}namespace {space};\n\n{body}\n";
 	}
 
 	/// <summary>The two formatting passes, over the whole file, since the whole file is new.</summary>

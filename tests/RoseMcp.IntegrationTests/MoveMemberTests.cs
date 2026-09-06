@@ -58,6 +58,59 @@ public sealed class MoveMemberTests
 	}
 
 	/// <summary>
+	/// A hand-wrapped signature keeps its shape through a move, re-indented for the type it lands in
+	/// rather than deepened by it.
+	/// <para>
+	/// The member arrives as its own source text with the first line's indentation trimmed off, which
+	/// reads as a baseline of nothing while every continuation still carries the old type's. The
+	/// destination's indentation then goes on top of indentation that is already there, and the list
+	/// lands a level deeper than the member it belongs to. Nothing downstream reports it: a
+	/// continuation line is not a statement, so Roslyn's formatter has no rule that moves one, and
+	/// neither IDE0055 nor <c>dotnet format</c> has an opinion about where a wrapped list sits.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Keeps_the_shape_of_a_wrapped_signature_it_moves()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Wrapped.Join", "Library.Greeter");
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var target = await ReadAsync(fixture, "Greeter.cs");
+
+		// One tab for the member, two for the parameters it wrapped onto their own lines.
+		Assert.Contains(
+			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third)\r\n\t{\r\n",
+			target,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A moved member arrives separated from the one above it, the same as one that is added.
+	/// Roslyn's formatter reindents and moves braces but never inserts a blank line between members,
+	/// so a member appended without one lands flush against the closing brace above it and no rule
+	/// anywhere puts it back.
+	/// </summary>
+	[Fact]
+	public async Task Separates_the_member_it_moves_from_the_one_above_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Wrapped.Join", "Library.Greeter");
+
+		Assert.True(result.Applied);
+
+		var target = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("\t}\r\n\r\n\tpublic static string Join(", target, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// The other call-site style: the calls stay as written and each calling file imports the new
 	/// home statically. Smaller diff, at the cost of a file whose calls no longer say where they go.
 	/// </summary>

@@ -7,7 +7,10 @@ public static class WorkerLauncher
 {
 	private const string WorkerName = "RoseMcp.Worker";
 
-	public static string ResolveWorkerPath(BrokerOptions options)
+	public static string ResolveWorkerPath(
+		BrokerOptions options,
+		string? baseDirectory = null,
+		bool searchRepository = true)
 	{
 		if (!string.IsNullOrWhiteSpace(options.WorkerPath))
 		{
@@ -21,10 +24,20 @@ public static class WorkerLauncher
 
 		var executableName = WorkerName + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
 
-		var alongside = Path.Combine(AppContext.BaseDirectory, executableName);
-		if (File.Exists(alongside)) return alongside;
+		// Two places count as "beside", the same two the live-app host looks in and for the same
+		// reason: the server publishes flat into the install root while the tray goes in a tray/
+		// subfolder, so what is beside one is one level up from the other. Looking only alongside left
+		// the tray unable to start a worker at all without --worker (#101), which is invisible from the
+		// repository because the development fallback below finds it anyway.
+		var root = baseDirectory ?? AppContext.BaseDirectory;
 
-		var inRepository = FindInRepository(executableName);
+		foreach (var directory in new[] { root, Path.Combine(root, "..") })
+		{
+			var alongside = Path.Combine(directory, executableName);
+			if (File.Exists(alongside)) return Path.GetFullPath(alongside);
+		}
+
+		var inRepository = searchRepository ? FindInRepository(executableName) : null;
 		if (inRepository is not null) return inRepository;
 
 		throw new FileNotFoundException(

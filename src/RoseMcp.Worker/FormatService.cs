@@ -86,7 +86,9 @@ public static class FormatService
 
 		// Read off the final text, so a literal the passes above left alone is reported once, against
 		// the line it ends up on rather than the line it started at.
-		notices.AddRange(await LiteralEndingNoticesAsync(solution, formatted, cancellationToken));
+		var literalEndings = await LiteralEndingNoticesAsync(solution, formatted, cancellationToken);
+
+		notices.AddRange(literalEndings);
 
 		progress?.Report(request.Apply ? "Writing the changed files" : "Building the diff", 95);
 
@@ -99,7 +101,17 @@ public static class FormatService
 		notices.AddRange(outcome.Notices);
 
 		if (!request.Apply) notices.Add("Preview only; nothing was written to disk.");
-		if (outcome.ChangedFiles.Count == 0 && missing.Count == 0) notices.Add("Every file was already formatted.");
+		if (outcome.ChangedFiles.Count == 0 && missing.Count == 0)
+		{
+			// Never "already formatted" while a literal above says dotnet format will reject the file.
+			// The two sentences contradict each other, a caller reads the headline, and the headline is
+			// the one that restates the failure this tool exists to remove. Which literal and why it was
+			// left alone is already said; this only has to stop claiming the opposite.
+			notices.Add(literalEndings.Count == 0
+				? "Every file was already formatted."
+				: "Nothing needed reformatting, and dotnet format will still reject the literal endings named "
+					+ "above -- a failed build wherever IDE0055 is an error.");
+		}
 
 		var result = new FormatResult
 		{

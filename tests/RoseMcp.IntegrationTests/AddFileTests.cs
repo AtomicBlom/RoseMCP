@@ -38,6 +38,79 @@ public sealed class AddFileTests
 	}
 
 	/// <summary>
+	/// A whole file the caller supplies keeps the layout they gave it, except where a rule the
+	/// repository enforces applies. Blank lines between using groups, between members and inside a
+	/// body are structure a reader put there on purpose; a wrapped chain is a line-length decision
+	/// nothing here is entitled to overturn; and the spacing inside a documentation tag is not
+	/// whitespace the language has an opinion about.
+	/// <para>
+	/// All four came from regenerating the trivia wholesale rather than formatting what arrived,
+	/// which is the one operation guaranteed to lose every one of them at once.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Keeps_the_layout_of_a_whole_file_it_is_given()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Kept.cs");
+
+		var result = await AddAsync(
+			session,
+			path,
+			"using System;\n"
+				+ "\n"
+				+ "using System.Linq;\n"
+				+ "\n"
+				+ "namespace Library;\n"
+				+ "\n"
+				+ "/// <summary>Kept as written.</summary>\n"
+				+ "public static class Kept\n"
+				+ "{\n"
+				+ "\t/// <summary>Counts the positive values.</summary>\n"
+				+ "\t/// <param name=\"values\">The values to count.</param>\n"
+				+ "\tpublic static int Count(int[] values)\n"
+				+ "\t{\n"
+				+ "\t\tif (values is null)\n"
+				+ "\t\t{\n"
+				+ "\t\t\treturn 0;\n"
+				+ "\t\t}\n"
+				+ "\n"
+				+ "\t\treturn values\n"
+				+ "\t\t\t.Where(value => value > 0)\n"
+				+ "\t\t\t.Select(value => value * 2)\n"
+				+ "\t\t\t.Count();\n"
+				+ "\t}\n"
+				+ "\n"
+				+ "\tpublic static string Describe() => nameof(Kept);\n"
+				+ "}\n");
+
+		Assert.True(result.Applied);
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+
+		// The blank line between the two using groups, and the one below the namespace.
+		Assert.Contains("using System;\r\n\r\nusing System.Linq;\r\n", text, StringComparison.Ordinal);
+		Assert.Contains("namespace Library;\r\n\r\n/// <summary>Kept as written.</summary>", text, StringComparison.Ordinal);
+
+		// The documentation tag as written, not respaced around the equals sign.
+		Assert.Contains("<param name=\"values\">", text, StringComparison.Ordinal);
+
+		// The braces the caller wrote, and the blank line after them.
+		Assert.Contains("\t\tif (values is null)\r\n\t\t{\r\n\t\t\treturn 0;\r\n\t\t}\r\n\r\n", text, StringComparison.Ordinal);
+
+		// The chain still wrapped, one call to a line.
+		Assert.Contains(
+			"\t\treturn values\r\n\t\t\t.Where(value => value > 0)\r\n\t\t\t.Select(value => value * 2)\r\n\t\t\t.Count();",
+			text,
+			StringComparison.Ordinal);
+
+		// And the blank line between the two members.
+		Assert.Contains("\t}\r\n\r\n\tpublic static string Describe()", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// A namespace the code declares is kept, because there are real reasons to want one that does
 	/// not match the folder -- and said out loud, because IDE0130 is a build error where it is
 	/// turned up and the caller may not have meant it.

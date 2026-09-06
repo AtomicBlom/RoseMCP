@@ -32,6 +32,19 @@ public sealed record MemberEditRequest
 	public string? Replace { get; init; }
 
 	/// <summary>
+	/// Match the body's text rather than its tokens, so <see cref="Find"/> may lie inside a comment or
+	/// a string.
+	/// <para>
+	/// The token stream is the right unit for code and cannot see any of this: a comment is trivia, and
+	/// the inside of a literal is one token however many words it holds. Without it the four kinds of
+	/// text with no tool at all -- a <c>//</c> comment, the body of a string constant, a sentence inside
+	/// a tool description, the text in an attribute argument -- are reachable only by re-emitting the
+	/// whole member, which is what sends a caller back to a text editor.
+	/// </para>
+	/// </summary>
+	public bool IncludeTrivia { get; init; }
+
+	/// <summary>
 	/// Where to insert <see cref="Code"/> instead of replacing the body: the top of the block, or the
 	/// end of it -- which means before a closing return or throw, since anything after one is
 	/// unreachable.

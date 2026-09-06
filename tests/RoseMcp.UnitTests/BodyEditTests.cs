@@ -20,7 +20,9 @@ public sealed class BodyEditTests
 			() => BodyEdit.Anchored("{\n\t// why\n\treturn 1;\n}", "// why\nreturn 1;", "// because\nreturn 2;"));
 
 		Assert.Contains("carries a comment", error.Message, StringComparison.Ordinal);
-		Assert.Contains("pass the whole body with code", error.Message, StringComparison.Ordinal);
+		// Naming the payload that can do it, which is now the switch that makes the comment matchable
+		// rather than only the whole-body rewrite.
+		Assert.Contains("includeTrivia", error.Message, StringComparison.Ordinal);
 	}
 
 	/// <summary>

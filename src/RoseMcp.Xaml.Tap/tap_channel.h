@@ -128,10 +128,17 @@ static std::string Utf8(const std::wstring& text)
 
 // The host end of the channel #50 replaces the files with. Global for the same reason g_workDir is:
 // the provider is handed its configuration once, at SetSite.
-static HANDLE g_pipe = INVALID_HANDLE_VALUE;
-static std::thread g_pipeThread;
-static std::atomic<bool> g_pipeStop{ false };
+// The largest frame either end will accept, the same number the C# side enforces. Without it a
+// length is whatever four bytes arrive, and payload.assign of a bad one throws bad_alloc out of a
+// std::thread function, which is std::terminate inside somebody else's app.
+static constexpr unsigned int RoseTapMaxFrame = 64u * 1024u * 1024u;
 
+static HANDLE g_pipe = INVALID_HANDLE_VALUE;
+
+// Whether a reader is on the pipe, so one can be started again after a disconnect without ever
+// running two. The thread itself is detached and never held: nothing joins it, and a joinable
+// std::thread reaching static destruction is std::terminate inside the app being inspected.
+static std::atomic<bool> g_pipeRunning{ false };
 // One length-prefixed UTF-8 message, which is the whole framing. Every message through the folder
 // made its own encoding decision and the record shows the cost twice: a wofstream narrowing UTF-16
 // to ANSI so a tree parsed as zero elements, and commands.tsv needing UTF-8-without-BOM because the
@@ -166,6 +173,9 @@ static bool WriteFrame(const std::string& payload)
 // one has already been got wrong once.
 static void ConnectPipe()
 {
+	// Reconnectable on purpose. The reader closes the handle and puts it back to INVALID_HANDLE_VALUE
+	// when the far side goes, so a later injection opens a new one; leaving it set would disable the
+	// pipe for the life of the process and send every later request down the file path in silence.
 	if (g_pipeName.empty() || g_pipe != INVALID_HANDLE_VALUE) return;
 
 	const std::wstring path = LR"(\\.\pipe\)" + g_pipeName;
@@ -217,6 +227,12 @@ static bool ReadFrame(std::string& payload)
 		| (static_cast<unsigned int>(header[1]) << 8)
 		| (static_cast<unsigned int>(header[2]) << 16)
 		| (static_cast<unsigned int>(header[3]) << 24);
+
+	if (length > RoseTapMaxFrame)
+	{
+		Log(L"pipe: refusing a frame of " + std::to_wstring(length) + L" bytes, which is not a length");
+		return false;
+	}
 
 	payload.assign(length, '\0');
 	return length == 0 || ReadExactly(payload.data(), length);

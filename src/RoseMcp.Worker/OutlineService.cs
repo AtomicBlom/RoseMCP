@@ -29,6 +29,8 @@ public static partial class OutlineService
 		string? type,
 		string? filePath,
 		bool includeInherited,
+		bool includeDocumentation,
+		bool includeSignatures,
 		CancellationToken cancellationToken)
 	{
 		var named = !string.IsNullOrWhiteSpace(type);
@@ -44,9 +46,11 @@ public static partial class OutlineService
 
 		var notices = new List<string>(snapshot.Notices);
 
+		var detail = new OutlineDetail(includeDocumentation, includeSignatures);
+
 		var types = named
-			? [await OfTypeAsync(snapshot, type!, filePath, includeInherited, cancellationToken)]
-			: await OfFileAsync(snapshot, filePath!, includeInherited, cancellationToken);
+			? [await OfTypeAsync(snapshot, type!, filePath, includeInherited, detail, cancellationToken)]
+			: await OfFileAsync(snapshot, filePath!, includeInherited, detail, cancellationToken);
 
 		if (types.Count == 0) notices.Add("The file declares no types.");
 
@@ -59,22 +63,35 @@ public static partial class OutlineService
 		};
 	}
 
+	/// <summary>
+	/// How much of each entry to fill in. Two switches rather than one, because they answer different
+	/// questions: documentation is what a member is for, a signature is what it takes and returns, and
+	/// a caller looking for a name in a large type wants neither.
+	/// <para>
+	/// A record rather than two bools threaded through four methods, so a third switch does not mean
+	/// another parameter on every one of them.
+	/// </para>
+	/// </summary>
+	private readonly record struct OutlineDetail(bool Documentation, bool Signatures);
+
 	private static async Task<OutlinedType> OfTypeAsync(
 		WorkspaceSnapshot snapshot,
 		string type,
 		string? filePath,
 		bool includeInherited,
+		OutlineDetail detail,
 		CancellationToken cancellationToken)
 	{
 		var target = await DeclarationLocator.FindTypeAsync(snapshot.Solution, type, filePath, cancellationToken);
 
-		return await DescribeAsync(snapshot, target.Symbol, includeInherited, cancellationToken);
+		return await DescribeAsync(snapshot, target.Symbol, includeInherited, detail, cancellationToken);
 	}
 
 	private static async Task<IReadOnlyList<OutlinedType>> OfFileAsync(
 		WorkspaceSnapshot snapshot,
 		string filePath,
 		bool includeInherited,
+		OutlineDetail detail,
 		CancellationToken cancellationToken)
 	{
 		var document = SymbolLocator.RequireDocument(snapshot.Solution, filePath);
@@ -97,7 +114,7 @@ public static partial class OutlineService
 
 			if (model.GetDeclaredSymbol(declaration, cancellationToken) is not INamedTypeSymbol symbol) continue;
 
-			described.Add(await DescribeAsync(snapshot, symbol, includeInherited, cancellationToken));
+			described.Add(await DescribeAsync(snapshot, symbol, includeInherited, detail, cancellationToken));
 		}
 
 		return described;
@@ -107,6 +124,7 @@ public static partial class OutlineService
 		WorkspaceSnapshot snapshot,
 		INamedTypeSymbol symbol,
 		bool includeInherited,
+		OutlineDetail detail,
 		CancellationToken cancellationToken)
 	{
 		var members = new List<OutlinedMember>();
@@ -115,7 +133,7 @@ public static partial class OutlineService
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
-			members.Add(await DescribeMemberAsync(snapshot, member, cancellationToken));
+			members.Add(await DescribeMemberAsync(snapshot, member, detail, cancellationToken));
 		}
 
 		var bases = new List<string>();
@@ -143,7 +161,7 @@ public static partial class OutlineService
 				? symbol.ContainingNamespace.ToDisplayString()
 				: null,
 			BaseTypes = bases,
-			Summary = Summary(symbol, cancellationToken),
+			Summary = detail.Documentation ? Summary(symbol, cancellationToken) : null,
 			Declarations = declarations,
 			Members = members,
 		};
@@ -152,6 +170,7 @@ public static partial class OutlineService
 	private static async Task<OutlinedMember> DescribeMemberAsync(
 		WorkspaceSnapshot snapshot,
 		ISymbol member,
+		OutlineDetail detail,
 		CancellationToken cancellationToken)
 	{
 		var location = member.Locations.FirstOrDefault(candidate => candidate.IsInSource);
@@ -159,7 +178,7 @@ public static partial class OutlineService
 		return new OutlinedMember
 		{
 			Name = member.Name,
-			Signature = member.ToDisplayString(SymbolSignature.Format),
+			Signature = detail.Signatures ? member.ToDisplayString(SymbolSignature.Format) : null,
 			Kind = member.Kind.ToString(),
 			Accessibility = member.DeclaredAccessibility.ToString(),
 			IsAbstract = member.IsAbstract,
@@ -169,7 +188,7 @@ public static partial class OutlineService
 			// refuse for exactly that reason.
 			IsGenerated = member.DeclaringSyntaxReferences.Length > 0
 				&& snapshot.Solution.GetDocument(member.DeclaringSyntaxReferences[0].SyntaxTree) is null,
-			Summary = Summary(member, cancellationToken),
+			Summary = detail.Documentation ? Summary(member, cancellationToken) : null,
 			Location = location is null
 				? null
 				: await SymbolLocator.DescribeAsync(snapshot.Solution, location, cancellationToken),

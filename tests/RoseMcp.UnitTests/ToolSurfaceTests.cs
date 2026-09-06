@@ -257,6 +257,89 @@ public sealed class ToolSurfaceTests
 	}
 
 	/// <summary>
+	/// The tools the instructions do not route, named so adding one is a decision. Each is the other
+	/// half of a pair whose first half is routed -- you list or remove what you have just set, deselect
+	/// what you have selected, select by a handle a read has already given you -- so a session that
+	/// reached the naming tool has the counterpart in that tool's own description. rose_workspace_close
+	/// is housekeeping nothing else depends on.
+	/// </summary>
+	private static readonly string[] Unrouted =
+	[
+		ToolNames.DebugList,
+		ToolNames.DebugListBreakpoints,
+		ToolNames.DebugListTracepoints,
+		ToolNames.DebugRemoveBreakpoint,
+		ToolNames.DebugRemoveTracepoint,
+		ToolNames.WorkspaceClose,
+		ToolNames.XamlDeselect,
+		ToolNames.XamlSelectElement,
+	];
+
+	/// <summary>
+	/// Every advertised tool is either routed by the instructions or exempted here. The instructions
+	/// are read at every initialize, before the model has chosen an approach, so a tool missing from
+	/// them is a tool that loses to grep before its own description is ever reached -- and four were
+	/// missing with nothing to notice.
+	/// </summary>
+	[Fact]
+	public void Every_advertised_tool_is_routed_or_exempt()
+	{
+		var services = new ServiceCollection();
+		services.AddRoseMcpBroker();
+
+		using var provider = services.BuildServiceProvider();
+
+		var instructions = provider.GetRequiredService<IOptions<McpServerOptions>>().Value.ServerInstructions;
+
+		Assert.NotNull(instructions);
+
+		var exempt = Unrouted.ToHashSet(StringComparer.Ordinal);
+
+		foreach (var name in Advertised().Where(name => !exempt.Contains(name)))
+		{
+			Assert.Contains(name, instructions, StringComparison.Ordinal);
+		}
+	}
+
+	/// <summary>
+	/// And that the exemption list is not carrying a name the instructions route after all, which is
+	/// how a list like this stops meaning anything.
+	/// </summary>
+	[Fact]
+	public void Nothing_exempt_is_routed_anyway()
+	{
+		var services = new ServiceCollection();
+		services.AddRoseMcpBroker();
+
+		using var provider = services.BuildServiceProvider();
+
+		var instructions = provider.GetRequiredService<IOptions<McpServerOptions>>().Value.ServerInstructions ?? string.Empty;
+		var advertised = Advertised().ToHashSet(StringComparer.Ordinal);
+
+		foreach (var name in Unrouted.Where(advertised.Contains))
+		{
+			Assert.DoesNotContain(name, instructions, StringComparison.Ordinal);
+		}
+	}
+
+	/// <summary>
+	/// The instructions are always in context, whether or not C# comes up, so their length is a budget
+	/// rather than a preference. They were 11,340 characters restating the descriptions line for line.
+	/// </summary>
+	[Fact]
+	public void The_instructions_stay_within_their_budget()
+	{
+		var services = new ServiceCollection();
+		services.AddRoseMcpBroker();
+
+		using var provider = services.BuildServiceProvider();
+
+		var instructions = provider.GetRequiredService<IOptions<McpServerOptions>>().Value.ServerInstructions ?? string.Empty;
+
+		Assert.InRange(instructions.Length, 1, 4000);
+	}
+
+	/// <summary>
 	/// The tools as a client is sent them, which is not what the registration holds: the SDK generates
 	/// an output schema per tool and the trim takes it back off on the way out.
 	/// </summary>

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis;
 
 namespace RoseMcp.IntegrationTests;
@@ -200,21 +201,40 @@ public sealed class NewFileTests
 		Assert.Empty(second.Notices);
 	}
 
+	/// <summary>
+	/// How long a poll waits before giving up. Generous, because what it waits for is a file appearing
+	/// on a loaded machine and the cost of a slow pass is nothing while the cost of a short one is a
+	/// flake.
+	/// </summary>
+	private const int Attempts = 40;
+
+	private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(100);
+
+	/// <summary>
+	/// Reads until the snapshot satisfies the condition, and fails saying so when it never does.
+	/// <para>
+	/// Throwing rather than returning the last snapshot, because a helper that hands an unsatisfied
+	/// one back turns a timeout into whatever assertion the caller makes next -- a missing document, a
+	/// revision that did not move -- and the failure then reads as the behaviour being wrong rather
+	/// than as nothing having happened at all.
+	/// </para>
+	/// </summary>
 	private static async Task<WorkspaceSnapshot> EventuallyAsync(
 		SessionScope scope,
-		Func<WorkspaceSnapshot, bool> satisfied)
+		Func<WorkspaceSnapshot, bool> satisfied,
+		[CallerArgumentExpression(nameof(satisfied))] string? description = null)
 	{
-		WorkspaceSnapshot snapshot;
-
-		for (var attempt = 0; attempt < 40; attempt++)
+		for (var attempt = 0; attempt < Attempts; attempt++)
 		{
-			snapshot = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+			var snapshot = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
 			if (satisfied(snapshot)) return snapshot;
 
-			await Task.Delay(100, TestContext.Current.CancellationToken);
+			await Task.Delay(PollInterval, TestContext.Current.CancellationToken);
 		}
 
-		return await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		throw new TimeoutException(
+			$"No read satisfied {description} within {Attempts} attempts over "
+				+ $"{Attempts * PollInterval.TotalSeconds:F0}s.");
 	}
 
 	private static async Task WriteAsync(SessionScope scope, string relativePath, string source)

@@ -102,15 +102,23 @@ public sealed class BrokerTests
 		var opened = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
 
 		// A two-project fixture can be loaded before the first call returns, and that is a legitimate
-		// outcome of this tool rather than a flake -- so the assertion is on the pairing of state and
-		// notice, which holds either way, instead of on catching it mid-load.
+		// outcome of this tool rather than a flake -- so the assertion is on the pairing of state with
+		// the fields that state can fill, which holds either way and is what makes the state worth
+		// reporting instead of a null. Asserting the loading notice alone would leave the finished half
+		// of the pairing untested on every machine fast enough to skip it.
 		if (opened.State == WorkspaceState.Loading)
 		{
 			Assert.Contains(opened.Notices, notice => notice.Contains("rose_workspace_open", StringComparison.Ordinal));
+
+			Assert.Null(opened.ProjectCount);
+			Assert.Null(opened.LoadSeconds);
 		}
 		else
 		{
-			Assert.DoesNotContain(opened.Notices, notice => notice.Contains("Still loading", StringComparison.Ordinal));
+			Assert.Equal(WorkspaceState.Loaded, opened.State);
+
+			Assert.NotNull(opened.ProjectCount);
+			Assert.NotNull(opened.LoadSeconds);
 		}
 	}
 	/// <summary>

@@ -1,7 +1,3 @@
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -79,24 +75,21 @@ public sealed class CallSiteShapeMatrixTests
 	}
 
 	/// <summary>
-	/// The mixed shape that does not work, and the reason the rest of this matrix exists. A
-	/// non-trailing named argument occupies its parameter's position, so the positional argument
-	/// after it belongs to the next parameter -- but the match counts only the positional ones, so
-	/// the two arguments pile onto the same parameter and everything after them shifts by one.
+	/// The mixed shape, and the reason the rest of this matrix exists. A non-trailing named argument
+	/// occupies its parameter's position, so the positional argument after it belongs to the next
+	/// parameter -- which is what the compiler says and what counting the positional arguments alone
+	/// gets wrong.
 	/// <para>
-	/// What comes out is worse than a refusal in every way. It passes the second argument in the
-	/// inserted parameter's place, names that parameter as well so the compiler reports CS1744, and
-	/// drops the argument for the parameter that has no default at all -- and it is written to disk,
-	/// because the rewriter believes it succeeded.
+	/// Counted, it produced <c>(a, b, separator: "-")</c>: the second argument in the inserted
+	/// parameter's place, that parameter named as well so the compiler reports CS1744, and nothing at
+	/// all for the parameter with no default -- written to disk, because the rewriter believed it had
+	/// succeeded.
 	/// </para>
 	/// </summary>
 	[Fact]
-	public void Mangles_a_named_argument_written_before_a_positional_one()
+	public void Rewrites_a_named_argument_written_before_a_positional_one()
 	{
-		StillWrong(
-			"""(a, "-", b)""",
-			"""(a, b, separator: "-")""",
-			Rewrite(Calling("Target(first: a, b)"), Inserted, Dash));
+		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(first: a, b)"), Inserted, Dash));
 	}
 
 	/// <summary>An optional the call site said nothing about goes on saying nothing about it.</summary>
@@ -295,61 +288,10 @@ public sealed class CallSiteShapeMatrixTests
 		""";
 
 	/// <summary>
-	/// The rewritten argument list as text, or null where the rewriter refused. The declaration in
-	/// the source supplies the old parameters, so a case says its shape once rather than twice.
+	/// The rewritten argument list as text, or null where the call site was left alone. The
+	/// declaration in the source supplies the old parameters, so a case says its shape once rather
+	/// than twice.
 	/// </summary>
-	private static string? Rewrite(string source, string wanted, params string[] arguments)
-	{
-		var tree = CSharpSyntaxTree.ParseText(source);
-
-		var compilation = CSharpCompilation.Create(
-			"Shapes",
-			[tree],
-			[MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
-			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-
-		var root = tree.GetRoot();
-		var model = compilation.GetSemanticModel(tree);
-
-		var declaration = root.DescendantNodes()
-			.OfType<MethodDeclarationSyntax>()
-			.Single(method => method.Identifier.Text == Target);
-
-		var call = root.DescendantNodes()
-			.OfType<InvocationExpressionSyntax>()
-			.Single(invocation => NameOf(invocation.Expression) == Target);
-
-		var plan = ParameterPlan.For(
-			declaration.ParameterList.Parameters,
-			MemberSyntax.ParseParameters(wanted, null));
-
-		// Whether the receiver takes a slot is asked of the binding rather than of the text, which is
-		// how ChangeSignatureService asks it.
-		var reduced = model.GetSymbolInfo(call).Symbol is IMethodSymbol { MethodKind: MethodKind.ReducedExtension };
-
-		return CallSiteRewriter.Rewrite(call.ArgumentList, plan, Supplied(arguments), reduced ? 1 : 0)?.ToString();
-	}
-
-	/// <summary>The name a call writes, whether or not it qualifies it.</summary>
-	private static string NameOf(ExpressionSyntax expression) => expression switch
-	{
-		MemberAccessExpressionSyntax member => member.Name.Identifier.Text,
-		SimpleNameSyntax name => name.Identifier.Text,
-		_ => string.Empty,
-	};
-
-	/// <summary>The expressions to pass for new parameters, written the way the tool takes them.</summary>
-	private static Dictionary<string, string> Supplied(IReadOnlyList<string> arguments)
-	{
-		var supplied = new Dictionary<string, string>(StringComparer.Ordinal);
-
-		foreach (var argument in arguments)
-		{
-			var split = argument.IndexOf('=', StringComparison.Ordinal);
-
-			supplied[argument[..split].Trim()] = argument[(split + 1)..].Trim();
-		}
-
-		return supplied;
-	}
+	private static string? Rewrite(string source, string wanted, params string[] arguments) =>
+		CallSites.Rewrite(source, wanted, arguments);
 }

@@ -129,7 +129,8 @@ public sealed class ChangeSignatureTests
 		Assert.Contains(
 			result.UnchangedCallSites,
 			site => site.Location.FilePath.EndsWith("Anticipating.cs", StringComparison.OrdinalIgnoreCase)
-				&& site.Reason.Contains("did not have yet", StringComparison.Ordinal));
+				&& site.Reason.Contains("does not compile as it stands", StringComparison.Ordinal)
+				&& site.Reason.Contains("may already be right", StringComparison.Ordinal));
 
 		Assert.DoesNotContain(
 			result.UpdatedCallSites,
@@ -588,5 +589,37 @@ public sealed class ChangeSignatureTests
 		// Both are real calls that now pass too few arguments, which is what makes the sentence above
 		// the wrong one.
 		Assert.Equal(2, result.IntroducedDiagnostics.Count(diagnostic => diagnostic.Id == "CS7036"));
+	}
+
+	/// <summary>
+	/// An expression supplied for a new parameter is the caller's code, and it is written even where
+	/// it does not resolve. The error is theirs to fix and the diagnostic is what points at it --
+	/// reverting the whole change instead would leave them with neither the parameter nor the error.
+	/// </summary>
+	[Fact]
+	public async Task Writes_a_supplied_expression_that_does_not_resolve_and_reports_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Greeter.Greet(string)", "string name, bool loud", ["loud=NoSuchThing"]);
+
+		Assert.True(result.Applied, "the declaration and its call sites are written; the expression is the caller's");
+
+		var text = await ReadAsync(fixture, "Caller.cs");
+
+		Assert.Contains("Greet(\"world\", NoSuchThing)", text, StringComparison.Ordinal);
+
+		Assert.Contains(
+			result.IntroducedDiagnostics,
+			diagnostic => diagnostic.Id == "CS0103"
+				&& diagnostic.FilePath?.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase) == true);
+
+		// The name does not resolve, which is a different thing from an argument on the wrong
+		// parameter -- so nothing here is called a defect in the tool.
+		Assert.DoesNotContain(
+			result.Notices,
+			notice => notice.Contains("defect in rose_change_signature", StringComparison.Ordinal));
 	}
 }

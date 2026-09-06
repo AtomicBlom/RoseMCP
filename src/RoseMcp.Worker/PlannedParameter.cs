@@ -21,13 +21,6 @@ public sealed record PlannedParameter
 	/// </summary>
 	public required bool HasDefault { get; init; }
 
-	/// <summary>
-	/// True when it was declared <c>params</c>. A params parameter can hold several arguments at one
-	/// call site, and several arguments cannot be written as one named argument -- so it is the one
-	/// parameter whose position at a call site is not negotiable.
-	/// </summary>
-	public required bool WasParams { get; init; }
-
 	/// <summary>True when an existing parameter is still at the index it was.</summary>
 	public bool KeptItsPlace => WasAt == IsAt;
 }

@@ -13,10 +13,16 @@ namespace RoseMcp.Worker;
 /// a change that has nothing to do with them.
 /// </para>
 /// <para>
-/// It returns null rather than guessing. A call site it cannot rewrite is reported and left alone,
-/// which leaves the caller with a compile error they were told about, in a place they were pointed
-/// at -- and that is much better than a plausible rewrite that binds an argument to the wrong
-/// parameter, which is the failure with no symptom.
+/// Which argument belongs to which parameter is not worked out here. It is read off a
+/// <see cref="CallSiteBinding"/>, which is the compiler's own answer -- because the order arguments
+/// are written in is not the same question, and a call site that cannot be bound at all is one
+/// where nothing is known about what its arguments mean.
+/// </para>
+/// <para>
+/// It returns null rather than guessing, with the reason. A call site it cannot rewrite is reported
+/// and left alone, which leaves the caller with a compile error they were told about, in a place
+/// they were pointed at -- and that is much better than a plausible rewrite that binds an argument
+/// to the wrong parameter, which is the failure with no symptom.
 /// </para>
 /// </summary>
 public static class CallSiteRewriter
@@ -24,47 +30,37 @@ public static class CallSiteRewriter
 	/// <summary>
 	/// The new argument list, or null when this call site has to be left to a person.
 	/// </summary>
-	/// <param name="arguments">The arguments as written.</param>
+	/// <param name="arguments">The arguments as they now stand, inner call sites already rewritten.</param>
+	/// <param name="binding">Which parameter each of those arguments is an argument for.</param>
 	/// <param name="plan">What is happening to the parameters.</param>
 	/// <param name="supplied">Expressions to pass for new parameters, by parameter name.</param>
-	/// <param name="skip">
-	/// Parameters the call site does not write an argument for: one, for an extension method invoked
-	/// on its receiver, and none otherwise.
+	/// <param name="refusal">
+	/// Why this call site is being left, as a clause naming the shape, or empty when it was
+	/// rewritten. It reaches the caller, who has to decide what to do about the site.
 	/// </param>
 	public static ArgumentListSyntax? Rewrite(
 		ArgumentListSyntax arguments,
+		CallSiteBinding binding,
 		ParameterPlan plan,
 		IReadOnlyDictionary<string, string> supplied,
-		int skip)
+		out string refusal)
 	{
-		var byOldIndex = Match(arguments, plan, skip);
-		if (byOldIndex is null) return null;
-
-		// An argument sitting at or past the end of the old parameter list was written for a
-		// parameter the member did not have yet. There is no old parameter to map it from, so the
-		// emit loop below never looks at it -- and it used to disappear (#59).
-		//
-		// That is the worst way for this to fail. Such a call site does not compile, which is
-		// normally the whole reason the tool is being run; truncating it to the old arity produced a
-		// call that *does* compile and means something else, so the test it came from went on passing
-		// for a reason unrelated to what it was written to check. Refusing leaves the argument exactly
-		// as written, which -- once the declaration gains the parameter -- is the code that was wanted
-		// all along.
-		//
-		// Only at or past the old count. Below it, an unclaimed argument belonged to a parameter that
-		// is being removed, and dropping that one is precisely what removing a parameter means. A
-		// params expansion is not surplus either: Match has already folded those onto the params
-		// parameter's own index, which is why it reads that index off the old list.
-		if (byOldIndex.Keys.Any(slot => slot >= plan.OldCount)) return null;
+		refusal = string.Empty;
 
 		var emitted = new List<ArgumentSyntax>();
 		var allPositionalSoFar = true;
 
-		foreach (var parameter in plan.Parameters.Skip(skip))
+		foreach (var parameter in plan.Parameters.Skip(binding.Skip))
 		{
-			var slot = parameter.IsAt - skip;
+			var slot = parameter.IsAt - binding.Skip;
 
-			if (!TryArgumentsFor(parameter, byOldIndex, supplied, out var wanted)) return null;
+			if (!TryArgumentsFor(parameter, arguments, binding, supplied, out var wanted))
+			{
+				refusal = $"nothing is passed for '{parameter.Name}' here and the new declaration gives it no default";
+
+				return null;
+			}
+
 			if (wanted.Count == 0) continue;
 
 			// A positional argument only stays positional while it would land in its own slot, and
@@ -74,11 +70,17 @@ public static class CallSiteRewriter
 
 			// Several arguments for one parameter is a params expansion, and there is no way to write
 			// that as a named argument at all.
-			if (wanted.Count > 1 && !positional) return null;
+			if (wanted.Count > 1 && !positional)
+			{
+				refusal = $"the arguments it passes for '{parameter.Name}' are a params expansion, and this change "
+					+ "would need them written as a named argument, which C# has no way to spell";
+
+				return null;
+			}
 
 			foreach (var argument in wanted)
 			{
-				emitted.Add(positional ? argument.WithNameColon(null) : Named(parameter.Name, argument));
+				emitted.Add(positional ? argument.WithNameColon(null) : Named(NameFor(parameter, binding), argument));
 			}
 
 			if (!positional) allPositionalSoFar = false;
@@ -109,77 +111,32 @@ public static class CallSiteRewriter
 	}
 
 	/// <summary>
-	/// Each old parameter's argument, by the index the parameter had. Null when the call site says
-	/// something this cannot read.
-	/// </summary>
-	private static Dictionary<int, List<ArgumentSyntax>>? Match(
-		ArgumentListSyntax arguments,
-		ParameterPlan plan,
-		int skip)
-	{
-		var byName = plan.Parameters
-			.Where(parameter => parameter.WasAt is not null)
-			.ToDictionary(parameter => parameter.Name, parameter => parameter.WasAt!.Value, StringComparer.Ordinal);
-
-		var matched = new Dictionary<int, List<ArgumentSyntax>>();
-		var position = 0;
-
-		foreach (var argument in arguments.Arguments)
-		{
-			if (argument.NameColon is { } name)
-			{
-				// A named argument for a parameter that is going: it has nowhere to go, and dropping
-				// it is exactly what removing the parameter means.
-				if (!byName.TryGetValue(name.Name.Identifier.Text, out var index))
-				{
-					if (plan.Removed.Contains(name.Name.Identifier.Text, StringComparer.Ordinal)) continue;
-
-					return null;
-				}
-
-				matched[index] = [argument];
-				continue;
-			}
-
-			var slot = position + skip;
-			position++;
-
-			// Past the end of the parameter list, the extras belong to the params parameter -- which
-			// is the only way there can legitimately be more arguments than parameters. Taken from
-			// the old list rather than from a parameter that survived, so a params parameter being
-			// removed still accounts for the arguments written for it instead of leaving them looking
-			// like arguments for a parameter that never existed.
-			if (plan.OldParamsAt is { } at && slot > at) slot = at;
-
-			if (!matched.TryGetValue(slot, out var existing)) matched[slot] = existing = [];
-
-			existing.Add(argument);
-		}
-
-		return matched;
-	}
-
-	/// <summary>
-	/// The arguments to write for one parameter: the ones it already had, the one the caller
-	/// supplied for it, or none when it is new and optional.
+	/// The arguments to write for one parameter: the ones already written for it here, the one the
+	/// caller supplied for it, or none when it is new and optional.
 	/// </summary>
 	private static bool TryArgumentsFor(
 		PlannedParameter parameter,
-		Dictionary<int, List<ArgumentSyntax>> byOldIndex,
+		ArgumentListSyntax arguments,
+		CallSiteBinding binding,
 		IReadOnlyDictionary<string, string> supplied,
 		out IReadOnlyList<ArgumentSyntax> wanted)
 	{
 		if (parameter.WasAt is { } at)
 		{
-			// Nothing at this call site for a parameter that has one is an omitted optional, and it
-			// stays omitted.
-			wanted = byOldIndex.TryGetValue(at, out var existing) ? existing : [];
+			// Nothing written here for a parameter that exists is an omitted optional, and it stays
+			// omitted. Taken by position rather than by node, so an argument that is itself a call
+			// site this pass has already rewritten comes through rewritten.
+			wanted = binding.ByOrdinal.TryGetValue(at, out var written)
+				? [.. written.Select(index => arguments.Arguments[index])]
+				: [];
+
 			return true;
 		}
 
 		if (supplied.TryGetValue(parameter.Name, out var expression))
 		{
 			wanted = [SyntaxFactory.Argument(SyntaxFactory.ParseExpression(expression))];
+
 			return true;
 		}
 
@@ -189,6 +146,19 @@ public static class CallSiteRewriter
 
 		return parameter.HasDefault;
 	}
+
+	/// <summary>
+	/// The name to write when an argument has to be named. Taken from the method the call site binds
+	/// to rather than from the declaration being changed, because an override is free to call its
+	/// parameters something else and a named argument has to use the names of the method it calls --
+	/// so naming it from the declaration is CS1739 at every call site reached through an override
+	/// that renamed anything. A parameter that is new has one name everywhere, since every
+	/// declaration takes it from what the caller wrote.
+	/// </summary>
+	private static string NameFor(PlannedParameter parameter, CallSiteBinding binding) =>
+		parameter.WasAt is { } at && at < binding.ParameterNames.Count
+			? binding.ParameterNames[at]
+			: parameter.Name;
 
 	private static ArgumentSyntax Named(string name, ArgumentSyntax argument) =>
 		argument.WithNameColon(

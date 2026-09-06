@@ -88,6 +88,62 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui)
 	}
 
 	/// <summary>
+	/// A live-app session belongs to the MCP session that started it. The broker is a singleton every
+	/// connection shares, so without this any client of an http broker reaches another client's
+	/// debugger -- reading its captured exceptions and log output, setting breakpoints in its target,
+	/// evaluating expressions inside it, detaching it -- by guessing an eight-character id.
+	/// <para>
+	/// Refused as though it were not there, because which of "no such session" and "not yours" it is
+	/// is not the caller's business and the next step is the same either way. The list is scoped for
+	/// the same reason: the refusal sends the caller to rose_debug_list, so a list naming sessions it
+	/// cannot then use would be worse than no list.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task A_session_belongs_to_the_client_that_started_it()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			LiveAppSession session;
+
+			using (CallSession.Use("mcp-session-one"))
+			{
+				session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+				Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+				Assert.NotNull(manager.Find(session.SessionId));
+				Assert.Contains(manager.DescribeOwned(), row => row.SessionId == session.SessionId);
+			}
+
+			using (CallSession.Use("mcp-session-two"))
+			{
+				Assert.Null(manager.Find(session.SessionId));
+				Assert.Empty(manager.DescribeOwned());
+
+				// The loudest thing one client can do to another, and it goes through the same check.
+				Assert.False(await manager.CloseAsync(session.SessionId, cancellationToken));
+			}
+
+			// The tray window and GET /admin/sessions read the whole picture, and still do: their reader
+			// is the person running the broker rather than one of its clients.
+			Assert.Contains(manager.Describe(), row => row.SessionId == session.SessionId);
+
+			using (CallSession.Use("mcp-session-one"))
+			{
+				Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			}
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// Being told about an event without polling for it (#8). The agent is turn-based, so a pushed MCP
 	/// notification reaches nobody -- there is no listener between its turns. What it can use is one
 	/// call that does not come back until there is something to say, which is what waitSeconds is.

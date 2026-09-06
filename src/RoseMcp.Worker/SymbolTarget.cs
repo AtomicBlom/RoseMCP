@@ -41,14 +41,39 @@ public sealed record SymbolTarget
 	/// and answering confidently about the wrong symbol is the failure worth the most trouble to
 	/// avoid.
 	/// </summary>
-	public async Task<ISymbol> ResolveAsync(WorkspaceSnapshot snapshot, CancellationToken cancellationToken)
+	/// <param name="snapshot">The solution to resolve against.</param>
+	/// <param name="cancellationToken">Cancels the compilations a metadata search builds.</param>
+	/// <param name="includeMetadata">
+	/// Whether a name nothing in the solution declares may be answered from a referenced assembly.
+	/// Off by default, because most callers go on to edit what they resolve and a metadata symbol has
+	/// no file to edit. On for the reads that can say something true about one.
+	/// </param>
+	public async Task<ISymbol> ResolveAsync(
+		WorkspaceSnapshot snapshot,
+		CancellationToken cancellationToken,
+		bool includeMetadata = false)
 	{
 		if (IsByName)
 		{
-			var target = await DeclarationLocator.FindSymbolAsync(
-				snapshot.Solution, Symbol!, FilePath, cancellationToken);
+			try
+			{
+				var target = await DeclarationLocator.FindSymbolAsync(
+					snapshot.Solution, Symbol!, FilePath, cancellationToken);
 
-			return target.Symbol;
+				return target.Symbol;
+			}
+			catch (SymbolNotFoundException) when (includeMetadata && FilePath is null)
+			{
+				// Only after source has found nothing at all, and only when the caller pinned no file:
+				// naming one says the answer is in this solution's source, and a referenced assembly is
+				// not in it.
+				var found = await MetadataSymbols.FindAsync(
+					snapshot.Solution, SymbolAddress.Parse(Symbol!), cancellationToken);
+
+				if (found is not null) return found;
+
+				throw;
+			}
 		}
 
 		if (!IsByPosition)

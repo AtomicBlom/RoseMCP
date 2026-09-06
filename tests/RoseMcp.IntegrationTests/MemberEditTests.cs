@@ -567,7 +567,9 @@ public sealed class MemberEditTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var missing = await Assert.ThrowsAsync<ArgumentException>(() => ReplaceAsync(
+		// Its own type, and the only refusal here that has one: a read may answer this one from metadata
+		// instead, where nothing may answer a name that is in source somewhere other than where asked.
+		var missing = await Assert.ThrowsAsync<SymbolNotFoundException>(() => ReplaceAsync(
 			session, "Library.Greeter.Salute", "public string Salute() => _prefix;"));
 
 		Assert.Contains("Nothing in the solution is called 'Salute'", missing.Message, StringComparison.Ordinal);
@@ -689,6 +691,142 @@ public sealed class MemberEditTests
 			result.IntroducedDiagnostics,
 			entry => entry.FilePath!.EndsWith("Program.cs", StringComparison.OrdinalIgnoreCase));
 		Assert.Empty(result.DependentsNotChecked);
+	}
+
+	/// <summary>
+	/// A repository that escalates a style rule to an error fails its build on a diagnostic no compiler
+	/// pass produces. Verifying without analyzers therefore reports clean on an edit that does not
+	/// build, which breaks the one promise a caller cannot check without the build this exists to
+	/// replace: that the result names the errors the edit introduced.
+	/// <para>
+	/// The copy stands in for such a repository. Turning IDE0005 up in the checked-in fixture instead
+	/// would put an unused import between every other test here and its assertion.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Reports_an_analyzer_error_the_edit_introduced()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.AppendAllTextAsync(
+			fixture.Path("Members", ".editorconfig"),
+			Environment.NewLine + "dotnet_diagnostic.IDE0005.severity = error" + Environment.NewLine,
+			TestContext.Current.CancellationToken);
+
+		// Both properties are needed: the first is what puts the code-style analyzers in front of the
+		// compiler at all, and IDE0005 stays quiet without the second, since a using directive can be
+		// needed by a documentation comment alone.
+		var project = fixture.Path("Members", "Library", "Library.csproj");
+		var projectText = await File.ReadAllTextAsync(project, TestContext.Current.CancellationToken);
+		await File.WriteAllTextAsync(
+			project,
+			projectText.Replace(
+				"<ImplicitUsings>enable</ImplicitUsings>",
+				"<ImplicitUsings>enable</ImplicitUsings>"
+					+ Environment.NewLine + "    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>"
+					+ Environment.NewLine + "    <GenerateDocumentationFile>true</GenerateDocumentationFile>"),
+			TestContext.Current.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		// Formatted holds the file's only use of System.Globalization, so a body without CultureInfo
+		// leaves the import unused and the project no longer builds.
+		var result = await ReplaceAsync(
+			session,
+			"Library.Imports.Formatted(double)",
+			"public static string Formatted(double value) => value.ToString();");
+
+		Assert.True(result.Applied);
+
+		Assert.Contains(result.IntroducedDiagnostics, entry => entry.Id == "IDE0005");
+
+		// And the result says where they ran, so a caller can tell a clean answer from an unasked one.
+		Assert.Contains(result.Notices, notice => notice.Contains("Analyzers ran in Library", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// Dropping an attribute the caller never saw leaves valid C# that compiles and verifies clean
+	/// while the member has quietly left whatever the attribute enrolled it in -- an [McpServerTool]
+	/// off the surface, a [Fact] out of the run. There is no symptom until something is missing
+	/// somewhere else, so the old attributes are kept and named.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_the_attributes_a_replacement_does_not_declare()
+	{
+		using var fixture = await AttributedGreeterAsync();
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ReplaceAsync(
+			session,
+			"Library.Greeter.Shout(string)",
+			"private static string Shout(string text)\n{\n\treturn text.ToUpperInvariant() + \"!\";\n}");
+
+		Assert.True(result.Applied);
+
+		var after = await ReadAsync(fixture, "Greeter.cs");
+
+		// Comment above attribute above declaration, each on its own line at the file's indentation:
+		// the comment is content the caller did not supply, and the attribute is now the first token.
+		Assert.Contains(
+			"\t/// <summary>Louder.</summary>\r\n\t[Obsolete(\"Shout is going away.\")]\r\n\tprivate static string Shout(string text)",
+			after,
+			StringComparison.Ordinal);
+
+		Assert.Contains("ToUpperInvariant() + \"!\"", after, StringComparison.Ordinal);
+
+		// Named rather than counted, so a caller can tell whether the one it cares about survived.
+		Assert.Contains(result.Notices, notice => notice.Contains("[Obsolete]", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// The other half of the rule, and the way a caller removes one: attributes in the code are the
+	/// attributes written, so replacing them or leaving them off is a decision the caller can make.
+	/// </summary>
+	[Fact]
+	public async Task Takes_the_attributes_a_replacement_declares()
+	{
+		using var fixture = await AttributedGreeterAsync();
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ReplaceAsync(
+			session,
+			"Library.Greeter.Shout(string)",
+			"[Obsolete(\"Use Announce instead.\")]\nprivate static string Shout(string text) => text.ToUpperInvariant();");
+
+		Assert.True(result.Applied);
+
+		var after = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("[Obsolete(\"Use Announce instead.\")]", after, StringComparison.Ordinal);
+		Assert.DoesNotContain("Shout is going away.", after, StringComparison.Ordinal);
+		Assert.DoesNotContain(result.Notices, notice => notice.Contains("Kept [Obsolete]", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A copy of the Members fixture whose Shout carries a documentation comment and an attribute.
+	/// Written into the copy rather than into the checked-in fixture, which every test counting its
+	/// members would see. Both, because the two share one piece of trivia: a declaration's
+	/// documentation comment sits above the first of its attributes, so carrying attributes over moves
+	/// which token the comment is attached to.
+	/// </summary>
+	private static async Task<FixtureSolution> AttributedGreeterAsync()
+	{
+		var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		var greeter = fixture.Path("Members", "Library", "Greeter.cs");
+		var text = await File.ReadAllTextAsync(greeter, TestContext.Current.CancellationToken);
+
+		await File.WriteAllTextAsync(
+			greeter,
+			text.Replace(
+				"\tprivate static string Shout(string text)",
+				"\t/// <summary>Louder.</summary>\r\n"
+					+ "\t[Obsolete(\"Shout is going away.\")]\r\n"
+					+ "\tprivate static string Shout(string text)",
+				StringComparison.Ordinal),
+			TestContext.Current.CancellationToken);
+
+		return fixture;
 	}
 
 	/// <summary>

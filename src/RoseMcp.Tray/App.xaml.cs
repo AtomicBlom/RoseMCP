@@ -50,6 +50,20 @@ public partial class App : Application
 			.WithHttpTransport();
 
 		_broker = builder.Build();
+
+		// The same endpoint as the http server's, so the same refusal: a page cannot reach a broker
+		// through a name it rebinds to loopback. See LoopbackOrigin for why an absent header is allowed.
+		_broker.Use(async (context, next) =>
+		{
+			if (!LoopbackOrigin.IsAllowed(context.Request.Headers.Origin.ToString()))
+			{
+				context.Response.StatusCode = StatusCodes.Status403Forbidden;
+				return;
+			}
+
+			await next(context);
+		});
+
 		_broker.MapMcp();
 		_broker.MapGet(
 			"/admin/workspaces",

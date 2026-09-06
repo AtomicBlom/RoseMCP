@@ -75,12 +75,14 @@ public sealed class DiskSynchronizer
 	}
 
 	/// <summary>
-	/// Starts tracking documents that have appeared in the snapshot since the last sweep -- which
-	/// means the ones this worker added itself, since anything else arrives through a reload.
+	/// Starts tracking documents that have appeared in the snapshot since the last sweep -- the ones a
+	/// mutation added, which is the only way a document reaches the snapshot without also being on disk
+	/// first.
 	/// <para>
-	/// Without this a file the worker created is in the snapshot but not in the tracking table, so
-	/// the next edit anyone makes to it would be invisible until something forced a reload. That is
-	/// precisely the staleness this class exists to prevent.
+	/// Without this a file the worker created is in the snapshot but not in the tracking table, so the next
+	/// edit anyone makes to it would be invisible until something forced a reload. That is precisely the
+	/// staleness this class exists to prevent. A file that appears on disk without a mutation is a
+	/// different case and <see cref="AbsorbNewAsync"/> is what finds it.
 	/// </para>
 	/// </summary>
 	public void TrackNew(Solution solution)
@@ -127,6 +129,7 @@ public sealed class DiskSynchronizer
 		// nothing here can patch in and which a directory walk for source files would not see.
 		var structural = created.Any(IsStructural);
 
+		var update = new DiskTrackerUpdate();
 		var added = new List<string>();
 		var notInTheBuild = new List<string>();
 
@@ -141,14 +144,23 @@ public sealed class DiskSynchronizer
 			{
 				// Once. The file stays untracked for as long as it stays out of the project, and
 				// repeating the notice on every read afterwards would bury everything else.
-				if (_declined.Add(path)) notInTheBuild.Add(path);
+				if (!_declined.Contains(path))
+				{
+					update.Declined.Add(path);
+					notInTheBuild.Add(path);
+				}
+
 				continue;
 			}
 
+			// Stamped before the read, the way the sweep stats before it reads: a write landing between
+			// the two then leaves a stamp older than the file and the next sweep re-reads it. The other
+			// order records the new stamp against the text read before the write, so that write stays
+			// invisible until the file changes again.
+			var stamp = FileStamp.For(path);
+
 			var text = await TryReadAsync(path, cancellationToken);
 			if (text is null) continue;
-
-			var stamp = FileStamp.For(path);
 
 			// Every project whose directory holds it, not just one. A multi-targeted project is
 			// several projects over one file, and a file missing from all but the first would report
@@ -158,7 +170,7 @@ public sealed class DiskSynchronizer
 				var id = DocumentId.CreateNewId(project.Id, Path.GetFileName(path));
 
 				solution = solution.AddDocument(id, Path.GetFileName(path), text, Folders(project, path), path);
-				_documents[id] = new TrackedDocument(id, path, TrackedDocumentKind.Source, stamp);
+				update.Tracked.Add(new TrackedDocument(id, path, TrackedDocumentKind.Source, stamp));
 			}
 
 			added.Add(path);
@@ -170,6 +182,7 @@ public sealed class DiskSynchronizer
 			Added = added,
 			StructuralChange = structural,
 			NotInTheBuild = notInTheBuild,
+			Tracker = update,
 		};
 	}
 
@@ -188,10 +201,10 @@ public sealed class DiskSynchronizer
 	/// </summary>
 	public async Task<DiskSyncResult> SyncAsync(Solution solution, CancellationToken cancellationToken)
 	{
+		var update = new DiskTrackerUpdate();
 		var changed = 0;
 		var removed = 0;
 		List<string>? deferred = null;
-		List<DocumentId>? dropped = null;
 
 		foreach (var (id, tracked) in _documents.ToArray())
 		{
@@ -202,7 +215,7 @@ public sealed class DiskSynchronizer
 			if (stamp is null)
 			{
 				solution = Remove(solution, tracked);
-				(dropped ??= []).Add(id);
+				update.Untracked.Add(id);
 				removed++;
 				continue;
 			}
@@ -219,16 +232,8 @@ public sealed class DiskSynchronizer
 			}
 
 			solution = WithText(solution, tracked, text);
-			_documents[id] = tracked with { Stamp = stamp };
+			update.Tracked.Add(tracked with { Stamp = stamp });
 			changed++;
-		}
-
-		if (dropped is not null)
-		{
-			foreach (var id in dropped)
-			{
-				_documents.Remove(id);
-			}
 		}
 
 		return new DiskSyncResult
@@ -236,9 +241,37 @@ public sealed class DiskSynchronizer
 			Solution = solution,
 			ChangedCount = changed,
 			RemovedCount = removed,
-			StructuralChange = DetectStructuralChange(),
+			StructuralChange = DetectStructuralChange(update),
 			Deferred = (IReadOnlyList<string>?)deferred ?? [],
+			Tracker = update,
 		};
+	}
+
+	/// <summary>
+	/// Applies a sweep's tracking changes. Called with the snapshot they describe, so a
+	/// reconciliation that ends any other way leaves the table describing the snapshot still in hand.
+	/// </summary>
+	public void Commit(DiskTrackerUpdate update)
+	{
+		foreach (var tracked in update.Tracked)
+		{
+			_documents[tracked.Id] = tracked;
+		}
+
+		foreach (var id in update.Untracked)
+		{
+			_documents.Remove(id);
+		}
+
+		foreach (var (path, stamp) in update.Structural)
+		{
+			_structuralFiles[path] = stamp;
+		}
+
+		foreach (var path in update.Declined)
+		{
+			_declined.Add(path);
+		}
 	}
 
 	/// <summary>
@@ -420,16 +453,16 @@ public sealed class DiskSynchronizer
 	private static bool Encloses(string directory, string path) =>
 		path.StartsWith(directory.TrimEnd(SeparatorChars) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
-	private bool DetectStructuralChange()
+	private bool DetectStructuralChange(DiskTrackerUpdate update)
 	{
 		var changed = false;
 
-		foreach (var (path, previous) in _structuralFiles.ToArray())
+		foreach (var (path, previous) in _structuralFiles)
 		{
 			var current = FileStamp.For(path);
 			if (current == previous) continue;
 
-			_structuralFiles[path] = current;
+			update.Structural.Add(new KeyValuePair<string, FileStamp?>(path, current));
 			changed = true;
 		}
 

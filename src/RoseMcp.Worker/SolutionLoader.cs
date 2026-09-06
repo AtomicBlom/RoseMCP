@@ -29,6 +29,12 @@ public sealed class SolutionLoader(
 
 	private AnalyzerFileReference? _xamlStubs;
 
+	/// <summary>
+	/// The loader every analyzer assembly goes through. Exposed so status computed later reports the
+	/// same load failures the load recorded, rather than an empty list beside a generator count of zero.
+	/// </summary>
+	public ShadowCopyAnalyzerAssemblyLoader AnalyzerLoader => analyzerLoader;
+
 	public async Task<LoadResult> LoadAsync(
 		WorkerOptions options,
 		CancellationToken cancellationToken,
@@ -94,7 +100,8 @@ public sealed class SolutionLoader(
 			Math.Round(stopwatch.Elapsed.TotalSeconds, 2),
 			cancellationToken,
 			progress.Slice(XamlDone, 100),
-			build);
+			build,
+			analyzerLoader);
 
 		logger.LogInformation(
 			"Loaded {SolutionPath} in {Seconds}s: {State}, {ProjectCount} project(s), {GeneratedCount} generated document(s).",
@@ -134,16 +141,6 @@ public sealed class SolutionLoader(
 	}
 
 	/// <summary>
-	/// Gives every XAML project the stand-in partials its markup compiler would have written.
-	/// <para>
-	/// The design-time build reports no XAML items and no additional files, so the markup is found
-	/// on disk, added as additional documents -- which the disk synchroniser then watches like any
-	/// other tracked file -- and a generator is attached to turn them into source. Skipped entirely
-	/// for projects with no XAML, which is most of them.
-	/// </para>
-	/// </summary>
-
-	/// <summary>
 	/// The stub generator's assembly, beside this one. Null, with a warning, when it is missing:
 	/// XAML stubbing is an enhancement, and a deployment that dropped one file should degrade to a
 	/// workspace without stubs rather than refuse to load the solution at all.
@@ -161,6 +158,16 @@ public sealed class SolutionLoader(
 
 		return _xamlStubs = new AnalyzerFileReference(path, analyzerLoader);
 	}
+
+	/// <summary>
+	/// Gives every XAML project the stand-in partials its markup compiler would have written.
+	/// <para>
+	/// The design-time build reports no XAML items and no additional files, so the markup is found on
+	/// disk, added as additional documents -- which the disk synchroniser then watches like any other
+	/// tracked file -- and a generator is attached to turn them into source. Skipped entirely for projects
+	/// with no XAML, which is most of them.
+	/// </para>
+	/// </summary>
 	private async Task<Solution> WithXamlStubsAsync(
 		Solution solution,
 		IWorkProgress? progress,
@@ -233,6 +240,7 @@ public sealed class SolutionLoader(
 			return null;
 		}
 	}
+
 	/// <summary>
 	/// Rebuilds every project's analyzer references so they load from throwaway copies.
 	/// <para>

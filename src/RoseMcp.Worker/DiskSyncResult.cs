@@ -20,5 +20,11 @@ public sealed record DiskSyncResult
 	/// <summary>Files that could not be read this sweep, usually because a write was in progress.</summary>
 	public required IReadOnlyList<string> Deferred { get; init; }
 
+	/// <summary>
+	/// The tracking changes this sweep worked out. Applied by the caller in the same step that takes
+	/// the snapshot above, never as the sweep goes.
+	/// </summary>
+	public required DiskTrackerUpdate Tracker { get; init; }
+
 	public bool AnythingChanged => ChangedCount > 0 || RemovedCount > 0 || StructuralChange;
 }

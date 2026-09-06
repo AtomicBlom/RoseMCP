@@ -105,6 +105,10 @@ internal static class Program
 
 		var application = builder.Build();
 
+		// First, and before the token, because it costs a header read and refuses a whole class of caller
+		// no later check would notice: a browser sends the token nowhere but sends Origin always.
+		application.Use(RefuseForeignOrigin);
+
 		var token = Environment.GetEnvironmentVariable("ROSEMCP_TOKEN");
 		if (!string.IsNullOrWhiteSpace(token)) application.Use(RequireToken(token));
 
@@ -122,6 +126,22 @@ internal static class Program
 
 		await application.RunAsync();
 		return 0;
+	}
+
+	/// <summary>
+	/// Refuses a request whose <c>Origin</c> names anywhere but this machine, which the MCP
+	/// specification asks of a local http server. See <see cref="LoopbackOrigin"/> for the attack and
+	/// for why an absent header is allowed.
+	/// </summary>
+	private static async Task RefuseForeignOrigin(HttpContext context, RequestDelegate next)
+	{
+		if (!LoopbackOrigin.IsAllowed(context.Request.Headers.Origin.ToString()))
+		{
+			context.Response.StatusCode = StatusCodes.Status403Forbidden;
+			return;
+		}
+
+		await next(context);
 	}
 
 	private static Func<HttpContext, RequestDelegate, Task> RequireToken(string token) => async (context, next) =>

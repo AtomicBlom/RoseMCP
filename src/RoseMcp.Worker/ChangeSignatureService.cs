@@ -600,6 +600,8 @@ public static class ChangeSignatureService
 			yield break;
 		}
 
+		foreach (var notice in verification.Notices) yield return notice;
+
 		if (verification.TotalCount == 0) yield return "The whole solution compiles clean.";
 
 		var existing = verification.TotalCount - verification.Introduced.Count;

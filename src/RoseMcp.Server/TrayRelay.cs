@@ -48,6 +48,12 @@ public sealed class TrayRelay : IAsyncDisposable
 	private readonly string _workingDirectory;
 	private readonly SemaphoreSlim _reconnecting = new(1, 1);
 
+	/// <summary>
+	/// Which of the tray's tools may be re-sent after the connection dies, learned from the tool list
+	/// this relay forwards anyway.
+	/// </summary>
+	private readonly RelayRetryPolicy _retries = new();
+
 	private McpClient _tray;
 
 	private TrayRelay(Uri endpoint, McpClient tray, string workingDirectory, ILoggerFactory loggerFactory)
@@ -125,10 +131,19 @@ public sealed class TrayRelay : IAsyncDisposable
 
 	public ValueTask<ListToolsResult> ListToolsAsync(CancellationToken cancellationToken) =>
 		InvokeAsync(
-			async (tray, token) => new ListToolsResult
+			async (tray, token) =>
 			{
-				Tools = [.. (await tray.ListToolsAsync(cancellationToken: token)).Select(tool => tool.ProtocolTool)],
+				var tools = (await tray.ListToolsAsync(cancellationToken: token))
+					.Select(tool => tool.ProtocolTool)
+					.ToArray();
+
+				// The same list the client gets, read once on the way past. It is what decides whether a
+				// call may be re-sent after the connection dies, and it costs nothing extra to know.
+				_retries.Learn(tools);
+
+				return new ListToolsResult { Tools = tools };
 			},
+			retryable: true,
 			cancellationToken);
 
 	/// <summary>
@@ -162,6 +177,7 @@ public sealed class TrayRelay : IAsyncDisposable
 		return await InvokeAsync(
 			(tray, token) => CancellableToolCall.InvokeAsync(
 				tray, request.Name, arguments, progress, token, _workingDirectory),
+			_retries.MayRetry(request.Name),
 			cancellationToken);
 	}
 
@@ -172,17 +188,20 @@ public sealed class TrayRelay : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Runs one call against the tray, reconnecting and trying once more if the connection has died
-	/// underneath us.
-	/// <para>
-	/// One retry, not a loop: a second transport failure means the tray is genuinely unreachable
-	/// rather than merely restarted, and retrying past that turns a clear failure into a hang. The
-	/// retried call finds a tray with nothing loaded, so it pays the solution load again, which is
-	/// correct and is why the failure message below promises a slow call rather than a fast one.
-	/// </para>
+	/// Runs one call against the tray, reconnecting if the connection has died underneath us, and
+	/// trying once more only where re-sending is safe.
 	/// </summary>
+	/// <param name="call">The work to do against the tray.</param>
+	/// <param name="retryable">
+	/// Whether re-issuing this call can do no harm. A transport failure does not say whether the far
+	/// side ran the call: a restarted tray never did, and a broken socket to a living tray may have
+	/// applied the rename already. So a write is reported rather than repeated, and the caller is told
+	/// what it does not know.
+	/// </param>
+	/// <param name="cancellationToken">The caller's token, which abandons the call rather than retrying it.</param>
 	private async ValueTask<T> InvokeAsync<T>(
 		Func<McpClient, CancellationToken, Task<T>> call,
+		bool retryable,
 		CancellationToken cancellationToken)
 	{
 		var tray = _tray;
@@ -203,9 +222,20 @@ public sealed class TrayRelay : IAsyncDisposable
 		{
 			_logger.LogWarning(exception, "The tray at {Endpoint} stopped answering; reconnecting.", _endpoint);
 
+			// Reconnected either way, so the next call does not pay for this one's failure.
 			var reconnected = await ReconnectAsync(tray, cancellationToken);
 
-			return await call(reconnected, cancellationToken);
+			// One retry, not a loop: a second transport failure means the tray is genuinely unreachable
+			// rather than merely restarted, and retrying past that turns a clear failure into a hang. The
+			// retried call finds a tray with nothing loaded, so it pays the solution load again, which is
+			// correct and is why the failure message elsewhere promises a slow call rather than a fast one.
+			if (retryable) return await call(reconnected, cancellationToken);
+
+			throw new McpException(
+				"The connection to the tray dropped part-way through this call, which is not one that can "
+					+ "be re-sent: the tray may have applied it before the connection went. The connection is "
+					+ "back, so read the workspace and call again if it did not.",
+				exception);
 		}
 	}
 

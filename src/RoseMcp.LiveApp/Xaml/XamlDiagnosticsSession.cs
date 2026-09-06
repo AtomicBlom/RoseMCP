@@ -11,18 +11,25 @@ using RoseMcp.XamlDiff;
 namespace RoseMcp.LiveApp.Xaml;
 
 /// <summary>
-/// Injects a XAML diagnostics provider into the target and reads back what it reports (#2/#3).
-/// <c>InitializeXamlDiagnosticsEx</c> loads the provider into the app by pid; the two ends exchange
-/// tab-separated files through a working folder this side stages. The provider must match the
-/// target's architecture, which is this host's architecture -- an x64 provider for a classic UWP app
-/// emulated on ARM64.
+/// Injects a XAML diagnostics provider into the target and reads back what it reports.
+/// <c>InitializeXamlDiagnosticsEx</c> loads the provider into the app by pid; the two ends then talk
+/// over a named pipe the provider connects back on, falling back to tab-separated files in a working
+/// folder this side stages. The provider must match the target's architecture, which is this host's
+/// architecture -- an x64 provider for a classic UWP app emulated on ARM64.
 /// <para>
 /// Which provider, which library exports the initialiser, which class id, and whether that folder
-/// needs AppContainer grants are all asked of the target rather than assumed (#74). They were four
-/// separate hard-codings of UWP, and their cost was not that WinUI 3 failed -- it is that it failed
-/// after a twenty-second wait, blaming the app for not being packaged. <see cref="XamlStackProbe"/>
-/// reads the framework DLLs the process has loaded and <see cref="XamlTaps"/> maps the answer to a
-/// tap, so a stack with no provider is refused immediately and by name.
+/// needs AppContainer grants are all asked of the target rather than assumed. They were four separate
+/// hard-codings of UWP, and their cost was not that WinUI 3 failed -- it is that it failed after a
+/// twenty-second wait, blaming the app for not being packaged. <see cref="XamlStackProbe"/> reads the
+/// framework DLLs the process has loaded and <see cref="XamlTaps"/> maps the answer to a tap, so a
+/// stack with no provider is refused immediately and by name.
+/// </para>
+/// <para>
+/// One request at a time, and the lock is re-entrant. The host serves MCP calls concurrently while
+/// every XAML request shares one work folder, one request file and one generation counter, and two at
+/// once produced a tree of 22 elements where the app has 24 -- a truncated tree handing out handles
+/// for a tree that is not there. Re-entrant because selecting by handle finishes by reading the
+/// selection, which takes the lock again on the same thread.
 /// </para>
 /// </summary>
 internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
@@ -50,9 +57,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// The XAML framework dll the initialiser is pointed at, resolved from the target, or null where
 	// the framework exports its own initialiser and needs no telling.
 	private string? _diagnosticsPath;
-	// The host end of the pipe the provider connects back on (#50). Present alongside the file
-	// channel while the two overlap: this proves the AppContainer can reach it before any request
-	// depends on it, which is the one thing about #50 that could not be settled by reading.
+	// The host end of the pipe the provider connects back on, and the fast path for every tree and
+	// properties read. The file channel stays as the fallback: a pipe an AppContainer cannot reach is
+	// a slower session rather than a broken one.
 	private XamlProviderPipe? _pipe;
 
 	// The number stamped on the request being served, and echoed back by the provider on everything it
@@ -564,6 +571,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return (0, 0);
 		}
 	}
+
 	/// <summary>
 	/// The last tree snapshot indexed by handle, for joining source info onto a selection. Empty when
 	/// no tree has been read: a selection is still perfectly usable without it, so a missing snapshot
@@ -1104,9 +1112,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Records whether the provider connected back on the pipe. Observation only for now: every
-	/// request still goes through the files, so a pipe that never connects costs nothing but the
-	/// line in the log that says so (#50).
+	/// Records whether the provider connected back on the pipe, which every tree and properties read tries
+	/// first. One that never connects costs each of those its fast path and nothing else, since the file
+	/// channel still answers -- so it is logged rather than treated as a failed injection.
 	/// </summary>
 	private void NoteProviderPipe()
 	{

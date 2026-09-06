@@ -1,9 +1,14 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>
-/// Tool names shared by the broker facade and the worker that implements them. The broker exposes
-/// exactly these names; a worker exposes the same names minus the <c>workspace</c> argument, so
-/// routing is a straight pass-through and a worker can be driven standalone by any MCP client.
+/// Every tool name in the system, in one place so a caller and its callee cannot spell one differently.
+/// <para>
+/// Three sets, and they are not the same set. The broker exposes the <c>rose_*</c> names an agent
+/// sees. A worker exposes the Roslyn ones minus the <c>workspace</c> argument, so routing is a straight
+/// pass-through and a worker can be driven standalone by any MCP client. The <c>rose_worker_info</c>
+/// and <c>rose_live_app_*</c> names are host-internal: the broker calls them and declares none of them,
+/// because a client offered one would be offered a tool with no session to run it against.
+/// </para>
 /// </summary>
 public static class ToolNames
 {

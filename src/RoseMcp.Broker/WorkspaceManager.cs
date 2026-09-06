@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -20,13 +22,23 @@ public sealed class WorkspaceManager(
 	ILoggerFactory loggerFactory,
 	ILogger<WorkspaceManager> logger) : IAsyncDisposable
 {
-	private readonly Dictionary<string, WorkspaceWorker> _workers = new(PathCasing.Comparer);
+	/// <summary>
+	/// The open workers, by solution path.
+	/// <para>
+	/// Concurrent because the readers and the writer are not the same caller and never were: the tray
+	/// enumerates this on a two-second timer while a call on another thread starts or replaces a
+	/// worker, and a plain Dictionary read against a concurrent write is documented to throw or to
+	/// corrupt its table. The gate below is a different guarantee -- it makes the compound
+	/// check-dispose-replace-start sequence atomic, which no dictionary can do.
+	/// </para>
+	/// </summary>
+	private readonly ConcurrentDictionary<string, WorkspaceWorker> _workers = new(PathCasing.Comparer);
 
 	/// <summary>
 	/// MSBuild properties asked for at reload, per solution. Kept because they belong to the worker's
 	/// command line, and a worker replaced after a crash would otherwise lose them.
 	/// </summary>
-	private readonly Dictionary<string, WorkspaceBuildOverrides> _buildOverrides =
+	private readonly ConcurrentDictionary<string, WorkspaceBuildOverrides> _buildOverrides =
 		new(PathCasing.Comparer);
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
@@ -40,16 +52,7 @@ public sealed class WorkspaceManager(
 	public ActivityLog Activities { get; } = new();
 
 	/// <summary>Open workspaces, for status reporting and the tray UI.</summary>
-	public IReadOnlyList<WorkspaceWorker> Workers
-	{
-		get
-		{
-			lock (_workers)
-			{
-				return [.. _workers.Values];
-			}
-		}
-	}
+	public IReadOnlyList<WorkspaceWorker> Workers => [.. _workers.Values];
 
 	/// <summary>
 	/// One row per open workspace, memory and in-flight work included. The same model backs the
@@ -90,7 +93,7 @@ public sealed class WorkspaceManager(
 					existing.ExitReason);
 
 				await existing.DisposeAsync();
-				_workers.Remove(solutionPath);
+				_workers.TryRemove(solutionPath, out _);
 				Activities.Forget(solutionPath);
 			}
 
@@ -215,18 +218,15 @@ public sealed class WorkspaceManager(
 
 		if (overlaps.Count == 0) return [];
 
-		lock (_workers)
+		return [.. overlaps.Select(overlap =>
 		{
-			return [.. overlaps.Select(overlap =>
-			{
-				var open = _workers.ContainsKey(overlap.SolutionPath) ? "open" : "not open";
+			var open = _workers.ContainsKey(overlap.SolutionPath) ? "open" : "not open";
 
-				return $"{Path.GetFileName(overlap.SolutionPath)} also compiles {overlap.SharedFileCount} of the "
-					+ $"file(s) this changed, and is {open}. This ran against "
-					+ $"{Path.GetFileName(worker.SolutionPath)} alone, so anything referencing those files from "
-					+ "projects only the other solution contains was not updated.";
-			})];
-		}
+			return $"{Path.GetFileName(overlap.SolutionPath)} also compiles {overlap.SharedFileCount} of the "
+				+ $"file(s) this changed, and is {open}. This ran against "
+				+ $"{Path.GetFileName(worker.SolutionPath)} alone, so anything referencing those files from "
+				+ "projects only the other solution contains was not updated.";
+		})];
 	}
 
 	/// <summary>
@@ -257,7 +257,7 @@ public sealed class WorkspaceManager(
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
-			if (!_workers.Remove(solutionPath, out var worker)) return false;
+			if (!_workers.TryRemove(solutionPath, out var worker)) return false;
 
 			await worker.DisposeAsync();
 
@@ -386,16 +386,15 @@ public sealed class WorkspaceManager(
 	/// </summary>
 	private string OpenWorkspacesSuffix()
 	{
-		lock (_workers)
-		{
-			if (_workers.Count == 0)
-			{
-				return ". Pass the workspace argument naming a solution, project, or any file inside one.";
-			}
+		var open = _workers.Keys;
 
-			return ". Pass the workspace argument naming a solution, project, or any file inside one. "
-				+ $"Already open: {string.Join(", ", _workers.Keys)}.";
+		if (open.Count == 0)
+		{
+			return ". Pass the workspace argument naming a solution, project, or any file inside one.";
 		}
+
+		return ". Pass the workspace argument naming a solution, project, or any file inside one. "
+			+ $"Already open: {string.Join(", ", open)}.";
 	}
 
 	/// <summary>
@@ -431,10 +430,7 @@ public sealed class WorkspaceManager(
 			await worker.DisposeAsync();
 		}
 
-		lock (_workers)
-		{
-			_workers.Clear();
-		}
+		_workers.Clear();
 
 		_gate.Dispose();
 	}

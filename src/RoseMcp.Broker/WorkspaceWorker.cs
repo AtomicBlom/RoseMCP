@@ -168,8 +168,9 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// Forwards a tool call, records it as an activity, and deserialises the worker's structured
 	/// result.
 	/// <para>
-	/// Worker tools mirror the broker's one-for-one minus the workspace argument, so routing is a
-	/// straight pass-through and the two schemas cannot drift apart.
+	/// A worker's tool takes the broker's arguments minus the workspace one, so routing is a straight
+	/// pass-through: the name and the argument dictionary go over as they arrived. Nothing checks that
+	/// the two schemas agree, and their parameter text has drifted.
 	/// </para>
 	/// <para>
 	/// A progress sink is the calling client's, when it asked for one; progress reaches the

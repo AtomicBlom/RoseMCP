@@ -10,8 +10,13 @@ namespace RoseMcp.Broker.Tools;
 
 /// <summary>
 /// The agent-facing debugging surface. Each tool drives a per-target live-app session the broker
-/// supervises, the debugging counterpart to the per-solution workspace tools. This is the first
-/// dogfoodable slice: attach to a running .NET process, watch its exceptions and log output, detach.
+/// supervises, the debugging counterpart to the per-solution workspace tools: attach or launch, watch
+/// what the target throws and logs, set tracepoints and breakpoints, step, evaluate a field chain in a
+/// stopped frame, read and edit the running visual tree, and detach.
+/// <para>
+/// Every one of them but the four that start or list a session takes a session id, and reaches it
+/// through <see cref="LiveAppSessionManager"/>, which serves only the calling client its own.
+/// </para>
 /// </summary>
 [McpServerToolType]
 public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
@@ -21,7 +26,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	[McpServerTool(
 		Name = ToolNames.DebugAttach,
 		Title = "Attach a debugger to a process",
-		ReadOnly = true,
+		ReadOnly = false,
+		Destructive = false,
 		Idempotent = false,
 		OpenWorld = true,
 		UseStructuredContent = true)]
@@ -220,7 +226,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		"List the live-app debug sessions the broker is supervising, each with its session id, target, "
 			+ "architecture, state, and process ids. Use it to recover a session id you did not keep from "
 			+ "rose_debug_attach, or to see what is currently attached before starting another session.")]
-	public LiveAppSessionList List() => new() { Sessions = sessions.Describe() };
+	public LiveAppSessionList List() => new() { Sessions = sessions.DescribeOwned() };
 
 	[McpServerTool(
 		Name = ToolNames.DebugAddTracepoint,
@@ -417,8 +423,9 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "-- an argument or local name, then .field into the object graph (e.g. state.Inner.Count). It "
 			+ "reads fields directly from memory and runs none of the debuggee's own code, so it never hangs "
 			+ "or changes the target; property getters and method calls are deliberately not evaluated. Only "
-			+ "valid while stopped. Local names need a PDB; arguments are always named. Returns the value and "
-			+ "its type, or an error explaining why it did not resolve.")]
+			+ "valid while stopped. Locals are local_0, local_1 and so on in slot order -- a breakpoint's "
+			+ "recorded frame names them -- and arguments are named. Returns the value and its type, or an "
+			+ "error explaining why it did not resolve.")]
 	public async Task<LiveEvaluation> EvaluateAsync(
 		[Description(SessionHelp)] string sessionId,
 		[Description("A field-access expression, e.g. this.field or state.Inner.Count.")] string expression,
@@ -651,7 +658,11 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	}
 
 	private LiveAppSession Require(string sessionId)
-		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
+		=> sessions.Find(sessionId)
+			?? throw new McpException(
+				$"No debug session '{sessionId}' is open for this client. rose_debug_list names the ones there "
+					+ "are. A session another client of this broker started belongs to it and is not reachable "
+					+ "from here.");
 
 	private static string DescribeProcess(int processId)
 	{

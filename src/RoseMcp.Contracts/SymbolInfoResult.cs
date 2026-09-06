@@ -44,6 +44,13 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 	public required bool IsFromSource { get; init; }
 
 	/// <summary>
+	/// The assembly the symbol lives in, when it is not one this solution declares. Where a source
+	/// symbol has declarations to point at, a metadata one has only this -- and a caller that knows
+	/// which assembly a type came from knows which package to look in and which reference to add.
+	/// </summary>
+	public string? ContainingAssembly { get; init; }
+
+	/// <summary>
 	/// The declaration's own source text, when it was asked for. One entry per declaration, so a
 	/// partial comes back in the several pieces it is written in.
 	/// <para>

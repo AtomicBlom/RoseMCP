@@ -14,7 +14,9 @@ public static class NavigationService
 		CancellationToken cancellationToken,
 		bool includeSource = false)
 	{
-		var symbol = await request.ResolveAsync(snapshot, cancellationToken);
+		// The one read that can say something true about a symbol it cannot edit, so it is the one that
+		// looks in metadata when nothing in source carries the name.
+		var symbol = await request.ResolveAsync(snapshot, cancellationToken, includeMetadata: true);
 
 		var declarations = new List<SourceLocation>();
 		foreach (var location in symbol.Locations.Where(location => location.IsInSource))
@@ -40,8 +42,10 @@ public static class NavigationService
 			DeclarationSpans = await SymbolLocator.SpansOfAsync(symbol, cancellationToken),
 			BaseDefinitions = await DescribeAllAsync(snapshot, BaseDefinitions(symbol), cancellationToken),
 
-			// A symbol from metadata has no source locations, which is also why it cannot be renamed.
+			// A symbol from metadata has no source locations, which is also why it cannot be renamed. The
+			// assembly it came from is named in its place, since that is the only place it can be looked at.
 			IsFromSource = declarations.Count > 0,
+			ContainingAssembly = declarations.Count > 0 ? null : symbol.ContainingAssembly?.Identity.Name,
 
 			Source = includeSource ? await SourceOfAsync(symbol, cancellationToken) : [],
 		};

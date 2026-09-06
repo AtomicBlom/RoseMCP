@@ -7,21 +7,20 @@ using Microsoft.Extensions.Logging;
 namespace RoseMcp.Worker;
 
 /// <summary>
-/// The consistency core: one solution, one writer, and a guarantee that no read is ever served
-/// from a snapshot older than disk.
+/// The consistency core: one solution, one writer, and a guarantee that no read is ever served from a
+/// snapshot older than disk.
 /// <para>
-/// Every operation is queued onto a single-consumer channel, so mutations are strictly ordered.
-/// Reads queue a barrier that drains everything ahead of it, reconciles the snapshot with disk,
-/// and returns an immutable <see cref="WorkspaceSnapshot"/>. The expensive part of a read --
-/// compiling, running analyzers, finding references -- then happens off the writer against that
-/// snapshot, so concurrent reads still parallelise. Roslyn's immutability is what makes both halves
-/// of that safe.
+/// Every operation is queued onto a single-consumer channel, so mutations are strictly ordered. Reads
+/// queue a barrier that drains everything ahead of it, reconciles the snapshot with disk, and returns
+/// an immutable <see cref="WorkspaceSnapshot"/>. The expensive part of a read -- compiling, running
+/// analyzers, finding references -- then happens off the writer against that snapshot, so concurrent
+/// reads still parallelise. Roslyn's immutability is what makes both halves of that safe.
 /// </para>
 /// <para>
-/// The MSBuildWorkspace is used only as a loader. Its snapshot is forked on the first read and the
-/// session owns the authoritative <see cref="Solution"/> from then on, because the only public way
-/// to push changes back into a Workspace is TryApplyChanges, which writes to disk -- the opposite
-/// of what absorbing an external edit means.
+/// The MSBuildWorkspace is used only as a loader. Its solution is taken once, at construction and again
+/// at each reload, and the session owns the authoritative <see cref="Solution"/> from then on, because
+/// the only public way to push changes back into a Workspace is TryApplyChanges, which writes to disk --
+/// the opposite of what absorbing an external edit means.
 /// </para>
 /// </summary>
 public sealed class WorkspaceSession : IAsyncDisposable
@@ -202,20 +201,32 @@ public sealed class WorkspaceSession : IAsyncDisposable
 				_ => "Bulk changes on disk outran incremental tracking; the solution was reloaded.",
 			});
 
+			// The sweep is deliberately not committed on this path: a reload rebuilds the tracking
+			// table outright, and one that throws has to leave the table still describing the
+			// snapshot in hand. Committing first would tell the next sweep every stamp matches disk,
+			// which is how a worker goes on serving a snapshot older than disk with nothing to say so.
 			await ReloadAsync(cancellationToken);
 		}
-		else if (sync.AnythingChanged || appeared.AnythingChanged)
+		else
 		{
-			_current = appeared.Solution;
-			Interlocked.Increment(ref _revision);
+			// The stamps and document ids describe this snapshot, so they are applied with it. Said
+			// before the assignment only because nothing between the two can fail.
+			_synchronizer.Commit(sync.Tracker);
+			_synchronizer.Commit(appeared.Tracker);
 
-			if (sync.ChangedCount > 0) notices.Add($"Absorbed {sync.ChangedCount} external file change(s).");
-			if (sync.RemovedCount > 0) notices.Add($"{sync.RemovedCount} tracked document(s) no longer exist on disk.");
-
-			if (appeared.Added.Count > 0)
+			if (sync.AnythingChanged || appeared.AnythingChanged)
 			{
-				notices.Add($"Added {appeared.Added.Count} new file(s) that appeared on disk: "
-					+ string.Join(", ", appeared.Added.Take(5).Select(Path.GetFileName)));
+				_current = appeared.Solution;
+				Interlocked.Increment(ref _revision);
+
+				if (sync.ChangedCount > 0) notices.Add($"Absorbed {sync.ChangedCount} external file change(s).");
+				if (sync.RemovedCount > 0) notices.Add($"{sync.RemovedCount} tracked document(s) no longer exist on disk.");
+
+				if (appeared.Added.Count > 0)
+				{
+					notices.Add($"Added {appeared.Added.Count} new file(s) that appeared on disk: "
+						+ string.Join(", ", appeared.Added.Take(5).Select(Path.GetFileName)));
+				}
 			}
 		}
 

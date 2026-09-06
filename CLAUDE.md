@@ -578,11 +578,13 @@ Deploy over the running instance, or build release zips:
 `%LOCALAPPDATA%/BinaryVibrance/RoseMCP` -- the same vendor/product folder the logs live under.
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
-Tests are split by what they cost. `RoseMcp.UnitTests` touches no disk, no MSBuild and no child
-process -- 253 tests in about a second, so it is worth running on every change.
-`RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time
-builds and starts real workers, and takes about four minutes (236 tests). `RoseMcp.TestSupport` holds the
-doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
+Tests are split by what they cost. `RoseMcp.UnitTests` runs no MSBuild and starts no child process:
+305 tests in about a second, so it is worth running on every change. It does touch disk, in the
+handful of tests that write a temp file to prove a path is read the way the code says.
+`RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real design-time builds
+and starts real workers -- 308 tests, of which the 270 needing only the .NET SDK run in about two
+minutes while the 38 in `LiveAppSessionTests` take considerably longer. `RoseMcp.TestSupport` holds
+the doubles both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
 `TestSession` is an integration test however small it looks.
 
 The live-app tests are the expensive part, and they are phased by what each one can share (D33, D35).

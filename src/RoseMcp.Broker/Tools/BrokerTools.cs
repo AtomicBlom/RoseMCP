@@ -46,7 +46,8 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 	[McpServerTool(
 		Name = ToolNames.WorkspaceOpen,
 		Title = "Open a solution",
-		ReadOnly = true,
+		ReadOnly = false,
+		Destructive = false,
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]

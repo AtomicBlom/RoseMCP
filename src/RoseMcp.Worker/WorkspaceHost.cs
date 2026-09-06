@@ -59,8 +59,8 @@ public sealed class WorkspaceHost(
 				session.Load.Seconds,
 				cancellationToken,
 				progress,
-
-				session.Build);
+				session.Build,
+				loader.AnalyzerLoader);
 
 			// A reconciliation notice is something that happened, not a reason to distrust the answer:
 			// "Absorbed 16 external file change(s)" is the server doing the job it exists for. These

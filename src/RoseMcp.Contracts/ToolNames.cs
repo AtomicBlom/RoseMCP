@@ -201,4 +201,42 @@ public static class ToolNames
 	/// </para>
 	/// </summary>
 	public const string XamlSelectElement = "rose_xaml_select_element";
+
+	/// <summary>
+	/// Which host-internal tool answers each live-app tool the broker declares, for the pairs where a
+	/// name alone does not say.
+	/// <para>
+	/// The Roslyn half pairs by name -- a worker declares the same tool minus the workspace argument --
+	/// so a parity test over it needs no map. The live-app half does not: the broker's
+	/// <c>rose_debug_*</c> and <c>rose_xaml_*</c> names reach <c>rose_live_app_*</c> ones, and the four
+	/// layers that spell each argument had already drifted twice with nothing to notice. This is what
+	/// lets a test say the two ends declare the same arguments.
+	/// </para>
+	/// <para>
+	/// Session lifecycle is absent on purpose: <c>rose_debug_attach</c>, <c>rose_debug_launch</c>,
+	/// <c>rose_debug_launch_uwp</c> and <c>rose_debug_list</c> are the broker's own work -- starting,
+	/// activating and enumerating host processes -- and no host tool corresponds to them. So is
+	/// <c>rose_debug_detach</c>, which ends a session the broker owns rather than forwarding.
+	/// </para>
+	/// </summary>
+	public static readonly IReadOnlyDictionary<string, string> LiveAppPairs = new Dictionary<string, string>
+	{
+		[DebugEvents] = LiveAppEvents,
+		[DebugAddTracepoint] = LiveAppAddTracepoint,
+		[DebugListTracepoints] = LiveAppListTracepoints,
+		[DebugRemoveTracepoint] = LiveAppRemoveTracepoint,
+		[DebugSetBreakpoint] = LiveAppSetBreakpoint,
+		[DebugListBreakpoints] = LiveAppListBreakpoints,
+		[DebugRemoveBreakpoint] = LiveAppRemoveBreakpoint,
+		[DebugContinue] = LiveAppContinue,
+		[DebugStep] = LiveAppStep,
+		[DebugEvaluate] = LiveAppEvaluate,
+		[XamlTree] = LiveAppXamlTree,
+		[XamlProperties] = LiveAppXamlProperties,
+		[XamlApply] = LiveAppXamlApply,
+		[XamlSelectMode] = LiveAppXamlSelectMode,
+		[XamlSelection] = LiveAppXamlSelection,
+		[XamlDeselect] = LiveAppXamlDeselect,
+		[XamlSelectElement] = LiveAppXamlSelectElement,
+	};
 }

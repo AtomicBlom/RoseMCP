@@ -19,12 +19,7 @@ public static class RenameService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		if (request.ExpectedRevision is { } expected && expected != snapshot.Revision)
-		{
-			throw new InvalidOperationException(
-				$"The workspace is at revision {snapshot.Revision}, not the expected {expected}. "
-					+ "Something changed underneath this request; re-read and try again.");
-		}
+		snapshot.RefuseIfMoved(request.ExpectedRevision);
 
 		progress?.Report("Resolving the symbol", 0);
 

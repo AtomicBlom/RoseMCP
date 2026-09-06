@@ -76,7 +76,7 @@ public sealed class ToolDescriptionTests
 	[InlineData(ToolNames.Diagnostics, "in place of building after every change")]
 	[InlineData(ToolNames.ListGeneratedDocuments, "no file search")]
 	[InlineData(ToolNames.ReadGeneratedDocument, "no other way")]
-	[InlineData(ToolNames.BuildFreshness, "a green build does not answer")]
+	[InlineData(ToolNames.BuildFreshness, "a green build")]
 	[InlineData(ToolNames.AddUsing, "rather than editing the import block")]
 	[InlineData(ToolNames.ResolveName, "not reachable through rose_apply_code_fix")]
 	public void Says_what_the_caller_would_otherwise_have_done(string tool, string expected)
@@ -98,6 +98,64 @@ public sealed class ToolDescriptionTests
 
 		Assert.Contains("configuration", status, StringComparison.OrdinalIgnoreCase);
 		Assert.Contains("degraded", status, StringComparison.OrdinalIgnoreCase);
+	}
+
+	/// <summary>
+	/// The forwarding chain is the shape of every change here, and nothing checked it. Both ends of the
+	/// Roslyn hop declare the same tool, and their parameter text had drifted in eight places -- always
+	/// the broker's, the copy a client actually reads, saying less: whether a solution-relative path is
+	/// accepted was stated only on the side no client can see. Order as well as names, because the
+	/// worker is also driven standalone by an MCP client.
+	/// </summary>
+	[Fact]
+	public void The_two_hosts_declare_the_same_arguments_for_every_shared_tool()
+	{
+		var broker = Parameters(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);
+		var worker = Parameters(typeof(WorkspaceHost).Assembly);
+
+		var shared = broker.Keys.Intersect(worker.Keys, StringComparer.Ordinal).ToArray();
+
+		Assert.NotEmpty(shared);
+
+		// Compared as one string per tool rather than as two lists, so a failure names the tool and
+		// shows both argument lists rather than reporting that two arrays differ.
+		foreach (var name in shared)
+		{
+			Assert.Equal($"{name}: {string.Join(" | ", worker[name])}", $"{name}: {string.Join(" | ", broker[name])}");
+		}
+	}
+
+	/// <summary>
+	/// Each tool's arguments as a client is shown them: name and description, in order.
+	/// <para>
+	/// Three are dropped rather than compared. <c>workspace</c> and <c>sessionId</c> are how the broker
+	/// routes a call and exist only on the end that routes; <c>progress</c> and
+	/// <c>cancellationToken</c> are the SDK's own and never reach the schema.
+	/// </para>
+	/// </summary>
+	private static Dictionary<string, string[]> Parameters(Assembly assembly)
+	{
+		var declared = new Dictionary<string, string[]>(StringComparer.Ordinal);
+
+		foreach (var type in assembly.GetTypes())
+		{
+			if (type.GetCustomAttribute<McpServerToolTypeAttribute>() is null) continue;
+
+			foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+			{
+				if (method.GetCustomAttribute<McpServerToolAttribute>() is not { Name: { Length: > 0 } name }) continue;
+
+				declared[name] =
+				[
+					.. method.GetParameters()
+						.Where(parameter => parameter.Name is not ("workspace" or "sessionId" or "progress" or "cancellationToken"))
+						.Select(parameter =>
+							$"{parameter.Name}: {parameter.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty}"),
+				];
+			}
+		}
+
+		return declared;
 	}
 
 

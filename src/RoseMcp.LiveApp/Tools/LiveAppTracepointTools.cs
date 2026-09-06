@@ -20,10 +20,10 @@ public sealed class LiveAppTracepointTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Add a tracepoint at a method by name; it logs and auto-continues without pausing.")]
 	public LiveTracepoint Add(
-		[Description("[Assembly!]Namespace.Type.Method, e.g. MyApp.Widget.Refresh.")] string location,
-		[Description("Optional message logged on each hit.")] string? logMessage = null,
-		[Description("Optional: log only every Nth hit; all hits are still counted.")] int? logEveryNthHit = null,
-		[Description("Optional condition (name OP literal) gating each hit.")] string? condition = null)
+		[Description(ToolDescriptions.TracepointLocationArgument)] string location,
+		[Description(ToolDescriptions.LogMessageArgument)] string? logMessage = null,
+		[Description(ToolDescriptions.LogEveryNthHitArgument)] int? logEveryNthHit = null,
+		[Description(ToolDescriptions.TracepointConditionArgument)] string? condition = null)
 		=> host.AddTracepoint(location, logMessage, logEveryNthHit, condition);
 
 	[McpServerTool(
@@ -46,6 +46,6 @@ public sealed class LiveAppTracepointTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Remove a tracepoint by id, returning the remaining set.")]
 	public LiveTracepointList Remove(
-		[Description("The tracepoint id from add.")] string id)
-		=> host.RemoveTracepoint(id);
+		[Description(ToolDescriptions.TracepointIdArgument)] string tracepointId)
+		=> host.RemoveTracepoint(tracepointId);
 }

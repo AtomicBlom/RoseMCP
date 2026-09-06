@@ -19,9 +19,9 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Inject the XAML diagnostics provider into the target and read a snapshot of its live visual tree.")]
 	public LiveXamlTree XamlTree(
-		[Description("Root the tree at this named element's subtree.")] string? rootName = null,
-		[Description("Skip this many nodes (paging).")] int offset = 0,
-		[Description("Return at most this many nodes; 0 for all.")] int limit = 0)
+		[Description(ToolDescriptions.XamlRootNameArgument)] string? rootName = null,
+		[Description(ToolDescriptions.XamlOffsetArgument)] int offset = 0,
+		[Description(ToolDescriptions.XamlLimitArgument)] int limit = 0)
 		=> host.ReadXamlTree(rootName, offset, limit);
 
 	[McpServerTool(
@@ -33,8 +33,8 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Read one element's XAML properties (by handle) with provenance and source location.")]
 	public LiveXamlProperties XamlProperties(
-		[Description("The element handle from a tree snapshot.")] ulong handle,
-		[Description("Include the framework defaults, not only what it reports as set.")] bool includeDefaults = false)
+		[Description(ToolDescriptions.XamlHandleArgument)] ulong handle,
+		[Description(ToolDescriptions.IncludeDefaultsArgument)] bool includeDefaults = false)
 		=> host.ReadXamlProperties(handle, includeDefaults);
 
 	[McpServerTool(
@@ -48,10 +48,10 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		"Apply a XAML change to the live visual tree, from a file the session tracks or from two "
 			+ "versions of the markup.")]
 	public LiveXamlApplyResult XamlApply(
-		[Description("The XAML file to apply what is now on disk from; the session tracks what it last sent.")]
+		[Description(ToolDescriptions.XamlFilePathArgument)]
 		string? filePath = null,
-		[Description("The previous XAML. Not needed with filePath after the first apply.")] string? oldXaml = null,
-		[Description("The new XAML to apply, for markup that is not on disk.")] string? newXaml = null)
+		[Description(ToolDescriptions.XamlOldMarkupArgument)] string? oldXaml = null,
+		[Description(ToolDescriptions.XamlNewMarkupArgument)] string? newXaml = null)
 		=> host.ApplyXaml(oldXaml, newXaml, filePath);
 
 	[McpServerTool(
@@ -63,11 +63,11 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Arm the interactive selection overlay so the next click in the app picks that element, or disarm it.")]
 	public LiveXamlSelection XamlSelectMode(
-		[Description("Include elements the framework would not hit-test. Off by default.")]
+		[Description(ToolDescriptions.IncludeAllElementsArgument)]
 		bool includeAllElements = false,
-		[Description("Prefer the element declared in the app's own markup over a control template's parts.")]
+		[Description(ToolDescriptions.JustMyXamlArgument)]
 		bool justMyXaml = true,
-		[Description("False disarms select mode, the same as the toolbar's Idle button.")]
+		[Description(ToolDescriptions.ArmArgument)]
 		bool arm = true)
 		=> host.EnterXamlSelectMode(includeAllElements, justMyXaml, arm);
 
@@ -101,5 +101,7 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description("Select the element a handle names, without a click.")]
-	public LiveXamlSelection XamlSelectElement(ulong handle) => host.SelectXamlElement(handle);
+	public LiveXamlSelection XamlSelectElement(
+		[Description(ToolDescriptions.XamlHandleArgument)] ulong handle)
+		=> host.SelectXamlElement(handle);
 }

@@ -29,6 +29,7 @@ public static class NavigationService
 		return new SymbolInfoResult
 		{
 			Revision = snapshot.Revision,
+			Address = SymbolAddress.Of(symbol),
 			Name = symbol.Name,
 			Kind = symbol.Kind.ToString(),
 			Signature = symbol.ToDisplayString(SymbolSignature.Format),
@@ -51,13 +52,51 @@ public static class NavigationService
 		};
 	}
 
+	/// <summary>
+	/// Every reference to a symbol, with three ways to ask for less of it.
+	/// <para>
+	/// A widely used member answers at a size nothing can read: one member of a test fixture came back
+	/// at 63 KB, and <paramref name="maxResults"/> is no answer to it, because it drops references and
+	/// the previews on the ones it keeps are most of the payload. So the payload is separable from the
+	/// list -- how widely a symbol is used, which projects use it, and where exactly, are three
+	/// questions of very different sizes and only the last of them needs a line of source per hit.
+	/// </para>
+	/// </summary>
+	/// <param name="snapshot">The solution to search.</param>
+	/// <param name="target">The symbol, named or pointed at.</param>
+	/// <param name="maxResults">How many references to return.</param>
+	/// <param name="cancellationToken">Cancels the search.</param>
+	/// <param name="definitionsOnly">
+	/// Return where the symbol is declared and how many uses there are, without listing them. The count
+	/// is the whole answer to "is this used at all" and to "is this safe to change", at a fraction of
+	/// the size.
+	/// </param>
+	/// <param name="project">
+	/// Only references compiled by this project. Named rather than filtered by the caller afterwards,
+	/// because the truncation happens here: a symbol used five hundred times in tests and twice in the
+	/// product answers with the two only if the narrowing reaches the search.
+	/// </param>
+	/// <param name="includePreviews">
+	/// Whether each location carries its line of source. The member each reference sits inside is
+	/// reported either way, and that is what turns a flat list into "used by these six methods".
+	/// </param>
+	/// <exception cref="ArgumentException">The solution has no project of that name.</exception>
 	public static async Task<ReferencesResult> FindReferencesAsync(
 		WorkspaceSnapshot snapshot,
 		SymbolTarget target,
 		int maxResults,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		bool definitionsOnly = false,
+		string? project = null,
+		bool includePreviews = true)
 	{
-		var symbol = await target.ResolveAsync(snapshot, cancellationToken);
+		GuardProject(snapshot, project);
+
+		// Metadata included: who calls ILogger.LogInformation in this solution is a question about this
+		// solution's source, and refusing it because nothing here declares the member answers a narrower
+		// question than the one asked. The definitions come back empty, since a metadata symbol has no
+		// source location, and the references are the answer.
+		var symbol = await target.ResolveAsync(snapshot, cancellationToken, includeMetadata: true);
 		var found = await SymbolFinder.FindReferencesAsync(symbol, snapshot.Solution, cancellationToken);
 
 		var definitions = new List<SourceLocation>();
@@ -80,22 +119,55 @@ public static class NavigationService
 		}
 
 		var ordered = references
+			.Where(location => InProject(location, project))
 			.OrderBy(location => location.FilePath, StringComparer.OrdinalIgnoreCase)
 			.ThenBy(location => location.Line)
 			.ToArray();
 
-		var truncated = ordered.Length > maxResults;
+		// Truncated says the list is not all of them, which is as true of asking for none as of asking
+		// for two hundred. The count beside it is the real one either way.
+		var listed = definitionsOnly ? [] : ordered.Length > maxResults ? ordered[..maxResults] : ordered;
 
 		return new ReferencesResult
 		{
 			Revision = snapshot.Revision,
+			Address = SymbolAddress.Of(symbol),
 			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
-			Definitions = definitions,
-			References = truncated ? ordered[..maxResults] : ordered,
+			Definitions = [.. definitions.Select(location => Previewed(location, includePreviews))],
+			References = [.. listed.Select(location => Previewed(location, includePreviews))],
 			TotalCount = ordered.Length,
-			Truncated = truncated,
+			Truncated = listed.Length < ordered.Length,
 		};
 	}
+
+	/// <summary>
+	/// Refuses a project name the solution does not carry. Filtering silently on a name nothing
+	/// matches returns an empty list, which reads exactly like a symbol nobody uses -- the shape of
+	/// wrong answer worth the most trouble to avoid, since it invites a deletion.
+	/// </summary>
+	private static void GuardProject(WorkspaceSnapshot snapshot, string? project)
+	{
+		if (project is not { Length: > 0 }) return;
+
+		var names = snapshot.Solution.Projects.Select(candidate => candidate.Name).ToArray();
+
+		if (names.Any(name => string.Equals(name, project, StringComparison.OrdinalIgnoreCase))) return;
+
+		throw new ArgumentException(
+			$"No project in this solution is called '{project}'. It has {string.Join(", ", names.Order(StringComparer.Ordinal))}.");
+	}
+
+	/// <summary>Whether a location belongs to the project the caller narrowed to, or to any if none.</summary>
+	private static bool InProject(SourceLocation location, string? project) =>
+		project is not { Length: > 0 }
+			|| string.Equals(location.Project, project, StringComparison.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// The location with or without its line of source. Dropping the preview is most of the size of a
+	/// large answer, and it costs the caller nothing they cannot get back by asking about one file.
+	/// </summary>
+	private static SourceLocation Previewed(SourceLocation location, bool includePreviews) =>
+		includePreviews ? location : location with { Preview = null };
 
 	/// <summary>
 	/// What implements, overrides, or derives from the symbol at a position.
@@ -112,7 +184,10 @@ public static class NavigationService
 		int maxResults,
 		CancellationToken cancellationToken)
 	{
-		var symbol = await target.ResolveAsync(snapshot, cancellationToken);
+		// Metadata included, and this is where it earns most: what in this solution implements
+		// IDisposable or derives from Exception is a question about source, asked of a type no project
+		// here declares, and it is the ordinary shape of the question rather than an edge of it.
+		var symbol = await target.ResolveAsync(snapshot, cancellationToken, includeMetadata: true);
 		var solution = snapshot.Solution;
 		var found = new List<ISymbol>();
 		string relationship;
@@ -154,6 +229,7 @@ public static class NavigationService
 		return new ImplementationsResult
 		{
 			Revision = snapshot.Revision,
+			Address = SymbolAddress.Of(symbol),
 			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
 			Relationship = relationship,
 			Matches = truncated ? ordered[..maxResults] : ordered,
@@ -238,6 +314,7 @@ public static class NavigationService
 			{
 				Name = symbol.Name,
 				Kind = symbol.Kind.ToString(),
+				Address = SymbolAddress.Of(symbol),
 				Signature = symbol.ToDisplayString(SymbolSignature.Format),
 
 				// Metadata symbols belong to no project in the solution, and saying so is more use
@@ -276,6 +353,7 @@ public static class NavigationService
 				{
 					Name = symbol.Name,
 					Kind = symbol.Kind.ToString(),
+					Address = SymbolAddress.Of(symbol),
 					Signature = symbol.ToDisplayString(SymbolSignature.Format),
 					Project = project.Name,
 					Location = location is null

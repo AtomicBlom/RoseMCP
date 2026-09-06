@@ -1,3 +1,6 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -25,6 +28,83 @@ public sealed class SymbolAddressTests
 
 		Assert.Equal("ReadEventsAsync", address.Name);
 		Assert.Equal(["ReadEventsAsync"], address.Path);
+	}
+
+	/// <summary>
+	/// Putting one together, which is the direction a result needs. What was reported before was the
+	/// reading format -- return type first, parameters named -- and none of it parsed back.
+	/// </summary>
+	[Theory]
+	[InlineData("Shop.Till", "Shop.Till")]
+	[InlineData("Shop.Till.Total", "Shop.Till.Total")]
+	[InlineData("Shop.Till.Ring", "Shop.Till.Ring(string, int)")]
+	[InlineData("Shop.Till.Wrap", "Shop.Till.Wrap()")]
+	public void Spells_an_address_a_caller_can_write(string name, string expected) =>
+		Assert.Equal(expected, SymbolAddress.Of(Symbol(name)));
+
+	/// <summary>
+	/// And it goes back in: the address this spells is one <see cref="SymbolAddress.Parse"/> reads and
+	/// matches to the symbol it came from. Asserting the round trip rather than the string is what
+	/// makes this a contract instead of a snapshot of a display format.
+	/// </summary>
+	[Theory]
+	[InlineData("Shop.Till.Ring")]
+	[InlineData("Shop.Till.Wrap")]
+	[InlineData("Shop.Till.Total")]
+	public void Reads_back_the_address_it_spelled(string name)
+	{
+		var symbol = Symbol(name);
+		var address = SymbolAddress.Of(symbol);
+
+		Assert.NotNull(address);
+		Assert.True(SymbolAddress.Parse(address).Matches(symbol), $"'{address}' does not match the symbol it came from");
+	}
+
+	/// <summary>
+	/// A parameter has no address, and says so rather than reporting a bare identifier that would
+	/// invite a call that cannot work: it is declared inside a member rather than as one, so no
+	/// declaration search could find it.
+	/// </summary>
+	[Fact]
+	public void Spells_no_address_for_something_nothing_can_name()
+	{
+		var method = (IMethodSymbol)Symbol("Shop.Till.Ring");
+
+		Assert.Null(SymbolAddress.Of(method.Parameters[0]));
+	}
+
+	/// <summary>
+	/// One compilation, from source, so these assert what the formatter does rather than what a
+	/// solution happens to hold. Two overloads because separating them is most of what an address is
+	/// for.
+	/// </summary>
+	private static ISymbol Symbol(string name)
+	{
+		const string Source = """
+			namespace Shop;
+	
+			public class Till
+			{
+				public int Total { get; set; }
+	
+				public string Ring(string item, int pence) => item;
+	
+				public string Wrap() => "wrapped";
+			}
+			""";
+
+		var compilation = CSharpCompilation.Create(
+			"Addresses",
+			[CSharpSyntaxTree.ParseText(Source)],
+			[MetadataReference.CreateFromFile(typeof(object).Assembly.Location)]);
+
+		var found = compilation.GetSymbolsWithName(
+			candidate => candidate == name.Split('.')[^1],
+			SymbolFilter.TypeAndMember).ToArray();
+
+		Assert.Single(found);
+
+		return found[0];
 	}
 
 	/// <summary>

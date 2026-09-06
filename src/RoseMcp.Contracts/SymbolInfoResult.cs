@@ -5,6 +5,12 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 
+	/// <summary>
+	/// This symbol as an address: pass it back as <c>symbol</c> to any rose_* tool. Null where nothing
+	/// can name it -- a local or a parameter is declared inside a member rather than as one.
+	/// </summary>
+	public string? Address { get; init; }
+
 	public required string Name { get; init; }
 
 	public required string Kind { get; init; }

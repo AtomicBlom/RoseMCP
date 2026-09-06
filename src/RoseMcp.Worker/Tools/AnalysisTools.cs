@@ -27,7 +27,7 @@ public sealed class AnalysisTools(
 	[Description(ToolDescriptions.ListCodeFixes)]
 	public async Task<CodeFixList> ListCodeFixesAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Absolute or solution-relative path to the file.")] string filePath,
+		[Description(ToolDescriptions.SingleFilePathArgument)] string filePath,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -48,7 +48,7 @@ public sealed class AnalysisTools(
 	[Description(ToolDescriptions.BuildFreshness)]
 	public async Task<BuildFreshnessReport> BuildFreshnessAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Limit to one project by name or path. Defaults to every project.")] string? project = null,
+		[Description(ToolDescriptions.ProjectOrPathFilterArgument)] string? project = null,
 		CancellationToken cancellationToken = default)
 	{
 		// Comparing timestamps is instant. The only wait worth reporting is the workspace itself.
@@ -91,29 +91,32 @@ public sealed class AnalysisTools(
 	[Description(ToolDescriptions.Diagnostics)]
 	public async Task<DiagnosticsResult> DiagnosticsAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("document, project, or solution. Defaults to solution.")] string? scope = null,
-		[Description("File path for document scope, or project name for project scope.")] string? target = null,
-		[Description("Lowest severity to report: hidden, info, warning, or error. Defaults to warning.")] string? minimumSeverity = null,
-		[Description("Run analyzers as well as the compiler. Much slower over a whole solution; off by default.")] bool includeAnalyzers = false,
-		[Description("Maximum diagnostics to return. Defaults to 200.")] int maxResults = 200,
+		[Description(ToolDescriptions.DiagnosticFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.DiagnosticProjectArgument)] string? project = null,
+		[Description(ToolDescriptions.DiagnosticScopeArgument)] string? scope = null,
+		[Description(ToolDescriptions.MinimumSeverityArgument)] string? minimumSeverity = null,
+		[Description(ToolDescriptions.IncludeAnalyzersArgument)] bool includeAnalyzers = false,
+		[Description(ToolDescriptions.MaxDiagnosticsArgument)] int maxResults = 200,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
 		using var following = sharedWork.Follow(waiting);
 
+		// Read before the workspace, so a contradictory call is refused without paying for a load.
+		var wanted = DiagnosticTarget.From(filePath, project, scope);
+
 		var snapshot = await host.ReadAsync(cancellationToken);
 
 		var request = new DiagnosticsRequest
 		{
-			Scope = ParseScope(scope),
-			Target = target,
+			Scope = wanted.Scope,
+			Target = wanted.Target,
 			MinimumSeverity = ParseSeverity(minimumSeverity),
 			IncludeAnalyzers = includeAnalyzers,
 			MaxResults = maxResults <= 0 ? 200 : maxResults,
 		};
 
-		return await diagnostics.AnalyseAsync(
-			snapshot, request, cancellationToken, working);
+		return await diagnostics.AnalyseAsync(snapshot, request, cancellationToken, working);
 	}
 
 	[McpServerTool(
@@ -126,7 +129,7 @@ public sealed class AnalysisTools(
 	[Description(ToolDescriptions.ListGeneratedDocuments)]
 	public async Task<GeneratedDocumentList> ListGeneratedAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		CancellationToken cancellationToken = default)
 	{
 		var (waiting, working) = WorkProgress.Split(progress);
@@ -148,8 +151,8 @@ public sealed class AnalysisTools(
 	[Description(ToolDescriptions.ReadGeneratedDocument)]
 	public async Task<GeneratedDocumentContent> ReadGeneratedAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description("Hint name of the generated document, for example Widget.Greeting.g.cs.")] string hintName,
-		[Description("Limit to one project by name. Defaults to the whole solution.")] string? project = null,
+		[Description(ToolDescriptions.HintNameArgument)] string hintName,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		CancellationToken cancellationToken = default)
 	{
 		// Reading one document is cheap; the only wait worth reporting is the workspace itself.
@@ -159,18 +162,13 @@ public sealed class AnalysisTools(
 		return await GeneratedDocumentService.ReadAsync(snapshot, hintName, project, cancellationToken);
 	}
 
-	private static DiagnosticScope ParseScope(string? scope) => scope?.ToLowerInvariant() switch
-	{
-		"document" or "file" => DiagnosticScope.Document,
-		"project" => DiagnosticScope.Project,
-		_ => DiagnosticScope.Solution,
-	};
-
 	private static DiagnosticSeverity ParseSeverity(string? severity) => severity?.ToLowerInvariant() switch
 	{
 		"hidden" => DiagnosticSeverity.Hidden,
 		"info" or "information" => DiagnosticSeverity.Info,
 		"error" => DiagnosticSeverity.Error,
-		_ => DiagnosticSeverity.Warning,
+		null or "" => DiagnosticSeverity.Warning,
+		"warning" => DiagnosticSeverity.Warning,
+		_ => throw ArgumentValues.Unknown("minimumSeverity", severity, "hidden", "info", "warning", "error"),
 	};
 }

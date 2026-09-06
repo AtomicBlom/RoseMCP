@@ -94,12 +94,7 @@ public static class DeclarationEditService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress)
 	{
-		if (request.ExpectedRevision is { } expected && expected != snapshot.Revision)
-		{
-			throw new InvalidOperationException(
-				$"The workspace is at revision {snapshot.Revision}, not the expected {expected}. "
-					+ "Something changed underneath this request; re-read and try again.");
-		}
+		snapshot.RefuseIfMoved(request.ExpectedRevision);
 
 		var notices = new List<string>(snapshot.Notices);
 

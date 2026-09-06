@@ -175,13 +175,13 @@ public sealed partial class MainWindow : Window
 	{
 		for (var index = _rows.Count - 1; index >= 0; index--)
 		{
-			var stillOpen = summaries.Any(summary => Same(summary.SolutionPath, _rows[index].SolutionPath));
+			var stillOpen = summaries.Any(summary => Same(summary.Workspace, _rows[index].SolutionPath));
 			if (!stillOpen) _rows.RemoveAt(index);
 		}
 
 		foreach (var summary in summaries)
 		{
-			var existing = _rows.FirstOrDefault(row => Same(row.SolutionPath, summary.SolutionPath));
+			var existing = _rows.FirstOrDefault(row => Same(row.SolutionPath, summary.Workspace));
 
 			if (existing is null)
 			{

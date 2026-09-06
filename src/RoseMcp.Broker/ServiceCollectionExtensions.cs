@@ -31,122 +31,61 @@ public static class ServiceCollectionExtensions
 		?? "0.0.0";
 
 	/// <summary>
-	/// Sent to the client during initialize, which means the model sees it before it decides how to
-	/// approach anything. That makes it the highest-leverage text in the server: tool descriptions
-	/// are only read once a tool is already being considered, whereas this is what stops the reflex
-	/// reach for grep in the first place. It is always in context, so it stays short and concrete.
+	/// Sent to the client during initialize, which means the model reads it before it decides how to
+	/// approach anything. That makes it the highest-leverage text in the server: a tool description is
+	/// read only once that tool is already a candidate, whereas this is what stops the reflex reach
+	/// for grep in the first place.
+	/// <para>
+	/// A routing table, then the facts no description can carry. It was 11,340 characters of three to
+	/// six lines of reasoning per tool, and the routing -- which tool for which situation -- was the
+	/// first clause of each bullet, buried under it. The SDK's own guidance is that instructions
+	/// "should not duplicate tool, prompt, or resource descriptions already exposed elsewhere", and
+	/// every cut sentence still exists once, in the description of the tool it is about, where it is
+	/// read at the moment of choosing.
+	/// </para>
+	/// <para>
+	/// What earns a place under the table is what no description can say, because it is about the
+	/// server rather than about one tool: that there is no setup call, that every result names the
+	/// workspace that answered, that several solutions refuse rather than guess, that generated code
+	/// is not on disk, and that thousands of errors about System.Object mean the wrong MSBuild
+	/// configuration -- the one failure whose symptom points nowhere near its cause.
+	/// </para>
 	/// </summary>
 	private const string Instructions = """
-		Real C# semantics from a live Roslyn compilation of the user's solution, kept in sync with
-		disk. For C# work, prefer these over text search and hand editing.
+		Roslyn semantics over the user's C# solution, kept in sync with disk. For C#, reach for these
+		before grep, find-and-replace or a text edit:
 
-		- Locating something by name: rose_search_symbols, not a filename guess or a grep for the
-		  declaration. It matches the abbreviations people type, and returns the position the other
-		  tools want.
-		- Finding usages: rose_find_references, not grep. Grep matches comments, strings and
-		  unrelated identifiers that share a name, and misses overrides, interface implementations
-		  and aliases.
-		- Renaming: rose_rename_symbol, not find-and-replace. It moves overrides, interface
-		  implementations, partial declarations and cref references together, reports conflicts,
-		  and returns a diff. It also reports XAML that still names the old identifier, which it
-		  does not change: markup is text to the compiler, so a broken binding builds and runs.
-		- Reading code before you change it: rose_outline for what a type or a file contains, and
-		  rose_symbol_info with includeSource for one member and its code. Not a file read -- once
-		  the file is open, the next edit goes through a text tool and none of this is worth
-		  reaching for.
-		- Starting a new file: rose_add_file, not a text write. It puts the file in the project
-		  whose directory contains the path, gives it the namespace its folder implies, writes it in
-		  the repository's own tabs and line endings, works out the imports its code needs, and
-		  refuses a path that already exists. Writing a C# file outside the workspace leaves it
-		  permanently mid-edit, which is the earliest point a session stops being able to ask any of
-		  these questions usefully.
-		- Writing code into a file that already exists: rose_replace_member, rose_add_member,
-		  rose_delete_member and rose_replace_body, not a text edit. They address a member by name,
-		  parse what you give them before the file is touched and refuse if it does not parse, write
-		  through the repository's own .editorconfig, and then compile and tell you what the edit
-		  broke. That last part is the point: it takes the build out of the edit loop. A name also
-		  does not go stale the way a line number does the moment an earlier edit lands.
-		- Changing part of a body: rose_replace_body with find and replace, rather than re-emitting
-		  sixty lines to change one. The anchor is matched on the tokens inside the one member you
-		  named, so spacing does not matter, and nothing or more than one match is refused. position
-		  with code inserts at one end instead.
-		- Changing a documentation comment or an attribute: rose_replace_doc_comment and
-		  rose_set_attribute, not a whole-member rewrite and not a text edit. Composing a
-		  declaration to change a sentence is a trade nobody takes, and the editor then takes the
-		  code half too.
-		- Moving a member between types: rose_move_member, not an add and a delete. It is one change
-		  rather than two, and it decides what happens to the call sites once instead of once per
-		  file.
-		- Imports for code you write: worked out for you. A write compiles what it wrote, looks up
-		  the names that did not bind, and imports the ones with a single answer -- the rest come back
-		  as a choice, because the wrong import compiles and binds to the wrong type. Pass usings to
-		  the same call to be explicit, rather than editing the import block afterwards. rose_add_using does the same for code that
-		  arrived some other way. Either way it goes where the file's own ordering puts it, and one
-		  already in scope -- from a global using, an implicit using, or the namespace the file is
-		  in -- is reported rather than added, because adding it again is a build error too. Where
-		  you cannot say which namespace a name needs, rose_resolve_name searches the compilation
-		  for it and refuses to choose between two candidates rather than returning the first,
-		  because the wrong import compiles and binds to the wrong type.
-		- Adding, removing or retyping a parameter: rose_change_signature, not an edit per layer. It
-		  moves the base declaration and every override and implementation together, rewrites the
-		  arguments at every call site, keeps the param tags in the documentation in step, and
-		  reports the uses it did not change -- including the ones that still compile, which is
-		  where a missed layer hides. Threading one optional parameter through a stack of
-		  forwarders by hand is how a call site gets missed.
-		- Splitting a file that declares several types: rose_move_type_to_file, not a read followed
-		  by two writes. It carries the declaration across untouched and fixes the using directives
-		  in both files, which hand-splitting gets wrong in a way that fails the build.
-		- After writing or editing any C# file yourself: rose_format. Hand-written C# lands with
-		  the wrong indentation and the wrong line endings, and where IDE0055 is an error that is a
-		  failed build. This applies the repository's own .editorconfig, so it is not a matter of
-		  taste, and it leaves multi-line string literals alone.
-		- Fixing a diagnostic: rose_apply_code_fix, not editing each occurrence. The analyzers a
-		  solution already has ship the fixes for their own rules, and Roslyn applies one across a
-		  whole project or solution correctly where find-and-replace does not.
-		  rose_list_code_fixes says what is available in a file.
-		- Checking an edit compiles: rose_diagnostics, in place of building after every change. It
-		  answers from a warm compilation in milliseconds. It is not a substitute for a build --
-		  it emits nothing and runs no MSBuild targets -- so build before concluding you are done.
-		- Understanding a symbol: rose_symbol_info resolves the real signature, accessibility,
-		  documentation and declaration sites rather than whatever the declaration text looks like,
-		  and says what the member overrides or implements. Name it rather than pointing at a line,
-		  and it also tells you the first and last line of the declaration -- so where a member
-		  stops is known rather than approximated by reading forty lines after it.
-		- Who implements or overrides something: rose_find_implementations. Grep cannot answer this
-		  at all, since an implementation need not mention the interface anywhere near the member.
+		- find a declaration: rose_search_symbols; what a type or a file contains: rose_outline
+		- what a symbol is, and its code: rose_symbol_info with includeSource
+		- usages: rose_find_references; implementors and overrides: rose_find_implementations
+		- does it compile: rose_diagnostics -- a warm compilation, not a substitute for a build
+		- start a file: rose_add_file, which picks the project and the namespace the folder implies
+		- change a member: rose_replace_member, rose_add_member, rose_delete_member; just its body:
+		  rose_replace_body, with find and replace for a change too small to re-emit one for; just
+		  the prose or the attributes: rose_replace_doc_comment, rose_set_attribute
+		- rename: rose_rename_symbol; add, remove or retype a parameter across every override,
+		  implementation and call site: rose_change_signature; move a member between types:
+		  rose_move_member; split a file: rose_move_type_to_file
+		- imports: pass usings on any write, or rose_add_using for code that arrived another way;
+		  which namespace a name needs: rose_resolve_name
+		- analyzer fixes: rose_list_code_fixes then rose_apply_code_fix; formatting: rose_format
+		- what depends on what: rose_project_graph; is bin/ this code: rose_build_freshness
+		- source-generated code is not on disk at all: rose_list_generated_documents,
+		  rose_read_generated_document
 
-		Source-generated code exists only inside the compilation. The compiler does not write it to
-		disk, so no file read or search will ever find it. If a diagnostic names a file you cannot
-		open, it is generated: read it with rose_read_generated_document using the hint name.
+		Every write is addressed by name rather than by line, parsed before the file is opened,
+		formatted to the repository's own .editorconfig, then compiled -- so the result says what the
+		edit broke and there is no build in the loop. Grep matches comments, strings and same-named
+		identifiers, and misses overrides and interface implementations.
 
-		No setup call is needed. Any tool taking a file path finds the enclosing solution itself, and
-		with one solution nearby even the path is optional. The first call loads the solution and
-		takes a few seconds; every call after that is fast, so there is no reason to batch around it.
-
-		A large solution is the exception: the first call can take a couple of minutes. If you are
-		about to work in one and have something else to do first -- reading the files you are going to
-		ask about, checking out a branch, running the part of a build that needs no Roslyn --
-		rose_workspace_open begins the load and returns at once, and calling it again says how far it
-		has got without waiting. Asking a real question early is always safe: every other tool blocks
-		until the workspace can answer, so it waits exactly as it would have.
-
-		Every result names the workspace that answered, and carries a short workspaceKey you can pass
-		back as the workspace argument. Check it when an answer surprises you: an empty result from
-		the wrong solution looks exactly like an empty result from the right one. Where a directory
-		holds several solutions and the file you named does not single one out, the call fails and
-		lists them rather than picking.
-
-		Edits made by other tools are picked up automatically before each call, so results are never
-		stale and no refresh step exists. The one thing that does need rose_workspace_reload is
-		rebuilding an analyzer or source generator, because loaded assemblies cannot be replaced.
-
-		If answers look wrong or generated code seems missing, call rose_workspace_status. A
-		degraded workspace returns plausible but incomplete results rather than errors.
-
-		If a whole solution looks broken -- thousands of errors, System.Object undefined, nothing
-		resolving -- it is almost certainly loaded under the wrong MSBuild configuration rather than
-		actually broken. rose_workspace_status reports the one in use and the ones the solution
-		declares; rose_workspace_reload takes a different one.
+		No setup call: every tool finds the enclosing solution from a path or the working directory.
+		The first call loads it -- seconds usually, minutes for a very large one, which
+		rose_workspace_open starts early and returns without waiting for. Every result names the
+		workspace that answered and carries a revision, and a directory holding several solutions
+		refuses and lists them rather than guessing. Edits by other tools are absorbed on the next
+		call; only a rebuilt analyzer or generator needs rose_workspace_reload. If answers look
+		wrong, ask rose_workspace_status -- thousands of errors about System.Object means the
+		solution loaded under an MSBuild configuration it does not declare.
 		""";
 
 	/// <summary>
@@ -156,39 +95,22 @@ public static class ServiceCollectionExtensions
 	/// </summary>
 	private const string DebuggingInstructions = """
 
-		Debugging a running .NET process is done with the rose_debug_* tools, which attach a debugger
-		without Visual Studio and without loading the solution a second time, so they cost far less
-		memory than an external debugger. Prefer them over adding Console.WriteLine and rebuilding,
-		which needs a source edit and a restart to observe anything.
-		- rose_debug_attach takes a running process by pid; rose_debug_launch starts one under the
-		  debugger so its earliest events are caught. Local, same-user processes only.
-		- rose_debug_events reads what has happened since a cursor -- exceptions with stack traces,
-		  Debugger.Log output, module loads, breakpoint hits -- so you read it between turns rather
-		  than waiting on the process. To wait for something instead of asking repeatedly, give it
-		  waitSeconds and it answers the moment a matching event arrives; with kinds it waits for one
-		  thing, and kinds=BreakpointHit is "wait until the target stops". Do not call it in a loop.
-		- rose_debug_add_tracepoint logs a method's hits and keeps running: the low-friction default,
-		  since it never freezes the app. rose_debug_set_breakpoint instead holds the target and
-		  records its stack and the top frame's locals and arguments; rose_debug_continue or
-		  rose_debug_step (in/over/out) resumes it, and it auto-continues after a timeout so an
-		  unattended stop cannot wedge the app. Both take a cheap condition like count >= 100.
-		- rose_debug_detach ends a session and leaves the target running.
+		Debugging a running .NET process: rose_debug_attach takes a pid, rose_debug_launch an
+		executable, rose_debug_launch_uwp an app user-model id; then rose_debug_events with kinds and
+		waitSeconds waits for one thing rather than polling. rose_debug_add_tracepoint logs hits
+		without stopping the app; rose_debug_set_breakpoint stops with a stack and locals and
+		auto-continues after a timeout, so an unattended stop cannot wedge the app. At a stop,
+		rose_debug_step, rose_debug_continue and rose_debug_evaluate (field chains only, and no
+		debuggee code is run). rose_debug_detach leaves the target running.
 
-		A running XAML app (UWP, WinUI) can also be inspected and edited in place with the rose_xaml_*
-		tools, against the same session. Reach for them instead of rebuilding and relaunching to see a
-		layout or colour change, and instead of reading markup to work out what the user is looking at.
-		- rose_xaml_tree and rose_xaml_properties read the live visual tree and one element's real
-		  values, with where each was set -- so "why is this the wrong colour" is answered from the
-		  running app rather than inferred from the XAML.
-		- rose_xaml_apply live-edits it: edit the XAML file, pass its path, and the change is applied to
-		  the running app's visual tree with no relaunch, as often as you like -- what Visual Studio
-		  calls XAML Hot Reload. It diffs against what it last sent, so there is nothing to carry
-		  between calls. The first call for a file records a baseline and applies nothing, so make it
-		  before you start editing. The change lives on the objects in the tree, not in the app's
-		  markup, so it is gone if the app rebuilds that part of the UI.
-		- rose_xaml_select_mode and rose_xaml_selection let the user point at an element instead of
-		  describing it. Read the selection first: the user can arm the in-app toolbar themselves, so
-		  "look at the element I selected" may already have an answer waiting.
+		A running UWP or WinUI app is inspected and edited in place against the same session.
+		rose_xaml_tree and rose_xaml_properties read the live visual tree and one element's real
+		values, with where each was set. rose_xaml_apply live-edits it from the XAML file with no
+		relaunch -- what Visual Studio calls XAML Hot Reload -- and the first call for a file records
+		only a baseline, so make it before editing; the change lives on the objects in the tree
+		rather than in the app's markup, so it is gone if the app rebuilds that part of the UI.
+		rose_xaml_selection reads what the user clicked -- read it before asking them to point, since
+		they can arm the in-app toolbar themselves -- and rose_xaml_select_mode arms the click.
 		""";
 
 	public static IMcpServerBuilder AddRoseMcpBroker(
@@ -224,7 +146,8 @@ public static class ServiceCollectionExtensions
 
 		return builder
 			.WithCallOrigin()
-			.WithToolErrorMessages();
+			.WithToolErrorMessages()
+			.WithLeanListing();
 	}
 
 	/// <summary>
@@ -288,5 +211,19 @@ public static class ServiceCollectionExtensions
 			{
 				throw new McpException(exception.Message, exception);
 			}
+		}));
+
+	/// <summary>
+	/// Applies <see cref="ToolListing.Trim"/> at the one place every listing passes through, so no tool
+	/// can be added that skips it.
+	/// </summary>
+	private static IMcpServerBuilder WithLeanListing(this IMcpServerBuilder builder) =>
+		builder.WithRequestFilters(filters => filters.AddListToolsFilter(next => async (context, cancellationToken) =>
+		{
+			var result = await next(context, cancellationToken);
+
+			foreach (var tool in result.Tools) ToolListing.Trim(tool);
+
+			return result;
 		}));
 }

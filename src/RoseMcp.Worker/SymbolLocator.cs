@@ -21,8 +21,7 @@ public static class SymbolLocator
 		int column,
 		CancellationToken cancellationToken)
 	{
-		var document = FindDocument(solution, filePath)
-			?? throw new ArgumentException($"No document in the solution matches '{filePath}'.");
+		var document = RequireDocument(solution, filePath);
 
 		var text = await document.GetTextAsync(cancellationToken);
 		var position = ToPosition(text, filePath, line, column);
@@ -47,6 +46,44 @@ public static class SymbolLocator
 			.SelectMany(project => project.Documents)
 			.FirstOrDefault(document => document.FilePath is { Length: > 0 } path
 				&& string.Equals(Path.GetFullPath(path), full, StringComparison.OrdinalIgnoreCase));
+	}
+
+	/// <summary>
+	/// The document at a path, or a refusal that says which of the three reasons it is not there.
+	/// <para>
+	/// "No document in the solution matches" was true and useless. A path can be absent for three
+	/// quite different reasons, each with a different next step: the file is new and no project's globs
+	/// have picked it up yet, which the next call fixes on its own; it exists but no project compiles
+	/// it, which is a project-file problem; or another solution over the same directory compiles it,
+	/// which the workspace argument settles. A caller told only that it does not match cannot tell
+	/// which, and the commonest guess -- that the path is wrong -- is the one that is usually right and
+	/// occasionally very wrong.
+	/// </para>
+	/// </summary>
+	/// <exception cref="ArgumentException">No project in this solution compiles the path.</exception>
+	public static Document RequireDocument(Solution solution, string filePath) =>
+		FindDocument(solution, filePath) ?? throw NoDocument(solution, filePath);
+
+	/// <summary>The refusal, with the reason narrowed by what is actually on disk.</summary>
+	public static ArgumentException NoDocument(Solution solution, string filePath)
+	{
+		var full = Path.GetFullPath(filePath);
+		var name = Path.GetFileName(full);
+
+		var elsewhere = solution.Projects
+			.SelectMany(project => project.Documents)
+			.Any(document => string.Equals(Path.GetFileName(document.FilePath), name, StringComparison.OrdinalIgnoreCase));
+
+		var hint = File.Exists(full)
+			? "The file is on disk, so either no project compiles it -- a project that lists its files "
+				+ "rather than globbing them claims nothing new -- or another solution over these "
+				+ "directories does, which the workspace argument settles."
+			: "Nothing is at that path. A file this solution is about to compile appears on the next "
+				+ "call, once it exists and a project's globs reach it.";
+
+		var similar = elsewhere ? $" A file called {name} is in the solution under another path." : string.Empty;
+
+		return new ArgumentException($"No project in this solution compiles '{filePath}'. {hint}{similar}");
 	}
 
 	/// <summary>

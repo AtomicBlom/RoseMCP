@@ -14,11 +14,6 @@ namespace RoseMcp.Broker.Tools;
 [McpServerToolType]
 public sealed class BrokerTools(WorkspaceManager workspaces)
 {
-	private const string WorkspaceHelp =
-		"Path to a solution, project, or any file inside one. Usually omitted: it is inferred from the "
-			+ "other arguments, or from the working directory. Needed only where a directory holds "
-			+ "several solutions and none of them is pinned, which is reported when it happens.";
-
 	/// <summary>
 	/// Starts a load and returns without waiting for it (#44).
 	/// <para>
@@ -53,7 +48,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.WorkspaceOpen)]
 	public async Task<WorkspaceSummary> OpenAsync(
-		[Description(WorkspaceHelp)] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
 		// Returns as soon as the process is up and the MCP handshake is done -- a second or so, not the
@@ -104,7 +99,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.WorkspaceStatus)]
 	public async Task<WorkspaceStatusReport> StatusAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(WorkspaceHelp)] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(workspace), cancellationToken);
@@ -122,10 +117,10 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 	[Description(ToolDescriptions.WorkspaceReload)]
 	public async Task<WorkspaceStatusReport> ReloadAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(WorkspaceHelp)] string? workspace = null,
-		[Description("MSBuild configuration to load under, for example Debug-2027.")] string? configuration = null,
-		[Description("MSBuild platform to load under, for example x64.")] string? platform = null,
-		[Description("Further MSBuild properties, each as Name=Value.")] string[]? properties = null,
+		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
+		[Description(ToolDescriptions.ConfigurationArgument)] string? configuration = null,
+		[Description(ToolDescriptions.PlatformArgument)] string? platform = null,
+		[Description(ToolDescriptions.PropertiesArgument)] string[]? properties = null,
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.RestartAsync(
@@ -144,7 +139,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		OpenWorld = false)]
 	[Description(ToolDescriptions.WorkspaceClose)]
 	public async Task<string> CloseAsync(
-		[Description(WorkspaceHelp)] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
 		var closed = await workspaces.CloseAsync(WorkspaceHints.From(workspace), cancellationToken);

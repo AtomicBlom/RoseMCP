@@ -27,17 +27,11 @@ public static class MoveTypeService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		if (request.ExpectedRevision is { } expected && expected != snapshot.Revision)
-		{
-			throw new InvalidOperationException(
-				$"The workspace is at revision {snapshot.Revision}, not the expected {expected}. "
-					+ "Something changed underneath this request; re-read and try again.");
-		}
+		snapshot.RefuseIfMoved(request.ExpectedRevision);
 
-		progress?.Report($"Locating {request.TypeName}", 0);
+		progress?.Report($"Locating {request.Symbol}", 0);
 
-		var document = SymbolLocator.FindDocument(snapshot.Solution, request.FilePath)
-			?? throw new ArgumentException($"No document in the solution matches '{request.FilePath}'.");
+		var document = SymbolLocator.RequireDocument(snapshot.Solution, request.FilePath);
 
 		var sourcePath = document.FilePath ?? request.FilePath;
 
@@ -47,7 +41,7 @@ public static class MoveTypeService
 		}
 
 		var text = await document.GetTextAsync(cancellationToken);
-		var moving = Select(root, request.TypeName, sourcePath);
+		var moving = Select(root, request.Symbol, sourcePath);
 		var siblings = Siblings(moving);
 
 		if (siblings.Count == 1) throw OnlyType(moving, sourcePath);
@@ -109,8 +103,10 @@ public static class MoveTypeService
 	/// </summary>
 	private static MemberDeclarationSyntax Select(CompilationUnitSyntax root, string typeName, string sourcePath)
 	{
-		var name = typeName.Trim();
-		var bare = name.Contains('<', StringComparison.Ordinal) ? name[..name.IndexOf('<', StringComparison.Ordinal)] : name;
+		// Read through the same grammar every other symbol argument uses, so a caller who took the
+		// address out of one answer can pass it here: it drops type arguments and any qualification,
+		// and what is left is the identifier a top-level declaration in this file carries.
+		var bare = SymbolAddress.Parse(typeName).Name;
 
 		var all = TopLevelTypes(root);
 		var matches = all.Where(member => NameOf(member) == bare).ToArray();
@@ -123,7 +119,9 @@ public static class MoveTypeService
 		{
 			throw new InvalidOperationException(
 				$"{file} declares '{bare}' {matches.Length} times -- partial declarations, or the same name at "
-					+ "different arities. Moving one of them is ambiguous, so do it by hand.");
+					+ "different arities. Which one to move is not something a name settles, so nothing was "
+					+ "written: rose_replace_member can write one declaration into a file rose_add_file has "
+					+ "created, and rose_delete_member takes it out of this one.");
 		}
 
 		var available = all.Count == 0
@@ -221,7 +219,9 @@ public static class MoveTypeService
 		if (File.Exists(targetPath))
 		{
 			throw new InvalidOperationException(
-				$"{targetPath} already exists. Pick a target that does not, or move the type there by hand.");
+				$"{targetPath} already exists. Pass targetPath naming a file that does not, or write the "
+					+ "declaration into the existing one with rose_replace_member and take it out of this file "
+					+ "with rose_delete_member.");
 		}
 
 		if (SymbolLocator.FindDocument(solution, targetPath) is not null)
@@ -270,7 +270,8 @@ public static class MoveTypeService
 
 		throw new InvalidOperationException(
 			$"'{NameOf(moving)}' in {Path.GetFileName(sourcePath)} is mixed up with preprocessor directives. "
-				+ "Moving it could change what is compiled, so do this one by hand.");
+				+ "Moving it could change what is compiled, so nothing was written: rose_add_file, "
+				+ "rose_replace_member and rose_delete_member do it in steps you can read the diff of.");
 	}
 
 	/// <summary>

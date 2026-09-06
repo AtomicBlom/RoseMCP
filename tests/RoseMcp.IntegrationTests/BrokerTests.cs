@@ -45,8 +45,8 @@ public sealed class BrokerTests
 
 		var started = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
 
-		Assert.Equal(fixture.SolutionPath, started.SolutionPath);
-		Assert.NotEmpty(started.Key);
+		Assert.Equal(fixture.SolutionPath, started.Workspace);
+		Assert.NotEmpty(started.WorkspaceKey);
 		Assert.True(started.Alive, $"the worker should be alive; exit reason was '{started.ExitReason}'");
 
 		// Polling is the same call, so it must not start a second worker.
@@ -462,7 +462,7 @@ public sealed class BrokerTests
 			ToolNames.AddMember,
 			new Dictionary<string, object?>
 			{
-				["type"] = "Library.Greeter",
+				["symbol"] = "Library.Greeter",
 				["code"] = "public int Doubled => Count * 2;",
 				["after"] = "Count",
 			},
@@ -583,7 +583,7 @@ public sealed class BrokerTests
 			ToolNames.AddMember,
 			new Dictionary<string, object?>
 			{
-				["type"] = "Library.Greeter",
+				["symbol"] = "Library.Greeter",
 				["code"] = "public string Encoded() => Encoding.UTF8.EncodingName;",
 				["usings"] = new[] { "System.Text" },
 			},

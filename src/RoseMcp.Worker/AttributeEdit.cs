@@ -46,7 +46,7 @@ public static class AttributeEdit
 		string lineEnding,
 		List<string> notices)
 	{
-		var parsed = Parse(attribute, options);
+		var parsed = Parse(attribute, options, indent);
 		var name = NameOf(parsed);
 		var matching = Matching(declaration, name);
 
@@ -60,14 +60,25 @@ public static class AttributeEdit
 
 	/// <summary>
 	/// The attribute the caller wrote, parsed inside a list so a malformed argument is refused before
-	/// the file is opened rather than landing in it.
+	/// the file is opened rather than landing in it, and re-indented for where it is going.
+	/// <para>
+	/// The re-indentation is the same rule a written member goes through, and it matters here for the
+	/// same reason: an attribute argument list wrapped by hand keeps whatever indentation arrived,
+	/// because Roslyn's formatter has no rule about where a wrapped list sits and neither IDE0055 nor
+	/// <c>dotnet format</c> has an opinion either. Four <c>InlineData</c> arguments written at column
+	/// zero would land at column zero, under a declaration several levels in, and nothing would say so.
+	/// </para>
 	/// </summary>
-	private static AttributeSyntax Parse(string attribute, ParseOptions? options)
+	private static AttributeSyntax Parse(string attribute, ParseOptions? options, string indent)
 	{
 		var text = attribute.Trim();
 		if (text.Length == 0) throw new ArgumentException("No attribute was supplied, so there is nothing to write.");
 
-		var bracketed = text.StartsWith('[') ? text : $"[{text}]";
+		// Re-indented from what arrived rather than from the trimmed copy: trimming takes the first
+		// line's indentation off, which is where the baseline is read from, and the rest would then be
+		// measured against nothing and land a level deeper than the declaration.
+		var placed = MemberSyntax.Reindented(attribute, indent).Trim();
+		var bracketed = placed.StartsWith('[') ? placed : $"[{placed}]";
 
 		// Attached to a throwaway declaration, because an attribute list means nothing on its own and
 		// parsing it alone reports errors in terms of a construct the caller never wrote.

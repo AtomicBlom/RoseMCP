@@ -43,7 +43,8 @@ internal static class Program
 		builder.Services
 			.AddMcpServer(server => server.ServerInfo = new() { Name = "rose-mcp-live-app", Version = "0.1.0" })
 			.WithStdioServerTransport()
-			.WithToolsFromAssembly();
+			.WithToolsFromAssembly()
+			.WithToolErrorMessages();
 
 		await builder.Build().RunAsync();
 		return 0;

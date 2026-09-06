@@ -135,6 +135,50 @@ public static class MemberSyntax
 		return list.Parameters;
 	}
 
+	/// <summary>
+	/// A fragment re-indented for where it is going: the baseline it was written at taken off every
+	/// line, <paramref name="indent"/> put on.
+	/// <para>
+	/// The rule a whole member goes through, on something smaller than one. A caller that has read the
+	/// file and indented for the destination and a caller that wrote at column zero are the same
+	/// request, and only taking the baseline off first makes them so -- otherwise the two indentations
+	/// add up and the code lands as deep as the caller's own habits made it.
+	/// </para>
+	/// <para>
+	/// The first line keeps neither, because it is spliced at a point that already carries the
+	/// indentation of the line it lands on.
+	/// </para>
+	/// </summary>
+	/// <param name="code">The fragment as the caller wrote it.</param>
+	/// <param name="indent">The indentation of the code it is going beside.</param>
+	/// <param name="untouched">
+	/// Lines whose leading whitespace belongs to a string rather than to the layout. Moving one line of
+	/// a multi-line literal and not another changes what the program says rather than how it reads.
+	/// </param>
+	public static string Reindented(string code, string indent, IReadOnlySet<int> untouched)
+	{
+		var lines = Split(code);
+		var baseline = Baseline([.. lines.Select(line => line.Content)]);
+
+		if (baseline.Length == 0 && indent.Length == 0) return code;
+
+		var shifted = lines.Select((line, index) =>
+		{
+			if (untouched.Contains(index)) return line.Content + line.Ending;
+
+			var stripped = baseline.Length > 0 && line.Content.StartsWith(baseline, StringComparison.Ordinal)
+				? line.Content[baseline.Length..]
+				: line.Content;
+
+			// Padding a blank line only makes trailing whitespace for the next pass to strip again.
+			var prefixed = index > 0 && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+
+			return prefixed + line.Ending;
+		});
+
+		return string.Concat(shifted);
+	}
+
 	/// <summary>True for a comment of any kind, documentation included.</summary>
 	public static bool IsComment(SyntaxTrivia trivia) => trivia.Kind() is
 		SyntaxKind.SingleLineCommentTrivia

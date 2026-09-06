@@ -72,7 +72,7 @@ public static class BodyEdit
 		var start = present[at].SpanStart;
 		var end = present[at + wanted.Count - 1].Span.End;
 
-		return string.Concat(body.AsSpan(0, start), replace, body.AsSpan(end));
+		return string.Concat(body.AsSpan(0, start), Placed(replace, IndentOf(body, start)), body.AsSpan(end));
 	}
 
 	/// <summary>
@@ -141,6 +141,83 @@ public static class BodyEdit
 			.. SyntaxFactory.ParseTokens(code)
 				.Where(token => !token.IsKind(SyntaxKind.EndOfFileToken) && token.Span.Length > 0),
 		];
+
+	/// <summary>
+	/// The replacement laid out for where it lands: the baseline the caller wrote it at taken off
+	/// every line and the indentation of the code it replaces put on.
+	/// <para>
+	/// Without it the two indentations add up, and every line the caller wrapped by hand comes out as
+	/// far in again as their own baseline put it. Silently, which is what makes it worth code: a
+	/// continuation line is not a statement, so Roslyn's formatter has no rule that moves one back,
+	/// and neither IDE0055 nor <c>dotnet format</c> has an opinion about where a wrapped argument list
+	/// sits.
+	/// </para>
+	/// </summary>
+	private static string Placed(string replace, string indent) =>
+		replace.Length == 0 ? replace : MemberSyntax.Reindented(replace, indent, LiteralLines(replace));
+
+	/// <summary>
+	/// The indentation of the line the match starts on, whether or not the match starts the line.
+	/// That is where the replacement is going, so it is the indentation the replacement's own lines
+	/// are measured against.
+	/// </summary>
+	private static string IndentOf(string body, int start)
+	{
+		var lineStart = start;
+
+		while (lineStart > 0 && body[lineStart - 1] is not ('\n' or '\r')) lineStart--;
+
+		var line = body[lineStart..];
+
+		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
+	}
+
+	/// <summary>
+	/// Which lines of the code sit inside a literal spanning more than one of them, counted from zero.
+	/// <para>
+	/// Leading whitespace there is the value in a verbatim literal and decides how much is stripped
+	/// from a raw one, so re-indenting one such line and not another changes what the program says
+	/// rather than how it reads. Left exactly as they arrived here; the pass over the whole member
+	/// afterwards knows which kind each is and moves a raw literal with the code around it.
+	/// </para>
+	/// <para>
+	/// A token spanning two lines is a literal by construction -- an identifier, a keyword and a
+	/// punctuator each fit on one, and a comment is trivia rather than a token.
+	/// </para>
+	/// </summary>
+	private static IReadOnlySet<int> LiteralLines(string code)
+	{
+		var lines = new HashSet<int>();
+
+		foreach (var token in Tokens(code))
+		{
+			var start = LineOf(code, token.SpanStart);
+			var end = LineOf(code, token.Span.End - 1);
+
+			// From the line after the opening delimiter through the one carrying the closing one: a raw
+			// literal's terminator sets the indentation taken off the rest, so it stays with them.
+			for (var line = start + 1; line <= end; line++) lines.Add(line);
+		}
+
+		return lines;
+	}
+
+	/// <summary>Which line an offset falls on, counted from zero, with CR, LF and CR LF all endings.</summary>
+	private static int LineOf(string code, int offset)
+	{
+		var line = 0;
+
+		for (var index = 0; index < offset && index < code.Length; index++)
+		{
+			if (code[index] is not ('\n' or '\r')) continue;
+
+			line++;
+
+			if (code[index] == '\r' && index + 1 < code.Length && code[index + 1] == '\n') index++;
+		}
+
+		return line;
+	}
 
 	/// <summary>Every index in <paramref name="present"/> where <paramref name="wanted"/> starts.</summary>
 	private static IReadOnlyList<int> Matches(IReadOnlyList<SyntaxToken> present, IReadOnlyList<SyntaxToken> wanted)

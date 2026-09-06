@@ -648,6 +648,75 @@ public sealed class MemberEditTests
 			StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// An anchored replacement keeps its own shape, exactly as a whole body does. The replacement
+	/// arrives in the caller's coordinate system and is spliced into a body written in the file's, so
+	/// without the baseline pass the two indentations add up and every line the caller wrapped by hand
+	/// lands that much further in -- silently, since a continuation line is not a statement and the
+	/// formatter has no rule that moves one back.
+	/// </summary>
+	[Theory]
+	[InlineData(0)]
+	[InlineData(2)]
+	public async Task Keeps_the_shape_of_an_anchored_replacement(int written)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var baseline = new string('\t', written);
+
+		var replace = $"{baseline}return string.Concat(\n{baseline}\tfirst,\n{baseline}\tsecond,\n{baseline}\tthird);";
+
+		var result = await EditAsync(
+			session,
+			new MemberEditRequest
+			{
+				Kind = MemberEditKind.ReplaceBody,
+				Symbol = "Library.Wrapped.Join",
+				Find = "return first + second + third;",
+				Replace = replace,
+			});
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		Assert.Contains(
+			"\t{\r\n\t\treturn string.Concat(\r\n\t\t\tfirst,\r\n\t\t\tsecond,\r\n\t\t\tthird);\r\n\t}",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The same pass must not reach inside a verbatim literal the replacement carries. Its leading
+	/// whitespace is the value, so a line of it moved is a changed string rather than changed layout,
+	/// and nothing downstream reports it.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_literal_in_an_anchored_replacement_alone()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var replace = "\t\tvar banner = @\"one\r\ntwo\";\r\n\t\treturn banner + first + second + third;";
+
+		var result = await EditAsync(
+			session,
+			new MemberEditRequest
+			{
+				Kind = MemberEditKind.ReplaceBody,
+				Symbol = "Library.Wrapped.Join",
+				Find = "return first + second + third;",
+				Replace = replace,
+			});
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		Assert.Contains("@\"one\r\ntwo\";", text, StringComparison.Ordinal);
+	}
+
 	private static Task<MemberEditResult> ReplaceAsync(WorkspaceSession session, string symbol, string code) =>
 		EditAsync(session, Request(MemberEditKind.Replace, symbol, code));
 

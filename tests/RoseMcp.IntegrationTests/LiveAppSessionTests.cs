@@ -343,7 +343,20 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			// The two things that make a filter usable rather than a trap: it says how much it passed
 			// over, and its cursor has moved past that -- so paging with it does not re-read forever.
 			Assert.True(hitsOnly.Skipped > 0, "the filter should report the events it passed over");
-			Assert.Equal(unfiltered.NextCursor, hitsOnly.NextCursor);
+
+			// Asserted about content rather than by comparing the two cursors (#124). The target goes on
+			// emitting between the two reads, so the numbers legitimately differ and the comparison raced
+			// about one run in three -- while saying nothing about the property that matters, which is
+			// that paging with the filtered cursor moves forward instead of re-reading.
+			var lastRead = hitsOnly.Events[^1].Sequence;
+
+			Assert.True(
+				hitsOnly.NextCursor > lastRead,
+				$"the filtered cursor ({hitsOnly.NextCursor}) should be past the last event it returned ({lastRead})");
+
+			var nextPage = await session.ReadEventsAsync(hitsOnly.NextCursor, ["BreakpointHit"], limit: 500, cancellationToken);
+
+			Assert.DoesNotContain(nextPage.Events, entry => entry.Sequence <= lastRead);
 
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.
 			var nonsense = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -735,8 +748,9 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 		try
 		{
-			// Long enough that the window and its tree are up before anything attaches.
-			await Task.Delay(TimeSpan.FromSeconds(6), cancellationToken);
+			// Waits for the window rather than for a fixed six seconds, so a probe that died at startup
+			// says so instead of being attached to (#129).
+			await WaitForProbeWindowAsync(child, cancellationToken);
 
 			var target = new LiveAppTarget
 			{
@@ -791,7 +805,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 		try
 		{
-			await Task.Delay(TimeSpan.FromSeconds(6), cancellationToken);
+			await WaitForProbeWindowAsync(child, cancellationToken);
 
 			var target = new LiveAppTarget
 			{
@@ -865,7 +879,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 		try
 		{
-			await Task.Delay(TimeSpan.FromSeconds(6), cancellationToken);
+			await WaitForProbeWindowAsync(child, cancellationToken);
 
 			var session = await manager.StartAsync(
 				new LiveAppTarget
@@ -2622,6 +2636,44 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		};
 
 		return Process.Start(start) ?? throw new InvalidOperationException($"Could not start {path}.");
+	}
+
+	/// <summary>
+	/// Waits for a launched probe to have a window, and says exactly what happened when it does not.
+	/// </summary>
+	/// <remarks>
+	/// Replaces a bare six-second sleep, which was wrong in both directions. It waited six seconds on
+	/// a machine that was ready in one, and on a machine where the app died at startup it waited the
+	/// same six and then attached to nothing -- so a WinUI probe that failed to bootstrap the Windows
+	/// App Runtime under load presented as a test hanging or failing on an attach, with the actual
+	/// cause two layers down and no message anywhere (#129).
+	/// <para>
+	/// An app that exits is a fact about this machine rather than about the change under test, so it
+	/// skips with the exit code rather than failing. An app that is up but slow costs only the time it
+	/// actually needs.
+	/// </para>
+	/// </remarks>
+	private static async Task WaitForProbeWindowAsync(Process child, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+
+		while (DateTime.UtcNow < deadline)
+		{
+			if (child.HasExited)
+			{
+				Assert.Skip(
+					$"The probe app exited with code {child.ExitCode} before it could be attached to, which on WinUI "
+						+ "is usually the Windows App Runtime failing to bootstrap.");
+			}
+
+			child.Refresh();
+
+			if (child.MainWindowHandle != nint.Zero) return;
+
+			await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+		}
+
+		Assert.Skip("The probe app did not open a window within 30 seconds.");
 	}
 
 	private static string ProbeTargetPath()

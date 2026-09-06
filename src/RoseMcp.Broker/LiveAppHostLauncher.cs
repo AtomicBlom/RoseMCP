@@ -13,7 +13,11 @@ public static class LiveAppHostLauncher
 {
 	private const string HostName = "RoseMcp.LiveApp";
 
-	public static string ResolveHostPath(TargetArchitecture architecture, BrokerOptions options)
+	public static string ResolveHostPath(
+		TargetArchitecture architecture,
+		BrokerOptions options,
+		string? baseDirectory = null,
+		bool searchRepository = true)
 	{
 		var rid = RuntimeIdentifierFor(architecture);
 		var executableName = HostName + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
@@ -27,13 +31,15 @@ public static class LiveAppHostLauncher
 		// enough that mixing it with the server risks one overwriting the other's shared assemblies.
 		// So the hosts are published once, into the root, and the tray finds them one level up rather
 		// than every deploy shipping a second copy of both architectures.
-		foreach (var root in new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "..") })
+		var installRoot = baseDirectory ?? AppContext.BaseDirectory;
+
+		foreach (var root in new[] { installRoot, Path.Combine(installRoot, "..") })
 		{
 			var alongside = Path.Combine(root, "live-app", rid, executableName);
 			if (File.Exists(alongside)) return Path.GetFullPath(alongside);
 		}
 
-		var inRepository = FindInRepository(executableName, rid);
+		var inRepository = searchRepository ? FindInRepository(executableName, rid) : null;
 		if (inRepository is not null) return inRepository;
 
 		throw new FileNotFoundException(

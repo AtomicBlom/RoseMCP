@@ -444,13 +444,13 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "rather than failing. Use it to see the live tree of an app started with rose_debug_launch_uwp.")]
 	public async Task<LiveXamlTree> XamlTreeAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.XamlRootNameArgument)] string? rootName = null,
+		[Description(ToolDescriptions.XamlRootArgument)] string? root = null,
 		[Description(ToolDescriptions.XamlOffsetArgument)] int offset = 0,
 		[Description(ToolDescriptions.XamlLimitArgument)] int limit = 0,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReadXamlTreeAsync(rootName, offset, limit, cancellationToken);
+		return await session.ReadXamlTreeAsync(root, offset, limit, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -473,13 +473,14 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "one; do not treat properties that appear between two reads as something an edit did.")]
 	public async Task<LiveXamlProperties> XamlPropertiesAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.XamlHandleArgument)] ulong handle,
+		[Description(ToolDescriptions.XamlElementArgument)] string element,
 		[Description(ToolDescriptions.IncludeDefaultsArgument)]
 		bool includeDefaults = false,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReadXamlPropertiesAsync(handle, includeDefaults, cancellationToken);
+		return await session.ReadXamlPropertiesAsync(
+			await session.ResolveElementAsync(element, cancellationToken), includeDefaults, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -622,11 +623,13 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "Each handle feeds rose_xaml_properties and rose_xaml_apply directly.")]
 	public async Task<LiveXamlSelection> XamlSelectElementAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.XamlHandleArgument)] ulong handle,
+		[Description(ToolDescriptions.XamlElementArgument)] string element,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.SelectXamlElementAsync(handle, cancellationToken);
+
+		return await session.SelectXamlElementAsync(
+			await session.ResolveElementAsync(element, cancellationToken), cancellationToken);
 	}
 
 	private LiveAppSession Require(string sessionId)

@@ -94,9 +94,21 @@ public sealed class ToolParityTests
 		return declared;
 	}
 
-	/// <summary>Whether an argument is one both ends are expected to declare.</summary>
+	/// <summary>
+	/// Whether an argument is one both ends are expected to declare.
+	/// <para>
+	/// Five are not, and each for a stated reason. sessionId is how the broker picks the host to send
+	/// to and exists only on the end that picks; progress and cancellationToken are the SDK's own and
+	/// never reach the schema. element and root are the one place the two ends deliberately take
+	/// different things: the broker accepts a handle, an x:Name or an address and resolves it, and the
+	/// host takes the handle that comes out -- an address is a position among siblings, so only the
+	/// side holding the tree it came from could resolve it, and that side is the broker.
+	/// </para>
+	/// </summary>
 	private static bool Compared(ParameterInfo parameter) =>
-		parameter.Name is not ("sessionId" or "progress" or "cancellationToken");
+		parameter.Name is not (
+			"sessionId" or "progress" or "cancellationToken"
+			or "element" or "handle" or "root" or "rootName");
 
 	private static string Describe(ParameterInfo parameter) =>
 		$"{parameter.Name}: {parameter.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty}";

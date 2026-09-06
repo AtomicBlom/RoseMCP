@@ -330,6 +330,20 @@ public static class ToolDescriptions
 	public const string EvaluateExpressionArgument =
 		"A field-access expression, e.g. this.field or state.Inner.Count.";
 
+	/// <summary>
+	/// How a live element is named to the tools that read one. All three spellings, because a caller
+	/// has all three to hand -- the tree and the selection report a handle and an address, and an
+	/// x:Name is in the markup -- and could use only the handle at each tool. The address is the form
+	/// that exists for the elements that matter: everything inside a control template is unnamed.
+	/// </summary>
+	public const string XamlElementArgument =
+		"The element: its handle, an x:Name as #name, or the address rose_xaml_tree and "
+			+ "rose_xaml_selection report. A name that matches several elements is refused.";
+
+	public const string XamlRootArgument =
+		"Root the tree at this element's subtree; omit for the whole tree. A handle, an x:Name as "
+			+ "#name, or an address.";
+
 	public const string XamlRootNameArgument =
 		"Root the tree at this named element's subtree; omit for the whole tree.";
 

@@ -927,9 +927,30 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.DoesNotContain(panelSubtree.Nodes, node => node.Name == "RootGrid");
 
 			// Paging: a limited page carries at most that many nodes, and Total says how many matched.
-			var firstPage = await session.ReadXamlTreeAsync(rootName: null, offset: 0, limit: 2, cancellationToken);
+			var firstPage = await session.ReadXamlTreeAsync(root: null, offset: 0, limit: 2, cancellationToken);
 			Assert.Equal(2, firstPage.Nodes.Count);
 			Assert.True(firstPage.Total > 2, $"expected more than a page of nodes; total {firstPage.Total}");
+
+			// The three spellings of one element all reach it. The address is the one that matters: it is
+			// what an element with no x:Name has instead, which is everything inside a control template,
+			// and passing it back was refused for not being a number.
+			var caption = tree.Nodes.Single(node => node.Name == "Caption");
+
+			Assert.NotNull(caption.Address);
+			Assert.Equal(caption.Handle, await session.ResolveElementAsync(caption.Handle.ToString(), cancellationToken));
+			Assert.Equal(caption.Handle, await session.ResolveElementAsync("#Caption", cancellationToken));
+			Assert.Equal(caption.Handle, await session.ResolveElementAsync("Caption", cancellationToken));
+			Assert.Equal(caption.Handle, await session.ResolveElementAsync(caption.Address!, cancellationToken));
+
+			// And an address roots the tree, which the host itself cannot do -- it knows only names.
+			var byAddress = await session.ReadXamlTreeAsync(caption.Address, offset: 0, limit: 0, cancellationToken);
+
+			Assert.Contains(byAddress.Nodes, node => node.Handle == caption.Handle);
+
+			var missing = await Assert.ThrowsAsync<ArgumentException>(
+				() => session.ResolveElementAsync("#NotThere", cancellationToken));
+
+			Assert.Contains("Nothing in the live tree is called", missing.Message, StringComparison.Ordinal);
 		}
 	}
 

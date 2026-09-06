@@ -255,12 +255,58 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public Task<LiveXamlTree> ReadXamlTreeAsync(CancellationToken cancellationToken)
 		=> ReadXamlTreeAsync(null, 0, 0, cancellationToken);
 
-	/// <summary>Reads the tree, optionally rooted at a named element and paged.</summary>
-	public Task<LiveXamlTree> ReadXamlTreeAsync(string? rootName, int offset, int limit, CancellationToken cancellationToken)
-		=> SendAsync<LiveXamlTree>(
-			ToolNames.LiveAppXamlTree,
-			new Dictionary<string, object?> { ["rootName"] = rootName, ["offset"] = offset, ["limit"] = limit },
-			cancellationToken);
+	/// <summary>
+	/// Whether a reference is something the host cannot root at: an address or a handle rather than an
+	/// <c>x:Name</c>. An address always carries a bracketed index, since it is a path of
+	/// <c>Type[index]</c> segments, and a handle is all digits.
+	/// </summary>
+	private static bool Addressed(string root) =>
+		root.Contains('[', StringComparison.Ordinal) || ulong.TryParse(root.Trim(), out _);
+
+	/// <summary>An element and everything under it, in the order the whole tree reported them.</summary>
+	private static IReadOnlyList<LiveXamlNode> Subtree(IReadOnlyList<LiveXamlNode> nodes, ulong root)
+	{
+		var kept = new HashSet<ulong> { root };
+
+		// One pass is enough: the host reports a parent before its children, so whether a node's parent
+		// is in the subtree is already settled by the time the node is looked at.
+		return
+		[
+			.. nodes.Where(node =>
+				kept.Contains(node.Handle) || (kept.Contains(node.Parent) && kept.Add(node.Handle))),
+		];
+	}
+
+	/// <summary>
+	/// Reads the tree, optionally rooted at one element and paged.
+	/// <para>
+	/// The host can root only at an <c>x:Name</c>, which is absent for everything inside a control
+	/// template -- so anything else is resolved to a handle here and the subtree cut out of the whole
+	/// tree. That costs the whole tree over the pipe, which is why a name still takes the host's own
+	/// path: it is the cheap case and the common one.
+	/// </para>
+	/// </summary>
+	public async Task<LiveXamlTree> ReadXamlTreeAsync(string? root, int offset, int limit, CancellationToken cancellationToken)
+	{
+		var name = root?.Trim().TrimStart('#');
+
+		if (root is null || (name is { Length: > 0 } && !Addressed(root)))
+		{
+			return await SendAsync<LiveXamlTree>(
+				ToolNames.LiveAppXamlTree,
+				new Dictionary<string, object?> { ["rootName"] = name, ["offset"] = offset, ["limit"] = limit },
+				cancellationToken);
+		}
+
+		var handle = await ResolveElementAsync(root, cancellationToken);
+		var whole = await ReadXamlTreeAsync(cancellationToken);
+		var subtree = Subtree(whole.Nodes, handle);
+
+		var paged = subtree.Skip(offset);
+		if (limit > 0) paged = paged.Take(limit);
+
+		return whole with { Nodes = [.. paged], Total = subtree.Count };
+	}
 
 	/// <summary>Reads one element's XAML properties (by handle) with provenance and source location.</summary>
 	public Task<LiveXamlProperties> ReadXamlPropertiesAsync(ulong handle, bool includeDefaults, CancellationToken cancellationToken)
@@ -299,6 +345,59 @@ public sealed class LiveAppSession : IAsyncDisposable
 			ToolNames.LiveAppXamlSelectElement,
 			new Dictionary<string, object?> { ["handle"] = handle },
 			cancellationToken);
+
+	/// <summary>
+	/// The handle an element reference names: a decimal handle, an <c>x:Name</c> with or without a
+	/// leading <c>#</c>, or the address the tree and the selection report.
+	/// <para>
+	/// One parser, because a caller has all three forms to hand and could use only one at each tool.
+	/// The tree and the selection both report a handle <em>and</em> an address, and the address is the
+	/// form that exists for the elements that matter: everything inside a control template is unnamed,
+	/// so a click usually lands on something whose only spoken name is its address -- and passing it
+	/// back was refused for being not a number.
+	/// </para>
+	/// <para>
+	/// A handle costs nothing to resolve. Anything else reads the tree first, because an address is a
+	/// position among siblings and only the tree it came from can say which element that is. Refused
+	/// rather than guessed at when nothing matches or several do: a duplicate <c>x:Name</c> is ordinary
+	/// once a template is instantiated three times, and picking one of them is a guess wearing a
+	/// success message.
+	/// </para>
+	/// </summary>
+	/// <exception cref="ArgumentException">Nothing in the tree matches, or more than one thing does.</exception>
+	public async Task<ulong> ResolveElementAsync(string element, CancellationToken cancellationToken)
+	{
+		if (ulong.TryParse(element.Trim(), out var handle)) return handle;
+
+		var wanted = element.Trim();
+		var tree = await ReadXamlTreeAsync(cancellationToken);
+
+		var matching = tree.Nodes
+			.Where(node => Names(node, wanted) || string.Equals(node.Address, wanted, StringComparison.Ordinal))
+			.ToArray();
+
+		if (matching.Length == 1) return matching[0].Handle;
+
+		if (matching.Length > 1)
+		{
+			throw new ArgumentException(
+				$"'{wanted}' names {matching.Length} elements in the live tree: "
+					+ $"{string.Join(", ", matching.Select(node => node.Address ?? node.TypeName))}. "
+					+ "A template instantiated more than once gives every x:Name in it that many elements, "
+					+ "so pass one of those addresses, or the handle.");
+		}
+
+		throw new ArgumentException(
+			$"Nothing in the live tree is called '{wanted}'. Pass a handle, an x:Name as #name, or the "
+				+ "address rose_xaml_tree and rose_xaml_selection report -- which is what an element with no "
+				+ "x:Name has instead.");
+	}
+
+	/// <summary>Whether a reference names this element, with or without the leading marker.</summary>
+	private static bool Names(LiveXamlNode node, string wanted) =>
+		node.Name is { Length: > 0 } name
+		&& (string.Equals(name, wanted, StringComparison.Ordinal)
+			|| string.Equals($"#{name}", wanted, StringComparison.Ordinal));
 
 	/// <summary>
 	/// Applies a XAML change to the live tree and returns each edit's outcome. Naming a file is the

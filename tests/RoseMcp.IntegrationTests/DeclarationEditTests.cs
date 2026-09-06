@@ -198,6 +198,46 @@ public sealed class DeclarationEditTests
 	}
 
 	/// <summary>
+	/// An attribute on a parameter, which a declaration name cannot reach. It goes in front of the
+	/// type on the same line, because that is where a parameter's attribute sits and a line break
+	/// there is layout nothing downstream has a rule about.
+	/// </summary>
+	[Fact]
+	public async Task Writes_an_attribute_onto_a_parameter()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AttributeAsync(
+			session, "Library.Greeter.Greet(string)", "Marked", AttributeAction.Add, parameter: "name");
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("Greet([Marked] string name)", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A parameter name that matches nothing is refused with the names that are there, rather than
+	/// writing the attribute onto the declaration and reporting success -- which is the shape of
+	/// failure that looks exactly like the change working.
+	/// </summary>
+	[Fact]
+	public async Task Refuses_a_parameter_the_member_does_not_have()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var error = await Assert.ThrowsAsync<ArgumentException>(
+			() => AttributeAsync(
+				session, "Library.Greeter.Greet(string)", "Marked", AttributeAction.Add, parameter: "missing"));
+
+		Assert.Contains("no parameter called missing", error.Message, StringComparison.Ordinal);
+		Assert.Contains("name", error.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// Replacing one of several attributes of a name would compile and change the wrong case, which
 	/// is the failure with no symptom. It is refused, and the refusal lists what it found.
 	/// </summary>
@@ -296,7 +336,8 @@ public sealed class DeclarationEditTests
 		WorkspaceSession session,
 		string symbol,
 		string attribute,
-		AttributeAction action)
+		AttributeAction action,
+		string? parameter = null)
 	{
 		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
 
@@ -305,6 +346,7 @@ public sealed class DeclarationEditTests
 			Symbol = symbol,
 			Attribute = attribute,
 			Action = action,
+			Parameter = parameter,
 
 			// The fixture has no attribute class of its own, so an unresolved one would report an
 			// error that says nothing about whether the edit landed where it was aimed.

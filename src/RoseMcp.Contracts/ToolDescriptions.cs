@@ -144,6 +144,15 @@ public static class ToolDescriptions
 		"Give each member its full signature. On by default; off leaves the name, kind and location, "
 			+ "which is what a search through a large type needs.";
 
+	public const string IncludeTriviaArgument =
+		"Match find against the body's text rather than its tokens, so it can lie inside a // comment or "
+			+ "a string. Spacing then matters and the replacement is written exactly as given. A match "
+			+ "half inside a comment or string and half in the code is refused.";
+
+	public const string AttributeParameterArgument =
+		"Put the attribute on this parameter of the named member, by name, rather than on the member "
+			+ "itself. A parameter's attribute is otherwise reachable only by rewriting the whole signature.";
+
 	public const string ArityArgument =
 		"How many type arguments the use site supplies, where the name is not written with them.";
 
@@ -596,15 +605,15 @@ public static class ToolDescriptions
 	public const string ReplaceBody = """
 		Replaces a member's body and nothing else: the signature that comes out is the one that was
 		there, copied rather than rewritten, so it cannot drift. Use it rather than a line-range edit,
-		which is the usual way a member gets broken -- splicing against moved line numbers drops a
-		brace, and the damage is found at the next build. Three payloads, exactly one per call. code is
-		the whole body: statements, a block, or => expression;, and a member may switch between the last
-		two. find and replace change part of it, matched on the tokens inside this one member, so
-		indentation cannot cause a miss and a one-line change costs one line; nothing, more than one
-		match, or a comment in find is refused, since matching cannot see a comment. position (start or
-		end) with code inserts, and end means before a closing return or throw. Whichever arrives, what
-		is written is a whole body: parsed, refused if it does not parse, formatted, then compiled. A
-		property with accessors or an abstract member is refused.
+		which is how a member gets broken -- splicing against moved line numbers drops a brace, and the
+		damage is found at the next build. Three payloads, exactly one per call. code is the whole body:
+		statements, a block, or => expression;. find and replace change part of it, matched on the
+		tokens inside this one member, so indentation cannot cause a miss; nothing, more than one match,
+		or a comment in find is refused -- includeTrivia matches the text instead, which reaches a //
+		comment or the words inside a string. position (start or end) with code inserts, end meaning
+		before a closing return or throw. A field or property initialiser counts as a body, which is
+		what reaches a string constant. What is written is always a whole body: parsed, refused if it
+		does not parse, formatted, then compiled.
 		""";
 
 	public const string AddMember = """

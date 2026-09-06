@@ -69,17 +69,60 @@ public static class DeclarationEditService
 			snapshot,
 			diagnostics,
 			request,
-			(declaration, context, notices) => AttributeEdit.Apply(
-				declaration,
-				request.Attribute ?? string.Empty,
-				request.Action,
-				context.ParseOptions,
-				context.Indent,
-				context.LineEnding,
-				notices),
+			(declaration, context, notices) => request.Parameter is { Length: > 0 } parameter
+				? OnParameter(declaration, parameter, request, context, notices)
+				: AttributeEdit.Apply(
+					declaration,
+					request.Attribute ?? string.Empty,
+					request.Action,
+					context.ParseOptions,
+					context.Indent,
+					context.LineEnding,
+					notices),
 			noteSelfWrite,
 			cancellationToken,
 			progress);
+
+	/// <summary>
+	/// The declaration with the attribute written on one of its parameters.
+	/// <para>
+	/// The parameter is found by name and a name that matches none is refused with the ones that are
+	/// there, because the alternative is writing the attribute nowhere and reporting success.
+	/// </para>
+	/// </summary>
+	private static MemberDeclarationSyntax OnParameter(
+		MemberDeclarationSyntax declaration,
+		string name,
+		DeclarationEditRequest request,
+		Context context,
+		List<string> notices)
+	{
+		if (ParameterLists.Of(declaration) is not { } list)
+		{
+			throw new ArgumentException(
+				"This declaration has no parameter list, so it has no parameter to put an attribute on.");
+		}
+
+		var matching = list.Parameters.Where(candidate => candidate.Identifier.Text == name).ToArray();
+
+		if (matching.Length == 0)
+		{
+			var present = list.Parameters.Select(parameter => parameter.Identifier.Text).ToArray();
+
+			throw new ArgumentException(
+				$"There is no parameter called {name}. This one takes "
+					+ (present.Length == 0 ? "none." : $"{string.Join(", ", present)}."));
+		}
+
+		var written = AttributeEdit.Apply(
+			matching[0],
+			request.Attribute ?? string.Empty,
+			request.Action,
+			context.ParseOptions,
+			notices);
+
+		return declaration.ReplaceNode(matching[0], written);
+	}
 
 	/// <summary>
 	/// Resolve, rewrite, format, write, compile. One path for both edits, because everything except

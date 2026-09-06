@@ -304,8 +304,15 @@ public static class MemberEditService
 		// from the statements they belong to, landing a wrapped call flat against its own statement.
 		// It is the same trap as the line above, arriving from the other side, and nothing catches
 		// it: a continuation line is not a statement, so the formatter has no rule that puts it back.
+		// An initialiser goes back as an expression and a semicolon; a body is wrapped in braces or
+		// left behind its arrow. Sharing the rebuild is what keeps the copied-signature promise on
+		// both: what comes out in front of the "=" is the text that was in front of it.
+		var rebuilt = IsInitialiser(declaration)
+			? $"{head} {written.Trim()};"
+			: $"{head} {Body(written)}";
+
 		var parsed = MemberSyntax.Parse(
-			$"{head} {Body(written)}",
+			rebuilt,
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
 			indent,
@@ -378,7 +385,7 @@ public static class MemberEditService
 		{
 			var body = text.ToString(TextSpan.FromBounds(bodyStart, declaration.Span.End)).TrimEnd(';', ' ', '\t');
 
-			return BodyEdit.Anchored(body, find, request.Replace ?? string.Empty);
+			return BodyEdit.Anchored(body, find, request.Replace ?? string.Empty, request.IncludeTrivia);
 		}
 
 		if (request.Position is not { } position) return request.Code;
@@ -805,22 +812,49 @@ public static class MemberEditService
 	}
 
 	/// <summary>
-	/// Where the body starts, or nothing when the member has no single body to replace. A property
-	/// with accessors has one body each and an abstract method has none, and both are better said
-	/// than guessed at.
+	/// Where the part this tool replaces begins, or null for a declaration that has no such part.
+	/// <para>
+	/// An initialiser counts, and that is the whole of what makes a string constant reachable. Every
+	/// tool description in this repository is the body of one, and changing a sentence in one had no
+	/// tool at all: <c>rose_replace_member</c> re-emits the whole declaration, which for a fifty-line
+	/// description means retyping fifty lines to change one. Only a declaration with a single variable
+	/// qualifies, because <c>int a = 1, b = 2;</c> has two initialisers and naming either of them would
+	/// have to pick.
+	/// </para>
 	/// </summary>
 	private static int? BodyStart(MemberDeclarationSyntax declaration) => declaration switch
 	{
 		BaseMethodDeclarationSyntax method => ((SyntaxNode?)method.Body ?? method.ExpressionBody)?.SpanStart,
 		PropertyDeclarationSyntax { ExpressionBody: { } arrow } => arrow.SpanStart,
+		PropertyDeclarationSyntax { Initializer: { } initializer } => initializer.Value.SpanStart,
 		IndexerDeclarationSyntax { ExpressionBody: { } arrow } => arrow.SpanStart,
+		BaseFieldDeclarationSyntax field => Initialiser(field)?.SpanStart,
 		_ => null,
+	};
+
+	/// <summary>
+	/// The single initialised variable's value, or null where there is not exactly one to name.
+	/// </summary>
+	private static ExpressionSyntax? Initialiser(BaseFieldDeclarationSyntax field) =>
+		field.Declaration.Variables is [{ Initializer: { } initializer }] ? initializer.Value : null;
+
+	/// <summary>
+	/// True where what is being replaced is an initialiser rather than a body, so it goes back as an
+	/// expression and a semicolon instead of being wrapped in braces or behind an arrow.
+	/// </summary>
+	private static bool IsInitialiser(MemberDeclarationSyntax declaration) => declaration switch
+	{
+		PropertyDeclarationSyntax { ExpressionBody: null, Initializer: not null } => true,
+		BaseFieldDeclarationSyntax => true,
+		_ => false,
 	};
 
 	private static string WhyNoBody(MemberDeclarationSyntax declaration) => declaration switch
 	{
 		BasePropertyDeclarationSyntax { AccessorList: not null } => " -- it has accessors, and each one has a body of its own",
-		BaseFieldDeclarationSyntax => " -- a field has an initialiser rather than a body",
+		BaseFieldDeclarationSyntax { Declaration.Variables.Count: > 1 } =>
+			" -- it declares more than one variable, so naming it does not say which initialiser to write",
+		BaseFieldDeclarationSyntax => " -- it has no initialiser to replace",
 		BaseMethodDeclarationSyntax => " -- it is abstract, extern, or one half of a partial",
 		BaseTypeDeclarationSyntax => " -- it is a type",
 		_ => string.Empty,

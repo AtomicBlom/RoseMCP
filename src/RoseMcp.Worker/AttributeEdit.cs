@@ -44,17 +44,74 @@ public static class AttributeEdit
 		ParseOptions? options,
 		string indent,
 		string lineEnding,
+		List<string> notices) =>
+		Applied(
+			declaration,
+			declaration.AttributeLists,
+			static (node, lists) => node.WithAttributeLists(lists),
+			attribute,
+			action,
+			options,
+			indent,
+			lineEnding,
+			inline: false,
+			notices);
+
+	/// <summary>
+	/// The same edit on a parameter, which is the one attribute position a declaration name cannot
+	/// reach. <c>[FromBody]</c>, <c>[CallerMemberName]</c> and every framework's per-parameter
+	/// attribute live there, and the only other way to one is rewriting the whole signature.
+	/// <para>
+	/// It goes inline rather than on a line of its own: a parameter's attribute sits in front of its
+	/// type, and a line break there is layout Roslyn's formatter has no rule about, so it would stay
+	/// wherever this put it.
+	/// </para>
+	/// </summary>
+	public static ParameterSyntax Apply(
+		ParameterSyntax parameter,
+		string attribute,
+		AttributeAction action,
+		ParseOptions? options,
+		List<string> notices) =>
+		Applied(
+			parameter,
+			parameter.AttributeLists,
+			static (node, lists) => node.WithAttributeLists(lists),
+			attribute,
+			action,
+			options,
+			indent: string.Empty,
+			lineEnding: string.Empty,
+			inline: true,
+			notices);
+
+	/// <summary>
+	/// The edit itself, over anything carrying attribute lists. Written once rather than once per node
+	/// kind, because every rule here -- one name matching two attributes, a list emptied by a removal,
+	/// the trivia a documentation comment sits in -- is the same wherever the attribute is.
+	/// </summary>
+	private static TNode Applied<TNode>(
+		TNode node,
+		SyntaxList<AttributeListSyntax> lists,
+		Func<TNode, SyntaxList<AttributeListSyntax>, TNode> withLists,
+		string attribute,
+		AttributeAction action,
+		ParseOptions? options,
+		string indent,
+		string lineEnding,
+		bool inline,
 		List<string> notices)
+		where TNode : SyntaxNode
 	{
 		var parsed = Parse(attribute, options, indent);
 		var name = NameOf(parsed);
-		var matching = Matching(declaration, name);
+		var matching = Matching(lists, name);
 
 		return action switch
 		{
-			AttributeAction.Remove => Remove(declaration, name, matching, notices),
-			AttributeAction.Add => Add(declaration, parsed, matching, name, indent, lineEnding, notices),
-			_ => Set(declaration, parsed, matching, name, indent, lineEnding, notices),
+			AttributeAction.Remove => Remove(node, lists, name, matching, notices),
+			AttributeAction.Add => Add(node, withLists, parsed, matching, name, indent, lineEnding, inline, notices),
+			_ => Set(node, withLists, parsed, matching, name, indent, lineEnding, inline, notices),
 		};
 	}
 
@@ -108,26 +165,24 @@ public static class AttributeEdit
 	}
 
 	/// <summary>
-	/// The attributes already on the declaration that this one would replace, matched on the name as
-	/// written and on the same name with Attribute on the end -- <c>[Obsolete]</c> and
-	/// <c>[ObsoleteAttribute]</c> are the same attribute, and a caller should not have to know which
-	/// spelling the file used.
+	/// The attributes already there that this one would replace, matched on the name as written and on
+	/// the same name with Attribute on the end -- <c>[Obsolete]</c> and <c>[ObsoleteAttribute]</c> are
+	/// the same attribute, and a caller should not have to know which spelling the file used.
 	/// </summary>
-	private static IReadOnlyList<AttributeSyntax> Matching(MemberDeclarationSyntax declaration, string name) =>
-		[
-			.. declaration.AttributeLists
-				.SelectMany(list => list.Attributes)
-				.Where(existing => Same(NameOf(existing), name)),
-		];
+	private static IReadOnlyList<AttributeSyntax> Matching(SyntaxList<AttributeListSyntax> lists, string name) =>
+		[.. lists.SelectMany(list => list.Attributes).Where(existing => Same(NameOf(existing), name))];
 
-	private static MemberDeclarationSyntax Set(
-		MemberDeclarationSyntax declaration,
+	private static TNode Set<TNode>(
+		TNode node,
+		Func<TNode, SyntaxList<AttributeListSyntax>, TNode> withLists,
 		AttributeSyntax parsed,
 		IReadOnlyList<AttributeSyntax> matching,
 		string name,
 		string indent,
 		string lineEnding,
+		bool inline,
 		List<string> notices)
+		where TNode : SyntaxNode
 	{
 		if (matching.Count > 1) throw Several(name, matching, "set");
 
@@ -135,20 +190,23 @@ public static class AttributeEdit
 		{
 			notices.Add($"{name} was not there, so it was added rather than replaced.");
 
-			return Attach(declaration, parsed, indent, lineEnding);
+			return Attach(node, withLists, parsed, indent, lineEnding, inline);
 		}
 
-		return declaration.ReplaceNode(matching[0], parsed.WithTriviaFrom(matching[0]));
+		return node.ReplaceNode(matching[0], parsed.WithTriviaFrom(matching[0]));
 	}
 
-	private static MemberDeclarationSyntax Add(
-		MemberDeclarationSyntax declaration,
+	private static TNode Add<TNode>(
+		TNode node,
+		Func<TNode, SyntaxList<AttributeListSyntax>, TNode> withLists,
 		AttributeSyntax parsed,
 		IReadOnlyList<AttributeSyntax> matching,
 		string name,
 		string indent,
 		string lineEnding,
+		bool inline,
 		List<string> notices)
+		where TNode : SyntaxNode
 	{
 		if (matching.Count > 0)
 		{
@@ -157,20 +215,21 @@ public static class AttributeEdit
 					+ "one. Use set to replace.");
 		}
 
-		return Attach(declaration, parsed, indent, lineEnding);
+		return Attach(node, withLists, parsed, indent, lineEnding, inline);
 	}
 
-	private static MemberDeclarationSyntax Remove(
-		MemberDeclarationSyntax declaration,
+	private static TNode Remove<TNode>(
+		TNode node,
+		SyntaxList<AttributeListSyntax> lists,
 		string name,
 		IReadOnlyList<AttributeSyntax> matching,
 		List<string> notices)
+		where TNode : SyntaxNode
 	{
 		if (matching.Count == 0)
 		{
 			throw new ArgumentException(
-				$"{name} is not on this declaration, so there is nothing to remove. It carries "
-					+ $"{Listed(declaration)}.");
+				$"{name} is not there, so there is nothing to remove. What is there: {Listed(lists)}.");
 		}
 
 		if (matching.Count > 1) throw Several(name, matching, "remove");
@@ -181,34 +240,51 @@ public static class AttributeEdit
 		// compile, and leaving one would be a syntax error written by a tool that parses everything.
 		if (list.Attributes.Count == 1)
 		{
-			return declaration.RemoveNode(list, SyntaxRemoveOptions.KeepNoTrivia | SyntaxRemoveOptions.KeepUnbalancedDirectives)!;
+			return node.RemoveNode(list, SyntaxRemoveOptions.KeepNoTrivia | SyntaxRemoveOptions.KeepUnbalancedDirectives)!;
 		}
 
 		notices.Add($"{name} shared a bracket with {list.Attributes.Count - 1} other attribute(s), which stay.");
 
-		return declaration.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(matching[0])));
+		return node.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(matching[0])));
 	}
 
 	/// <summary>
-	/// The attribute in a list of its own, above whatever is already there, carrying the leading
-	/// trivia so a documentation comment stays above the attributes rather than below them.
+	/// The attribute in a list of its own, after whatever is already there, carrying the leading trivia
+	/// so a documentation comment stays above the attributes rather than below them.
+	/// <para>
+	/// A member's list ends the line and re-indents for the declaration beneath it. A parameter's is
+	/// followed by a single space, because it sits in front of the type on the same line.
+	/// </para>
 	/// </summary>
-	private static MemberDeclarationSyntax Attach(
-		MemberDeclarationSyntax declaration,
+	private static TNode Attach<TNode>(
+		TNode node,
+		Func<TNode, SyntaxList<AttributeListSyntax>, TNode> withLists,
 		AttributeSyntax parsed,
 		string indent,
-		string lineEnding)
+		string lineEnding,
+		bool inline)
+		where TNode : SyntaxNode
 	{
+		SyntaxTrivia[] trailing = inline
+			? [SyntaxFactory.Space]
+			: [SyntaxFactory.EndOfLine(lineEnding), SyntaxFactory.Whitespace(indent)];
+
 		var list = SyntaxFactory.AttributeList(SyntaxFactory.SingletonSeparatedList(parsed))
-			.WithTrailingTrivia(SyntaxFactory.EndOfLine(lineEnding), SyntaxFactory.Whitespace(indent));
+			.WithTrailingTrivia(trailing);
 
-		var leading = declaration.GetLeadingTrivia();
-		var stripped = declaration.WithoutLeadingTrivia();
+		var leading = node.GetLeadingTrivia();
+		var stripped = node.WithoutLeadingTrivia();
 
-		return stripped
-			.WithAttributeLists(stripped.AttributeLists.Insert(stripped.AttributeLists.Count, list))
-			.WithLeadingTrivia(leading);
+		return withLists(stripped, ListsOf(stripped).Add(list)).WithLeadingTrivia(leading);
 	}
+
+	/// <summary>The attribute lists a node carries, for the two kinds this writes to.</summary>
+	private static SyntaxList<AttributeListSyntax> ListsOf(SyntaxNode node) => node switch
+	{
+		MemberDeclarationSyntax member => member.AttributeLists,
+		ParameterSyntax parameter => parameter.AttributeLists,
+		_ => default,
+	};
 
 	private static ArgumentException Several(string name, IReadOnlyList<AttributeSyntax> matching, string action)
 	{
@@ -220,9 +296,9 @@ public static class AttributeEdit
 					+ "for another, or edit the declaration with rose_replace_member.");
 	}
 
-	private static string Listed(MemberDeclarationSyntax declaration)
+	private static string Listed(SyntaxList<AttributeListSyntax> lists)
 	{
-		var names = declaration.AttributeLists
+		var names = lists
 			.SelectMany(list => list.Attributes)
 			.Select(NameOf)
 			.Distinct(StringComparer.Ordinal)

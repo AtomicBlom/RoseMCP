@@ -31,6 +31,17 @@ public sealed record DeclarationEditRequest
 	/// <summary>What to do with the attribute.</summary>
 	public AttributeAction Action { get; init; }
 
+	/// <summary>
+	/// The parameter to put the attribute on, by name, rather than the declaration itself.
+	/// <para>
+	/// A parameter is the one attribute position a declaration name cannot reach, and the alternative
+	/// is rewriting the whole signature to add a word to one of its parameters. Named rather than
+	/// indexed, for the same reason every other address here is a name: a position is wrong the moment
+	/// something before it moves.
+	/// </para>
+	/// </summary>
+	public string? Parameter { get; init; }
+
 	/// <summary>Which file, when the name is declared in more than one -- a partial type or member.</summary>
 	public string? FilePath { get; init; }
 

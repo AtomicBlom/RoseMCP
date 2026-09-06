@@ -34,17 +34,33 @@ public static class BodyEdit
 	/// and splice a replacement underneath it. An anchor carrying one is refused for that reason, which
 	/// is the only place the token stream being the unit of matching is a limit rather than the point.
 	/// </para>
+	/// <para>
+	/// <paramref name="includeTrivia"/> is the way past that limit for the text a token stream cannot
+	/// reach: the words inside a <c>//</c> comment, and the characters inside a string. Matching is then
+	/// exact text rather than tokens -- whitespace and line endings count, because inside a comment or a
+	/// literal they are the content being edited -- and the replacement is spliced exactly as written
+	/// for the same reason. What comes out is still a whole body handed to the parse-and-format path, so
+	/// a change that would not compile is still refused before anything is written.
+	/// </para>
 	/// </summary>
 	/// <param name="body">The body as it stands, from the file.</param>
-	/// <param name="find">The code to look for, as C#.</param>
+	/// <param name="find">The code to look for, as C#, or the text where <paramref name="includeTrivia"/> is set.</param>
 	/// <param name="replace">What to put in its place. Empty removes the matched code.</param>
-	/// <exception cref="ArgumentException">Nothing matched, more than one thing did, or find carries a comment.</exception>
-	public static string Anchored(string body, string find, string replace)
+	/// <param name="includeTrivia">
+	/// Match the body's text rather than its tokens, so a match may lie inside a comment or a string.
+	/// </param>
+	/// <exception cref="ArgumentException">
+	/// Nothing matched, more than one thing did, find carries a comment the token matching cannot see,
+	/// or the match straddles code and trivia.
+	/// </exception>
+	public static string Anchored(string body, string find, string replace, bool includeTrivia = false)
 	{
 		if (string.IsNullOrWhiteSpace(find))
 		{
 			throw new ArgumentException("Nothing to find. Pass the code to look for, or use code to write the whole body.");
 		}
+
+		if (includeTrivia) return InText(body, find, replace);
 
 		var wanted = Tokens(find);
 
@@ -52,7 +68,7 @@ public static class BodyEdit
 		{
 			throw new ArgumentException(
 				$"'{find.Trim()}' is only whitespace or a comment, and matching is on the tokens. Include the "
-					+ "code you mean to change.");
+					+ "code you mean to change, or pass includeTrivia to match the text instead.");
 		}
 
 		if (Comment(find) is { } comment)
@@ -60,8 +76,8 @@ public static class BodyEdit
 			throw new ArgumentException(
 				$"find carries a comment ('{comment}'), and matching is on the tokens -- a comment is trivia, so "
 					+ "it matches nothing while the code around it matches, and the replacement then lands under "
-					+ "the comment already in the file rather than over it. Anchor on the code alone; to change "
-					+ "the comment as well, pass the whole body with code.");
+					+ "the comment already in the file rather than over it. Anchor on the code alone, or pass "
+					+ "includeTrivia to match the text and reach the comment itself.");
 		}
 
 		var present = Tokens(body);
@@ -88,6 +104,102 @@ public static class BodyEdit
 		var end = present[at + wanted.Count - 1].Span.End;
 
 		return string.Concat(body.AsSpan(0, start), Placed(replace, IndentOf(body, start)), body.AsSpan(end));
+	}
+
+	/// <summary>
+	/// The body with an exact run of text replaced, for the text a token stream cannot see.
+	/// <para>
+	/// Exact rather than tolerant of whitespace, which is the opposite of the token path and right for
+	/// the same reason: inside a comment or a string, whitespace is the content being changed, so a
+	/// match that ignored it could not say which of two spacings the caller meant and a replacement
+	/// that reflowed it would change the value.
+	/// </para>
+	/// </summary>
+	private static string InText(string body, string find, string replace)
+	{
+		var matches = new List<int>();
+
+		for (var at = body.IndexOf(find, StringComparison.Ordinal); at >= 0;
+			at = body.IndexOf(find, at + 1, StringComparison.Ordinal))
+		{
+			matches.Add(at);
+		}
+
+		if (matches.Count == 0)
+		{
+			throw new ArgumentException(
+				$"The body does not contain '{First(find)}'. includeTrivia matches the text exactly, so spacing "
+					+ "and line endings have to match too. Read the body with rose_symbol_info includeSource=true.");
+		}
+
+		if (matches.Count > 1)
+		{
+			throw new ArgumentException(
+				$"'{First(find)}' appears {matches.Count} times in the body. Extend it until it picks one out, or "
+					+ "write the whole body with code.");
+		}
+
+		var start = matches[0];
+
+		GuardStraddled(body, start, find.Length);
+
+		// Spliced exactly as written, with none of the re-indentation the token path applies. The point
+		// of this path is the text inside a comment or a literal, where leading whitespace is content:
+		// a raw literal's indentation decides how much is stripped from its value, and reflowing a
+		// comment is a change nobody asked for.
+		return string.Concat(body.AsSpan(0, start), replace, body.AsSpan(start + find.Length));
+	}
+
+	/// <summary>
+	/// Refuses a match that covers part of a comment or a string and part of the code around it.
+	/// <para>
+	/// Such a match is always a mistake and never a cheap one: replacing it rewrites a delimiter, so
+	/// what comes out is either unparseable -- caught, but after the caller has been told the anchor
+	/// was found -- or parses as something else entirely, with the rest of the body swallowed into a
+	/// string. Contained in one comment or one literal, or clear of every one of them, are the two
+	/// shapes that mean what the caller thinks they mean.
+	/// </para>
+	/// </summary>
+	private static void GuardStraddled(string body, int start, int length)
+	{
+		var end = start + length;
+
+		foreach (var (from, to, what) in Protected(body))
+		{
+			var overlaps = start < to && from < end;
+			if (!overlaps) continue;
+
+			var contained = start >= from && end <= to;
+			if (contained) return;
+
+			throw new ArgumentException(
+				$"The match covers part of {what} and part of the code around it, so replacing it would rewrite a "
+					+ "delimiter rather than the text inside one. Anchor entirely inside it, or entirely outside it.");
+		}
+	}
+
+	/// <summary>
+	/// The spans of the body whose content is text rather than code: every comment, and every string
+	/// or character literal including the pieces of an interpolated one.
+	/// </summary>
+	private static IEnumerable<(int From, int To, string What)> Protected(string body)
+	{
+		foreach (var token in SyntaxFactory.ParseTokens(body))
+		{
+			foreach (var trivia in token.LeadingTrivia.Concat(token.TrailingTrivia))
+			{
+				if (MemberSyntax.IsComment(trivia)) yield return (trivia.SpanStart, trivia.Span.End, "a comment");
+			}
+
+			var literal = token.Kind() is SyntaxKind.StringLiteralToken
+				or SyntaxKind.Utf8StringLiteralToken
+				or SyntaxKind.SingleLineRawStringLiteralToken
+				or SyntaxKind.MultiLineRawStringLiteralToken
+				or SyntaxKind.CharacterLiteralToken
+				or SyntaxKind.InterpolatedStringTextToken;
+
+			if (literal) yield return (token.SpanStart, token.Span.End, "a string");
+		}
 	}
 
 	/// <summary>

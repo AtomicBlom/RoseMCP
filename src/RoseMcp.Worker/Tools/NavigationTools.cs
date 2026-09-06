@@ -180,13 +180,22 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
+		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
+		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
 		CancellationToken cancellationToken = default)
 	{
 		using var following = sharedWork.Follow(WorkProgress.For(progress));
 
 		var snapshot = await host.ReadAsync(cancellationToken);
 
-		return await OutlineService.OutlineAsync(snapshot, symbol, filePath, includeInherited, cancellationToken);
+		return await OutlineService.OutlineAsync(
+			snapshot,
+			symbol,
+			filePath,
+			includeInherited,
+			includeDocumentation,
+			includeSignatures,
+			cancellationToken);
 	}
 
 	[McpServerTool(

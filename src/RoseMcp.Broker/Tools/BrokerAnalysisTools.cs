@@ -135,6 +135,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
+		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
+		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<OutlineResult>(WorkspaceHints.From(workspace, filePath), ToolNames.Outline, new()
@@ -142,6 +144,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["symbol"] = symbol,
 			["filePath"] = filePath,
 			["includeInherited"] = includeInherited,
+			["includeDocumentation"] = includeDocumentation,
+			["includeSignatures"] = includeSignatures,
 		}, cancellationToken, progress);
 
 	[McpServerTool(

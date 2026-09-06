@@ -137,6 +137,13 @@ public static class ToolDescriptions
 
 	public const string IncludeInheritedArgument = "Also list what the base classes contribute. Off by default.";
 
+	public const string IncludeDocumentationArgument =
+		"Give each type and member the first line of its documentation. On by default; off is much smaller.";
+
+	public const string IncludeSignaturesArgument =
+		"Give each member its full signature. On by default; off leaves the name, kind and location, "
+			+ "which is what a search through a large type needs.";
+
 	public const string ArityArgument =
 		"How many type arguments the use site supplies, where the name is not written with them.";
 

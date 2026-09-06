@@ -7,21 +7,20 @@ using Microsoft.Extensions.Logging;
 namespace RoseMcp.Worker;
 
 /// <summary>
-/// The consistency core: one solution, one writer, and a guarantee that no read is ever served
-/// from a snapshot older than disk.
+/// The consistency core: one solution, one writer, and a guarantee that no read is ever served from a
+/// snapshot older than disk.
 /// <para>
-/// Every operation is queued onto a single-consumer channel, so mutations are strictly ordered.
-/// Reads queue a barrier that drains everything ahead of it, reconciles the snapshot with disk,
-/// and returns an immutable <see cref="WorkspaceSnapshot"/>. The expensive part of a read --
-/// compiling, running analyzers, finding references -- then happens off the writer against that
-/// snapshot, so concurrent reads still parallelise. Roslyn's immutability is what makes both halves
-/// of that safe.
+/// Every operation is queued onto a single-consumer channel, so mutations are strictly ordered. Reads
+/// queue a barrier that drains everything ahead of it, reconciles the snapshot with disk, and returns
+/// an immutable <see cref="WorkspaceSnapshot"/>. The expensive part of a read -- compiling, running
+/// analyzers, finding references -- then happens off the writer against that snapshot, so concurrent
+/// reads still parallelise. Roslyn's immutability is what makes both halves of that safe.
 /// </para>
 /// <para>
-/// The MSBuildWorkspace is used only as a loader. Its snapshot is forked on the first read and the
-/// session owns the authoritative <see cref="Solution"/> from then on, because the only public way
-/// to push changes back into a Workspace is TryApplyChanges, which writes to disk -- the opposite
-/// of what absorbing an external edit means.
+/// The MSBuildWorkspace is used only as a loader. Its solution is taken once, at construction and again
+/// at each reload, and the session owns the authoritative <see cref="Solution"/> from then on, because
+/// the only public way to push changes back into a Workspace is TryApplyChanges, which writes to disk --
+/// the opposite of what absorbing an external edit means.
 /// </para>
 /// </summary>
 public sealed class WorkspaceSession : IAsyncDisposable

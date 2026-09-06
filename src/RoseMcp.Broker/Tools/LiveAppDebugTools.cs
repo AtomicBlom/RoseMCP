@@ -10,8 +10,13 @@ namespace RoseMcp.Broker.Tools;
 
 /// <summary>
 /// The agent-facing debugging surface. Each tool drives a per-target live-app session the broker
-/// supervises, the debugging counterpart to the per-solution workspace tools. This is the first
-/// dogfoodable slice: attach to a running .NET process, watch its exceptions and log output, detach.
+/// supervises, the debugging counterpart to the per-solution workspace tools: attach or launch, watch
+/// what the target throws and logs, set tracepoints and breakpoints, step, evaluate a field chain in a
+/// stopped frame, read and edit the running visual tree, and detach.
+/// <para>
+/// Every one of them but the four that start or list a session takes a session id, and reaches it
+/// through <see cref="LiveAppSessionManager"/>, which serves only the calling client its own.
+/// </para>
 /// </summary>
 [McpServerToolType]
 public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)

@@ -11,10 +11,15 @@ using RoseMcp.LiveApp.Xaml;
 namespace RoseMcp.LiveApp;
 
 /// <summary>
-/// Owns the one target this host was launched for. For an attach it establishes a real ICorDebug
-/// session over the target (issue #4, attach path) and captures its debug events into a buffer the
-/// broker reads (issue #8). The XAML provider and the launch paths come in later issues; this is the
-/// shell the broker supervises and everything else plugs into.
+/// Owns the one target this host was launched for, and everything the broker can ask about it: a real
+/// ICorDebug session capturing debug events into a buffer the broker reads, the XAML facade over the
+/// running visual tree, and the paths that launch a target rather than attach to one -- an ordinary
+/// executable, and a packaged UWP app activated by AUMID so the debugger is there from its first
+/// module load.
+/// <para>
+/// One target and not several, because ICorDebug, the XAML diagnostics tap and the architecture the
+/// host must match are all per process. The broker owns the fan-out.
+/// </para>
 /// </summary>
 public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSessionHost> logger) : IHostedService
 {

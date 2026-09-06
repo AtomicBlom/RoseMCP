@@ -10,17 +10,16 @@ using RoseMcp.Contracts;
 namespace RoseMcp.LiveApp.Debugging;
 
 /// <summary>
-/// One ICorDebug session against one already-running process. Callbacks arrive on mscordbi's own
-/// thread with the debuggee stopped, and nothing in it runs again until <c>Continue</c> is called, so
-/// every handler ends by recording the event and continuing -- except ExitProcess, after which there
-/// is nothing left to continue, and a stopping breakpoint, which deliberately holds.
+/// One ICorDebug session against one process, attached to or launched. Callbacks arrive on mscordbi's
+/// own thread with the debuggee stopped, and nothing in it runs again until <c>Continue</c> is called,
+/// so every handler ends by recording the event and continuing -- except ExitProcess, after which
+/// there is nothing left to continue, and a stopping breakpoint, which deliberately holds.
 /// <para>
-/// This is the attach half of issue #4: it never launches a process, so a running .NET target can be
-/// attached to and watched with nothing injected into it. It supports both tracepoints (#17) --
-/// breakpoints that log and auto-continue, never pausing -- and stopping breakpoints (#6), which hold
-/// the target and notify, with a safety timeout so an unattended stop cannot wedge the app. Events
-/// are captured into a <see cref="DebugEventBuffer"/> rather than printed, because the reader is a
-/// turn-based agent that looks between its turns.
+/// Nothing is injected into the target, so a running process can be watched as it is. It supports
+/// tracepoints -- breakpoints that log and auto-continue, never pausing -- and stopping breakpoints,
+/// which hold the target and notify, with a safety timeout so an unattended stop cannot wedge the app.
+/// Events are captured into a <see cref="DebugEventBuffer"/> rather than printed, because the reader
+/// is a turn-based agent that looks between its turns.
 /// </para>
 /// </summary>
 internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
@@ -863,10 +862,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// The top managed frame's arguments and locals, read while the thread is stopped. Argument names
-	/// come from metadata (an instance method's argument 0 is <c>this</c>); local names need a PDB and
-	/// are indexed when one is not available. Reading is defensive per variable, so one unreadable
-	/// value does not lose the rest of the frame.
+	/// The top managed frame's arguments and locals, read while the thread is stopped. Argument names come
+	/// from metadata (an instance method's argument 0 is <c>this</c>); locals are numbered by slot,
+	/// <c>local_0</c> upwards, because nothing here reads a PDB (#83). Reading is defensive per variable,
+	/// so one unreadable value does not lose the rest of the frame.
 	/// </summary>
 	private IReadOnlyList<LiveVariable> ReadTopFrameVariables(CorDebugThread thread)
 	{

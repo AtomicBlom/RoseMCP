@@ -75,12 +75,14 @@ public sealed class DiskSynchronizer
 	}
 
 	/// <summary>
-	/// Starts tracking documents that have appeared in the snapshot since the last sweep -- which
-	/// means the ones this worker added itself, since anything else arrives through a reload.
+	/// Starts tracking documents that have appeared in the snapshot since the last sweep -- the ones a
+	/// mutation added, which is the only way a document reaches the snapshot without also being on disk
+	/// first.
 	/// <para>
-	/// Without this a file the worker created is in the snapshot but not in the tracking table, so
-	/// the next edit anyone makes to it would be invisible until something forced a reload. That is
-	/// precisely the staleness this class exists to prevent.
+	/// Without this a file the worker created is in the snapshot but not in the tracking table, so the next
+	/// edit anyone makes to it would be invisible until something forced a reload. That is precisely the
+	/// staleness this class exists to prevent. A file that appears on disk without a mutation is a
+	/// different case and <see cref="AbsorbNewAsync"/> is what finds it.
 	/// </para>
 	/// </summary>
 	public void TrackNew(Solution solution)

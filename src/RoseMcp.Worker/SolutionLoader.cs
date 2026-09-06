@@ -29,6 +29,12 @@ public sealed class SolutionLoader(
 
 	private AnalyzerFileReference? _xamlStubs;
 
+	/// <summary>
+	/// The loader every analyzer assembly goes through. Exposed so status computed later reports the
+	/// same load failures the load recorded, rather than an empty list beside a generator count of zero.
+	/// </summary>
+	public ShadowCopyAnalyzerAssemblyLoader AnalyzerLoader => analyzerLoader;
+
 	public async Task<LoadResult> LoadAsync(
 		WorkerOptions options,
 		CancellationToken cancellationToken,
@@ -94,7 +100,8 @@ public sealed class SolutionLoader(
 			Math.Round(stopwatch.Elapsed.TotalSeconds, 2),
 			cancellationToken,
 			progress.Slice(XamlDone, 100),
-			build);
+			build,
+			analyzerLoader);
 
 		logger.LogInformation(
 			"Loaded {SolutionPath} in {Seconds}s: {State}, {ProjectCount} project(s), {GeneratedCount} generated document(s).",

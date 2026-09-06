@@ -25,13 +25,18 @@ public static class WorkspaceStatusReporter
 		double loadSeconds,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null,
-		BuildProperties? build = null)
+		BuildProperties? build = null,
+		ShadowCopyAnalyzerAssemblyLoader? analyzerLoader = null)
 	{
 		var (projects, xamlReasons) = await DescribeProjectsAsync(
-			solution, cancellationToken, progress);
+			solution, analyzerLoader, cancellationToken, progress);
+
+		// Read after the projects are described, not before: describing one is what asks its references
+		// for their generators, and that is the moment an assembly that will not load says so.
+		var analyzerFailures = analyzerLoader?.LoadFailures ?? [];
 
 		var degradedReasons = (IReadOnlyList<string>)
-			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build), .. xamlReasons];
+			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build, analyzerFailures), .. xamlReasons];
 
 		return new WorkspaceStatusReport
 		{
@@ -52,6 +57,7 @@ public static class WorkspaceStatusReporter
 
 	private static async Task<(IReadOnlyList<ProjectStatus> Statuses, IReadOnlyList<string> XamlReasons)> DescribeProjectsAsync(
 		Solution solution,
+		ShadowCopyAnalyzerAssemblyLoader? analyzerLoader,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress)
 	{
@@ -70,7 +76,7 @@ public static class WorkspaceStatusReporter
 				total == 0 ? 100 : 100.0 * statuses.Count / total);
 
 			var generators = project.AnalyzerReferences
-				.SelectMany(reference => SafeGetGenerators(reference, project.Language))
+				.SelectMany(reference => SafeGetGenerators(reference, project.Language, analyzerLoader))
 				.ToArray();
 
 			// Only pay for generator execution when there is a generator to run.
@@ -138,17 +144,25 @@ public static class WorkspaceStatusReporter
 	}
 
 	/// <summary>
-	/// A generator built against an older Roslyn, or one with a broken dependency, throws on load.
-	/// That is a fact about the solution, not a reason to fail the whole open.
+	/// A generator built against a Roslyn this worker does not have, or one with a broken dependency,
+	/// throws on load. That is a fact about the solution rather than a reason to fail the whole open,
+	/// so it is recorded beside the failures the reference raises through its own event: a reference
+	/// that yields no generators and says nothing is the silent nothing this project exists to catch.
 	/// </summary>
-	private static IEnumerable<ISourceGenerator> SafeGetGenerators(AnalyzerReference reference, string language)
+	private static IEnumerable<ISourceGenerator> SafeGetGenerators(
+		AnalyzerReference reference,
+		string language,
+		ShadowCopyAnalyzerAssemblyLoader? analyzerLoader)
 	{
 		try
 		{
 			return reference.GetGenerators(language);
 		}
-		catch (Exception)
+		catch (Exception exception)
 		{
+			analyzerLoader?.RecordLoadFailure(
+				reference.FullPath ?? reference.Display ?? language, exception.Message);
+
 			return [];
 		}
 	}
@@ -276,7 +290,8 @@ public static class WorkspaceStatusReporter
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		IReadOnlyList<ProjectStatus> projects,
 		RestoreReport? restore,
-		BuildProperties? build)
+		BuildProperties? build,
+		IReadOnlyList<string> analyzerLoadFailures)
 	{
 		var reasons = new List<string>();
 
@@ -309,6 +324,17 @@ public static class WorkspaceStatusReporter
 					+ "disk. MSBuild still passes it to the compiler, so any source generators it contains are "
 					+ $"silently producing nothing. {remedy}");
 			}
+		}
+
+		// The file being there and not loading, which the missing-output check above cannot see. The
+		// compiler is handed the reference either way, so the generators inside it produce nothing while
+		// the project reports a clean load and a generator count of zero -- a healthy-looking workspace
+		// that is not one, and the second of the three failures this server exists to prevent.
+		foreach (var failure in analyzerLoadFailures)
+		{
+			reasons.Add($"An analyzer assembly failed to load -- {failure}. MSBuild still passes it to the "
+				+ "compiler, so any analyzers or source generators it contains are producing nothing. Rebuild "
+				+ "it, or check its dependencies and the Roslyn version it was built against, then reload.");
 		}
 
 		// Counted, but only degrading when something actually came back impaired. MSBuild's Failure

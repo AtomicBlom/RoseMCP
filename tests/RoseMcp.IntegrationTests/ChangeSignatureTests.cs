@@ -514,4 +514,79 @@ public sealed class ChangeSignatureTests
 			result.UnchangedCallSites,
 			site => site.Reason.Contains("whole body of SendTwice", StringComparison.Ordinal));
 	}
+
+	/// <summary>
+	/// The two shapes that name the member without calling it. Neither can be rewritten -- a
+	/// <c>nameof</c> carries no arguments to put back, and a method group's shape belongs to the
+	/// delegate type it converts to rather than to the call -- and the conversion stops compiling
+	/// the moment the signature moves, so passing over them silently leaves the caller to find it
+	/// from a build.
+	/// </summary>
+	[Fact]
+	public async Task Reports_a_nameof_and_a_method_group_it_cannot_rewrite()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session,
+			"Library.Shaped.Combine(string, string)",
+			"string first, string separator, string second",
+			["separator=\"-\""]);
+
+		Assert.True(result.Applied, "the change applies; the two sites it cannot rewrite are reported, not refused");
+
+		var named = result.UnchangedCallSites
+			.Where(site => site.Location.FilePath.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+
+		Assert.Equal(2, named.Length);
+
+		Assert.All(
+			named,
+			site => Assert.Contains("names the member without calling it", site.Reason, StringComparison.Ordinal));
+
+		// The delegate conversion is now wrong, and saying so is the whole point of reporting a site
+		// nothing could be done about.
+		Assert.Contains(
+			result.IntroducedDiagnostics,
+			diagnostic => diagnostic.FilePath?.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase) == true);
+	}
+
+	/// <summary>
+	/// A base-initialiser and a this-initialiser are calls, with arguments, and both are left alone.
+	/// The walk that finds a call site climbs from the reference to the member declaration and never
+	/// looks at a constructor initialiser on the way, so both arrive at the reason written for a name
+	/// that is not a call at all.
+	/// <para>
+	/// That reason is wrong about these two: they call the constructor, and after this change they
+	/// call it with too few arguments. The errors are reported, so the caller is pointed at the right
+	/// lines by the wrong sentence -- pinned as it stands, so whatever replaces the sentence has to
+	/// come back here and say so.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Calls_a_constructor_initialiser_a_name_that_is_not_a_call()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Rooted.Rooted(string)", "string name, int age", ["age=0"]);
+
+		Assert.True(result.Applied, "the initialisers are reported rather than refusing the whole change");
+
+		var initialisers = result.UnchangedCallSites
+			.Where(site => site.Location.FilePath.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+
+		Assert.Equal(2, initialisers.Length);
+
+		Assert.All(
+			initialisers,
+			site => Assert.Contains("names the member without calling it", site.Reason, StringComparison.Ordinal));
+
+		// Both are real calls that now pass too few arguments, which is what makes the sentence above
+		// the wrong one.
+		Assert.Equal(2, result.IntroducedDiagnostics.Count(diagnostic => diagnostic.Id == "CS7036"));
+	}
 }

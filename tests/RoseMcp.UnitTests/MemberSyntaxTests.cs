@@ -193,6 +193,26 @@ public sealed class MemberSyntaxTests
 	}
 
 	/// <summary>
+	/// A declaration arriving as its own source text, indentation and all, which is what a move
+	/// hands over. Its first line carries the level it was written at, so that is the baseline, and
+	/// every wrapped line keeps the relation it had to it.
+	/// </summary>
+	[Fact]
+	public void Measures_a_moved_declaration_against_the_indentation_it_arrives_with()
+	{
+		var members = MemberSyntax.Parse(
+			"\tpublic static string Join(\n\t\tstring first,\n\t\tstring second)\n\t{\n\t\treturn first;\n\t}",
+			"class",
+			null,
+			"\t");
+
+		var text = Assert.Single(members).ToFullString();
+
+		Assert.Contains("\n\t\tstring first,", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("\n\t\t\tstring first,", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// The line inside a string is content, not layout. Shifting it changes what the program says,
 	/// and in a raw literal it changes how much is stripped from every other line of the value.
 	/// </summary>

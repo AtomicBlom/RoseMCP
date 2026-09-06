@@ -445,7 +445,7 @@ public static class MemberEditService
 
 		for (var position = 0; position < parsed.Count; position++)
 		{
-			prepared.Add(Prepared(
+			prepared.Add(MemberSyntax.Prepared(
 				parsed[position],
 				blankBefore: position > 0 || index > 0,
 				blankAfter: position == parsed.Count - 1 && !followerIsSeparated,
@@ -619,7 +619,7 @@ public static class MemberEditService
 		// Read before the attributes are carried over, because a declaration that has attributes keeps
 		// its documentation comment above the first of them: the member's leading trivia is whichever
 		// token comes first, and that changes under this call.
-		var supplied = WithoutLeadingBlanks(replacement.GetLeadingTrivia());
+		var supplied = MemberSyntax.WithoutLeadingBlanks(replacement.GetLeadingTrivia());
 		var existingTrivia = existing.GetLeadingTrivia();
 
 		replacement = WithCarriedAttributes(replacement, existing, notices);
@@ -674,50 +674,6 @@ public static class MemberEditService
 				.WithTrailingTrivia(SyntaxFactory.ElasticMarker)));
 
 		return replacement.WithLeadingTrivia().WithAttributeLists(carried);
-	}
-
-	/// <summary>
-	/// A member as it will read in the file: indented for where it is going, separated from its
-	/// neighbours by a blank line, ending its own line, and marked so the formatter and the
-	/// whitespace pass know which lines are new.
-	/// <para>
-	/// The indentation goes on as leading trivia rather than being left to the formatter, and that is
-	/// what makes this path behave like the replace path. Given a member whose first line is already
-	/// indented, the formatter leaves the lines it has no rule about -- a wrapped parameter list --
-	/// exactly where they are, which is where the shift put them. Given one with no leading
-	/// whitespace it recomputes the indentation itself, and then the shift and the formatter both
-	/// apply, and every wrapped line lands a level too deep. Measured: writing this very method
-	/// through the tool put its attribute arguments at three tabs.
-	/// </para>
-	/// <para>
-	/// The blank line is added here rather than left to the formatter, which reindents and moves
-	/// braces but never inserts one between members -- so a member appended without it lands flush
-	/// against the one above.
-	/// </para>
-	/// </summary>
-	private static MemberDeclarationSyntax Prepared(
-		MemberDeclarationSyntax member,
-		bool blankBefore,
-		bool blankAfter,
-		string lineEnding,
-		string indent,
-		SyntaxAnnotation marker)
-	{
-		var newLine = SyntaxFactory.EndOfLine(lineEnding);
-
-		IEnumerable<SyntaxTrivia> leading = WithoutLeadingBlanks(member.GetLeadingTrivia());
-
-		if (indent.Length > 0) leading = [SyntaxFactory.Whitespace(indent), .. leading];
-		if (blankBefore) leading = [newLine, .. leading];
-
-		var trailing = member.GetTrailingTrivia();
-		if (trailing.Count == 0 || !trailing.Last().IsKind(SyntaxKind.EndOfLineTrivia)) trailing = trailing.Add(newLine);
-		if (blankAfter) trailing = trailing.Add(newLine);
-
-		return member
-			.WithLeadingTrivia(leading)
-			.WithTrailingTrivia(trailing)
-			.WithAdditionalAnnotations(marker);
 	}
 
 	/// <summary>
@@ -957,12 +913,6 @@ public static class MemberEditService
 	/// </summary>
 	private static bool StartsBlank(MemberDeclarationSyntax member) =>
 		member.GetLeadingTrivia() is [var first, ..] && first.IsKind(SyntaxKind.EndOfLineTrivia);
-
-	private static IReadOnlyList<SyntaxTrivia> WithoutLeadingBlanks(SyntaxTriviaList trivia) =>
-		[
-			.. trivia.SkipWhile(candidate =>
-				candidate.Kind() is SyntaxKind.WhitespaceTrivia or SyntaxKind.EndOfLineTrivia),
-		];
 
 	/// <summary>
 	/// What a declaration is called, which for a field is every variable it declares. Used both to

@@ -274,8 +274,12 @@ public static class MoveMemberService
 			? IndentAt(text, type.Members[0].SpanStart)
 			: IndentAt(text, type.SpanStart) + "\t";
 
+		// The line breaks above the declaration come off; the indentation of its first line does not.
+		// That indentation is the baseline every wrapped line is measured against, and taking it away
+		// leaves the continuations carrying the old type's level with the new type's added on top of it
+		// -- a signature that arrives wrapped two levels in lands four, and nothing downstream says so.
 		var moved = MemberSyntax.Parse(
-			WithoutDirectives(source.Declaration, notices).ToFullString().Trim(),
+			WithoutDirectives(source.Declaration, notices).ToFullString().TrimStart('\r', '\n').TrimEnd(),
 			MemberSyntax.KeywordOf(type),
 			document.Project.ParseOptions,
 			indent,
@@ -284,7 +288,17 @@ public static class MoveMemberService
 		if (moved.Count != 1) throw new InvalidOperationException("The member being moved parsed as more than one.");
 
 		var marker = new SyntaxAnnotation();
-		var placed = type.WithMembers(type.Members.Add(moved[0].WithAdditionalAnnotations(marker)));
+
+		// Through the same preparation the add path uses. Handing the formatter a member with no
+		// leading whitespace has it recompute the indentation, on top of the shift that already
+		// applied it, and every wrapped line lands a level too deep.
+		var placed = type.WithMembers(type.Members.Add(MemberSyntax.Prepared(
+			moved[0],
+			blankBefore: false,
+			blankAfter: false,
+			Whitespace.Dominant(text),
+			indent,
+			marker)));
 
 		var written = solution.WithDocumentSyntaxRoot(document.Id, root.ReplaceNode(type, placed));
 

@@ -76,6 +76,42 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// The same rule on the way in as on the way over: a member added with a hand-wrapped parameter
+	/// list keeps the shape the caller gave it and lands at the destination's own level, whether they
+	/// wrote the whole thing at column zero or already indented for where it goes.
+	/// <para>
+	/// A whole member carries its own first line, so the relative shape the caller wrote is the
+	/// specification and the baseline is all that has to come off. That is what separates this from a
+	/// bare parameter list, which opens after the parenthesis with no first line to measure and so
+	/// takes its level from the declaration instead.
+	/// </para>
+	/// </summary>
+	[Theory]
+	[InlineData("public string Wrapped(\n\tstring first,\n\tstring second) => first + second;")]
+	[InlineData("\tpublic string Wrapped(\n\t\tstring first,\n\t\tstring second) => first + second;")]
+	[InlineData("\t\tpublic string Wrapped(\n\t\t\tstring first,\n\t\t\tstring second) => first + second;")]
+	public async Task Lines_up_a_wrapped_parameter_list_on_a_member_it_adds(string written)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = written,
+		});
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		// One tab for the member, two for the parameters it wrapped onto their own lines.
+		Assert.Contains(
+			"\tpublic string Wrapped(\r\n\t\tstring first,\r\n\t\tstring second) => first + second;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// The same shift must not reach inside a verbatim string. Its leading whitespace is part of the
 	/// value, and no delimiter rule takes it back out again, so a literal written flush left stays
 	/// flush left however deep the member around it sits.

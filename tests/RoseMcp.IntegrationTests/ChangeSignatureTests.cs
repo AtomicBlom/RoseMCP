@@ -45,6 +45,43 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
+	/// A parameter list the caller wrapped lands one level in from the declaration it belongs to,
+	/// and gets there whether they wrote it flat, indented relative to itself, or already indented
+	/// for where it goes -- those are one request, and only taking the baseline off first makes
+	/// them so.
+	/// <para>
+	/// The declaration's own indentation is a level short, because a continuation is not a sibling
+	/// of the signature. Nothing downstream corrects it: a continuation line is not a statement, so
+	/// Roslyn's formatter has no rule that moves one, and neither IDE0055 nor <c>dotnet format</c>
+	/// has an opinion about where a wrapped list sits. The list comes out level with the member it
+	/// belongs to and every build passes.
+	/// </para>
+	/// </summary>
+	[Theory]
+	[InlineData("\nstring first,\nstring second,\nstring third,\nstring fourth = \"\"")]
+	[InlineData("\n\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
+	[InlineData("\n\t\tstring first,\n\t\tstring second,\n\t\tstring third,\n\t\tstring fourth = \"\"")]
+	public async Task Wraps_a_parameter_list_a_level_in_from_the_declaration(string written)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Wrapped.Join(string, string, string)", written);
+
+		Assert.True(result.Applied);
+		Assert.Equal(0, result.TotalErrorCount);
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		// One tab for the member, two for the parameters it wrapped onto their own lines.
+		Assert.Contains(
+			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third,"
+				+ "\r\n\t\tstring fourth = \"\")\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// Issue #59, end to end. A call site that already writes an argument for the parameter being
 	/// added does not compile as it stands -- which is the ordinary reason to reach for this tool -- and
 	/// its surplus argument was silently deleted, leaving a call that compiles and means something

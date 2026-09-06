@@ -283,8 +283,8 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 		return new WorkspaceSummary
 		{
-			SolutionPath = SolutionPath,
-			Key = Key,
+			Workspace = SolutionPath,
+			WorkspaceKey = Key,
 			DisplayName = Path.GetFileNameWithoutExtension(SolutionPath),
 			Alive = IsAlive,
 			ExitReason = ExitReason.ToString(),

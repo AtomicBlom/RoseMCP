@@ -1,16 +1,18 @@
 namespace RoseMcp.Contracts;
 
-/// <summary>One row of the tray window, and of GET /admin/workspaces.</summary>
-public sealed record WorkspaceSummary
+/// <summary>
+/// One row of the tray window, and of GET /admin/workspaces, and what rose_workspace_open answers
+/// with.
+/// <para>
+/// The path and the short key come from <see cref="WorkspaceScopedResult"/> rather than from two
+/// properties of its own. They were spelled solutionPath and key here and workspace and
+/// workspaceKey everywhere else, so the one result a caller reads before anything is loaded named
+/// the workspace by two fields no other result has -- and the value that has to be passed back as
+/// the workspace argument was the one called something else.
+/// </para>
+/// </summary>
+public sealed record WorkspaceSummary : WorkspaceScopedResult
 {
-	public required string SolutionPath { get; init; }
-
-	/// <summary>
-	/// The short name callers pass as <c>workspace</c>. Shown here so the key a result carries can
-	/// be matched against a row without anyone having to work out how it is derived.
-	/// </summary>
-	public string Key { get; init; } = string.Empty;
-
 	public required string DisplayName { get; init; }
 
 	public required bool Alive { get; init; }

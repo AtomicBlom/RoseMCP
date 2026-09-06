@@ -37,6 +37,41 @@ public sealed record SymbolAddress
 	/// <summary>What the caller wrote, for repeating back in an error.</summary>
 	public required string Requested { get; init; }
 
+	/// <summary>
+	/// How an address is spelled: fully qualified, with parameter types and nothing else.
+	/// <para>
+	/// Deliberately not <see cref="SymbolSignature.Format"/>, which is for reading. That one leads
+	/// with the return type and names the parameters, so
+	/// <c>string RoseMcp.Broker.WorkspaceHints.From(string workspace, string[] paths)</c> is what a
+	/// result carried -- and none of it parses back, because the space before the second qualified
+	/// name lands inside a segment and a parameter's name is not its type. A caller who read a symbol
+	/// out of one answer and wanted to edit it had to take the string apart by hand.
+	/// </para>
+	/// <para>
+	/// Type parameters are omitted because <see cref="Parse"/> strips them anyway, and parameter types
+	/// are minimally qualified, which is one of the spellings the match already accepts.
+	/// </para>
+	/// </summary>
+	private static readonly SymbolDisplayFormat AddressFormat = new(
+		globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
+		typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+		genericsOptions: SymbolDisplayGenericsOptions.None,
+		memberOptions: SymbolDisplayMemberOptions.IncludeParameters | SymbolDisplayMemberOptions.IncludeContainingType,
+		parameterOptions: SymbolDisplayParameterOptions.IncludeType,
+		miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
+
+	/// <summary>
+	/// The address that names this symbol, or null where nothing can: a local, a parameter, a label or
+	/// a type parameter is declared inside a member rather than as one, so there is no name a
+	/// declaration search could find and reporting a bare identifier would invite a call that fails.
+	/// </summary>
+	public static string? Of(ISymbol symbol) => symbol.Kind switch
+	{
+		SymbolKind.Local or SymbolKind.Parameter or SymbolKind.Label
+			or SymbolKind.TypeParameter or SymbolKind.RangeVariable or SymbolKind.Discard => null,
+		_ => symbol.ToDisplayString(AddressFormat),
+	};
+
 	/// <summary>The last segment: the name the symbol itself carries.</summary>
 	public required string Name { get; init; }
 

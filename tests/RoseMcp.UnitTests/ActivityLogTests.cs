@@ -146,7 +146,7 @@ public sealed class ActivityLogTests
 		var json = System.Text.Json.JsonSerializer.Serialize(
 			new WorkspaceSummary
 			{
-				SolutionPath = Solution,
+				Workspace = Solution,
 				DisplayName = "Thing",
 				Alive = true,
 				ExitReason = "Running",

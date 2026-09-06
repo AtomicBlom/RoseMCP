@@ -5,6 +5,12 @@ public sealed record ImplementationsResult : WorkspaceScopedResult
 {
 	public required long Revision { get; init; }
 
+	/// <summary>
+	/// The symbol this was asked about, as an address: pass it back as <c>symbol</c> to any rose_*
+	/// tool. Each match carries its own.
+	/// </summary>
+	public string? Address { get; init; }
+
 	public required string Symbol { get; init; }
 
 	/// <summary>

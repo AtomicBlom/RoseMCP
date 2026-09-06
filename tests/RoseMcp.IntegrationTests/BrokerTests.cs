@@ -45,8 +45,8 @@ public sealed class BrokerTests
 
 		var started = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current.CancellationToken);
 
-		Assert.Equal(fixture.SolutionPath, started.SolutionPath);
-		Assert.NotEmpty(started.Key);
+		Assert.Equal(fixture.SolutionPath, started.Workspace);
+		Assert.NotEmpty(started.WorkspaceKey);
 		Assert.True(started.Alive, $"the worker should be alive; exit reason was '{started.ExitReason}'");
 
 		// Polling is the same call, so it must not start a second worker.

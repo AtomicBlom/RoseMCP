@@ -44,7 +44,7 @@ public sealed class WorkspaceRow : Observable
 
 	public WorkspaceRow(WorkspaceSummary summary)
 	{
-		SolutionPath = summary.SolutionPath;
+		SolutionPath = summary.Workspace;
 		DisplayName = summary.DisplayName;
 
 		Update(summary);

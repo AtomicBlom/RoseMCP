@@ -191,6 +191,72 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
+	/// An address a result reports is one the next call takes. The signature beside it is for reading
+	/// and does not parse: it leads with the return type, so the space before the second qualified name
+	/// lands inside a segment, and it names the parameters, which are not their types. A caller who
+	/// read a symbol out of one answer and wanted to edit it had to take the string apart by hand.
+	/// </summary>
+	[Fact]
+	public async Task Reports_an_address_the_next_call_takes()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var found = await NavigationService.SearchAsync(snapshot, "Notify", 50, TestContext.Current.CancellationToken);
+
+		var match = found.Matches.First(candidate => candidate.Signature.Contains("Notifier.Notify", StringComparison.Ordinal));
+
+		Assert.NotNull(match.Address);
+
+		// The whole claim: the address goes back in as symbol, and answers about the same member.
+		var described = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = match.Address },
+			TestContext.Current.CancellationToken);
+
+		Assert.Equal(match.Signature, described.Signature);
+		Assert.Equal(match.Address, described.Address);
+
+		var references = await NavigationService.FindReferencesAsync(
+			snapshot, new SymbolTarget { Symbol = described.Address }, 200, TestContext.Current.CancellationToken);
+
+		Assert.Equal(match.Address, references.Address);
+		Assert.NotEmpty(references.References);
+	}
+
+	/// <summary>
+	/// An overload is separated by its parameter types, which is what makes the address usable on the
+	/// members most likely to have one: a name alone is refused where two declarations carry it.
+	/// </summary>
+	[Fact]
+	public async Task Reports_an_address_that_separates_an_overload()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+
+		var found = await NavigationService.SearchAsync(snapshot, "Greet", 50, TestContext.Current.CancellationToken);
+
+		var addresses = found.Matches
+			.Where(match => match.Name == "Greet")
+			.Select(match => match.Address)
+			.ToArray();
+
+		Assert.Equal(2, addresses.Length);
+		Assert.Contains("Library.Greeter.Greet(string)", addresses);
+		Assert.Contains("Library.Greeter.Greet(string, string)", addresses);
+
+		foreach (var address in addresses)
+		{
+			var described = await NavigationService.DescribeAsync(
+				snapshot, new SymbolTarget { Symbol = address }, TestContext.Current.CancellationToken);
+
+			Assert.Equal(address, described.Address);
+		}
+	}
+
+	/// <summary>
 	/// A project name the solution does not carry is refused rather than filtered on. An empty list
 	/// reads exactly like a symbol nobody uses, and that is the answer that invites a deletion.
 	/// </summary>

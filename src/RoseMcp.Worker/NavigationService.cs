@@ -29,6 +29,7 @@ public static class NavigationService
 		return new SymbolInfoResult
 		{
 			Revision = snapshot.Revision,
+			Address = SymbolAddress.Of(symbol),
 			Name = symbol.Name,
 			Kind = symbol.Kind.ToString(),
 			Signature = symbol.ToDisplayString(SymbolSignature.Format),
@@ -130,6 +131,7 @@ public static class NavigationService
 		return new ReferencesResult
 		{
 			Revision = snapshot.Revision,
+			Address = SymbolAddress.Of(symbol),
 			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
 			Definitions = [.. definitions.Select(location => Previewed(location, includePreviews))],
 			References = [.. listed.Select(location => Previewed(location, includePreviews))],
@@ -227,6 +229,7 @@ public static class NavigationService
 		return new ImplementationsResult
 		{
 			Revision = snapshot.Revision,
+			Address = SymbolAddress.Of(symbol),
 			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
 			Relationship = relationship,
 			Matches = truncated ? ordered[..maxResults] : ordered,
@@ -311,6 +314,7 @@ public static class NavigationService
 			{
 				Name = symbol.Name,
 				Kind = symbol.Kind.ToString(),
+				Address = SymbolAddress.Of(symbol),
 				Signature = symbol.ToDisplayString(SymbolSignature.Format),
 
 				// Metadata symbols belong to no project in the solution, and saying so is more use
@@ -349,6 +353,7 @@ public static class NavigationService
 				{
 					Name = symbol.Name,
 					Kind = symbol.Kind.ToString(),
+					Address = SymbolAddress.Of(symbol),
 					Signature = symbol.ToDisplayString(SymbolSignature.Format),
 					Project = project.Name,
 					Location = location is null

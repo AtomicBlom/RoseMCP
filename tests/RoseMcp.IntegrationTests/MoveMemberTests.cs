@@ -90,6 +90,27 @@ public sealed class MoveMemberTests
 	}
 
 	/// <summary>
+	/// A moved member arrives separated from the one above it, the same as one that is added.
+	/// Roslyn's formatter reindents and moves braces but never inserts a blank line between members,
+	/// so a member appended without one lands flush against the closing brace above it and no rule
+	/// anywhere puts it back.
+	/// </summary>
+	[Fact]
+	public async Task Separates_the_member_it_moves_from_the_one_above_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Wrapped.Join", "Library.Greeter");
+
+		Assert.True(result.Applied);
+
+		var target = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.Contains("\t}\r\n\r\n\tpublic static string Join(", target, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// The other call-site style: the calls stay as written and each calling file imports the new
 	/// home statically. Smaller diff, at the cost of a file whose calls no longer say where they go.
 	/// </summary>

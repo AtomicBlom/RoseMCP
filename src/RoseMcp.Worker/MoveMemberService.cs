@@ -294,7 +294,7 @@ public static class MoveMemberService
 		// applied it, and every wrapped line lands a level too deep.
 		var placed = type.WithMembers(type.Members.Add(MemberSyntax.Prepared(
 			moved[0],
-			blankBefore: false,
+			blankBefore: type.Members.Count > 0,
 			blankAfter: false,
 			Whitespace.Dominant(text),
 			indent,

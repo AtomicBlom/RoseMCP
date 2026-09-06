@@ -40,12 +40,53 @@ public sealed class LiveAppSessionManager(
 	/// <summary>One row per open session; the same model backs any UI and GET /admin/sessions.</summary>
 	public IReadOnlyList<LiveAppSessionSummary> Describe() => [.. Sessions.Select(session => session.Describe())];
 
+	/// <summary>
+	/// One row per session the caller owns, which is what an agent-facing list may show.
+	/// <see cref="Describe"/> is the whole picture, for the tray window and GET /admin/sessions, where
+	/// the reader is the person running the broker rather than one of its clients.
+	/// <para>
+	/// Scoped for the same reason <see cref="Find"/> is, and because the refusal there sends the caller
+	/// here: a list naming sessions it cannot then use would be worse than no list.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<LiveAppSessionSummary> DescribeOwned() =>
+		[.. Sessions.Where(Owns).Select(session => session.Describe())];
+
+	/// <summary>
+	/// Whether this call may reach that session. A stdio broker records no owner and matches null with
+	/// null, since the process has one session for its whole life and nothing else can reach it.
+	/// </summary>
+	private static bool Owns(LiveAppSession session) =>
+		string.Equals(session.Owner, CallSession.Id, StringComparison.Ordinal);
+
+	/// <summary>
+	/// The session with that id, if the caller owns it.
+	/// <para>
+	/// A live-app session is a debugger attached to somebody's running program: its events carry
+	/// captured exceptions and log output, and its other tools set breakpoints, evaluate expressions
+	/// and edit the running UI. The broker is a singleton every connection shares, so without this an
+	/// http client reaches another client's target by guessing an eight-character id -- or by reading
+	/// GET /admin/sessions, which lists them.
+	/// </para>
+	/// <para>
+	/// Refused as though it were not there, rather than as a session belonging to someone else,
+	/// because which of those it is is not the caller's business and the next step is the same either
+	/// way. A stdio broker records no owner and every call in it matches, since the process has one
+	/// session for its whole life.
+	/// </para>
+	/// </summary>
 	public LiveAppSession? Find(string sessionId)
 	{
+		LiveAppSession? session;
+
 		lock (_sessions)
 		{
-			return _sessions.GetValueOrDefault(sessionId);
+			session = _sessions.GetValueOrDefault(sessionId);
 		}
+
+		if (session is null) return null;
+
+		return Owns(session) ? session : null;
 	}
 
 	/// <summary>Starts a host against a target, detecting the target's architecture first.</summary>
@@ -60,6 +101,10 @@ public sealed class LiveAppSessionManager(
 		{
 			var session = await LiveAppSession.StartAsync(
 				sessionId, target, architecture, hostPath, Activities, loggerFactory, cancellationToken);
+
+			// Recorded before it is reachable, so there is no window in which a session exists with no
+			// owner and every caller is its owner.
+			session.Owner = CallSession.Id;
 
 			await _gate.WaitAsync(cancellationToken);
 			try
@@ -81,9 +126,15 @@ public sealed class LiveAppSessionManager(
 		}
 	}
 
-	/// <summary>Stops a session's host and forgets it.</summary>
+	/// <summary>
+	/// Stops a session's host and forgets it, if the caller owns it. Detaching someone else's debugger
+	/// is the loudest thing this surface can do to another client, so it goes through the same
+	/// ownership check as every read.
+	/// </summary>
 	public async Task<bool> CloseAsync(string sessionId, CancellationToken cancellationToken)
 	{
+		if (Find(sessionId) is null) return false;
+
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{

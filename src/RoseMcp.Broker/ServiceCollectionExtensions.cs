@@ -228,18 +228,21 @@ public static class ServiceCollectionExtensions
 	}
 
 	/// <summary>
-	/// Picks the calling session's directory out of <c>_meta</c> and makes it available for the length
-	/// of the call.
+	/// Picks the two facts about the calling session out of the request and makes them available for the
+	/// length of the call: the directory it lives in, out of <c>_meta</c>, and which session it is, from
+	/// the transport.
 	/// <para>
-	/// A filter rather than a tool parameter, so no tool declares it and no tool can forget it -- the
-	/// same reasoning that puts attribution in one place. See <see cref="CallOrigin"/> for why the
-	/// broker needs telling at all.
+	/// A filter rather than tool parameters, so no tool declares either and no tool can forget one -- the
+	/// same reasoning that puts attribution in one place. See <see cref="CallOrigin"/> for why the broker
+	/// needs telling which directory, and <see cref="CallSession"/> for what owning a live-app session
+	/// means.
 	/// </para>
 	/// </summary>
 	private static IMcpServerBuilder WithCallOrigin(this IMcpServerBuilder builder) =>
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
 		{
 			using var origin = CallOrigin.Use(OriginDirectory(context.Params));
+			using var session = CallSession.Use(context.Server.SessionId);
 
 			return await next(context, cancellationToken);
 		}));

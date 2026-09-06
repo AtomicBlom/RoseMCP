@@ -220,7 +220,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		"List the live-app debug sessions the broker is supervising, each with its session id, target, "
 			+ "architecture, state, and process ids. Use it to recover a session id you did not keep from "
 			+ "rose_debug_attach, or to see what is currently attached before starting another session.")]
-	public LiveAppSessionList List() => new() { Sessions = sessions.Describe() };
+	public LiveAppSessionList List() => new() { Sessions = sessions.DescribeOwned() };
 
 	[McpServerTool(
 		Name = ToolNames.DebugAddTracepoint,
@@ -651,7 +651,11 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	}
 
 	private LiveAppSession Require(string sessionId)
-		=> sessions.Find(sessionId) ?? throw new McpException($"No debug session '{sessionId}' is open.");
+		=> sessions.Find(sessionId)
+			?? throw new McpException(
+				$"No debug session '{sessionId}' is open for this client. rose_debug_list names the ones there "
+					+ "are. A session another client of this broker started belongs to it and is not reachable "
+					+ "from here.");
 
 	private static string DescribeProcess(int processId)
 	{

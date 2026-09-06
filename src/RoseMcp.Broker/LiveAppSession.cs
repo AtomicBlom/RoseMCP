@@ -44,6 +44,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	public string SessionId { get; }
 
+	/// <summary>
+	/// The MCP session that started this one, or null where the transport has no notion of one. Set by
+	/// <see cref="LiveAppSessionManager"/>, which is the only thing that starts a session, so a session
+	/// cannot exist without an owner having been decided for it.
+	/// </summary>
+	public string? Owner { get; internal set; }
+
 	public LiveAppTarget Target { get; }
 
 	/// <summary>The architecture the broker detected for the target and launched the host as.</summary>

@@ -114,7 +114,7 @@ public sealed class ResilienceTests
 		var whileMissing = await session.ReadAsync(TestContext.Current.CancellationToken);
 
 		Assert.True(whileMissing.Stale);
-		Assert.False(session.Unloaded);
+		Assert.False(session.Unloaded, "the session stays loaded while the solution is missing");
 		Assert.NotEmpty(whileMissing.Solution.Projects);
 		Assert.Contains(whileMissing.Notices, notice => notice.Contains("missing", StringComparison.OrdinalIgnoreCase));
 
@@ -123,8 +123,8 @@ public sealed class ResilienceTests
 
 		var recovered = await session.ReadAsync(TestContext.Current.CancellationToken);
 
-		Assert.False(recovered.Stale);
-		Assert.False(session.Unloaded);
+		Assert.False(recovered.Stale, "the snapshot is current again once the solution is back");
+		Assert.False(session.Unloaded, "the session stayed loaded throughout");
 		Assert.NotEmpty(recovered.Solution.Projects);
 	}
 

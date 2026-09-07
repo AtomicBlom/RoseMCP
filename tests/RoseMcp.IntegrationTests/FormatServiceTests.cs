@@ -98,7 +98,7 @@ public sealed class FormatServiceTests
 
 		var result = await FormatAsync(session, [path], apply: false);
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.NotEmpty(result.Diff);
 		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
 

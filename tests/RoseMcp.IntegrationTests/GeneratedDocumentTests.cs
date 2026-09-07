@@ -22,7 +22,11 @@ public sealed class GeneratedDocumentTests
 			list.Documents.Select(document => document.HintName).Order());
 
 		// Nothing was written to disk; the only way to see this code is through the compilation.
-		Assert.All(list.Documents, document => Assert.False(File.Exists(document.FilePath)));
+		Assert.All(
+			list.Documents,
+			document => Assert.False(
+				File.Exists(document.FilePath),
+				"generated code has no file on disk to open"));
 
 		var content = await GeneratedDocumentService.ReadAsync(
 			snapshot, "Widget.Greeting.g.cs", null, TestContext.Current.CancellationToken);

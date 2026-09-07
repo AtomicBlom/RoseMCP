@@ -805,7 +805,7 @@ public sealed class MemberEditTests
 			Apply = false,
 		});
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
 		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
 
@@ -833,7 +833,7 @@ public sealed class MemberEditTests
 		});
 
 		Assert.True(result.Applied);
-		Assert.False(result.Verified);
+		Assert.False(result.Verified, "verify=false compiles nothing, and says so");
 		Assert.Empty(result.IntroducedDiagnostics);
 		Assert.Contains("Nothing was compiled", string.Join(" ", result.Notices), StringComparison.Ordinal);
 	}

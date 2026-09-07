@@ -33,7 +33,7 @@ public sealed class SolutionLoaderTests
 		}
 
 		using var second = await LoadAsync(fixture);
-		Assert.False(second.Result.Report.Restore?.Ran);
+		Assert.False(second.Result.Report.Restore?.Ran, "the second load skips a restore it does not need");
 
 		// A skipped restore must not read as a failed one.
 		Assert.Null(second.Result.Report.Restore?.Succeeded);

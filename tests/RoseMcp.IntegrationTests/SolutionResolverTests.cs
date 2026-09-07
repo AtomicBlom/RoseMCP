@@ -201,7 +201,7 @@ public sealed class SolutionResolverTests
 
 		var choice = SolutionResolver.Choose(fixture.Path("Simple", "Core", "Calculator.cs"));
 
-		Assert.False(choice.WasContested);
+		Assert.False(choice.WasContested, "one candidate is no contest");
 	}
 
 	/// <summary>

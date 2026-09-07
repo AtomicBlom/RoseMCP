@@ -203,7 +203,7 @@ public sealed class OutlineTests
 		Assert.Equal(["App"], core.ReferencedBy);
 		Assert.Empty(core.References);
 		Assert.Equal(["Core"], app.References);
-		Assert.False(core.IsTestProject);
+		Assert.False(core.IsTestProject, "the library is not a test project");
 		Assert.True(core.DocumentCount > 0);
 	}
 
@@ -240,7 +240,7 @@ public sealed class OutlineTests
 
 		Assert.Equal("Call", reference.ContainingMember);
 		Assert.Equal("Library", reference.Project);
-		Assert.False(reference.IsTestProject);
+		Assert.False(reference.IsTestProject, "the reference is in the library rather than a test project");
 	}
 
 	/// <summary>A type's own bases and interfaces, which were reported only for members.</summary>

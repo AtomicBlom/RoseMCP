@@ -106,6 +106,6 @@ public sealed class XamlMaterialiserTests
 	public void Notes_that_an_added_element_cannot_keep_its_name()
 	{
 		Assert.True(XamlMaterialiser.NamesAnything("""<Border xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Name="new" />"""));
-		Assert.False(XamlMaterialiser.NamesAnything("""<Border Padding="6" />"""));
+		Assert.False(XamlMaterialiser.NamesAnything("""<Border Padding="6" />"""), "markup with no x:Name names nothing");
 	}
 }

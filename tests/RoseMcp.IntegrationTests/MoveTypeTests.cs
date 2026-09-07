@@ -144,7 +144,7 @@ public sealed class MoveTypeTests
 
 		var result = await MoveAsync(session, fixture, "Circle", apply: false);
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.False(File.Exists(fixture.Path("MultiType", "Shapes", "Circle.cs")));
 		Assert.Equal(before, await File.ReadAllTextAsync(
 			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current.CancellationToken));

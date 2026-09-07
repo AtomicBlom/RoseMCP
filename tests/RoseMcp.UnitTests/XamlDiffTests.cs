@@ -332,7 +332,7 @@ public sealed class XamlDiffTests
 		Assert.Null(fine);
 
 		Assert.False(XamlDiff.XamlDiff.Parses($"<Border {Ns} x:Name=\"pane\">", out var reason));
-		Assert.False(string.IsNullOrWhiteSpace(reason));
+		Assert.False(string.IsNullOrWhiteSpace(reason), "the reason is the parser's own words rather than empty");
 	}
 
 	private static IReadOnlyList<XamlEdit> Compute(string oldXaml, string newXaml)

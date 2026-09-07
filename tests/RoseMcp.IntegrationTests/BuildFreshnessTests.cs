@@ -42,7 +42,7 @@ public sealed class BuildFreshnessTests
 
 		var built = await FreshnessAsync(session, "Core");
 
-		Assert.False(built.Stale);
+		Assert.False(built.Stale, "the project is fresh before its source is touched");
 		Assert.NotNull(built.OutputPath);
 		Assert.NotNull(built.OutputWrittenUtc);
 		Assert.Equal(0, built.SourcesNewerThanOutput);

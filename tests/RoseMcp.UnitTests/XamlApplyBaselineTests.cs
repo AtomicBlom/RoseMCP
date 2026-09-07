@@ -116,7 +116,7 @@ public sealed class XamlApplyBaselineTests
 		var baseline = new XamlApplyBaseline();
 		baseline.Advance(@"C:\app\MainPage.xaml", First);
 
-		Assert.False(baseline.Knows(@"C:\app\Settings.xaml"));
+		Assert.False(baseline.Knows(@"C:\app\Settings.xaml"), "a file with no baseline is not known");
 
 		var plan = baseline.Prepare(@"C:\app\Settings.xaml", Second, XamlBaselineAge.UnchangedSinceTargetStarted);
 

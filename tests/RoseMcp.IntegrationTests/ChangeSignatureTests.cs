@@ -404,7 +404,7 @@ public sealed class ChangeSignatureTests
 				token),
 			TestContext.Current.CancellationToken);
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.Equal(before, await ReadAsync(fixture, "Layers.cs"));
 		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
 		Assert.Contains("urgent", result.Diff, StringComparison.Ordinal);

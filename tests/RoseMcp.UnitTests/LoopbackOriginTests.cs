@@ -43,7 +43,7 @@ public sealed class LoopbackOriginTests
 	[InlineData("http://127.0.0.1.evil.com")]
 	[InlineData("http://192.168.1.10:5077")]
 	public void Refuses_an_origin_naming_anywhere_else(string origin) =>
-		Assert.False(LoopbackOrigin.IsAllowed(origin));
+		Assert.False(LoopbackOrigin.IsAllowed(origin), "an origin naming another host is refused");
 
 	/// <summary>
 	/// A value that cannot be read cannot be vouched for, and "unreadable" is the shape an attempt to
@@ -55,5 +55,5 @@ public sealed class LoopbackOriginTests
 	[InlineData("localhost")]
 	[InlineData("not a uri")]
 	public void Refuses_an_origin_it_cannot_read(string origin) =>
-		Assert.False(LoopbackOrigin.IsAllowed(origin));
+		Assert.False(LoopbackOrigin.IsAllowed(origin), "an origin that cannot be read is refused");
 }

@@ -17,8 +17,8 @@ public sealed class DiagnosticsTests
 			TestContext.Current.CancellationToken);
 
 		Assert.Empty(result.Diagnostics);
-		Assert.False(result.Truncated);
-		Assert.False(result.IncludedAnalyzers);
+		Assert.False(result.Truncated, "a clean solution's answer is complete rather than truncated");
+		Assert.False(result.IncludedAnalyzers, "analyzers stay off unless they are asked for");
 	}
 
 	[Fact]

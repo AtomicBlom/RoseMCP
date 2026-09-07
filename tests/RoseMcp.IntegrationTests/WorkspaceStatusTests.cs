@@ -48,7 +48,11 @@ public sealed class WorkspaceStatusTests
 		var status = await host.GetStatusAsync(TestContext.Current.CancellationToken);
 
 		Assert.NotEmpty(status.Projects);
-		Assert.All(status.Projects, project => Assert.False(string.IsNullOrWhiteSpace(project.TargetFramework)));
+		Assert.All(
+			status.Projects,
+			project => Assert.False(
+				string.IsNullOrWhiteSpace(project.TargetFramework),
+				"every project reports the framework it was built for"));
 	}
 
 	/// <summary>

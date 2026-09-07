@@ -204,6 +204,33 @@ public sealed class DeclarationEditTests
 	}
 
 	/// <summary>
+	/// An attribute onto a member whose expression body is wrapped. The attribute goes above the
+	/// declaration and the body is none of its business, but both go through the same indentation
+	/// pass -- so the body is what says whether that pass reached further than it was asked to.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_wrapped_expression_body_alone_when_it_writes_an_attribute()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AttributeAsync(
+			session, "Library.Arrowed.Spread", "Obsolete(\"use Describe\")", AttributeAction.Add);
+
+		Assert.True(result.Applied, "the attribute is written; the body is what is under test");
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		Assert.Contains("\t[Obsolete(\"use Describe\")]\r\n\tpublic static string Spread(", text, StringComparison.Ordinal);
+
+		// Two tabs for the body, three for the lines it wraps onto, exactly as before.
+		Assert.Contains(
+			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// An attribute on a parameter, which a declaration name cannot reach. It goes in front of the
 	/// type on the same line, because that is where a parameter's attribute sits and a line break
 	/// there is layout nothing downstream has a rule about.

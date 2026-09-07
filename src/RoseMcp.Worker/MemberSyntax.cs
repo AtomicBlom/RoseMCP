@@ -59,6 +59,18 @@ public static class MemberSyntax
 	/// baseline is read from what follows it. Without that, the signature's indentation is taken as
 	/// the body's and a hand-wrapped call inside the body comes out flat against its own statement.
 	/// </param>
+	/// <param name="baseline">
+	/// The indentation to take off every written line, where the caller knows it rather than leaving
+	/// it to be read from the code.
+	/// <para>
+	/// Reading it from the code is right when the code is the caller's and wrong when it came out of
+	/// the file. Text already sitting where it belongs wants the destination's own indentation off and
+	/// back on -- the identity this pass should be for it -- and reading the first written line
+	/// instead measures how deep the body sits inside its member, so every line comes out a level
+	/// shallower. Roslyn's formatter hides that for a block body, whose statements and braces it has
+	/// rules for, and not for an expression body, which is a continuation it has no rule about.
+	/// </para>
+	/// </param>
 	/// <exception cref="ArgumentException">
 	/// The code does not parse, declares no member, or would put something outside the container.
 	/// </exception>
@@ -69,7 +81,8 @@ public static class MemberSyntax
 		string indent = "",
 		string lineEnding = "",
 		Action<int>? rewritten = null,
-		string copied = "")
+		string copied = "",
+		string? baseline = null)
 	{
 		if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("No code was supplied, so there is nothing to write.");
 
@@ -80,7 +93,7 @@ public static class MemberSyntax
 		// understood: which lines sit inside a multi-line literal decides which of them have to be
 		// left exactly as they arrived. The second parse is of text, in microseconds, against an edit
 		// that is about to compile a project.
-		var shifted = Shift(code, indent, Literals(members), lineEnding, rewritten, Copied(code, copied));
+		var shifted = Shift(code, indent, Literals(members), lineEnding, rewritten, Copied(code, copied), baseline);
 
 		return string.Equals(shifted, code, StringComparison.Ordinal)
 			? members
@@ -369,11 +382,12 @@ public static class MemberSyntax
 		Literal literals,
 		string lineEnding,
 		Action<int>? rewritten,
-		int copied)
+		int copied,
+		string? given)
 	{
 		var lines = Split(code);
 		var written = lines.Skip(copied).ToArray();
-		var baseline = Baseline([.. written.Select(line => line.Content)]);
+		var baseline = given ?? Baseline([.. written.Select(line => line.Content)]);
 		var changed = 0;
 
 		var wanted = written.All(line => line.Ending is "" or "\n") ? lineEnding : string.Empty;

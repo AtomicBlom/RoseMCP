@@ -109,6 +109,32 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
+	/// A signature change on a member whose expression body is wrapped. The parameters are this
+	/// tool's business and the body is not, but the whitespace pass runs over the lines the change
+	/// wrote -- so the body is what says whether it reached past them.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_wrapped_expression_body_alone_when_it_changes_the_parameters()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Arrowed.Spread", "string first, string second, string third, string fourth = \"\"");
+
+		Assert.True(result.Applied, "the change is written; the body is what is under test");
+		Assert.Equal(0, result.TotalErrorCount);
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		// Two tabs for the body, three for the lines it wraps onto, exactly as before.
+		Assert.Contains(
+			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// Issue #59, end to end. A call site that already writes an argument for the parameter being
 	/// added does not compile as it stands -- which is the ordinary reason to reach for this tool -- and
 	/// its surplus argument was silently deleted, leaving a call that compiles and means something

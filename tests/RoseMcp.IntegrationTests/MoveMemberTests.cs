@@ -90,6 +90,32 @@ public sealed class MoveMemberTests
 	}
 
 	/// <summary>
+	/// An expression body wrapped across lines keeps its shape through a move, re-indented for the
+	/// type it lands in rather than deepened or flattened by it. The <c>=&gt;</c> and the lines under
+	/// it are continuations, which Roslyn's formatter has no rule about.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_the_shape_of_a_wrapped_expression_body_it_moves()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Arrowed.Spread", "Library.Greeter");
+
+		Assert.True(result.Applied, "the move is written; only its layout is under test");
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var target = await ReadAsync(fixture, "Greeter.cs");
+
+		// One tab for the member, two for the body, three for the lines it wraps onto.
+		Assert.Contains(
+			"\tpublic static string Spread(string first, string second, string third) =>\r\n\t\tfirst"
+				+ "\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;",
+			target,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// A moved member arrives separated from the one above it, the same as one that is added.
 	/// Roslyn's formatter reindents and moves braces but never inserts a blank line between members,
 	/// so a member appended without one lands flush against the closing brace above it and no rule

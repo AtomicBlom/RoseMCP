@@ -154,6 +154,109 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
+	/// An expression body wrapped onto its own line, replaced whole. The <c>=&gt;</c> and what follows
+	/// it are a continuation rather than a statement, so Roslyn's formatter has no rule that puts one
+	/// back where it belongs and neither IDE0055 nor <c>dotnet format</c> has an opinion about where
+	/// it sits.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_an_expression_body_a_level_in_when_it_replaces_the_member()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Library.Arrowed.Describe",
+			Code = "public static string Describe(string first, string second) =>\n\tfirst + \" and \" + second;",
+		});
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		Assert.Contains(
+			"\tpublic static string Describe(string first, string second) =>\r\n\t\tfirst + \" and \" + second;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The same body supplied as a body rather than as a member, which is the path that copies the
+	/// signature out of the file and measures the caller's code against what follows it.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_an_expression_body_a_level_in_when_it_replaces_the_body()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Arrowed.Describe",
+			Code = "=>\n\tfirst + \" and \" + second;",
+		});
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		Assert.Contains(
+			"\tpublic static string Describe(string first, string second) =>\r\n\t\tfirst + \" and \" + second;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A find and replace inside an expression body, which is the shape the finding names: the body
+	/// came out a level shallower than it went in and <c>rose_format</c> called the file formatted.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_an_expression_body_where_it_was_on_a_find_and_replace()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Arrowed.Spread",
+			Find = "+ \", \" + third",
+			Replace = "+ \"; \" + third",
+		});
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		// Two tabs for the body's first line, three for the lines it wraps onto.
+		Assert.Contains(
+			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \"; \" + third;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// An expression-bodied member added rather than edited, with its body on a line of its own.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_an_expression_body_a_level_in_on_a_member_it_adds()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Arrowed",
+			Code = "public static string Joined(string first, string second) =>\n\tfirst + second;",
+		});
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		Assert.Contains(
+			"\tpublic static string Joined(string first, string second) =>\r\n\t\tfirst + second;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// A sentence inside a <c>//</c> comment, which the token matching cannot see at all. Without
 	/// this the only way to change one is to re-emit the whole member, which is what sends a caller
 	/// back to a text editor and takes the rest of this surface with them.

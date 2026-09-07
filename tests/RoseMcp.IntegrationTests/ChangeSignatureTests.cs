@@ -608,19 +608,18 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
-	/// A base-initialiser and a this-initialiser are calls, with arguments, and both are left alone.
-	/// The walk that finds a call site climbs from the reference to the member declaration and never
-	/// looks at a constructor initialiser on the way, so both arrive at the reason written for a name
-	/// that is not a call at all.
+	/// A base-initialiser and a this-initialiser are calls, with arguments, that this leaves alone --
+	/// the walk from a reference to its invocation climbs to the member declaration and never looks
+	/// at a constructor initialiser on the way.
 	/// <para>
-	/// That reason is wrong about these two: they call the constructor, and after this change they
-	/// call it with too few arguments. The errors are reported, so the caller is pointed at the right
-	/// lines by the wrong sentence -- pinned as it stands, so whatever replaces the sentence has to
-	/// come back here and say so.
+	/// So they are refused, and the refusal says which shape it is. They used to arrive at the
+	/// sentence written for a name that is not a call, which is false of them twice over: they call
+	/// the constructor, and after this change they call it with too few arguments. The caller was
+	/// pointed at the right lines by the wrong reason.
 	/// </para>
 	/// </summary>
 	[Fact]
-	public async Task Calls_a_constructor_initialiser_a_name_that_is_not_a_call()
+	public async Task Says_a_constructor_initialiser_is_a_call_it_cannot_reach()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -637,7 +636,11 @@ public sealed class ChangeSignatureTests
 
 		Assert.All(
 			initialisers,
-			site => Assert.Contains("names the member without calling it", site.Reason, StringComparison.Ordinal));
+			site => Assert.Contains("base or this initialiser", site.Reason, StringComparison.Ordinal));
+
+		Assert.All(
+			initialisers,
+			site => Assert.DoesNotContain("without calling it", site.Reason, StringComparison.Ordinal));
 
 		// Both are real calls that now pass too few arguments, which is what makes the sentence above
 		// the wrong one.

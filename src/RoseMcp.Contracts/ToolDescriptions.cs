@@ -633,11 +633,11 @@ public static class ToolDescriptions
 		than grep and an edit per layer -- a missed forwarder compiles at some layers and not others,
 		so a build tells you about the wrong half. Give the full parameter list as it should read
 		between the parentheses; what changed is worked out from it. Existing parameters cannot be
-		reordered, since an argument's meaning at a call site is not always recoverable from its
-		position. A new one needs a default or an arguments entry. Call sites left unchanged are listed
-		with the reason, including those that still compile because a new parameter has a default -- a
-		forwarder still passing the old default is the bug that hides. Verified against the whole
-		solution.
+		reordered: an argument's meaning at a call site is not always recoverable from its position. A
+		new one needs a default or an arguments entry. Every use left alone is listed with the reason:
+		a nameof or method group, a base or this initialiser, one that does not compile, and the ones
+		that still compile because a new parameter has a default -- a forwarder passing the old default
+		is the bug that hides. Verified against the whole solution.
 		""";
 
 	public const string BuildFreshness = """

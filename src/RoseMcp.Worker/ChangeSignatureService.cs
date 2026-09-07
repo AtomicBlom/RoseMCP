@@ -269,7 +269,7 @@ public static class ChangeSignatureService
 
 					if (ArgumentListOf(token) is not { } arguments)
 					{
-						found.Unusable.Add(location.Location);
+						found.Unusable.Add(new RefusedCallSite(location.Location, WhyUnusable(token)));
 						continue;
 					}
 
@@ -508,15 +508,14 @@ public static class ChangeSignatureService
 			});
 		}
 
-		foreach (var location in work.SelectMany(item => item.Unusable))
+		foreach (var refused in work.SelectMany(item => item.Unusable))
 		{
-			reported.Add(location);
+			reported.Add(refused.Location);
 
 			unchanged.Add(new UnchangedCallSite
 			{
-				Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),
-				Reason = "It names the member without calling it -- a method group, a nameof, or a cref. A changed "
-					+ "signature can break that, and nothing here can rewrite it.",
+				Location = await SymbolLocator.DescribeAsync(solution, refused.Location, cancellationToken),
+				Reason = $"It was left exactly as written, because {refused.Reason}.",
 			});
 		}
 
@@ -703,6 +702,34 @@ public static class ChangeSignatureService
 		return null;
 	}
 
+	/// <summary>
+	/// Why a reference cannot have its arguments rewritten, as a clause naming the shape.
+	/// <para>
+	/// Two different things, and calling them one was wrong about half of them. A nameof, a cref and
+	/// a method group name the member without calling it, so there are no arguments to put back at
+	/// all. A base or this initialiser <em>is</em> a call, with arguments, that the walk from a
+	/// reference to its invocation does not reach -- and telling someone their initialiser is not a
+	/// call is a confident answer to a question they did not ask, on the line the compiler is about
+	/// to fail on.
+	/// </para>
+	/// </summary>
+	private static string WhyUnusable(SyntaxToken token)
+	{
+		for (var node = token.Parent; node is not null; node = node.Parent)
+		{
+			if (node is ConstructorInitializerSyntax)
+			{
+				return "it is a base or this initialiser -- a call to the constructor that does not go through an "
+					+ "invocation, which is what this rewrites arguments in, so its arguments have to be changed "
+					+ "by hand";
+			}
+
+			if (node is MemberDeclarationSyntax) break;
+		}
+
+		return "it names the member without calling it -- a method group, a nameof, or a cref -- so it has no "
+			+ "arguments to put back, and a changed signature can break it with nothing here able to help";
+	}
 	private static IReadOnlyDictionary<string, string> Supplied(IReadOnlyList<string> arguments)
 	{
 		var supplied = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -762,8 +789,8 @@ public static class ChangeSignatureService
 
 		public Dictionary<TextSpan, Location> CallSiteLocations { get; } = [];
 
-		/// <summary>Uses that are not calls, so there is nothing to rewrite.</summary>
-		public List<Location> Unusable { get; } = [];
+		/// <summary>Uses whose arguments this cannot rewrite, each with the reason.</summary>
+		public List<RefusedCallSite> Unusable { get; } = [];
 	}
 
 	/// <summary>

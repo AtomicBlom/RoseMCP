@@ -331,11 +331,11 @@ public static class ChangeSignatureService
 		var addedHere = plan.Added.Select(parameter => parameter.Name).ToArray();
 
 		var documentation = ParamTags.Update(declaration.GetLeadingTrivia(), removedHere, addedHere, notices);
+		var parameters = list.WithParameters(Separated(built, primary ? wanted : own));
 
 		return new DeclarationChange
 		{
-			Parameters = list.WithParameters(
-				Separated(built, primary ? wanted : own)),
+			Parameters = primary ? parameters.WithOpenParenToken(Unbroken(parameters.OpenParenToken)) : parameters,
 			Documentation = documentation,
 		};
 	}
@@ -362,6 +362,24 @@ public static class ChangeSignatureService
 
 		return SyntaxFactory.SeparatedList(parameters, separators);
 	}
+
+	/// <summary>
+	/// The token with the whitespace after it dropped, keeping anything else.
+	/// <para>
+	/// The list the caller wrote carries its own layout from the parenthesis onwards, and the break
+	/// the file had after that parenthesis is the file's idea of the same thing: a break on both
+	/// makes a blank line, and a break on neither puts the first parameter inline with its own
+	/// indentation in the middle of the signature. Only the declaration the caller named is re-laid
+	/// out this way -- every other one keeps its own parameters, its own names and its own wrapping.
+	/// </para>
+	/// <para>
+	/// Whitespace only, because a comment written between the parenthesis and the first parameter is
+	/// not layout and would be lost without trace.
+	/// </para>
+	/// </summary>
+	private static SyntaxToken Unbroken(SyntaxToken token) =>
+		token.WithTrailingTrivia(token.TrailingTrivia.Where(trivia =>
+			!trivia.IsKind(SyntaxKind.EndOfLineTrivia) && !trivia.IsKind(SyntaxKind.WhitespaceTrivia)));
 
 	/// <summary>Applies every document's work, one rewrite per document.</summary>
 	private static async Task<Applied> ApplyAsync(

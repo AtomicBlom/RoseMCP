@@ -45,22 +45,27 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
-	/// A parameter list the caller wrapped lands one level in from the declaration it belongs to,
-	/// and gets there whether they wrote it flat, indented relative to itself, or already indented
-	/// for where it goes -- those are one request, and only taking the baseline off first makes
-	/// them so.
+	/// A parameter list the caller wrapped lands one level in from the declaration it belongs to, one
+	/// parameter to a line, and gets there whichever of the five ways they wrote it: flat under a
+	/// leading line break, indented relative to itself, already indented for where it goes, with the
+	/// first parameter indented alongside the rest, or with the first flush and the rest under it.
+	/// Those are one request.
 	/// <para>
-	/// The declaration's own indentation is a level short, because a continuation is not a sibling
-	/// of the signature. Nothing downstream corrects it: a continuation line is not a statement, so
-	/// Roslyn's formatter has no rule that moves one, and neither IDE0055 nor <c>dotnet format</c>
-	/// has an opinion about where a wrapped list sits. The list comes out level with the member it
-	/// belongs to and every build passes.
+	/// The declaration's own indentation is a level short, because a continuation is not a sibling of
+	/// the signature, and the first line is the half that had no rule at all: it landed inline after
+	/// the parenthesis carrying its own indentation, or -- where the declaration was already wrapped
+	/// and the parenthesis held the break -- at column zero. Nothing downstream corrects any of it.
+	/// A continuation line is not a statement, so Roslyn's formatter has no rule that moves one, and
+	/// neither IDE0055 nor <c>dotnet format</c> has an opinion about where a wrapped list sits: the
+	/// list comes out however it landed and every build passes.
 	/// </para>
 	/// </summary>
 	[Theory]
 	[InlineData("\nstring first,\nstring second,\nstring third,\nstring fourth = \"\"")]
 	[InlineData("\n\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
 	[InlineData("\n\t\tstring first,\n\t\tstring second,\n\t\tstring third,\n\t\tstring fourth = \"\"")]
+	[InlineData("\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
+	[InlineData("string first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
 	public async Task Wraps_a_parameter_list_a_level_in_from_the_declaration(string written)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -68,7 +73,7 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Wrapped.Join(string, string, string)", written);
 
-		Assert.True(result.Applied);
+		Assert.True(result.Applied, "the change is written; only its layout is under test");
 		Assert.Equal(0, result.TotalErrorCount);
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
@@ -79,6 +84,28 @@ public sealed class ChangeSignatureTests
 				+ "\r\n\t\tstring fourth = \"\")\r\n",
 			text,
 			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The other half of the same rule: a list the caller wrote on one line goes on the signature
+	/// line, even where the declaration it replaces was wrapped and its parenthesis still carries the
+	/// break. Left there, that break puts the first parameter alone on a line of its own at whatever
+	/// column the caller's text happened to begin at.
+	/// </summary>
+	[Fact]
+	public async Task Unwraps_a_parameter_list_the_caller_wrote_on_one_line()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Wrapped.Join(string, string, string)", "string first, string second");
+
+		Assert.True(result.Applied, "the change is written; only its layout is under test");
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		Assert.Contains("\tpublic static string Join(string first, string second)\r\n", text, StringComparison.Ordinal);
 	}
 
 	/// <summary>

@@ -169,25 +169,31 @@ public sealed class DeclarationEditTests
 
 	/// <summary>
 	/// An attribute whose argument list the caller wrapped keeps that shape and lands at the
-	/// declaration's own level. Roslyn's formatter has no rule about where a wrapped list sits, so an
-	/// attribute composed at column zero stays at column zero under a declaration several levels in --
-	/// and neither IDE0055 nor dotnet format has an opinion about it either, so nothing says so.
+	/// declaration's own level, whether they wrote it at column zero, already indented for where it
+	/// goes, or opening with a line break. Roslyn's formatter has no rule about where a wrapped list
+	/// sits, so an attribute composed at column zero stays at column zero under a declaration several
+	/// levels in -- and neither IDE0055 nor <c>dotnet format</c> has an opinion about it either, so
+	/// nothing says so.
+	/// <para>
+	/// The leading-break case is the first-line half of the same question. Unlike a bare parameter
+	/// list, a fragment spliced into a line has a first line of its own, and it belongs at the splice
+	/// point however many blank lines precede it -- which is why the line exempted from the shift is
+	/// the first one with content on it rather than the first one there is.
+	/// </para>
 	/// </summary>
 	[Theory]
-	[InlineData(0)]
-	[InlineData(2)]
-	public async Task Keeps_the_shape_of_a_wrapped_attribute(int written)
+	[InlineData("Obsolete(\n\t\"use Greet\",\n\terror: false)")]
+	[InlineData("\t\tObsolete(\n\t\t\t\"use Greet\",\n\t\t\terror: false)")]
+	[InlineData("\nObsolete(\n\t\"use Greet\",\n\terror: false)")]
+	[InlineData("\n\t\tObsolete(\n\t\t\t\"use Greet\",\n\t\t\terror: false)")]
+	public async Task Keeps_the_shape_of_a_wrapped_attribute(string attribute)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var baseline = new string('\t', written);
-
-		var attribute = $"{baseline}Obsolete(\n{baseline}\t\"use Greet\",\n{baseline}\terror: false)";
-
 		var result = await AttributeAsync(session, "Library.Greeter.Greet(string)", attribute, AttributeAction.Add);
 
-		Assert.True(result.Applied);
+		Assert.True(result.Applied, "the attribute is written; only its layout is under test");
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 

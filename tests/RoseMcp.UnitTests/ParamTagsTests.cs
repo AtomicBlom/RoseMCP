@@ -128,6 +128,42 @@ public sealed class ParamTagsTests
 	}
 
 	/// <summary>
+	/// A tag whose description runs over several lines. It opens on one line and closes on a later
+	/// one, so the new tag goes after the whole of it -- not after the line it opens on, which put the
+	/// new tag inside its prose and, taking its pattern from the line it landed after, copied that
+	/// line's words into itself.
+	/// <para>
+	/// The same failure a <c>paramref</c> in the summary used to cause, arriving from a tag that is
+	/// real. Found on this repository's own <c>MemberSyntax.Parse</c>, whose <c>copied</c> tag has
+	/// five lines of description.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public void Writes_after_the_whole_of_a_tag_that_runs_over_several_lines()
+	{
+		var updated = Update(
+			"""
+				/// <summary>Says hello.</summary>
+				/// <param name="name">
+				/// Who to greet. Long enough that whoever wrote it wrapped the description onto a second
+				/// line, which is the ordinary shape for anything worth documenting.
+				/// </param>
+				""",
+			added: ["loud"]);
+
+		Assert.Equal(
+			"""
+				/// <summary>Says hello.</summary>
+				/// <param name="name">
+				/// Who to greet. Long enough that whoever wrote it wrapped the description onto a second
+				/// line, which is the ordinary shape for anything worth documenting.
+				/// </param>
+				/// <param name="loud"></param>
+				""",
+			updated);
+	}
+
+	/// <summary>
 	/// A member that documents no parameter is left entirely alone: neither diagnostic fires on one,
 	/// and a summary mentioning a parameter is still not a tag.
 	/// </summary>

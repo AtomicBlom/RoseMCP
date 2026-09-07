@@ -168,8 +168,15 @@ public static class ParamTags
 	}
 
 	/// <summary>
-	/// The line a new tag goes after: the last param tag there is, else the line the summary closes
-	/// on, else nowhere.
+	/// The line a new tag goes after: the line the last param tag closes on, else the line the
+	/// summary closes on, else nowhere.
+	/// <para>
+	/// The line it closes on, not the line it opens on. A tag whose description runs to a second line
+	/// opens on one and closes on a later one, so anchoring where it opens writes the new tag into the
+	/// middle of its prose -- and, taking its pattern from the line it lands after, copies that line's
+	/// words into itself. Which is the same failure a <c>paramref</c> in the summary used to cause,
+	/// arriving from a tag that is real.
+	/// </para>
 	/// <para>
 	/// After the last tag rather than in declaration order, because a member's tags are not always in
 	/// that order and reordering documentation nobody asked to reorder is a diff to read for nothing.
@@ -180,9 +187,16 @@ public static class ParamTags
 	/// </summary>
 	private static int Anchor(List<string> lines)
 	{
-		var tag = lines.FindLastIndex(line => TagAt(line) >= 0);
+		var opening = lines.FindLastIndex(line => TagAt(line) >= 0);
 
-		return tag >= 0 ? tag : lines.FindLastIndex(line => line.Contains("</summary>", StringComparison.Ordinal));
+		if (opening < 0) return lines.FindLastIndex(line => line.Contains("</summary>", StringComparison.Ordinal));
+
+		for (var index = opening; index < lines.Count; index++)
+		{
+			if (Closes(lines[index])) return index;
+		}
+
+		return opening;
 	}
 
 	private static bool Closes(string line) =>

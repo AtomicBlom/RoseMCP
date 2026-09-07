@@ -80,7 +80,7 @@ public static class CallSiteRewriter
 
 			foreach (var argument in wanted)
 			{
-				emitted.Add(positional ? argument.WithNameColon(null) : Named(NameFor(parameter, binding), argument));
+				emitted.Add(positional ? Unnamed(argument) : Named(NameFor(parameter, binding), argument));
 			}
 
 			if (!positional) allPositionalSoFar = false;
@@ -90,24 +90,50 @@ public static class CallSiteRewriter
 	}
 
 	/// <summary>
-	/// The commas, keeping the ones already at this call site so an argument list somebody wrapped
-	/// across lines stays wrapped, and using a comma and a space for any the list has gained.
+	/// The commas, keeping the ones already at this call site and giving any the list has gained the
+	/// shape of the last one that was there.
 	/// <para>
-	/// Worth the trouble: a separated list built without them renders <c>Foo("a",false)</c>, which is
-	/// valid C# and fails IDE0055 in any repository with an opinion about the space -- the exact class
-	/// of failure these tools exist to remove.
+	/// Worth the trouble twice over. A separated list built without them renders <c>Foo("a",false)</c>,
+	/// which is valid C# and fails IDE0055 in any repository with an opinion about the space -- the
+	/// exact class of failure these tools exist to remove. And a comma and a space is only right for a
+	/// list written on one line: in a wrapped one it leaves the argument after it up on the line
+	/// above, behind a trailing space, which nothing reports because a continuation line is not a
+	/// statement.
 	/// </para>
 	/// </summary>
 	private static IEnumerable<SyntaxToken> Separators(int count, ArgumentListSyntax existing)
 	{
 		var already = existing.Arguments.GetSeparators().ToArray();
 
+		var gained = already.Length > 0
+			? already[^1]
+			: SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(SyntaxFactory.Space);
+
 		for (var index = 0; index < count - 1; index++)
 		{
-			yield return index < already.Length
-				? already[index]
-				: SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(SyntaxFactory.Space);
+			yield return index < already.Length ? already[index] : gained;
 		}
+	}
+
+	/// <summary>
+	/// The whitespace in front of an argument that sits on a line of its own here, or none where the
+	/// call site is written on one line.
+	/// <para>
+	/// Read from the arguments rather than worked out, because it is the only thing at hand that
+	/// knows how deep this particular call is indented -- and the line break belongs to the comma
+	/// before it, so what is left on the argument is the indentation alone.
+	/// </para>
+	/// </summary>
+	private static SyntaxTriviaList Continuation(ArgumentListSyntax arguments)
+	{
+		foreach (var argument in arguments.Arguments)
+		{
+			var leading = argument.GetLeadingTrivia();
+
+			if (leading.Count > 0) return leading;
+		}
+
+		return default;
 	}
 
 	/// <summary>
@@ -135,7 +161,14 @@ public static class CallSiteRewriter
 
 		if (supplied.TryGetValue(parameter.Name, out var expression))
 		{
-			wanted = [SyntaxFactory.Argument(SyntaxFactory.ParseExpression(expression))];
+			// Given the indentation the arguments already here have, so an argument arriving in the
+			// middle of a call site somebody wrapped by hand lands on a line of its own rather than
+			// at column zero.
+			wanted =
+			[
+				SyntaxFactory.Argument(SyntaxFactory.ParseExpression(expression))
+					.WithLeadingTrivia(Continuation(arguments)),
+			];
 
 			return true;
 		}
@@ -160,8 +193,40 @@ public static class CallSiteRewriter
 			? binding.ParameterNames[at]
 			: parameter.Name;
 
-	private static ArgumentSyntax Named(string name, ArgumentSyntax argument) =>
-		argument.WithNameColon(
-			SyntaxFactory.NameColon(SyntaxFactory.IdentifierName(name))
-				.WithTrailingTrivia(SyntaxFactory.Space));
+	/// <summary>
+	/// The argument with a name colon put on, keeping the whitespace in front of it in front of it.
+	/// <para>
+	/// An argument's leading trivia sits on its first token, and naming one puts a new token in
+	/// front. Left where it was, the line break and the indentation end up between the name and the
+	/// value -- <c>filePath: \t\t\tTestContext.Current.CancellationToken</c>, which is what the
+	/// finding behind the binding work reported alongside the wrong parameter. Getting the parameter
+	/// right did not move it.
+	/// </para>
+	/// </summary>
+	private static ArgumentSyntax Named(string name, ArgumentSyntax argument)
+	{
+		var leading = argument.GetLeadingTrivia();
+
+		var colon = SyntaxFactory.NameColon(SyntaxFactory.IdentifierName(name))
+			.WithTrailingTrivia(SyntaxFactory.Space);
+
+		return argument
+			.WithExpression(argument.Expression.WithoutLeadingTrivia())
+			.WithNameColon(colon)
+			.WithLeadingTrivia(leading);
+	}
+
+	/// <summary>
+	/// The argument with its name colon taken off, keeping the whitespace in front of it.
+	/// <para>
+	/// The same trivia, lost by the same argument from the other side. A named argument's first token
+	/// is its name, so taking the name colon away takes the line break and the indentation with it
+	/// and the argument lands at column zero -- which is what four call sites of one wrapped method
+	/// did the moment their arguments no longer needed naming.
+	/// </para>
+	/// </summary>
+	private static ArgumentSyntax Unnamed(ArgumentSyntax argument) =>
+		argument.NameColon is null
+			? argument
+			: argument.WithNameColon(null).WithLeadingTrivia(argument.GetLeadingTrivia());
 }

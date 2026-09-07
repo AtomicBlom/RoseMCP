@@ -10,8 +10,11 @@ namespace RoseMcp.UnitTests;
 /// shapes that are handled and the shapes that are not can only be told apart by asking each one.
 /// </para>
 /// <para>
-/// A shape that is not handled is marked with what the rewriter produces instead, so the case fails
-/// the moment the defect is fixed and the map cannot go stale against the code it maps.
+/// Three of them were not handled when this was written, and each case says what it produced
+/// instead: an argument on the wrong parameter where a named one came before a positional one, and
+/// the whitespace in front of an argument lost or stranded after the colon when the argument's name
+/// went on or came off. Keeping that in the case rather than in a commit message is what makes the
+/// next one findable, since all three were silent.
 /// </para>
 /// <para>
 /// The call site is bound in a real compilation rather than parsed on its own, because whether the
@@ -179,28 +182,66 @@ public sealed class CallSiteShapeMatrixTests
 	}
 
 	/// <summary>
-	/// A call site somebody wrapped across lines, which an inserted argument takes apart.
+	/// A call site somebody wrapped across lines stays wrapped, the argument arriving in the middle
+	/// of it included.
 	/// <para>
-	/// The commas already there are kept, so the wrapping of the arguments that were already there
-	/// survives. Nothing gives the argument that arrives between them any of it: the comma the list
-	/// gained is a comma and a space rather than a comma and the line break its neighbours use, and
-	/// the new argument carries no indentation at all. So it lands at column zero, and the argument
-	/// after it -- which still carries its own indentation as leading trivia -- is pulled up onto
-	/// the same line behind that space.
+	/// It used to be taken apart. The commas already there were kept, so the arguments already there
+	/// kept their lines, and nothing gave the new one any of it: the comma the list gained was a
+	/// comma and a space rather than a comma and the break its neighbours use, and the new argument
+	/// carried no indentation at all. So it landed at column zero and pulled the argument after it
+	/// up onto the same line.
 	/// </para>
 	/// <para>
-	/// Nothing downstream puts it back. The whitespace pass runs over the spans the change annotated,
+	/// Nothing downstream put it back. The whitespace pass runs over the spans the change annotated,
 	/// which are the declarations' parameter lists and not the call sites, and Roslyn's formatter has
-	/// no rule about where a continuation line sits -- so this is what reaches disk.
+	/// no rule about where a continuation line sits -- so that is what reached disk.
 	/// </para>
 	/// </summary>
 	[Fact]
-	public void Breaks_the_wrapping_of_a_call_site_it_inserts_into()
+	public void Keeps_the_wrapping_of_a_call_site_it_inserts_into()
 	{
-		StillWrong(
-			"(\n\t\ta,\n\t\t\"-\",\n\t\tb)",
-			"(\n\t\ta,\n\"-\", \t\tb)",
-			Rewrite(WrappedCall, Inserted, Dash));
+		Assert.Equal("(\n\t\ta,\n\t\t\"-\",\n\t\tb)", Rewrite(WrappedCall, Inserted, Dash));
+	}
+
+	/// <summary>
+	/// An argument that has to be named at a wrapped call site keeps the whitespace in front of it in
+	/// front of it, rather than between the name and the value.
+	/// <para>
+	/// An argument's leading trivia sits on its first token, and naming one puts a new token in front
+	/// -- so the break and the indentation ended up after the colon, as
+	/// <c>filePath: \t\t\tTestContext.Current.CancellationToken</c>. That is what the finding behind
+	/// the binding work reported alongside the argument being on the wrong parameter, and getting the
+	/// parameter right did not move it.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public void Keeps_the_whitespace_in_front_of_an_argument_it_names()
+	{
+		// A new optional in front of second is what forces second to be named at all: an argument
+		// stays positional only while it would land in its own slot.
+		var wanted = "string first, string separator, string third = \"\", string second";
+
+		Assert.Equal("(\n\t\ta,\n\t\t\"-\",\n\t\tsecond: b)", Rewrite(WrappedCall, wanted, Dash));
+	}
+
+	/// <summary>
+	/// The same whitespace lost by the same argument from the other side: a name colon coming off
+	/// takes the break and the indentation with it, because for a named argument they sit on the
+	/// name.
+	/// </summary>
+	[Fact]
+	public void Keeps_the_whitespace_in_front_of_an_argument_it_stops_naming()
+	{
+		var call = "public static class Fixture\n"
+			+ "{\n"
+			+ "\tpublic static string Target(string first, string second) => first + second;\n"
+			+ "\n"
+			+ "\tpublic static string Use(string a, string b) => Target(\n"
+			+ "\t\tfirst: a,\n"
+			+ "\t\tsecond: b);\n"
+			+ "}\n";
+
+		Assert.Equal("(\n\t\ta,\n\t\t\"-\",\n\t\tb)", Rewrite(call, Inserted, Dash));
 	}
 
 	/// <summary>
@@ -248,23 +289,6 @@ public sealed class CallSiteShapeMatrixTests
 			""";
 
 		Assert.Equal("""(a, "-", b)""", Rewrite(source, Inserted, Dash));
-	}
-
-	/// <summary>
-	/// A shape the rewriter does not handle, pinned to what it produces instead of what it should.
-	/// <para>
-	/// Marked rather than skipped. A skipped case says nothing at all when the defect is fixed,
-	/// while this one fails, so the commit that fixes it has to come back here and say so. Both
-	/// halves are asserted, since a typo that made the two the same would otherwise pass.
-	/// </para>
-	/// </summary>
-	/// <param name="correct">What the shape should rewrite to.</param>
-	/// <param name="produced">What it rewrites to instead.</param>
-	/// <param name="actual">What it just rewrote to.</param>
-	private static void StillWrong(string? correct, string? produced, string? actual)
-	{
-		Assert.NotEqual(correct, produced);
-		Assert.Equal(produced, actual);
 	}
 
 	/// <summary>The ordinary fixture: a two-parameter target, called once, as the case writes it.</summary>

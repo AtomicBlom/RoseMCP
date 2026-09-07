@@ -32,15 +32,17 @@ public static class ParamTags
 		IReadOnlyList<string> added,
 		List<string> notes)
 	{
-		var text = leading.ToFullString();
-		if (!text.Contains("<param", StringComparison.Ordinal)) return null;
+		var lines = leading.ToFullString().Split('\n').ToList();
 
-		var lines = text.Split('\n').ToList();
+		// Neither CS1572 nor CS1573 fires on a member that documents no parameter at all, so there is
+		// nothing here to keep in step.
+		if (!lines.Any(line => TagAt(line) >= 0)) return null;
+
 		var changed = false;
 
 		foreach (var name in removed)
 		{
-			var index = lines.FindIndex(line => Mentions(line, name));
+			var index = lines.FindIndex(line => NameAt(line) == name);
 			if (index < 0) continue;
 
 			// A tag that does not close on its own line is a paragraph somebody wrote, and cutting it
@@ -58,12 +60,26 @@ public static class ParamTags
 
 		foreach (var name in added)
 		{
-			if (lines.Any(line => Mentions(line, name))) continue;
+			if (lines.Any(line => NameAt(line) == name)) continue;
 
-			var last = lines.FindLastIndex(line => line.Contains("<param", StringComparison.Ordinal));
-			if (last < 0) continue;
+			var anchor = Anchor(lines);
 
-			lines.Insert(last + 1, Modelled(lines[last], name));
+			if (anchor < 0)
+			{
+				notes.Add($"There was nowhere safe to put a param tag for '{name}'. Add one by hand, or "
+					+ "the build will fail on CS1573.");
+				continue;
+			}
+
+			var ending = EndingOf(lines);
+
+			// The line the tag goes after stops being the last one, so it needs the ending a last line
+			// does not have. Only where the comment has one to give: the last line of a trivia list
+			// legitimately ends without one, and that is the line an anchor lands on whenever the tag it
+			// found is the last thing the comment says.
+			if (ending.Length > 0 && !lines[anchor].EndsWith('\r')) lines[anchor] += ending;
+
+			lines.Insert(anchor + 1, Modelled(lines[anchor], name, ending));
 			changed = true;
 
 			notes.Add($"Added an empty param tag for '{name}'; it needs a description, which is not "
@@ -76,21 +92,112 @@ public static class ParamTags
 	}
 
 	/// <summary>
-	/// A new tag built on the pattern of an existing one, so its indentation, its <c>///</c> and its
+	/// A new tag built on the pattern of an existing line, so its indentation, its <c>///</c> and its
 	/// line ending are the file's rather than this code's idea of them.
+	/// <para>
+	/// The prefix stops at the marker rather than at whatever the model line says next. A summary's
+	/// closing line is a legitimate model and has no tag on it to stop at, and a tag with prose in
+	/// front of it would otherwise have that prose copied into the new one.
+	/// </para>
+	/// <para>
+	/// The ending comes from the comment rather than from the model line, because a line that happens
+	/// to be the last one in the trivia has no ending of its own -- so reading it there answers a
+	/// question about position and writes a bare line feed into a file that uses CR LF.
+	/// </para>
 	/// </summary>
-	private static string Modelled(string existing, string name)
+	private static string Modelled(string existing, string name, string ending)
 	{
-		var opening = existing.IndexOf("<param", StringComparison.Ordinal);
-		var prefix = opening < 0 ? "/// " : existing[..opening];
-		var ending = existing.EndsWith('\r') ? "\r" : string.Empty;
+		var marker = existing.IndexOf("///", StringComparison.Ordinal);
+		var prefix = marker < 0 ? "/// " : existing[..(marker + 3)] + " ";
 
 		return $"{prefix}<param name=\"{name}\"></param>{ending}";
 	}
 
-	private static bool Mentions(string line, string name) =>
-		line.Contains("<param", StringComparison.Ordinal)
-			&& line.Contains($"name=\"{name}\"", StringComparison.Ordinal);
+	/// <summary>
+	/// The ending this comment uses, taken from any line that has one rather than from a particular
+	/// line. The last line of a trivia list has none, and that says nothing about the file.
+	/// </summary>
+	private static string EndingOf(List<string> lines) =>
+		lines.Any(line => line.EndsWith('\r')) ? "\r" : string.Empty;
+
+	/// <summary>
+	/// The parameter a param tag on this line documents, or null when the line opens no such tag.
+	/// <para>
+	/// Matched as a whole tag rather than as six characters, because <c>&lt;paramref&gt;</c> begins
+	/// with the same six and is prose inside another tag rather than a tag of its own. Read as six,
+	/// a sentence in the summary counted as the last tag there was: a new tag was written after it,
+	/// inside the summary and on that sentence's own pattern, so the sentence appeared twice; a
+	/// parameter the summary happened to mention was taken as documented already and never given a
+	/// tag at all, which is CS1573; and removing that parameter took the sentence with it.
+	/// </para>
+	/// </summary>
+	private static string? NameAt(string line)
+	{
+		var opening = TagAt(line);
+		if (opening < 0) return null;
+
+		var attribute = line.IndexOf("name=\"", opening, StringComparison.Ordinal);
+		var close = line.IndexOf('>', opening);
+
+		if (attribute < 0 || (close >= 0 && attribute > close)) return null;
+
+		var start = attribute + "name=\"".Length;
+		var end = line.IndexOf('"', start);
+
+		return end < 0 ? null : line[start..end];
+	}
+
+	/// <summary>
+	/// Where a param tag opens on this line, or -1. A letter straight after it makes it a tag of some
+	/// other name, which <c>&lt;paramref&gt;</c> is.
+	/// </summary>
+	private static int TagAt(string line)
+	{
+		const string Opening = "<param";
+
+		for (var index = line.IndexOf(Opening, StringComparison.Ordinal);
+			index >= 0;
+			index = line.IndexOf(Opening, index + 1, StringComparison.Ordinal))
+		{
+			var after = index + Opening.Length;
+
+			if (after >= line.Length || !char.IsLetter(line[after])) return index;
+		}
+
+		return -1;
+	}
+
+	/// <summary>
+	/// The line a new tag goes after: the line the last param tag closes on, else the line the
+	/// summary closes on, else nowhere.
+	/// <para>
+	/// The line it closes on, not the line it opens on. A tag whose description runs to a second line
+	/// opens on one and closes on a later one, so anchoring where it opens writes the new tag into the
+	/// middle of its prose -- and, taking its pattern from the line it lands after, copies that line's
+	/// words into itself. Which is the same failure a <c>paramref</c> in the summary used to cause,
+	/// arriving from a tag that is real.
+	/// </para>
+	/// <para>
+	/// After the last tag rather than in declaration order, because a member's tags are not always in
+	/// that order and reordering documentation nobody asked to reorder is a diff to read for nothing.
+	/// After the summary when there is no tag left, which is what renaming a parameter looks like from
+	/// here -- the removal takes the only tag and the addition then has nothing to anchor on, so the
+	/// new name never gets a tag and the build fails on CS1573.
+	/// </para>
+	/// </summary>
+	private static int Anchor(List<string> lines)
+	{
+		var opening = lines.FindLastIndex(line => TagAt(line) >= 0);
+
+		if (opening < 0) return lines.FindLastIndex(line => line.Contains("</summary>", StringComparison.Ordinal));
+
+		for (var index = opening; index < lines.Count; index++)
+		{
+			if (Closes(lines[index])) return index;
+		}
+
+		return opening;
+	}
 
 	private static bool Closes(string line) =>
 		line.Contains("</param>", StringComparison.Ordinal) || line.Contains("/>", StringComparison.Ordinal);

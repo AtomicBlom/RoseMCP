@@ -219,7 +219,7 @@ public sealed class AddFileTests
 			() => AddAsync(session, path, "public sealed class Broken { public void M() { "));
 
 		Assert.Contains("does not parse", thrown.Message, StringComparison.Ordinal);
-		Assert.False(File.Exists(path));
+		Assert.False(File.Exists(path), "a refusal writes nothing");
 	}
 
 	/// <summary>
@@ -251,9 +251,9 @@ public sealed class AddFileTests
 
 		var result = await AddAsync(session, path, "public sealed class Preview;", apply: false);
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview says what it would do without doing it");
 		Assert.NotEmpty(result.Diff);
-		Assert.False(File.Exists(path));
+		Assert.False(File.Exists(path), "a preview leaves no file behind");
 	}
 
 	private static Task<AddFileResult> AddAsync(

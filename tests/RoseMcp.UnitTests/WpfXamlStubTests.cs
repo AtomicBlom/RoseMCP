@@ -304,7 +304,7 @@ public sealed class WpfXamlStubTests
 			Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework), [document!]);
 
 		Assert.Same(WpfXamlDialect.Instance, choice.Dialect);
-		Assert.False(choice.WasAmbiguous);
+		Assert.False(choice.WasAmbiguous, "the dialect was not ambiguous");
 	}
 
 	private static XamlStubEmission Emit(

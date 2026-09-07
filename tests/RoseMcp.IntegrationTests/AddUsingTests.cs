@@ -90,7 +90,7 @@ public sealed class AddUsingTests
 			session, fixture, "Imports.cs", ["System.Globalization", "System.Collections.Generic", "Library"]);
 
 		Assert.Empty(result.Added);
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "an import already in scope is reported rather than added");
 		Assert.Equal(before, await ReadAsync(fixture, "Imports.cs"));
 
 		var reasons = string.Join(" | ", result.AlreadyInScope);

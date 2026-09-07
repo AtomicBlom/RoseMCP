@@ -158,6 +158,57 @@ public sealed class WhitespaceTests
 		Assert.Empty(Disagreeing(source, SourceText.From(source).Lines[0].SpanIncludingLineBreak));
 	}
 
+	/// <summary>
+	/// A raw literal's closing delimiter takes the file's ending, and so does the line its opening
+	/// one is on. Neither break is content: a raw literal's value begins after the break that
+	/// follows the opening quotes and stops before the one in front of the closing quotes, so both
+	/// are the literal's punctuation.
+	/// <para>
+	/// Left as they arrived, a literal written with LF put a lone LF into a CRLF file on the two
+	/// lines that were never part of the string -- which dotnet format rejects, on a line where the
+	/// obvious fix does not change what the program says. The content between them stays exactly as
+	/// it is, which is asserted on the bytes rather than the shape.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public void Gives_a_raw_literal_delimiter_the_file_ending_and_leaves_the_content_alone()
+	{
+		var source = "class C" + Crlf
+			+ "{" + Crlf
+			+ "\tconst string Text = \"\"\"" + Lf
+			+ "\t\tone" + Lf
+			+ "\t\ttwo" + Lf
+			+ "\t\t\"\"\";" + Lf
+			+ "}" + Crlf;
+
+		var result = Apply(source, Strict);
+
+		// The two content lines keep their line feeds: those are what the string says.
+		Assert.Contains("\t\tone" + Lf + "\t\ttwo" + Lf, result, StringComparison.Ordinal);
+
+		// Both delimiter lines take the file's ending.
+		Assert.Contains("= \"\"\"" + Crlf, result, StringComparison.Ordinal);
+		Assert.Contains("\"\"\";" + Crlf, result, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A verbatim literal has no delimiter line to normalise: every break inside it is part of its
+	/// value, the first one included, so the whole of it is left alone.
+	/// </summary>
+	[Fact]
+	public void Leaves_every_line_of_a_verbatim_literal_alone()
+	{
+		var source = "class C" + Crlf
+			+ "{" + Crlf
+			+ "\tconst string Text = @\"one" + Lf
+			+ "two\";" + Lf
+			+ "}" + Crlf;
+
+		var result = Apply(source, Strict);
+
+		Assert.Contains("@\"one" + Lf + "two\";", result, StringComparison.Ordinal);
+	}
+
 	private static IReadOnlyList<int> Disagreeing(string source, TextSpan? within = null)
 	{
 		var tree = CSharpSyntaxTree.ParseText(source);

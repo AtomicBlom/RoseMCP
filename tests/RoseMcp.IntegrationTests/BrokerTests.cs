@@ -265,7 +265,7 @@ public sealed class BrokerTests
 
 		Assert.True(await manager.CloseAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current.CancellationToken));
 		Assert.Empty(manager.Workers);
-		Assert.False(worker.IsAlive);
+		Assert.False(worker.IsAlive, "closing the workspace stops its worker");
 
 		// Closing something that is not open is a no-op, not an error.
 		Assert.False(await manager.CloseAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current.CancellationToken));
@@ -666,7 +666,7 @@ public sealed class BrokerTests
 			TestContext.Current.CancellationToken);
 
 		Assert.Empty(again.Added);
-		Assert.False(again.Applied);
+		Assert.False(again.Applied, "the second call finds the import already there");
 		Assert.Contains(again.AlreadyInScope, reason => reason.Contains("already imported here", StringComparison.Ordinal));
 	}
 

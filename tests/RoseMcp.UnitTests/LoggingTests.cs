@@ -169,7 +169,7 @@ public sealed class LoggingTests : IDisposable
 		RoseLogFile.PruneSessions(directory, keep: 1);
 
 		Assert.Equal(3, Directory.GetFiles(directory).Length);
-		Assert.False(File.Exists(older));
+		Assert.False(File.Exists(older), "the older session's file was pruned");
 	}
 
 	[Fact]

@@ -15,14 +15,18 @@ namespace RoseMcp.Worker;
 /// </para>
 /// </summary>
 public sealed class SignatureRewriter(
+	SemanticModel model,
 	IReadOnlyDictionary<TextSpan, DeclarationChange> declarations,
-	IReadOnlyDictionary<TextSpan, int> callSites,
+	IReadOnlySet<TextSpan> callSites,
 	ParameterPlan plan,
 	IReadOnlyDictionary<string, string> supplied,
 	SyntaxAnnotation marker) : CSharpSyntaxRewriter
 {
-	/// <summary>Call sites whose arguments could not be rewritten safely, by their original span.</summary>
-	public HashSet<TextSpan> Refused { get; } = [];
+	/// <summary>
+	/// Call sites left exactly as written, by their original span, each with the reason. The reason
+	/// reaches the caller, who is the only one who can decide what to do about the site.
+	/// </summary>
+	public Dictionary<TextSpan, string> Refused { get; } = [];
 
 	/// <summary>
 	/// Call sites whose arguments actually came out different, by their original span. Rewriting one
@@ -47,13 +51,23 @@ public sealed class SignatureRewriter(
 			return change.Documentation is { } documentation ? updated.WithLeadingTrivia(documentation) : updated;
 		}
 
-		if (!callSites.TryGetValue(node.Span, out var skip) || visited is not ArgumentListSyntax arguments) return visited;
+		if (!callSites.Contains(node.Span)) return visited;
+		if (node is not ArgumentListSyntax written || visited is not ArgumentListSyntax arguments) return visited;
 
-		var rewritten = CallSiteRewriter.Rewrite(arguments, plan, supplied, skip);
+		// Bound against the node as the caller wrote it, because that is the tree the semantic model
+		// knows and the binding is a fact about what they wrote. Rebuilt from the visited node, whose
+		// arguments carry any call site nested inside this one that has already been rewritten. The
+		// binding holds positions rather than nodes, which is what lets one answer serve both.
+		var binding = CallSiteBinding.For(model, written, out var refusal);
+
+		var rewritten = binding is null
+			? null
+			: CallSiteRewriter.Rewrite(arguments, binding, plan, supplied, out refusal);
 
 		if (rewritten is null)
 		{
-			Refused.Add(node.Span);
+			Refused[node.Span] = refusal;
+
 			return visited;
 		}
 

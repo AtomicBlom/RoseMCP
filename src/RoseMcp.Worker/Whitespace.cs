@@ -1,6 +1,7 @@
 using System.Text;
 
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
@@ -66,15 +67,21 @@ public static class Whitespace
 		IReadOnlyList<TextSpan>? within = null)
 	{
 		var protectedSpans = MultiLineLiterals(root, text);
+		var delimiters = RawDelimiterLines(root, text, protectedSpans);
 		var source = text.ToString();
 		var builder = new StringBuilder(source.Length + rules.LineEnding.Length);
 
 		foreach (var line in text.Lines)
 		{
+			var insideALiteral = protectedSpans.Any(span => span.IntersectsWith(line.SpanIncludingLineBreak))
+				&& !delimiters.Contains(line.LineNumber);
+
 			// Overlapping rather than touching, so a region beginning where the previous line ends
 			// does not claim that line as well and widen the diff by one line for nothing.
-			var leaveAlone = protectedSpans.Any(span => span.IntersectsWith(line.SpanIncludingLineBreak))
-				|| (within is not null && !within.Any(region => region.OverlapsWith(line.SpanIncludingLineBreak)));
+			var outsideTheEdit = within is not null
+				&& !within.Any(region => region.OverlapsWith(line.SpanIncludingLineBreak));
+
+			var leaveAlone = insideALiteral || outsideTheEdit;
 
 			var written = source[line.Span.Start..line.Span.End];
 
@@ -206,6 +213,55 @@ public static class Whitespace
 	private static IReadOnlyList<TextSpan> MultiLineLiterals(SyntaxNode root, SourceText text) =>
 		[.. Crossing(root.DescendantNodes()
 			.Where(node => node is LiteralExpressionSyntax or InterpolatedStringExpressionSyntax), text)];
+
+	/// <summary>
+	/// The lines a multi-line raw literal's delimiters sit on.
+	/// <para>
+	/// Neither is content. A raw literal's value begins after the line break that follows its opening
+	/// quotes and stops before the one in front of its closing quotes, so those two breaks are the
+	/// literal's punctuation rather than part of what it says -- and leaving them as they arrived is
+	/// how a CRLF file keeps a lone LF that dotnet format rejects and no build mentions. The lines
+	/// between them are content and stay exactly as they are.
+	/// </para>
+	/// <para>
+	/// Raw literals only. Every break inside a verbatim literal is part of its value, the first one
+	/// included, so a verbatim literal has no delimiter line to speak of.
+	/// </para>
+	/// <para>
+	/// A delimiter inside another literal is not one: a raw literal written into an interpolation of
+	/// a multi-line one has quotes that are the outer literal's content, and normalising the line
+	/// they sit on would rewrite what the outer one says.
+	/// </para>
+	/// </summary>
+	private static IReadOnlySet<int> RawDelimiterLines(
+		SyntaxNode root,
+		SourceText text,
+		IReadOnlyList<TextSpan> literals)
+	{
+		var lines = new HashSet<int>();
+
+		foreach (var span in Crossing(root.DescendantNodes().Where(IsRaw), text))
+		{
+			if (literals.Any(other => other != span && other.Contains(span))) continue;
+
+			lines.Add(text.Lines.GetLineFromPosition(span.Start).LineNumber);
+			lines.Add(text.Lines.GetLineFromPosition(span.End - 1).LineNumber);
+		}
+
+		return lines;
+	}
+
+	/// <summary>
+	/// True for a literal written with raw quotes, read off the delimiter it opens with rather than
+	/// guessed at from its content.
+	/// </summary>
+	private static bool IsRaw(SyntaxNode node) => node switch
+	{
+		LiteralExpressionSyntax literal => literal.Token.IsKind(SyntaxKind.MultiLineRawStringLiteralToken),
+		InterpolatedStringExpressionSyntax interpolated =>
+			interpolated.StringStartToken.IsKind(SyntaxKind.InterpolatedMultiLineRawStringStartToken),
+		_ => false,
+	};
 
 	/// <summary>The spans of those nodes that start and end on different lines.</summary>
 	private static IEnumerable<TextSpan> Crossing(IEnumerable<SyntaxNode> nodes, SourceText text) =>

@@ -45,22 +45,27 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
-	/// A parameter list the caller wrapped lands one level in from the declaration it belongs to,
-	/// and gets there whether they wrote it flat, indented relative to itself, or already indented
-	/// for where it goes -- those are one request, and only taking the baseline off first makes
-	/// them so.
+	/// A parameter list the caller wrapped lands one level in from the declaration it belongs to, one
+	/// parameter to a line, and gets there whichever of the five ways they wrote it: flat under a
+	/// leading line break, indented relative to itself, already indented for where it goes, with the
+	/// first parameter indented alongside the rest, or with the first flush and the rest under it.
+	/// Those are one request.
 	/// <para>
-	/// The declaration's own indentation is a level short, because a continuation is not a sibling
-	/// of the signature. Nothing downstream corrects it: a continuation line is not a statement, so
-	/// Roslyn's formatter has no rule that moves one, and neither IDE0055 nor <c>dotnet format</c>
-	/// has an opinion about where a wrapped list sits. The list comes out level with the member it
-	/// belongs to and every build passes.
+	/// The declaration's own indentation is a level short, because a continuation is not a sibling of
+	/// the signature, and the first line is the half that had no rule at all: it landed inline after
+	/// the parenthesis carrying its own indentation, or -- where the declaration was already wrapped
+	/// and the parenthesis held the break -- at column zero. Nothing downstream corrects any of it.
+	/// A continuation line is not a statement, so Roslyn's formatter has no rule that moves one, and
+	/// neither IDE0055 nor <c>dotnet format</c> has an opinion about where a wrapped list sits: the
+	/// list comes out however it landed and every build passes.
 	/// </para>
 	/// </summary>
 	[Theory]
 	[InlineData("\nstring first,\nstring second,\nstring third,\nstring fourth = \"\"")]
 	[InlineData("\n\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
 	[InlineData("\n\t\tstring first,\n\t\tstring second,\n\t\tstring third,\n\t\tstring fourth = \"\"")]
+	[InlineData("\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
+	[InlineData("string first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
 	public async Task Wraps_a_parameter_list_a_level_in_from_the_declaration(string written)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -68,7 +73,7 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Wrapped.Join(string, string, string)", written);
 
-		Assert.True(result.Applied);
+		Assert.True(result.Applied, "the change is written; only its layout is under test");
 		Assert.Equal(0, result.TotalErrorCount);
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
@@ -77,6 +82,54 @@ public sealed class ChangeSignatureTests
 		Assert.Contains(
 			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third,"
 				+ "\r\n\t\tstring fourth = \"\")\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The other half of the same rule: a list the caller wrote on one line goes on the signature
+	/// line, even where the declaration it replaces was wrapped and its parenthesis still carries the
+	/// break. Left there, that break puts the first parameter alone on a line of its own at whatever
+	/// column the caller's text happened to begin at.
+	/// </summary>
+	[Fact]
+	public async Task Unwraps_a_parameter_list_the_caller_wrote_on_one_line()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Wrapped.Join(string, string, string)", "string first, string second");
+
+		Assert.True(result.Applied, "the change is written; only its layout is under test");
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		Assert.Contains("\tpublic static string Join(string first, string second)\r\n", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A signature change on a member whose expression body is wrapped. The parameters are this
+	/// tool's business and the body is not, but the whitespace pass runs over the lines the change
+	/// wrote -- so the body is what says whether it reached past them.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_a_wrapped_expression_body_alone_when_it_changes_the_parameters()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Arrowed.Spread", "string first, string second, string third, string fourth = \"\"");
+
+		Assert.True(result.Applied, "the change is written; the body is what is under test");
+		Assert.Equal(0, result.TotalErrorCount);
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		// Two tabs for the body, three for the lines it wraps onto, exactly as before.
+		Assert.Contains(
+			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;",
 			text,
 			StringComparison.Ordinal);
 	}
@@ -129,7 +182,8 @@ public sealed class ChangeSignatureTests
 		Assert.Contains(
 			result.UnchangedCallSites,
 			site => site.Location.FilePath.EndsWith("Anticipating.cs", StringComparison.OrdinalIgnoreCase)
-				&& site.Reason.Contains("did not have yet", StringComparison.Ordinal));
+				&& site.Reason.Contains("does not compile as it stands", StringComparison.Ordinal)
+				&& site.Reason.Contains("may already be right", StringComparison.Ordinal));
 
 		Assert.DoesNotContain(
 			result.UpdatedCallSites,
@@ -350,7 +404,7 @@ public sealed class ChangeSignatureTests
 				token),
 			TestContext.Current.CancellationToken);
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.Equal(before, await ReadAsync(fixture, "Layers.cs"));
 		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
 		Assert.Contains("urgent", result.Diff, StringComparison.Ordinal);
@@ -513,5 +567,115 @@ public sealed class ChangeSignatureTests
 		Assert.DoesNotContain(
 			result.UnchangedCallSites,
 			site => site.Reason.Contains("whole body of SendTwice", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// The two shapes that name the member without calling it. Neither can be rewritten -- a
+	/// <c>nameof</c> carries no arguments to put back, and a method group's shape belongs to the
+	/// delegate type it converts to rather than to the call -- and the conversion stops compiling
+	/// the moment the signature moves, so passing over them silently leaves the caller to find it
+	/// from a build.
+	/// </summary>
+	[Fact]
+	public async Task Reports_a_nameof_and_a_method_group_it_cannot_rewrite()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session,
+			"Library.Shaped.Combine(string, string)",
+			"string first, string separator, string second",
+			["separator=\"-\""]);
+
+		Assert.True(result.Applied, "the change applies; the two sites it cannot rewrite are reported, not refused");
+
+		var named = result.UnchangedCallSites
+			.Where(site => site.Location.FilePath.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+
+		Assert.Equal(2, named.Length);
+
+		Assert.All(
+			named,
+			site => Assert.Contains("names the member without calling it", site.Reason, StringComparison.Ordinal));
+
+		// The delegate conversion is now wrong, and saying so is the whole point of reporting a site
+		// nothing could be done about.
+		Assert.Contains(
+			result.IntroducedDiagnostics,
+			diagnostic => diagnostic.FilePath?.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase) == true);
+	}
+
+	/// <summary>
+	/// A base-initialiser and a this-initialiser are calls, with arguments, that this leaves alone --
+	/// the walk from a reference to its invocation climbs to the member declaration and never looks
+	/// at a constructor initialiser on the way.
+	/// <para>
+	/// So they are refused, and the refusal says which shape it is. They used to arrive at the
+	/// sentence written for a name that is not a call, which is false of them twice over: they call
+	/// the constructor, and after this change they call it with too few arguments. The caller was
+	/// pointed at the right lines by the wrong reason.
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Says_a_constructor_initialiser_is_a_call_it_cannot_reach()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Rooted.Rooted(string)", "string name, int age", ["age=0"]);
+
+		Assert.True(result.Applied, "the initialisers are reported rather than refusing the whole change");
+
+		var initialisers = result.UnchangedCallSites
+			.Where(site => site.Location.FilePath.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+
+		Assert.Equal(2, initialisers.Length);
+
+		Assert.All(
+			initialisers,
+			site => Assert.Contains("base or this initialiser", site.Reason, StringComparison.Ordinal));
+
+		Assert.All(
+			initialisers,
+			site => Assert.DoesNotContain("without calling it", site.Reason, StringComparison.Ordinal));
+
+		// Both are real calls that now pass too few arguments, which is what makes the sentence above
+		// the wrong one.
+		Assert.Equal(2, result.IntroducedDiagnostics.Count(diagnostic => diagnostic.Id == "CS7036"));
+	}
+
+	/// <summary>
+	/// An expression supplied for a new parameter is the caller's code, and it is written even where
+	/// it does not resolve. The error is theirs to fix and the diagnostic is what points at it --
+	/// reverting the whole change instead would leave them with neither the parameter nor the error.
+	/// </summary>
+	[Fact]
+	public async Task Writes_a_supplied_expression_that_does_not_resolve_and_reports_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Greeter.Greet(string)", "string name, bool loud", ["loud=NoSuchThing"]);
+
+		Assert.True(result.Applied, "the declaration and its call sites are written; the expression is the caller's");
+
+		var text = await ReadAsync(fixture, "Caller.cs");
+
+		Assert.Contains("Greet(\"world\", NoSuchThing)", text, StringComparison.Ordinal);
+
+		Assert.Contains(
+			result.IntroducedDiagnostics,
+			diagnostic => diagnostic.Id == "CS0103"
+				&& diagnostic.FilePath?.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase) == true);
+
+		// The name does not resolve, which is a different thing from an argument on the wrong
+		// parameter -- so nothing here is called a defect in the tool.
+		Assert.DoesNotContain(
+			result.Notices,
+			notice => notice.Contains("defect in rose_change_signature", StringComparison.Ordinal));
 	}
 }

@@ -105,7 +105,7 @@ public static class ChangeSignatureService
 
 		var unchanged = await DescribeUnchangedAsync(snapshot.Solution, work, applied, plan, cancellationToken);
 
-		notices.AddRange(Notices(request, plan, verification, outcome, unchanged));
+		notices.AddRange(Notices(request, plan, applied, verification, outcome, unchanged));
 
 		var result = new SignatureChangeResult
 		{
@@ -269,13 +269,11 @@ public static class ChangeSignatureService
 
 					if (ArgumentListOf(token) is not { } arguments)
 					{
-						found.Unusable.Add(location.Location);
+						found.Unusable.Add(new RefusedCallSite(location.Location, WhyUnusable(token)));
 						continue;
 					}
 
-					var model = await document.GetSemanticModelAsync(cancellationToken);
-
-					found.CallSites[arguments.Span] = Reduced(model, arguments.Parent) ? 1 : 0;
+					found.CallSites.Add(arguments.Span);
 					found.CallSiteLocations[arguments.Span] = location.Location;
 				}
 			}
@@ -333,11 +331,11 @@ public static class ChangeSignatureService
 		var addedHere = plan.Added.Select(parameter => parameter.Name).ToArray();
 
 		var documentation = ParamTags.Update(declaration.GetLeadingTrivia(), removedHere, addedHere, notices);
+		var parameters = list.WithParameters(Separated(built, primary ? wanted : own));
 
 		return new DeclarationChange
 		{
-			Parameters = list.WithParameters(
-				Separated(built, primary ? wanted : own)),
+			Parameters = primary ? parameters.WithOpenParenToken(Unbroken(parameters.OpenParenToken)) : parameters,
 			Documentation = documentation,
 		};
 	}
@@ -365,6 +363,24 @@ public static class ChangeSignatureService
 		return SyntaxFactory.SeparatedList(parameters, separators);
 	}
 
+	/// <summary>
+	/// The token with the whitespace after it dropped, keeping anything else.
+	/// <para>
+	/// The list the caller wrote carries its own layout from the parenthesis onwards, and the break
+	/// the file had after that parenthesis is the file's idea of the same thing: a break on both
+	/// makes a blank line, and a break on neither puts the first parameter inline with its own
+	/// indentation in the middle of the signature. Only the declaration the caller named is re-laid
+	/// out this way -- every other one keeps its own parameters, its own names and its own wrapping.
+	/// </para>
+	/// <para>
+	/// Whitespace only, because a comment written between the parenthesis and the first parameter is
+	/// not layout and would be lost without trace.
+	/// </para>
+	/// </summary>
+	private static SyntaxToken Unbroken(SyntaxToken token) =>
+		token.WithTrailingTrivia(token.TrailingTrivia.Where(trivia =>
+			!trivia.IsKind(SyntaxKind.EndOfLineTrivia) && !trivia.IsKind(SyntaxKind.WhitespaceTrivia)));
+
 	/// <summary>Applies every document's work, one rewrite per document.</summary>
 	private static async Task<Applied> ApplyAsync(
 		Solution solution,
@@ -374,18 +390,26 @@ public static class ChangeSignatureService
 		CancellationToken cancellationToken)
 	{
 		var rewritten = new List<Location>();
-		var refused = new List<Location>();
+		var refused = new List<RefusedCallSite>();
 		var documentation = new List<string>();
+
+		// Every document is read from the solution as it arrived, not from the one being built up.
+		// The spans in `work` were found there, and so was the binding each call site is rewritten
+		// from: once the declaration has taken its new parameters, a call site that has not yet been
+		// touched no longer binds to it, so a model read from the growing solution would refuse every
+		// call site outside the file the declaration is in -- and the file order decides which ones.
+		var original = solution;
 
 		foreach (var item in work)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
-			if (solution.GetDocument(item.Id) is not { } document) continue;
+			if (original.GetDocument(item.Id) is not { } document) continue;
 			if (await document.GetSyntaxRootAsync(cancellationToken) is not { } root) continue;
+			if (await document.GetSemanticModelAsync(cancellationToken) is not { } model) continue;
 
 			var marker = new SyntaxAnnotation();
-			var rewriter = new SignatureRewriter(item.Declarations, item.CallSites, plan, supplied, marker);
+			var rewriter = new SignatureRewriter(model, item.Declarations, item.CallSites, plan, supplied, marker);
 
 			if (rewriter.Visit(root) is not { } updated) continue;
 
@@ -394,9 +418,12 @@ public static class ChangeSignatureService
 				if (item.CallSiteLocations.TryGetValue(span, out var location)) rewritten.Add(location);
 			}
 
-			foreach (var span in rewriter.Refused)
+			foreach (var (span, reason) in rewriter.Refused)
 			{
-				if (item.CallSiteLocations.TryGetValue(span, out var location)) refused.Add(location);
+				if (item.CallSiteLocations.TryGetValue(span, out var location))
+				{
+					refused.Add(new RefusedCallSite(location, reason));
+				}
 			}
 
 			if (item.Declarations.Values.Any(change => change.Documentation is not null))
@@ -469,29 +496,26 @@ public static class ChangeSignatureService
 		// would have been drowned by the same duplicate.
 		var reported = new HashSet<Location>(applied.RewrittenCallSites);
 
-		foreach (var location in applied.RefusedCallSites)
+		foreach (var refused in applied.RefusedCallSites)
 		{
-			reported.Add(location);
+			reported.Add(refused.Location);
 
 			unchanged.Add(new UnchangedCallSite
 			{
-				Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),
-				Reason = "Its arguments could not be put back safely -- an argument written for a parameter the "
-					+ "member did not have yet, a params expansion, or an argument whose meaning depends on its "
-					+ "position. It is left exactly as written, so if the change you just made is the one it was "
-					+ "waiting for, it may already be right; otherwise change it by hand.",
+				Location = await SymbolLocator.DescribeAsync(solution, refused.Location, cancellationToken),
+				Reason = $"Its arguments were left exactly as written, because {refused.Reason}. Nothing here can "
+					+ "put them back safely, so change it by hand.",
 			});
 		}
 
-		foreach (var location in work.SelectMany(item => item.Unusable))
+		foreach (var refused in work.SelectMany(item => item.Unusable))
 		{
-			reported.Add(location);
+			reported.Add(refused.Location);
 
 			unchanged.Add(new UnchangedCallSite
 			{
-				Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),
-				Reason = "It names the member without calling it -- a method group, a nameof, or a cref. A changed "
-					+ "signature can break that, and nothing here can rewrite it.",
+				Location = await SymbolLocator.DescribeAsync(solution, refused.Location, cancellationToken),
+				Reason = $"It was left exactly as written, because {refused.Reason}.",
 			});
 		}
 
@@ -566,10 +590,14 @@ public static class ChangeSignatureService
 	private static IEnumerable<string> Notices(
 		ChangeSignatureRequest request,
 		ParameterPlan plan,
+		Applied applied,
 		Verification verification,
 		WriteOutcome outcome,
 		IReadOnlyList<UnchangedCallSite> unchanged)
 	{
+		// First, because it is the only thing here that is nobody's work but this tool's.
+		foreach (var defect in Defects(applied, verification)) yield return defect;
+
 		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 		if (outcome.ChangedFiles.Count == 0) yield return "The signature already read exactly like that.";
 
@@ -617,6 +645,35 @@ public static class ChangeSignatureService
 	}
 
 	/// <summary>
+	/// The one thing in a result that is this tool's own fault, said as such.
+	/// <para>
+	/// An argument-mapping error where this rewrote a call site cannot be the caller's work, so
+	/// listing it beside the errors that are would send them looking for it in code they did not
+	/// write. <see cref="CallSiteBinding.MappingFailures"/> decides which those are.
+	/// </para>
+	/// </summary>
+	private static IEnumerable<string> Defects(Applied applied, Verification verification)
+	{
+		var files = applied.RewrittenCallSites
+			.Select(location => location.SourceTree?.FilePath)
+			.OfType<string>();
+
+		var mapping = CallSiteBinding.MappingFailures(files, verification.Introduced);
+
+		if (mapping.Count == 0) yield break;
+
+		var listed = string.Join(", ", mapping.Select(Where));
+
+		yield return $"This is a defect in rose_change_signature rather than in your code: {listed}. Each of those "
+			+ "is the compiler saying an argument does not fit the parameter it was written for, at a call site "
+			+ "whose arguments this rewrote a moment ago. Revert those files and report it.";
+	}
+
+	/// <summary>One diagnostic as a place, short enough to list several of on one line.</summary>
+	private static string Where(DiagnosticEntry diagnostic) =>
+		$"{diagnostic.Id} at {Path.GetFileName(diagnostic.FilePath)}:{diagnostic.Line}";
+
+	/// <summary>
 	/// The argument list of the call this reference is the target of, or nothing when the reference
 	/// is not a call at all.
 	/// <para>
@@ -646,13 +703,33 @@ public static class ChangeSignatureService
 	}
 
 	/// <summary>
-	/// True when the call is an extension method invoked on its receiver, in which case the first
-	/// parameter has no argument at the call site and everything after it is one place to the left.
+	/// Why a reference cannot have its arguments rewritten, as a clause naming the shape.
+	/// <para>
+	/// Two different things, and calling them one was wrong about half of them. A nameof, a cref and
+	/// a method group name the member without calling it, so there are no arguments to put back at
+	/// all. A base or this initialiser <em>is</em> a call, with arguments, that the walk from a
+	/// reference to its invocation does not reach -- and telling someone their initialiser is not a
+	/// call is a confident answer to a question they did not ask, on the line the compiler is about
+	/// to fail on.
+	/// </para>
 	/// </summary>
-	private static bool Reduced(SemanticModel? model, SyntaxNode? invocation) =>
-		invocation is not null
-			&& model?.GetSymbolInfo(invocation).Symbol is IMethodSymbol { MethodKind: MethodKind.ReducedExtension };
+	private static string WhyUnusable(SyntaxToken token)
+	{
+		for (var node = token.Parent; node is not null; node = node.Parent)
+		{
+			if (node is ConstructorInitializerSyntax)
+			{
+				return "it is a base or this initialiser -- a call to the constructor that does not go through an "
+					+ "invocation, which is what this rewrites arguments in, so its arguments have to be changed "
+					+ "by hand";
+			}
 
+			if (node is MemberDeclarationSyntax) break;
+		}
+
+		return "it names the member without calling it -- a method group, a nameof, or a cref -- so it has no "
+			+ "arguments to put back, and a changed signature can break it with nothing here able to help";
+	}
 	private static IReadOnlyDictionary<string, string> Supplied(IReadOnlyList<string> arguments)
 	{
 		var supplied = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -707,18 +784,26 @@ public static class ChangeSignatureService
 
 		public List<Location> DeclarationSites { get; } = [];
 
-		/// <summary>Argument lists to rewrite, and how many parameters the call site does not write.</summary>
-		public Dictionary<TextSpan, int> CallSites { get; } = [];
+		/// <summary>Argument lists to rewrite, by their span.</summary>
+		public HashSet<TextSpan> CallSites { get; } = [];
 
 		public Dictionary<TextSpan, Location> CallSiteLocations { get; } = [];
 
-		/// <summary>Uses that are not calls, so there is nothing to rewrite.</summary>
-		public List<Location> Unusable { get; } = [];
+		/// <summary>Uses whose arguments this cannot rewrite, each with the reason.</summary>
+		public List<RefusedCallSite> Unusable { get; } = [];
 	}
+
+	/// <summary>
+	/// A call site left exactly as written, and the reason, which is a clause naming the shape.
+	/// Carried per site rather than answered once for all of them, because the reasons are different
+	/// work for the caller: a call that never compiled may already be right after this change, while
+	/// a shape the rewriter cannot spell has to be written by hand.
+	/// </summary>
+	private sealed record RefusedCallSite(Location Location, string Reason);
 
 	private sealed record Applied(
 		Solution Solution,
 		IReadOnlyList<Location> RewrittenCallSites,
-		IReadOnlyList<Location> RefusedCallSites,
+		IReadOnlyList<RefusedCallSite> RefusedCallSites,
 		IReadOnlyList<string> Documentation);
 }

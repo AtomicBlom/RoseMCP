@@ -1,5 +1,4 @@
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace RoseMcp.Worker;
@@ -24,24 +23,6 @@ public sealed record ParameterPlan
 
 	/// <summary>Parameters that stayed but changed type, which is what can break a call site silently.</summary>
 	public required IReadOnlyList<string> Retyped { get; init; }
-
-	/// <summary>
-	/// How many parameters the member had. It is the line between two kinds of argument a call site
-	/// can have that no new parameter claims, and they need opposite answers: below this, the
-	/// argument belonged to a parameter that is being removed, and dropping it is what removal
-	/// means. At or above it, the caller wrote an argument for a parameter that did not exist yet,
-	/// and dropping that deletes code they wrote (#59).
-	/// </summary>
-	public required int OldCount { get; init; }
-
-	/// <summary>
-	/// Where the member's <c>params</c> parameter was, if it had one, whether or not it survives.
-	/// It is the only way a call site can legitimately carry more arguments than the member had
-	/// parameters, so the surplus above has to be measured against it -- and it is read off the old
-	/// list rather than off a surviving parameter, because a <c>params</c> parameter being removed
-	/// still explains the arguments that were written for it.
-	/// </summary>
-	public int? OldParamsAt { get; init; }
 
 	/// <summary>New parameters, in the order they now appear.</summary>
 	public IEnumerable<PlannedParameter> Added => Parameters.Where(parameter => parameter.WasAt is null);
@@ -78,7 +59,6 @@ public sealed record ParameterPlan
 				WasAt = before.ContainsKey(name) ? was.Index : null,
 				IsAt = index,
 				HasDefault = parameter.Default is not null,
-				WasParams = was.Node?.Modifiers.Any(SyntaxKind.ParamsKeyword) ?? false,
 			});
 		}
 
@@ -95,21 +75,11 @@ public sealed record ParameterPlan
 			.Select(parameter => parameter.Name)
 			.ToArray();
 
-		// Taken from the old list rather than from the parameters that survived, because a params
-		// parameter being removed still accounts for the arguments a call site wrote for it.
-		int? oldParamsAt = null;
-		for (var index = 0; index < existing.Count; index++)
-		{
-			if (existing[index].Modifiers.Any(SyntaxKind.ParamsKeyword)) oldParamsAt = index;
-		}
-
 		return new ParameterPlan
 		{
 			Parameters = planned,
 			Removed = removed,
 			Retyped = retyped,
-			OldCount = existing.Count,
-			OldParamsAt = oldParamsAt,
 		};
 	}
 

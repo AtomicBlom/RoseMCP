@@ -78,18 +78,22 @@ public sealed class MemberEditTests
 	/// <summary>
 	/// The same rule on the way in as on the way over: a member added with a hand-wrapped parameter
 	/// list keeps the shape the caller gave it and lands at the destination's own level, whether they
-	/// wrote the whole thing at column zero or already indented for where it goes.
+	/// wrote the whole thing at column zero, already indented for where it goes, or opening with a
+	/// line break.
 	/// <para>
 	/// A whole member carries its own first line, so the relative shape the caller wrote is the
 	/// specification and the baseline is all that has to come off. That is what separates this from a
 	/// bare parameter list, which opens after the parenthesis with no first line to measure and so
-	/// takes its level from the declaration instead.
+	/// takes its level from the declaration instead -- and it is why a member whose text opens with a
+	/// line break still starts at the splice point rather than a line below it.
 	/// </para>
 	/// </summary>
 	[Theory]
 	[InlineData("public string Wrapped(\n\tstring first,\n\tstring second) => first + second;")]
 	[InlineData("\tpublic string Wrapped(\n\t\tstring first,\n\t\tstring second) => first + second;")]
 	[InlineData("\t\tpublic string Wrapped(\n\t\t\tstring first,\n\t\t\tstring second) => first + second;")]
+	[InlineData("\npublic string Wrapped(\n\tstring first,\n\tstring second) => first + second;")]
+	[InlineData("\n\t\tpublic string Wrapped(\n\t\t\tstring first,\n\t\t\tstring second) => first + second;")]
 	public async Task Lines_up_a_wrapped_parameter_list_on_a_member_it_adds(string written)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -107,6 +111,147 @@ public sealed class MemberEditTests
 		// One tab for the member, two for the parameters it wrapped onto their own lines.
 		Assert.Contains(
 			"\tpublic string Wrapped(\r\n\t\tstring first,\r\n\t\tstring second) => first + second;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The third site the same indentation rule runs at: a multi-line replacement spliced into a
+	/// body. It lands at the indentation of the line the match starts on, and the shape the caller
+	/// wrote is what decides the rest -- flat, or opening with a line break, are one request, because
+	/// the line exempted from the shift is the first one with content on it rather than the first one
+	/// there is.
+	/// <para>
+	/// A replacement is measured against its own first line and not against the file, so writing the
+	/// continuations at the depth they will end up at while leaving the first line flush asks for that
+	/// depth again on top. Nothing downstream says so, which is why it is worth a case: a continuation
+	/// line is not a statement, so Roslyn's formatter has no rule that moves one back.
+	/// </para>
+	/// </summary>
+	[Theory]
+	[InlineData("return first\n\t+ second\n\t+ third;")]
+	[InlineData("\nreturn first\n\t+ second\n\t+ third;")]
+	public async Task Lines_up_a_wrapped_replacement_inside_a_body(string replace)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Wrapped.Join",
+			Find = "return first + second + third;",
+			Replace = replace,
+		});
+
+		var text = await ReadAsync(fixture, "Wrapped.cs");
+
+		// Two tabs for the statement, three for the lines it wraps onto.
+		Assert.Contains(
+			"\t\treturn first\r\n\t\t\t+ second\r\n\t\t\t+ third;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// An expression body wrapped onto its own line, replaced whole. The <c>=&gt;</c> and what follows
+	/// it are a continuation rather than a statement, so Roslyn's formatter has no rule that puts one
+	/// back where it belongs and neither IDE0055 nor <c>dotnet format</c> has an opinion about where
+	/// it sits.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_an_expression_body_a_level_in_when_it_replaces_the_member()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Replace,
+			Symbol = "Library.Arrowed.Describe",
+			Code = "public static string Describe(string first, string second) =>\n\tfirst + \" and \" + second;",
+		});
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		Assert.Contains(
+			"\tpublic static string Describe(string first, string second) =>\r\n\t\tfirst + \" and \" + second;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The same body supplied as a body rather than as a member, which is the path that copies the
+	/// signature out of the file and measures the caller's code against what follows it.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_an_expression_body_a_level_in_when_it_replaces_the_body()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Arrowed.Describe",
+			Code = "=>\n\tfirst + \" and \" + second;",
+		});
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		Assert.Contains(
+			"\tpublic static string Describe(string first, string second) =>\r\n\t\tfirst + \" and \" + second;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A find and replace inside an expression body, which is the shape the finding names: the body
+	/// came out a level shallower than it went in and <c>rose_format</c> called the file formatted.
+	/// </summary>
+	[Fact]
+	public async Task Leaves_an_expression_body_where_it_was_on_a_find_and_replace()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Arrowed.Spread",
+			Find = "+ \", \" + third",
+			Replace = "+ \"; \" + third",
+		});
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		// Two tabs for the body's first line, three for the lines it wraps onto.
+		Assert.Contains(
+			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \"; \" + third;",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// An expression-bodied member added rather than edited, with its body on a line of its own.
+	/// </summary>
+	[Fact]
+	public async Task Keeps_an_expression_body_a_level_in_on_a_member_it_adds()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Arrowed",
+			Code = "public static string Joined(string first, string second) =>\n\tfirst + second;",
+		});
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		Assert.Contains(
+			"\tpublic static string Joined(string first, string second) =>\r\n\t\tfirst + second;",
 			text,
 			StringComparison.Ordinal);
 	}
@@ -660,7 +805,7 @@ public sealed class MemberEditTests
 			Apply = false,
 		});
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
 		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
 
@@ -688,7 +833,7 @@ public sealed class MemberEditTests
 		});
 
 		Assert.True(result.Applied);
-		Assert.False(result.Verified);
+		Assert.False(result.Verified, "verify=false compiles nothing, and says so");
 		Assert.Empty(result.IntroducedDiagnostics);
 		Assert.Contains("Nothing was compiled", string.Join(" ", result.Notices), StringComparison.Ordinal);
 	}

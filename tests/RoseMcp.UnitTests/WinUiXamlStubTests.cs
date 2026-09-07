@@ -73,7 +73,7 @@ public sealed class WinUiXamlStubTests
 		var choice = XamlDialectSelector.Select(Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework), [document!]);
 
 		Assert.Same(WindowsXamlDialect.WinUi, choice.Dialect);
-		Assert.False(choice.WasAmbiguous);
+		Assert.False(choice.WasAmbiguous, "the dialect was not ambiguous");
 	}
 
 	/// <summary>

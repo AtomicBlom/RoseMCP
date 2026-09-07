@@ -67,7 +67,7 @@ public sealed class NavigationTests
 
 		// No file to point at, and the assembly said in its place: the two together are what tell a
 		// caller this is not something it can edit.
-		Assert.False(info.IsFromSource);
+		Assert.False(info.IsFromSource, "a type from metadata has no source to edit");
 		Assert.Empty(info.Declarations);
 		Assert.NotNull(info.ContainingAssembly);
 	}
@@ -91,7 +91,7 @@ public sealed class NavigationTests
 		Assert.Equal("UTF8", info.Name);
 		Assert.Equal("Property", info.Kind);
 		Assert.Contains("Encoding", info.ContainingType, StringComparison.Ordinal);
-		Assert.False(info.IsFromSource);
+		Assert.False(info.IsFromSource, "a member from metadata has no source to edit");
 	}
 
 	/// <summary>

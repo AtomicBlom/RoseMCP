@@ -65,7 +65,7 @@ public sealed class CodeFixTests
 
 		var result = await ApplyAsync(session, "CA1822", path, apply: false);
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.NotEmpty(result.Diff);
 		Assert.Equal(Fixable, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
 	}
@@ -78,7 +78,7 @@ public sealed class CodeFixTests
 
 		var result = await ApplyAsync(session, "CS0168", path);
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "an id nothing can fix is reported rather than applied");
 		Assert.Equal(0, result.Occurrences);
 		Assert.NotEmpty(result.Notices);
 	}

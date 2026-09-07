@@ -73,7 +73,7 @@ public sealed class SolutionWriterTests
 		var outcome = await SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current.CancellationToken);
 
 		Assert.Equal([path], outcome.ChangedFiles);
-		Assert.False(File.Exists(path));
+		Assert.False(File.Exists(path), "rendering the diff writes nothing");
 	}
 
 	private static Project Empty(AdhocWorkspace workspace) =>

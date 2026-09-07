@@ -311,14 +311,29 @@ public static class MemberEditService
 			? $"{head} {written.Trim()};"
 			: $"{head} {Body(written)}";
 
+		// A body assembled from the file's own text is already indented for where it sits, and the
+		// only caller code in it has been placed against the line it lands on -- so the destination's
+		// own indentation is what comes off and goes back on, and the pass is the identity it should
+		// be. Read from the code instead, the baseline is how deep the body sits inside its member,
+		// and every line comes out a level shallower: invisibly for a block body, which the formatter
+		// has rules for, and on disk for an expression body, which is a continuation it has none for.
+		var fromTheFile = request.Find is { Length: > 0 } || request.Position is not null;
+
+		// A body the caller supplied whole is measured against itself, as everything else here is, and
+		// its lines belong one level in from the member: what precedes them is a brace or an arrow on
+		// the signature's own line, not a line of their own to take a level from. Roslyn's formatter
+		// puts a block's braces back where .editorconfig wants them and has no rule for an arrow.
+		var rules = Whitespace.RulesFor(target.Document.Project, declaration.SyntaxTree, text);
+
 		var parsed = MemberSyntax.Parse(
 			rebuilt,
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
-			indent,
+			fromTheFile ? indent : indent + rules.IndentUnit,
 			Whitespace.Dominant(text),
 			count => notices.Add(RewrittenEndings(count, text)),
-			copied: head);
+			copied: head,
+			baseline: fromTheFile ? indent : null);
 
 		if (parsed.Count != 1)
 		{

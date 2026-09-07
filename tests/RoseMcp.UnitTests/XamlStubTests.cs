@@ -254,7 +254,7 @@ public sealed class XamlStubTests
 
 		Assert.NotNull(chosen.Dialect);
 		Assert.Equal("UWP", chosen.Dialect.Name);
-		Assert.False(chosen.WasAmbiguous);
+		Assert.False(chosen.WasAmbiguous, "the dialect was not ambiguous");
 		Assert.Contains("Windows.UI.Xaml.Controls.Control", chosen.Reason, StringComparison.Ordinal);
 	}
 

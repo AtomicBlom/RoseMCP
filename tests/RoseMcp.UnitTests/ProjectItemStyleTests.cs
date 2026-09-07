@@ -35,7 +35,7 @@ public sealed class ProjectItemStyleTests
 			</Project>
 			""";
 
-		Assert.False(ProjectItemStyle.GlobsSourceFiles(project));
+		Assert.False(ProjectItemStyle.GlobsSourceFiles(project), "a legacy project lists its files rather than globbing them");
 	}
 
 	/// <summary>
@@ -55,7 +55,7 @@ public sealed class ProjectItemStyleTests
 			</Project>
 			""";
 
-		Assert.False(ProjectItemStyle.GlobsSourceFiles(project));
+		Assert.False(ProjectItemStyle.GlobsSourceFiles(project), "a project that turns the globs off does not glob");
 	}
 
 	/// <summary>

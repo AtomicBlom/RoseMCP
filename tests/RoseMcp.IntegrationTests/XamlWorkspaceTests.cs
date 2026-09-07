@@ -67,7 +67,7 @@ public sealed class XamlWorkspaceTests
 
 		Assert.NotNull(report);
 		Assert.Equal("UWP", report.Dialect);
-		Assert.False(report.DialectAmbiguous);
+		Assert.False(report.DialectAmbiguous, "the dialect was not ambiguous");
 		Assert.Contains("Windows.UI.Xaml.Controls.Control", report.DialectReason, StringComparison.Ordinal);
 		Assert.Equal(1, report.MarkupFileCount);
 		Assert.Equal(1, report.StubbedClassCount);

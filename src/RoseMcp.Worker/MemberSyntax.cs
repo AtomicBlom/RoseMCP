@@ -59,6 +59,18 @@ public static class MemberSyntax
 	/// baseline is read from what follows it. Without that, the signature's indentation is taken as
 	/// the body's and a hand-wrapped call inside the body comes out flat against its own statement.
 	/// </param>
+	/// <param name="baseline">
+	/// The indentation to take off every written line, where the caller knows it rather than leaving
+	/// it to be read from the code.
+	/// <para>
+	/// Reading it from the code is right when the code is the caller's and wrong when it came out of
+	/// the file. Text already sitting where it belongs wants the destination's own indentation off and
+	/// back on -- the identity this pass should be for it -- and reading the first written line
+	/// instead measures how deep the body sits inside its member, so every line comes out a level
+	/// shallower. Roslyn's formatter hides that for a block body, whose statements and braces it has
+	/// rules for, and not for an expression body, which is a continuation it has no rule about.
+	/// </para>
+	/// </param>
 	/// <exception cref="ArgumentException">
 	/// The code does not parse, declares no member, or would put something outside the container.
 	/// </exception>
@@ -69,7 +81,8 @@ public static class MemberSyntax
 		string indent = "",
 		string lineEnding = "",
 		Action<int>? rewritten = null,
-		string copied = "")
+		string copied = "",
+		string? baseline = null)
 	{
 		if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("No code was supplied, so there is nothing to write.");
 
@@ -80,7 +93,7 @@ public static class MemberSyntax
 		// understood: which lines sit inside a multi-line literal decides which of them have to be
 		// left exactly as they arrived. The second parse is of text, in microseconds, against an edit
 		// that is about to compile a project.
-		var shifted = Shift(code, indent, Literals(members), lineEnding, rewritten, Copied(code, copied));
+		var shifted = Shift(code, indent, Literals(members), lineEnding, rewritten, Copied(code, copied), baseline);
 
 		return string.Equals(shifted, code, StringComparison.Ordinal)
 			? members
@@ -157,8 +170,8 @@ public static class MemberSyntax
 
 	/// <summary>
 	/// The parameters <paramref name="text"/> declares, taken as what goes between the parentheses,
-	/// with any lines it wraps onto indented one level in from a declaration sitting at
-	/// <paramref name="indent"/>.
+	/// laid out one to a line and indented one level in from a declaration sitting at
+	/// <paramref name="indent"/> when the caller wrapped them.
 	/// <para>
 	/// Source text rather than a structured list, because it is what someone writing C# already
 	/// knows how to write, and it carries for free everything a structured shape would have to
@@ -192,9 +205,9 @@ public static class MemberSyntax
 		string indent = "",
 		string indentUnit = "")
 	{
-		var list = SyntaxFactory.ParseParameterList(
-			$"({ShiftContinuations(text, indentUnit.Length == 0 ? string.Empty : indent + indentUnit)})",
-			options: options);
+		var continuation = indentUnit.Length == 0 ? string.Empty : indent + indentUnit;
+
+		var list = SyntaxFactory.ParseParameterList($"({Arranged(text, continuation)})", options: options);
 
 		var errors = list.GetDiagnostics()
 			.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
@@ -204,7 +217,7 @@ public static class MemberSyntax
 		// wrapped in anything, so the only offset is the one character.
 		if (errors.Length > 0) throw Rejected(text, errors, lineOffset: 0, columnOffset: 1);
 
-		return list.Parameters;
+		return continuation.Length > 0 && Wrapped(text) ? Opened(list.Parameters, continuation) : list.Parameters;
 	}
 
 	/// <summary>
@@ -218,10 +231,16 @@ public static class MemberSyntax
 	/// </para>
 	/// <para>
 	/// The first line keeps neither, because it is spliced at a point that already carries the
-	/// indentation of the line it lands on. The lines of a multi-line literal keep both: leading
-	/// whitespace there is the value in a verbatim literal and decides how much is stripped from a raw
-	/// one, so moving one such line and not another changes what the program says rather than how it
-	/// reads. Found here rather than asked of the caller, since a caller who forgets does not find out.
+	/// indentation of the line it lands on. Which line that is is asked of the content rather than of
+	/// the index, and the blank lines above it are dropped: a fragment that opens with a line break
+	/// belongs at the splice point all the same, and keeping the break puts its first line alone at
+	/// column zero with the indentation already written sitting on the line above.
+	/// </para>
+	/// <para>
+	/// The lines of a multi-line literal keep both: leading whitespace there is the value in a
+	/// verbatim literal and decides how much is stripped from a raw one, so moving one such line and
+	/// not another changes what the program says rather than how it reads. Found here rather than
+	/// asked of the caller, since a caller who forgets does not find out.
 	/// </para>
 	/// </summary>
 	/// <param name="code">The fragment as the caller wrote it.</param>
@@ -234,25 +253,22 @@ public static class MemberSyntax
 		if (baseline.Length == 0 && indent.Length == 0) return code;
 
 		var untouched = LiteralLines(code);
-
-		// Which line is the first is asked of the content rather than of the index, because a fragment
-		// that opens with a line break has its baseline on the second line and belongs at the splice
-		// point all the same. Indenting it as a continuation puts the whole fragment a level out.
 		var first = lines.ToList().FindIndex(line => line.Content.Trim().Length > 0);
 
-		var shifted = lines.Select((line, index) =>
-		{
-			if (untouched.Contains(index)) return line.Content + line.Ending;
+		var shifted = lines
+			.Select((line, index) => (Line: line, Index: index))
+			.Skip(Math.Max(first, 0))
+			.Select(entry =>
+			{
+				if (untouched.Contains(entry.Index)) return entry.Line.Content + entry.Line.Ending;
 
-			var stripped = baseline.Length > 0 && line.Content.StartsWith(baseline, StringComparison.Ordinal)
-				? line.Content[baseline.Length..]
-				: line.Content;
+				var stripped = Stripped(entry.Line.Content, baseline);
 
-			// Padding a blank line only makes trailing whitespace for the next pass to strip again.
-			var prefixed = index > first && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+				// Padding a blank line only makes trailing whitespace for the next pass to strip again.
+				var prefixed = entry.Index > first && stripped.Trim().Length > 0 ? indent + stripped : stripped;
 
-			return prefixed + line.Ending;
-		});
+				return prefixed + entry.Line.Ending;
+			});
 
 		return string.Concat(shifted);
 	}
@@ -366,11 +382,12 @@ public static class MemberSyntax
 		Literal literals,
 		string lineEnding,
 		Action<int>? rewritten,
-		int copied)
+		int copied,
+		string? given)
 	{
 		var lines = Split(code);
 		var written = lines.Skip(copied).ToArray();
-		var baseline = Baseline([.. written.Select(line => line.Content)]);
+		var baseline = given ?? Baseline([.. written.Select(line => line.Content)]);
 		var changed = 0;
 
 		var wanted = written.All(line => line.Ending is "" or "\n") ? lineEnding : string.Empty;
@@ -483,40 +500,84 @@ public static class MemberSyntax
 	}
 
 	/// <summary>
-	/// Every line but the first re-indented to <paramref name="continuation"/>: the baseline the
-	/// caller wrote the wrapped lines at taken off, that put on.
+	/// The parameters with the caller's own indentation taken off and the destination's put on: the
+	/// first parameter bare, since what precedes it is a parenthesis rather than a line, and every
+	/// line after it at <paramref name="continuation"/>.
 	/// <para>
-	/// The baseline is read from the first wrapped line rather than from the first line of all,
-	/// because a parameter list opens after the parenthesis and its first line carries no
-	/// indentation of its own to measure. Reading it there is what makes a list written flat, one
-	/// indented relative to itself, and one already indented for the destination the same request,
-	/// rather than three answers a level apart with nothing downstream to say which was meant.
+	/// The baseline comes off before that goes on, and it is read from the lines after the first: a
+	/// list written flat, one indented relative to itself, and one already indented for the
+	/// destination are one request, and only removing it makes them so. Reading it from the first
+	/// line as well would find nothing to take off in the shape where that line is flush and the rest
+	/// are indented under it, and every wrapped line would keep a level it does not want.
 	/// </para>
 	/// <para>
-	/// Blank lines are left blank, since padding one only makes trailing whitespace for the next
-	/// pass to strip again.
+	/// Blank lines stay blank, since padding one only makes trailing whitespace for the next pass to
+	/// strip again.
 	/// </para>
 	/// </summary>
-	private static string ShiftContinuations(string text, string continuation)
+	private static string Arranged(string text, string continuation)
 	{
 		if (continuation.Length == 0) return text;
 
 		var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
-		var baseline = Baseline(lines.Skip(1).ToArray());
 
-		return string.Join(
-			"\n",
-			lines.Select((line, index) =>
-			{
-				if (index == 0 || line.Trim().Length == 0) return line;
+		var first = Array.FindIndex(lines, line => line.Trim().Length > 0);
+		var last = Array.FindLastIndex(lines, line => line.Trim().Length > 0);
 
-				var stripped = baseline.Length > 0 && line.StartsWith(baseline, StringComparison.Ordinal)
-					? line[baseline.Length..]
-					: line;
+		if (first < 0) return text;
+		if (first == last) return lines[first].Trim();
 
-				return continuation + stripped;
-			}));
+		var baseline = Baseline(lines.Skip(first + 1).ToArray());
+
+		var placed = lines[(first + 1)..(last + 1)].Select(line => line.Trim().Length == 0
+			? string.Empty
+			: continuation + Stripped(line, baseline));
+
+		return lines[first].Trim() + "\n" + string.Join("\n", placed);
 	}
+
+	/// <summary>True when the caller wrote the parameters over more than one line.</summary>
+	private static bool Wrapped(string text) =>
+		text.Replace("\r\n", "\n", StringComparison.Ordinal)
+			.Split('\n')
+			.Count(line => line.Trim().Length > 0) > 1;
+
+	/// <summary>
+	/// The list with its first parameter carrying the line break and the indentation the rest of them
+	/// have, so a wrapped list wraps all the way.
+	/// <para>
+	/// Set on the parameter rather than left to the text it was parsed from, because whitespace
+	/// between a parenthesis and the first parameter is the parenthesis's trailing trivia -- and the
+	/// parenthesis a list is parsed with is thrown away, since the one already in the file is the one
+	/// that stays. Nothing carried the first line's layout across that, so it landed wherever the
+	/// file's own parenthesis happened to leave it: inline with its own indentation where that
+	/// parenthesis had no break, and at column zero where it had one. Neither is reported by
+	/// anything, since a continuation line is not a statement and no analyzer has an opinion about
+	/// where one sits.
+	/// </para>
+	/// <para>
+	/// A line feed rather than the destination's ending, because the whitespace pass that runs over
+	/// what was written normalises it, and asking here for an ending this otherwise has no need to
+	/// know is one more thing to get wrong.
+	/// </para>
+	/// </summary>
+	private static SeparatedSyntaxList<ParameterSyntax> Opened(
+		SeparatedSyntaxList<ParameterSyntax> parameters,
+		string continuation)
+	{
+		if (parameters.Count == 0) return parameters;
+
+		var first = parameters[0]
+			.WithLeadingTrivia(SyntaxFactory.LineFeed, SyntaxFactory.Whitespace(continuation));
+
+		return parameters.Replace(parameters[0], first);
+	}
+
+	/// <summary>The line with the indentation it was written at taken off, where it has that.</summary>
+	private static string Stripped(string line, string baseline) =>
+		baseline.Length > 0 && line.StartsWith(baseline, StringComparison.Ordinal)
+			? line[baseline.Length..]
+			: line;
 
 	/// <summary>
 	/// Lines whose leading whitespace belongs to a string rather than to the layout, told apart by

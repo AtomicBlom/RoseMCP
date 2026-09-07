@@ -81,7 +81,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.Empty(manager.Sessions);
 
 			// Detach leaves the target running; the debugger did not take it down.
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "the target survives being attached to and throwing");
 		}
 		finally
 		{
@@ -253,7 +253,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 
 			Assert.Null(session.DetachFailure);
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "detaching leaves the target running");
 		}
 		finally
 		{
@@ -368,7 +368,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.Empty(remaining.Tracepoints);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "the target runs on through the tracepoint");
 		}
 		finally
 		{
@@ -479,7 +479,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.NotNull(marker);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "the target survives an attach across architectures");
 		}
 		finally
 		{
@@ -548,7 +548,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.NotNull(marker);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "the x86 target survives the attach");
 		}
 		finally
 		{
@@ -985,7 +985,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			var padding = properties.Properties.FirstOrDefault(property => property.Name == "Padding");
 
 			Assert.NotNull(padding);
-			Assert.False(string.IsNullOrEmpty(padding!.Value));
+			Assert.False(string.IsNullOrEmpty(padding!.Value), "Padding reports a value, which is what makes the empty one above a finding");
 
 			// And the apply half: a property edit lands and reads back.
 			var markup = Path.Combine(TestToolchain.RepositoryRoot(), "tests", "apps", "winui", "MainWindow.xaml");
@@ -1322,7 +1322,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			var radius = properties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
 			Assert.NotNull(radius);
 			Assert.Equal("8,8,8,8", radius!.Value);
-			Assert.False(radius.ValueUnavailable);
+			Assert.False(radius.ValueUnavailable, "a corner radius of zero is a value rather than an absence");
 
 			var padding = properties.Properties.FirstOrDefault(property => property.Name == "Padding");
 			Assert.NotNull(padding);
@@ -2214,16 +2214,16 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			// arm-time preference versus what decided the pick -- which was not what the code did.
 			var withoutFilter = await session.EnterXamlSelectModeAsync(includeAllElements: false, justMyXaml: false, cancellationToken);
 			Assert.True(withoutFilter.Armed, $"expected select mode to arm; got: {withoutFilter.Detail}");
-			Assert.False(withoutFilter.JustMyXaml);
+			Assert.False(withoutFilter.JustMyXaml, "an unfiltered read reports no just-my-xaml filter");
 
 			// And the toolbar agrees, because it is one switch rather than two pieces of state.
 			var afterDisabling = await session.ReadXamlSelectionAsync(cancellationToken);
-			Assert.False(afterDisabling.JustMyXaml);
+			Assert.False(afterDisabling.JustMyXaml, "disabling the filter turns it off");
 
 			// Nothing picked yet: an empty selection that says so, safe to poll. Armed comes back from
 			// the toolbar's own state file, so this is the provider reporting, not the host remembering.
 			var selection = await session.ReadXamlSelectionAsync(cancellationToken);
-			Assert.False(selection.Selected);
+			Assert.False(selection.Selected, "select mode arms with nothing selected");
 			Assert.True(selection.Armed, $"expected the toolbar to report select mode armed; got: {selection.Detail}");
 			Assert.NotNull(selection.Detail);
 
@@ -2232,12 +2232,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			// a click is a human action and this suite does not drive the mouse on a live desktop -- so
 			// the second is the honest answer, and it is the one that used to be unreachable at all.
 			var cleared = await session.ClearXamlSelectionAsync(cancellationToken);
-			Assert.False(cleared.Selected);
+			Assert.False(cleared.Selected, "deselecting clears the selection");
 			Assert.Contains("nothing", cleared.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
 			// And the toolbar is still there afterwards, because deselecting is not leaving.
 			var afterClearing = await session.ReadXamlSelectionAsync(cancellationToken);
-			Assert.False(afterClearing.Selected);
+			Assert.False(afterClearing.Selected, "clearing again leaves nothing selected");
 
 			// Armed is app-wide state this test turned on, so this test turns it off. Clearing the
 			// pick does not disarm, because they are two pieces of state -- and until the shared app
@@ -2302,7 +2302,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 			// Clearing it works the same as for a click, because it is the same selection (#45).
 			var cleared = await session.ClearXamlSelectionAsync(cancellationToken);
-			Assert.False(cleared.Selected);
+			Assert.False(cleared.Selected, "deselecting clears a selection made by handle");
 			Assert.Contains("cleared", cleared.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
 		}
@@ -2330,7 +2330,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			// A handle nothing owns. The provider resolves it, finds nothing, and declines.
 			var selected = await session.SelectXamlElementAsync(1, cancellationToken);
 
-			Assert.False(selected.Selected);
+			Assert.False(selected.Selected, "a refused selection selects nothing");
 			Assert.NotNull(selected.Detail);
 
 		}
@@ -2386,7 +2386,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			// removal happens -- so by the time the exception has been observed the work is done.
 			var after = await session.ReadXamlSelectionAsync(cancellationToken);
 
-			Assert.False(after.Selected);
+			Assert.False(after.Selected, "an element leaving the tree clears the selection");
 			Assert.Equal(0ul, after.Handle);
 			Assert.Contains("removed from the visual tree", after.Detail ?? string.Empty, StringComparison.Ordinal);
 
@@ -2498,7 +2498,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.NotNull(afterResume);
 
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "a stop holds the target rather than killing it");
 		}
 		finally
 		{
@@ -2549,7 +2549,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
 			await session.ContinueAsync(cancellationToken);
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "the target is still running after a conditional stop");
 		}
 		finally
 		{
@@ -2608,7 +2608,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
 			Assert.True(await session.ContinueAsync(cancellationToken));
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "the target is still running after an evaluation");
 		}
 		finally
 		{
@@ -2664,7 +2664,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			// Release the step hold and confirm the target keeps running.
 			await session.ContinueAsync(cancellationToken);
 			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited);
+			Assert.False(child.HasExited, "the target is still running after a step");
 		}
 		finally
 		{

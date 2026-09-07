@@ -38,7 +38,7 @@ public sealed class ParameterPlanTests
 	{
 		var plan = Plan("string title, string name", "string title, bool loud = false, string name");
 
-		Assert.False(plan.CallSitesUnaffected);
+		Assert.False(plan.CallSitesUnaffected, "a parameter inserted in the middle moves the call sites");
 		Assert.Null(plan.WhyImpossible());
 	}
 
@@ -48,7 +48,7 @@ public sealed class ParameterPlanTests
 		var plan = Plan("string name, bool loud", "string name");
 
 		Assert.Equal(["loud"], plan.Removed);
-		Assert.False(plan.CallSitesUnaffected);
+		Assert.False(plan.CallSitesUnaffected, "a removed parameter moves the call sites");
 	}
 
 	/// <summary>

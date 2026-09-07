@@ -65,7 +65,7 @@ public sealed class BuildPropertiesTests
 		var build = BuildProperties.Select(options, declared);
 
 		Assert.Equal("x64", build.Platform);
-		Assert.False(build.PlatformWasChosen);
+		Assert.False(build.PlatformWasChosen, "a platform the caller named was not chosen by this");
 	}
 
 	/// <summary>
@@ -77,7 +77,7 @@ public sealed class BuildPropertiesTests
 	{
 		var build = BuildProperties.Select(Options(), SolutionConfigurations.None);
 
-		Assert.False(build.PlatformWasChosen);
+		Assert.False(build.PlatformWasChosen, "MSBuild's own default is not a choice this made");
 	}
 
 	/// <summary>

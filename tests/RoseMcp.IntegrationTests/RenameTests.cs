@@ -53,7 +53,7 @@ public sealed class RenameTests
 
 		var result = await RenameAsync(session, fixture, "Product", apply: false);
 
-		Assert.False(result.Applied);
+		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.NotEmpty(result.Diff);
 
 		var after = await File.ReadAllTextAsync(

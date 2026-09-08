@@ -57,11 +57,17 @@ internal sealed record XamlChannelBounds
 	/// number of seconds. A ceiling rather than a set of variables, and a cap rather than an
 	/// assignment: one number is all a caller in a hurry wants, and capping means the variable can
 	/// only ever make a wait shorter, so a typo cannot lengthen the wait it was meant to shorten.
+	/// <para>
+	/// Zero is accepted and means every bound is already spent, which is the only value a test can
+	/// use and be sure of the answer. A small non-zero one cannot: Windows' scheduler granularity is
+	/// about fifteen milliseconds, so a bound of one millisecond is really a wait of fifteen, and an
+	/// injection into a warm app finishes inside that often enough to make the test pass at random.
+	/// </para>
 	/// </summary>
 	public static XamlChannelBounds FromEnvironment()
 	{
 		var configured = Environment.GetEnvironmentVariable(CeilingVariable);
-		if (!double.TryParse(configured, out var seconds) || seconds <= 0) return new XamlChannelBounds();
+		if (!double.TryParse(configured, out var seconds) || seconds < 0) return new XamlChannelBounds();
 
 		var ceiling = TimeSpan.FromSeconds(seconds);
 		var defaults = new XamlChannelBounds();

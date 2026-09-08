@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -430,6 +431,147 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 					// Already gone; nothing to reclaim.
 				}
 			}
+		}
+	}
+
+	/// <summary>
+	/// A live-app host dies with the client that spawned it, and takes a target it launched with it.
+	/// </summary>
+	/// <remarks>
+	/// The half that already held is the exit: closing the host's stdin ends it, in about fifty
+	/// milliseconds, the way it ends a worker. The half that did not is the target. Killing a wedged
+	/// test host left both hosts and both probe apps running, and the probe app is single-instance --
+	/// so the orphan is not a process that costs memory, it is a process the next run's fixture finds
+	/// and mistakes for its own.
+	/// <para>
+	/// Driven against the host binary over a hand-written handshake rather than through
+	/// <see cref="LiveAppSessionManager"/> or an <c>McpClient</c>, and both halves of that are
+	/// load-bearing. The manager always detaches before it closes stdin, and a detach is precisely
+	/// the request this must honour. And disposing an <c>McpClient</c> kills the child's whole
+	/// process tree, which the target is in -- so a test written that way passes against the fix and
+	/// against its absence, which is what the first draft of this did.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task A_live_app_host_takes_the_target_it_launched_when_its_client_goes_away()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		var start = new ProcessStartInfo(LiveAppHostLauncher.ResolveHostPath(ExpectedArchitecture, new BrokerOptions()))
+		{
+			RedirectStandardInput = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+			UseShellExecute = false,
+		};
+
+		foreach (var argument in new[] { "--launch", ProbeTargetPath(), "--description", "orphan probe" })
+		{
+			start.ArgumentList.Add(argument);
+		}
+
+		using var host = Process.Start(start) ?? throw new InvalidOperationException("Could not start the live-app host.");
+
+		// Drained, not ignored: the host logs to stderr, and a full pipe buffer stops the process
+		// this test is waiting on.
+		var draining = host.StandardError.ReadToEndAsync(cancellationToken);
+
+		int targetProcessId;
+		try
+		{
+			await SendAsync(host, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"rose-tests","version":"1"}}}""");
+			await ReadReplyAsync(host, cancellationToken);
+
+			await SendAsync(host, """{"jsonrpc":"2.0","method":"notifications/initialized"}""");
+
+			// The tool name substituted rather than interpolated: a raw literal ending in three braces
+			// cannot also carry an interpolation, and spelling the name again is how a constant stops
+			// being one.
+			await SendAsync(
+				host,
+				"""{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"TOOL","arguments":{}}}"""
+					.Replace("TOOL", ToolNames.LiveAppInfo, StringComparison.Ordinal));
+
+			using var reply = JsonDocument.Parse(await ReadReplyAsync(host, cancellationToken));
+			var info = reply.RootElement.GetProperty("result").GetProperty("structuredContent");
+
+			Assert.Equal(nameof(LiveAppSessionState.Ready), info.GetProperty("state").GetString());
+
+			targetProcessId = info.GetProperty("targetProcessId").GetInt32();
+		}
+		catch
+		{
+			if (!host.HasExited) host.Kill(entireProcessTree: true);
+			throw;
+		}
+
+		// The client going away, and nothing else: stdin closes, no detach was asked for, and nobody
+		// reaches into the process tree.
+		host.StandardInput.Close();
+
+		await AssertGoneAsync(host.Id, "the host", cancellationToken);
+		await AssertGoneAsync(targetProcessId, "the target it launched", cancellationToken);
+
+		await draining;
+	}
+
+	/// <summary>One JSON-RPC frame to a host driven directly, which is newline-delimited and nothing else.</summary>
+	private static async Task SendAsync(Process host, string frame)
+	{
+		await host.StandardInput.WriteLineAsync(frame);
+		await host.StandardInput.FlushAsync();
+	}
+
+	/// <summary>
+	/// The next line of the host's stdout, or a failure saying it never came. Bounded, because the
+	/// alternative to a bound here is a test that hangs a run -- which is the family of defect this
+	/// block of work is about.
+	/// </summary>
+	private static async Task<string> ReadReplyAsync(Process host, CancellationToken cancellationToken)
+	{
+		using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		bounded.CancelAfter(TimeSpan.FromSeconds(60));
+
+		try
+		{
+			return await host.StandardOutput.ReadLineAsync(bounded.Token)
+				?? throw new InvalidOperationException("The live-app host closed its stdout without replying.");
+		}
+		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+		{
+			throw new InvalidOperationException("The live-app host did not reply within 60s.");
+		}
+	}
+
+	/// <summary>
+	/// Waits for a process to be gone, and fails naming which one it was still waiting for. Bounded
+	/// rather than immediate because exiting is not instantaneous, and generously rather than tightly
+	/// because the number is not what is under test.
+	/// </summary>
+	private static async Task AssertGoneAsync(int processId, string what, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+
+		while (DateTime.UtcNow < deadline)
+		{
+			if (!IsRunning(processId)) return;
+
+			await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
+		}
+
+		Assert.Fail($"{what} (pid {processId}) was still running 30s after the client went away.");
+	}
+
+	private static bool IsRunning(int processId)
+	{
+		try
+		{
+			using var process = Process.GetProcessById(processId);
+			return !process.HasExited;
+		}
+		catch (ArgumentException)
+		{
+			return false;
 		}
 	}
 
@@ -955,8 +1097,10 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			await WaitForProbeWindowAsync(child, cancellationToken);
 
 			// Process-wide, and safe because the host reads it at startup and this turn holds the only
-			// gate under which a live-app host is started.
-			using var shortened = new EnvironmentVariable("ROSEMCP_XAML_TIMEOUT_SECONDS", "0.001");
+			// gate under which a live-app host is started. Zero rather than a small number: a bound of one
+			// millisecond is really a wait of fifteen, because that is the scheduler's granularity, and an
+			// injection into a warm app finishes inside that often enough to pass at random.
+			using var shortened = new EnvironmentVariable("ROSEMCP_XAML_TIMEOUT_SECONDS", "0");
 
 			await using var manager = CreateManager();
 

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
@@ -38,6 +39,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	// mode is lifted: it says which build this session ran, and that stays true afterwards.
 	private string? _uwpInstallLocation;
 	private XamlDiagnosticsSession? _xaml;
+
+	// Whether somebody has asked for the target to be left running. A detach is that request, and it
+	// is what separates an ordinary close -- where the app is meant to outlive the session -- from a
+	// client that went away, where a launched target has nobody left to end it.
+	private bool _targetReleased;
 
 	/// <summary>The architecture this host launched as, which is the target's architecture.</summary>
 	public static TargetArchitecture Architecture => RuntimeInformation.ProcessArchitecture switch
@@ -484,6 +490,12 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		{
 			session = _session;
 			targetProcessId = _targetProcessId;
+
+			// Recorded before the attempt rather than after it. Asking to detach is the request to
+			// leave the target running, and it stays that request whether or not the debugger comes
+			// off cleanly -- so a failed detach must not turn into this host ending the app on its
+			// way out.
+			_targetReleased = true;
 		}
 
 		var detached = session?.Detach() ?? true;
@@ -530,14 +542,63 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		session?.Dispose();
 
 		// The XAML sandbox folder belongs to the host that made it, so it goes when the host does.
-		// Nothing used to remove it at all, and the folders accumulated indefinitely -- each with a
-		// copy of the provider and a grant to ALL APPLICATION PACKAGES. Whatever the target app still
-		// holds open cannot go now, because detaching leaves that app running on purpose; the next
-		// host to start sweeps the remainder once this pid is gone (#57).
+		// Whatever the target app still holds open cannot go now, because detaching leaves that app
+		// running on purpose; the next host to start sweeps the remainder once this pid is gone. A
+		// folder that outlives its host accumulates a copy of the provider and a grant to ALL
+		// APPLICATION PACKAGES.
 		xaml?.Dispose();
 
 		DisableUwpDebugging();
+		EndLaunchedTarget();
+
 		return Task.CompletedTask;
+	}
+
+	/// <summary>
+	/// Ends a target this host started, unless somebody asked for it to be left running.
+	/// <para>
+	/// A host dies when its client closes its stdin, the way a worker does -- and a target it
+	/// launched has nobody else to end it. Killing the test host that had wedged left both hosts and
+	/// both probe apps running, and the probe app is single-instance, so the next run's fixture found
+	/// an app it had not launched and could not activate its own. An orphan of this kind is not a
+	/// leaked process that costs memory; it is a process the next run mistakes for its own.
+	/// </para>
+	/// <para>
+	/// Launched only, never attached: this host did not start somebody else's app and has no business
+	/// ending it. And never after a detach has been asked for, because that is the request to leave
+	/// the target running -- asked for rather than succeeded, since a caller who asked has said what
+	/// they want whether or not the debugger came off cleanly.
+	/// </para>
+	/// </summary>
+	private void EndLaunchedTarget()
+	{
+		var launched = options.Target.Kind is LiveAppTargetKind.LaunchExecutable or LiveAppTargetKind.LaunchUwp;
+
+		int? targetProcessId;
+		bool released;
+		lock (_gate)
+		{
+			targetProcessId = _targetProcessId;
+			released = _targetReleased;
+		}
+
+		if (!launched || released || targetProcessId is not { } pid) return;
+
+		try
+		{
+			using var process = Process.GetProcessById(pid);
+			if (process.HasExited) return;
+
+			// The whole tree: a launched target is free to have started children, and leaving those
+			// behind reaches the same end as leaving the target behind.
+			process.Kill(entireProcessTree: true);
+			logger.LogInformation("Ended pid {Pid}, which this host launched and nobody detached from.", pid);
+		}
+		catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or Win32Exception)
+		{
+			// Already gone, or gone between the look and the kill. Both mean the job is done.
+			logger.LogDebug(exception, "Could not end the launched target pid {Pid}.", pid);
+		}
 	}
 
 	private void Establish()

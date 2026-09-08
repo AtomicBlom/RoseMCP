@@ -1235,45 +1235,48 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// it -- so the detach asks over the pipe and reports the answer, while there is still a channel
 	/// to report on.
 	/// </para>
+	/// <para>
+	/// On the classic UWP probe rather than the WinUI one, because the WinUI probe cannot be launched
+	/// reliably on this machine: two of two full runs had it exit at startup with
+	/// REGDB_E_CLASSNOTREG, and the helper that meets that skips. A skip is the one outcome an
+	/// acceptance test must not have, since it reads as green. The tap is shared code, so which
+	/// framework hosts it does not change what is under test here.
+	/// </para>
 	/// </remarks>
 	[Fact]
 	public async Task The_tap_releases_its_interfaces_when_the_session_detaches()
 	{
 		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, cancellationToken);
 
-		using var child = StartProcess(turn.ExecutablePath);
+		var logs = new RecordingLoggerFactory();
+		await using var manager = CreateManager(logs);
 
-		try
-		{
-			await WaitForProbeWindowAsync(child, cancellationToken);
+		var session = await manager.StartAsync(
+			new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = turn.Aumid,
+				Description = "uwp probe (detach)",
+			},
+			cancellationToken);
 
-			var logs = new RecordingLoggerFactory();
-			await using var manager = CreateManager(logs);
+		// The first tick is the signal that the tree is up, and there is no provider in the app --
+		// so nothing holding anything -- until a read has injected one.
+		await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+				&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+			cancellationToken);
 
-			var session = await manager.StartAsync(
-				new LiveAppTarget
-				{
-					Kind = LiveAppTargetKind.AttachProcess,
-					ProcessId = child.Id,
-					Description = "winui probe (detach)",
-				},
-				cancellationToken);
+		var tree = await session.ReadXamlTreeAsync(cancellationToken);
+		Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
 
-			// A read first, or there is no provider in the app and nothing holding anything.
-			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-
-			Assert.Contains(
-				logs.Lines,
-				line => line.Contains("released its diagnostics interfaces on detach", StringComparison.Ordinal));
-		}
-		finally
-		{
-			if (!child.HasExited) child.Kill(entireProcessTree: true);
-		}
+		Assert.Contains(
+			logs.Lines,
+			line => line.Contains("released its diagnostics interfaces on detach", StringComparison.Ordinal));
 	}
 
 	/// <summary>

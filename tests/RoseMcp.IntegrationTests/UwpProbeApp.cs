@@ -42,15 +42,6 @@ public sealed class UwpProbeApp : IAsyncDisposable
 
 	private readonly Lock _gate = new();
 
-	/// <summary>
-	/// One UWP test at a time. Held here rather than by disabling parallelization on the test class,
-	/// which sounds like the same thing and is not: that stops the class running in parallel with
-	/// <em>anything</em>, and it was measured -- one of two hundred and ten other tests overlapped a
-	/// live-app test, so the suite's two halves added up (268s + 109s) instead of overlapping. What
-	/// actually cannot overlap is two tests driving this one app, so that is what is serialised.
-	/// </summary>
-	private readonly SemaphoreSlim _oneAtATime = new(1, 1);
-
 	private bool _msBuildProbed;
 	private string? _msBuild;
 	private bool _registered;
@@ -104,24 +95,23 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	public string? LayoutDirectory => _layoutDirectory;
 
 	/// <summary>
-	/// Takes the app for one test: waits its turn, makes sure everything is built and registered, and
-	/// hands back the AUMID to launch. Disposing the lease ends the app and lets the next test in.
+	/// Takes the app for one test: makes sure everything is built and registered, and hands back the
+	/// AUMID to launch. Disposing the lease ends the app.
 	/// <para>
-	/// A lease rather than a getter plus a <c>finally</c>, because the two have to go together. The
-	/// turn is only safely held while the app is nobody else's, and the thing that ends the app is the
-	/// thing that ends the turn.
+	/// A lease rather than a getter plus a <c>finally</c>, because the two have to go together: the
+	/// app is only safely the caller's while nobody else holds it, and the thing that ends the app is
+	/// the thing that ends the lease.
 	/// </para>
 	/// </summary>
 	/// <remarks>
-	/// The unconverted shape, kept while tests move to the phases one at a time. It goes through the
-	/// same gate as everything else, and that is not tidiness: a lease of its own would be a second
-	/// lock over one single-instance app, so an old-style test and a phase B test would each believe
-	/// they had it. That is exactly what happened -- a run wedged with the host alive and the app gone,
-	/// because one test launched its own instance while another was using the shared one.
+	/// The unconverted shape, kept while tests move to the phases one at a time. A caller declares
+	/// <c>[ClassicOwnApp]</c> exactly as a <see cref="TakeAppAsync"/> caller does, so the two cannot
+	/// overlap: a lease with exclusion of its own would be a second lock over one single-instance app,
+	/// and two locks over one shared thing is not two locks, it is none.
 	/// </remarks>
 	public async Task<Lease> LeaseAsync(bool needsXamlProvider, CancellationToken cancellationToken)
 	{
-		var aumid = await EnterAsync(writer: true, needsXamlProvider, cancellationToken);
+		var aumid = await EnterAsync(needsXamlProvider, cancellationToken);
 
 		// It launches its own app, so the shared one has to go first, exactly as phase A does.
 		await CloseSharedAsync();
@@ -131,9 +121,9 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// One test's turn with the app. Disposing it ends the app and then releases the turn, in that
-	/// order: the next test launches by AUMID, and a surviving instance would be activated rather
-	/// than started under the debugger, so the turn must not be handed on while the app is still up.
+	/// One test's turn with the app. Disposing it ends the app, so the next test to launch by AUMID
+	/// starts a process rather than activating this one -- which would leave a from-birth attach with
+	/// nothing to attach to.
 	/// <para>
 	/// Each test also stops the app in its own <c>finally</c>, which is what ends it promptly rather
 	/// than at scope exit. Stopping is idempotent, so this is the backstop for the case that finally
@@ -144,11 +134,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	{
 		public string Aumid { get; } = aumid;
 
-		public void Dispose()
-		{
-			probe.StopApp();
-			probe._phases.ReleaseWriter();
-		}
+		public void Dispose() => probe.StopApp();
 	}
 
 	// ---- The shared app, and the three ways a test can ask for it -------------------------------
@@ -169,6 +155,12 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	//                  tests that build elements, work on them and take them away. These may overlap
 	//                  each other.
 	//
+	// Which of those a test gets is declared, not requested: [ClassicOwnApp], [ClassicSession] and
+	// [ClassicSlot(n)] in ProbeConstraints.cs are what keep them apart and what decide the order they
+	// are admitted in. Nothing here excludes anybody, because a lock cannot -- it can serialise
+	// arrivals but not choose which to admit first, and admitting an app-ending test before a shared
+	// one is what made the app launch seven times where once would do.
+	//
 	// Overlapping is allowed for slots rather than pursued: every XAML request through one host is
 	// serialised behind XamlDiagnosticsSession's lock (#93), and behind that a single UI thread, so
 	// two slot tests cannot have their XAML work run at the same time however they are scheduled.
@@ -178,7 +170,6 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// <summary>How many slots the probe's markup declares. Named Slot0..Slot15 under Scratch.</summary>
 	private const int SlotCount = 16;
 
-	private readonly PhaseGate _phases = new();
 	private readonly Stack<int> _freeSlots = new(Enumerable.Range(0, SlotCount).Reverse());
 
 	/// <summary>
@@ -189,8 +180,8 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// The second one kills what the first has just launched. Whoever loses that race holds a session
 	/// whose process is gone, and the next XAML call spends twenty seconds discovering it and reports
 	/// "the target's XAML diagnostics endpoint did not appear", which describes the corpse rather than
-	/// the killing. The phase gate cannot cover this: readers are meant to overlap, and the relaunch
-	/// is the exception hiding among them.
+	/// the killing. The constraint keys cannot cover this: slot tests hold different keys precisely so
+	/// they overlap, and the relaunch is the exception hiding among them.
 	/// </summary>
 	private readonly SemaphoreSlim _relaunch = new(1, 1);
 
@@ -203,22 +194,10 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// </summary>
 	public async Task<AppTurn> TakeAppAsync(bool needsXamlProvider, CancellationToken cancellationToken)
 	{
-		var aumid = await EnterAsync(writer: true, needsXamlProvider, cancellationToken);
+		var aumid = await EnterAsync(needsXamlProvider, cancellationToken);
 
-		// Everything between taking the gate and handing back a turn has to give the gate back if it
-		// throws. Only the turn's disposal releases it otherwise, and a turn that was never returned is
-		// never disposed -- so one launch that will not come up Ready stops being one failed test and
-		// becomes a suite with no output, which is the shape that is hardest to read.
-		try
-		{
-			await CloseSharedAsync();
-			await StopAppAndWaitAsync();
-		}
-		catch
-		{
-			_phases.ReleaseWriter();
-			throw;
-		}
+		await CloseSharedAsync();
+		await StopAppAndWaitAsync();
 
 		return new AppTurn(this, aumid);
 	}
@@ -229,17 +208,9 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// </summary>
 	public async Task<SessionTurn> TakeSessionAsync(CancellationToken cancellationToken)
 	{
-		await EnterAsync(writer: true, needsXamlProvider: true, cancellationToken);
+		await EnterAsync(needsXamlProvider: true, cancellationToken);
 
-		try
-		{
-			return new SessionTurn(this, await SharedSessionAsync(cancellationToken));
-		}
-		catch
-		{
-			_phases.ReleaseWriter();
-			throw;
-		}
+		return new SessionTurn(await SharedSessionAsync(cancellationToken));
 	}
 
 	/// <summary>
@@ -248,27 +219,23 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// declares it.
 	/// </summary>
 	/// <param name="cancellationToken">The calling test's token.</param>
-	/// <param name="exclusive">
-	/// True to take the app to yourself as well as the slot, for an edit whose correctness depends on
-	/// the rest of the tree holding still. No test needs it today. The removal test did, or was
-	/// believed to: it passed alone and failed in company, and exclusivity was given to it as a fix
-	/// pending an explanation. The explanation turned out to be the fixture emitting its own cleanup
-	/// removals in document order so that each renumbered the next (D36), which exclusivity never
-	/// addressed and only hid. Kept because the capability is real and the next test to want it should
-	/// not have to rebuild it -- but a test reaching for this should say what it is protecting against,
-	/// since last time the honest answer was "nothing, the bug is elsewhere".
-	/// </param>
-	public async Task<SlotTurn> TakeSlotAsync(CancellationToken cancellationToken, bool exclusive = false)
+	/// <remarks>
+	/// The scratch slot is allocated here rather than named by the caller's <c>[ClassicSlot(n)]</c>,
+	/// which addresses a different thing: the attribute's index is a constraint key, and its job is
+	/// only to say "this test overlaps other slot tests". Two tests given the same index lose their
+	/// overlap, which is slow. Two tests given the same *slot* would build elements in one container
+	/// and renumber each other's addresses, which is wrong -- so the container is handed out by the
+	/// fixture, which is the only party that knows what is free.
+	/// </remarks>
+	public async Task<SlotTurn> TakeSlotAsync(CancellationToken cancellationToken)
 	{
-		await EnterAsync(writer: exclusive, needsXamlProvider: true, cancellationToken);
+		await EnterAsync(needsXamlProvider: true, cancellationToken);
 
 		int slot;
 		lock (_gate)
 		{
 			if (_freeSlots.Count == 0)
 			{
-				if (exclusive) _phases.ReleaseWriter();
-				else _phases.ReleaseReader();
 				throw new InvalidOperationException(
 					$"Every one of the {SlotCount} scratch slots is in use. Add more <Grid x:Name=\"SlotN\" /> to "
 						+ "the probe's Scratch panel and raise SlotCount; running out is a fact about how many "
@@ -280,44 +247,31 @@ public sealed class UwpProbeApp : IAsyncDisposable
 
 		try
 		{
-			return new SlotTurn(this, await SharedSessionAsync(cancellationToken), slot, exclusive);
+			return new SlotTurn(this, await SharedSessionAsync(cancellationToken), slot);
 		}
 		catch
 		{
-			// The slot goes back as well as the gate. A slot leaked here is not fatal on its own -- there
-			// are sixteen -- but it is silent, and it turns "the app would not start" into "every one of
-			// the 16 scratch slots is in use" several tests later, which names the wrong problem.
+			// A slot leaked here is not fatal on its own -- there are sixteen -- but it is silent, and it
+			// turns "the app would not start" into "every one of the 16 scratch slots is in use" several
+			// tests later, which names the wrong problem.
 			lock (_gate)
 			{
 				_freeSlots.Push(slot);
 			}
 
-			if (exclusive) _phases.ReleaseWriter();
-			else _phases.ReleaseReader();
 			throw;
 		}
 	}
 
-	/// <summary>Common entry: make sure everything is built, then take the phase gate.</summary>
-	private async Task<string> EnterAsync(bool writer, bool needsXamlProvider, CancellationToken cancellationToken)
+	/// <summary>Common entry: make sure everything the calling test needs is built and registered.</summary>
+	private async Task<string> EnterAsync(bool needsXamlProvider, CancellationToken cancellationToken)
 	{
-		// Built before the gate is taken, and under its own lock, so a half-minute of MSBuild is not
-		// done while holding a gate every other test is queued on.
-		string aumid;
-		await _oneAtATime.WaitAsync(cancellationToken);
-		try
-		{
-			aumid = AumidCore(needsXamlProvider);
-		}
-		finally
-		{
-			_oneAtATime.Release();
-		}
+		// Synchronous, and under AumidCore's own lock. Awaited only so callers read the same either way
+		// and so the token has somewhere to be observed.
+		await Task.Yield();
+		cancellationToken.ThrowIfCancellationRequested();
 
-		if (writer) await _phases.EnterWriterAsync(cancellationToken);
-		else await _phases.EnterReaderAsync(cancellationToken);
-
-		return aumid;
+		return AumidCore(needsXamlProvider);
 	}
 
 	/// <summary>
@@ -471,13 +425,12 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			// The app this test started goes with it, so the next shared session starts a fresh one
 			// rather than activating this.
 			probe.StopApp();
-			probe._phases.ReleaseWriter();
 			return ValueTask.CompletedTask;
 		}
 	}
 
 	/// <summary>Phase B: the shared app, to this test alone, handed back as it was found.</summary>
-	public sealed class SessionTurn(UwpProbeApp probe, LiveAppSession session) : IAsyncDisposable
+	public sealed class SessionTurn(LiveAppSession session) : IAsyncDisposable
 	{
 		public LiveAppSession Session { get; } = session;
 
@@ -493,34 +446,27 @@ public sealed class UwpProbeApp : IAsyncDisposable
 		/// </summary>
 		public async ValueTask DisposeAsync()
 		{
-			try
-			{
-				// Bounded, because this runs after the test's own assertions and a check that can hang
-				// turns a failing test into a hanging suite -- which is what it did: fifteen minutes
-				// with no output, against a run that takes three.
-				using var bounded = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-				var left = await Session.ReadXamlSelectionAsync(bounded.Token);
+			// Bounded, because this runs after the test's own assertions and a check that can hang
+			// turns a failing test into a hanging suite -- which is what it did: fifteen minutes
+			// with no output, against a run that takes three.
+			using var bounded = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+			var left = await Session.ReadXamlSelectionAsync(bounded.Token);
 
-				// Best effort at putting it right, so one offending test does not cascade. It still
-				// fails below: cleaning up after it is not the same as it having been clean.
-				if (left.Selected || left.Armed) await Session.ClearXamlSelectionAsync(bounded.Token);
+			// Best effort at putting it right, so one offending test does not cascade. It still
+			// fails below: cleaning up after it is not the same as it having been clean.
+			if (left.Selected || left.Armed) await Session.ClearXamlSelectionAsync(bounded.Token);
 
-				Assert.False(
-					left.Selected,
-					$"this test left {left.Name ?? left.Address ?? "an element"} selected. A phase B test holds the "
-						+ "whole app, so it has to hand it back unselected.");
+			Assert.False(
+				left.Selected,
+				$"this test left {left.Name ?? left.Address ?? "an element"} selected. A phase B test holds the "
+					+ "whole app, so it has to hand it back unselected.");
 
-				Assert.False(left.Armed, "this test left select mode armed. Disarm it before the test ends.");
-			}
-			finally
-			{
-				probe._phases.ReleaseWriter();
-			}
+			Assert.False(left.Armed, "this test left select mode armed. Disarm it before the test ends.");
 		}
 	}
 
 	/// <summary>Phase C: the shared app, plus one empty slot this test owns.</summary>
-	public sealed class SlotTurn(UwpProbeApp probe, LiveAppSession session, int slot, bool exclusive) : IAsyncDisposable
+	public sealed class SlotTurn(UwpProbeApp probe, LiveAppSession session, int slot) : IAsyncDisposable
 	{
 		public LiveAppSession Session { get; } = session;
 
@@ -558,9 +504,6 @@ public sealed class UwpProbeApp : IAsyncDisposable
 				{
 					probe._freeSlots.Push(slot);
 				}
-
-				if (exclusive) probe._phases.ReleaseWriter();
-				else probe._phases.ReleaseReader();
 			}
 		}
 	}
@@ -617,71 +560,6 @@ public sealed class UwpProbeApp : IAsyncDisposable
 		return dot >= 0 && dot < typeName.Length - 1 ? typeName[(dot + 1)..] : typeName;
 	}
 
-	/// <summary>
-	/// Lets phase A and phase B tests have the app to themselves while phase C tests may overlap each
-	/// other. A reader/writer gate rather than one lock, written out here because .NET has no
-	/// asynchronous one and a synchronous lock held across a test would block xUnit's threads.
-	/// </summary>
-	private sealed class PhaseGate
-	{
-		private readonly SemaphoreSlim _turnstile = new(1, 1);
-		private readonly SemaphoreSlim _noReaders = new(1, 1);
-		private readonly Lock _count = new();
-		private int _readers;
-
-		public async Task EnterWriterAsync(CancellationToken cancellationToken)
-		{
-			// The turnstile first, which also stops new readers arriving, then wait for the readers
-			// already inside to leave.
-			await _turnstile.WaitAsync(cancellationToken);
-			try
-			{
-				await _noReaders.WaitAsync(cancellationToken);
-			}
-			catch
-			{
-				_turnstile.Release();
-				throw;
-			}
-		}
-
-		public void ReleaseWriter()
-		{
-			_noReaders.Release();
-			_turnstile.Release();
-		}
-
-		public async Task EnterReaderAsync(CancellationToken cancellationToken)
-		{
-			await _turnstile.WaitAsync(cancellationToken);
-			try
-			{
-				var first = false;
-				lock (_count)
-				{
-					first = ++_readers == 1;
-				}
-
-				// Only the first reader claims the no-readers token; the rest are already covered by
-				// it, which is what lets them run together.
-				if (first) await _noReaders.WaitAsync(cancellationToken);
-			}
-			finally
-			{
-				_turnstile.Release();
-			}
-		}
-
-		public void ReleaseReader()
-		{
-			lock (_count)
-			{
-				if (--_readers > 0) return;
-			}
-
-			_noReaders.Release();
-		}
-	}
 	/// <summary>
 	/// Ends the running app, so the next test's launch starts a fresh process rather than activating
 	/// this one.

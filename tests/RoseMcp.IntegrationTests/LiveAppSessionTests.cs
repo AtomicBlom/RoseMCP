@@ -713,6 +713,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// build toolchain or app registration is not available, so the suite stays green without them.
 	/// </summary>
 	[Test]
+	[ClassicOwnApp]
 	public async Task Launches_and_debugs_the_classic_uwp_probe_app()
 	{
 		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current!.Execution.CancellationToken);
@@ -758,6 +759,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// it, so catching it proves the resume stub attached from the runtime's first breath.
 	/// </summary>
 	[Test]
+	[ClassicOwnApp]
 	public async Task Captures_the_classic_uwp_probe_apps_startup_from_birth()
 	{
 		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current!.Execution.CancellationToken);
@@ -807,10 +809,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[WinUiProbe]
 	public async Task Launches_and_debugs_the_unpackaged_winui_probe_app()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: false, cancellationToken);
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: false, cancellationToken);
 
 		await using var manager = CreateManager();
 
@@ -849,10 +852,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[WinUiProbe]
 	public async Task Launches_and_debugs_the_packaged_winui_probe_app()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: true, needsXamlProvider: false, cancellationToken);
+		var turn = await winui.TakeAsync(packaged: true, needsXamlProvider: false, cancellationToken);
 
 		await using var manager = CreateManager();
 
@@ -895,10 +899,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[WinUiProbe]
 	public async Task Reads_the_xaml_tree_of_a_winui_app_it_launched()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		await using var manager = CreateManager();
 
@@ -956,10 +961,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// being assumed to follow from the launched one.
 	/// </remarks>
 	[Test]
+	[WinUiProbe]
 	public async Task Reads_the_xaml_tree_of_a_winui_app_it_attached_to()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		// Started outside the session on purpose: nothing about this process was arranged for us.
 		using var child = StartProcess(turn.ExecutablePath);
@@ -1015,10 +1021,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[WinUiProbe]
 	public async Task Reads_the_xaml_tree_again_after_the_first_session_closed_the_pipe()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		using var child = StartProcess(turn.ExecutablePath);
 
@@ -1093,10 +1100,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[WinUiProbe]
 	public async Task Bounds_the_wait_on_the_xaml_injection_call_and_names_the_channel()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		using var child = StartProcess(turn.ExecutablePath);
 
@@ -1154,10 +1162,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[WinUiProbe]
 	public async Task The_second_xaml_read_of_a_session_is_served_over_the_pipe()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		using var child = StartProcess(turn.ExecutablePath);
 
@@ -1214,6 +1223,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[ClassicSession]
 	public async Task A_uwp_xaml_read_reaches_the_pipe_from_inside_the_app_container()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1252,6 +1262,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[ClassicOwnApp]
 	public async Task The_tap_releases_its_interfaces_when_the_session_detaches()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1305,10 +1316,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[WinUiProbe]
 	public async Task Reads_and_edits_properties_on_a_winui_app()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		using var child = StartProcess(turn.ExecutablePath);
 		await using var manager = CreateManager();
@@ -1398,6 +1410,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[ModernUwpProbe]
 	public async Task Launches_and_debugs_the_modern_uwp_probe_app()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1453,6 +1466,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </remarks>
 	[Test]
+	[ModernUwpProbe]
 	public async Task Reads_the_xaml_tree_of_a_modern_uwp_app()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1515,6 +1529,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// broker. Skips where the UWP build toolchain or the C++ toolset is absent.
 	/// </summary>
 	[Test]
+	[ClassicSlot(0)]
 	public async Task Reads_the_live_visual_tree_of_the_classic_uwp_probe()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1577,6 +1592,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// all rides through the host to the broker. Skips where the UWP or C++ toolchain is absent.
 	/// </summary>
 	[Test]
+	[ClassicSlot(1)]
 	public async Task Reads_the_properties_of_a_xaml_element()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1660,6 +1676,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicSlot(2)]
 	public async Task Reads_a_corner_radius_the_framework_renders_as_nothing()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1731,6 +1748,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicOwnApp]
 	public async Task Names_the_install_location_a_uwp_session_activated()
 	{
 		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
@@ -1805,6 +1823,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// Skips where the UWP or C++ toolchain is absent.
 	/// </summary>
 	[Test]
+	[ClassicSlot(3)]
 	public async Task Live_edits_a_property_on_the_uwp_probe()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1877,6 +1896,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicSlot(4)]
 	public async Task Live_edits_an_unnamed_element_by_its_address()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -1936,6 +1956,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicSlot(5)]
 	public async Task Removes_an_element_from_the_live_tree()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -2003,6 +2024,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicOwnApp]
 	public async Task Adds_removes_and_retypes_in_one_apply()
 	{
 		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
@@ -2098,6 +2120,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// never been asked.
 	/// </summary>
 	[Test]
+	[ClassicOwnApp]
 	public async Task Sets_an_attached_property_on_the_live_tree()
 	{
 		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
@@ -2169,6 +2192,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicSession]
 	public async Task Replaces_a_keyed_resource_on_the_live_tree()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -2250,6 +2274,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicOwnApp]
 	public async Task Applies_successive_file_edits_to_the_running_app()
 	{
 		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
@@ -2363,6 +2388,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicSession]
 	public async Task Serves_two_xaml_calls_in_flight_together()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -2454,6 +2480,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicSlot(6)]
 	public async Task A_second_properties_read_reports_what_reading_the_first_created()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -2543,6 +2570,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// state rather than driving the mouse on a live desktop.
 	/// </summary>
 	[Test]
+	[ClassicSession]
 	public async Task Arms_interactive_select_mode_on_the_classic_uwp_probe()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -2628,6 +2656,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicSession]
 	public async Task Selects_a_xaml_element_by_handle_without_a_click()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -2680,6 +2709,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// a sentence rather than drawing an outline round nothing.
 	/// </summary>
 	[Test]
+	[ClassicSession]
 	public async Task Refuses_to_select_a_handle_that_is_not_an_element()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -2722,6 +2752,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicSession]
 	public async Task Clears_a_selection_whose_element_leaves_the_tree()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -3132,6 +3163,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </summary>
 	[Test]
+	[ClassicOwnApp]
 	public async Task Refuses_to_launch_a_uwp_app_that_is_already_running()
 	{
 		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current!.Execution.CancellationToken);

@@ -30,13 +30,6 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 {
 	private const string PackageName = "RoseMcp.ProbeApp.WinUi";
 
-	/// <summary>
-	/// One WinUI test at a time. The packaged shape is single-instance, and the unpackaged tests each
-	/// launch and debug their own process -- cheap to serialise, and it keeps a failure in one from
-	/// presenting as a mystery in another.
-	/// </summary>
-	private readonly SemaphoreSlim _oneAtATime = new(1, 1);
-
 	private readonly Lock _gate = new();
 
 	/// <summary>
@@ -49,8 +42,14 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	private string? _aumid;
 
 	/// <summary>
-	/// Takes the WinUI probe for one test: waits its turn, makes sure everything it needs is built,
-	/// and hands back where it was built. Skips the calling test where the machine cannot provide it.
+	/// Takes the WinUI probe for one test: makes sure everything it needs is built, and hands back
+	/// where it was built. Skips the calling test where the machine cannot provide it.
+	/// <para>
+	/// Nothing here serialises the tests. A caller declares <c>[WinUiProbe]</c>, which is a constraint
+	/// key nothing else in the suite holds, so WinUI tests queue behind each other and run alongside
+	/// the classic and modern probes -- different packages, different processes, nothing shared to
+	/// contend for. The shared build steps <see cref="Prepare"/> reaches are locked where they live.
+	/// </para>
 	/// </summary>
 	/// <param name="packaged">Which shape to build. The packaged one is also registered.</param>
 	/// <param name="needsXamlProvider">
@@ -58,21 +57,13 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	/// as the app. False for the two that only launch and debug it, so a machine with the .NET SDK
 	/// but no C++ toolset still runs those.
 	/// </param>
-	/// <param name="cancellationToken">Cancels waiting for the turn.</param>
+	/// <param name="cancellationToken">Observed before any building starts.</param>
 	public async Task<Turn> TakeAsync(bool packaged, bool needsXamlProvider, CancellationToken cancellationToken)
 	{
-		await _oneAtATime.WaitAsync(cancellationToken);
+		await Task.Yield();
+		cancellationToken.ThrowIfCancellationRequested();
 
-		try
-		{
-			return new Turn(this, Prepare(packaged, needsXamlProvider), packaged ? _aumid : null);
-		}
-		catch
-		{
-			// A skip throws, and a turn nobody holds must not be left locked.
-			_oneAtATime.Release();
-			throw;
-		}
+		return new Turn(Prepare(packaged, needsXamlProvider), packaged ? _aumid : null);
 	}
 
 	private string Prepare(bool packaged, bool needsXamlProvider)
@@ -212,7 +203,7 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	/// One test's turn with the probe. <see cref="Directory"/> is where the app was built;
 	/// <see cref="Aumid"/> is set only for the packaged shape.
 	/// </summary>
-	public sealed class Turn(WinUiProbeApp probe, string directory, string? aumid) : IDisposable
+	public sealed class Turn(string directory, string? aumid)
 	{
 		public string Directory => directory;
 
@@ -220,8 +211,6 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 
 		/// <summary>The probe executable, which is what the unpackaged tests launch and attach to.</summary>
 		public string ExecutablePath => Path.Combine(directory, "Rose.ProbeApp.WinUi.exe");
-
-		public void Dispose() => probe._oneAtATime.Release();
 	}
 
 	/// <summary>

@@ -233,7 +233,17 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		// Carried on every page, because this is the answer that looks right when it is not: the
 		// nodes below name source files, and a stale registration makes those files the wrong ones.
-		return new LiveXamlTree { Nodes = page, Total = matched.Count, InstallLocation = installLocation };
+		//
+		// The channel is carried for the same reason, and it is easy to lose here: paging builds a new
+		// result rather than narrowing the one it was given, so a field the read below filled and this
+		// line does not mention is dropped silently and reads as `not reported`.
+		return new LiveXamlTree
+		{
+			Nodes = page,
+			Total = matched.Count,
+			InstallLocation = installLocation,
+			Channel = tree.Channel,
+		};
 	}
 
 	/// <summary>An element and all its descendants, from the flat node list, by walking parent handles.</summary>

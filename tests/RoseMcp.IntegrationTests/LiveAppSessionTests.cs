@@ -1129,6 +1129,97 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>
+	/// The provider pipe serves the reads it says it does: the first read of a session injects and
+	/// answers through the work folder, and every read after it is a message to the resident reader.
+	/// </summary>
+	/// <remarks>
+	/// The pipe connected, greeted, and then served nothing, unchanged for two releases -- invisible
+	/// because both channels return the same tree, so every test that asserted the tree passed
+	/// either way. The result names its channel now, which is the only thing that makes this
+	/// assertable at all.
+	/// <para>
+	/// The first read cannot use the pipe and that is by construction rather than a shortcoming: the
+	/// provider is not in the app until something injects it, and the pipe name travels in that
+	/// injection's initialisation data. So the first read is asserted as the work folder, which also
+	/// keeps the second assertion honest -- a session that reported "pipe" for both would mean the
+	/// field was not being read off the path actually taken.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task The_second_xaml_read_of_a_session_is_served_over_the_pipe()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+
+		try
+		{
+			await WaitForProbeWindowAsync(child, cancellationToken);
+
+			await using var manager = CreateManager();
+
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "winui probe (channel)",
+				},
+				cancellationToken);
+
+			var first = await session.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.True(first.Detail is null, $"expected a tree, got detail: {first.Detail}");
+			Assert.Equal("work folder", first.Channel);
+
+			var second = await session.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.True(second.Detail is null, $"expected a tree, got detail: {second.Detail}");
+			Assert.Equal("pipe", second.Channel);
+
+			// The same tree either way, which is what made the pipe's silence invisible.
+			Assert.Contains(second.Nodes, node => node.Name == "RootGrid");
+			Assert.Equal(first.Count, second.Count);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// The pipe serves a classic UWP target too, which is the case that can genuinely fail: the
+	/// provider runs inside an AppContainer and reaches the pipe only through the two SIDs the host
+	/// grants on it.
+	/// </summary>
+	/// <remarks>
+	/// The WinUI probe cannot answer this. Unpackaged WinUI 3 is in nobody's AppContainer, so its
+	/// end of the pipe is an ordinary CreateFile that would succeed with no grants at all -- which
+	/// makes it the wrong target to conclude anything about the ACL from.
+	/// <para>
+	/// Two reads, and only the second is asserted. The shared app is shared, so whether this
+	/// session's first read has already happened is not something one test gets to know; reading
+	/// twice makes the second a second read either way.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task A_uwp_xaml_read_reaches_the_pipe_from_inside_the_app_container()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+
+		await turn.Session.ReadXamlTreeAsync(cancellationToken);
+
+		var second = await turn.Session.ReadXamlTreeAsync(cancellationToken);
+
+		Assert.True(second.Detail is null, $"expected a tree, got detail: {second.Detail}");
+		Assert.Equal("pipe", second.Channel);
+	}
+
+	/// <summary>
 	/// Reading and editing properties on WinUI 3 (#115), which nothing covered.
 	/// </summary>
 	/// <remarks>

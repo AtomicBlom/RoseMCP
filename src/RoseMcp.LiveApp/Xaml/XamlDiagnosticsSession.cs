@@ -37,6 +37,14 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// HRESULT_FROM_WIN32(ERROR_NOT_FOUND): the well-known diagnostics endpoint is not there yet.
 	private const int ErrorNotFound = unchecked((int)0x80070490);
 
+	// What a tree read reports about which channel answered. Named constants rather than literals at
+	// the two return sites, because the whole value of the field is that a test can tell the two
+	// apart, and a test comparing against a literal spelled differently in one place would pass
+	// while reporting the wrong channel.
+	private const string PipeChannel = "pipe";
+
+	private const string WorkFolderChannel = "work folder";
+
 	// Every wait on the provider, and the sentence each produces when it expires. Long enough for a
 	// XAML app to get its first tree up, short enough that a target which genuinely has no XAML UI
 	// does not hold a tool call for an uncomfortable length of time -- and bounded without exception,
@@ -120,7 +128,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			var fromPipe = ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
 			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", fromPipe.Count, pid);
-			return new LiveXamlTree { Nodes = fromPipe };
+			return new LiveXamlTree { Nodes = fromPipe, Channel = PipeChannel };
 		}
 
 		var (workDir, error) = Inject(pid, "tree");
@@ -135,7 +143,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			var nodes = ParseTree(File.ReadLines(Path.Combine(workDir!, "tree.tsv"), Encoding.UTF8));
 			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid}.", nodes.Count, pid);
-			return new LiveXamlTree { Nodes = nodes };
+			return new LiveXamlTree { Nodes = nodes, Channel = WorkFolderChannel };
 		}
 		catch (Exception exception)
 		{

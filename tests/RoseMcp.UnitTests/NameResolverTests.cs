@@ -6,7 +6,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class NameResolverTests
 {
-	[Fact]
+	[Test]
 	public void Takes_a_bare_name_as_it_stands()
 	{
 		var (name, arity) = NameResolver.Parse("Encoding");
@@ -19,9 +19,9 @@ public sealed class NameResolverTests
 	/// The first segment, not the last: what failed to resolve in <c>Encoding.UTF8</c> is
 	/// <c>Encoding</c>, and searching for <c>UTF8</c> would find nothing and say so confidently.
 	/// </summary>
-	[Theory]
-	[InlineData("Encoding.UTF8", "Encoding")]
-	[InlineData("Path.Combine", "Path")]
+	[Test]
+	[Arguments("Encoding.UTF8", "Encoding")]
+	[Arguments("Path.Combine", "Path")]
 	public void Takes_the_first_segment_of_a_dotted_name(string supplied, string expected) =>
 		Assert.Equal(expected, NameResolver.Parse(supplied).Name);
 
@@ -29,11 +29,11 @@ public sealed class NameResolverTests
 	/// Counted at the top level only, so a type argument that is itself generic does not inflate
 	/// the count and rule out the type that would have resolved.
 	/// </summary>
-	[Theory]
-	[InlineData("List<int>", "List", 1)]
-	[InlineData("Dictionary<string, int>", "Dictionary", 2)]
-	[InlineData("Dictionary<string, List<int>>", "Dictionary", 2)]
-	[InlineData("Func<Dictionary<int, string>, Task<bool>, int>", "Func", 3)]
+	[Test]
+	[Arguments("List<int>", "List", 1)]
+	[Arguments("Dictionary<string, int>", "Dictionary", 2)]
+	[Arguments("Dictionary<string, List<int>>", "Dictionary", 2)]
+	[Arguments("Func<Dictionary<int, string>, Task<bool>, int>", "Func", 3)]
 	public void Reads_the_arity_off_the_type_arguments(string supplied, string expected, int arity)
 	{
 		var parsed = NameResolver.Parse(supplied);
@@ -47,9 +47,9 @@ public sealed class NameResolverTests
 	/// type taking one argument, not of a type taking none, and counting nothing there would send
 	/// the search looking for a non-generic type that does not exist.
 	/// </summary>
-	[Theory]
-	[InlineData("List<>", 1)]
-	[InlineData("Dictionary<,>", 2)]
+	[Test]
+	[Arguments("List<>", 1)]
+	[Arguments("Dictionary<,>", 2)]
 	public void Counts_an_unbound_generic_by_its_commas(string supplied, int arity) =>
 		Assert.Equal(arity, NameResolver.Parse(supplied).Arity);
 
@@ -57,7 +57,7 @@ public sealed class NameResolverTests
 	/// A caller that says how the name is used outranks the spelling, because the spelling is
 	/// whatever they happened to paste and the arity is something they had to mean.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_an_arity_the_caller_supplied()
 	{
 		Assert.Equal(3, NameResolver.Parse("List<int>", 3).Arity);
@@ -69,10 +69,10 @@ public sealed class NameResolverTests
 	/// arguments, so splitting on the first dot before taking the arguments off would search for
 	/// <c>List&lt;Foo</c> -- a name nothing is called, reported as confidently as any other.
 	/// </summary>
-	[Theory]
-	[InlineData("  ImmutableArray<int>.Empty  ", "ImmutableArray", 1)]
-	[InlineData("List<Foo.Bar>", "List", 1)]
-	[InlineData("Dictionary<string, Foo.Bar>.Entry", "Dictionary", 2)]
+	[Test]
+	[Arguments("  ImmutableArray<int>.Empty  ", "ImmutableArray", 1)]
+	[Arguments("List<Foo.Bar>", "List", 1)]
+	[Arguments("Dictionary<string, Foo.Bar>.Entry", "Dictionary", 2)]
 	public void Handles_type_arguments_and_qualification_together(string supplied, string expected, int arity)
 	{
 		var (name, parsed) = NameResolver.Parse(supplied);

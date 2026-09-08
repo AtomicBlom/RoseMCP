@@ -56,7 +56,7 @@ public sealed class XamlStackModulesTests
 	/// in a family of three, it is the only one of them that is not a XAML framework, and it reads at
 	/// a glance like the WinUI signal.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Recognises_uwp_on_modern_dotnet()
 	{
 		var (stack, evidence) = XamlStackModules.Identify(ModernUwp);
@@ -73,7 +73,7 @@ public sealed class XamlStackModulesTests
 	/// which sends the injection at the wrong endpoint with the wrong initialiser, and the WinUI tap
 	/// then waits twenty seconds for a framework that is not there.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_uwp_projection_assembly_is_not_the_winui_signal()
 	{
 		var (stack, evidence) = XamlStackModules.Identify(["ntdll.dll", "Microsoft.Windows.UI.Xaml.dll"]);
@@ -82,7 +82,7 @@ public sealed class XamlStackModulesTests
 		Assert.Empty(evidence);
 	}
 
-	[Fact]
+	[Test]
 	public void Recognises_classic_uwp()
 	{
 		var (stack, evidence) = XamlStackModules.Identify(ClassicUwp);
@@ -91,7 +91,7 @@ public sealed class XamlStackModulesTests
 		Assert.Equal(["Windows.UI.Xaml.dll"], evidence);
 	}
 
-	[Fact]
+	[Test]
 	public void Recognises_winui3()
 	{
 		var (stack, evidence) = XamlStackModules.Identify(WinUi3);
@@ -107,7 +107,7 @@ public sealed class XamlStackModulesTests
 	/// and refuse to serve a target the UWP tap handles perfectly well -- a confident wrong answer,
 	/// which is the failure shape this repository has already paid for twice in source classification.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_uwp_app_hosting_winui2_is_uwp_not_winui3()
 	{
 		string[] modules = ["Windows.UI.Xaml.dll", "Microsoft.UI.Xaml.dll", "Microsoft.UI.Xaml.Controls.dll"];
@@ -118,7 +118,7 @@ public sealed class XamlStackModulesTests
 		Assert.Equal(["Windows.UI.Xaml.dll"], evidence);
 	}
 
-	[Fact]
+	[Test]
 	public void Recognises_wpf()
 	{
 		var (stack, evidence) = XamlStackModules.Identify(["clr.dll", "PresentationFramework.dll", "PresentationCore.dll"]);
@@ -131,7 +131,7 @@ public sealed class XamlStackModulesTests
 	/// Unknown carries no evidence, because there is none: naming the modules that did not match
 	/// would read as a finding about them.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_process_with_no_xaml_framework_is_unknown_and_cites_nothing()
 	{
 		var (stack, evidence) = XamlStackModules.Identify(["ntdll.dll", "kernel32.dll", "coreclr.dll"]);
@@ -141,7 +141,7 @@ public sealed class XamlStackModulesTests
 	}
 
 	/// <summary>Module names come off the OS with whatever casing it used; matching cannot depend on it.</summary>
-	[Fact]
+	[Test]
 	public void Matching_ignores_case()
 	{
 		var (stack, _) = XamlStackModules.Identify(["WINDOWS.UI.XAML.DLL"]);
@@ -154,7 +154,7 @@ public sealed class XamlStackModulesTests
 	/// modules" from "read them and recognised nothing" in its own message; both arrive here the same
 	/// way and neither is an occasion to guess.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void No_modules_is_unknown()
 	{
 		var (stack, evidence) = XamlStackModules.Identify([]);

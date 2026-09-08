@@ -8,16 +8,16 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class TargetFrameworkSymbolTests
 {
-	[Theory]
+	[Test]
 	// .NET Framework spells the version with no separator.
-	[InlineData("net48", "NETFRAMEWORK", "NET48", "NET20_OR_GREATER", "NET48_OR_GREATER")]
-	[InlineData("net472", "NETFRAMEWORK", "NET472", "NET472_OR_GREATER")]
+	[Arguments("net48", "NETFRAMEWORK", "NET48", "NET20_OR_GREATER", "NET48_OR_GREATER")]
+	[Arguments("net472", "NETFRAMEWORK", "NET472", "NET472_OR_GREATER")]
 	// Modern .NET separates major and minor.
-	[InlineData("net10.0", "NET", "NETCOREAPP", "NET10_0", "NET5_0_OR_GREATER", "NET10_0_OR_GREATER")]
-	[InlineData("net8.0", "NET", "NETCOREAPP", "NET8_0", "NET8_0_OR_GREATER")]
+	[Arguments("net10.0", "NET", "NETCOREAPP", "NET10_0", "NET5_0_OR_GREATER", "NET10_0_OR_GREATER")]
+	[Arguments("net8.0", "NET", "NETCOREAPP", "NET8_0", "NET8_0_OR_GREATER")]
 	// What eleven healthy projects in the Revit monorepo are, and reported nothing for.
-	[InlineData("netstandard2.0", "NETSTANDARD", "NETSTANDARD2_0", "NETSTANDARD1_0_OR_GREATER")]
-	[InlineData("netcoreapp3.1", "NETCOREAPP", "NETCOREAPP3_1", "NETCOREAPP3_1_OR_GREATER")]
+	[Arguments("netstandard2.0", "NETSTANDARD", "NETSTANDARD2_0", "NETSTANDARD1_0_OR_GREATER")]
+	[Arguments("netcoreapp3.1", "NETCOREAPP", "NETCOREAPP3_1", "NETCOREAPP3_1_OR_GREATER")]
 	public void Reads_the_target_out_of_the_symbols(string expected, params string[] symbols) =>
 		Assert.Equal(expected, TargetFrameworkSymbols.Infer(symbols));
 
@@ -25,7 +25,7 @@ public sealed class TargetFrameworkSymbolTests
 	/// The _OR_GREATER symbols name every target below this one as well, so taking any of them would
 	/// report the oldest framework the project is merely compatible with.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Ignores_the_or_greater_symbols_naming_older_targets()
 	{
 		var symbols = new[] { "NET", "NETCOREAPP", "NET5_0_OR_GREATER", "NET6_0_OR_GREATER", "NET10_0" };
@@ -37,17 +37,17 @@ public sealed class TargetFrameworkSymbolTests
 	/// NETFRAMEWORK, NETCOREAPP and a bare NET name a family, not a target. Answering with one would
 	/// be worse than answering with nothing.
 	/// </summary>
-	[Theory]
-	[InlineData("NETFRAMEWORK")]
-	[InlineData("NETCOREAPP")]
-	[InlineData("NET")]
-	[InlineData("NETSTANDARD")]
-	[InlineData("DEBUG")]
-	[InlineData("TRACE")]
+	[Test]
+	[Arguments("NETFRAMEWORK")]
+	[Arguments("NETCOREAPP")]
+	[Arguments("NET")]
+	[Arguments("NETSTANDARD")]
+	[Arguments("DEBUG")]
+	[Arguments("TRACE")]
 	public void Says_nothing_for_a_symbol_that_names_no_target(string symbol) =>
 		Assert.Null(TargetFrameworkSymbols.Infer([symbol]));
 
-	[Fact]
+	[Test]
 	public void Says_nothing_when_there_are_no_symbols_at_all()
 	{
 		Assert.Null(TargetFrameworkSymbols.Infer(null));
@@ -55,7 +55,7 @@ public sealed class TargetFrameworkSymbolTests
 	}
 
 	/// <summary>A project's own conditional symbols must not be mistaken for a framework.</summary>
-	[Fact]
+	[Test]
 	public void Is_not_fooled_by_a_projects_own_symbols()
 	{
 		var symbols = new[] { "REVIT2024", "INTERNAL_BUILD", "NETFRAMEWORK", "NET48" };

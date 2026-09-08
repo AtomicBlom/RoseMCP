@@ -48,6 +48,15 @@
   </ItemGroup>
 
   <ItemGroup Label="Testing">
+    <PackageVersion Include="TUnit.Core" Version="1.66.27" />
+    <PackageVersion Include="TUnit.Engine" Version="1.66.27" />
+
+    <!-- The assertion half of xunit, referenced without the framework that used to run it, so a
+         move to TUnit is a change of runner rather than a rewrite of every assertion. TUnit.Assertions
+         is deliberately absent: it declares an Assert of its own, and two of those in scope is an
+         ambiguity in every file. -->
+    <PackageVersion Include="xunit.v3.assert" Version="4.0.0" />
+
     <PackageVersion Include="xunit.v3" Version="4.0.0" />
   </ItemGroup>
 

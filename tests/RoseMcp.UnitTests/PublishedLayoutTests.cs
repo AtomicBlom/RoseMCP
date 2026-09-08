@@ -43,7 +43,7 @@ public sealed class PublishedLayoutTests : IDisposable
 	/// <summary>
 	/// The broker's own directory, which is the case that always worked.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Finds_the_worker_beside_the_broker()
 	{
 		var resolved = WorkerLauncher.ResolveWorkerPath(new BrokerOptions(), _root, searchRepository: false);
@@ -58,7 +58,7 @@ public sealed class PublishedLayoutTests : IDisposable
 	/// without --worker. Invisible from the repository, because the development fallback finds one
 	/// there whatever the layout says.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Finds_the_worker_one_level_up_from_the_tray()
 	{
 		var tray = Path.Combine(_root, "tray");
@@ -71,9 +71,9 @@ public sealed class PublishedLayoutTests : IDisposable
 	/// <summary>
 	/// The live-app host, from both hosts of the broker and for each architecture published.
 	/// </summary>
-	[Theory]
-	[InlineData(TargetArchitecture.X64, "win-x64")]
-	[InlineData(TargetArchitecture.Arm64, "win-arm64")]
+	[Test]
+	[Arguments(TargetArchitecture.X64, "win-x64")]
+	[Arguments(TargetArchitecture.Arm64, "win-arm64")]
 	public void Finds_the_live_app_host_from_either_broker_host(TargetArchitecture architecture, string rid)
 	{
 		foreach (var directory in new[] { _root, Path.Combine(_root, "tray") })
@@ -92,7 +92,7 @@ public sealed class PublishedLayoutTests : IDisposable
 	/// falling back to one that cannot debug the target. ICorDebug has no cross-architecture path,
 	/// so the wrong host is not a slower answer but a wrong one.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Says_which_layout_it_wanted_when_the_host_is_not_published()
 	{
 		var error = Assert.Throws<FileNotFoundException>(
@@ -113,10 +113,10 @@ public sealed class PublishedLayoutTests : IDisposable
 	/// under whatever directory the client started the process in -- so the install looks as though
 	/// it never wrote any.
 	/// </remarks>
-	[Theory]
-	[InlineData("Server")]
-	[InlineData("Worker")]
-	[InlineData("Tray")]
+	[Test]
+	[Arguments("Server")]
+	[Arguments("Worker")]
+	[Arguments("Tray")]
 	public void Puts_the_logs_under_an_absolute_root_with_no_root_supplied(string component)
 	{
 		var directory = RoseLogFile.DirectoryFor(component);
@@ -126,7 +126,7 @@ public sealed class PublishedLayoutTests : IDisposable
 	}
 
 	/// <summary>An empty root is the same case arriving from the caller rather than the environment.</summary>
-	[Fact]
+	[Test]
 	public void Treats_an_empty_root_the_way_it_treats_a_missing_one()
 	{
 		Assert.True(Path.IsPathFullyQualified(RoseLogFile.DirectoryFor("Server", string.Empty)));

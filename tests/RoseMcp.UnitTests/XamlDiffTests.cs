@@ -13,7 +13,7 @@ public sealed class XamlDiffTests
 		"xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" "
 			+ "xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"";
 
-	[Fact]
+	[Test]
 	public void A_changed_property_on_a_named_element_is_one_set_addressed_by_name()
 	{
 		var edits = Compute(
@@ -28,14 +28,14 @@ public sealed class XamlDiffTests
 		Assert.Equal("Windows.UI.Xaml.Media.SolidColorBrush", edit.ValueType);
 	}
 
-	[Fact]
+	[Test]
 	public void An_unchanged_tree_produces_no_edits()
 	{
 		var xaml = $"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF000000\" Opacity=\"1\" /></Grid>";
 		Assert.Empty(Compute(xaml, xaml));
 	}
 
-	[Fact]
+	[Test]
 	public void A_changed_property_on_an_unnamed_element_is_addressed_by_path()
 	{
 		var edits = Compute(
@@ -60,7 +60,7 @@ public sealed class XamlDiffTests
 	/// problem, stated confidently.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_changed_resource_is_an_edit_against_its_owners_dictionary()
 	{
 		var edits = Compute(
@@ -78,7 +78,7 @@ public sealed class XamlDiffTests
 	/// Resources are matched by key and never by position, which is the only thing that tells two
 	/// brushes apart. Reordering a dictionary therefore means nothing at all.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Matches_resources_by_key_rather_than_by_where_they_sit()
 	{
 		var edits = Compute(
@@ -101,7 +101,7 @@ public sealed class XamlDiffTests
 	/// Both spellings mean one dictionary, and understanding only one of them would find no resources at
 	/// all in half the markup out there.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Reads_resources_through_an_explicit_resource_dictionary()
 	{
 		var edits = Compute(
@@ -118,7 +118,7 @@ public sealed class XamlDiffTests
 	}
 
 	/// <summary>Adding and removing a resource are said rather than attempted, since neither applies yet.</summary>
-	[Fact]
+	[Test]
 	public void Says_when_a_resource_arrives_or_goes_rather_than_emitting_an_edit()
 	{
 		var added = Diff(
@@ -141,7 +141,7 @@ public sealed class XamlDiffTests
 	/// after a <c>Grid.RowDefinitions</c> was handed an index that counted something which is not its
 	/// sibling -- and went in at the wrong place, or nowhere.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Does_not_let_property_element_syntax_take_up_a_child_position()
 	{
 		var edits = Compute(
@@ -159,7 +159,7 @@ public sealed class XamlDiffTests
 	/// Walking in produced an edit addressed at something that is not an element, so the apply failed
 	/// naming a missing element instead of an edit it does not do.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Says_when_a_property_written_in_element_form_changed()
 	{
 		var result = Diff(
@@ -170,7 +170,7 @@ public sealed class XamlDiffTests
 		Assert.Contains(result.Notes, note => note.Contains("Grid.RowDefinitions", StringComparison.Ordinal));
 	}
 
-	[Fact]
+	[Test]
 	public void Two_same_named_types_from_different_namespaces_do_not_share_an_address()
 	{
 		// The sibling index was counted over the *qualified* name and then printed with the *local*
@@ -186,7 +186,7 @@ public sealed class XamlDiffTests
 		Assert.Equal(2, edits.Select(edit => edit.Target).Distinct().Count());
 	}
 
-	[Fact]
+	[Test]
 	public void An_unnamed_element_under_a_named_ancestor_is_anchored_at_the_name()
 	{
 		var edits = Compute(
@@ -197,7 +197,7 @@ public sealed class XamlDiffTests
 		Assert.Equal("#panel/Border[0]", edit.Target);
 	}
 
-	[Fact]
+	[Test]
 	public void A_removed_attribute_is_a_clear()
 	{
 		var edits = Compute(
@@ -210,7 +210,7 @@ public sealed class XamlDiffTests
 		Assert.Equal("Background", edit.Property);
 	}
 
-	[Fact]
+	[Test]
 	public void An_attached_property_change_is_a_set_keeping_its_dotted_name()
 	{
 		var edits = Compute(
@@ -223,7 +223,7 @@ public sealed class XamlDiffTests
 		Assert.Equal("2", edit.Value);
 	}
 
-	[Fact]
+	[Test]
 	public void An_added_child_is_a_structural_edit_carrying_its_markup()
 	{
 		var edits = Compute(
@@ -237,7 +237,7 @@ public sealed class XamlDiffTests
 		Assert.Contains("Go", edit.Payload);
 	}
 
-	[Fact]
+	[Test]
 	public void A_removed_child_is_a_structural_edit()
 	{
 		var edits = Compute(
@@ -258,7 +258,7 @@ public sealed class XamlDiffTests
 	/// just filled with two elements and being handed one back, silently, which then poisoned the next
 	/// test to use that container.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Two_removed_children_go_out_last_first()
 	{
 		var edits = Compute(
@@ -281,7 +281,7 @@ public sealed class XamlDiffTests
 	/// in the first place -- and every property whose type cannot be read off its value has to be
 	/// named here, because inference cannot get there.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_single_number_corner_radius_is_typed_as_a_corner_radius_not_a_double()
 	{
 		var edits = Compute(
@@ -299,7 +299,7 @@ public sealed class XamlDiffTests
 	/// number a CornerRadius": a genuine Double property stays a Double, and a four-part CornerRadius
 	/// is still a CornerRadius rather than being mistaken for the Thickness it looks exactly like.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_number_on_a_double_property_is_still_a_double()
 	{
 		var edits = Compute(
@@ -309,7 +309,7 @@ public sealed class XamlDiffTests
 		Assert.Equal("Windows.Foundation.Double", Assert.Single(edits).ValueType);
 	}
 
-	[Fact]
+	[Test]
 	public void A_four_part_corner_radius_is_not_mistaken_for_a_thickness()
 	{
 		var edits = Compute(
@@ -325,7 +325,7 @@ public sealed class XamlDiffTests
 	/// rather than stored -- stored, it would make every later apply report a parse error about a file
 	/// the caller had since fixed.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Reports_markup_it_cannot_parse_with_the_parsers_own_reason()
 	{
 		Assert.True(XamlDiff.XamlDiff.Parses($"<Border {Ns} x:Name=\"pane\" />", out var fine));

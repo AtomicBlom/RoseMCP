@@ -164,7 +164,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.XamlTree,
 	];
 
-	[Fact]
+	[Test]
 	public void The_broker_offers_exactly_the_listed_tools()
 	{
 		var expected = OperatingSystem.IsWindows() ? [.. Roslyn, .. LiveApp] : Roslyn;
@@ -172,7 +172,7 @@ public sealed class ToolSurfaceTests
 		Assert.Equal(Sorted(expected), Advertised());
 	}
 
-	[Fact]
+	[Test]
 	public void Every_advertised_name_starts_with_the_server_prefix()
 	{
 		foreach (var name in Advertised())
@@ -186,7 +186,7 @@ public sealed class ToolSurfaceTests
 	/// surface rather than against the registration, because the failure being guarded is a tool
 	/// class gaining a method that happens to reuse one of these constants.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_tools_the_broker_calls_elsewhere_are_not_offered()
 	{
 		var advertised = Advertised().ToHashSet(StringComparer.Ordinal);
@@ -201,7 +201,7 @@ public sealed class ToolSurfaceTests
 	/// The live-app half is Windows-only, and the two lists must not overlap: a tool that appears in
 	/// both would be gated by the operating system in one place and not the other.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_two_halves_of_the_surface_are_disjoint()
 	{
 		Assert.Empty(Roslyn.Intersect(LiveApp, StringComparer.Ordinal));
@@ -212,7 +212,7 @@ public sealed class ToolSurfaceTests
 	/// client skips confirmation on the strength of the hint, so one on a tool that starts a process
 	/// or attaches a debugger spends the user's consent without asking for it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Only_the_listed_tools_call_themselves_read_only()
 	{
 		var advertised = Advertised().ToHashSet(StringComparer.Ordinal);
@@ -227,7 +227,7 @@ public sealed class ToolSurfaceTests
 	/// mean; the carriage returns come from raw string literals in CRLF files and at least one client
 	/// passes them to the model verbatim.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_listing_carries_no_output_schema_and_no_carriage_return()
 	{
 		foreach (var tool in Listed())
@@ -243,7 +243,7 @@ public sealed class ToolSurfaceTests
 	/// assertions are separate because a filter registered without doing the work and work available
 	/// but never applied are different failures and neither implies the other.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_listing_passes_through_a_filter()
 	{
 		var services = new ServiceCollection();
@@ -281,7 +281,7 @@ public sealed class ToolSurfaceTests
 	/// them is a tool that loses to grep before its own description is ever reached -- and four were
 	/// missing with nothing to notice.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Every_advertised_tool_is_routed_or_exempt()
 	{
 		var services = new ServiceCollection();
@@ -305,7 +305,7 @@ public sealed class ToolSurfaceTests
 	/// And that the exemption list is not carrying a name the instructions route after all, which is
 	/// how a list like this stops meaning anything.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Nothing_exempt_is_routed_anyway()
 	{
 		var services = new ServiceCollection();
@@ -326,7 +326,7 @@ public sealed class ToolSurfaceTests
 	/// The instructions are always in context, whether or not C# comes up, so their length is a budget
 	/// rather than a preference. They were 11,340 characters restating the descriptions line for line.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_instructions_stay_within_their_budget()
 	{
 		var services = new ServiceCollection();

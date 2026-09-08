@@ -7,7 +7,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class LineEndingsTests
 {
-	[Fact]
+	[Test]
 	public void Counts_every_line_that_changed_terminator()
 	{
 		var changed = LineEndings.Changed("one\ntwo\nthree\n", "one\r\ntwo\r\nthree\r\n");
@@ -18,10 +18,10 @@ public sealed class LineEndingsTests
 	}
 
 	/// <summary>The whole point of the return being nullable: no change is not a change of zero.</summary>
-	[Theory]
-	[InlineData("one\r\ntwo\r\n", "one\r\ntwo\r\n")]
-	[InlineData("one\ntwo\n", "one\ntwo\n")]
-	[InlineData("", "")]
+	[Test]
+	[Arguments("one\r\ntwo\r\n", "one\r\ntwo\r\n")]
+	[Arguments("one\ntwo\n", "one\ntwo\n")]
+	[Arguments("", "")]
 	public void Says_nothing_where_the_terminators_are_the_same(string before, string after) =>
 		Assert.Null(LineEndings.Changed(before, after));
 
@@ -29,14 +29,14 @@ public sealed class LineEndingsTests
 	/// Content changing on its own is the case the diff already covers, and reporting it here would
 	/// put a line-endings notice on every ordinary edit.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Says_nothing_where_only_the_content_changed()
 	{
 		Assert.Null(LineEndings.Changed("one\r\ntwo\r\n", "one\r\nTWO\r\n"));
 	}
 
 	/// <summary>A file part-converted already reports only the lines that actually moved.</summary>
-	[Fact]
+	[Test]
 	public void Counts_only_the_lines_that_moved()
 	{
 		var changed = LineEndings.Changed("one\r\ntwo\nthree\n", "one\r\ntwo\r\nthree\r\n");
@@ -47,7 +47,7 @@ public sealed class LineEndingsTests
 	}
 
 	/// <summary>Both directions, because a repository that wants LF is as entitled to be told.</summary>
-	[Fact]
+	[Test]
 	public void Reports_the_direction_it_actually_went()
 	{
 		var changed = LineEndings.Changed("one\r\ntwo\r\n", "one\ntwo\n");
@@ -61,7 +61,7 @@ public sealed class LineEndingsTests
 	/// formatter produces, but naming whichever happened to come last would be wrong on the day it
 	/// does.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Names_the_terminator_most_of_the_changed_lines_took()
 	{
 		var changed = LineEndings.Changed("a\nb\nc\n", "a\r\nb\r\nc\n");
@@ -76,16 +76,16 @@ public sealed class LineEndingsTests
 	/// comparison means nothing -- but it also does not need to, because a change of that shape is
 	/// one the diff shows in full.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Does_not_invent_a_change_when_lines_were_added()
 	{
 		Assert.Null(LineEndings.Changed("one\r\n", "one\r\ntwo\r\nthree\r\n"));
 	}
 
-	[Theory]
-	[InlineData("\r\n", "CRLF")]
-	[InlineData("\n", "LF")]
-	[InlineData("\r", "CR")]
+	[Test]
+	[Arguments("\r\n", "CRLF")]
+	[Arguments("\n", "LF")]
+	[Arguments("\r", "CR")]
 	public void Names_a_terminator_the_way_a_person_would(string ending, string expected) =>
 		Assert.Equal(expected, LineEndings.Name(ending));
 }

@@ -14,7 +14,7 @@ public sealed class ActivityLogTests
 {
 	private const string Solution = @"D:\somewhere\Thing.sln";
 
-	[Fact]
+	[Test]
 	public void Reports_an_operation_while_it_runs_and_files_it_when_it_ends()
 	{
 		var log = new ActivityLog();
@@ -48,7 +48,7 @@ public sealed class ActivityLogTests
 	/// A worker that stops knowing how far along it is must clear the number rather than leave a
 	/// bar frozen at whatever it last said, which reads as a hang rather than as unknown.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_report_without_a_total_means_unknown_rather_than_unchanged()
 	{
 		var log = new ActivityLog();
@@ -64,7 +64,7 @@ public sealed class ActivityLogTests
 	}
 
 	/// <summary>Progress the client asked for still reaches the client, not just the tray.</summary>
-	[Fact]
+	[Test]
 	public void Passes_progress_on_to_the_calling_client()
 	{
 		var log = new ActivityLog();
@@ -79,7 +79,7 @@ public sealed class ActivityLogTests
 		Assert.Equal(10, forwarded.Progress);
 	}
 
-	[Fact]
+	[Test]
 	public void Records_why_an_operation_failed()
 	{
 		var log = new ActivityLog();
@@ -100,7 +100,7 @@ public sealed class ActivityLogTests
 	/// This is live state for a window, not an audit trail. An agent making hundreds of calls must
 	/// not grow the list without bound, and the newest are the ones worth showing.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_only_the_last_few_finished_operations_newest_first()
 	{
 		var log = new ActivityLog();
@@ -121,7 +121,7 @@ public sealed class ActivityLogTests
 	/// Closing a workspace takes its history with it. Attributing the old process's work to
 	/// whatever starts next would be worse than showing nothing.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Forgetting_a_workspace_drops_its_history()
 	{
 		var log = new ActivityLog();
@@ -137,7 +137,7 @@ public sealed class ActivityLogTests
 	/// GET /admin/workspaces is meant to return exactly what the tray window renders. It cannot do
 	/// that while an outcome goes over the wire as "1", which is what the framework default gives.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Serialises_an_outcome_as_a_word_rather_than_a_number()
 	{
 		var log = new ActivityLog();

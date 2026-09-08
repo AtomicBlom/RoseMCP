@@ -46,7 +46,7 @@ public sealed class ToolBudgetTests
 	/// </summary>
 	private const int ModelFacing = 74000;
 
-	[Fact]
+	[Test]
 	public void No_description_is_longer_than_its_ceiling()
 	{
 		foreach (var tool in Listed())
@@ -58,7 +58,7 @@ public sealed class ToolBudgetTests
 		}
 	}
 
-	[Fact]
+	[Test]
 	public void No_argument_help_is_longer_than_its_ceiling()
 	{
 		foreach (var tool in Listed())
@@ -74,7 +74,7 @@ public sealed class ToolBudgetTests
 	/// And the total, because a per-tool ceiling says nothing about fifty-two of them. This is the
 	/// number a client without tool deferral pays at the start of every session.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_whole_model_facing_surface_stays_within_its_budget()
 	{
 		var total = Listed().Sum(tool => (tool.Description?.Length ?? 0) + tool.InputSchema.GetRawText().Length);

@@ -18,10 +18,10 @@ public sealed class CallSiteBindingTests
 	/// The three ids, in a file the change rewrote. Each is the compiler saying an argument list does
 	/// not match the parameters it is calling, and those argument lists were written by the tool.
 	/// </summary>
-	[Theory]
-	[InlineData("CS1744")]
-	[InlineData("CS1739")]
-	[InlineData("CS1501")]
+	[Test]
+	[Arguments("CS1744")]
+	[Arguments("CS1739")]
+	[Arguments("CS1501")]
 	public void Calls_an_argument_mapping_error_where_it_wrote_its_own(string id)
 	{
 		var failures = CallSiteBinding.MappingFailures([@"C:\repo\Caller.cs"], [Error(id, @"C:\repo\Caller.cs")]);
@@ -34,7 +34,7 @@ public sealed class CallSiteBindingTests
 	/// purpose: telling someone their own compile error is a tool defect is the same wrong answer in
 	/// the other direction.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_an_error_of_another_shape_to_the_caller()
 	{
 		var failures = CallSiteBinding.MappingFailures([@"C:\repo\Caller.cs"], [Error("CS0103", @"C:\repo\Caller.cs")]);
@@ -46,7 +46,7 @@ public sealed class CallSiteBindingTests
 	/// A mapping error in a file this did not rewrite a call site in belongs to whoever wrote that
 	/// file. Only the argument lists this touched are evidence about this tool.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_a_mapping_error_in_a_file_it_did_not_rewrite()
 	{
 		var failures = CallSiteBinding.MappingFailures([@"C:\repo\Caller.cs"], [Error("CS1744", @"C:\repo\Other.cs")]);
@@ -58,7 +58,7 @@ public sealed class CallSiteBindingTests
 	/// A change that rewrote no call site at all can have caused none of these, so nothing it did is
 	/// evidence either way.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Claims_nothing_when_it_rewrote_no_call_site()
 	{
 		Assert.Empty(CallSiteBinding.MappingFailures([], [Error("CS1744", @"C:\repo\Caller.cs")]));
@@ -68,7 +68,7 @@ public sealed class CallSiteBindingTests
 	/// Paths are compared the way Windows compares them, since the locations come from Roslyn and the
 	/// diagnostics from a second compilation, and neither promises the same spelling of a drive.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Matches_a_path_whatever_its_case()
 	{
 		var failures = CallSiteBinding.MappingFailures([@"C:\repo\Caller.cs"], [Error("CS1744", @"c:\REPO\caller.cs")]);

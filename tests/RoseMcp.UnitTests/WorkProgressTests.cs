@@ -10,7 +10,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class WorkProgressTests
 {
-	[Fact]
+	[Test]
 	public void The_work_phase_carries_on_from_where_the_wait_ended()
 	{
 		var sink = new RecordingSink();
@@ -28,7 +28,7 @@ public sealed class WorkProgressTests
 	/// A call that finds the workspace warm waited for nothing, so its own work is all there is to
 	/// report and it gets the whole bar rather than starting at an arbitrary halfway mark.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_call_that_never_waited_gets_the_whole_scale()
 	{
 		var sink = new RecordingSink();
@@ -43,7 +43,7 @@ public sealed class WorkProgressTests
 	/// No total is the protocol's way of saying the sender does not know how much work there is.
 	/// The number itself must not go backwards even so, since progress is only ever allowed to rise.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_report_with_no_percentage_keeps_the_number_but_drops_the_total()
 	{
 		var sink = new RecordingSink();
@@ -57,7 +57,7 @@ public sealed class WorkProgressTests
 		Assert.Equal(30, sink.Values[1].Progress, 3);
 	}
 
-	[Fact]
+	[Test]
 	public void A_slice_maps_an_operation_onto_its_share_of_the_caller_scale()
 	{
 		var captured = new CapturingProgress();
@@ -69,7 +69,7 @@ public sealed class WorkProgressTests
 		Assert.Equal(40, report.Percent);
 	}
 
-	[Fact]
+	[Test]
 	public void Slicing_nothing_is_still_nothing()
 	{
 		IWorkProgress? nobody = null;
@@ -81,7 +81,7 @@ public sealed class WorkProgressTests
 	/// A call that arrives halfway through a load must be told what it is waiting for, rather than
 	/// showing nothing until the next project happens to finish.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Shared_work_catches_a_late_listener_up()
 	{
 		var shared = new SharedWorkProgress();
@@ -98,7 +98,7 @@ public sealed class WorkProgressTests
 		Assert.Equal(30, caught.Percent);
 	}
 
-	[Fact]
+	[Test]
 	public void Shared_work_has_nothing_to_say_once_it_is_over()
 	{
 		var shared = new SharedWorkProgress();
@@ -111,7 +111,7 @@ public sealed class WorkProgressTests
 		Assert.Empty(listener.Reports);
 	}
 
-	[Fact]
+	[Test]
 	public void Shared_work_stops_reporting_to_a_listener_that_has_let_go()
 	{
 		var shared = new SharedWorkProgress();

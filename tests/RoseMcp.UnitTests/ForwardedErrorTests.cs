@@ -12,7 +12,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class ForwardedErrorTests
 {
-	[Fact]
+	[Test]
 	public void Takes_off_the_wrapper_the_far_side_added()
 	{
 		var message = ForwardedError.Message(Failed(
@@ -23,7 +23,7 @@ public sealed class ForwardedErrorTests
 	}
 
 	/// <summary>Once, so a message that quotes the sentence itself keeps its own copy.</summary>
-	[Fact]
+	[Test]
 	public void Takes_it_off_once()
 	{
 		var message = ForwardedError.Message(Failed(
@@ -32,7 +32,7 @@ public sealed class ForwardedErrorTests
 		Assert.Equal("An error occurred invoking 'rose_format': no", message);
 	}
 
-	[Fact]
+	[Test]
 	public void Leaves_a_message_that_never_had_one()
 	{
 		Assert.Equal("Nothing in the solution is called 'Widget'.", ForwardedError.Message(Failed(
@@ -40,7 +40,7 @@ public sealed class ForwardedErrorTests
 	}
 
 	/// <summary>A result that did not fail has no message, which is how the caller tells.</summary>
-	[Fact]
+	[Test]
 	public void Reports_nothing_for_a_result_that_succeeded()
 	{
 		Assert.Null(ForwardedError.Message(new CallToolResult { Content = [] }));

@@ -17,11 +17,11 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class TargetArchitectureProbeTests
 {
-	[Theory]
-	[InlineData("Microsoft.Paint_11.2605.81.0_x64__8wekyb3d8bbwe", TargetArchitecture.X64)]
-	[InlineData("Microsoft.WindowsCalculator_11.2607.0.0_x64__8wekyb3d8bbwe", TargetArchitecture.X64)]
-	[InlineData("RoseMcp.ProbeApp.UwpModern_1.0.0.0_x86__m6jgrvk8sw5nm", TargetArchitecture.X86)]
-	[InlineData("RoseMcp.ProbeApp.UwpModern_1.0.0.0_arm64__m6jgrvk8sw5nm", TargetArchitecture.Arm64)]
+	[Test]
+	[Arguments("Microsoft.Paint_11.2605.81.0_x64__8wekyb3d8bbwe", TargetArchitecture.X64)]
+	[Arguments("Microsoft.WindowsCalculator_11.2607.0.0_x64__8wekyb3d8bbwe", TargetArchitecture.X64)]
+	[Arguments("RoseMcp.ProbeApp.UwpModern_1.0.0.0_x86__m6jgrvk8sw5nm", TargetArchitecture.X86)]
+	[Arguments("RoseMcp.ProbeApp.UwpModern_1.0.0.0_arm64__m6jgrvk8sw5nm", TargetArchitecture.Arm64)]
 	public void Reads_the_architecture_a_full_name_carries(string fullName, TargetArchitecture expected)
 	{
 		Assert.Equal(expected, TargetArchitectureProbe.ArchitectureFromFullName(fullName));
@@ -33,9 +33,9 @@ public sealed class TargetArchitectureProbeTests
 	/// managed code with no architecture of its own; <c>arm</c> is 32-bit ARM, which nothing here
 	/// builds a host for.
 	/// </summary>
-	[Theory]
-	[InlineData("Contoso.App_1.0.0.0_neutral__8wekyb3d8bbwe")]
-	[InlineData("Contoso.App_1.0.0.0_arm__8wekyb3d8bbwe")]
+	[Test]
+	[Arguments("Contoso.App_1.0.0.0_neutral__8wekyb3d8bbwe")]
+	[Arguments("Contoso.App_1.0.0.0_arm__8wekyb3d8bbwe")]
 	public void An_architecture_with_no_host_is_unknown(string fullName)
 	{
 		Assert.Equal(TargetArchitecture.Unknown, TargetArchitectureProbe.ArchitectureFromFullName(fullName));
@@ -46,11 +46,11 @@ public sealed class TargetArchitectureProbeTests
 	/// family name is the likeliest thing to arrive here by mistake, since it is the half of an AUMID
 	/// this is given, and it has three fields rather than five.
 	/// </summary>
-	[Theory]
-	[InlineData("RoseMcp.ProbeApp.UwpModern_m6jgrvk8sw5nm")]
-	[InlineData("Microsoft.Paint")]
-	[InlineData("")]
-	[InlineData("a_b_c_d_e_f")]
+	[Test]
+	[Arguments("RoseMcp.ProbeApp.UwpModern_m6jgrvk8sw5nm")]
+	[Arguments("Microsoft.Paint")]
+	[Arguments("")]
+	[Arguments("a_b_c_d_e_f")]
 	public void A_name_that_is_not_a_full_name_is_unknown(string name)
 	{
 		Assert.Equal(TargetArchitecture.Unknown, TargetArchitectureProbe.ArchitectureFromFullName(name));
@@ -60,7 +60,7 @@ public sealed class TargetArchitectureProbeTests
 	/// Windows spells these lower-case, but the value decides which host directory is looked in, so
 	/// matching cannot depend on a casing nobody here controls.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Matching_ignores_case()
 	{
 		Assert.Equal(
@@ -73,7 +73,7 @@ public sealed class TargetArchitectureProbeTests
 	/// is what callers actually hold. Splitting it on '!' is <c>ForPackage</c>'s job, and what is
 	/// left is a family name, which carries no architecture at all.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void An_aumid_carries_no_architecture()
 	{
 		Assert.Equal(

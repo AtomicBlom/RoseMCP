@@ -22,7 +22,7 @@ public sealed class WhitespaceTests
 		IndentUnit = "\t",
 	};
 
-	[Fact]
+	[Test]
 	public void Gives_every_line_the_ending_the_rules_ask_for()
 	{
 		var source = string.Join(string.Empty, "class C" + Crlf, "{" + Lf, "\tint Value;" + Lf, "}");
@@ -33,7 +33,7 @@ public sealed class WhitespaceTests
 		Assert.EndsWith(Crlf, result, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Trims_trailing_whitespace_and_adds_the_final_newline()
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tint Value;   " + Crlf + "}";
@@ -50,7 +50,7 @@ public sealed class WhitespaceTests
 	/// literal is part of the value, and a raw literal's indentation decides how much is stripped from
 	/// every line of it -- so normalising in there changes what the program does, silently.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_a_multi_line_raw_string_exactly_as_it_was()
 	{
 		var literal = "\"\"\"" + Lf + "\t\t\tfirst  " + Lf + "\t\t\tsecond" + Lf + "\t\t\t\"\"\"";
@@ -72,7 +72,7 @@ public sealed class WhitespaceTests
 		Assert.EndsWith("}" + Crlf, result, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Leaves_a_verbatim_string_alone_too()
 	{
 		var source = string.Join(Lf, "class C", "{", "\tconst string Text = @\"first", "second\";", "}");
@@ -82,7 +82,7 @@ public sealed class WhitespaceTests
 		Assert.Contains("first" + Lf + "second", result, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Changes_nothing_when_the_file_already_obeys_the_rules()
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tint Value;" + Crlf + "}" + Crlf;
@@ -90,10 +90,10 @@ public sealed class WhitespaceTests
 		Assert.Equal(source, Apply(source, Strict));
 	}
 
-	[Theory]
-	[InlineData("a\r\nb\r\nc\n", "\r\n")]
-	[InlineData("a\nb\nc\r\n", "\n")]
-	[InlineData("a\rb\rc\r", "\r")]
+	[Test]
+	[Arguments("a\r\nb\r\nc\n", "\r\n")]
+	[Arguments("a\nb\nc\r\n", "\n")]
+	[Arguments("a\rb\rc\r", "\r")]
 	public void Reads_the_ending_a_file_mostly_uses(string source, string expected)
 	{
 		// Which is the fallback when .editorconfig says nothing: matching the file is what keeps a
@@ -105,7 +105,7 @@ public sealed class WhitespaceTests
 	/// The literal the whitespace pass deliberately will not touch is the one that then fails
 	/// dotnet format, so the least it can do is say where it is.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Reports_a_multi_line_literal_whose_endings_are_not_the_files()
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Lf + "two\";" + Crlf + "}" + Crlf;
@@ -118,7 +118,7 @@ public sealed class WhitespaceTests
 	/// that is mostly the file's endings with one line that is not, and that line is exactly what
 	/// dotnet format fails on -- asking which ending it mostly uses would call this clean.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Reports_a_literal_that_mostly_agrees_and_partly_does_not()
 	{
 		var source = "class C" + Crlf + "{" + Crlf
@@ -128,7 +128,7 @@ public sealed class WhitespaceTests
 		Assert.Equal([3], Disagreeing(source));
 	}
 
-	[Fact]
+	[Test]
 	public void Says_nothing_about_a_literal_written_with_the_files_own_endings()
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Crlf + "two\";" + Crlf + "}" + Crlf;
@@ -137,7 +137,7 @@ public sealed class WhitespaceTests
 	}
 
 	/// <summary>A single-line literal cannot hold a line ending, so it can never disagree about one.</summary>
-	[Fact]
+	[Test]
 	public void Says_nothing_about_a_single_line_literal()
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = \"one\";" + Crlf + "}" + Crlf;
@@ -150,7 +150,7 @@ public sealed class WhitespaceTests
 	/// in -- a member replacement that warned about a literal four hundred lines away would be
 	/// blaming this change for something it did not do.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Ignores_a_disagreeing_literal_outside_the_span_asked_about()
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Lf + "two\";" + Crlf + "}" + Crlf;
@@ -170,7 +170,7 @@ public sealed class WhitespaceTests
 	/// it is, which is asserted on the bytes rather than the shape.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Gives_a_raw_literal_delimiter_the_file_ending_and_leaves_the_content_alone()
 	{
 		var source = "class C" + Crlf
@@ -195,7 +195,7 @@ public sealed class WhitespaceTests
 	/// A verbatim literal has no delimiter line to normalise: every break inside it is part of its
 	/// value, the first one included, so the whole of it is left alone.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_every_line_of_a_verbatim_literal_alone()
 	{
 		var source = "class C" + Crlf
@@ -215,7 +215,7 @@ public sealed class WhitespaceTests
 		var text = SourceText.From(source);
 
 		return Whitespace.LiteralsDisagreeingWith(
-			tree.GetRoot(TestContext.Current.CancellationToken), text, Strict, within);
+			tree.GetRoot(TestContext.Current!.Execution.CancellationToken), text, Strict, within);
 	}
 
 	private static string Apply(string source, WhitespaceRules rules)
@@ -223,7 +223,7 @@ public sealed class WhitespaceTests
 		var tree = CSharpSyntaxTree.ParseText(source);
 		var text = SourceText.From(source);
 
-		return Whitespace.Apply(tree.GetRoot(TestContext.Current.CancellationToken), text, rules).ToString();
+		return Whitespace.Apply(tree.GetRoot(TestContext.Current!.Execution.CancellationToken), text, rules).ToString();
 	}
 
 	private static string StripCrlf(string text) => text.Replace(Crlf, string.Empty, StringComparison.Ordinal);

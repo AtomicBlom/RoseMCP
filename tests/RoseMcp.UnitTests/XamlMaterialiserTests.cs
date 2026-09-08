@@ -9,7 +9,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class XamlMaterialiserTests
 {
-	[Fact]
+	[Test]
 	public void Creates_an_element_sets_its_properties_then_adds_it()
 	{
 		var steps = XamlMaterialiser.Steps("""<Border Background="#FFFF0000" />""", "#Pair", 2);
@@ -44,7 +44,7 @@ public sealed class XamlMaterialiserTests
 	/// before anything attaches it to the running app, so the framework never lays out or renders a
 	/// half-built element. The attach is the last step, always.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Attaches_the_finished_subtree_to_the_app_last()
 	{
 		var steps = XamlMaterialiser.Steps(
@@ -66,7 +66,7 @@ public sealed class XamlMaterialiserTests
 		Assert.True(steps.IndexOf(nested) < steps.Count - 1, "the nested add must come before the attach");
 	}
 
-	[Fact]
+	[Test]
 	public void Gives_every_element_its_own_slot()
 	{
 		var steps = XamlMaterialiser.Steps(
@@ -86,7 +86,7 @@ public sealed class XamlMaterialiserTests
 	/// Property-element syntax is a property, not a child. Adding <c>Grid.RowDefinitions</c> as an
 	/// element would fail somewhere that reads like a fault in the element beside it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Passes_over_property_element_syntax_rather_than_adding_it_as_a_child()
 	{
 		var steps = XamlMaterialiser.Steps(
@@ -102,7 +102,7 @@ public sealed class XamlMaterialiserTests
 	/// A live add cannot carry a name, so the diff says so. Names come from a namescope the markup
 	/// compiler built, and nothing settable at runtime puts an element into one.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Notes_that_an_added_element_cannot_keep_its_name()
 	{
 		Assert.True(XamlMaterialiser.NamesAnything("""<Border xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Name="new" />"""));

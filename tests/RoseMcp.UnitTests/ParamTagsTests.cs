@@ -18,7 +18,7 @@ public sealed class ParamTagsTests
 	/// the new tag goes after the last real one -- not after the sentence, on the sentence's own
 	/// pattern, which wrote the sentence out a second time and put a param tag inside the summary.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Writes_a_new_tag_after_the_last_real_one_rather_than_into_the_summary()
 	{
 		var updated = Update(
@@ -41,7 +41,7 @@ public sealed class ParamTagsTests
 	/// The same confusion from the other side: a parameter the summary happens to mention is not a
 	/// parameter that has a tag, and skipping it leaves CS1573 behind.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Counts_a_paramref_as_no_tag_at_all()
 	{
 		var updated = Update(
@@ -59,7 +59,7 @@ public sealed class ParamTagsTests
 	/// line the mention was on, which is a sentence nobody asked to lose and nothing in the diff
 	/// explains.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_the_summary_alone_when_the_parameter_it_mentions_goes()
 	{
 		var updated = Update(
@@ -83,7 +83,7 @@ public sealed class ParamTagsTests
 	/// from here. With nothing left to anchor on the new tag was never written at all, and the build
 	/// failed on CS1573 -- so the summary's closing line is the anchor of last resort.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Writes_after_the_summary_when_the_removal_took_the_last_tag()
 	{
 		var updated = Update(
@@ -106,7 +106,7 @@ public sealed class ParamTagsTests
 	/// Tags written in an order the declaration does not use. The new one goes after the last of
 	/// them, because reordering documentation nobody asked to reorder is a diff to read for nothing.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Anchors_on_the_last_tag_even_where_the_tags_are_out_of_order()
 	{
 		var updated = Update(
@@ -138,7 +138,7 @@ public sealed class ParamTagsTests
 	/// five lines of description.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Writes_after_the_whole_of_a_tag_that_runs_over_several_lines()
 	{
 		var updated = Update(
@@ -167,7 +167,7 @@ public sealed class ParamTagsTests
 	/// A member that documents no parameter is left entirely alone: neither diagnostic fires on one,
 	/// and a summary mentioning a parameter is still not a tag.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_a_member_that_documents_no_parameter_alone()
 	{
 		Assert.Null(ParamTags.Update(
@@ -181,7 +181,7 @@ public sealed class ParamTagsTests
 	/// The new tag takes its indentation, its marker and its line ending from the line it is modelled
 	/// on, so a member nested two levels in does not get a tag at column zero with the wrong ending.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Copies_the_indentation_and_the_ending_of_the_line_it_models()
 	{
 		var updated = Update(

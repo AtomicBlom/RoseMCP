@@ -49,7 +49,7 @@ public sealed class WpfXamlStubTests
 		}
 		""";
 
-	[Fact]
+	[Test]
 	public void Declares_the_base_type_and_an_internal_field_for_every_named_element()
 	{
 		var markup = """
@@ -80,7 +80,7 @@ public sealed class WpfXamlStubTests
 		Assert.Empty(emission.UnresolvedTypes);
 	}
 
-	[Fact]
+	[Test]
 	public void Resolves_a_framework_element_to_the_namespace_the_markup_compiler_chose()
 	{
 		var markup = """
@@ -116,7 +116,7 @@ public sealed class WpfXamlStubTests
 	/// generated files. Typing it as the element would compile and then fail on every member of the
 	/// view itself, which is a worse failure than the missing field it replaced.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Types_a_named_root_element_as_the_class_it_generates()
 	{
 		var markup = """
@@ -145,7 +145,7 @@ public sealed class WpfXamlStubTests
 		Assert.DoesNotContain("UserControl ProjectSelectionRoot", emission.Source!, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Honours_an_explicit_field_modifier_over_the_dialect_default()
 	{
 		var markup = """
@@ -161,7 +161,7 @@ public sealed class WpfXamlStubTests
 		Assert.Contains("public global::System.Windows.Controls.Button Shared;", emission.Source!, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Gives_an_application_definition_the_entry_point_its_markup_compiler_would_have()
 	{
 		var markup = """
@@ -195,7 +195,7 @@ public sealed class WpfXamlStubTests
 	/// fields from generated code this deliberately does not emit, so it is also what proves the
 	/// pragmas cover the never-assigned warning that leaves behind.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_a_compilation_that_binds_and_reports_nothing()
 	{
 		var markup = """
@@ -240,7 +240,7 @@ public sealed class WpfXamlStubTests
 
 		var complete = Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework, behind, emission.Source);
 
-		Assert.Empty(complete.GetDiagnostics(TestContext.Current.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
+		Assert.Empty(complete.GetDiagnostics(TestContext.Current!.Execution.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
 	}
 
 	/// <summary>
@@ -248,7 +248,7 @@ public sealed class WpfXamlStubTests
 	/// likely to still be on it. Found by loading a real net48 WPF project, where the stub's own
 	/// #nullable disable was three CS8370 errors in a file whose whole purpose is removing errors.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Emits_nothing_a_pre_nullable_language_version_cannot_parse()
 	{
 		var markup = """
@@ -287,11 +287,11 @@ public sealed class WpfXamlStubTests
 		var complete = Compile(LanguageVersion.CSharp7_3, FakeFramework, behind, emission.Source);
 
 		Assert.Empty(complete
-			.GetDiagnostics(TestContext.Current.CancellationToken)
+			.GetDiagnostics(TestContext.Current!.Execution.CancellationToken)
 			.Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
 	}
 
-	[Fact]
+	[Test]
 	public void Recognises_a_wpf_project_by_the_types_it_references()
 	{
 		var document = XamlDocumentReader.Read("Widget.xaml", """

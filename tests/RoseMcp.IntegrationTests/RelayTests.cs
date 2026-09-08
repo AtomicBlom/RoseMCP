@@ -54,6 +54,63 @@ public sealed class RelayTests
 		Assert.Contains(fixture.SolutionPath, paths);
 	}
 
+	/// <summary>
+	/// The relay's failures carry their reason however many times they are asked, not only the first
+	/// time.
+	/// </summary>
+	/// <remarks>
+	/// Found by making it fail rather than by reading the hops, and the first call is exactly the one
+	/// that hides it. After a tray restart call one said "The RoseMCP tray at ... is not answering",
+	/// which is right, and every call after it said "An error occurred invoking 'rose_x'." -- the
+	/// SDK's shrug, on the path where the caller most needs telling.
+	/// <para>
+	/// Two causes, both needed. The reconnect leaves the dead client in the field, so the next call
+	/// goes to a disposed session and fails instantly as a <c>TaskCanceledException</c> -- which was
+	/// not in the relay's idea of a transport failure, so it neither reconnected nor explained
+	/// itself. And the relayed session applied no call-tool filter at all, because it declares no
+	/// tools, so nothing turned that exception into a message.
+	/// </para>
+	/// <para>
+	/// Three calls rather than two, because two would not have distinguished "the second is wrong"
+	/// from "every one after the first is wrong", and the fix has to hold for both.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task A_relayed_call_says_why_it_failed_every_time_the_tray_is_gone()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var directory = Path.GetDirectoryName(fixture.SolutionPath)!;
+		await using var relay = await RelayFixture.StartAsync(directory, cancellationToken);
+
+		// A working call first, so what follows is a session that was relaying rather than one that
+		// never connected.
+		using (var working = await relay.Session.CallToolAsync(ToolNames.WorkspaceStatus, "{}", cancellationToken))
+		{
+			Structured(working);
+		}
+
+		await relay.StopBrokerAsync(cancellationToken);
+
+		for (var attempt = 1; attempt <= 3; attempt++)
+		{
+			using var failed = await relay.Session.CallToolAsync(ToolNames.WorkspaceStatus, "{}", cancellationToken);
+
+			var text = ErrorText(failed);
+
+			Assert.True(
+				failed.RootElement.GetProperty("result").GetProperty("isError").GetBoolean(),
+				$"call {attempt} should have failed with the tray gone, and said: {text}");
+
+			// The reason is the discriminator, and it is the whole assertion. The SDK writes its own
+			// preamble in front of every tool failure including the ones that do explain themselves,
+			// so "An error occurred invoking" appearing says nothing; what separated the first call
+			// from the rest was that only the first went on to say anything after it.
+			Assert.Contains("is not answering", text, StringComparison.Ordinal);
+		}
+	}
+
 	/// <summary>The structured half of a tool reply, or the error text when the call failed.</summary>
 	internal static JsonElement Structured(JsonDocument reply)
 	{

@@ -82,7 +82,14 @@ internal static class Program
 				.AddMcpServer(server => server.ServerInfo = new() { Name = "rose-mcp", Version = "0.1.0" })
 				.WithStdioServerTransport()
 				.WithListToolsHandler((_, token) => relay.ListToolsAsync(token))
-				.WithCallToolHandler((context, token) => relay.CallToolAsync(context.Params!, context.Server, token));
+				.WithCallToolHandler((context, token) => relay.CallToolAsync(context.Params!, context.Server, token))
+
+				// This is an MCP boundary like any other, and declaring no tools of its own is exactly
+				// why it was missed: a boundary is wherever an exception meets the SDK. Without it a
+				// relay failure the SDK does not recognise came back as "An error occurred invoking
+				// 'rose_x'." -- the shrug this filter exists to replace, on the one path where the
+				// caller most needs to be told the tray is gone.
+				.WithToolErrorMessages();
 
 			await builder.Build().RunAsync();
 		}

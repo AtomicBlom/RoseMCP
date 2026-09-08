@@ -317,12 +317,26 @@ public sealed class TrayRelay : IAsyncDisposable
 	/// <summary>
 	/// The connection died, as opposed to the call failing. Mirrors what the broker treats as a dead
 	/// worker, plus the http failures a socket to a stopped tray produces.
+	/// <para>
+	/// A cancellation counts, and it is the one that was missing. The caller's own cancellation is
+	/// caught before this is ever consulted, so an <see cref="OperationCanceledException"/> arriving
+	/// here was raised by the transport rather than asked for -- which is exactly what a request on a
+	/// client whose session has been disposed throws, instantly and as a
+	/// <c>TaskCanceledException</c> out of <c>HttpClient</c>.
+	/// </para>
+	/// <para>
+	/// Leaving it out is what made the second failure after a tray restart worse than the first. The
+	/// first call fails on the socket, reconnects, cannot, and reports why; the dead client stays in
+	/// the field, so every call after it fails this way instead -- unrecognised, so no reconnect, no
+	/// message, and a bare shrug for a caller who has just been told something useful once.
+	/// </para>
 	/// </summary>
 	private static bool IsTransportFailure(Exception exception) => exception
 		is ClientTransportClosedException
 		or HttpRequestException
 		or IOException
 		or ObjectDisposedException
+		or OperationCanceledException
 		or InvalidOperationException { Source: "ModelContextProtocol.Core" };
 
 	/// <summary>

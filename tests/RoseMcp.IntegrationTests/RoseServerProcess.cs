@@ -77,7 +77,13 @@ public sealed class RoseServerProcess : IDisposable
 	}
 
 	/// <summary>Starts a server, with its streams held so a test can close stdin on its own terms.</summary>
-	public static RoseServerProcess Start(params string[] arguments)
+	public static RoseServerProcess Start(params string[] arguments) => StartIn(workingDirectory: null, arguments);
+
+	/// <summary>
+	/// Starts a server in a given directory. That directory is not decoration: it is the one fact a
+	/// stdio session has that an http broker cannot learn, and the relay sends it with every call.
+	/// </summary>
+	public static RoseServerProcess StartIn(string? workingDirectory, params string[] arguments)
 	{
 		var start = new ProcessStartInfo(ExecutablePath())
 		{
@@ -86,6 +92,8 @@ public sealed class RoseServerProcess : IDisposable
 			RedirectStandardError = true,
 			UseShellExecute = false,
 		};
+
+		if (workingDirectory is not null) start.WorkingDirectory = workingDirectory;
 
 		foreach (var argument in arguments) start.ArgumentList.Add(argument);
 

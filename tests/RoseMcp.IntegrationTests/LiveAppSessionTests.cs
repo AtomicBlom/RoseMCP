@@ -1,13 +1,14 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 using Microsoft.Extensions.Logging;
-
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.TestToolchain;
 
@@ -430,6 +431,147 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 					// Already gone; nothing to reclaim.
 				}
 			}
+		}
+	}
+
+	/// <summary>
+	/// A live-app host dies with the client that spawned it, and takes a target it launched with it.
+	/// </summary>
+	/// <remarks>
+	/// The half that already held is the exit: closing the host's stdin ends it, in about fifty
+	/// milliseconds, the way it ends a worker. The half that did not is the target. Killing a wedged
+	/// test host left both hosts and both probe apps running, and the probe app is single-instance --
+	/// so the orphan is not a process that costs memory, it is a process the next run's fixture finds
+	/// and mistakes for its own.
+	/// <para>
+	/// Driven against the host binary over a hand-written handshake rather than through
+	/// <see cref="LiveAppSessionManager"/> or an <c>McpClient</c>, and both halves of that are
+	/// load-bearing. The manager always detaches before it closes stdin, and a detach is precisely
+	/// the request this must honour. And disposing an <c>McpClient</c> kills the child's whole
+	/// process tree, which the target is in -- so a test written that way passes against the fix and
+	/// against its absence, which is what the first draft of this did.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task A_live_app_host_takes_the_target_it_launched_when_its_client_goes_away()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+
+		var start = new ProcessStartInfo(LiveAppHostLauncher.ResolveHostPath(ExpectedArchitecture, new BrokerOptions()))
+		{
+			RedirectStandardInput = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+			UseShellExecute = false,
+		};
+
+		foreach (var argument in new[] { "--launch", ProbeTargetPath(), "--description", "orphan probe" })
+		{
+			start.ArgumentList.Add(argument);
+		}
+
+		using var host = Process.Start(start) ?? throw new InvalidOperationException("Could not start the live-app host.");
+
+		// Drained, not ignored: the host logs to stderr, and a full pipe buffer stops the process
+		// this test is waiting on.
+		var draining = host.StandardError.ReadToEndAsync(cancellationToken);
+
+		int targetProcessId;
+		try
+		{
+			await SendAsync(host, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"rose-tests","version":"1"}}}""");
+			await ReadReplyAsync(host, cancellationToken);
+
+			await SendAsync(host, """{"jsonrpc":"2.0","method":"notifications/initialized"}""");
+
+			// The tool name substituted rather than interpolated: a raw literal ending in three braces
+			// cannot also carry an interpolation, and spelling the name again is how a constant stops
+			// being one.
+			await SendAsync(
+				host,
+				"""{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"TOOL","arguments":{}}}"""
+					.Replace("TOOL", ToolNames.LiveAppInfo, StringComparison.Ordinal));
+
+			using var reply = JsonDocument.Parse(await ReadReplyAsync(host, cancellationToken));
+			var info = reply.RootElement.GetProperty("result").GetProperty("structuredContent");
+
+			Assert.Equal(nameof(LiveAppSessionState.Ready), info.GetProperty("state").GetString());
+
+			targetProcessId = info.GetProperty("targetProcessId").GetInt32();
+		}
+		catch
+		{
+			if (!host.HasExited) host.Kill(entireProcessTree: true);
+			throw;
+		}
+
+		// The client going away, and nothing else: stdin closes, no detach was asked for, and nobody
+		// reaches into the process tree.
+		host.StandardInput.Close();
+
+		await AssertGoneAsync(host.Id, "the host", cancellationToken);
+		await AssertGoneAsync(targetProcessId, "the target it launched", cancellationToken);
+
+		await draining;
+	}
+
+	/// <summary>One JSON-RPC frame to a host driven directly, which is newline-delimited and nothing else.</summary>
+	private static async Task SendAsync(Process host, string frame)
+	{
+		await host.StandardInput.WriteLineAsync(frame);
+		await host.StandardInput.FlushAsync();
+	}
+
+	/// <summary>
+	/// The next line of the host's stdout, or a failure saying it never came. Bounded, because the
+	/// alternative to a bound here is a test that hangs a run -- which is the family of defect this
+	/// block of work is about.
+	/// </summary>
+	private static async Task<string> ReadReplyAsync(Process host, CancellationToken cancellationToken)
+	{
+		using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		bounded.CancelAfter(TimeSpan.FromSeconds(60));
+
+		try
+		{
+			return await host.StandardOutput.ReadLineAsync(bounded.Token)
+				?? throw new InvalidOperationException("The live-app host closed its stdout without replying.");
+		}
+		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+		{
+			throw new InvalidOperationException("The live-app host did not reply within 60s.");
+		}
+	}
+
+	/// <summary>
+	/// Waits for a process to be gone, and fails naming which one it was still waiting for. Bounded
+	/// rather than immediate because exiting is not instantaneous, and generously rather than tightly
+	/// because the number is not what is under test.
+	/// </summary>
+	private static async Task AssertGoneAsync(int processId, string what, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+
+		while (DateTime.UtcNow < deadline)
+		{
+			if (!IsRunning(processId)) return;
+
+			await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
+		}
+
+		Assert.Fail($"{what} (pid {processId}) was still running 30s after the client went away.");
+	}
+
+	private static bool IsRunning(int processId)
+	{
+		try
+		{
+			using var process = Process.GetProcessById(processId);
+			return !process.HasExited;
+		}
+		catch (ArgumentException)
+		{
+			return false;
 		}
 	}
 
@@ -918,6 +1060,223 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		{
 			if (!child.HasExited) child.Kill(entireProcessTree: true);
 		}
+	}
+
+	/// <summary>
+	/// Every wait on the provider channel is bounded, and the sentence that comes back names which
+	/// channel ran out and how long it was given.
+	/// </summary>
+	/// <remarks>
+	/// The bound this drives is the injection call itself, which had none. It is a blocking
+	/// cross-process call served by the target's UI thread, so a target wedged below managed code
+	/// never returns from it -- which is how a full suite run hung for fifty minutes on a first tree
+	/// read, the pipe logged as listening and no line after it.
+	/// <para>
+	/// Driven by shortening the bound rather than by wedging an app, because a wedged UI thread is not
+	/// something a test can arrange on demand and a test that waits for a real hang is the very thing
+	/// this is fixing. A millisecond is far below what loading a DLL into another process and walking
+	/// its tree can take, so the bound expires every time; the abandoned injection completes into the
+	/// work folder afterwards, harmlessly, which is why this takes the app for itself.
+	/// <para>
+	/// What it does not prove is that the abandoned call was genuinely blocked rather than merely
+	/// slow. Nothing here can prove that: the wait is bounded either way, and the difference is
+	/// invisible from this side by construction.
+	/// </para>
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Bounds_the_wait_on_the_xaml_injection_call_and_names_the_channel()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+
+		try
+		{
+			await WaitForProbeWindowAsync(child, cancellationToken);
+
+			// Process-wide, and safe because the host reads it at startup and this turn holds the only
+			// gate under which a live-app host is started. Zero rather than a small number: a bound of one
+			// millisecond is really a wait of fifteen, because that is the scheduler's granularity, and an
+			// injection into a warm app finishes inside that often enough to pass at random.
+			using var shortened = new EnvironmentVariable("ROSEMCP_XAML_TIMEOUT_SECONDS", "0");
+
+			await using var manager = CreateManager();
+
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "winui probe (bounded injection)",
+				},
+				cancellationToken);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.NotNull(tree.Detail);
+			Assert.Contains("the XAML diagnostics injection call", tree.Detail, StringComparison.Ordinal);
+			Assert.Contains("timed out after", tree.Detail, StringComparison.Ordinal);
+			Assert.Empty(tree.Nodes);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// The provider pipe serves the reads it says it does: the first read of a session injects and
+	/// answers through the work folder, and every read after it is a message to the resident reader.
+	/// </summary>
+	/// <remarks>
+	/// The pipe connected, greeted, and then served nothing, unchanged for two releases -- invisible
+	/// because both channels return the same tree, so every test that asserted the tree passed
+	/// either way. The result names its channel now, which is the only thing that makes this
+	/// assertable at all.
+	/// <para>
+	/// The first read cannot use the pipe and that is by construction rather than a shortcoming: the
+	/// provider is not in the app until something injects it, and the pipe name travels in that
+	/// injection's initialisation data. So the first read is asserted as the work folder, which also
+	/// keeps the second assertion honest -- a session that reported "pipe" for both would mean the
+	/// field was not being read off the path actually taken.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task The_second_xaml_read_of_a_session_is_served_over_the_pipe()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+
+		try
+		{
+			await WaitForProbeWindowAsync(child, cancellationToken);
+
+			await using var manager = CreateManager();
+
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "winui probe (channel)",
+				},
+				cancellationToken);
+
+			var first = await session.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.True(first.Detail is null, $"expected a tree, got detail: {first.Detail}");
+			Assert.Equal("work folder", first.Channel);
+
+			var second = await session.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.True(second.Detail is null, $"expected a tree, got detail: {second.Detail}");
+			Assert.Equal("pipe", second.Channel);
+
+			// The same tree either way, which is what made the pipe's silence invisible.
+			Assert.Contains(second.Nodes, node => node.Name == "RootGrid");
+			Assert.Equal(first.Count, second.Count);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// The pipe serves a classic UWP target too, which is the case that can genuinely fail: the
+	/// provider runs inside an AppContainer and reaches the pipe only through the two SIDs the host
+	/// grants on it.
+	/// </summary>
+	/// <remarks>
+	/// The WinUI probe cannot answer this. Unpackaged WinUI 3 is in nobody's AppContainer, so its
+	/// end of the pipe is an ordinary CreateFile that would succeed with no grants at all -- which
+	/// makes it the wrong target to conclude anything about the ACL from.
+	/// <para>
+	/// Two reads, and only the second is asserted. The shared app is shared, so whether this
+	/// session's first read has already happened is not something one test gets to know; reading
+	/// twice makes the second a second read either way.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task A_uwp_xaml_read_reaches_the_pipe_from_inside_the_app_container()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+
+		await turn.Session.ReadXamlTreeAsync(cancellationToken);
+
+		var second = await turn.Session.ReadXamlTreeAsync(cancellationToken);
+
+		Assert.True(second.Detail is null, $"expected a tree, got detail: {second.Detail}");
+		Assert.Equal("pipe", second.Channel);
+	}
+
+	/// <summary>
+	/// The tap gives its two framework interfaces back when the session detaches, and says so.
+	/// </summary>
+	/// <remarks>
+	/// They were released only from <c>SetSite(nullptr)</c>, which nothing reaches -- no tap is ever
+	/// unadvised -- so every injection left an <c>IXamlDiagnostics</c> and an
+	/// <c>IVisualTreeService</c> held for the life of the app, and the app outlives the session on
+	/// purpose. A destructor would not have helped: the framework's advise and the reader's active
+	/// pointer both hold a reference, so the object is never deleted either.
+	/// <para>
+	/// Asserted on the host's line rather than the provider's log file, and that is what decided
+	/// where the release goes. The provider writes into the work folder the host is about to delete,
+	/// and a release done at host shutdown is written after the client has closed the stdin carrying
+	/// it -- so the detach asks over the pipe and reports the answer, while there is still a channel
+	/// to report on.
+	/// </para>
+	/// <para>
+	/// On the classic UWP probe rather than the WinUI one, because the WinUI probe cannot be launched
+	/// reliably on this machine: two of two full runs had it exit at startup with
+	/// REGDB_E_CLASSNOTREG, and the helper that meets that skips. A skip is the one outcome an
+	/// acceptance test must not have, since it reads as green. The tap is shared code, so which
+	/// framework hosts it does not change what is under test here.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task The_tap_releases_its_interfaces_when_the_session_detaches()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, cancellationToken);
+
+		var logs = new RecordingLoggerFactory();
+		await using var manager = CreateManager(logs);
+
+		var session = await manager.StartAsync(
+			new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.LaunchUwp,
+				AppUserModelId = turn.Aumid,
+				Description = "uwp probe (detach)",
+			},
+			cancellationToken);
+
+		// The first tick is the signal that the tree is up, and there is no provider in the app --
+		// so nothing holding anything -- until a read has injected one.
+		await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
+				&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
+			cancellationToken);
+
+		var tree = await session.ReadXamlTreeAsync(cancellationToken);
+		Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+
+		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+
+		Assert.Contains(
+			logs.Lines,
+			line => line.Contains("released its diagnostics interfaces on detach", StringComparison.Ordinal));
 	}
 
 	/// <summary>

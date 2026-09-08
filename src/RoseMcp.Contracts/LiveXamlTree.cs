@@ -19,6 +19,19 @@ public sealed record LiveXamlTree
 	public int Total { get; init; }
 
 	/// <summary>
+	/// Which channel answered: <c>pipe</c> for the resident provider's reader, <c>work folder</c> for
+	/// an injection that wrote a snapshot to disk. Null when no tree came back.
+	/// <para>
+	/// Reported because the two are indistinguishable from outside -- they return the same tree, and
+	/// the pipe silently serving nothing is invisible to every test that checks the answer. Which one
+	/// ran is the difference between a read that is a message to a resident reader and one that
+	/// re-injects the provider, so it is also the only way a caller can see that the fast path is
+	/// gone.
+	/// </para>
+	/// </summary>
+	public string? Channel { get; init; }
+
+	/// <summary>
 	/// Where the packaged app being inspected is installed from, for a UWP target. Null otherwise.
 	/// <para>
 	/// Here as well as on the session because this is the tool that answers plausibly rather than

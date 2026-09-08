@@ -638,8 +638,14 @@ reclaim memory or pick up a rebuilt generator.
   half-minute of a large solution is invisible -- which is exactly what a reload from the tray
   produces, since no client is waiting on it. The priming call pays for nothing the first real call
   would not have.
-- **Workers die with the broker.** A worker exits when its stdin closes. Orphaned Roslyn hosts
-  holding a solution in memory are invisible until the machine is out of RAM.
+- **Every stdio process dies with its client, and takes what it owns.** A worker, a live-app host
+  and a stdio `RoseMcp.Server` all exit when their stdin closes, and the rule is the same one three
+  times: whatever the process owns goes with it, because nothing else knows it is there. A server
+  ends its workers, and a host ends a target it *launched* -- never one it attached to, and never
+  after a detach, which is the request to leave the app running. Orphaned Roslyn hosts holding a
+  solution in memory are invisible until the machine is out of RAM; an orphaned probe app is worse
+  than invisible, because the probe is single-instance and the next run finds an app it did not
+  launch and treats it as its own.
 
 ## Commands
 

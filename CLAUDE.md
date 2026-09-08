@@ -665,7 +665,7 @@ refused unless `ROSEMCP_TOKEN` is set.
 Deploy over the running instance, or build release zips:
 
 ```
-./tools/deploy.ps1                          # test, stop tray, publish, restart
+./tools/deploy.ps1                          # stop tray, publish, restart
 ./tools/deploy.ps1 -Mode package            # artifacts/rosemcp-win-{x64,arm64}.zip
 ```
 

@@ -164,9 +164,13 @@ public sealed class WorkspaceManager(
 		}
 		catch (WorkerUnavailableException) when (retryIfWorkerDied)
 		{
-			logger.LogInformation("Restarting the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
+			logger.LogInformation("Replacing the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
 
-			var replacement = await RestartResolvedAsync(worker.SolutionPath, cancellationToken);
+			// GetOrStart rather than Restart, because Restart closes whatever is registered for the
+			// path rather than the instance that just died. Two callers on one dead worker and the
+			// second closes the replacement the first is already loading a solution into, mid-load.
+			// GetOrStart replaces only an instance that is not alive, which is exactly this case.
+			var replacement = await GetOrStartResolvedAsync(worker.SolutionPath, cancellationToken);
 
 			return Attribute(
 				await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);

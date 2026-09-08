@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 
@@ -171,15 +172,26 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 			sink.Append(text);
 	}
 
+	/// <summary>
+	/// Ends a restore that ran out of time. Both failures mean the job is already done -- there is
+	/// nothing left to kill -- and neither may replace the timeout the caller is about to report,
+	/// which is the actual reason the restore failed.
+	/// <para>
+	/// <c>Win32Exception</c> as well as <c>InvalidOperationException</c>: <c>Process.Kill</c> throws
+	/// the first when the operating system refuses, which happens for a process that is mid-exit, and
+	/// only the second means "already gone" in the managed sense. Catching one and not the other left
+	/// the timeout path throwing "Access is denied" instead, about a process nobody needed any more.
+	/// </para>
+	/// </summary>
 	private static void TryKill(Process process)
 	{
 		try
 		{
 			process.Kill(entireProcessTree: true);
 		}
-		catch (InvalidOperationException)
+		catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
 		{
-			// Already gone. Nothing to do.
+			// Already gone, or going. Nothing to do.
 		}
 	}
 

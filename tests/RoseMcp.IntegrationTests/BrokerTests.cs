@@ -794,6 +794,131 @@ public sealed class BrokerTests
 		await Assert.ThrowsAnyAsync<Exception>(() => call);
 	}
 
+	/// <summary>
+	/// A worker that dies is noticed when it dies, without anyone calling it.
+	/// </summary>
+	/// <remarks>
+	/// Nothing observed exit: the exit reason flipped inside the send path, so a worker that had
+	/// crashed while idle went on describing itself as alive until somebody asked it something. The
+	/// tray polls exactly this description every couple of seconds, so it showed a dead worker as
+	/// loaded for as long as nobody used it -- which is the situation someone opens that window in.
+	/// <para>
+	/// Waiting for the workspace to go quiet first is what makes this discriminate, and the first
+	/// draft did not: killing a worker while its load was still finishing meant the heap refresh
+	/// that follows every call met the dead process and flipped the reason anyway, so the test passed
+	/// against the un-fixed broker. Nothing polls a worker on its own once the load is done, so a
+	/// reason that changes after that changed because the exit was observed.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task A_crashed_worker_is_noticed_without_being_called()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), cancellationToken);
+
+		Assert.True(worker.IsAlive, $"the worker should be alive; exit reason was '{worker.ExitReason}'");
+		Assert.NotNull(worker.ProcessId);
+
+		// The load, and then the heap read that follows it. Both are calls, and a call notices a dead
+		// worker by itself -- which is the behaviour this test has to run after rather than alongside.
+		await WaitForLoadAsync(worker, cancellationToken);
+		await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+
+		Assert.True(worker.IsAlive, "the worker should still be alive with nothing having been asked of it");
+
+		using (var process = Process.GetProcessById(worker.ProcessId!.Value))
+		{
+			process.Kill(entireProcessTree: true);
+		}
+
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+		while (worker.IsAlive && DateTime.UtcNow < deadline)
+		{
+			await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+		}
+
+		Assert.False(worker.IsAlive, "a worker killed from outside should be reported dead without being called");
+		Assert.Equal(WorkerExitReason.Crashed, worker.ExitReason);
+
+		// And the description the tray reads agrees, which is the thing that was wrong.
+		var described = Assert.Single(manager.Describe());
+
+		Assert.False(described.Alive, "the description a tray polls should agree that the worker is gone");
+		Assert.Equal(WorkspaceState.Faulted, described.State);
+	}
+
+	/// <summary>
+	/// Waits for a worker's initial load to finish, which is what makes it safe to say that nothing
+	/// is about to call it.
+	/// </summary>
+	private static async Task WaitForLoadAsync(WorkspaceWorker worker, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(2);
+
+		while (DateTime.UtcNow < deadline)
+		{
+			if (worker.LoadDuration is not null || !worker.IsAlive) return;
+
+			await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+		}
+
+		throw new InvalidOperationException($"The worker for {worker.SolutionPath} never finished loading.");
+	}
+
+	/// <summary>
+	/// The retry after a worker dies replaces the dead instance rather than closing whatever is
+	/// registered for the path.
+	/// </summary>
+	/// <remarks>
+	/// The retry called the restart path, which removes and closes whatever is registered whether or
+	/// not it is the instance that just died. Two callers on one dead worker and the second closes
+	/// the replacement the first is already loading a solution into, mid-load. Replacing only a dead
+	/// instance is what <c>GetOrStart</c> already does.
+	/// <para>
+	/// This is a characterisation test and it passes against the un-fixed broker, which was checked
+	/// rather than assumed. With one caller the two paths are indistinguishable: both end with one
+	/// live replacement serving the call. The difference needs two callers arriving on the same dead
+	/// worker inside the same window, which is not something a test can arrange reliably -- one that
+	/// tried would be asserting a timing and would fail for reasons that are not this bug. What it
+	/// does hold is the outcome nobody should be able to break quietly: one worker registered, not a
+	/// closed one beside a live one, and the retried call answered.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task A_call_retried_after_a_worker_dies_is_served_by_one_replacement()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var hints = WorkspaceHints.From(fixture.SolutionPath);
+		var original = await manager.GetOrStartAsync(hints, cancellationToken);
+
+		using (var process = Process.GetProcessById(original.ProcessId!.Value))
+		{
+			process.Kill(entireProcessTree: true);
+		}
+
+		var status = await manager.CallAsync<WorkspaceStatusReport>(
+			hints,
+			ToolNames.WorkspaceStatus,
+			new Dictionary<string, object?>(),
+			retryIfWorkerDied: true,
+			cancellationToken);
+
+		Assert.Equal(WorkspaceState.Loaded, status.State);
+		Assert.NotEmpty(status.Projects);
+
+		var replacement = Assert.Single(manager.Workers);
+
+		Assert.NotEqual(original.ProcessId, replacement.ProcessId);
+		Assert.Equal(fixture.SolutionPath, replacement.SolutionPath);
+		Assert.True(replacement.IsAlive, $"the replacement should be alive; exit reason was '{replacement.ExitReason}'");
+	}
+
 	/// <summary>The worker this server started, waited for rather than assumed to exist already.</summary>
 	private static async Task<int> WaitForNewWorkerAsync(IReadOnlyCollection<int> before, CancellationToken cancellationToken)
 	{

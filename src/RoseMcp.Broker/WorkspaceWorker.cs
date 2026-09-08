@@ -42,6 +42,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	private string? _loadFailure;
 	private string? _key;
 
+	// The worker process, held only to be told when it exits. Opened from the pid the worker reports
+	// about itself rather than from the transport, which does not expose the child it started.
+	private Process? _process;
+
 	private WorkspaceWorker(string solutionPath, McpClient client, ActivityLog activities, ILogger logger)
 	{
 		SolutionPath = solutionPath;
@@ -224,11 +228,59 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			var info = await SendAsync<WorkerInfo>(ToolNames.WorkerInfo, EmptyArguments, progress: null, cancellationToken);
 			ProcessId = info.ProcessId;
 			ManagedHeapBytes = info.ManagedHeapBytes;
+
+			WatchForExit(info.ProcessId);
 		}
 		catch (Exception exception)
 		{
 			// Memory reporting is a nicety. Losing it must not stop the workspace from opening.
 			_logger.LogDebug(exception, "Could not read worker info for {SolutionPath}.", SolutionPath);
+		}
+	}
+
+	/// <summary>
+	/// Subscribes to the worker process exiting, so a crash is noticed when it happens rather than
+	/// on the next call.
+	/// <para>
+	/// Nothing observed exit before: <see cref="ExitReason"/> flipped inside <c>SendAsync</c>, so a
+	/// worker that crashed while idle went on describing itself as alive until somebody called it.
+	/// The tray polls <see cref="Describe"/> every couple of seconds and showed a crashed worker as
+	/// loaded for as long as nobody asked it anything, which is exactly the situation a person is
+	/// looking at that window in.
+	/// </para>
+	/// <para>
+	/// Only when this side still thinks it is alive, so a worker the broker closed on purpose keeps
+	/// <see cref="WorkerExitReason.StoppedByBroker"/> rather than being relabelled a crash by its own
+	/// orderly exit.
+	/// </para>
+	/// </summary>
+	private void WatchForExit(int processId)
+	{
+		if (_process is not null) return;
+
+		try
+		{
+			var process = Process.GetProcessById(processId);
+			process.EnableRaisingEvents = true;
+			process.Exited += (_, _) =>
+			{
+				if (!IsAlive) return;
+
+				ExitReason = WorkerExitReason.Crashed;
+				_logger.LogWarning("The worker for {SolutionPath} exited on its own.", SolutionPath);
+			};
+
+			_process = process;
+
+			// Between opening the handle and arming the event the process can already have gone, and
+			// Exited does not fire for an exit that happened first.
+			if (process.HasExited && IsAlive) ExitReason = WorkerExitReason.Crashed;
+		}
+		catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+		{
+			// No such process, or it went between being reported and being looked up. The call path
+			// still notices, which is what this improves on rather than replaces.
+			_logger.LogDebug(exception, "Could not watch worker {ProcessId} for exit.", processId);
 		}
 	}
 
@@ -438,5 +490,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		{
 			_logger.LogDebug(exception, "The worker for {SolutionPath} did not shut down cleanly.", SolutionPath);
 		}
+
+		// The exit watch goes with the worker it was watching. Held open it is one handle per worker
+		// ever started, in a broker that replaces them routinely.
+		_process?.Dispose();
+		_process = null;
 	}
 }

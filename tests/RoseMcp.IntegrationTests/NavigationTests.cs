@@ -4,17 +4,17 @@ namespace RoseMcp.IntegrationTests;
 
 public sealed class NavigationTests
 {
-	[Fact]
+	[Test]
 	public async Task Describes_a_symbol_from_its_declaration()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 7, Column = 20 },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal("Multiply", info.Name);
 		Assert.Equal("Method", info.Kind);
@@ -25,17 +25,17 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>Pointing at a use site must work as well as pointing at the declaration.</summary>
-	[Fact]
+	[Test]
 	public async Task Describes_a_symbol_from_a_use_site_in_another_project()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { FilePath = fixture.Path("Simple", "App", "Program.cs"), Line = 4, Column = 30 },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal("Multiply", info.Name);
 		Assert.Equal(
@@ -49,17 +49,17 @@ public sealed class NavigationTests
 	/// describe it because nothing in the solution declares it answers a narrower question than the one
 	/// asked -- and sends the caller to a decompiler for something the compilation had to hand.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Describes_a_type_that_lives_in_metadata()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "System.Text.StringBuilder" },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal("StringBuilder", info.Name);
 		Assert.Equal("NamedType", info.Kind);
@@ -76,17 +76,17 @@ public sealed class NavigationTests
 	/// A member of a metadata type, which is the half a caller reaches for after the type: the last
 	/// segment is looked up on the type the rest of the name resolves to.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Describes_a_member_of_a_type_that_lives_in_metadata()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "System.Text.Encoding.UTF8" },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal("UTF8", info.Name);
 		Assert.Equal("Property", info.Kind);
@@ -98,18 +98,18 @@ public sealed class NavigationTests
 	/// A name nothing carries anywhere still refuses, and with the refusal the source search wrote:
 	/// falling back to metadata must not turn "nothing is called that" into a vaguer error.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Still_refuses_a_name_that_is_in_neither_source_nor_metadata()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Assert.ThrowsAsync<SymbolNotFoundException>(() =>
 			NavigationService.DescribeAsync(
 				snapshot,
 				new SymbolTarget { Symbol = "Nowhere.At.All.Whatsoever" },
-				TestContext.Current.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Contains("Whatsoever", error.Message, StringComparison.Ordinal);
 	}
@@ -120,18 +120,18 @@ public sealed class NavigationTests
 	/// asked. The definitions come back empty -- a metadata symbol has no source location, which is
 	/// what tells the caller there is nothing to edit -- and the uses are the answer.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Finds_the_uses_of_a_type_that_lives_in_metadata()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindReferencesAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "System.Console" },
 			200,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Empty(result.Definitions);
 		Assert.Equal(2, result.TotalCount);
@@ -146,23 +146,23 @@ public sealed class NavigationTests
 	/// references while the previews on the ones it keeps are most of the payload. Each narrowing has
 	/// to be smaller than the full answer or it is not one.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Narrows_a_large_answer_three_ways()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var target = new SymbolTarget { Symbol = "Core.Calculator.Add" };
 
 		var full = await NavigationService.FindReferencesAsync(
-			snapshot, target, 200, TestContext.Current.CancellationToken);
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.NotEmpty(full.References);
 		Assert.All(full.References, location => Assert.NotNull(location.Preview));
 
 		var plain = await NavigationService.FindReferencesAsync(
-			snapshot, target, 200, TestContext.Current.CancellationToken, includePreviews: false);
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, includePreviews: false);
 
 		// The count and the places are the same answer; only the lines of source are gone.
 		Assert.Equal(full.TotalCount, plain.TotalCount);
@@ -172,7 +172,7 @@ public sealed class NavigationTests
 		Assert.True(Size(plain) < Size(full));
 
 		var counted = await NavigationService.FindReferencesAsync(
-			snapshot, target, 200, TestContext.Current.CancellationToken, definitionsOnly: true);
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, definitionsOnly: true);
 
 		Assert.Empty(counted.References);
 		Assert.NotEmpty(counted.Definitions);
@@ -181,7 +181,7 @@ public sealed class NavigationTests
 		Assert.True(Size(counted) < Size(plain));
 
 		var scoped = await NavigationService.FindReferencesAsync(
-			snapshot, target, 200, TestContext.Current.CancellationToken, project: "Core");
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core");
 
 		// Add is called from App and never from the project declaring it, so narrowing to Core empties
 		// the list while the symbol goes on being used -- which the caller can tell apart only because
@@ -196,14 +196,14 @@ public sealed class NavigationTests
 	/// lands inside a segment, and it names the parameters, which are not their types. A caller who
 	/// read a symbol out of one answer and wanted to edit it had to take the string apart by hand.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_an_address_the_next_call_takes()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var found = await NavigationService.SearchAsync(snapshot, "Notify", 50, TestContext.Current.CancellationToken);
+		var found = await NavigationService.SearchAsync(snapshot, "Notify", 50, TestContext.Current!.Execution.CancellationToken);
 
 		var match = found.Matches.First(candidate => candidate.Signature.Contains("Notifier.Notify", StringComparison.Ordinal));
 
@@ -213,13 +213,13 @@ public sealed class NavigationTests
 		var described = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = match.Address },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(match.Signature, described.Signature);
 		Assert.Equal(match.Address, described.Address);
 
 		var references = await NavigationService.FindReferencesAsync(
-			snapshot, new SymbolTarget { Symbol = described.Address }, 200, TestContext.Current.CancellationToken);
+			snapshot, new SymbolTarget { Symbol = described.Address }, 200, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(match.Address, references.Address);
 		Assert.NotEmpty(references.References);
@@ -229,14 +229,14 @@ public sealed class NavigationTests
 	/// An overload is separated by its parameter types, which is what makes the address usable on the
 	/// members most likely to have one: a name alone is refused where two declarations carry it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_an_address_that_separates_an_overload()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var found = await NavigationService.SearchAsync(snapshot, "Greet", 50, TestContext.Current.CancellationToken);
+		var found = await NavigationService.SearchAsync(snapshot, "Greet", 50, TestContext.Current!.Execution.CancellationToken);
 
 		var addresses = found.Matches
 			.Where(match => match.Name == "Greet")
@@ -250,7 +250,7 @@ public sealed class NavigationTests
 		foreach (var address in addresses)
 		{
 			var described = await NavigationService.DescribeAsync(
-				snapshot, new SymbolTarget { Symbol = address }, TestContext.Current.CancellationToken);
+				snapshot, new SymbolTarget { Symbol = address }, TestContext.Current!.Execution.CancellationToken);
 
 			Assert.Equal(address, described.Address);
 		}
@@ -260,19 +260,19 @@ public sealed class NavigationTests
 	/// A project name the solution does not carry is refused rather than filtered on. An empty list
 	/// reads exactly like a symbol nobody uses, and that is the answer that invites a deletion.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_to_narrow_to_a_project_that_is_not_there()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Assert.ThrowsAsync<ArgumentException>(() =>
 			NavigationService.FindReferencesAsync(
 				snapshot,
 				new SymbolTarget { Symbol = "Core.Calculator.Add" },
 				200,
-				TestContext.Current.CancellationToken,
+				TestContext.Current!.Execution.CancellationToken,
 				project: "Kernel"));
 
 		Assert.Contains("Kernel", error.Message, StringComparison.Ordinal);
@@ -283,12 +283,12 @@ public sealed class NavigationTests
 	private static int Size(ReferencesResult result) =>
 		System.Text.Json.JsonSerializer.Serialize(result, ContractJson.Options).Length;
 
-	[Fact]
+	[Test]
 	public async Task Finds_references_across_project_boundaries()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var target = new SymbolTarget
 		{
@@ -298,7 +298,7 @@ public sealed class NavigationTests
 		};
 
 		var references = await NavigationService.FindReferencesAsync(
-			snapshot, target, 200, TestContext.Current.CancellationToken);
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken);
 
 		var reference = Assert.Single(references.References);
 
@@ -307,31 +307,31 @@ public sealed class NavigationTests
 		Assert.Contains("Calculator.Multiply", reference.Preview!, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Explains_a_position_that_is_not_a_symbol()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
 			() => NavigationService.DescribeAsync(
 				snapshot,
 				new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 9999, Column = 1 },
-				TestContext.Current.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken));
 
 		// Guessing at a line number should not produce an opaque index error.
 		Assert.Contains("line(s)", error.Message, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Searches_by_abbreviation()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var result = await NavigationService.SearchAsync(snapshot, "Calc", 50, TestContext.Current.CancellationToken);
+		var result = await NavigationService.SearchAsync(snapshot, "Calc", 50, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains(result.Matches, match => match.Name == "Calculator" && match.Kind == "NamedType");
 	}
@@ -341,17 +341,17 @@ public sealed class NavigationTests
 	/// needing a line and column means grepping for one first, and the position is wrong as soon as
 	/// an earlier edit lands.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Describes_a_symbol_named_rather_than_pointed_at()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Core.Calculator.Multiply" },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal("Multiply", info.Name);
 		Assert.Equal("Method", info.Kind);
@@ -363,20 +363,20 @@ public sealed class NavigationTests
 	/// compiler knows it, and the doc comment above the member counts as part of it, since replacing
 	/// the member without it leaves the documentation stranded above the wrong thing.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_where_the_declaration_begins_and_ends()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var span = Assert.Single(info.DeclarationSpans);
-		var lines = await File.ReadAllLinesAsync(span.FilePath, TestContext.Current.CancellationToken);
+		var lines = await File.ReadAllLinesAsync(span.FilePath, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.EndsWith("Greeter.cs", span.FilePath, StringComparison.OrdinalIgnoreCase);
 		Assert.Equal(5, span.LineCount);
@@ -387,17 +387,17 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>A partial has a declaration in each of its files, and both are worth knowing.</summary>
-	[Fact]
+	[Test]
 	public async Task Reports_a_span_for_each_declaration_of_a_partial()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Library.Split" },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(2, info.DeclarationSpans.Count);
 		Assert.Contains(info.DeclarationSpans, span => span.FilePath.EndsWith("Split.cs", StringComparison.OrdinalIgnoreCase));
@@ -408,16 +408,16 @@ public sealed class NavigationTests
 	/// Neither addressing given is a mistake rather than a default, since guessing which was meant
 	/// would answer confidently about some other symbol.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_request_that_names_nothing_and_points_nowhere()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Assert.ThrowsAsync<ArgumentException>(
 			() => NavigationService.DescribeAsync(
-				snapshot, new SymbolTarget(), TestContext.Current.CancellationToken));
+				snapshot, new SymbolTarget(), TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Contains("Name the symbol", error.Message, StringComparison.Ordinal);
 	}
@@ -427,18 +427,18 @@ public sealed class NavigationTests
 	/// and a mis-counted column lands on a different identifier and answers completely, correctly and
 	/// about the wrong symbol -- which is silent in a way a write's refusal is not.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Finds_references_by_name()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Core.Calculator.Multiply" },
 			200,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var reference = Assert.Single(references.References);
 
@@ -450,16 +450,16 @@ public sealed class NavigationTests
 	/// A name that matches nothing says so, and says what to do about a local or a parameter, which is
 	/// the one thing a name cannot reach.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_reference_search_that_names_nothing()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var thrown = await Assert.ThrowsAsync<ArgumentException>(
 			() => NavigationService.FindReferencesAsync(
-				snapshot, new SymbolTarget(), 200, TestContext.Current.CancellationToken));
+				snapshot, new SymbolTarget(), 200, TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Contains("local variable or a parameter", thrown.Message, StringComparison.Ordinal);
 	}
@@ -468,17 +468,17 @@ public sealed class NavigationTests
 	/// The source with the answer, so understanding a member does not end in a file read -- which is
 	/// the moment the file is in front of the caller and the next edit goes through a text tool.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Returns_the_source_of_a_member_when_asked()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
-			TestContext.Current.CancellationToken,
+			TestContext.Current!.Execution.CancellationToken,
 			includeSource: true);
 
 		var source = Assert.Single(info.Source);
@@ -491,17 +491,17 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>Not asked for, not paid for: the field stays empty rather than always carrying a body.</summary>
-	[Fact]
+	[Test]
 	public async Task Leaves_the_source_out_unless_it_is_asked_for()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Empty(info.Source);
 	}

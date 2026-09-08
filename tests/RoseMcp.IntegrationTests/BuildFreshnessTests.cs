@@ -12,14 +12,14 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class BuildFreshnessTests
 {
-	[Fact]
+	[Test]
 	public async Task Calls_a_project_stale_when_nothing_has_been_built()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
-		var freshness = BuildFreshness.Of(snapshot.Solution, null, TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var freshness = BuildFreshness.Of(snapshot.Solution, null, TestContext.Current!.Execution.CancellationToken);
 
 		// A fresh copy has no bin directory at all, which is the state a clone starts in.
 		Assert.NotEmpty(freshness);
@@ -32,7 +32,7 @@ public sealed class BuildFreshnessTests
 	/// Built, and then a source touched: the output exists, the build was green, and the binary is
 	/// no longer the code. This is the case that has no other symptom.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Notices_a_source_written_after_the_output()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -63,7 +63,7 @@ public sealed class BuildFreshnessTests
 	/// The project file counts as a source. Changing a csproj changes what the assembly is even
 	/// when no code moved, which is exactly the case a source-only comparison would miss.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Counts_the_project_file_as_a_source()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -83,16 +83,16 @@ public sealed class BuildFreshnessTests
 	}
 
 	/// <summary>Naming one project answers about that one and not the rest.</summary>
-	[Fact]
+	[Test]
 	public async Task Answers_about_one_project_when_told_which()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Single(BuildFreshness.Of(snapshot.Solution, "Core", TestContext.Current.CancellationToken));
-		Assert.Empty(BuildFreshness.Of(snapshot.Solution, "Nonexistent", TestContext.Current.CancellationToken));
+		Assert.Single(BuildFreshness.Of(snapshot.Solution, "Core", TestContext.Current!.Execution.CancellationToken));
+		Assert.Empty(BuildFreshness.Of(snapshot.Solution, "Nonexistent", TestContext.Current!.Execution.CancellationToken));
 	}
 
 	/// <summary>
@@ -101,13 +101,13 @@ public sealed class BuildFreshnessTests
 	/// source. It is also the ordinary state of a solution being edited, so putting it in
 	/// degradedReasons would mark almost every workspace on the machine degraded.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_so_in_status_without_calling_the_workspace_degraded()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var status = await WorkspaceStatusReporter.DescribeAsync(
 			snapshot.Solution,
@@ -116,7 +116,7 @@ public sealed class BuildFreshnessTests
 			restore: null,
 			snapshot.Revision,
 			loadSeconds: 0,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains(
 			status.Notices,
@@ -128,8 +128,8 @@ public sealed class BuildFreshnessTests
 
 	private static async Task<Contracts.ProjectFreshness> FreshnessAsync(WorkspaceSession session, string project)
 	{
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		return Assert.Single(BuildFreshness.Of(snapshot.Solution, project, TestContext.Current.CancellationToken));
+		return Assert.Single(BuildFreshness.Of(snapshot.Solution, project, TestContext.Current!.Execution.CancellationToken));
 	}
 }

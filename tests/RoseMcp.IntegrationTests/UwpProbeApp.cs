@@ -72,11 +72,11 @@ public sealed class UwpProbeApp : IAsyncDisposable
 		lock (_gate)
 		{
 			var msbuild = MsBuild();
-			if (msbuild is null) Assert.Skip("No Visual Studio MSBuild with the classic-UWP tooling was found.");
+			if (msbuild is null) Skip.Test("No Visual Studio MSBuild with the classic-UWP tooling was found.");
 
 			if (needsXamlProvider && !ProviderBuilt())
 			{
-				Assert.Skip("The native XAML provider could not be built (no C++ toolset).");
+				Skip.Test("The native XAML provider could not be built (no C++ toolset).");
 			}
 
 			// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
@@ -84,7 +84,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 
 			if (_registered)
 			{
-				if (_aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+				if (_aumid is null) Skip.Test("The UWP probe app could not be registered (developer mode may be off).");
 				return _aumid!;
 			}
 
@@ -92,7 +92,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			_layoutDirectory = Stage(Build(msbuild!));
 			_aumid = Register(_layoutDirectory);
 
-			if (_aumid is null) Assert.Skip("The UWP probe app could not be registered (developer mode may be off).");
+			if (_aumid is null) Skip.Test("The UWP probe app could not be registered (developer mode may be off).");
 			return _aumid!;
 		}
 	}

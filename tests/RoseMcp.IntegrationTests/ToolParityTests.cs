@@ -1,9 +1,10 @@
 using System.ComponentModel;
 using System.Reflection;
-
 using ModelContextProtocol.Server;
-
 using RoseMcp.Contracts;
+// Assembly by an alias, because TUnit reaches HookType.Assembly as a bare name -- which is
+// ambiguous with the type wherever the name is used as an expression rather than in type position.
+using Assembly = System.Reflection.Assembly;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -25,7 +26,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class ToolParityTests
 {
-	[Fact]
+	[Test]
 	public void The_broker_and_the_live_app_host_declare_the_same_arguments()
 	{
 		var broker = Parameters(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);

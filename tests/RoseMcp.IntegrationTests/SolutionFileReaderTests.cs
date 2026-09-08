@@ -6,7 +6,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 {
 	private readonly DirectoryInfo _temporary = Directory.CreateTempSubdirectory("rosemcp-solutions-");
 
-	[Fact]
+	[Test]
 	public void Reads_projects_from_a_classic_sln()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -18,7 +18,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 		Assert.All(projects, path => Assert.True(File.Exists(path)));
 	}
 
-	[Fact]
+	[Test]
 	public void Reads_projects_from_an_slnx()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -29,7 +29,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 		Assert.All(projects, path => Assert.True(File.Exists(path)));
 	}
 
-	[Fact]
+	[Test]
 	public void Reads_the_configurations_an_slnx_declares()
 	{
 		// The BuildType and Platform elements under a Project map a solution configuration onto a
@@ -54,7 +54,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 		Assert.Equal(["x64"], configurations.Platforms);
 	}
 
-	[Fact]
+	[Test]
 	public void Reads_the_configurations_a_classic_sln_declares()
 	{
 		// Only the solution-wide section: the per-project one repeats the same names with a GUID
@@ -82,7 +82,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 		Assert.Equal(["x64", "AnyCPU"], configurations.Platforms);
 	}
 
-	[Fact]
+	[Test]
 	public void Reads_the_configurations_a_bare_project_declares()
 	{
 		var path = Write("A.csproj", """
@@ -100,7 +100,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 		Assert.Equal(["x64"], configurations.Platforms);
 	}
 
-	[Fact]
+	[Test]
 	public void Declares_nothing_for_a_solution_that_declares_nothing()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -108,7 +108,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 		Assert.True(SolutionFileReader.ReadConfigurations(fixture.SolutionPath).IsEmpty);
 	}
 
-	[Fact]
+	[Test]
 	public void Treats_a_bare_project_path_as_a_single_project()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");

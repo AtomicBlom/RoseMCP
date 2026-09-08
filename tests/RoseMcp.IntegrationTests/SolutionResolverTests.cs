@@ -9,7 +9,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class SolutionResolverTests
 {
-	[Fact]
+	[Test]
 	public void Resolves_a_source_file_to_its_enclosing_solution()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -19,7 +19,7 @@ public sealed class SolutionResolverTests
 		Assert.Equal(fixture.SolutionPath, resolved, ignoreCase: true);
 	}
 
-	[Fact]
+	[Test]
 	public void Resolves_a_directory_to_its_enclosing_solution()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -29,7 +29,7 @@ public sealed class SolutionResolverTests
 		Assert.Equal(fixture.SolutionPath, resolved, ignoreCase: true);
 	}
 
-	[Fact]
+	[Test]
 	public void Passes_a_solution_path_straight_through()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -38,7 +38,7 @@ public sealed class SolutionResolverTests
 	}
 
 	/// <summary>A project with no solution above it is still perfectly loadable.</summary>
-	[Fact]
+	[Test]
 	public void Falls_back_to_a_bare_project_when_no_solution_encloses_it()
 	{
 		var root = Path.Combine(Path.GetTempPath(), "rosemcp-tests", $"bare-{Guid.NewGuid():N}");
@@ -60,7 +60,7 @@ public sealed class SolutionResolverTests
 		}
 	}
 
-	[Fact]
+	[Test]
 	public void Says_what_to_pass_when_nothing_can_be_resolved()
 	{
 		var error = Assert.Throws<ArgumentException>(() => SolutionResolver.Resolve(NowhereDirectory.Path()));
@@ -73,7 +73,7 @@ public sealed class SolutionResolverTests
 	/// first, and taking the first by name answered every question in the repository from the wrong
 	/// compilation -- returning nothing, which is indistinguishable from a true negative.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Prefers_the_solution_that_compiles_the_file_over_the_first_by_name()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -84,7 +84,7 @@ public sealed class SolutionResolverTests
 	}
 
 	/// <summary>Containment works from a directory inside the project, not just from a file in it.</summary>
-	[Fact]
+	[Test]
 	public void Prefers_the_containing_solution_for_a_directory_inside_a_project()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -98,7 +98,7 @@ public sealed class SolutionResolverTests
 	/// A repository root encloses no project, so containment has nothing to say and guessing is what
 	/// produced the bug. The candidates go in the message, because the caller can fix the call.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_to_guess_between_solutions_sharing_a_directory()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -112,7 +112,7 @@ public sealed class SolutionResolverTests
 		Assert.Equal(2, error.Candidates.Count);
 	}
 
-	[Fact]
+	[Test]
 	public void A_pin_beside_them_settles_what_containment_cannot()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -131,7 +131,7 @@ public sealed class SolutionResolverTests
 	/// compilation that does not contain the file.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Containment_beats_a_pin_that_does_not_compile_the_path()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -146,7 +146,7 @@ public sealed class SolutionResolverTests
 	}
 
 	/// <summary>A pin naming something that is not there must not stop the repository working.</summary>
-	[Fact]
+	[Test]
 	public void A_pin_naming_an_absent_solution_is_ignored_rather_than_fatal()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -155,7 +155,7 @@ public sealed class SolutionResolverTests
 		Assert.Throws<AmbiguousSolutionException>(() => SolutionResolver.Resolve(repository.Root));
 	}
 
-	[Fact]
+	[Test]
 	public void Reports_what_it_chose_between_and_why()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -172,7 +172,7 @@ public sealed class SolutionResolverTests
 	/// project picks the new text up while still calling the old name from projects this solution
 	/// never had. The sibling is not stale afterwards; it is broken.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Finds_the_sibling_solution_that_shares_a_changed_file()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -185,7 +185,7 @@ public sealed class SolutionResolverTests
 		Assert.Equal(1, overlap.SharedFileCount);
 	}
 
-	[Fact]
+	[Test]
 	public void Says_nothing_when_no_sibling_shares_the_change()
 	{
 		using var repository = new TwoSolutionRepository();
@@ -194,7 +194,7 @@ public sealed class SolutionResolverTests
 		Assert.Empty(SolutionResolver.SiblingsSharing(repository.Main, [changed]));
 	}
 
-	[Fact]
+	[Test]
 	public void An_uncontested_choice_says_so()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");

@@ -23,7 +23,7 @@ public sealed class WorkspaceRoutingTests
 	/// The failure that prompted all this, reduced to its shape: the caller names a solution, the
 	/// directory they are calling from holds several, and the call must go where they said.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_named_workspace_beats_an_ambiguous_origin()
 	{
 		using var repository = new SeveralSolutions();
@@ -38,7 +38,7 @@ public sealed class WorkspaceRoutingTests
 	/// And the same call with nothing named is still refused, because the directory genuinely does
 	/// not say. Being able to answer the first case is not a licence to guess at this one.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void An_ambiguous_origin_with_nothing_named_is_still_refused()
 	{
 		using var repository = new SeveralSolutions();
@@ -54,7 +54,7 @@ public sealed class WorkspaceRoutingTests
 	/// pre-emptive resolve used to make impossible: every rose_find_references in a multi-solution
 	/// root failed on the directory before the file path it was given could settle it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_path_in_the_call_decides_where_the_origin_cannot()
 	{
 		using var repository = new SeveralSolutions();
@@ -71,7 +71,7 @@ public sealed class WorkspaceRoutingTests
 	/// scope and a project name under project scope, and resolving "Second" as a path would make it
 	/// relative to the process directory -- answering from whichever solution is sitting there.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_hint_that_names_nothing_on_disk_is_passed_over()
 	{
 		using var repository = new SeveralSolutions();
@@ -86,7 +86,7 @@ public sealed class WorkspaceRoutingTests
 	/// With nothing named and nothing in the arguments, the session's own directory answers. This is
 	/// what makes every tool work with no setup call, which is the whole reason the tools get used.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_origin_directory_answers_a_bare_call()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -100,7 +100,7 @@ public sealed class WorkspaceRoutingTests
 	/// The origin a relay sent outranks the broker's own working directory, which in http mode is the
 	/// tray's install directory and describes nothing.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void A_relayed_origin_outranks_the_brokers_own_directory()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -116,7 +116,7 @@ public sealed class WorkspaceRoutingTests
 	/// An ambiguity about a path the caller named explains more than one about a directory they only
 	/// happened to be in, so that is the failure they get.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Reports_the_ambiguity_about_the_path_over_the_one_about_the_directory()
 	{
 		using var repository = new SeveralSolutions();

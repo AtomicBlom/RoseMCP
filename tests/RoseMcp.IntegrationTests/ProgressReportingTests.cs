@@ -14,7 +14,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class ProgressReportingTests
 {
-	[Fact]
+	[Test]
 	public async Task A_solution_load_says_which_project_it_is_on()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -27,7 +27,7 @@ public sealed class ProgressReportingTests
 
 		var load = await loader.LoadAsync(
 			new WorkerOptions { SolutionPath = fixture.SolutionPath },
-			TestContext.Current.CancellationToken,
+			TestContext.Current!.Execution.CancellationToken,
 			progress);
 
 		load.Workspace.Dispose();
@@ -50,19 +50,19 @@ public sealed class ProgressReportingTests
 		Assert.True(reports[^1].Percent >= 75, $"the load finished at {reports[^1].Percent}");
 	}
 
-	[Fact]
+	[Test]
 	public async Task A_diagnostics_pass_says_which_project_it_is_analysing()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var progress = new CapturingProgress();
 
 		await new DiagnosticsService(NullLogger<DiagnosticsService>.Instance).AnalyseAsync(
 			snapshot,
 			new DiagnosticsRequest(),
-			TestContext.Current.CancellationToken,
+			TestContext.Current!.Execution.CancellationToken,
 			progress);
 
 		var reports = progress.Reports;
@@ -76,7 +76,7 @@ public sealed class ProgressReportingTests
 	/// The end-to-end check: a worker's progress notifications have to reach the broker's activity
 	/// log, because that log is the only thing the tray window and the admin endpoint can read.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task The_broker_records_the_load_a_worker_does_before_anyone_calls_it()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -87,7 +87,7 @@ public sealed class ProgressReportingTests
 
 		// No tool call of any kind: starting the worker is enough, which is what makes a reload from
 		// the tray visible.
-		await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current.CancellationToken);
+		await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
 
 		var load = await WaitForAsync(
 			() => manager.Describe().SingleOrDefault()?.Recent
@@ -132,7 +132,7 @@ public sealed class ProgressReportingTests
 		{
 			if (probe() is { } found) return found;
 
-			await Task.Delay(100, TestContext.Current.CancellationToken);
+			await Task.Delay(100, TestContext.Current!.Execution.CancellationToken);
 		}
 
 		throw new TimeoutException($"Nothing showed up within {timeout.TotalSeconds:F0}s.");

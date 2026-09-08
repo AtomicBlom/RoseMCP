@@ -15,12 +15,12 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class StalenessTests
 {
-	[Fact]
+	[Test]
 	public async Task Sees_an_out_of_band_edit_on_the_very_next_read()
 	{
 		await using var scope = await OpenAsync("Simple", "Simple.sln");
 
-		var before = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var before = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		Assert.Empty(await ErrorsAsync(before));
 
 		// Edit behind the workspace's back, exactly as an external editor would.
@@ -28,9 +28,9 @@ public sealed class StalenessTests
 		await File.WriteAllTextAsync(
 			calculator,
 			"namespace Core;" + Environment.NewLine + "public static class Calculator { this is not C# }",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
-		var after = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.NotEmpty(await ErrorsAsync(after));
 		Assert.True(after.Revision > before.Revision, "absorbing an external edit must advance the revision");
@@ -46,7 +46,7 @@ public sealed class StalenessTests
 	/// degraded reason. Found only because status gained a notices field to sit beside it.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Absorbing_an_edit_is_a_notice_and_not_a_reason_to_distrust_anything()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -64,17 +64,17 @@ public sealed class StalenessTests
 			new NeverStops(),
 			NullLogger<WorkspaceHost>.Instance);
 
-		await host.StartAsync(TestContext.Current.CancellationToken);
-		await host.GetStatusAsync(TestContext.Current.CancellationToken);
+		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
+		await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
 		// Edited behind the workspace's back, so the next status reconciles and absorbs it.
 		await File.WriteAllTextAsync(
 			fixture.Path("Simple", "Core", "Calculator.cs"),
 			"namespace Core;" + Environment.NewLine
 				+ "public static class Calculator { public static int Add(int a, int b) => a + b; }",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
-		var status = await host.GetStatusAsync(TestContext.Current.CancellationToken);
+		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains(status.Notices, notice => notice.Contains("Absorbed", StringComparison.Ordinal));
 		Assert.DoesNotContain(status.DegradedReasons, reason => reason.Contains("Absorbed", StringComparison.Ordinal));
@@ -84,13 +84,13 @@ public sealed class StalenessTests
 		Assert.Equal(WorkspaceState.Loaded, status.State);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Reports_no_change_when_nothing_moved()
 	{
 		await using var scope = await OpenAsync("Simple", "Simple.sln");
 
-		var first = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
-		var second = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var first = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var second = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		// A sweep that finds nothing must not churn the revision, or callers can never tell
 		// whether two answers describe the same world.
@@ -98,18 +98,18 @@ public sealed class StalenessTests
 		Assert.Same(first.Solution, second.Solution);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Drops_a_document_whose_file_was_deleted()
 	{
 		await using var scope = await OpenAsync("Simple", "Simple.sln");
 
-		var before = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var before = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		Assert.Contains(before.Solution.Projects.SelectMany(project => project.Documents),
 			document => document.Name == "Calculator.cs");
 
 		File.Delete(scope.Fixture.Path("Simple", "Core", "Calculator.cs"));
 
-		var after = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.DoesNotContain(after.Solution.Projects.SelectMany(project => project.Documents),
 			document => document.Name == "Calculator.cs");
@@ -120,22 +120,22 @@ public sealed class StalenessTests
 	/// the document set and the analyzer list all move at once -- so the barrier has to reload
 	/// rather than carry on with a text-level patch.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reloads_the_solution_when_a_project_file_changes()
 	{
 		await using var scope = await OpenAsync("Simple", "Simple.sln");
 
-		var before = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var before = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var project = scope.Fixture.Path("Simple", "Core", "Core.csproj");
-		var text = await File.ReadAllTextAsync(project, TestContext.Current.CancellationToken);
+		var text = await File.ReadAllTextAsync(project, TestContext.Current!.Execution.CancellationToken);
 		await File.WriteAllTextAsync(
 			project,
 			text.Replace("<Nullable>enable</Nullable>", "<Nullable>enable</Nullable>" + Environment.NewLine
 				+ "    <DefineConstants>$(DefineConstants);RELOADED</DefineConstants>"),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
-		var after = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.True(after.Revision > before.Revision);
 		Assert.Contains(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
@@ -155,42 +155,42 @@ public sealed class StalenessTests
 	/// fail by holding the solution file open exclusively, which is the first thing a load reads.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Absorbs_the_change_on_the_next_read_when_a_reload_throws()
 	{
 		await using var scope = await OpenAsync("Simple", "Simple.sln");
 
-		await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		await File.WriteAllTextAsync(
 			scope.Fixture.Path("Simple", "Core", "Calculator.cs"),
 			"namespace Core;" + Environment.NewLine
 				+ "public static class Calculator { public static int Tripled(int a) => a * 3; }",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		// The project file is what forces a reload. A source edit on its own is patched into the
 		// snapshot and never reaches one, so it could not show this.
 		var projectFile = scope.Fixture.Path("Simple", "Core", "Core.csproj");
-		var projectText = await File.ReadAllTextAsync(projectFile, TestContext.Current.CancellationToken);
+		var projectText = await File.ReadAllTextAsync(projectFile, TestContext.Current!.Execution.CancellationToken);
 		await File.WriteAllTextAsync(
 			projectFile,
 			projectText.Replace("<Nullable>enable</Nullable>", "<Nullable>enable</Nullable>" + Environment.NewLine
 				+ "    <DefineConstants>$(DefineConstants);RELOADED</DefineConstants>"),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		using (new FileStream(scope.Fixture.SolutionPath, FileMode.Open, FileAccess.Read, FileShare.None))
 		{
 			await Assert.ThrowsAnyAsync<IOException>(
-				() => scope.Session.ReadAsync(TestContext.Current.CancellationToken));
+				() => scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken));
 		}
 
-		var after = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var calculator = after.Solution.Projects
 			.SelectMany(project => project.Documents)
 			.Single(document => document.Name == "Calculator.cs");
 
-		var source = (await calculator.GetTextAsync(TestContext.Current.CancellationToken)).ToString();
+		var source = (await calculator.GetTextAsync(TestContext.Current!.Execution.CancellationToken)).ToString();
 		Assert.Contains("Tripled", source, StringComparison.Ordinal);
 
 		// And the structural half of the same sweep survived too.
@@ -202,7 +202,7 @@ public sealed class StalenessTests
 	/// Reads must be ordered behind mutations, not merely serialised with them. A read issued after
 	/// a mutation is queued has to observe that mutation.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Orders_a_read_behind_a_mutation_queued_before_it()
 	{
 		await using var scope = await OpenAsync("Simple", "Simple.sln");
@@ -221,9 +221,9 @@ public sealed class StalenessTests
 
 				return Task.FromResult(new MutationResult<long>(snapshot.Revision, updated));
 			},
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
-		var read = scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var read = scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		await Task.WhenAll(mutation, read);
 
@@ -234,7 +234,7 @@ public sealed class StalenessTests
 			.SelectMany(project => project.Documents)
 			.Single(document => document.Name == "Calculator.cs");
 
-		var source = (await calculator.GetTextAsync(TestContext.Current.CancellationToken)).ToString();
+		var source = (await calculator.GetTextAsync(TestContext.Current!.Execution.CancellationToken)).ToString();
 		Assert.DoesNotContain("Multiply", source, StringComparison.Ordinal);
 	}
 
@@ -244,8 +244,8 @@ public sealed class StalenessTests
 
 		foreach (var project in snapshot.Solution.Projects)
 		{
-			var compilation = await project.GetCompilationAsync(TestContext.Current.CancellationToken);
-			errors.AddRange(compilation!.GetDiagnostics(TestContext.Current.CancellationToken)
+			var compilation = await project.GetCompilationAsync(TestContext.Current!.Execution.CancellationToken);
+			errors.AddRange(compilation!.GetDiagnostics(TestContext.Current!.Execution.CancellationToken)
 				.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
 		}
 

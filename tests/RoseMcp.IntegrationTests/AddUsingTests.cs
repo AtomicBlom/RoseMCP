@@ -19,7 +19,7 @@ public sealed class AddUsingTests
 	/// <summary>
 	/// Into the group it belongs to, in order, without disturbing the groups around it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Puts_an_import_where_the_files_own_ordering_puts_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -40,7 +40,7 @@ public sealed class AddUsingTests
 	}
 
 	/// <summary>A namespace whose group is not there yet starts one, separated the way the file separates them.</summary>
-	[Fact]
+	[Test]
 	public async Task Starts_a_group_when_there_is_none_to_join()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -61,7 +61,7 @@ public sealed class AddUsingTests
 	/// under an import is not a formatting quibble -- for an auto-generated marker or a licence it
 	/// changes what the file means to other tools.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Keeps_the_file_header_above_an_import_added_at_the_top()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -78,7 +78,7 @@ public sealed class AddUsingTests
 	/// The three ways to be in scope already, none of which shows in this file's import block, and
 	/// all of which are IDE0005 if imported again.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_what_is_already_in_scope_and_says_which_way()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -107,7 +107,7 @@ public sealed class AddUsingTests
 	/// for -- code that arrived some other way and needs an import it has not got.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_the_errors_the_import_resolved()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -135,7 +135,7 @@ public sealed class AddUsingTests
 	/// The whole point of the argument: the import arrives with the code that needs it, in one call,
 	/// so a successful semantic write does not end in a text edit.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Imports_in_the_same_call_that_writes_the_code()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -160,7 +160,7 @@ public sealed class AddUsingTests
 	}
 
 	/// <summary>And one already in scope is reported from that call too, rather than written twice.</summary>
-	[Fact]
+	[Test]
 	public async Task Says_when_the_code_it_wrote_needed_no_import()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -201,7 +201,7 @@ public sealed class AddUsingTests
 		return session.MutateAsync(
 			(snapshot, token) => AddUsingService.AddAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static Task<MemberEditResult> EditAsync(WorkspaceSession session, MemberEditRequest request)
@@ -211,9 +211,9 @@ public sealed class AddUsingTests
 		return session.MutateAsync(
 			(snapshot, token) => MemberEditService.EditAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static Task<string> ReadAsync(FixtureSolution fixture, string file) =>
-		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current.CancellationToken);
+		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current!.Execution.CancellationToken);
 }

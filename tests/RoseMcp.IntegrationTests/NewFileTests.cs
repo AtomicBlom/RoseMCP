@@ -20,12 +20,12 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class NewFileTests
 {
-	[Fact]
+	[Test]
 	public async Task Sees_a_new_file_on_the_very_next_read()
 	{
 		await using var scope = await OpenAsync();
 
-		var before = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var before = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		Assert.DoesNotContain(Documents(before), name => name == "Doubler.cs");
 
 		await WriteAsync(scope, "Doubler.cs", """
@@ -37,7 +37,7 @@ public sealed class NewFileTests
 			}
 			""");
 
-		var after = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains(Documents(after), name => name == "Doubler.cs");
 		Assert.True(after.Revision > before.Revision, "absorbing a new file must advance the revision");
@@ -50,7 +50,7 @@ public sealed class NewFileTests
 	/// absorbed reports CS0103 against perfectly good code, and nothing about the answer says the
 	/// file is missing rather than the code wrong.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Resolves_a_reference_to_a_type_in_a_file_that_has_just_appeared()
 	{
 		await using var scope = await OpenAsync();
@@ -73,7 +73,7 @@ public sealed class NewFileTests
 			}
 			""");
 
-		var snapshot = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Empty(await ErrorsAsync(snapshot));
 	}
@@ -82,7 +82,7 @@ public sealed class NewFileTests
 	/// And the new file's own errors are reported, which is the other half: a file nobody compiles
 	/// is a file whose mistakes are found at the build.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_the_errors_in_a_file_that_has_just_appeared()
 	{
 		await using var scope = await OpenAsync();
@@ -96,7 +96,7 @@ public sealed class NewFileTests
 			}
 			""");
 
-		var snapshot = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var errors = await ErrorsAsync(snapshot);
 
 		Assert.Contains(errors, error => error.Id == "CS0103");
@@ -108,7 +108,7 @@ public sealed class NewFileTests
 	/// repository nests projects inside other projects' folders often enough that the outermost
 	/// would otherwise claim half the tree.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Adds_the_file_to_the_project_whose_directory_holds_it()
 	{
 		await using var scope = await OpenAsync();
@@ -122,7 +122,7 @@ public sealed class NewFileTests
 			}
 			""");
 
-		var snapshot = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var document = snapshot.Solution.Projects
 			.SelectMany(project => project.Documents)
@@ -136,7 +136,7 @@ public sealed class NewFileTests
 	/// Build output is not source. A generated file under obj belongs to the compiler, which puts it
 	/// into the compilation itself -- absorbing it as well would compile it twice.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Ignores_files_under_build_output()
 	{
 		await using var scope = await OpenAsync();
@@ -150,7 +150,7 @@ public sealed class NewFileTests
 			}
 			""");
 
-		var snapshot = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.DoesNotContain(Documents(snapshot), name => name == "Generated.cs");
 	}
@@ -159,18 +159,18 @@ public sealed class NewFileTests
 	/// A file appearing is absorbed; a build file appearing is not something a snapshot can
 	/// represent, since it changes how every project below it evaluates.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reloads_when_a_build_file_appears()
 	{
 		await using var scope = await OpenAsync();
 
-		await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		await File.WriteAllTextAsync(
 			scope.Fixture.Path("Simple", "Directory.Build.props"),
 			"<Project>\r\n  <PropertyGroup>\r\n    <DefineConstants>$(DefineConstants);APPEARED</DefineConstants>\r\n"
 				+ "  </PropertyGroup>\r\n</Project>\r\n",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		// The watcher is what notices this one, so it is the one place a wait is honest.
 		var snapshot = await EventuallyAsync(
@@ -188,13 +188,13 @@ public sealed class NewFileTests
 	/// two answers describe one world. The walk runs on every barrier, so this is the case that
 	/// proves it stays quiet.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_nothing_when_no_file_appeared()
 	{
 		await using var scope = await OpenAsync();
 
-		var first = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
-		var second = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+		var first = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var second = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(first.Revision, second.Revision);
 		Assert.Same(first.Solution, second.Solution);
@@ -226,10 +226,10 @@ public sealed class NewFileTests
 	{
 		for (var attempt = 0; attempt < Attempts; attempt++)
 		{
-			var snapshot = await scope.Session.ReadAsync(TestContext.Current.CancellationToken);
+			var snapshot = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 			if (satisfied(snapshot)) return snapshot;
 
-			await Task.Delay(PollInterval, TestContext.Current.CancellationToken);
+			await Task.Delay(PollInterval, TestContext.Current!.Execution.CancellationToken);
 		}
 
 		throw new TimeoutException(
@@ -246,7 +246,7 @@ public sealed class NewFileTests
 		await File.WriteAllTextAsync(
 			path,
 			source.ReplaceLineEndings("\r\n") + "\r\n",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static IEnumerable<string> Documents(WorkspaceSnapshot snapshot) =>
@@ -258,9 +258,9 @@ public sealed class NewFileTests
 
 		foreach (var project in snapshot.Solution.Projects)
 		{
-			var compilation = await project.GetCompilationAsync(TestContext.Current.CancellationToken);
+			var compilation = await project.GetCompilationAsync(TestContext.Current!.Execution.CancellationToken);
 
-			errors.AddRange(compilation!.GetDiagnostics(TestContext.Current.CancellationToken)
+			errors.AddRange(compilation!.GetDiagnostics(TestContext.Current!.Execution.CancellationToken)
 				.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
 		}
 

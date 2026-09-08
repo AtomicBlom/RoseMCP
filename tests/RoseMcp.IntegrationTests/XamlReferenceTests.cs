@@ -24,12 +24,12 @@ public sealed class XamlReferenceTests
 		</UserControl>
 		""";
 
-	[Theory]
-	[InlineData("Title", "binding")]
-	[InlineData("Root", "x:Name")]
-	[InlineData("OnSaved", "attribute value")]
-	[InlineData("Crumb", "element")]
-	[InlineData("Widget", "attribute value")]
+	[Test]
+	[Arguments("Title", "binding")]
+	[Arguments("Root", "x:Name")]
+	[Arguments("OnSaved", "attribute value")]
+	[Arguments("Crumb", "element")]
+	[Arguments("Widget", "attribute value")]
 	public void Finds_each_way_markup_can_name_something(string name, string expectedKind)
 	{
 		var mentions = XamlReferenceScanner.InText("Widget.xaml", Markup, name).ToArray();
@@ -42,7 +42,7 @@ public sealed class XamlReferenceTests
 	/// Both bindings for Title, and the comment mentioning it is not one of them -- anchoring to XAML
 	/// syntax rather than to the text is what keeps this from being a noisy grep.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Ignores_a_name_that_is_only_prose()
 	{
 		var mentions = XamlReferenceScanner.InText("Widget.xaml", Markup, "Title").ToArray();
@@ -52,7 +52,7 @@ public sealed class XamlReferenceTests
 		Assert.DoesNotContain(mentions, mention => mention.Text.Contains("<!--", StringComparison.Ordinal));
 	}
 
-	[Fact]
+	[Test]
 	public void Finds_nothing_for_a_name_the_markup_never_mentions()
 	{
 		Assert.Empty(XamlReferenceScanner.InText("Widget.xaml", Markup, "Absent"));
@@ -63,14 +63,14 @@ public sealed class XamlReferenceTests
 	/// the old one. Nothing rewrites it, because nothing here can prove what it refers to -- but a
 	/// rename that reports nothing is how it goes unnoticed.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_markup_left_behind_by_a_rename()
 	{
 		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var path = fixture.Path("XamlStub", "Ui", "Widget.xaml.cs");
-		var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 		var index = text.IndexOf("partial class Widget", StringComparison.Ordinal) + "partial class ".Length;
 		var before = text[..index];
 
@@ -83,7 +83,7 @@ public sealed class XamlReferenceTests
 
 		var result = await session.MutateAsync(
 			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal("Widget", result.OldName);
 

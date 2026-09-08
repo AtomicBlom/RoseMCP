@@ -26,10 +26,10 @@ public sealed class RelayTests
 	/// answering correctly is the entire point of relaying rather than binding to the tray directly.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
 	public async Task A_relayed_session_is_served_by_the_tray_and_decided_by_its_own_directory()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 
 		var directory = Path.GetDirectoryName(fixture.SolutionPath)!;
@@ -75,10 +75,10 @@ public sealed class RelayTests
 	/// from "every one after the first is wrong", and the fix has to hold for both.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
 	public async Task A_relayed_call_says_why_it_failed_every_time_the_tray_is_gone()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 
 		var directory = Path.GetDirectoryName(fixture.SolutionPath)!;

@@ -81,7 +81,7 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 		{
 			if (needsXamlProvider && !ProviderBuilt())
 			{
-				Assert.Skip("The WinUI XAML provider could not be built (no C++ toolset, or no WindowsAppSDK).");
+				Skip.Test("The WinUI XAML provider could not be built (no C++ toolset, or no WindowsAppSDK).");
 			}
 
 			// The WinUI target runs natively, but the broker still hosts it out of the x64 host on x64.
@@ -93,7 +93,7 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 				_built[packaged] = output;
 			}
 
-			if (output is null) Assert.Skip("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
+			if (output is null) Skip.Test("The WinUI probe app could not be restored (the WindowsAppSDK may be unavailable).");
 
 			if (packaged && !_registered)
 			{
@@ -101,7 +101,7 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 				_aumid = Register(output!);
 			}
 
-			if (packaged && _aumid is null) Assert.Skip("The WinUI probe app could not be registered (developer mode may be off).");
+			if (packaged && _aumid is null) Skip.Test("The WinUI probe app could not be registered (developer mode may be off).");
 
 			return output!;
 		}

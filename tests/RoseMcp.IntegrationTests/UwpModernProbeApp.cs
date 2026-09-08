@@ -87,7 +87,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 		{
 			if (needsXamlProvider && !ProviderBuilt())
 			{
-				Assert.Skip("The UWP XAML provider could not be built (no C++ toolset, or no Windows SDK).");
+				Skip.Test("The UWP XAML provider could not be built (no C++ toolset, or no Windows SDK).");
 			}
 
 			// A modern UWP app runs as whatever it was built for, so the host matches it. On x64 that is
@@ -102,7 +102,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 
 			if (_built is null)
 			{
-				Assert.Skip(
+				Skip.Test(
 					"The modern UWP probe app could not be built: it needs full MSBuild from a Visual Studio "
 						+ "install and the Windows SDK's XAML compiler, which dotnet build cannot substitute for.");
 			}
@@ -113,7 +113,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 				_aumid = Register(_built!);
 			}
 
-			if (_aumid is null) Assert.Skip("The modern UWP probe app could not be registered (developer mode may be off).");
+			if (_aumid is null) Skip.Test("The modern UWP probe app could not be registered (developer mode may be off).");
 
 			return (_built!, _aumid!);
 		}

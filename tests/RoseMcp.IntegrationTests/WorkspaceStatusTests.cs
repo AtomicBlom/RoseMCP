@@ -20,14 +20,14 @@ public sealed class WorkspaceStatusTests
 	/// situation it exists to warn about.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Status_still_knows_what_the_load_cost_and_how_it_went()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var host = Host(fixture);
 
-		await host.StartAsync(TestContext.Current.CancellationToken);
-		var status = await host.GetStatusAsync(TestContext.Current.CancellationToken);
+		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
+		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.True(status.LoadSeconds > 0, "a load that took no time did not happen");
 		Assert.NotNull(status.Restore);
@@ -38,14 +38,14 @@ public sealed class WorkspaceStatusTests
 	/// of a solution loaded under a configuration it does not declare. A permanent false alarm on
 	/// the one signal worth trusting.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Every_project_reports_the_framework_it_was_built_for()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var host = Host(fixture);
 
-		await host.StartAsync(TestContext.Current.CancellationToken);
-		var status = await host.GetStatusAsync(TestContext.Current.CancellationToken);
+		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
+		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.NotEmpty(status.Projects);
 		Assert.All(
@@ -60,14 +60,14 @@ public sealed class WorkspaceStatusTests
 	/// projects that went on to compile perfectly. Blaming them for it marked most of a solution as
 	/// failed, and a workspace that is always degraded says nothing.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task A_project_that_resolved_its_references_is_not_called_a_failure()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var host = Host(fixture);
 
-		await host.StartAsync(TestContext.Current.CancellationToken);
-		var status = await host.GetStatusAsync(TestContext.Current.CancellationToken);
+		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
+		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.All(status.Projects, project => Assert.True(project.LoadedSuccessfully));
 		Assert.DoesNotContain(status.DegradedReasons, reason => reason.Contains("did not load", StringComparison.Ordinal));

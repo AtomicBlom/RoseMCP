@@ -11,7 +11,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class MoveMemberTests
 {
-	[Fact]
+	[Test]
 	public async Task Moves_a_member_and_qualifies_its_call_sites()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -38,7 +38,7 @@ public sealed class MoveMemberTests
 	/// The documentation comment goes with the declaration. Leaving it behind would leave a summary
 	/// describing something that is not there, above whatever the next member turns out to be.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Takes_the_documentation_comment_with_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -69,7 +69,7 @@ public sealed class MoveMemberTests
 	/// neither IDE0055 nor <c>dotnet format</c> has an opinion about where a wrapped list sits.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Keeps_the_shape_of_a_wrapped_signature_it_moves()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -94,7 +94,7 @@ public sealed class MoveMemberTests
 	/// type it lands in rather than deepened or flattened by it. The <c>=&gt;</c> and the lines under
 	/// it are continuations, which Roslyn's formatter has no rule about.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Keeps_the_shape_of_a_wrapped_expression_body_it_moves()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -121,7 +121,7 @@ public sealed class MoveMemberTests
 	/// so a member appended without one lands flush against the closing brace above it and no rule
 	/// anywhere puts it back.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Separates_the_member_it_moves_from_the_one_above_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -140,7 +140,7 @@ public sealed class MoveMemberTests
 	/// The other call-site style: the calls stay as written and each calling file imports the new
 	/// home statically. Smaller diff, at the cost of a file whose calls no longer say where they go.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Imports_the_new_home_instead_of_qualifying()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -159,7 +159,7 @@ public sealed class MoveMemberTests
 	/// An instance member's move changes what 'this' means inside it, and every call site would need
 	/// a receiver it has no reason to have to hand. Refused rather than half done.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_an_instance_member()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -176,7 +176,7 @@ public sealed class MoveMemberTests
 	}
 
 	/// <summary>Moving a member to where it already is is a mistake worth naming rather than a no-op.</summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_move_to_the_type_it_is_already_in()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -206,11 +206,11 @@ public sealed class MoveMemberTests
 		return session.MutateAsync(
 			(snapshot, token) => MoveMemberService.MoveAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static Task<string> ReadAsync(FixtureSolution fixture, params string[] parts) =>
 		File.ReadAllTextAsync(
 			fixture.Path("Members", "Library", string.Join(Path.DirectorySeparatorChar, parts)),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 }

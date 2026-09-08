@@ -26,7 +26,7 @@ public sealed class SessionScope(FixtureSolution fixture, WorkspaceSession sessi
 			NullLogger<SolutionLoader>.Instance);
 
 		var options = new WorkerOptions { SolutionPath = fixture.SolutionPath };
-		var load = await loader.LoadAsync(options, TestContext.Current.CancellationToken);
+		var load = await loader.LoadAsync(options, TestContext.Current!.Execution.CancellationToken);
 
 		return new SessionScope(
 			fixture,

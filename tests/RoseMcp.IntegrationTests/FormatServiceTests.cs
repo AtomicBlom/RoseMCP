@@ -67,7 +67,7 @@ public sealed class FormatServiceTests
 		"}",
 		string.Empty);
 
-	[Fact]
+	[Test]
 	public async Task Formats_a_file_to_what_the_editorconfig_asks_for()
 	{
 		using var fixture = Prepare(out var path);
@@ -78,7 +78,7 @@ public sealed class FormatServiceTests
 		Assert.True(result.Applied);
 		Assert.Equal([path], result.ChangedFiles);
 
-		var formatted = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var formatted = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		// Tabs, Allman braces: the formatter's half.
 		Assert.Contains("\tpublic int Twice()" + Crlf + "\t{", formatted, StringComparison.Ordinal);
@@ -90,7 +90,7 @@ public sealed class FormatServiceTests
 		Assert.EndsWith(Crlf, formatted, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Reports_the_diff_without_writing_when_previewing()
 	{
 		using var fixture = Prepare(out var path);
@@ -103,10 +103,10 @@ public sealed class FormatServiceTests
 		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
 
 		// Which is what makes this usable as a formatting check: the file is untouched.
-		Assert.Equal(Mangled, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
+		Assert.Equal(Mangled, await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task Says_so_rather_than_failing_when_a_file_is_not_in_the_solution()
 	{
 		using var fixture = Prepare(out _);
@@ -120,7 +120,7 @@ public sealed class FormatServiceTests
 	}
 
 	/// <summary>A file already correct must produce no diff at all, or every call is a false change.</summary>
-	[Fact]
+	[Test]
 	public async Task Changes_nothing_on_a_file_that_is_already_formatted()
 	{
 		using var fixture = Prepare(out var path);
@@ -143,13 +143,13 @@ public sealed class FormatServiceTests
 	/// what a diff is and not a defect to be fixed in the renderer.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_it_rewrote_line_endings_where_the_diff_cannot_show_it()
 	{
 		using var fixture = Prepare(out _);
 
 		var path = fixture.Path("Simple", "Core", "Endings.cs");
-		await File.WriteAllTextAsync(path, OnlyEndings, TestContext.Current.CancellationToken);
+		await File.WriteAllTextAsync(path, OnlyEndings, TestContext.Current!.Execution.CancellationToken);
 
 		await using var session = await TestSession.OpenAsync(fixture);
 
@@ -164,7 +164,7 @@ public sealed class FormatServiceTests
 		Assert.Contains("line ending(s) to CRLF", notices, StringComparison.Ordinal);
 		Assert.Contains("Endings.cs", notices, StringComparison.Ordinal);
 
-		var formatted = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var formatted = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.DoesNotContain(Lf, formatted.Replace(Crlf, string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
 	}
@@ -175,14 +175,14 @@ public sealed class FormatServiceTests
 	/// then fails <c>dotnet format</c> at the build. Rewriting it is not the answer -- a newline
 	/// inside a literal is part of the string's value -- so the fix is that the tool says so.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_which_literal_holds_endings_it_would_not_rewrite()
 	{
 		using var fixture = Prepare(out _);
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var path = fixture.Path("Simple", "Core", "Literal.cs");
-		await File.WriteAllTextAsync(path, WithLfInsideALiteral, TestContext.Current.CancellationToken);
+		await File.WriteAllTextAsync(path, WithLfInsideALiteral, TestContext.Current!.Execution.CancellationToken);
 
 		var result = await FormatAsync(session, [path]);
 		var notices = string.Join(" ", result.Notices);
@@ -191,7 +191,7 @@ public sealed class FormatServiceTests
 		Assert.Contains("line endings the file does not use", notices, StringComparison.Ordinal);
 
 		// And it is still not rewritten, because doing so would change what the program says.
-		var after = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var after = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 		Assert.Contains("one" + Lf + "two", after, StringComparison.Ordinal);
 	}
 
@@ -201,14 +201,14 @@ public sealed class FormatServiceTests
 	/// of them, and a caller who reads the headline stops there -- which is the whole failure #35 is
 	/// about, restated by the tool that was supposed to have removed it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Does_not_call_a_file_formatted_when_dotnet_format_will_reject_it()
 	{
 		using var fixture = Prepare(out _);
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var path = fixture.Path("Simple", "Core", "Literal.cs");
-		await File.WriteAllTextAsync(path, WithLfInsideALiteral, TestContext.Current.CancellationToken);
+		await File.WriteAllTextAsync(path, WithLfInsideALiteral, TestContext.Current!.Execution.CancellationToken);
 
 		var result = await FormatAsync(session, [path]);
 		var notices = string.Join(" ", result.Notices);
@@ -222,7 +222,7 @@ public sealed class FormatServiceTests
 	/// The other half: a literal written with the file's own endings must not be warned about, or
 	/// the notice fires on every file holding a multi-line string and stops being read.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_nothing_about_a_literal_that_already_uses_the_files_endings()
 	{
 		using var fixture = Prepare(out _);
@@ -232,7 +232,7 @@ public sealed class FormatServiceTests
 		await File.WriteAllTextAsync(
 			path,
 			WithLfInsideALiteral.Replace(Lf, Crlf, StringComparison.Ordinal),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var result = await FormatAsync(session, [path]);
 
@@ -262,6 +262,6 @@ public sealed class FormatServiceTests
 
 		return session.MutateAsync(
 			(snapshot, token) => FormatService.FormatAsync(snapshot, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 }

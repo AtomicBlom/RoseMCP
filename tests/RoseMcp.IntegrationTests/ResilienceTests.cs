@@ -8,7 +8,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class ResilienceTests
 {
-	[Fact]
+	[Test]
 	public async Task Picks_up_a_branch_switch_that_rewrites_a_source_file()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -31,7 +31,7 @@ public sealed class ResilienceTests
 				+ "\tpublic static int Add(int left, int right) => left + right;" + Environment.NewLine
 				+ "\tpublic static int Subtract(int left, int right) => left - right;" + Environment.NewLine
 				+ "}",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 		Git(fixture.Root, "commit", "-qam", "other");
 		Git(fixture.Root, "checkout", "-q", "main");
 
@@ -53,7 +53,7 @@ public sealed class ResilienceTests
 	/// A branch that adds a project cannot be absorbed by patching document text, because the
 	/// project does not exist in the snapshot to patch. Only a reload can represent it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Picks_up_a_branch_that_adds_a_project()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -73,11 +73,11 @@ public sealed class ResilienceTests
 			Path.Combine(extra, "Extra.csproj"),
 			"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
 				+ "</PropertyGroup></Project>",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 		await File.WriteAllTextAsync(
 			Path.Combine(extra, "Thing.cs"),
 			"namespace Extra; public sealed class Thing;",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 		Dotnet(fixture.Path("Simple"), "sln", "Simple.sln", "add", "Extra/Extra.csproj");
 		Git(fixture.Root, "add", "-A");
 		Git(fixture.Root, "commit", "-q", "-m", "extra");
@@ -85,12 +85,12 @@ public sealed class ResilienceTests
 
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var before = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var before = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		Assert.DoesNotContain(before.Solution.Projects, project => project.Name == "Extra");
 
 		Git(fixture.Root, "checkout", "-q", "extra");
 
-		var after = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var after = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		Assert.Contains(after.Solution.Projects, project => project.Name == "Extra");
 		Assert.Contains(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 	}
@@ -99,19 +99,19 @@ public sealed class ResilienceTests
 	/// Transient absence must not unload. Editors save atomically by delete-then-rename, and a
 	/// branch switch can remove and restore the solution inside one operation.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Serves_a_stale_snapshot_while_the_solution_is_briefly_missing()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture, TimeSpan.FromSeconds(30));
 
-		await session.ReadAsync(TestContext.Current.CancellationToken);
+		await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var solution = fixture.SolutionPath;
-		var saved = await File.ReadAllTextAsync(solution, TestContext.Current.CancellationToken);
+		var saved = await File.ReadAllTextAsync(solution, TestContext.Current!.Execution.CancellationToken);
 		File.Delete(solution);
 
-		var whileMissing = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var whileMissing = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.True(whileMissing.Stale);
 		Assert.False(session.Unloaded, "the session stays loaded while the solution is missing");
@@ -119,32 +119,32 @@ public sealed class ResilienceTests
 		Assert.Contains(whileMissing.Notices, notice => notice.Contains("missing", StringComparison.OrdinalIgnoreCase));
 
 		// Put it back inside the grace period; nothing should have been torn down.
-		await File.WriteAllTextAsync(solution, saved, TestContext.Current.CancellationToken);
+		await File.WriteAllTextAsync(solution, saved, TestContext.Current!.Execution.CancellationToken);
 
-		var recovered = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var recovered = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Assert.False(recovered.Stale, "the snapshot is current again once the solution is back");
 		Assert.False(session.Unloaded, "the session stayed loaded throughout");
 		Assert.NotEmpty(recovered.Solution.Projects);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Unloads_once_the_solution_stays_missing_past_the_grace_period()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture, TimeSpan.FromMilliseconds(200));
 
-		await session.ReadAsync(TestContext.Current.CancellationToken);
+		await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		File.Delete(fixture.SolutionPath);
 
 		// First read starts the grace timer and is served stale.
-		Assert.True((await session.ReadAsync(TestContext.Current.CancellationToken)).Stale);
+		Assert.True((await session.ReadAsync(TestContext.Current!.Execution.CancellationToken)).Stale);
 
-		await Task.Delay(TimeSpan.FromMilliseconds(400), TestContext.Current.CancellationToken);
+		await Task.Delay(TimeSpan.FromMilliseconds(400), TestContext.Current!.Execution.CancellationToken);
 
 		var unloaded = await Assert.ThrowsAsync<SolutionUnloadedException>(
-			() => session.ReadAsync(TestContext.Current.CancellationToken));
+			() => session.ReadAsync(TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Equal(fixture.SolutionPath, unloaded.SolutionPath);
 		Assert.True(session.Unloaded);
@@ -155,12 +155,12 @@ public sealed class ResilienceTests
 
 	private static async Task<string> SourceOfAsync(WorkspaceSession session, string documentName)
 	{
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var document = snapshot.Solution.Projects
 			.SelectMany(project => project.Documents)
 			.Single(candidate => candidate.Name == documentName);
 
-		return (await document.GetTextAsync(TestContext.Current.CancellationToken)).ToString();
+		return (await document.GetTextAsync(TestContext.Current!.Execution.CancellationToken)).ToString();
 	}
 
 	private static void Git(string workingDirectory, params string[] arguments) =>

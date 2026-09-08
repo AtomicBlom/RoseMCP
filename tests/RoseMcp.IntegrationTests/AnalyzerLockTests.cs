@@ -15,7 +15,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class AnalyzerLockTests
 {
-	[Fact]
+	[Test]
 	public async Task Leaves_the_generator_assembly_writable_while_the_workspace_is_loaded()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -25,10 +25,10 @@ public sealed class AnalyzerLockTests
 		Assert.True(File.Exists(generatorAssembly));
 
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		// Forces the generators to load and run. Nothing is locked until this happens.
-		var generated = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current.CancellationToken);
+		var generated = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current!.Execution.CancellationToken);
 		Assert.Equal(2, generated.Documents.Count);
 
 		// Exactly what MSBuild's Copy task needs to do to refresh bin.
@@ -47,7 +47,7 @@ public sealed class AnalyzerLockTests
 	/// other costs a second fixture that would go stale with every compiler bump.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_why_an_analyzer_failed_to_load()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -56,7 +56,7 @@ public sealed class AnalyzerLockTests
 		await File.WriteAllTextAsync(
 			fixture.Path("WithGenerator", "Gen", "bin", "Debug", "netstandard2.0", "Gen.dll"),
 			"present, named by the project, and not an assembly",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var analyzerLoader = new ShadowCopyAnalyzerAssemblyLoader(
 			NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance);
@@ -68,7 +68,7 @@ public sealed class AnalyzerLockTests
 
 		var load = await loader.LoadAsync(
 			new WorkerOptions { SolutionPath = fixture.SolutionPath },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		using var workspace = load.Workspace;
 

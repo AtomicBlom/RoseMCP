@@ -7,7 +7,7 @@ namespace RoseMcp.IntegrationTests;
 
 public sealed class SolutionLoaderTests
 {
-	[Fact]
+	[Test]
 	public async Task Loads_every_project_in_a_classic_sln()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -21,7 +21,7 @@ public sealed class SolutionLoaderTests
 		Assert.All(report.Projects, project => Assert.True(project.LoadedSuccessfully));
 	}
 
-	[Fact]
+	[Test]
 	public async Task Restores_when_there_is_no_restore_output_and_skips_when_there_is()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -39,7 +39,7 @@ public sealed class SolutionLoaderTests
 		Assert.Null(second.Result.Report.Restore?.Succeeded);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Runs_source_generators_once_the_generator_project_is_built()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -63,7 +63,7 @@ public sealed class SolutionLoaderTests
 	/// passes its expected output to the compiler, so the workspace loads without complaint and
 	/// simply produces no generated code. Reporting that as a healthy load is the bug.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_degraded_when_an_in_solution_generator_has_not_been_built()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -84,7 +84,7 @@ public sealed class SolutionLoaderTests
 		Assert.Contains("Gen.csproj", reason, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Recovers_from_degraded_once_the_generator_is_built()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -108,7 +108,7 @@ public sealed class SolutionLoaderTests
 	/// find it by itself. Release rather than a Revit-shaped name because the fixture has to build:
 	/// what is under test is that the file was read and obeyed, not what it said.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Loads_under_the_properties_a_config_file_pins()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -116,7 +116,7 @@ public sealed class SolutionLoaderTests
 		await File.WriteAllTextAsync(
 			Path.Combine(Path.GetDirectoryName(fixture.SolutionPath)!, WorkspaceConfigFile.FileName),
 			"{ \"configuration\": \"Release\" }",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		using var load = await LoadAsync(fixture);
 
@@ -137,7 +137,7 @@ public sealed class SolutionLoaderTests
 			NullLogger<SolutionLoader>.Instance);
 
 		var options = new WorkerOptions { SolutionPath = fixture.SolutionPath };
-		return new LoadScope(await loader.LoadAsync(options, TestContext.Current.CancellationToken));
+		return new LoadScope(await loader.LoadAsync(options, TestContext.Current!.Execution.CancellationToken));
 	}
 
 	/// <summary>Disposes the workspace a load produced, which the caller owns.</summary>

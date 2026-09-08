@@ -5,10 +5,13 @@
 .DESCRIPTION
     Two jobs that share all their plumbing:
 
-      promote  Hand the running instance a new build. Tests first, because this is the moment a
-               broken change reaches the tool you are using to work. The tray, and any stdio
-               server running from the install, have to be stopped before publishing -- a running
-               exe cannot be overwritten -- so this costs an /mcp reconnect and a solution reload.
+      promote  Hand the running instance a new build, and nothing else. It runs no tests: whoever
+               is deploying is often not whoever changed the code, and a suite that tests none of
+               their work still costs them the wait -- so the gate is `dotnet test` before a commit
+               and CI on every push, both of which run where somebody can act on a failure. The
+               tray, and any stdio server running from the install, have to be stopped before
+               publishing -- a running exe cannot be overwritten -- so this costs an /mcp reconnect
+               and a solution reload.
 
       package  Build the release artifacts, one archive per runtime. Windows gets a zip carrying the
                broker, the worker, the tray, and a live-app debug host for every architecture that
@@ -63,9 +66,6 @@ param(
     [string] $WorkspaceRoot,
 
     [switch] $NoRestart,
-
-    [switch] $SkipTests
-,
 
     # Fail rather than warn when the native XAML provider cannot be built. Always on for
     # package, because that run cuts a release and a release that quietly ships without it is
@@ -435,12 +435,6 @@ if (-not $Runtime)
 if ($Mode -eq 'promote')
 {
     if ($Runtime.Count -ne 1) { throw 'promote takes a single runtime' }
-
-    if (-not $SkipTests)
-    {
-        Write-Host 'running tests before touching the live instance'
-        Invoke-Dotnet @('test', "$repo/RoseMcp.slnx", '-c', 'Release') 'tests'
-    }
 
     # Everything about stopping and restarting is about the tray and the stdio servers holding the
     # install's files open, and neither exists off Windows: there is nothing to stop, and nothing to

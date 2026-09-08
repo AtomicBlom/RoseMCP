@@ -16,6 +16,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\RoseMcp.Broker\RoseMcp.Broker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
+    <!-- Started as a child process by the lifetime and relay tests, never used as a library: the
+         thing under test is what the process does with its stdin and its socket. -->
+    <ProjectReference Include="..\..\src\RoseMcp.Server\RoseMcp.Server.csproj" ReferenceOutputAssembly="false" />
     <!-- Referenced so the host is built for the live-app session tests to launch; not used as a
          library, and it is net10.0-windows, so ReferenceOutputAssembly is off to keep this net10.0
          test project from taking a framework-incompatible compile reference on it. -->

@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Text.Json;
+
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -727,6 +730,98 @@ public sealed class BrokerTests
 
 		Assert.NotEqual(before.ProcessId, after.ProcessId);
 		Assert.Equal(key, after.Key);
+	}
+
+	/// <summary>
+	/// A stdio server exits when its client's stdin closes, and takes its workers with it.
+	/// </summary>
+	/// <remarks>
+	/// "Workers die with the broker" covered the Roslyn workers and nothing covered the process
+	/// holding them, and six servers were once seen accumulating over one session, one per reconnect.
+	/// <para>
+	/// This is a regression test rather than the fix for that: the behaviour it asserts already held
+	/// when it was written, in every shape that could be arranged -- idle, after a handshake and a
+	/// tool listing, mid-call, relaying to a tray, and relaying to a tray that had been killed. What
+	/// is left of the report is a client that never closes stdin at all, and no rule inside this
+	/// process reaches that.
+	/// </para>
+	/// <para>
+	/// Mid-call is the shape asserted, because it is the one with something to go wrong: the call has
+	/// a worker loading a solution behind it, so exiting means ending work in flight rather than
+	/// noticing an idle stream. The wait is generous for the same reason -- what is under test is
+	/// that it ends, not how quickly.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task A_stdio_server_exits_when_its_client_closes_stdin()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		// A port with no tray on it, so this server owns its workers rather than relaying to whatever
+		// happens to be running on this machine.
+		using var server = RoseServerProcess.Start("--port", RoseServerProcess.FreePort().ToString());
+
+		await server.InitializeAsync(cancellationToken);
+
+		var workersBefore = WorkerProcessIds();
+
+		// Not awaited: the point is to close stdin while this is still running.
+		var call = server.CallToolAsync(
+			ToolNames.WorkspaceStatus,
+			$$"""{"workspace":{{JsonSerializer.Serialize(fixture.SolutionPath)}}}""",
+			cancellationToken);
+
+		var worker = await WaitForNewWorkerAsync(workersBefore, cancellationToken);
+
+		server.CloseStandardInput();
+
+		Assert.True(
+			await server.WaitForExitAsync(TimeSpan.FromMinutes(2), cancellationToken),
+			$"the server (pid {server.Id}) was still running two minutes after its client's stdin closed");
+
+		// And the worker goes with it, which is the invariant this extends rather than replaces.
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+		while (WorkerProcessIds().Contains(worker) && DateTime.UtcNow < deadline)
+		{
+			await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
+		}
+
+		Assert.DoesNotContain(worker, WorkerProcessIds());
+
+		// The call never gets an answer, and saying so is the point rather than an aside: a client
+		// that has gone is not owed one.
+		await Assert.ThrowsAnyAsync<Exception>(() => call);
+	}
+
+	/// <summary>The worker this server started, waited for rather than assumed to exist already.</summary>
+	private static async Task<int> WaitForNewWorkerAsync(IReadOnlyCollection<int> before, CancellationToken cancellationToken)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(1);
+
+		while (DateTime.UtcNow < deadline)
+		{
+			var started = WorkerProcessIds().Except(before).ToList();
+			if (started.Count > 0) return started[0];
+
+			await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+		}
+
+		throw new InvalidOperationException("The server never started a worker.");
+	}
+
+	/// <summary>
+	/// Every worker on the machine, because a test cannot ask a server it is deliberately not
+	/// talking to. Compared as a difference rather than a count, so another session's workers -- a
+	/// tray's, most often -- are not mistaken for this one's.
+	/// </summary>
+	private static IReadOnlyList<int> WorkerProcessIds()
+	{
+		var running = Process.GetProcessesByName("RoseMcp.Worker");
+		var ids = running.Select(process => process.Id).ToList();
+		foreach (var process in running) process.Dispose();
+
+		return ids;
 	}
 
 	private static WorkspaceManager CreateManager(string? defaultRoot = null) => new(

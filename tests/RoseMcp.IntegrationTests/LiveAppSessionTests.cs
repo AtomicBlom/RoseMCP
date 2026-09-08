@@ -1220,6 +1220,63 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>
+	/// The tap gives its two framework interfaces back when the session detaches, and says so.
+	/// </summary>
+	/// <remarks>
+	/// They were released only from <c>SetSite(nullptr)</c>, which nothing reaches -- no tap is ever
+	/// unadvised -- so every injection left an <c>IXamlDiagnostics</c> and an
+	/// <c>IVisualTreeService</c> held for the life of the app, and the app outlives the session on
+	/// purpose. A destructor would not have helped: the framework's advise and the reader's active
+	/// pointer both hold a reference, so the object is never deleted either.
+	/// <para>
+	/// Asserted on the host's line rather than the provider's log file, and that is what decided
+	/// where the release goes. The provider writes into the work folder the host is about to delete,
+	/// and a release done at host shutdown is written after the client has closed the stdin carrying
+	/// it -- so the detach asks over the pipe and reports the answer, while there is still a channel
+	/// to report on.
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task The_tap_releases_its_interfaces_when_the_session_detaches()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+
+		try
+		{
+			await WaitForProbeWindowAsync(child, cancellationToken);
+
+			var logs = new RecordingLoggerFactory();
+			await using var manager = CreateManager(logs);
+
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "winui probe (detach)",
+				},
+				cancellationToken);
+
+			// A read first, or there is no provider in the app and nothing holding anything.
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+
+			Assert.Contains(
+				logs.Lines,
+				line => line.Contains("released its diagnostics interfaces on detach", StringComparison.Ordinal));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// Reading and editing properties on WinUI 3 (#115), which nothing covered.
 	/// </summary>
 	/// <remarks>

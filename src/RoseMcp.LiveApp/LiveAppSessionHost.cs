@@ -495,10 +495,16 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	public LiveAppInfo DetachTarget()
 	{
 		CorDebugSession? session;
+		XamlDiagnosticsSession? xaml;
 		int? targetProcessId;
 		lock (_gate)
 		{
 			session = _session;
+
+			// Captured under the gate and read from the local afterwards, because StopAsync nulls the
+			// field: reading it again below would be reading a field another thread is allowed to
+			// clear between the two reads.
+			xaml = _xaml;
 			targetProcessId = _targetProcessId;
 
 			// Recorded before the attempt rather than after it. Asking to detach is the request to
@@ -507,6 +513,12 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			// way out.
 			_targetReleased = true;
 		}
+
+		// The tap holds an IXamlDiagnostics and an IVisualTreeService, and a detach is where a
+		// session ends while there is still a channel to say so on. Before the debugger comes off,
+		// because a detach that fails leaves this host alive and the app inspectable, and the
+		// provider giving its interfaces back does not depend on either.
+		xaml?.EndProviderSession();
 
 		var detached = session?.Detach() ?? true;
 

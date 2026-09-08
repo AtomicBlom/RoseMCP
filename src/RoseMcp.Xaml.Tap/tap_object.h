@@ -312,8 +312,46 @@ public:
 			return reply;
 		}
 
+		if (request == L"detach")
+		{
+			// Asked for rather than inferred, so the host can say it happened. The pipe closing is the
+			// only other signal a provider gets that its session is over, and by then there is nothing
+			// left to answer on.
+			return EndSession() ? std::string("released") : std::string("already released");
+		}
+
 		Log(L"pipe: no handler for '" + request + L"', falling back to the files");
 		return std::string();
+	}
+
+	/// <summary>
+	/// Gives back the two framework interfaces this tap holds, because its session has ended.
+	/// </summary>
+	/// <remarks>
+	/// They were released only from SetSite(nullptr), which nothing reaches: no tap is ever unadvised
+	/// (#68), so each injection left an IXamlDiagnostics and an IVisualTreeService held for the life
+	/// of the app. A destructor would not have helped -- the framework's advise and the reader's
+	/// active pointer both hold a reference, so the object is never deleted either.
+	/// <para>
+	/// On the UI thread, because unadvising is a call into the framework and everything past the tree
+	/// walk belongs there. A thread that cannot be reached leaves the interfaces held and says so: a
+	/// leak in somebody else's app is a worse outcome than a leak, but not as bad as a crash in it.
+	/// </para>
+	/// </remarks>
+	bool EndSession()
+	{
+		bool released = false;
+		if (!RoseTapRunOnUiThread([&] { released = Unadvise(); }))
+		{
+			Log(L"detach: could not reach the UI thread, so the two interfaces stay held");
+			return false;
+		}
+
+		Log(released
+			? L"detach: released IXamlDiagnostics and IVisualTreeService"
+			: L"detach: nothing to release; this tap had already given them back");
+
+		return released;
 	}
 
 	HRESULT STDMETHODCALLTYPE GetSite(REFIID riid, void** ppv) override
@@ -1665,11 +1703,23 @@ private:
 		return commands;
 	}
 
-	void Unadvise()
+	// Gives back the framework's two interfaces, and says whether there was anything to give back.
+	//
+	// Unadvising first is not tidiness: releasing m_tree while the framework still holds this tap as
+	// a visual-tree callback leaves it calling into an object holding a dangling pointer.
+	//
+	// The overlay is untouched by this. It takes its own reference to IXamlDiagnostics when it is
+	// installed, precisely so a click can resolve to a handle long after the injection that drew it
+	// is over, so the toolbar outlives the release rather than being broken by it.
+	bool Unadvise()
 	{
+		const bool held = m_tree != nullptr || m_diagnostics != nullptr;
+
 		if (m_tree) m_tree->UnadviseVisualTreeChange(this);
 		if (m_tree) { m_tree->Release(); m_tree = nullptr; }
 		if (m_diagnostics) { m_diagnostics->Release(); m_diagnostics = nullptr; }
+
+		return held;
 	}
 
 	std::atomic<long> m_refs{ 1 };
@@ -1750,6 +1800,21 @@ static void PipeReaderLoop()
 	}
 
 	g_pipeRunning.store(false);
+
+	// The pipe going is the other way a session ends: a host that was killed never asked to detach.
+	// Idempotent, so a host that did ask and then closed the pipe behind it does not release twice.
+	RoseTap* ending = nullptr;
+	{
+		std::lock_guard<std::mutex> guard(g_activeMutex);
+		ending = g_active;
+		if (ending) ending->AddRef();
+	}
+
+	if (ending)
+	{
+		ending->EndSession();
+		ending->Release();
+	}
 
 	Log(L"pipe: reader stopped");
 }

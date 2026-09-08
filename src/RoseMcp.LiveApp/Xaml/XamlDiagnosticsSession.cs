@@ -1326,9 +1326,53 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Deletes this session's sandbox folder. Best effort by nature, for the reason above: the staged
-	/// provider is loaded into an app that is meant to still be running afterwards, so the DLL is
-	/// held open and only the next host's sweep can finish the job.
+	/// Asks the resident provider to give back the two framework interfaces it holds, and says what
+	/// it answered.
+	/// <para>
+	/// Over the pipe and acknowledged, rather than left to the provider noticing the pipe close. Both
+	/// paths exist, because a host that is killed asks nothing -- but only the acknowledged one can be
+	/// reported, and a release nobody can observe is one nobody can tell from the leak it replaces.
+	/// </para>
+	/// <para>
+	/// Called on detach rather than only on disposal, and the difference is what makes it observable:
+	/// disposal happens as the host shuts down, after its client has closed the stdin that carried
+	/// its log, so the one line saying whether the release happened is written where nothing is left
+	/// to read it. Idempotent, so both still calling it is fine -- the provider answers the second
+	/// with "already released".
+	/// </para>
+	/// <para>
+	/// A session with no pipe cannot ask, and there is nothing else to ask through: the work folder
+	/// carries requests only into an injection, and injecting again to say "stop" would create a
+	/// third tap to release the second one's interfaces. That case is said rather than fixed.
+	/// </para>
+	/// </summary>
+	public void EndProviderSession()
+	{
+		lock (_requests)
+		{
+			if (_pipe?.Connected != true)
+			{
+				logger.LogDebug(
+					"No provider pipe to detach on; anything the provider still holds goes when the app does.");
+
+				return;
+			}
+
+			var answered = _pipe.Request("detach", _bounds.Greeting);
+			if (answered is null)
+			{
+				logger.LogWarning("The XAML provider did not acknowledge the detach, so it may still hold its interfaces.");
+				return;
+			}
+
+			logger.LogInformation("The XAML provider {Answer} its diagnostics interfaces on detach.", answered);
+		}
+	}
+
+	/// <summary>
+	/// Ends the session in the app and then deletes this session's sandbox folder. The folder is best
+	/// effort by nature: the staged provider is loaded into an app that is meant to still be running
+	/// afterwards, so the DLL is held open and only the next host's sweep can finish the job.
 	/// </summary>
 	public void Dispose()
 	{
@@ -1336,6 +1380,13 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		lock (_requests)
 		{
 			if (_workDir is null) return;
+
+			// Asked before the pipe goes, because afterwards there is no way to ask and no way to hear
+			// the answer. The provider holds an IXamlDiagnostics and an IVisualTreeService per
+			// injection and released them from nowhere any caller reaches, so they were held for the
+			// life of the app -- and the app outlives the session deliberately, which is what turns a
+			// leak per session into a leak that accumulates.
+			EndProviderSession();
 
 			_pipe?.Dispose();
 			_pipe = null;

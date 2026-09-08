@@ -736,14 +736,20 @@ after 120 seconds, which was ample when a live-app test had the machine to itsel
 the moment they shared it -- the tests that end by asserting their target is still running failed on
 it having correctly done what it was told. It is ten minutes now.
 
-`dotnet test` needs the `global.json` opt-in already in the repo: xunit.v3 runs on
-Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest.
-Individual test projects are also executables, so running one directly works too -- and that is
-how you run just the fast half:
+`dotnet test` needs the `global.json` opt-in already in the repo: TUnit runs on
+Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest -- without the
+opt-in it refuses outright, naming the VSTest target.
+
+**Never pass `--nologo` to `dotnet test` here.** It is a VSTest option, Microsoft.Testing.Platform
+does not recognise it, and an unrecognised option is reported as `Zero tests ran` with exit code 5 --
+which reads exactly like a discovery failure and sends you looking at the runner, the source
+generator and the project file in turn. The banner-suppressing equivalent is `--no-banner`
+(dotnet/sdk#55309). Individual test projects are also executables, so running one directly works too
+-- and that is how you run just the fast half:
 
 ```
 ./tests/RoseMcp.UnitTests/bin/Debug/net10.0/RoseMcp.UnitTests.exe
-./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe -class '*RenameTests'
+./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/RenameTests/*'
 ```
 
 Run a worker standalone against a fixture -- the fastest way to debug Roslyn behaviour without

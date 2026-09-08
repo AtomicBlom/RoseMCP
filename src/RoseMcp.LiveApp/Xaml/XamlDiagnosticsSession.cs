@@ -80,6 +80,14 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// (#57).
 	private long _generation;
 
+	// Whether the target's diagnostics endpoint has ever answered this session. It separates two
+	// failures that share an HRESULT and mean opposite things: ERROR_NOT_FOUND before any read is an
+	// app whose tree is not up yet, or one with no XAML at all, and waiting is the advice. The same
+	// code after a read has succeeded is an app that was serving us and has stopped, where waiting is
+	// exactly the wrong advice -- it was reported costing an hour of looking at the wrong app, because
+	// the message offered "still starting" and "no XAML UI" and neither had been true for some time.
+	private bool _endpointAnswered;
+
 	// What this side has already sent to the app, per source file (#12). It is held here rather than by
 	// the caller for two reasons: this is the only place that can tell whether an apply reached the
 	// provider, and a caller that has just written a file no longer holds what was there before.
@@ -1083,7 +1091,13 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// ERROR_NOT_FOUND for a second or two. A caller told "the target may have no XAML UI" about a
 		// XAML app concludes the tool does not work on their app, and stops. It was reported that way
 		// from a real session: the same call twelve seconds later returned 629 nodes.
+		// Timed, because how long the endpoint took to answer is the one number that separates a session
+		// that goes on working from one that wedges, and it was only ever recoverable by subtracting two
+		// log timestamps by hand. InitializeXamlDiagnosticsEx does not return until the target's side has
+		// created and sited the tap, so this measures the target's UI thread as much as our own work: a
+		// handshake of seconds means that thread was saturated while we injected into it.
 		var deadline = DateTime.UtcNow + _bounds.Endpoint;
+		var handshake = Stopwatch.StartNew();
 		var hr = 0;
 		while (true)
 		{
@@ -1099,6 +1113,14 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			if (hr >= 0)
 			{
 				NoteProviderPipe();
+
+				logger.LogInformation(
+					"The target's XAML diagnostics endpoint answered in {HandshakeMs}ms for '{Request}' on pid {Pid}.",
+					handshake.ElapsedMilliseconds,
+					Verb(request),
+					pid);
+
+				_endpointAnswered = true;
 				return (workDir, null);
 			}
 			if (hr != ErrorNotFound || DateTime.UtcNow >= deadline) break;
@@ -1114,12 +1136,33 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// nothing to do with whether the endpoint appears, and unpackaged WinUI 3 is an ordinary
 		// supported shape. The stack is known by the time this runs, so the message can name it
 		// rather than guess at causes.
-		var detail = hr == ErrorNotFound
-			? XamlChannelBounds.TimedOut("the target's XAML diagnostics endpoint", _bounds.Endpoint)
-				+ $" It never appeared (0x{ErrorNotFound:x8}). The target was detected as {_stack!.Stack} because "
-				+ $"{_stack.Reason}. A XAML app that is still starting can take a moment; if it persists, the "
-				+ "target has no XAML UI."
-			: $"InitializeXamlDiagnosticsEx failed (0x{hr:x8}).";
+		// A third case, and it is the one that reads worst when it is folded into the second: the endpoint
+		// answered earlier in this very session and has stopped. Neither "still starting" nor "no XAML UI"
+		// can be true of an app that has already handed us a tree, so saying either sends the caller to
+		// look at their own app. What it actually indicates is the target's UI thread no longer serving,
+		// and the handshake time is quoted because a slow one is the warning that precedes this.
+		var detail = hr != ErrorNotFound
+			? $"InitializeXamlDiagnosticsEx failed (0x{hr:x8})."
+			: _endpointAnswered
+				? XamlChannelBounds.TimedOut("the target's XAML diagnostics endpoint", _bounds.Endpoint)
+					+ $" It answered earlier in this session and has stopped (0x{ErrorNotFound:x8}), so the target is "
+					+ "not starting up and does have a XAML UI. Its UI thread is no longer serving diagnostics: check "
+					+ "whether the process is spinning a core, and if it is, the app will not recover and has to be "
+					+ "restarted. Reads before this one took "
+					+ $"{handshake.ElapsedMilliseconds}ms to be answered."
+				: XamlChannelBounds.TimedOut("the target's XAML diagnostics endpoint", _bounds.Endpoint)
+					+ $" It never appeared (0x{ErrorNotFound:x8}). The target was detected as {_stack!.Stack} because "
+					+ $"{_stack.Reason}. A XAML app that is still starting can take a moment; if it persists, the "
+					+ "target has no XAML UI.";
+
+		logger.LogWarning(
+			"The target's XAML diagnostics endpoint did not answer within {HandshakeMs}ms for '{Request}' on pid {Pid} "
+				+ "(0x{Hr:x8}); it had answered before in this session: {Answered}.",
+			handshake.ElapsedMilliseconds,
+			Verb(request),
+			pid,
+			hr,
+			_endpointAnswered);
 
 		return (null, detail);
 	}

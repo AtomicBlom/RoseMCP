@@ -10,6 +10,8 @@ using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.TestSupport;
 
+using Xunit.Sdk;
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -789,9 +791,27 @@ public sealed class BrokerTests
 
 		Assert.DoesNotContain(worker, WorkerProcessIds());
 
-		// The call never gets an answer, and saying so is the point rather than an aside: a client
-		// that has gone is not owed one.
-		await Assert.ThrowsAnyAsync<Exception>(() => call);
+		// Whether the in-flight call was answered is a race, and asserting either way is wrong. The
+		// server finishes work already running before it exits -- measured at fourteen seconds for a
+		// call whose solution was still loading -- so the reply is written if stdout is still being
+		// read and lost if it is not. Awaited rather than abandoned so the outcome is observed and
+		// neither outcome fails: what this test claims is that the process ends and the worker goes
+		// with it, both asserted above.
+		//
+		// The first version asserted that no answer arrives. It passed five runs out of six and then
+		// failed on "No exception was thrown", which is the assertion being wrong rather than the
+		// behaviour changing.
+		try
+		{
+			using var answered = await call;
+			Assert.True(
+				answered.RootElement.TryGetProperty("result", out _) || answered.RootElement.TryGetProperty("error", out _),
+				"a reply that arrives at all has to be a JSON-RPC result or error");
+		}
+		catch (Exception exception) when (exception is not TrueException)
+		{
+			// The other legitimate outcome: the stream went before the answer did.
+		}
 	}
 
 	/// <summary>

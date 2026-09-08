@@ -37,10 +37,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// HRESULT_FROM_WIN32(ERROR_NOT_FOUND): the well-known diagnostics endpoint is not there yet.
 	private const int ErrorNotFound = unchecked((int)0x80070490);
 
-	// Long enough for a XAML app to get its first tree up, short enough that a target which genuinely
-	// has no XAML UI does not hold a tool call for an uncomfortable length of time.
-	private static readonly TimeSpan EndpointTimeout = TimeSpan.FromSeconds(20);
-	private static readonly TimeSpan SnapshotTimeout = TimeSpan.FromSeconds(15);
+	// Every wait on the provider, and the sentence each produces when it expires. Long enough for a
+	// XAML app to get its first tree up, short enough that a target which genuinely has no XAML UI
+	// does not hold a tool call for an uncomfortable length of time -- and bounded without exception,
+	// because a wait with no bound here is a tool call that never returns rather than a slow one.
+	private readonly XamlChannelBounds _bounds = XamlChannelBounds.FromEnvironment();
 
 	private string? _workDir;
 	private string? _stagedProvider;
@@ -115,7 +116,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// This is the whole point of #50 -- the provider does its work on the app's UI thread, so
 		// every request used to re-inject to get onto that thread, and a resident reader reaching it
 		// through the dispatcher makes a read a message instead.
-		if (_pipe?.Connected == true && _pipe.Request("tree", SnapshotTimeout) is { } served)
+		if (_pipe?.Connected == true && _pipe.Request("tree", _bounds.Snapshot) is { } served)
 		{
 			var fromPipe = ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
 			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", fromPipe.Count, pid);
@@ -125,9 +126,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var (workDir, error) = Inject(pid, "tree");
 		if (error is not null) return new LiveXamlTree { Detail = error };
 
-		if (!WaitForMarker(Path.Combine(workDir!, "tree.ready"), SnapshotTimeout))
+		if (!WaitForMarker(Path.Combine(workDir!, "tree.ready"), _bounds.Snapshot))
 		{
-			return new LiveXamlTree { Detail = "The XAML provider was injected but did not produce a tree snapshot in time." };
+			return new LiveXamlTree { Detail = MarkerTimedOut("write a tree snapshot") };
 		}
 
 		try
@@ -162,7 +163,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// the rows, so "the chain could not be read" stays distinguishable from "read it and there
 		// was nothing" -- a distinction the marker file made with the word "error" and an empty reply
 		// could not make at all.
-		if (_pipe?.Connected == true && _pipe.Request(request, SnapshotTimeout) is { } served)
+		if (_pipe?.Connected == true && _pipe.Request(request, _bounds.Snapshot) is { } served)
 		{
 			var lines = served.Split('\n', StringSplitOptions.RemoveEmptyEntries);
 			if (lines.Length > 0 && lines[0] == "error")
@@ -187,9 +188,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var (workDir, error) = Inject(pid, request);
 		if (error is not null) return new LiveXamlProperties { Handle = handle, Detail = error };
 
-		if (!WaitForMarker(Path.Combine(workDir!, "properties.ready"), SnapshotTimeout))
+		if (!WaitForMarker(Path.Combine(workDir!, "properties.ready"), _bounds.Snapshot))
 		{
-			return new LiveXamlProperties { Handle = handle, Detail = "The XAML provider was injected but did not produce the properties in time." };
+			return new LiveXamlProperties { Handle = handle, Detail = MarkerTimedOut("write the properties") };
 		}
 
 		try
@@ -241,9 +242,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var (workDir, error) = Inject(pid, "idle");
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
-		if (!WaitForMarker(Path.Combine(workDir!, "idle.ready"), SnapshotTimeout))
+		if (!WaitForMarker(Path.Combine(workDir!, "idle.ready"), _bounds.Snapshot))
 		{
-			return new LiveXamlSelection { Detail = "The provider was injected but did not report select mode disarmed." };
+			return new LiveXamlSelection { Detail = MarkerTimedOut("report select mode disarmed") };
 		}
 
 		// Answered from the provider's own state rather than from the fact that it acknowledged, for
@@ -264,9 +265,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
 		var readyFile = Path.Combine(workDir!, "select.ready");
-		if (!WaitForMarker(readyFile, SnapshotTimeout))
+		if (!WaitForMarker(readyFile, _bounds.Snapshot))
 		{
-			return new LiveXamlSelection { Detail = "The provider was injected but did not arm select mode (the app may have no diagnostics UI layer)." };
+			return new LiveXamlSelection { Detail = MarkerTimedOut("arm select mode (the app may have no diagnostics UI layer)") };
 		}
 
 		// The provider reports the extent XAML arranged its capture layer at, and a zero is checked
@@ -326,11 +327,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		if (error is not null) return new LiveXamlSelection { Detail = error };
 
 		var readyFile = Path.Combine(workDir!, "deselect.ready");
-		if (!WaitForMarker(readyFile, SnapshotTimeout))
+		if (!WaitForMarker(readyFile, _bounds.Snapshot))
 		{
 			return new LiveXamlSelection
 			{
-				Detail = "The provider was injected but did not confirm the deselect (the app may have no diagnostics UI layer).",
+				Detail = MarkerTimedOut("confirm the deselect (the app may have no diagnostics UI layer)"),
 			};
 		}
 
@@ -382,11 +383,11 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// answer a request and survive one, which is the same lesson selection.ready taught from the
 		// other side. A "no" now costs what a "yes" costs.
 		var readyFile = Path.Combine(workDir!, "selecthandle.ready");
-		if (!WaitForMarker(readyFile, SnapshotTimeout))
+		if (!WaitForMarker(readyFile, _bounds.Snapshot))
 		{
 			return new LiveXamlSelection
 			{
-				Detail = $"The provider was injected but did not answer about handle {handle}.",
+				Detail = MarkerTimedOut($"answer about handle {handle}"),
 			};
 		}
 
@@ -740,7 +741,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			var (workDir, error) = Inject(pid, "apply", commands);
 			if (error is not null) return new LiveXamlApplyResult { Detail = error };
 
-			if (!WaitForMarker(Path.Combine(workDir!, "apply.ready"), SnapshotTimeout))
+			if (!WaitForMarker(Path.Combine(workDir!, "apply.ready"), _bounds.Snapshot))
 			{
 				// The baseline is deliberately left where it was, and the message says what that costs.
 				// The commands were injected, so they may well have run; this side just cannot say. So
@@ -748,9 +749,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 				// batch was adding, a retry that lands twice is a second copy.
 				return new LiveXamlApplyResult
 				{
-					Detail = "The XAML provider was injected but did not report the apply in time. The edits may or "
-						+ "may not have reached the app, so applying the same change again could add a second copy "
-						+ "of anything this one was adding.",
+					Detail = MarkerTimedOut("report the apply")
+						+ " The edits may or may not have reached the app, so applying the same change again could "
+						+ "add a second copy of anything this one was adding.",
 				};
 			}
 
@@ -1068,13 +1069,13 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return (null, $"Could not write the provider request: {exception.Message}");
 		}
 
-		// Retried, because the common failure here is transient and the old message called it fatal.
+		// Retried, because the common failure here is transient and a one-shot message called it fatal.
 		// The XAML diagnostics endpoint does not exist until the framework has built a tree, so a
 		// session that has only just attached -- which is exactly when an agent asks -- gets
 		// ERROR_NOT_FOUND for a second or two. A caller told "the target may have no XAML UI" about a
 		// XAML app concludes the tool does not work on their app, and stops. It was reported that way
 		// from a real session: the same call twelve seconds later returned 629 nodes.
-		var deadline = DateTime.UtcNow + EndpointTimeout;
+		var deadline = DateTime.UtcNow + _bounds.Endpoint;
 		var hr = 0;
 		while (true)
 		{
@@ -1083,7 +1084,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			// establish the channel. Separated by '|', which cannot occur in a Windows path.
 			var initData = _pipe is null ? workDir : $"{workDir}|{_pipe.Name}";
 
-			hr = _initialise!(tap.EndpointName, (uint)pid, _diagnosticsPath, stagedProvider, tap.ProviderClsid, initData);
+			var attempt = Initialise(tap, pid, stagedProvider, initData);
+			if (attempt is null) return (null, WedgedInjectionDetail(pid));
+
+			hr = attempt.Value;
 			if (hr >= 0)
 			{
 				NoteProviderPipe();
@@ -1103,13 +1107,64 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// supported shape. The stack is known by the time this runs, so the message can name it
 		// rather than guess at causes.
 		var detail = hr == ErrorNotFound
-			? $"The target's XAML diagnostics endpoint did not appear within {EndpointTimeout.TotalSeconds:0}s "
-				+ $"(0x{ErrorNotFound:x8}). It was detected as {_stack!.Stack} because {_stack.Reason}. A XAML "
-				+ "app that is still starting can take a moment; if it persists, the target has no XAML UI."
+			? XamlChannelBounds.TimedOut("the target's XAML diagnostics endpoint", _bounds.Endpoint)
+				+ $" It never appeared (0x{ErrorNotFound:x8}). The target was detected as {_stack!.Stack} because "
+				+ $"{_stack.Reason}. A XAML app that is still starting can take a moment; if it persists, the "
+				+ "target has no XAML UI."
 			: $"InitializeXamlDiagnosticsEx failed (0x{hr:x8}).";
 
 		return (null, detail);
 	}
+
+	/// <summary>
+	/// One <c>InitializeXamlDiagnosticsEx</c> call, bounded. Returns the HRESULT, or null when the
+	/// call did not come back inside <see cref="XamlChannelBounds.Injection"/>.
+	/// <para>
+	/// It is a blocking cross-process call that does not return until the target's side has created
+	/// and sited the tap, and on WinUI 3 that means the app's UI thread has run the tap's body. A
+	/// target whose UI thread is stuck below managed code therefore never returns from it -- which is
+	/// how a suite run came to hang for fifty minutes on a first tree read, with the pipe logged as
+	/// listening and no line after it.
+	/// </para>
+	/// <para>
+	/// Bounded by running it on a thread of its own and abandoning that thread, because there is no
+	/// other way to bound a blocking P/Invoke: the call cannot be cancelled and the native side holds
+	/// no token. The thread is a background thread, so an abandoned injection cannot keep this process
+	/// from exiting -- which matters more than reclaiming it, since the host has to be able to die
+	/// with its client whatever the target is doing.
+	/// </para>
+	/// </summary>
+	private int? Initialise(XamlTap tap, int pid, string stagedProvider, string initData)
+	{
+		var result = 0;
+		var thread = new Thread(() => result = _initialise!(
+			tap.EndpointName, (uint)pid, _diagnosticsPath, stagedProvider, tap.ProviderClsid, initData))
+		{
+			IsBackground = true,
+			Name = "rose-xaml-inject",
+		};
+
+		thread.Start();
+		if (thread.Join(_bounds.Injection)) return result;
+
+		logger.LogWarning(
+			"InitializeXamlDiagnosticsEx into pid {Pid} did not return within {Seconds}s; abandoning it.",
+			pid,
+			_bounds.Injection.TotalSeconds);
+
+		return null;
+	}
+
+	/// <summary>
+	/// What to tell a caller whose injection never came back. It names the channel, the bound, and the
+	/// one thing that explains it, because from outside this is indistinguishable from every other
+	/// way a tree read comes back empty.
+	/// </summary>
+	private string WedgedInjectionDetail(int pid) =>
+		XamlChannelBounds.TimedOut("the XAML diagnostics injection call", _bounds.Injection)
+			+ $" InitializeXamlDiagnosticsEx into pid {pid} did not return. It is served by the target's UI "
+			+ "thread, so an app that is wedged, or stopped at a breakpoint, never lets it finish. The "
+			+ "provider may still load if the app frees that thread.";
 
 	/// <summary>
 	/// Records whether the provider connected back on the pipe, which every tree and properties read tries
@@ -1120,10 +1175,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	{
 		if (_pipe is null || _pipe.Connected) return;
 
-		var greeting = _pipe.WaitForProvider(TimeSpan.FromSeconds(5));
+		var greeting = _pipe.WaitForProvider(_bounds.Greeting);
 		if (greeting is null)
 		{
-			logger.LogWarning("The XAML provider did not connect on {PipeName}.", _pipe.Name);
+			// The bound is in the line because this is the one failure here that costs nothing
+			// visible: the reads go on working over the work folder, so the only way anyone learns
+			// the fast path is gone is by reading how long it was given to appear.
+			logger.LogWarning(
+				"The XAML provider did not connect on {PipeName} within {Seconds}s; reads fall back to the work folder.",
+				_pipe.Name,
+				_bounds.Greeting.TotalSeconds);
+
 			return;
 		}
 
@@ -1287,7 +1349,20 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 				UseShellExecute = false,
 			};
 			using var process = Process.Start(start);
-			process?.WaitForExit();
+			if (process is null) return;
+
+			// Bounded like every other wait on this path. A grant that never finishes is a tool call
+			// that never returns, and the AppContainer grants are the last thing between staging the
+			// provider and injecting it -- so a wait with no bound here hangs exactly where the pipe
+			// has just been logged as listening.
+			if (process.WaitForExit((int)_bounds.Grant.TotalMilliseconds)) return;
+
+			logger.LogWarning(
+				"icacls {Arguments} on {Path} did not finish within {Seconds}s; the provider may not be able "
+					+ "to reach the work folder.",
+				arguments,
+				path,
+				_bounds.Grant.TotalSeconds);
 		}
 		catch (Exception exception)
 		{
@@ -1446,6 +1521,16 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			Thread.Sleep(100);
 		}
 	}
+
+	/// <summary>
+	/// What to tell a caller whose marker never arrived. The channel is the provider's work folder,
+	/// which is a different thing from the pipe and from the injection call -- all three come back as
+	/// an empty result with a detail, so the detail is the only place they can be told apart.
+	/// </summary>
+	/// <param name="expected">What the provider was asked for, in the caller's terms.</param>
+	private string MarkerTimedOut(string expected) =>
+		XamlChannelBounds.TimedOut("the XAML provider's work folder", _bounds.Snapshot)
+			+ $" The provider was injected but did not {expected}.";
 
 	private bool IsCurrent(string path)
 	{

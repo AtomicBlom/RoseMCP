@@ -139,6 +139,12 @@ public sealed class XamlProviderPipe : IDisposable
 	/// echo it back to tell this answer from the last one (#57, #89). A reply read from the pipe the
 	/// request went out on is *this* request's answer by construction.
 	/// </para>
+	/// <para>
+	/// Every step is bounded, and a step that expires says which pipe and how long it waited. It has
+	/// to be said rather than returned: a null here is indistinguishable from "the provider does not
+	/// serve this verb", the caller falls back to the work folder and answers correctly either way,
+	/// so a silent timeout is a channel that has stopped working with nothing anywhere to say so.
+	/// </para>
 	/// </summary>
 	public string? Request(string request, TimeSpan timeout)
 	{
@@ -154,22 +160,42 @@ public sealed class XamlProviderPipe : IDisposable
 			header[3] = (byte)((payload.Length >> 24) & 0xFF);
 
 			var writing = _server.WriteAsync(header, 0, 4);
-			if (!writing.Wait(timeout)) return null;
+			if (!writing.Wait(timeout)) return TimedOut(request, timeout, "sending the length");
 
 			writing = _server.WriteAsync(payload, 0, payload.Length);
-			if (!writing.Wait(timeout)) return null;
+			if (!writing.Wait(timeout)) return TimedOut(request, timeout, "sending the request");
 
 			var flushing = _server.FlushAsync();
-			if (!flushing.Wait(timeout)) return null;
+			if (!flushing.Wait(timeout)) return TimedOut(request, timeout, "flushing the request");
 
 			var reply = ReadFrame(timeout);
-			return string.IsNullOrEmpty(reply) ? null : reply;
+			if (reply is null) return TimedOut(request, timeout, "waiting for the reply");
+
+			return reply.Length == 0 ? null : reply;
 		}
 		catch (Exception exception)
 		{
 			_logger.LogWarning(exception, "The XAML provider request '{Request}' failed on {PipeName}.", request, Name);
 			return null;
 		}
+	}
+
+	/// <summary>
+	/// Says which pipe stopped answering, at which step, and how long it was given, then returns null
+	/// so the caller falls back to the work folder. Always null: a timeout here is a slower session,
+	/// never a failed one, and the log line is the only place it is visible at all.
+	/// </summary>
+	private string? TimedOut(string request, TimeSpan timeout, string step)
+	{
+		_logger.LogWarning(
+			"The XAML provider pipe {PipeName} timed out after {Seconds}s {Step} for '{Request}'; "
+				+ "this read falls back to the work folder.",
+			Name,
+			timeout.TotalSeconds,
+			step,
+			request);
+
+		return null;
 	}
 
 	/// <summary>

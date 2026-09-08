@@ -2,12 +2,12 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 using Microsoft.Extensions.Logging;
-
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.TestToolchain;
 
@@ -913,6 +913,70 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.Contains(secondLogs.Lines, line => line.Contains("provider connected on", StringComparison.Ordinal));
 
 			Assert.True(await second.CloseAsync(again.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// Every wait on the provider channel is bounded, and the sentence that comes back names which
+	/// channel ran out and how long it was given.
+	/// </summary>
+	/// <remarks>
+	/// The bound this drives is the injection call itself, which had none. It is a blocking
+	/// cross-process call served by the target's UI thread, so a target wedged below managed code
+	/// never returns from it -- which is how a full suite run hung for fifty minutes on a first tree
+	/// read, the pipe logged as listening and no line after it.
+	/// <para>
+	/// Driven by shortening the bound rather than by wedging an app, because a wedged UI thread is not
+	/// something a test can arrange on demand and a test that waits for a real hang is the very thing
+	/// this is fixing. A millisecond is far below what loading a DLL into another process and walking
+	/// its tree can take, so the bound expires every time; the abandoned injection completes into the
+	/// work folder afterwards, harmlessly, which is why this takes the app for itself.
+	/// <para>
+	/// What it does not prove is that the abandoned call was genuinely blocked rather than merely
+	/// slow. Nothing here can prove that: the wait is bounded either way, and the difference is
+	/// invisible from this side by construction.
+	/// </para>
+	/// </para>
+	/// </remarks>
+	[Fact]
+	public async Task Bounds_the_wait_on_the_xaml_injection_call_and_names_the_channel()
+	{
+		var cancellationToken = TestContext.Current.CancellationToken;
+		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+
+		using var child = StartProcess(turn.ExecutablePath);
+
+		try
+		{
+			await WaitForProbeWindowAsync(child, cancellationToken);
+
+			// Process-wide, and safe because the host reads it at startup and this turn holds the only
+			// gate under which a live-app host is started.
+			using var shortened = new EnvironmentVariable("ROSEMCP_XAML_TIMEOUT_SECONDS", "0.001");
+
+			await using var manager = CreateManager();
+
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "winui probe (bounded injection)",
+				},
+				cancellationToken);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.NotNull(tree.Detail);
+			Assert.Contains("the XAML diagnostics injection call", tree.Detail, StringComparison.Ordinal);
+			Assert.Contains("timed out after", tree.Detail, StringComparison.Ordinal);
+			Assert.Empty(tree.Nodes);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
 		}
 		finally
 		{

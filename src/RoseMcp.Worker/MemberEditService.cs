@@ -177,7 +177,8 @@ public static class MemberEditService
 			target.Document.Project.ParseOptions,
 			IndentAt(text, target.Declaration.SpanStart),
 			Whitespace.Dominant(text),
-			count => notices.Add(RewrittenEndings(count, text)));
+			count => notices.Add(RewrittenEndings(count, text)),
+			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		if (parsed.Count != 1)
 		{
@@ -332,6 +333,7 @@ public static class MemberEditService
 			fromTheFile ? indent : indent + rules.IndentUnit,
 			Whitespace.Dominant(text),
 			count => notices.Add(RewrittenEndings(count, text)),
+			count => notices.Add(MemberSyntax.ReindentedLiteral(count)),
 			copied: head,
 			baseline: fromTheFile ? indent : null);
 
@@ -400,7 +402,12 @@ public static class MemberEditService
 		{
 			var body = text.ToString(TextSpan.FromBounds(bodyStart, declaration.Span.End)).TrimEnd(';', ' ', '\t');
 
-			return BodyEdit.Anchored(body, find, request.Replace ?? string.Empty, request.IncludeTrivia);
+			return BodyEdit.Anchored(
+				body,
+				find,
+				request.Replace ?? string.Empty,
+				request.IncludeTrivia,
+				count => notices.Add(RewrittenEndings(count, text)));
 		}
 
 		if (request.Position is not { } position) return request.Code;
@@ -452,7 +459,8 @@ public static class MemberEditService
 			document.Project.ParseOptions,
 			IndentFor(type, text, rules),
 			lineEnding,
-			count => notices.Add(RewrittenEndings(count, text)));
+			count => notices.Add(RewrittenEndings(count, text)),
+			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		GuardDuplicates(type, parsed);
 
@@ -802,7 +810,14 @@ public static class MemberEditService
 
 		if (existing > 0)
 		{
-			yield return $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics for those.";
+			// The count is analyzer-inclusive wherever the edit wrote, and rose_diagnostics leaves
+			// analyzers out by default -- so the bare advice sent a caller to a tool that answered 0
+			// about 297 errors, which reads as the two disagreeing rather than as a default.
+			yield return verification.AnalyzedProjects.Count == 0
+				? $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics for those."
+				: $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics with "
+					+ "includeAnalyzers=true for those, since this count includes the analyzer diagnostics it "
+					+ "leaves out by default.";
 		}
 
 		// The namespace itself, where the compilation could work it out. This is the answer the caller
@@ -1033,9 +1048,5 @@ public static class MemberEditService
 	/// is not line content, and inside a literal it is part of what the string says.
 	/// </summary>
 	private static string RewrittenEndings(int count, SourceText text) =>
-		$"Rewrote {count} line ending(s) in the code supplied to {LineEndings.Name(Whitespace.Dominant(text))}, "
-			+ "the ending this file uses. Every ending in it was a bare LF, which is what composing C# for "
-			+ "a tool argument produces without anyone deciding to -- but inside a string literal an "
-			+ "ending is part of the value, which is why this is said rather than left silent. Write one "
-			+ "CR LF anywhere in the code to keep every ending exactly as it arrived.";
+		MemberSyntax.RewrittenEndings(count, LineEndings.Name(Whitespace.Dominant(text)));
 }

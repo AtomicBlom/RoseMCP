@@ -69,7 +69,6 @@ public static class ChangeSignatureService
 		if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);
 
 		var supplied = Supplied(request.Arguments);
-		GuardMissingArguments(plan, supplied);
 
 		progress?.Report("Finding the declarations that move with it", 10);
 
@@ -78,6 +77,15 @@ public static class ChangeSignatureService
 		progress?.Report("Finding the call sites", 25);
 
 		var work = await GatherAsync(snapshot.Solution, group, method, plan, wanted, notices, cancellationToken);
+
+		// After the call sites and before anything is written, so a refusal still costs nothing and
+		// can be true of the sites it names. Asked of the plan alone it fired on a member nothing
+		// calls and on calls written ahead of the parameter they pass, saying both had nothing to
+		// pass.
+		GuardMissingArguments(
+			plan,
+			supplied,
+			await BindingCallSiteCountAsync(snapshot.Solution, work, cancellationToken));
 
 		progress?.Report("Rewriting", 55);
 
@@ -753,21 +761,82 @@ public static class ChangeSignatureService
 
 	/// <summary>
 	/// Refuses before anything is written when a new parameter has neither a default nor an argument
-	/// to pass. Every call site would fail to compile, and the caller knows which of the two they
-	/// meant.
+	/// to pass, and there is a call site the refusal is true of.
+	/// <para>
+	/// It has to be asked of the call sites rather than of the plan alone, which is what made it fire
+	/// on the two solutions where it is false. A call written ahead of the parameter it passes -- an
+	/// author's ordinary way round -- does not bind, so nothing can put an argument into it and this
+	/// change is what it was waiting for; and a member nothing calls has no call site to break at all.
+	/// Both were refused with "the existing call sites have nothing to pass", which named sites that
+	/// had something to pass and sites that did not exist, and recommended an argument that would have
+	/// been written into neither.
+	/// </para>
 	/// </summary>
-	private static void GuardMissingArguments(ParameterPlan plan, IReadOnlyDictionary<string, string> supplied)
+	/// <param name="plan">What is happening to the parameters.</param>
+	/// <param name="supplied">Expressions the caller gave for new parameters, by name.</param>
+	/// <param name="binding">
+	/// How many call sites the compiler can still read, which is how many would stop compiling.
+	/// </param>
+	private static void GuardMissingArguments(
+		ParameterPlan plan,
+		IReadOnlyDictionary<string, string> supplied,
+		int binding)
 	{
 		var missing = plan.Added
 			.Where(parameter => !parameter.HasDefault && !supplied.ContainsKey(parameter.Name))
 			.Select(parameter => parameter.Name)
 			.ToArray();
 
-		if (missing.Length == 0) return;
+		if (missing.Length == 0 || binding == 0) return;
 
 		throw new ArgumentException(
-			$"{string.Join(", ", missing)} would be required, and the existing call sites have nothing to pass. "
-				+ "Give the parameter a default, or say what to pass with arguments as name=expression.");
+			$"{string.Join(", ", missing)} would be required, and {binding} call site(s) that compile today have "
+				+ "nothing to pass. Give the parameter a default, or say what to pass with arguments as "
+				+ "name=expression.");
+	}
+
+	/// <summary>
+	/// How many call sites the compiler can still read, which is how many a required parameter with
+	/// nothing to pass would break.
+	/// <para>
+	/// A site that does not bind is one where nothing is known about which argument means what, so
+	/// nothing here can put an argument into it and it is left exactly as written either way. Two
+	/// shapes arrive that way and only one is a problem: a call written before the parameter it passes
+	/// -- which is what an author does, and which this change is what it was waiting for -- and a call
+	/// that was already broken for some other reason. Neither can be given an argument, so neither is
+	/// a reason to refuse, and both are reported.
+	/// </para>
+	/// <para>
+	/// Read from the same model and the same spans <see cref="ApplyAsync"/> uses, so the guard and the
+	/// rewrite cannot disagree about which sites are readable.
+	/// </para>
+	/// </summary>
+	private static async Task<int> BindingCallSiteCountAsync(
+		Solution solution,
+		IReadOnlyList<DocumentWork> work,
+		CancellationToken cancellationToken)
+	{
+		var count = 0;
+
+		foreach (var item in work)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			if (item.CallSites.Count == 0) continue;
+			if (solution.GetDocument(item.Id) is not { } document) continue;
+			if (await document.GetSyntaxRootAsync(cancellationToken) is not { } root) continue;
+			if (await document.GetSemanticModelAsync(cancellationToken) is not { } model) continue;
+
+			foreach (var span in item.CallSites)
+			{
+				if (root.FindNode(span) is not ArgumentListSyntax arguments) continue;
+				if (CallSiteBinding.For(model, arguments, out _) is null) continue;
+
+				count++;
+			}
+		}
+
+		return count;
 	}
 
 	private static string IndentAt(SourceText text, int position)

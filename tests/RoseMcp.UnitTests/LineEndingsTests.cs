@@ -82,6 +82,35 @@ public sealed class LineEndingsTests
 		Assert.Null(LineEndings.Changed("one\r\n", "one\r\ntwo\r\nthree\r\n"));
 	}
 
+	/// <summary>
+	/// Lines removed above a literal the file's rules cannot reach. Comparing terminators by position
+	/// puts the two files out of step from the removal onwards, and every CRLF then lines up against
+	/// an LF that has been in that literal all along -- so a CRLF repository is told its endings were
+	/// rewritten to LF, in the one message a caller relies on to know what happened to them.
+	/// </summary>
+	[Test]
+	public void Does_not_invent_a_direction_when_lines_were_removed_above_a_literal()
+	{
+		// Two imports and a three-line literal written with bare LFs, then one import dropped.
+		Assert.Null(LineEndings.Changed(
+			"using A;\r\nusing B;\r\nx\ny\nz\n",
+			"using B;\r\nx\ny\nz\n"));
+	}
+
+	/// <summary>
+	/// A rewrite that happens alongside a removal is still reported, and in the direction it went. The
+	/// count is of endings that stopped being what they were, so a deleted line does not inflate it.
+	/// </summary>
+	[Test]
+	public void Reports_a_rewrite_that_happened_beside_a_removal()
+	{
+		var changed = LineEndings.Changed("using A;\r\nusing B;\r\nx\ny\nz\n", "using B;\r\nx\r\ny\r\nz\r\n");
+
+		Assert.NotNull(changed);
+		Assert.Equal(3, changed.Value.Lines);
+		Assert.Equal("CRLF", changed.Value.To);
+	}
+
 	[Test]
 	[Arguments("\r\n", "CRLF")]
 	[Arguments("\n", "LF")]

@@ -283,7 +283,10 @@ public static class MoveMemberService
 			MemberSyntax.KeywordOf(type),
 			document.Project.ParseOptions,
 			indent,
-			Whitespace.Dominant(text));
+			Whitespace.Dominant(text),
+			count => notices.Add(MemberSyntax.RewrittenEndings(
+				count, LineEndings.Name(Whitespace.Dominant(text)))),
+			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		if (moved.Count != 1) throw new InvalidOperationException("The member being moved parsed as more than one.");
 

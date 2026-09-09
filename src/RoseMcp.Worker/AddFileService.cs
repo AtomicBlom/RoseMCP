@@ -99,7 +99,11 @@ public static class AddFileService
 
 		var globs = ProjectItemStyle.GlobsSourceFiles(await ProjectTextAsync(project, cancellationToken));
 
-		notices.AddRange(Notices(request, verification, outcome, imports, globs, project));
+		// Read off the solution the file was written from, so a literal is named against the line it
+		// ends up on rather than the line the caller wrote it at.
+		var literalEndings = await LiteralEndingsAsync(solution, id, cancellationToken);
+
+		notices.AddRange(Notices(request, verification, outcome, imports, globs, project, literalEndings));
 
 		var result = new AddFileResult
 		{
@@ -288,6 +292,14 @@ public static class AddFileService
 	/// The file's text: the imports, then the namespace, then what the caller wrote. Built as text
 	/// and parsed by the formatter afterwards rather than assembled as syntax, because the shape
 	/// being produced is a file and every part of it is decided by the repository's own rules.
+	/// <para>
+	/// The imports are ordered by <see cref="UsingDirectives.Sorts"/>, the same comparison that
+	/// places one among a file's existing imports. Sorting them here ordinally instead put anything
+	/// alphabetically before "System" above it, which compiles and trips no analyzer -- two orderings
+	/// were two chances to disagree, and they did. System-first is the language tooling's default and
+	/// cannot be read from .editorconfig at this point, since the document it would be read for does
+	/// not exist until this text does.
+	/// </para>
 	/// </summary>
 	private static string Build(
 		CompilationUnitSyntax unit,
@@ -304,12 +316,14 @@ public static class AddFileService
 			? unit.ToFullString()
 			: WithNamespace(unit, space);
 
+		var order = Comparer<string>.Create((left, right) => UsingDirectives.Sorts(left, right, systemFirst: true));
+
 		var imports = usings
 			.Select(name => name.Trim().TrimEnd(';'))
 			.Select(name => name.StartsWith("using ", StringComparison.Ordinal) ? name["using ".Length..] : name)
 			.Where(name => name.Length > 0)
 			.Distinct(StringComparer.Ordinal)
-			.Order(StringComparer.Ordinal)
+			.Order(order)
 			.Select(name => $"using {name};")
 			.ToArray();
 
@@ -397,6 +411,35 @@ public static class AddFileService
 		return (added, imports);
 	}
 
+	/// <summary>
+	/// What to say about a multi-line literal in the new file whose endings are not the file's, or
+	/// null where it holds none.
+	/// <para>
+	/// A whole file of literals arrives here at once, which is what makes this the tool that needs it
+	/// most: sixty-four ENDOFLINE errors on one added file, every one inside a raw literal, and
+	/// nothing in the result to say a single ending had been left as it arrived. Keeping them is the
+	/// invariant -- an ending inside a literal is part of the string's value -- so the answer is the
+	/// sentence rather than a rewrite, and it is <c>rose_format</c>'s own sentence so a caller who
+	/// runs both is not told two different things.
+	/// </para>
+	/// </summary>
+	private static async Task<string?> LiteralEndingsAsync(
+		Solution solution,
+		DocumentId id,
+		CancellationToken cancellationToken)
+	{
+		if (solution.GetDocument(id) is not { } document) return null;
+
+		var root = await document.GetSyntaxRootAsync(cancellationToken);
+		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
+
+		if (root is null || tree is null) return null;
+
+		var text = await document.GetTextAsync(cancellationToken);
+
+		return Whitespace.LiteralEndingNotice(root, text, Whitespace.RulesFor(document.Project, tree, text), document.Name);
+	}
+
 	private static async Task<string> ProjectTextAsync(Project project, CancellationToken cancellationToken)
 	{
 		if (project.FilePath is not { Length: > 0 } file || !File.Exists(file)) return string.Empty;
@@ -415,11 +458,16 @@ public static class AddFileService
 		WriteOutcome outcome,
 		ResolvedImports.Imports imports,
 		bool globs,
-		Project project)
+		Project project,
+		string? literalEndings)
 	{
 		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 
 		foreach (var notice in outcome.Notices) yield return notice;
+
+		// Beside the other things the diff cannot show, and before the compile: an ending left inside a
+		// literal is not a compile error and reads as one only at the next dotnet format.
+		if (literalEndings is { } endings) yield return endings;
 
 		if (!globs)
 		{

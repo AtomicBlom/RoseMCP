@@ -37,10 +37,13 @@ public static class BodyEdit
 	/// <para>
 	/// <paramref name="includeTrivia"/> is the way past that limit for the text a token stream cannot
 	/// reach: the words inside a <c>//</c> comment, and the characters inside a string. Matching is then
-	/// exact text rather than tokens -- whitespace and line endings count, because inside a comment or a
-	/// literal they are the content being edited -- and the replacement is spliced exactly as written
-	/// for the same reason. What comes out is still a whole body handed to the parse-and-format path, so
-	/// a change that would not compile is still refused before anything is written.
+	/// exact text rather than tokens -- whitespace counts, because inside a comment or a literal it is
+	/// the content being edited -- and the replacement is spliced exactly as written for the same reason.
+	/// Line endings are the one thing normalised, because an all-LF payload is what composing a string
+	/// for a JSON argument produces rather than anything the caller decided; a payload carrying a CR is
+	/// matched and spliced exactly as it arrived. What comes out is still a whole body handed to the
+	/// parse-and-format path, so a change that would not compile is still refused before anything is
+	/// written.
 	/// </para>
 	/// </summary>
 	/// <param name="body">The body as it stands, from the file.</param>
@@ -49,18 +52,27 @@ public static class BodyEdit
 	/// <param name="includeTrivia">
 	/// Match the body's text rather than its tokens, so a match may lie inside a comment or a string.
 	/// </param>
+	/// <param name="rewritten">
+	/// How many of the replacement's line endings were given the body's, so a caller can say so. It is a
+	/// change to what a literal says, and it must not be silent.
+	/// </param>
 	/// <exception cref="ArgumentException">
 	/// Nothing matched, more than one thing did, find carries a comment the token matching cannot see,
 	/// or the match straddles code and trivia.
 	/// </exception>
-	public static string Anchored(string body, string find, string replace, bool includeTrivia = false)
+	public static string Anchored(
+		string body,
+		string find,
+		string replace,
+		bool includeTrivia = false,
+		Action<int>? rewritten = null)
 	{
 		if (string.IsNullOrWhiteSpace(find))
 		{
 			throw new ArgumentException("Nothing to find. Pass the code to look for, or use code to write the whole body.");
 		}
 
-		if (includeTrivia) return InText(body, find, replace);
+		if (includeTrivia) return InText(body, find, replace, rewritten);
 
 		var wanted = Tokens(find);
 
@@ -114,22 +126,56 @@ public static class BodyEdit
 	/// match that ignored it could not say which of two spacings the caller meant and a replacement
 	/// that reflowed it would change the value.
 	/// </para>
+	/// <para>
+	/// Line endings are the exception, and leaving them out of it made this path unreachable. Every
+	/// file in a CRLF repository is CRLF and C# composed for a JSON argument is all bare LFs, so an
+	/// anchor spanning two lines matched nothing and the refusal named a difference the caller could
+	/// not see -- while the advice that fixes it, a CR LF written into the payload, is the one thing a
+	/// caller cannot do when the payload is two lines that both want the file's ending.
+	/// </para>
+	/// <para>
+	/// So the needle is tried as written first and given the body's endings only if that found
+	/// nothing, and the order is what makes it free. Exact still wins, so a bare LF still reaches a
+	/// literal written with bare LFs inside a file that is otherwise CRLF -- which is the shape
+	/// <c>rose_format</c> and <c>rose_add_file</c> both report, and the one a caller is most likely to
+	/// be editing when they reach for this path at all. Normalising unconditionally would have closed
+	/// that case as it opened the other. The replacement follows the needle: if the caller's LFs were
+	/// read as transport artefacts in one half they are in both, and if they were taken literally then
+	/// they are taken literally in both.
+	/// </para>
 	/// </summary>
-	private static string InText(string body, string find, string replace)
+	private static string InText(string body, string find, string replace, Action<int>? rewritten)
 	{
-		var matches = new List<int>();
+		var needle = find;
+		var written = replace;
+		var changed = 0;
+		var matches = Occurrences(body, needle);
 
-		for (var at = body.IndexOf(find, StringComparison.Ordinal); at >= 0;
-			at = body.IndexOf(find, at + 1, StringComparison.Ordinal))
+		if (matches.Count == 0)
 		{
-			matches.Add(at);
+			var ending = Whitespace.Dominant(body);
+			var wanted = Normalised(find, ending, out _);
+
+			if (!string.Equals(wanted, find, StringComparison.Ordinal))
+			{
+				var retried = Occurrences(body, wanted);
+
+				if (retried.Count > 0)
+				{
+					needle = wanted;
+					matches = retried;
+					written = Normalised(replace, ending, out changed);
+				}
+			}
 		}
 
 		if (matches.Count == 0)
 		{
 			throw new ArgumentException(
 				$"The body does not contain '{First(find)}'. includeTrivia matches the text exactly, so spacing "
-					+ "and line endings have to match too. Read the body with rose_symbol_info includeSource=true.");
+					+ "has to match too -- only the line endings are tried both as written and as the file's own, "
+					+ "and only when every one of them was a bare LF. Read the body with rose_symbol_info "
+					+ "includeSource=true.");
 		}
 
 		if (matches.Count > 1)
@@ -141,13 +187,53 @@ public static class BodyEdit
 
 		var start = matches[0];
 
-		GuardStraddled(body, start, find.Length);
+		GuardStraddled(body, start, needle.Length);
 
-		// Spliced exactly as written, with none of the re-indentation the token path applies. The point
-		// of this path is the text inside a comment or a literal, where leading whitespace is content:
-		// a raw literal's indentation decides how much is stripped from its value, and reflowing a
-		// comment is a change nobody asked for.
-		return string.Concat(body.AsSpan(0, start), replace, body.AsSpan(start + find.Length));
+		if (changed > 0) rewritten?.Invoke(changed);
+
+		// Spliced with none of the re-indentation the token path applies. The point of this path is the
+		// text inside a comment or a literal, where leading whitespace is content: a raw literal's
+		// indentation decides how much is stripped from its value, and reflowing a comment is a change
+		// nobody asked for.
+		return string.Concat(body.AsSpan(0, start), written, body.AsSpan(start + needle.Length));
+	}
+
+	/// <summary>Where <paramref name="needle"/> appears in <paramref name="body"/>, exactly.</summary>
+	private static List<int> Occurrences(string body, string needle)
+	{
+		var found = new List<int>();
+
+		for (var at = body.IndexOf(needle, StringComparison.Ordinal); at >= 0;
+			at = body.IndexOf(needle, at + 1, StringComparison.Ordinal))
+		{
+			found.Add(at);
+		}
+
+		return found;
+	}
+
+	/// <summary>
+	/// The payload with its line endings rewritten to <paramref name="ending"/>, or exactly as it
+	/// arrived where it says anything at all about endings.
+	/// <para>
+	/// A payload carrying a CR is one whose author is thinking about endings, and an all-LF payload is
+	/// what composing a string for a JSON argument produces without anyone deciding to. That is the
+	/// same test the written-member path applies, and having one rule rather than two is most of the
+	/// point: a caller learns it once, and the escape hatch is the same escape hatch.
+	/// </para>
+	/// </summary>
+	/// <param name="text">The payload as the caller wrote it.</param>
+	/// <param name="ending">The ending the body uses.</param>
+	/// <param name="changed">How many endings were rewritten, so a caller can be told.</param>
+	private static string Normalised(string text, string ending, out int changed)
+	{
+		changed = 0;
+
+		if (ending == "\n" || text.Contains('\r', StringComparison.Ordinal)) return text;
+
+		changed = text.Count(character => character == '\n');
+
+		return changed == 0 ? text : text.Replace("\n", ending, StringComparison.Ordinal);
 	}
 
 	/// <summary>

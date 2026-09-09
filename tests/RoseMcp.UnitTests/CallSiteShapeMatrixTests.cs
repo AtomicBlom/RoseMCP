@@ -60,21 +60,33 @@ public sealed class CallSiteShapeMatrixTests
 	}
 
 	/// <summary>
-	/// A call site that names all of its arguments. Nothing about the change requires the names to
-	/// go, and they are the caller's own emphasis -- but they are stripped, because an argument that
-	/// lands in its own slot is written positionally whatever it arrived as.
+	/// A call site that names all of its arguments keeps every name that still belongs to the
+	/// parameter it named. Keeping one reproduces the text already in the file, so those arguments
+	/// come out unchanged; taking it off would be an edit to a site that needed none, and it takes the
+	/// only thing saying what a bare literal is for.
+	/// <para>
+	/// They were stripped, because an argument landing in its own slot was written positionally
+	/// whatever it arrived as -- which turned <c>Parse(code, "class", options: null, indent: "\t")</c>
+	/// into <c>Parse(code, "class", null, "\t")</c>. The inserted argument is positional because
+	/// nothing wrote a name for it.
+	/// </para>
 	/// </summary>
 	[Test]
-	public void Takes_the_names_off_a_call_site_that_named_every_argument()
+	public void Keeps_the_names_a_call_site_wrote_for_parameters_it_still_has()
 	{
-		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(first: a, second: b)"), Inserted, Dash));
+		Assert.Equal(
+			"""(first: a, "-", second: b)""",
+			Rewrite(Calling("Target(first: a, second: b)"), Inserted, Dash));
 	}
 
-	/// <summary>The mixed shape that works: the named argument is the trailing one.</summary>
+	/// <summary>
+	/// The mixed shape that works: the named argument is the trailing one. Its name is the caller's
+	/// and stays; the positional one beside it had none to keep.
+	/// </summary>
 	[Test]
 	public void Rewrites_a_trailing_named_argument_beside_a_positional_one()
 	{
-		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(a, second: b)"), Inserted, Dash));
+		Assert.Equal("""(a, "-", second: b)""", Rewrite(Calling("Target(a, second: b)"), Inserted, Dash));
 	}
 
 	/// <summary>
@@ -92,7 +104,7 @@ public sealed class CallSiteShapeMatrixTests
 	[Test]
 	public void Rewrites_a_named_argument_written_before_a_positional_one()
 	{
-		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(first: a, b)"), Inserted, Dash));
+		Assert.Equal("""(first: a, "-", b)""", Rewrite(Calling("Target(first: a, b)"), Inserted, Dash));
 	}
 
 	/// <summary>An optional the call site said nothing about goes on saying nothing about it.</summary>
@@ -225,12 +237,14 @@ public sealed class CallSiteShapeMatrixTests
 	}
 
 	/// <summary>
-	/// The same whitespace lost by the same argument from the other side: a name colon coming off
-	/// takes the break and the indentation with it, because for a named argument they sit on the
-	/// name.
+	/// The same whitespace, on an argument whose name is kept rather than written. Its break and
+	/// indentation sit on the name, so a pass that rebuilds the colon has to put them back in front of
+	/// it -- and a pass that took the name off would take them with it and land the argument at column
+	/// zero, which is what four call sites of one wrapped method did when their arguments no longer
+	/// needed naming. Nothing takes a name off now, so this is the shape that has to hold.
 	/// </summary>
 	[Test]
-	public void Keeps_the_whitespace_in_front_of_an_argument_it_stops_naming()
+	public void Keeps_the_whitespace_in_front_of_a_wrapped_argument_that_keeps_its_name()
 	{
 		var call = "public static class Fixture\n"
 			+ "{\n"
@@ -241,7 +255,7 @@ public sealed class CallSiteShapeMatrixTests
 			+ "\t\tsecond: b);\n"
 			+ "}\n";
 
-		Assert.Equal("(\n\t\ta,\n\t\t\"-\",\n\t\tb)", Rewrite(call, Inserted, Dash));
+		Assert.Equal("(\n\t\tfirst: a,\n\t\t\"-\",\n\t\tsecond: b)", Rewrite(call, Inserted, Dash));
 	}
 
 	/// <summary>

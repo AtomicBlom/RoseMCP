@@ -103,7 +103,9 @@ public static class ResolvedImports
 				}
 
 				add.Add(single);
-				reported.Add($"{name}: imported {single}.");
+				// Saying the choice was forced is what lets a caller notice it is wrong: a name they are
+				// about to write has exactly one candidate too, and it is not this one.
+				reported.Add($"{name}: imported {single}, the only namespace anything of that name is in.");
 
 				continue;
 			}

@@ -209,6 +209,35 @@ public sealed class WhitespaceTests
 		Assert.Contains("@\"one" + Lf + "two\";", result, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// The sentence itself, since two tools now share it and a caller who runs both has to be told the
+	/// same thing by each. It names the line so the literal can be found, and says why nothing was
+	/// rewritten, because the obvious fix changes what the program says.
+	/// </summary>
+	[Test]
+	public void Says_which_literals_hold_endings_the_file_does_not_use()
+	{
+		var source = "class C" + Crlf + "{" + Crlf + "\tconst string T = \"\"\"" + Crlf
+			+ "first" + Lf + "second" + Lf + "\"\"\";" + Crlf + "}" + Crlf;
+
+		var notice = Notice(source, "Described.cs");
+
+		Assert.NotNull(notice);
+		Assert.StartsWith("Described.cs: the multi-line string at line 3", notice, StringComparison.Ordinal);
+		Assert.Contains("line endings the file does not use", notice, StringComparison.Ordinal);
+		Assert.Contains("dotnet format will still ask for them", notice, StringComparison.Ordinal);
+	}
+
+	/// <summary>Nothing to say about a file whose literals agree with it, so the notice means something.</summary>
+	[Test]
+	public void Says_nothing_about_a_file_whose_literals_agree_with_it()
+	{
+		var source = "class C" + Crlf + "{" + Crlf + "\tconst string T = \"\"\"" + Crlf
+			+ "first" + Crlf + "second" + Crlf + "\"\"\";" + Crlf + "}" + Crlf;
+
+		Assert.Null(Notice(source, "Agreed.cs"));
+	}
+
 	private static IReadOnlyList<int> Disagreeing(string source, TextSpan? within = null)
 	{
 		var tree = CSharpSyntaxTree.ParseText(source);
@@ -216,6 +245,13 @@ public sealed class WhitespaceTests
 
 		return Whitespace.LiteralsDisagreeingWith(
 			tree.GetRoot(TestContext.Current!.Execution.CancellationToken), text, Strict, within);
+	}
+
+	private static string? Notice(string source, string name)
+	{
+		var tree = CSharpSyntaxTree.ParseText(source);
+
+		return Whitespace.LiteralEndingNotice(tree.GetRoot(), SourceText.From(source), Strict, name);
 	}
 
 	private static string Apply(string source, WhitespaceRules rules)

@@ -167,21 +167,28 @@ public static class UsingDirectives
 	}
 
 	/// <summary>
-	/// Where the directive goes: before the first one that sorts after it, or at the end.
+	/// Where the directive goes: before the first one that sorts after it, before the first that
+	/// sorts by rules of its own, or at the end.
 	/// <para>
 	/// Found by comparing rather than by sorting the list, because a list that is not already in
 	/// order is not this call's business to fix -- reordering somebody's imports as a side effect of
 	/// adding one is a diff nobody asked for.
+	/// </para>
+	/// <para>
+	/// A static using and an alias sort by their own rules and belong below the plain imports, so a
+	/// plain one stops in front of the first of them rather than walking past it. Walking past puts it
+	/// at the end of the file, under a static block, which compiles and trips no analyzer and is not
+	/// what any file here looks like -- so the promise to follow the file's own ordering was doing
+	/// less than it said.
 	/// </para>
 	/// </summary>
 	private static int Position(SyntaxList<UsingDirectiveSyntax> existing, string requested, UsingStyle style)
 	{
 		for (var index = 0; index < existing.Count; index++)
 		{
-			// A using with an alias, or a static one, sorts by its own rules and is left where it is.
-			if (existing[index].Alias is not null || existing[index].StaticKeyword != default) continue;
+			if (existing[index].Alias is not null || existing[index].StaticKeyword != default) return index;
 
-			if (Sorts(requested, Names(existing[index]), style) < 0) return index;
+			if (Sorts(requested, Names(existing[index]), style.SystemFirst) < 0) return index;
 		}
 
 		return existing.Count;
@@ -189,10 +196,19 @@ public static class UsingDirectives
 
 	/// <summary>
 	/// The order two imports go in: System first where the file asks for it, then ordinal.
+	/// <para>
+	/// Public because a file that does not exist yet has its imports written as text rather than
+	/// placed among existing ones, and two orderings would be two chances to disagree -- which is
+	/// exactly what happened: a new file opened with its imports sorted ordinally, so anything
+	/// alphabetically before "System" landed above it.
+	/// </para>
 	/// </summary>
-	private static int Sorts(string left, string right, UsingStyle style)
+	/// <param name="left">The import being placed.</param>
+	/// <param name="right">The import it is being compared against.</param>
+	/// <param name="systemFirst">Whether System imports sort above the rest.</param>
+	public static int Sorts(string left, string right, bool systemFirst)
 	{
-		if (style.SystemFirst)
+		if (systemFirst)
 		{
 			var leftIsSystem = Group(left) == "System";
 			var rightIsSystem = Group(right) == "System";

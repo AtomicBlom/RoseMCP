@@ -80,7 +80,16 @@ public static class CallSiteRewriter
 
 			foreach (var argument in wanted)
 			{
-				emitted.Add(positional ? Unnamed(argument) : Named(NameFor(parameter, binding), argument));
+				// A name the caller wrote stays. Keeping it reproduces the text already in the file, so
+				// the site comes out unchanged; taking it off is an edit to a call site that needed
+				// none, and it takes the only thing saying what a bare null or true is for. An argument
+				// only ever arrives named for a parameter the member already had, since a new
+				// parameter's argument is built here and carries no name -- so nothing is left that a
+				// name has to come off. A name kept in its own position is legal beside the positional
+				// arguments after it, which C# has allowed since 7.2.
+				var named = !positional || argument.NameColon is not null;
+
+				emitted.Add(named ? Named(NameFor(parameter, binding), argument) : argument);
 			}
 
 			if (!positional) allPositionalSoFar = false;
@@ -194,13 +203,21 @@ public static class CallSiteRewriter
 			: parameter.Name;
 
 	/// <summary>
-	/// The argument with a name colon put on, keeping the whitespace in front of it in front of it.
+	/// The argument with a name colon put on, or kept, and the whitespace in front of it still in
+	/// front of it.
 	/// <para>
 	/// An argument's leading trivia sits on its first token, and naming one puts a new token in
 	/// front. Left where it was, the line break and the indentation end up between the name and the
 	/// value -- <c>filePath: \t\t\tTestContext.Current.CancellationToken</c>, which is what the
 	/// finding behind the binding work reported alongside the wrong parameter. Getting the parameter
 	/// right did not move it.
+	/// </para>
+	/// <para>
+	/// The same trivia goes the same way from the other side, which is why nothing here takes a name
+	/// off: for a named argument the break and the indentation sit on the name, so removing the colon
+	/// takes them with it and the argument lands at column zero -- what four call sites of one wrapped
+	/// method did the moment their arguments no longer needed naming. A name the caller wrote is kept
+	/// instead, so that path does not exist.
 	/// </para>
 	/// </summary>
 	private static ArgumentSyntax Named(string name, ArgumentSyntax argument)
@@ -215,18 +232,4 @@ public static class CallSiteRewriter
 			.WithNameColon(colon)
 			.WithLeadingTrivia(leading);
 	}
-
-	/// <summary>
-	/// The argument with its name colon taken off, keeping the whitespace in front of it.
-	/// <para>
-	/// The same trivia, lost by the same argument from the other side. A named argument's first token
-	/// is its name, so taking the name colon away takes the line break and the indentation with it
-	/// and the argument lands at column zero -- which is what four call sites of one wrapped method
-	/// did the moment their arguments no longer needed naming.
-	/// </para>
-	/// </summary>
-	private static ArgumentSyntax Unnamed(ArgumentSyntax argument) =>
-		argument.NameColon is null
-			? argument
-			: argument.WithNameColon(null).WithLeadingTrivia(argument.GetLeadingTrivia());
 }

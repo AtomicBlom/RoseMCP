@@ -256,6 +256,100 @@ public sealed class AddFileTests
 		Assert.False(File.Exists(path), "a preview leaves no file behind");
 	}
 
+	/// <summary>
+	/// A whole file of raw literals is what this tool receives, and the endings inside them are kept
+	/// -- an ending inside a literal is part of the string's value. The consequence has to be said: the
+	/// file fails dotnet format on an ENDOFLINE inside the literal, no build reports it, and the
+	/// obvious fix changes what the program says. Sixty-four such errors landed on one added file with
+	/// nothing in the result to mention a single one.
+	/// <para>
+	/// The code here carries a CR LF, which is what says the caller is thinking about endings, so the
+	/// bare LFs inside the literal are left exactly as written rather than rewritten to the file's.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Says_when_a_literals_endings_are_not_the_files()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AddAsync(
+			session,
+			fixture.Path("Members", "Library", "Described.cs"),
+			"public static class Described\r\n{\r\n\tpublic const string Text = \"\"\"\nfirst\nsecond\n\"\"\";\r\n}\r\n");
+
+		Assert.True(result.Applied);
+
+		var text = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Described.cs"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		// Kept, which is the invariant the notice exists to explain rather than to fix.
+		Assert.Contains("first\nsecond\n", text, StringComparison.Ordinal);
+
+		Assert.Contains(
+			result.Notices,
+			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal)
+				&& notice.Contains("dotnet format will still ask for them", StringComparison.Ordinal));
+	}
+
+	/// <summary>A file whose literals agree with it says nothing, so the notice means something.</summary>
+	[Test]
+	public async Task Says_nothing_when_a_literals_endings_are_the_files()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AddAsync(
+			session,
+			fixture.Path("Members", "Library", "Agreed.cs"),
+			"public static class Agreed\r\n{\r\n\tpublic const string Text = \"\"\"\r\n\t\tfirst\r\n\t\tsecond\r\n\t\t\"\"\";\r\n}\r\n");
+
+		Assert.True(result.Applied);
+
+		Assert.DoesNotContain(
+			result.Notices,
+			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// The imports a new file opens with, System first. They were sorted ordinally, which puts
+	/// anything alphabetically before "System" above it -- so a file asking for RoseMcp.Contracts and
+	/// System.Text.Json opened with the wrong one. It compiles and trips no analyzer, so the only way
+	/// to find it is to look.
+	/// </summary>
+	[Test]
+	public async Task Opens_a_new_file_with_System_imports_first()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
+
+		var request = new AddFileRequest
+		{
+			FilePath = fixture.Path("Members", "Library", "Ordered.cs"),
+			Code = "public static class Ordered\r\n{\r\n\tpublic static string Name => Marker.Name;\r\n}\r\n",
+			Usings = ["Library.Nested", "System.Globalization"],
+		};
+
+		var result = await session.MutateAsync(
+			(snapshot, token) => AddFileService.AddAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token),
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.True(result.Applied);
+
+		var text = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Ordered.cs"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.True(
+			text.IndexOf("using System.Globalization;", StringComparison.Ordinal)
+				< text.IndexOf("using Library.Nested;", StringComparison.Ordinal),
+			$"System did not come first: {text}");
+	}
+
 	private static Task<AddFileResult> AddAsync(
 		WorkspaceSession session,
 		string filePath,

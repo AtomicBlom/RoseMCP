@@ -139,6 +139,32 @@ public sealed class BodyEditTests
 	}
 
 	/// <summary>
+	/// The case normalising unconditionally would have closed as it opened the other: a literal
+	/// written with bare LFs inside a body that is otherwise CRLF. Those endings are the string's
+	/// value, which is why nothing rewrites them and why both rose_format and rose_add_file report
+	/// them -- so a caller reaching for this path is more likely than not to be editing one. The
+	/// needle matches as written, and the replacement is spliced as written with it.
+	/// </summary>
+	[Test]
+	public void Reaches_a_line_feed_literal_inside_a_carriage_return_body()
+	{
+		var rewritten = 0;
+
+		var body = BodyEdit.Anchored(
+			"{\r\n\tvar text = \"\"\"\r\n\t\tfirst\nsecond\n\t\t\"\"\";\r\n}",
+			"first\nsecond",
+			"first\nthird",
+			includeTrivia: true,
+			count => rewritten = count);
+
+		Assert.Contains("first\nthird\n", body, StringComparison.Ordinal);
+		Assert.DoesNotContain("second", body, StringComparison.Ordinal);
+
+		// Nothing was rewritten, so nothing is claimed: the caller's endings were taken literally.
+		Assert.Equal(0, rewritten);
+	}
+
+	/// <summary>
 	/// A needle carrying a carriage return is left exactly as written, which is how to reach an ending
 	/// the file does not use -- the same escape hatch as every other payload, and the reason the rule
 	/// can be a condition rather than an argument.

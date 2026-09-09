@@ -128,35 +128,54 @@ public static class BodyEdit
 	/// </para>
 	/// <para>
 	/// Line endings are the exception, and leaving them out of it made this path unreachable. Every
-	/// file in a CRLF repository is CRLF and C# composed for a JSON argument is LF, so an anchor
-	/// spanning two lines matched nothing and the refusal named a difference the caller could not see
-	/// -- while the advice that fixes it, a CR LF written into the payload, is the one thing a caller
-	/// cannot readily do when the payload is two lines both wanting the file's ending. So a payload
-	/// whose every ending is a bare LF is given the body's, which is the rule every other supplied
-	/// payload already goes through, and one carrying a CR LF is matched and spliced exactly as
-	/// written -- which is how to reach an ending the file does not use.
+	/// file in a CRLF repository is CRLF and C# composed for a JSON argument is all bare LFs, so an
+	/// anchor spanning two lines matched nothing and the refusal named a difference the caller could
+	/// not see -- while the advice that fixes it, a CR LF written into the payload, is the one thing a
+	/// caller cannot do when the payload is two lines that both want the file's ending.
+	/// </para>
+	/// <para>
+	/// So the needle is tried as written first and given the body's endings only if that found
+	/// nothing, and the order is what makes it free. Exact still wins, so a bare LF still reaches a
+	/// literal written with bare LFs inside a file that is otherwise CRLF -- which is the shape
+	/// <c>rose_format</c> and <c>rose_add_file</c> both report, and the one a caller is most likely to
+	/// be editing when they reach for this path at all. Normalising unconditionally would have closed
+	/// that case as it opened the other. The replacement follows the needle: if the caller's LFs were
+	/// read as transport artefacts in one half they are in both, and if they were taken literally then
+	/// they are taken literally in both.
 	/// </para>
 	/// </summary>
 	private static string InText(string body, string find, string replace, Action<int>? rewritten)
 	{
-		var ending = Whitespace.Dominant(body);
-		var needle = Normalised(find, ending, out _);
-		var written = Normalised(replace, ending, out var changed);
+		var needle = find;
+		var written = replace;
+		var changed = 0;
+		var matches = Occurrences(body, needle);
 
-		var matches = new List<int>();
-
-		for (var at = body.IndexOf(needle, StringComparison.Ordinal); at >= 0;
-			at = body.IndexOf(needle, at + 1, StringComparison.Ordinal))
+		if (matches.Count == 0)
 		{
-			matches.Add(at);
+			var ending = Whitespace.Dominant(body);
+			var wanted = Normalised(find, ending, out _);
+
+			if (!string.Equals(wanted, find, StringComparison.Ordinal))
+			{
+				var retried = Occurrences(body, wanted);
+
+				if (retried.Count > 0)
+				{
+					needle = wanted;
+					matches = retried;
+					written = Normalised(replace, ending, out changed);
+				}
+			}
 		}
 
 		if (matches.Count == 0)
 		{
 			throw new ArgumentException(
 				$"The body does not contain '{First(find)}'. includeTrivia matches the text exactly, so spacing "
-					+ "has to match too -- only the line endings are given the file's own, and only when every "
-					+ "one of them was a bare LF. Read the body with rose_symbol_info includeSource=true.");
+					+ "has to match too -- only the line endings are tried both as written and as the file's own, "
+					+ "and only when every one of them was a bare LF. Read the body with rose_symbol_info "
+					+ "includeSource=true.");
 		}
 
 		if (matches.Count > 1)
@@ -177,6 +196,20 @@ public static class BodyEdit
 		// indentation decides how much is stripped from its value, and reflowing a comment is a change
 		// nobody asked for.
 		return string.Concat(body.AsSpan(0, start), written, body.AsSpan(start + needle.Length));
+	}
+
+	/// <summary>Where <paramref name="needle"/> appears in <paramref name="body"/>, exactly.</summary>
+	private static List<int> Occurrences(string body, string needle)
+	{
+		var found = new List<int>();
+
+		for (var at = body.IndexOf(needle, StringComparison.Ordinal); at >= 0;
+			at = body.IndexOf(needle, at + 1, StringComparison.Ordinal))
+		{
+			found.Add(at);
+		}
+
+		return found;
 	}
 
 	/// <summary>

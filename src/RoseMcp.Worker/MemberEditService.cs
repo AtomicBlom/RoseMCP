@@ -407,7 +407,8 @@ public static class MemberEditService
 				find,
 				request.Replace ?? string.Empty,
 				request.IncludeTrivia,
-				count => notices.Add(RewrittenEndings(count, text)));
+				count => notices.Add(RewrittenEndings(count, text)),
+				notices.Add);
 		}
 
 		if (request.Position is not { } position) return request.Code;

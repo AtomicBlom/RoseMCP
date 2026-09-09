@@ -284,7 +284,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// </summary>
 	private async Task<LiveAppSession> SharedSessionAsync(CancellationToken cancellationToken)
 	{
-		if (Usable(_sharedSession)) return _sharedSession!;
+		if (await UsableAsync(_sharedSession, cancellationToken)) return _sharedSession!;
 
 		await _relaunch.WaitAsync(cancellationToken);
 		try
@@ -293,7 +293,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			// all but the first are now looking at the app the first one launched -- so without this
 			// they would each tear down a healthy app to build the same one again, which is the
 			// stampede the lock is here to stop rather than merely to serialise.
-			if (Usable(_sharedSession)) return _sharedSession!;
+			if (await UsableAsync(_sharedSession, cancellationToken)) return _sharedSession!;
 
 			return await LaunchSharedAsync(cancellationToken);
 		}
@@ -304,13 +304,63 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Whether a session can be handed to a test. Ready is the session's opinion of itself and it
-	/// outlives the app: a phase A test kills the process, and the session goes on reporting Ready
-	/// until something asks it to do work. So the process question is asked of the operating system,
-	/// which is the only party that knows.
+	/// Whether a session can be handed to a test, which takes three questions and not one.
+	/// <para>
+	/// Ready is the session's opinion of itself and it outlives the app: a phase A test kills the
+	/// process, and the session goes on reporting Ready until something asks it to do work. So the
+	/// process question is asked of the operating system, which is the only party that knows.
+	/// </para>
+	/// <para>
+	/// And a running process is not a working one. Injecting the XAML tap sometimes leaves the app's UI
+	/// thread stuck in the injection call, and the app then answers nothing for the rest of the run
+	/// while still being Ready and still being a live process -- so both of the other questions say yes
+	/// about an app that is no use to anybody. That cost seven failures from one bad launch, every one
+	/// of them reported against a test that had done nothing wrong. The third question is the only one
+	/// that separates them.
+	/// </para>
 	/// </summary>
-	private static bool Usable(LiveAppSession? session) =>
-		session is not null && session.Describe().State == LiveAppSessionState.Ready && AppIsRunning();
+	private async Task<bool> UsableAsync(LiveAppSession? session, CancellationToken cancellationToken)
+	{
+		if (session is null || session.Describe().State != LiveAppSessionState.Ready) return false;
+		if (!AppIsRunning()) return false;
+
+		return await IsTickingAsync(session, cancellationToken);
+	}
+
+	/// <summary>
+	/// Whether the app is still executing, asked by waiting for it to say so.
+	/// <para>
+	/// The probe throws on a timer several times a second, so a tick is the app's heartbeat and the
+	/// event count is the cheapest way to see one: reading past the end returns no events and still
+	/// reports the total, so a healthy app is confirmed in one round trip and nothing is transferred.
+	/// A wedged app costs the wait once and is then replaced, rather than being handed to every
+	/// remaining test in turn.
+	/// </para>
+	/// <para>
+	/// It cannot be answered from the process instead. A wedged app burns no CPU, repaints nothing, and
+	/// has no thread marked suspended, so every property of the process reads the same as a healthy
+	/// idle one. Producing events is the difference.
+	/// </para>
+	/// </summary>
+	private static async Task<bool> IsTickingAsync(LiveAppSession session, CancellationToken cancellationToken)
+	{
+		var before = await Observed(session, cancellationToken);
+
+		// Generous against a tick every few hundred milliseconds, so a slow machine cannot make a
+		// healthy app look wedged -- which would trade one cascade for a relaunch on every test.
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+		while (DateTime.UtcNow < deadline)
+		{
+			if (await Observed(session, cancellationToken) > before) return true;
+
+			await Task.Delay(100, cancellationToken);
+		}
+
+		return false;
+
+		static async Task<long> Observed(LiveAppSession session, CancellationToken cancellationToken) =>
+			(await session.ReadEventsAsync(long.MaxValue - 1, cancellationToken)).TotalObserved;
+	}
 
 	private async Task<LiveAppSession> LaunchSharedAsync(CancellationToken cancellationToken)
 	{

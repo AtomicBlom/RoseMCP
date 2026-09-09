@@ -229,13 +229,18 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// causes the channel's HRESULT cannot.
 	/// <para>
 	/// A handshake that fails means either a target that is executing and not serving diagnostics, or a
-	/// target that is not executing at all -- and the second is easy to reach without noticing. PLM
-	/// freezes a UWP app that is backgrounded with no debug mode on its package, and this session lifts
-	/// debug mode whenever it detaches while deliberately leaving the app running. A frozen app cannot
-	/// be told from a wedged one by anything about the process: a job-object freeze stops its threads
-	/// without marking them suspended, its CPU time stops climbing either way, and its window stops
-	/// repainting either way. What it does do is stop producing debug events, so their age says which
-	/// of the two this is.
+	/// target that is not executing at all, and nothing about the process tells them apart: CPU time
+	/// stops climbing either way, the window stops repainting either way, and a frozen app's threads
+	/// are stopped through its job object without any of them being marked suspended, so thread state
+	/// cannot see it either. What a target that has stopped executing does do is stop producing debug
+	/// events, so the age of the last one is the discriminator.
+	/// </para>
+	/// <para>
+	/// Two causes reach the second state. Injection itself is one, and it is the one measured here: the
+	/// call is served by the target's UI thread, and when it does not return, that thread never runs
+	/// again -- an age that starts climbing from the moment of the first injection is that, exactly. A
+	/// backgrounded UWP app whose package has no debug mode is the other, since PLM freezes it, and a
+	/// detach lifts debug mode while deliberately leaving the app running.
 	/// </para>
 	/// </summary>
 	private string WithTargetHeartbeat(string detail)
@@ -244,13 +249,22 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		var age = DateTime.UtcNow - newest.When;
 
+		// Logged as well as returned. The detail reaches whoever made the call; the log is where anyone
+		// reading a run afterwards is, and a wedge is diagnosed from the log long after the result is
+		// gone -- which it was, from a suite run, once this number existed to read.
+		logger.LogWarning(
+			"A XAML request failed and the target's last debug event ({Kind}) was {AgeSeconds:0.0}s ago.",
+			newest.Kind,
+			age.TotalSeconds);
+
 		// Seconds rather than a verdict. Which ages are suspicious depends on what the target does when
 		// it is idle -- a probe on a timer is silent for milliseconds, a real app for minutes -- and a
 		// threshold picked here would be a guess presented as a diagnosis.
 		return detail
-			+ $" The target's last debug event ({newest.Kind}) was {age.TotalSeconds:0.0}s ago: if that is not "
-			+ "recent, the target is not executing rather than not answering -- a UWP app is frozen by PLM "
-			+ "when it is backgrounded and its package has no debug mode, which a detach removes.";
+			+ $" The target's last debug event ({newest.Kind}) was {age.TotalSeconds:0.0}s ago. If that is not "
+			+ "recent the target has stopped executing rather than stopped answering: either the injection "
+			+ "call never returned, which leaves the UI thread that serves it stuck, or the app is a "
+			+ "backgrounded UWP one that PLM has frozen because its package no longer has debug mode.";
 	}
 
 	/// <summary>

@@ -59,14 +59,21 @@ internal static class ProbeKeys
 	public static readonly string[] AllClassicSlots = [.. Enumerable.Range(0, SlotKeys).Select(ClassicSlot)];
 
 	/// <summary>
-	/// Held by every live-app test, whichever probe it drives, because the three probes cannot overlap
-	/// each other and that was measured rather than assumed. Letting them run concurrently -- they are
-	/// different packages and different processes, so there looked to be nothing shared -- took the
-	/// suite from 1 failure to 14 and from 325s to 1067s, the failures landing on tests that read the
-	/// visual tree and reporting the app's diagnostics endpoint as never appearing. Whatever is shared
-	/// has not been identified yet, so this is deliberately the widest key that works: narrowing it to
-	/// the pairs that genuinely conflict needs that answer first, and a wrong guess here does not fail
-	/// honestly, it reports a missing endpoint on an app that is running perfectly well.
+	/// Held by every live-app test, whichever probe it drives. Not because the probes contend over
+	/// something shared -- they are separate packages and separate processes -- but because injecting
+	/// the XAML tap sometimes wedges the app it is injected into, and load makes that far likelier.
+	/// Letting the probes run concurrently took the suite from 1 failure to 14 and from 325s to 1067s.
+	/// <para>
+	/// The failures are one wedged app rather than fourteen races, which is why serialising helps so
+	/// much: the app stops executing the instant an injection fails to return, every later test on that
+	/// app fails the same way, and the fixture goes on handing the corpse out. The heartbeat in a XAML
+	/// failure is what says which of those is happening -- an age climbing from the first injection is
+	/// a wedge, not a busy app.
+	/// </para>
+	/// <para>
+	/// So this key is a blast radius, not a lock over a resource, and it stays until injection stops
+	/// wedging apps. Narrowing it trades wall clock for cascades.
+	/// </para>
 	/// </summary>
 	public const string LiveApp = "LiveApp";
 

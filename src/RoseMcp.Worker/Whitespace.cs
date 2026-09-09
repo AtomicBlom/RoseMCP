@@ -187,6 +187,45 @@ public static class Whitespace
 		return lines;
 	}
 
+	/// <summary>
+	/// One sentence about the multi-line literals in a file whose endings are not the file's, or null
+	/// where it has none.
+	/// <para>
+	/// Here rather than beside a caller so <c>rose_format</c> and <c>rose_add_file</c> cannot drift
+	/// apart on it. They are the two tools a caller reaches for after writing a file full of literals,
+	/// and a file that fails <c>dotnet format</c> on an ENDOFLINE inside one has to be told the same
+	/// thing whichever of them was called: nothing rewrites those endings, because a newline inside a
+	/// literal is part of the string's value, and the build will not complain either.
+	/// </para>
+	/// <para>
+	/// Grouped into one notice rather than one per literal, because the sentence explaining why they
+	/// were left alone is the long part and does not need saying five times.
+	/// </para>
+	/// </summary>
+	/// <param name="root">The file's syntax root, as it now stands.</param>
+	/// <param name="text">The file's text, so lines are numbered as they will read.</param>
+	/// <param name="rules">What ending the file is supposed to use.</param>
+	/// <param name="name">The file's name, for a caller holding several results.</param>
+	public static string? LiteralEndingNotice(
+		SyntaxNode root,
+		SourceText text,
+		WhitespaceRules rules,
+		string name)
+	{
+		var lines = LiteralsDisagreeingWith(root, text, rules);
+
+		if (lines.Count == 0) return null;
+
+		var where = lines.Count == 1
+			? $"the multi-line string at line {lines[0]}"
+			: $"the multi-line strings at lines {string.Join(", ", lines)}";
+
+		return $"{name}: {where} hold line endings the file does not use, and were left "
+			+ "alone -- a newline inside a literal is part of the string's value, so rewriting it changes "
+			+ "what the program says. dotnet format will still ask for them, and no build will complain. "
+			+ "Rewrite the literal with the file's own endings if the value allows it.";
+	}
+
 	/// <summary>Whether any line break in the text is something other than <paramref name="ending"/>.</summary>
 	private static bool HoldsAnEndingOtherThan(string written, string ending)
 	{

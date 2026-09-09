@@ -159,8 +159,9 @@ public static class FormatService
 	/// string's value: what is missing is that the tool ever said so.
 	/// </para>
 	/// <para>
-	/// Grouped by file rather than one notice per literal, because the sentence explaining why it was
-	/// left alone is the long part and it does not need saying five times.
+	/// The sentence itself is <see cref="Whitespace.LiteralEndingNotice"/>, shared with
+	/// <c>rose_add_file</c>, which is the other tool a caller reaches for after writing a file full of
+	/// literals and has to say the same thing about it.
 	/// </para>
 	/// </summary>
 	private static async Task<IReadOnlyList<string>> LiteralEndingNoticesAsync(
@@ -183,17 +184,8 @@ public static class FormatService
 
 			var text = await document.GetTextAsync(cancellationToken);
 			var rules = Whitespace.RulesFor(document.Project, tree, text);
-			var lines = Whitespace.LiteralsDisagreeingWith(root, text, rules);
-			if (lines.Count == 0) continue;
 
-			var where = lines.Count == 1
-				? $"the multi-line string at line {lines[0]}"
-				: $"the multi-line strings at lines {string.Join(", ", lines)}";
-
-			notices.Add($"{document.Name}: {where} hold line endings the file does not use, and were left "
-				+ "alone -- a newline inside a literal is part of the string's value, so rewriting it changes "
-				+ "what the program says. dotnet format will still ask for them, and no build will complain. "
-				+ "Rewrite the literal with the file's own endings if the value allows it.");
+			if (Whitespace.LiteralEndingNotice(root, text, rules, document.Name) is { } notice) notices.Add(notice);
 		}
 
 		return notices;

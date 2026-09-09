@@ -184,6 +184,52 @@ public sealed class AddUsingTests
 		Assert.DoesNotContain("using System.Collections.Generic;", text, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// A static using sorts by its own rules, and the position search walks past one rather than
+	/// stopping in front of it -- so a plain using added to a file ending in a static block landed
+	/// below it. Both spellings compile and neither trips IDE0055, which is why the docstring's promise
+	/// to follow "the file's own ordering and grouping" was doing less than it said.
+	/// </summary>
+	[Test]
+	public async Task Puts_a_plain_using_above_the_static_block()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AddAsync(session, fixture, "Statics.cs", ["Library.Nested"]);
+
+		Assert.Equal(["Library.Nested"], result.Added);
+
+		var text = await ReadAsync(fixture, "Statics.cs");
+		var plain = text.IndexOf("using Library.Nested;", StringComparison.Ordinal);
+		var statics = text.IndexOf("using static System.Math;", StringComparison.Ordinal);
+
+		Assert.True(plain > 0, $"the import was not written at all: {text}");
+		Assert.True(plain < statics, $"a plain using landed below the static block: {text}");
+	}
+
+	/// <summary>
+	/// System first, which is the language tooling's own default and what this file already does. An
+	/// import sorting before System.Globalization ordinally still goes after it.
+	/// </summary>
+	[Test]
+	public async Task Keeps_System_first_when_the_file_does()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AddAsync(session, fixture, "Statics.cs", ["Library.Nested"]);
+
+		Assert.Equal(["Library.Nested"], result.Added);
+
+		var text = await ReadAsync(fixture, "Statics.cs");
+
+		Assert.True(
+			text.IndexOf("using System.Globalization;", StringComparison.Ordinal)
+				< text.IndexOf("using Library.Nested;", StringComparison.Ordinal),
+			$"System did not come first: {text}");
+	}
+
 	private static Task<UsingResult> AddAsync(
 		WorkspaceSession session,
 		FixtureSolution fixture,

@@ -312,6 +312,44 @@ public sealed class AddFileTests
 			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
 	}
 
+	/// <summary>
+	/// The imports a new file opens with, System first. They were sorted ordinally, which puts
+	/// anything alphabetically before "System" above it -- so a file asking for RoseMcp.Contracts and
+	/// System.Text.Json opened with the wrong one. It compiles and trips no analyzer, so the only way
+	/// to find it is to look.
+	/// </summary>
+	[Test]
+	public async Task Opens_a_new_file_with_System_imports_first()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
+
+		var request = new AddFileRequest
+		{
+			FilePath = fixture.Path("Members", "Library", "Ordered.cs"),
+			Code = "public static class Ordered\r\n{\r\n\tpublic static string Name => Marker.Name;\r\n}\r\n",
+			Usings = ["Library.Nested", "System.Globalization"],
+		};
+
+		var result = await session.MutateAsync(
+			(snapshot, token) => AddFileService.AddAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token),
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.True(result.Applied);
+
+		var text = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Ordered.cs"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.True(
+			text.IndexOf("using System.Globalization;", StringComparison.Ordinal)
+				< text.IndexOf("using Library.Nested;", StringComparison.Ordinal),
+			$"System did not come first: {text}");
+	}
+
 	private static Task<AddFileResult> AddAsync(
 		WorkspaceSession session,
 		string filePath,

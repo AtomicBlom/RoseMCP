@@ -292,6 +292,14 @@ public static class AddFileService
 	/// The file's text: the imports, then the namespace, then what the caller wrote. Built as text
 	/// and parsed by the formatter afterwards rather than assembled as syntax, because the shape
 	/// being produced is a file and every part of it is decided by the repository's own rules.
+	/// <para>
+	/// The imports are ordered by <see cref="UsingDirectives.Sorts"/>, the same comparison that
+	/// places one among a file's existing imports. Sorting them here ordinally instead put anything
+	/// alphabetically before "System" above it, which compiles and trips no analyzer -- two orderings
+	/// were two chances to disagree, and they did. System-first is the language tooling's default and
+	/// cannot be read from .editorconfig at this point, since the document it would be read for does
+	/// not exist until this text does.
+	/// </para>
 	/// </summary>
 	private static string Build(
 		CompilationUnitSyntax unit,
@@ -308,12 +316,14 @@ public static class AddFileService
 			? unit.ToFullString()
 			: WithNamespace(unit, space);
 
+		var order = Comparer<string>.Create((left, right) => UsingDirectives.Sorts(left, right, systemFirst: true));
+
 		var imports = usings
 			.Select(name => name.Trim().TrimEnd(';'))
 			.Select(name => name.StartsWith("using ", StringComparison.Ordinal) ? name["using ".Length..] : name)
 			.Where(name => name.Length > 0)
 			.Distinct(StringComparer.Ordinal)
-			.Order(StringComparer.Ordinal)
+			.Order(order)
 			.Select(name => $"using {name};")
 			.ToArray();
 

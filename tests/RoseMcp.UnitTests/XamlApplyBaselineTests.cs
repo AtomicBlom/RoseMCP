@@ -17,7 +17,7 @@ public sealed class XamlApplyBaselineTests
 	/// The whole point: after the first call, the caller passes a file and nothing else, and each apply
 	/// is diffed against what the last one sent rather than against the original.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Diffs_each_apply_against_what_the_last_one_sent()
 	{
 		var baseline = new XamlApplyBaseline();
@@ -42,7 +42,7 @@ public sealed class XamlApplyBaselineTests
 	/// than diffing the file against itself -- which would find nothing and report success, quietly
 	/// skipping the caller's first edit.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Records_a_first_apply_instead_of_diffing_a_file_against_itself()
 	{
 		var baseline = new XamlApplyBaseline();
@@ -61,10 +61,10 @@ public sealed class XamlApplyBaselineTests
 	/// them claims more than it has. An unreadable start time in particular must not be reported as
 	/// "the file has changed", which is a statement about the file with nothing behind it.
 	/// </summary>
-	[Theory]
-	[InlineData(XamlBaselineAge.UnchangedSinceTargetStarted, "Nothing has edited")]
-	[InlineData(XamlBaselineAge.ChangedSinceTargetStarted, "no longer on disk")]
-	[InlineData(XamlBaselineAge.Unknown, "could not be read")]
+	[Test]
+	[Arguments(XamlBaselineAge.UnchangedSinceTargetStarted, "Nothing has edited")]
+	[Arguments(XamlBaselineAge.ChangedSinceTargetStarted, "no longer on disk")]
+	[Arguments(XamlBaselineAge.Unknown, "could not be read")]
 	public void Says_what_it_knows_about_the_files_age_and_no_more(XamlBaselineAge age, string expected)
 	{
 		var plan = new XamlApplyBaseline().Prepare(@"C:\app\MainPage.xaml", First, age);
@@ -78,7 +78,7 @@ public sealed class XamlApplyBaselineTests
 	/// come out as zero edits, and they mean different things to whoever asked -- one is a caller who
 	/// has not saved, the other a change this engine cannot express.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Says_when_the_file_has_not_changed_since_the_last_apply()
 	{
 		var baseline = new XamlApplyBaseline();
@@ -95,7 +95,7 @@ public sealed class XamlApplyBaselineTests
 	/// resolution, and a case difference between them is routine on Windows -- two baselines for one
 	/// file would make every second apply a first one.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Treats_one_file_spelled_two_ways_as_one_file()
 	{
 		var baseline = new XamlApplyBaseline();
@@ -110,7 +110,7 @@ public sealed class XamlApplyBaselineTests
 	/// Baselines are per file. Two files edited in the same session must not share one, or an apply to
 	/// the second would be diffed against the first and produce edits addressed at the wrong tree.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_a_baseline_for_each_file()
 	{
 		var baseline = new XamlApplyBaseline();

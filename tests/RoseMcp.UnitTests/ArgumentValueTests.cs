@@ -9,13 +9,13 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class ArgumentValueTests
 {
-	[Theory]
-	[InlineData(null, DiagnosticScope.Solution)]
-	[InlineData("", DiagnosticScope.Solution)]
-	[InlineData("solution", DiagnosticScope.Solution)]
-	[InlineData("document", DiagnosticScope.Document)]
-	[InlineData("file", DiagnosticScope.Document)]
-	[InlineData("PROJECT", DiagnosticScope.Project)]
+	[Test]
+	[Arguments(null, DiagnosticScope.Solution)]
+	[Arguments("", DiagnosticScope.Solution)]
+	[Arguments("solution", DiagnosticScope.Solution)]
+	[Arguments("document", DiagnosticScope.Document)]
+	[Arguments("file", DiagnosticScope.Document)]
+	[Arguments("PROJECT", DiagnosticScope.Project)]
 	public void Reads_the_scopes_it_accepts(string? given, DiagnosticScope expected) =>
 		Assert.Equal(expected, ArgumentValues.Scope(given));
 
@@ -23,7 +23,7 @@ public sealed class ArgumentValueTests
 	/// The one that cost the most: scope "proj" analysed the whole solution and came back with
 	/// diagnostics for fourteen projects when one was asked about.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_a_scope_it_does_not_know_and_says_what_it_takes()
 	{
 		var error = Assert.Throws<ArgumentException>(() => ArgumentValues.Scope("proj"));
@@ -31,15 +31,15 @@ public sealed class ArgumentValueTests
 		Assert.Equal("Unknown scope 'proj'. Use document, project, solution.", error.Message);
 	}
 
-	[Theory]
-	[InlineData(null, StepDirection.Over)]
-	[InlineData("over", StepDirection.Over)]
-	[InlineData("in", StepDirection.In)]
-	[InlineData("Out", StepDirection.Out)]
+	[Test]
+	[Arguments(null, StepDirection.Over)]
+	[Arguments("over", StepDirection.Over)]
+	[Arguments("in", StepDirection.In)]
+	[Arguments("Out", StepDirection.Out)]
 	public void Reads_the_step_modes_it_accepts(string? given, StepDirection expected) =>
 		Assert.Equal(expected, ArgumentValues.Step(given));
 
-	[Fact]
+	[Test]
 	public void Refuses_a_step_mode_it_does_not_know()
 	{
 		var error = Assert.Throws<ArgumentException>(() => ArgumentValues.Step("into"));
@@ -47,7 +47,7 @@ public sealed class ArgumentValueTests
 		Assert.Equal("Unknown step mode 'into'. Use in, over, out.", error.Message);
 	}
 
-	[Fact]
+	[Test]
 	public void Reads_a_filter_of_event_kinds()
 	{
 		var kinds = ArgumentValues.EventKinds(["LogMessage", "breakpointhit"]);
@@ -59,7 +59,7 @@ public sealed class ArgumentValueTests
 	}
 
 	/// <summary>Nothing asked for is no filter, which is what an empty list means anyway.</summary>
-	[Fact]
+	[Test]
 	public void Takes_no_filter_as_no_filter()
 	{
 		Assert.Null(ArgumentValues.EventKinds(null));
@@ -73,7 +73,7 @@ public sealed class ArgumentValueTests
 	/// there can be several of, and one CSV among six arrays is a thing a caller has to remember
 	/// rather than read.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Still_reads_a_comma_separated_entry()
 	{
 		var kinds = ArgumentValues.EventKinds(["LogMessage,BreakpointHit"]);
@@ -88,7 +88,7 @@ public sealed class ArgumentValueTests
 	/// hundreds of module loads a freshly started app produces -- burying the one event being waited
 	/// for.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_an_event_kind_it_does_not_know_and_lists_them_all()
 	{
 		var error = Assert.Throws<ArgumentException>(() => ArgumentValues.EventKinds(["LogMessage,Breakpoint"]));
@@ -103,7 +103,7 @@ public sealed class ArgumentValueTests
 	/// under one scope and a project under another was the only place in the surface where a name did
 	/// not say what it addressed, and the routing layer carries a paragraph about what that cost it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Reads_the_scope_from_what_the_call_named()
 	{
 		Assert.Equal(DiagnosticScope.Document, DiagnosticTarget.From("Widget.cs", null, null).Scope);
@@ -122,10 +122,10 @@ public sealed class ArgumentValueTests
 	/// analyse the whole solution -- an answer many times the size of the one asked, and one that reads
 	/// exactly like an answer to it.
 	/// </summary>
-	[Theory]
-	[InlineData("Widget.cs", "Core", null, "not both")]
-	[InlineData(null, null, "document", "nothing says which one")]
-	[InlineData(null, null, "project", "nothing says which one")]
+	[Test]
+	[Arguments("Widget.cs", "Core", null, "not both")]
+	[Arguments(null, null, "document", "nothing says which one")]
+	[Arguments(null, null, "project", "nothing says which one")]
 	public void Refuses_a_call_that_does_not_say_what_to_analyse(
 		string? filePath,
 		string? project,

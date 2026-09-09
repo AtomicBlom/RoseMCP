@@ -7,18 +7,18 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class ImplementationTests
 {
-	[Fact]
+	[Test]
 	public async Task Finds_the_types_that_implement_an_interface()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var path = fixture.Path("MultiType", "Shapes", "Shapes.cs");
 		var (line, column) = At(path, "IShape");
 
 		var result = await NavigationService.FindImplementationsAsync(
-			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current.CancellationToken);
+			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("implementing", result.Relationship, StringComparison.Ordinal);
 		Assert.Contains("Circle", result.Matches.Select(match => match.Name));
@@ -28,18 +28,18 @@ public sealed class ImplementationTests
 		Assert.All(result.Matches, match => Assert.NotNull(match.Location));
 	}
 
-	[Fact]
+	[Test]
 	public async Task Finds_the_members_that_implement_an_interface_member()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var path = fixture.Path("MultiType", "Shapes", "Shapes.cs");
 		var (line, column) = At(path, "Area();");
 
 		var result = await NavigationService.FindImplementationsAsync(
-			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current.CancellationToken);
+			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(2, result.Matches.Count);
 		Assert.All(result.Matches, match => Assert.Equal("Area", match.Name));
@@ -52,18 +52,18 @@ public sealed class ImplementationTests
 	/// asked of a symbol no project here declares, and it is the ordinary shape of the question rather
 	/// than an edge of it. The base names an assembly and the answers name files.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Finds_what_derives_from_a_type_that_lives_in_metadata()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindImplementationsAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "System.Object" },
 			200,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("derived", result.Relationship, StringComparison.Ordinal);
 		Assert.Contains("Circle", result.Matches.Select(match => match.Name));
@@ -75,29 +75,29 @@ public sealed class ImplementationTests
 	/// -- so a caller who pointed at the wrong thing can tell, rather than reading an empty list as
 	/// "nothing implements this".
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_which_question_it_answered_for_a_class()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var path = fixture.Path("MultiType", "Shapes", "Shapes.cs");
 		var (line, column) = At(path, "Square(double side)");
 
 		var result = await NavigationService.FindImplementationsAsync(
-			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current.CancellationToken);
+			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("derived", result.Relationship, StringComparison.Ordinal);
 		Assert.Empty(result.Matches);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Reports_what_a_member_implements()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var path = fixture.Path("MultiType", "Shapes", "Shapes.cs");
 		var (line, column) = At(path, "Area() => Math.PI");
@@ -105,7 +105,7 @@ public sealed class ImplementationTests
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { FilePath = path, Line = line, Column = column },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var implemented = Assert.Single(info.BaseDefinitions);
 
@@ -134,18 +134,18 @@ public sealed class ImplementationTests
 	/// The same search by name. Pointing at a type meant finding a position for it first, which is a
 	/// rose_search_symbols call before the question can even be asked -- two calls where a name is one.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Finds_implementations_by_name()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await NavigationService.FindImplementationsAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Shapes.IShape" },
 			200,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("implementing", result.Relationship, StringComparison.Ordinal);
 		Assert.Contains("Circle", result.Matches.Select(match => match.Name));

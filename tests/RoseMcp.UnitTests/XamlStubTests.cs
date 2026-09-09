@@ -47,7 +47,7 @@ public sealed class XamlStubTests
 		}
 		""";
 
-	[Fact]
+	[Test]
 	public void Declares_the_base_type_and_a_field_for_every_named_element()
 	{
 		var markup = """
@@ -78,7 +78,7 @@ public sealed class XamlStubTests
 	/// The strongest assertion available: put the stub back into the compilation and require that
 	/// code-behind using those members compiles, with nullable on and every warning an error.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_stub_compiles_where_warnings_are_errors()
 	{
 		var markup = """
@@ -106,10 +106,10 @@ public sealed class XamlStubTests
 		var emission = Emit(markup, behind);
 		var complete = Compile(FakeFramework, behind, emission.Source!);
 
-		Assert.Empty(complete.GetDiagnostics(TestContext.Current.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
+		Assert.Empty(complete.GetDiagnostics(TestContext.Current!.Execution.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
 	}
 
-	[Fact]
+	[Test]
 	public void Ignores_names_inside_templates_but_not_inside_visual_states_or_resources()
 	{
 		var markup = """
@@ -149,7 +149,7 @@ public sealed class XamlStubTests
 	/// A control we cannot see gets no field and a note saying so. Inventing a type would trade one
 	/// honest error for a scattering of misleading ones.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Omits_what_it_cannot_resolve_and_says_what_that_was()
 	{
 		var markup = """
@@ -173,7 +173,7 @@ public sealed class XamlStubTests
 		Assert.Contains("Nowhere.Controls", unresolved, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Emits_nothing_when_the_real_partial_is_already_there()
 	{
 		var markup = """
@@ -189,7 +189,7 @@ public sealed class XamlStubTests
 	}
 
 	/// <summary>Two partials naming different base classes is CS0263, so the other part wins.</summary>
-	[Fact]
+	[Test]
 	public void Leaves_the_base_type_alone_when_the_code_behind_declares_one()
 	{
 		var markup = """
@@ -206,7 +206,7 @@ public sealed class XamlStubTests
 		Assert.DoesNotContain("UserControl", emission.Source!, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Stubs_the_bindings_member_only_when_the_markup_uses_compiled_bindings()
 	{
 		var withBind = """
@@ -223,7 +223,7 @@ public sealed class XamlStubTests
 		Assert.DoesNotContain("Bindings", Emit(without, "namespace App { partial class Bound { } }").Source!, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Reads_nothing_useful_out_of_markup_with_no_code_behind()
 	{
 		var markup = """
@@ -240,14 +240,14 @@ public sealed class XamlStubTests
 		Assert.Contains("no x:Class", emission.SkipReason!, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Survives_markup_that_is_not_valid_xml()
 	{
 		Assert.Null(XamlDocumentReader.Read("Broken.xaml", "<UserControl <<< />"));
 	}
 
 	/// <summary>The dialect is chosen from what the project references, not from the markup.</summary>
-	[Fact]
+	[Test]
 	public void Picks_the_dialect_from_the_referenced_framework()
 	{
 		var chosen = XamlDialectSelector.Select(Compile(FakeFramework), []);
@@ -258,7 +258,7 @@ public sealed class XamlStubTests
 		Assert.Contains("Windows.UI.Xaml.Controls.Control", chosen.Reason, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Reports_no_dialect_when_no_framework_is_referenced()
 	{
 		var chosen = XamlDialectSelector.Select(Compile("namespace Plain { public class Thing { } }"), []);
@@ -272,7 +272,7 @@ public sealed class XamlStubTests
 	/// the real generated files, which emit one -- 'root', 'view' and the like were most of the
 	/// fields an earlier version of this missed.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Emits_a_field_for_a_named_root_element()
 	{
 		var markup = """
@@ -290,7 +290,7 @@ public sealed class XamlStubTests
 	/// A keyed resource has no name and no field, but a named one does -- storyboards are declared
 	/// this way, and skipping resources wholesale accounted for 65 errors in a real project.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Emits_fields_for_named_resources_but_not_keyed_ones()
 	{
 		var markup = """
@@ -314,7 +314,7 @@ public sealed class XamlStubTests
 	/// x:FieldModifier is how markup lets another class touch the field. Emitting it private anyway
 	/// turns a working reference into CS0122, which is what happened before this.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Honours_the_field_modifier_the_markup_asked_for()
 	{
 		var markup = """
@@ -336,7 +336,7 @@ public sealed class XamlStubTests
 	/// The App class carries the entry point the markup compiler would have generated, so without it
 	/// an application project is CS5001 -- but a hand-written Main always wins.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Gives_an_application_an_entry_point_unless_it_has_one()
 	{
 		var markup = """

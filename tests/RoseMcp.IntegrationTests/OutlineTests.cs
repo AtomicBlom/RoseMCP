@@ -7,12 +7,12 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class OutlineTests
 {
-	[Fact]
+	[Test]
 	public async Task Lists_a_types_members_with_their_signatures()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -21,7 +21,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: true,
 			includeSignatures: true,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var type = Assert.Single(result.Types);
 
@@ -47,12 +47,12 @@ public sealed class OutlineTests
 	/// switches rather than one, because a caller who wants to know what a member is for and one who
 	/// wants to know what it takes are asking different questions.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Leaves_out_the_documentation_and_signatures_when_asked_to()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -61,7 +61,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: false,
 			includeSignatures: false,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var type = Assert.Single(result.Types);
 
@@ -78,14 +78,14 @@ public sealed class OutlineTests
 	/// The two switches are independent, so asking for one does not silently bring the other. Both
 	/// default to on, which is what every existing caller gets.
 	/// </summary>
-	[Theory]
-	[InlineData(true, false)]
-	[InlineData(false, true)]
+	[Test]
+	[Arguments(true, false)]
+	[Arguments(false, true)]
 	public async Task Answers_each_detail_switch_on_its_own(bool documentation, bool signatures)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -94,7 +94,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: documentation,
 			includeSignatures: signatures,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		// PrefixLength rather than Greet: it is declared once, so the name identifies it whether or not
 		// the signature that would otherwise tell the overloads apart is in the answer.
@@ -110,12 +110,12 @@ public sealed class OutlineTests
 	/// An interface outline is what implementing it needs: the members are abstract and the
 	/// signatures are complete.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Marks_the_members_an_implementer_has_to_write()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -124,7 +124,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: true,
 			includeSignatures: true,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var type = Assert.Single(result.Types);
 
@@ -140,12 +140,12 @@ public sealed class OutlineTests
 	/// A file path is the other root, and the types come back in the order the file writes them
 	/// rather than sorted -- sorting would make the outline and the file disagree.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Lists_every_type_in_a_file_in_the_order_it_declares_them()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
@@ -154,21 +154,21 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: true,
 			includeSignatures: true,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(["Library.IShape", "Library.Colour", "Library.Empty"], result.Types.Select(type => type.Name));
 		Assert.Equal(["interface", "enum", "class"], result.Types.Select(type => type.Kind));
 	}
 
 	/// <summary>Naming both, or neither, is a choice the caller has to make rather than one to guess at.</summary>
-	[Theory]
-	[InlineData("Library.Greeter", "Greeter.cs")]
-	[InlineData(null, null)]
+	[Test]
+	[Arguments("Library.Greeter", "Greeter.cs")]
+	[Arguments(null, null)]
 	public async Task Refuses_both_roots_or_none(string? type, string? file)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var path = file is null ? null : fixture.Path("Members", "Library", file);
 
@@ -180,7 +180,7 @@ public sealed class OutlineTests
 				includeInherited: false,
 				includeDocumentation: true,
 				includeSignatures: true,
-				TestContext.Current.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken));
 	}
 
 	/// <summary>
@@ -188,12 +188,12 @@ public sealed class OutlineTests
 	/// the point: the set that breaks is everything depending on the project, not everything naming
 	/// the member.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_which_projects_depend_on_which()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var result = ProjectGraphService.Describe(snapshot, project: null);
 
@@ -207,12 +207,12 @@ public sealed class OutlineTests
 		Assert.True(core.DocumentCount > 0);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Refuses_a_project_that_is_not_there()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var thrown = Assert.Throws<ArgumentException>(() => ProjectGraphService.Describe(snapshot, "Nowhere"));
 
@@ -223,18 +223,18 @@ public sealed class OutlineTests
 	/// A reference says which member it is inside, which is what turns a flat list of call sites into
 	/// the answer to the question that was actually asked.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_which_member_a_reference_is_inside()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
 			200,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var reference = Assert.Single(references.References);
 
@@ -244,17 +244,17 @@ public sealed class OutlineTests
 	}
 
 	/// <summary>A type's own bases and interfaces, which were reported only for members.</summary>
-	[Fact]
+	[Test]
 	public async Task Reports_what_a_type_derives_from()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var info = await NavigationService.DescribeAsync(
 			snapshot,
 			new SymbolTarget { Symbol = "Shapes.Circle" },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains(info.BaseDefinitions, super => super.Name == "IShape");
 	}

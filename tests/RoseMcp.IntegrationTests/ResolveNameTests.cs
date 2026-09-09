@@ -18,7 +18,7 @@ namespace RoseMcp.IntegrationTests;
 public sealed class ResolveNameTests
 {
 	/// <summary>The ordinary case: one namespace, named, ready to hand to an import.</summary>
-	[Fact]
+	[Test]
 	public async Task Finds_the_one_namespace_that_would_resolve_a_name()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -35,7 +35,7 @@ public sealed class ResolveNameTests
 	/// Two namespaces is two candidates and no answer. Returning the first would compile, which is
 	/// exactly why it cannot be done: the caller would never find out it bound to the wrong type.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_to_choose_between_two_namespaces()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -56,7 +56,7 @@ public sealed class ResolveNameTests
 	/// A name qualified at the use site resolves on its first segment, because that is the part the
 	/// compiler failed on -- searching for UTF8 would find nothing, and say so with confidence.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Resolves_the_first_segment_of_a_qualified_use()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -72,7 +72,7 @@ public sealed class ResolveNameTests
 	/// Already imported is not an answer, and saying so is the point: it means the error is
 	/// something other than a missing import, and adding it again is IDE0005.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_when_the_namespace_is_in_scope_already()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -89,7 +89,7 @@ public sealed class ResolveNameTests
 	/// The implicit usings the SDK adds are in scope without appearing anywhere in the file, which
 	/// is exactly what a caller reading the import block would get wrong.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_when_an_implicit_using_already_covers_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -108,7 +108,7 @@ public sealed class ResolveNameTests
 	/// The third way a name fails: it is not a type at all, and the namespace has to be imported for
 	/// a method that does not bear its name.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Finds_an_extension_method_where_nothing_of_that_name_is_a_type()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -126,7 +126,7 @@ public sealed class ResolveNameTests
 	/// it. Offering it as an import would produce a directive that changes nothing and a second
 	/// error reading the same as the first.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_a_nested_type_cannot_be_reached_by_importing_alone()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -148,7 +148,7 @@ public sealed class ResolveNameTests
 	/// A name used with type arguments the type does not take is not an import problem, and the
 	/// count is the only thing that says so -- the name itself matches perfectly.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_when_the_arity_does_not_match_how_the_name_was_used()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -166,7 +166,7 @@ public sealed class ResolveNameTests
 	}
 
 	/// <summary>Nothing of that name anywhere is a real answer, and a different one from "pick a namespace".</summary>
-	[Fact]
+	[Test]
 	public async Task Says_when_nothing_is_called_that_at_all()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -183,7 +183,7 @@ public sealed class ResolveNameTests
 	/// Written, but in a project this one cannot see. No import resolves it, and a caller told only
 	/// that nothing was found would go looking for a typo in a name that is spelled right.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_when_the_type_is_in_a_project_this_one_does_not_reference()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -205,7 +205,7 @@ public sealed class ResolveNameTests
 	/// compilation built anyway. With resolveUsings off the import is reported rather than added, which
 	/// is the shape a caller wanting to place it themselves asks for.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Names_the_import_in_the_result_of_the_write_that_needed_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -228,7 +228,7 @@ public sealed class ResolveNameTests
 	}
 
 	/// <summary>And where there is no single namespace, the write says so rather than naming one.</summary>
-	[Fact]
+	[Test]
 	public async Task Reports_the_choice_rather_than_an_import_when_the_name_is_ambiguous()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -254,7 +254,7 @@ public sealed class ResolveNameTests
 	/// Microsoft.CodeAnalysis.CSharp.Features, which is not loaded here, so an unresolved name reads
 	/// as one more thing nothing can repair unless the answer says otherwise.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_the_add_import_fix_is_not_here_and_what_is()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -264,16 +264,16 @@ public sealed class ResolveNameTests
 			path,
 			"namespace Core;\r\n\r\npublic static class Unresolved\r\n{\r\n\tpublic static string Name() "
 				+ "=> Encoding.UTF8.EncodingName;\r\n}\r\n",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var catalog = new CodeFixCatalog(
 			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
 			NullLogger<CodeFixCatalog>.Instance);
 
-		var list = await CodeFixService.ListAsync(snapshot, catalog, path, TestContext.Current.CancellationToken);
+		var list = await CodeFixService.ListAsync(snapshot, catalog, path, TestContext.Current!.Execution.CancellationToken);
 
 		// Two fixers claim CS0103 -- generate variable and generate method -- and neither offers
 		// anything here, which used to drop it out of both lists and out of the answer altogether.
@@ -291,12 +291,12 @@ public sealed class ResolveNameTests
 		string? filePath = null,
 		int? arity = null)
 	{
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		return await NameResolver.ResolveAsync(
 			snapshot,
 			new ResolveNameRequest { Name = name, FilePath = filePath, Arity = arity },
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static Task<MemberEditResult> EditAsync(WorkspaceSession session, MemberEditRequest request)
@@ -306,6 +306,6 @@ public sealed class ResolveNameTests
 		return session.MutateAsync(
 			(snapshot, token) => MemberEditService.EditAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 }

@@ -21,7 +21,7 @@ public static class TestSession
 			UnloadGracePeriod = unloadGrace ?? TimeSpan.FromSeconds(30),
 		};
 
-		var load = await loader.LoadAsync(options, TestContext.Current.CancellationToken);
+		var load = await loader.LoadAsync(options, TestContext.Current!.Execution.CancellationToken);
 
 		return WorkspaceSession.Create(
 			load,

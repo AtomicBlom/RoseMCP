@@ -19,7 +19,7 @@ public sealed class CallSiteRewriterTests
 	/// compiles and means something else: the test it came from went on passing for a reason
 	/// unrelated to what it was written to check.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_a_call_site_that_already_wrote_an_argument_for_the_parameter_being_added()
 	{
 		var source = """
@@ -40,7 +40,7 @@ public sealed class CallSiteRewriterTests
 	/// a mistake, it is what removing a parameter means, so refusing every surplus argument outright
 	/// would trade one silent wrong answer for a tool that declines the case it exists for.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Still_drops_the_argument_of_a_parameter_that_was_removed()
 	{
 		var source = """
@@ -56,7 +56,7 @@ public sealed class CallSiteRewriterTests
 	}
 
 	/// <summary>The ordinary case: a call site that says nothing about the new optional is left as it is.</summary>
-	[Fact]
+	[Test]
 	public void Leaves_a_call_site_that_says_nothing_about_the_new_optional()
 	{
 		var source = """
@@ -75,7 +75,7 @@ public sealed class CallSiteRewriterTests
 	/// A named argument for a parameter that does not exist yet is the same mistake spelled
 	/// differently, and was already refused. Locked in so the positional fix does not route around it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_a_named_argument_for_a_parameter_the_old_signature_did_not_have()
 	{
 		var source = """
@@ -94,7 +94,7 @@ public sealed class CallSiteRewriterTests
 	/// A params parameter legitimately takes more arguments than there are parameters, so an
 	/// expansion must not read as arguments with nowhere to go.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_a_params_expansion_that_runs_past_the_parameter_count()
 	{
 		var source = """
@@ -119,7 +119,7 @@ public sealed class CallSiteRewriterTests
 	/// positional while it would land in its own slot.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Names_an_argument_after_the_method_the_call_site_binds_to()
 	{
 		var source = """

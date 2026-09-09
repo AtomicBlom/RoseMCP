@@ -197,6 +197,77 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
+	/// Why a XAML request cannot be served at this instant, or null when it can be.
+	/// <para>
+	/// A target this session is holding is the case worth naming, and it is the one thing a debugger can
+	/// know that nothing else can. <c>InitializeXamlDiagnosticsEx</c> does not return until the target's
+	/// own UI thread has created and sited the tap, so a stopped target cannot serve the request at all
+	/// -- and the bounds guarantee the shape of the failure rather than merely risking it: the endpoint
+	/// is given twenty seconds and a held target auto-continues after thirty, so every such request
+	/// expires first, and then blames the app for having no XAML UI. Visual Studio does not meet this
+	/// because it is the debugger as well as the diagnostics client. So are we; the signal was simply
+	/// never asked for.
+	/// </para>
+	/// </summary>
+	private string? WhyXamlIsUnservable()
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		if (session?.IsStoppedAtBreakpoint != true) return null;
+
+		return "The target is stopped, so its UI thread cannot serve a XAML request: the diagnostics "
+			+ "endpoint is created by that thread and this session is holding it. Resume the target and ask "
+			+ "again -- a held target also releases itself on the auto-continue timer.";
+	}
+
+	/// <summary>
+	/// A failed XAML detail with the target's own heartbeat added, which is what separates the two
+	/// causes the channel's HRESULT cannot.
+	/// <para>
+	/// A handshake that fails means either a target that is executing and not serving diagnostics, or a
+	/// target that is not executing at all, and nothing about the process tells them apart: CPU time
+	/// stops climbing either way, the window stops repainting either way, and a frozen app's threads
+	/// are stopped through its job object without any of them being marked suspended, so thread state
+	/// cannot see it either. What a target that has stopped executing does do is stop producing debug
+	/// events, so the age of the last one is the discriminator.
+	/// </para>
+	/// <para>
+	/// Two causes reach the second state. Injection itself is one, and it is the one measured here: the
+	/// call is served by the target's UI thread, and when it does not return, that thread never runs
+	/// again -- an age that starts climbing from the moment of the first injection is that, exactly. A
+	/// backgrounded UWP app whose package has no debug mode is the other, since PLM freezes it, and a
+	/// detach lifts debug mode while deliberately leaving the app running.
+	/// </para>
+	/// </summary>
+	private string WithTargetHeartbeat(string detail)
+	{
+		if (_events.Newest() is not { } newest) return detail;
+
+		var age = DateTime.UtcNow - newest.When;
+
+		// Logged as well as returned. The detail reaches whoever made the call; the log is where anyone
+		// reading a run afterwards is, and a wedge is diagnosed from the log long after the result is
+		// gone -- which it was, from a suite run, once this number existed to read.
+		logger.LogWarning(
+			"A XAML request failed and the target's last debug event ({Kind}) was {AgeSeconds:0.0}s ago.",
+			newest.Kind,
+			age.TotalSeconds);
+
+		// Seconds rather than a verdict. Which ages are suspicious depends on what the target does when
+		// it is idle -- a probe on a timer is silent for milliseconds, a real app for minutes -- and a
+		// threshold picked here would be a guess presented as a diagnosis.
+		return detail
+			+ $" The target's last debug event ({newest.Kind}) was {age.TotalSeconds:0.0}s ago. If that is not "
+			+ "recent the target has stopped executing rather than stopped answering: either the injection "
+			+ "call never returned, which leaves the UI thread that serves it stuck, or the app is a "
+			+ "backgrounded UWP one that PLM has frozen because its package no longer has debug mode.";
+	}
+
+	/// <summary>
 	/// Injects the XAML diagnostics provider into the target and returns a snapshot of its live visual
 	/// tree. Optionally rooted at a named element (its subtree only) and paged, since a real app's tree is
 	/// large. Returns a tree carrying only a detail (no nodes) when the target has no XAML UI or the
@@ -218,8 +289,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlTree { Detail = "This session has no target process to inspect." };
 		}
 
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlTree { Detail = held };
+
 		var tree = _xaml.ReadTree(pid);
-		if (tree.Detail is not null) return tree;
+		if (tree.Detail is not null) return tree with { Detail = WithTargetHeartbeat(tree.Detail) };
 
 		IReadOnlyList<LiveXamlNode> matched = tree.Nodes;
 		if (!string.IsNullOrWhiteSpace(rootName))
@@ -287,7 +360,12 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlProperties { Handle = handle, Detail = "This session has no target process to inspect." };
 		}
 
-		return _xaml.ReadProperties(pid, handle, includeDefaults);
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlProperties { Handle = handle, Detail = held };
+
+		var properties = _xaml.ReadProperties(pid, handle, includeDefaults);
+		return properties.Detail is null
+			? properties
+			: properties with { Detail = WithTargetHeartbeat(properties.Detail) };
 	}
 
 	/// <summary>
@@ -313,9 +391,13 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
 		}
 
-		return arm
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
+
+		var mode = arm
 			? _xaml.EnterSelectMode(pid, includeAllElements, justMyXaml)
 			: _xaml.ExitSelectMode(pid);
+
+		return mode.Detail is null ? mode : mode with { Detail = WithTargetHeartbeat(mode.Detail) };
 	}
 
 	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>
@@ -353,7 +435,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
 		}
 
-		return _xaml.ClearSelection(pid);
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
+
+		var cleared = _xaml.ClearSelection(pid);
+		return cleared.Detail is null ? cleared : cleared with { Detail = WithTargetHeartbeat(cleared.Detail) };
 	}
 
 	/// <summary>
@@ -374,7 +459,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
 		}
 
-		return _xaml.SelectByHandle(pid, handle);
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
+
+		var selected = _xaml.SelectByHandle(pid, handle);
+		return selected.Detail is null ? selected : selected with { Detail = WithTargetHeartbeat(selected.Detail) };
 	}
 
 	/// <summary>
@@ -396,7 +484,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlApplyResult { Detail = "This session has no target process to inspect." };
 		}
 
-		return _xaml.ApplyEdits(pid, oldXaml, newXaml, filePath);
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlApplyResult { Detail = held };
+
+		var applied = _xaml.ApplyEdits(pid, oldXaml, newXaml, filePath);
+		return applied.Detail is null ? applied : applied with { Detail = WithTargetHeartbeat(applied.Detail) };
 	}
 
 	/// <summary>

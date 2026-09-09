@@ -11,7 +11,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class AddFileTests
 {
-	[Fact]
+	[Test]
 	public async Task Writes_declarations_under_a_namespace_the_folder_implies()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -28,7 +28,7 @@ public sealed class AddFileTests
 		Assert.True(result.InTheBuild);
 		Assert.Empty(result.IntroducedDiagnostics);
 
-		var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		// The file's conventions, not the caller's: tabs where four spaces arrived, CRLF where bare
 		// newlines did, and a file-scoped namespace.
@@ -48,7 +48,7 @@ public sealed class AddFileTests
 	/// which is the one operation guaranteed to lose every one of them at once.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Keeps_the_layout_of_a_whole_file_it_is_given()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -88,7 +88,7 @@ public sealed class AddFileTests
 
 		Assert.True(result.Applied);
 
-		var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		// The blank line between the two using groups, and the one below the namespace.
 		Assert.Contains("using System;\r\n\r\nusing System.Linq;\r\n", text, StringComparison.Ordinal);
@@ -115,7 +115,7 @@ public sealed class AddFileTests
 	/// not match the folder -- and said out loud, because IDE0130 is a build error where it is
 	/// turned up and the caller may not have meant it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Keeps_a_namespace_the_code_declares_and_says_it_disagrees()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -136,7 +136,7 @@ public sealed class AddFileTests
 	/// and the ones with a single answer are added. Reporting the namespace and stopping is a round
 	/// trip at exactly the moment the caller was promised there would not be one.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Adds_the_import_a_single_answer_settles()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -153,7 +153,7 @@ public sealed class AddFileTests
 		Assert.Empty(result.IntroducedDiagnostics);
 		Assert.Contains(result.ImportsAdded, line => line.Contains("System.Text", StringComparison.Ordinal));
 
-		var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("using System.Text;", text, StringComparison.Ordinal);
 	}
@@ -162,7 +162,7 @@ public sealed class AddFileTests
 	/// A name in two namespaces is reported rather than resolved. The wrong import compiles and
 	/// binds to the wrong type, which is the failure with no symptom at all.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_to_choose_between_two_namespaces()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -181,33 +181,33 @@ public sealed class AddFileTests
 			result.ImportsAmbiguous,
 			line => line.Contains("Palette is in 2 namespaces", StringComparison.Ordinal));
 
-		var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.DoesNotContain("using Library.Left;", text, StringComparison.Ordinal);
 		Assert.DoesNotContain("using Library.Right;", text, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Refuses_a_path_that_already_exists()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var path = fixture.Path("Members", "Library", "Greeter.cs");
-		var before = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var before = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		var thrown = await Assert.ThrowsAsync<ArgumentException>(
 			() => AddAsync(session, path, "public sealed class Other;"));
 
 		Assert.Contains("already in the solution", thrown.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
+		Assert.Equal(before, await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken));
 	}
 
 	/// <summary>
 	/// Code that does not parse is refused before anything is placed, so a bad call leaves no file
 	/// behind -- the same promise every other write here makes.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_code_that_does_not_parse()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -226,7 +226,7 @@ public sealed class AddFileTests
 	/// A path outside every project's directory would compile nowhere, and saying so beats writing a
 	/// file nothing can see.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_path_no_project_would_compile()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -241,7 +241,7 @@ public sealed class AddFileTests
 	}
 
 	/// <summary>A preview writes nothing and still answers the question a preview is asking.</summary>
-	[Fact]
+	[Test]
 	public async Task Previews_without_writing()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -269,6 +269,6 @@ public sealed class AddFileTests
 		return session.MutateAsync(
 			(snapshot, token) => AddFileService.AddAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 }

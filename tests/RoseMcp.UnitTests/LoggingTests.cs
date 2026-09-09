@@ -37,7 +37,7 @@ public sealed class LoggingTests : IDisposable
 	private static string Rooted(params string[] segments) =>
 		Path.Combine([OperatingSystem.IsWindows() ? @"C:\" : "/", .. segments]);
 
-	[Fact]
+	[Test]
 	public void Puts_a_component_under_the_vendor_product_and_logs_folders()
 	{
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
@@ -45,7 +45,7 @@ public sealed class LoggingTests : IDisposable
 		Assert.Equal(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Logs", "Worker"), directory);
 	}
 
-	[Fact]
+	[Test]
 	public void Keeps_the_solution_name_readable_in_the_encoded_form()
 	{
 		var encoded = RoseLogFile.EncodeSolutionPath(Rooted("Dev", "Personal", "RoseMCP", "RoseMcp.slnx"));
@@ -59,7 +59,7 @@ public sealed class LoggingTests : IDisposable
 	/// Two worktrees of one repository are the normal case, not a corner one, and their solutions
 	/// share a file name. The encoded form has to tell them apart or their logs interleave.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Separates_two_checkouts_that_share_a_solution_name()
 	{
 		var first = RoseLogFile.EncodeSolutionPath(Rooted("repo", "main", "A.slnx"));
@@ -79,7 +79,7 @@ public sealed class LoggingTests : IDisposable
 	/// above.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Folds_case_exactly_where_the_filesystem_does()
 	{
 		var upper = RoseLogFile.EncodeSolutionPath(Rooted("Repo", "A.slnx"));
@@ -94,7 +94,7 @@ public sealed class LoggingTests : IDisposable
 		Assert.NotEqual(upper, lower);
 	}
 
-	[Fact]
+	[Test]
 	public void Names_a_workers_file_after_its_solution_and_a_hosts_file_after_nothing()
 	{
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
@@ -112,7 +112,7 @@ public sealed class LoggingTests : IDisposable
 	/// The broker can start two workers inside one second. Serilog takes an exclusive lock, so the
 	/// loser of a shared name logs nothing at all -- which is why the name is claimed, not assumed.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Claims_a_different_file_when_the_second_is_taken()
 	{
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
@@ -126,7 +126,7 @@ public sealed class LoggingTests : IDisposable
 		Assert.Equal("20260901-143022-2.log", Path.GetFileName(second));
 	}
 
-	[Fact]
+	[Test]
 	public void Prunes_the_oldest_sessions_and_keeps_the_newest()
 	{
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
@@ -149,7 +149,7 @@ public sealed class LoggingTests : IDisposable
 	/// A session that outgrew the size limit owns several files. They are one session and age out
 	/// together, or pruning keeps a tail with no beginning.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_the_parts_of_one_rolled_session_together()
 	{
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
@@ -172,7 +172,7 @@ public sealed class LoggingTests : IDisposable
 		Assert.False(File.Exists(older), "the older session's file was pruned");
 	}
 
-	[Fact]
+	[Test]
 	public void Writes_what_was_logged_to_the_file()
 	{
 		using (var factory = LoggerFactory.Create(logging =>
@@ -192,7 +192,14 @@ public sealed class LoggingTests : IDisposable
 	/// corrupts the stream and the failure reads as an unintelligible protocol error. A console
 	/// sink added to this pipeline by mistake is exactly how that would happen.
 	/// </summary>
-	[Fact]
+	// Runs alone, and the Console writer it swaps is TUnit's own: the framework routes a test's
+	// output through Console, so a capture that overlapped another test would swallow that test's
+	// output and count it as this one's. TUnit0055 says the same thing about the swap itself, and the
+	// swap is the assertion here -- the invariant is that nothing reaches stdout, and stdout is what
+	// has to be read to check it.
+	[Test]
+	[NotInParallel]
+#pragma warning disable TUnit0055
 	public void Writes_nothing_at_all_to_stdout()
 	{
 		var original = Console.Out;
@@ -213,5 +220,6 @@ public sealed class LoggingTests : IDisposable
 		}
 
 		Assert.Equal(string.Empty, stdout.ToString());
+#pragma warning restore TUnit0055
 	}
 }

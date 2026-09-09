@@ -20,7 +20,7 @@ public sealed class ChangeSignatureTests
 	/// has to change, which is exactly why every one of them is reported -- a caller that goes on
 	/// taking the default may be one that should not, and nothing about the build would say so.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Adds_an_optional_parameter_and_reports_the_call_sites_it_left()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -60,12 +60,12 @@ public sealed class ChangeSignatureTests
 	/// list comes out however it landed and every build passes.
 	/// </para>
 	/// </summary>
-	[Theory]
-	[InlineData("\nstring first,\nstring second,\nstring third,\nstring fourth = \"\"")]
-	[InlineData("\n\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
-	[InlineData("\n\t\tstring first,\n\t\tstring second,\n\t\tstring third,\n\t\tstring fourth = \"\"")]
-	[InlineData("\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
-	[InlineData("string first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
+	[Test]
+	[Arguments("\nstring first,\nstring second,\nstring third,\nstring fourth = \"\"")]
+	[Arguments("\n\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
+	[Arguments("\n\t\tstring first,\n\t\tstring second,\n\t\tstring third,\n\t\tstring fourth = \"\"")]
+	[Arguments("\tstring first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
+	[Arguments("string first,\n\tstring second,\n\tstring third,\n\tstring fourth = \"\"")]
 	public async Task Wraps_a_parameter_list_a_level_in_from_the_declaration(string written)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -92,7 +92,7 @@ public sealed class ChangeSignatureTests
 	/// break. Left there, that break puts the first parameter alone on a line of its own at whatever
 	/// column the caller's text happened to begin at.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Unwraps_a_parameter_list_the_caller_wrote_on_one_line()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -113,7 +113,7 @@ public sealed class ChangeSignatureTests
 	/// tool's business and the body is not, but the whitespace pass runs over the lines the change
 	/// wrote -- so the body is what says whether it reached past them.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Leaves_a_wrapped_expression_body_alone_when_it_changes_the_parameters()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -145,7 +145,7 @@ public sealed class ChangeSignatureTests
 	/// would fail every other test that loads this solution.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Leaves_the_argument_a_call_site_already_wrote_for_the_new_parameter()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -164,7 +164,7 @@ public sealed class ChangeSignatureTests
 		}
 
 		""",
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		await using var session = await TestSession.OpenAsync(fixture);
 
@@ -203,7 +203,7 @@ public sealed class ChangeSignatureTests
 	/// A required parameter, which every call site does have to change. The argument is written as
 	/// a named one, because that is valid wherever it lands and needs no reasoning about position.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Adds_a_required_parameter_and_passes_it_at_every_call_site()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -227,7 +227,7 @@ public sealed class ChangeSignatureTests
 	/// Refused before anything is written. A required parameter with nothing to pass would break
 	/// every call site, and which of the two the caller meant is not something to guess at.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_required_parameter_with_nothing_to_pass()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -248,7 +248,7 @@ public sealed class ChangeSignatureTests
 	/// and the override calls its parameter something else -- so its own name has to survive, or
 	/// the change would rename it without saying so.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Moves_the_interface_the_base_and_the_override_together()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -276,7 +276,7 @@ public sealed class ChangeSignatureTests
 	/// a parameter with no tag is CS1573 -- both errors in a repository that treats warnings as
 	/// errors. So a change that left the tags alone would compile the code and break the build.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Keeps_the_param_tags_in_step()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -302,7 +302,7 @@ public sealed class ChangeSignatureTests
 	/// were using it, which is a thing no tool can fix and the caller has to decide about. The
 	/// value is that it is one answer rather than a build, and it names both places.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Removes_a_parameter_and_reports_the_bodies_that_used_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -331,7 +331,7 @@ public sealed class ChangeSignatureTests
 	/// not always recoverable from its position. Inserting a new parameter in the middle is not the
 	/// same thing and is allowed.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_to_reorder_parameters_that_already_exist()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -348,7 +348,7 @@ public sealed class ChangeSignatureTests
 	/// A new parameter in the middle: the arguments after it can no longer be positional, so they
 	/// are written as named ones rather than left to bind to the wrong parameter.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Names_the_arguments_a_new_parameter_displaces()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -369,7 +369,7 @@ public sealed class ChangeSignatureTests
 	/// Retyping changes nothing at the call sites, which is exactly why it is worth a warning: an
 	/// argument that still converts will compile and mean something else.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_when_a_parameter_changed_type()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -382,7 +382,7 @@ public sealed class ChangeSignatureTests
 			notice => notice.Contains("Retyped name", StringComparison.Ordinal));
 	}
 
-	[Fact]
+	[Test]
 	public async Task Writes_nothing_when_previewing()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -402,7 +402,7 @@ public sealed class ChangeSignatureTests
 				},
 				session.NoteSelfWrite,
 				token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.Equal(before, await ReadAsync(fixture, "Layers.cs"));
@@ -411,7 +411,7 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>A member with no parameter list to change is told so rather than mangled.</summary>
-	[Fact]
+	[Test]
 	public async Task Declines_what_has_no_parameters()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -442,19 +442,19 @@ public sealed class ChangeSignatureTests
 		return session.MutateAsync(
 			(snapshot, token) => ChangeSignatureService.ChangeAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static Task<string> ReadAsync(FixtureSolution fixture, string file) =>
-		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current.CancellationToken);
+		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current!.Execution.CancellationToken);
 
 	/// <summary>
 	/// A constructor is where a parameter is added most often, and its declaration carries a name the
 	/// language and the runtime spell differently. Both spellings reach it.
 	/// </summary>
-	[Theory]
-	[InlineData("Library.Assembled.Assembled(string)")]
-	[InlineData("Library.Assembled..ctor(string)")]
+	[Test]
+	[Arguments("Library.Assembled.Assembled(string)")]
+	[Arguments("Library.Assembled..ctor(string)")]
 	public async Task Changes_a_constructor_addressed_either_way(string symbol)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -477,7 +477,7 @@ public sealed class ChangeSignatureTests
 	/// declaration. Nothing about that is visible in the symbol, which is a method like any other, and
 	/// treating "not a method declaration" as "no parameter list" refuses the ordinary modern shape.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Changes_a_primary_constructor_declared_on_the_type()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -499,7 +499,7 @@ public sealed class ChangeSignatureTests
 	/// A required parameter breaks every call site that does not pass it, and the call site is in
 	/// another file. What comes back names it rather than leaving it to a build.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Rewrites_a_construction_in_another_file()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -516,7 +516,7 @@ public sealed class ChangeSignatureTests
 			site => site.FilePath.EndsWith("Builds.cs", StringComparison.OrdinalIgnoreCase));
 
 		var text = await File.ReadAllTextAsync(
-			fixture.Path("Members", "Library", "Builds.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("Members", "Library", "Builds.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("new Assembled(\"one\", 1)", text, StringComparison.Ordinal);
 	}
@@ -525,7 +525,7 @@ public sealed class ChangeSignatureTests
 	/// A type with no constructor of its own has one the compiler writes, which is not in the file. The
 	/// refusal says that rather than reporting the name as unknown.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_constructor_the_compiler_wrote()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -543,7 +543,7 @@ public sealed class ChangeSignatureTests
 	/// every caller of it silently gets the behaviour the change was meant to alter. Listed beside
 	/// forty ordinary call sites, that is what lets a five-deep chain go half-changed.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_which_unchanged_call_sites_are_forwarders()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -576,7 +576,7 @@ public sealed class ChangeSignatureTests
 	/// the moment the signature moves, so passing over them silently leaves the caller to find it
 	/// from a build.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reports_a_nameof_and_a_method_group_it_cannot_rewrite()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -618,7 +618,7 @@ public sealed class ChangeSignatureTests
 	/// pointed at the right lines by the wrong reason.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_a_constructor_initialiser_is_a_call_it_cannot_reach()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -652,7 +652,7 @@ public sealed class ChangeSignatureTests
 	/// it does not resolve. The error is theirs to fix and the diagnostic is what points at it --
 	/// reverting the whole change instead would leave them with neither the parameter nor the error.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Writes_a_supplied_expression_that_does_not_resolve_and_reports_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");

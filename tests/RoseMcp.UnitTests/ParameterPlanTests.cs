@@ -13,7 +13,7 @@ public sealed class ParameterPlanTests
 	/// The common case, and the one worth naming: an optional flag on the end. Nothing at any call
 	/// site has to change, which is why the tool can report them all and touch none.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Knows_that_an_optional_parameter_on_the_end_leaves_call_sites_alone()
 	{
 		var plan = Plan("string name", "string name, bool loud = false");
@@ -23,7 +23,7 @@ public sealed class ParameterPlanTests
 		Assert.Equal(["loud"], plan.Added.Select(parameter => parameter.Name));
 	}
 
-	[Fact]
+	[Test]
 	public void Knows_that_a_required_parameter_does_not()
 	{
 		Assert.False(Plan("string name", "string name, bool loud").CallSitesUnaffected);
@@ -33,7 +33,7 @@ public sealed class ParameterPlanTests
 	/// A new parameter in the middle moves everything after it, so the arguments after it can no
 	/// longer be positional -- which is a call-site change even though nothing was removed.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Knows_that_a_parameter_inserted_in_the_middle_moves_the_rest()
 	{
 		var plan = Plan("string title, string name", "string title, bool loud = false, string name");
@@ -42,7 +42,7 @@ public sealed class ParameterPlanTests
 		Assert.Null(plan.WhyImpossible());
 	}
 
-	[Fact]
+	[Test]
 	public void Names_what_was_removed()
 	{
 		var plan = Plan("string name, bool loud", "string name");
@@ -55,7 +55,7 @@ public sealed class ParameterPlanTests
 	/// A parameter that kept its name and changed type is the same parameter, and the call sites go
 	/// on passing what they passed -- which is why it is reported rather than assumed harmless.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Names_what_changed_type_without_treating_it_as_new()
 	{
 		var plan = Plan("string name", "object name");
@@ -69,7 +69,7 @@ public sealed class ParameterPlanTests
 	/// Renaming a parameter reads as removing one and adding another, which is the right answer:
 	/// rose_rename_symbol moves the named arguments at every call site too, and nothing here would.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Reads_a_rename_as_a_removal_and_an_addition()
 	{
 		var plan = Plan("string name", "string other");
@@ -78,7 +78,7 @@ public sealed class ParameterPlanTests
 		Assert.Equal(["other"], plan.Added.Select(parameter => parameter.Name));
 	}
 
-	[Fact]
+	[Test]
 	public void Refuses_to_swap_two_parameters_that_already_exist()
 	{
 		var refusal = Plan("string title, string name", "string name, string title").WhyImpossible();
@@ -88,7 +88,7 @@ public sealed class ParameterPlanTests
 	}
 
 	/// <summary>Emptying the list is a removal of everything, not an impossibility.</summary>
-	[Fact]
+	[Test]
 	public void Takes_an_empty_list_as_removing_them_all()
 	{
 		var plan = Plan("string name, bool loud", string.Empty);

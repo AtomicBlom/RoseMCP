@@ -8,10 +8,10 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class ProjectItemStyleTests
 {
-	[Theory]
-	[InlineData("""<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup /></Project>""")]
-	[InlineData("""<Project><Sdk Name="Microsoft.NET.Sdk" /></Project>""")]
-	[InlineData("""<Project><Import Sdk="Microsoft.NET.Sdk" Project="Sdk.props" /></Project>""")]
+	[Test]
+	[Arguments("""<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup /></Project>""")]
+	[Arguments("""<Project><Sdk Name="Microsoft.NET.Sdk" /></Project>""")]
+	[Arguments("""<Project><Import Sdk="Microsoft.NET.Sdk" Project="Sdk.props" /></Project>""")]
 	public void Reads_an_sdk_project_as_globbing_its_files(string project)
 	{
 		Assert.True(ProjectItemStyle.GlobsSourceFiles(project));
@@ -22,7 +22,7 @@ public sealed class ProjectItemStyleTests
 	/// the build until the project names it -- and this is the case that must not be guessed at,
 	/// since UWP and older desktop projects are all of this shape.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Reads_a_legacy_project_as_listing_its_files()
 	{
 		var project = """
@@ -42,9 +42,9 @@ public sealed class ProjectItemStyleTests
 	/// An SDK project can turn the globs off, and a repository that does it means it: the file list
 	/// is then as explicit as a legacy project's.
 	/// </summary>
-	[Theory]
-	[InlineData("EnableDefaultCompileItems")]
-	[InlineData("EnableDefaultItems")]
+	[Test]
+	[Arguments("EnableDefaultCompileItems")]
+	[Arguments("EnableDefaultItems")]
 	public void Reads_a_project_that_turns_the_globs_off(string property)
 	{
 		var project = $"""
@@ -63,10 +63,10 @@ public sealed class ProjectItemStyleTests
 	/// a project file that will not parse is one this loaded from a solution that did parse it, so
 	/// the failure is here rather than in the project.
 	/// </summary>
-	[Theory]
-	[InlineData("")]
-	[InlineData("   ")]
-	[InlineData("<Project><PropertyGroup></Project>")]
+	[Test]
+	[Arguments("")]
+	[Arguments("   ")]
+	[Arguments("<Project><PropertyGroup></Project>")]
 	public void Assumes_the_default_when_it_cannot_tell(string project)
 	{
 		Assert.True(ProjectItemStyle.GlobsSourceFiles(project));

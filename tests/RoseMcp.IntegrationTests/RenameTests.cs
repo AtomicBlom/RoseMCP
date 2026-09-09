@@ -2,7 +2,7 @@ namespace RoseMcp.IntegrationTests;
 
 public sealed class RenameTests
 {
-	[Fact]
+	[Test]
 	public async Task Renames_across_projects_and_writes_the_files()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -16,9 +16,9 @@ public sealed class RenameTests
 		Assert.Empty(result.Conflicts);
 
 		var calculator = await File.ReadAllTextAsync(
-			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
 		var program = await File.ReadAllTextAsync(
-			fixture.Path("Simple", "App", "Program.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("Simple", "App", "Program.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("Product", calculator, StringComparison.Ordinal);
 		Assert.DoesNotContain("Multiply", calculator, StringComparison.Ordinal);
@@ -29,7 +29,7 @@ public sealed class RenameTests
 	/// A refactoring that reports only a file count asks to be trusted. The diff is how a caller
 	/// checks, so it has to be real rather than a placeholder.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Returns_a_unified_diff_of_what_changed()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -42,14 +42,14 @@ public sealed class RenameTests
 		Assert.Contains("@@", result.Diff, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Preview_reports_the_diff_without_touching_disk()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var before = await File.ReadAllTextAsync(
-			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		var result = await RenameAsync(session, fixture, "Product", apply: false);
 
@@ -57,24 +57,24 @@ public sealed class RenameTests
 		Assert.NotEmpty(result.Diff);
 
 		var after = await File.ReadAllTextAsync(
-			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(before, after);
 
 		// A preview must not advance the revision, or the snapshot would disagree with disk.
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		Assert.Equal(result.Revision, snapshot.Revision);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Advances_the_revision_when_it_applies()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var before = (await session.ReadAsync(TestContext.Current.CancellationToken)).Revision;
+		var before = (await session.ReadAsync(TestContext.Current!.Execution.CancellationToken)).Revision;
 		await RenameAsync(session, fixture, "Product");
-		var after = (await session.ReadAsync(TestContext.Current.CancellationToken)).Revision;
+		var after = (await session.ReadAsync(TestContext.Current!.Execution.CancellationToken)).Revision;
 
 		Assert.True(after > before);
 	}
@@ -83,13 +83,13 @@ public sealed class RenameTests
 	/// The optimistic-concurrency guard that keeps two clients sharing one broker from silently
 	/// overwriting each other in http mode.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_to_apply_against_a_stale_revision()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		await session.ReadAsync(TestContext.Current.CancellationToken);
+		await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Assert.ThrowsAsync<InvalidOperationException>(
 			() => RenameAsync(session, fixture, "Product", expectedRevision: 9999));
@@ -97,11 +97,11 @@ public sealed class RenameTests
 		Assert.Contains("9999", error.Message, StringComparison.Ordinal);
 
 		var calculator = await File.ReadAllTextAsync(
-			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
 		Assert.Contains("Multiply", calculator, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Refuses_to_rename_a_symbol_that_comes_from_metadata()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -117,7 +117,7 @@ public sealed class RenameTests
 		var error = await Assert.ThrowsAsync<InvalidOperationException>(
 			() => session.MutateAsync(
 				(snapshot, token) => RenameService.RenameAsync(snapshot, request, null, token),
-				TestContext.Current.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Contains("metadata", error.Message, StringComparison.Ordinal);
 	}
@@ -139,14 +139,14 @@ public sealed class RenameTests
 
 		return session.MutateAsync(
 			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	/// <summary>
 	/// A rename by name. Renames arrive in batches more than any other edit, and a position found by
 	/// reading the file is wrong the moment an earlier rename in the same batch lands.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Renames_a_symbol_named_rather_than_pointed_at()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
@@ -160,13 +160,13 @@ public sealed class RenameTests
 
 		var result = await session.MutateAsync(
 			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal("Multiply", result.OldName);
 		Assert.True(result.Applied);
 
 		var program = await File.ReadAllTextAsync(
-			fixture.Path("Simple", "App", "Program.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("Simple", "App", "Program.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("Times", program, StringComparison.Ordinal);
 		Assert.DoesNotContain("Multiply", program, StringComparison.Ordinal);
@@ -176,7 +176,7 @@ public sealed class RenameTests
 	/// Two overloads are two symbols, and renaming the wrong one is a change that compiles. The name
 	/// is refused with both listed rather than resolved to the first.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_rename_of_an_ambiguous_name()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -191,7 +191,7 @@ public sealed class RenameTests
 		var thrown = await Assert.ThrowsAsync<ArgumentException>(
 			() => session.MutateAsync(
 				(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
-				TestContext.Current.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Contains("matches 2 declarations", thrown.Message, StringComparison.Ordinal);
 		Assert.Contains("Name the parameter types", thrown.Message, StringComparison.Ordinal);

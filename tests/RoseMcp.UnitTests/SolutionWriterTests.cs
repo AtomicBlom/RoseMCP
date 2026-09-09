@@ -11,7 +11,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class SolutionWriterTests
 {
-	[Fact]
+	[Test]
 	public async Task Refuses_to_write_an_added_document_whose_path_is_relative()
 	{
 		using var workspace = new AdhocWorkspace();
@@ -21,13 +21,13 @@ public sealed class SolutionWriterTests
 		var after = before.AddDocument(DocumentId.CreateNewId(project.Id), "Added.cs", "class Added;", filePath: "Added.cs");
 
 		var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => SolutionWriter.ApplyAsync(before, after, write: true, noteSelfWrite: null, TestContext.Current.CancellationToken));
+			() => SolutionWriter.ApplyAsync(before, after, write: true, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Contains("Added.cs", failure.Message, StringComparison.Ordinal);
 		Assert.Contains("relative path", failure.Message, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Refuses_to_write_a_changed_document_whose_path_is_relative()
 	{
 		using var workspace = new AdhocWorkspace();
@@ -38,7 +38,7 @@ public sealed class SolutionWriterTests
 		var after = before.WithDocumentText(documentId, SourceText.From("class Existing { }"));
 
 		var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => SolutionWriter.ApplyAsync(before, after, write: true, noteSelfWrite: null, TestContext.Current.CancellationToken));
+			() => SolutionWriter.ApplyAsync(before, after, write: true, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Contains("Existing.cs", failure.Message, StringComparison.Ordinal);
 	}
@@ -47,7 +47,7 @@ public sealed class SolutionWriterTests
 	/// The refusal is not a write-time check: a preview asks the same question, because a diff
 	/// naming a path nobody can write is as misleading as the write itself.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_relative_path_even_when_not_writing()
 	{
 		using var workspace = new AdhocWorkspace();
@@ -57,10 +57,10 @@ public sealed class SolutionWriterTests
 		var after = before.AddDocument(DocumentId.CreateNewId(project.Id), "Added.cs", "class Added;", filePath: "Added.cs");
 
 		await Assert.ThrowsAsync<InvalidOperationException>(
-			() => SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current.CancellationToken));
+			() => SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task Renders_a_rooted_added_document_without_writing_it()
 	{
 		using var workspace = new AdhocWorkspace();
@@ -70,7 +70,7 @@ public sealed class SolutionWriterTests
 
 		var after = before.AddDocument(DocumentId.CreateNewId(project.Id), "Added.cs", "class Added;", filePath: path);
 
-		var outcome = await SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current.CancellationToken);
+		var outcome = await SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal([path], outcome.ChangedFiles);
 		Assert.False(File.Exists(path), "rendering the diff writes nothing");

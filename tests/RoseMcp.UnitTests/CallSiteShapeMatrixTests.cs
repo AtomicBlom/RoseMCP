@@ -53,7 +53,7 @@ public sealed class CallSiteShapeMatrixTests
 		+ "}\n";
 
 	/// <summary>The ordinary shape: every argument in its own place, and the new one lands between them.</summary>
-	[Fact]
+	[Test]
 	public void Puts_a_new_argument_between_two_positional_ones()
 	{
 		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(a, b)"), Inserted, Dash));
@@ -64,14 +64,14 @@ public sealed class CallSiteShapeMatrixTests
 	/// go, and they are the caller's own emphasis -- but they are stripped, because an argument that
 	/// lands in its own slot is written positionally whatever it arrived as.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Takes_the_names_off_a_call_site_that_named_every_argument()
 	{
 		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(first: a, second: b)"), Inserted, Dash));
 	}
 
 	/// <summary>The mixed shape that works: the named argument is the trailing one.</summary>
-	[Fact]
+	[Test]
 	public void Rewrites_a_trailing_named_argument_beside_a_positional_one()
 	{
 		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(a, second: b)"), Inserted, Dash));
@@ -89,14 +89,14 @@ public sealed class CallSiteShapeMatrixTests
 	/// succeeded.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Rewrites_a_named_argument_written_before_a_positional_one()
 	{
 		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(first: a, b)"), Inserted, Dash));
 	}
 
 	/// <summary>An optional the call site said nothing about goes on saying nothing about it.</summary>
-	[Fact]
+	[Test]
 	public void Leaves_an_omitted_optional_omitted()
 	{
 		var source = """
@@ -115,7 +115,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// A params expansion is several arguments for one parameter, and it has to stay positional --
 	/// there is no way to write it as a named argument at all.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_a_params_expansion_together_and_positional()
 	{
 		var source = """
@@ -135,7 +135,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// node is moved rather than regenerated. An <c>out var</c> also declares a variable the rest of
 	/// the method uses, so losing it would break code nowhere near the call.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_out_ref_and_in_exactly_as_written()
 	{
 		var source = """
@@ -161,7 +161,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// An extension method invoked on its receiver: the first parameter has an argument nowhere in
 	/// the list, so every parameter after it is one place to the left of where the text suggests.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Counts_the_receiver_of_an_extension_method_as_an_argument_that_is_not_there()
 	{
 		Assert.Equal(
@@ -173,7 +173,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// The same method called as the static it really is. The receiver is written this time, so the
 	/// slot it takes is a real one -- and the same declaration therefore has two right answers.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Rewrites_the_same_extension_method_called_as_a_static()
 	{
 		Assert.Equal(
@@ -197,7 +197,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// no rule about where a continuation line sits -- so that is what reached disk.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_the_wrapping_of_a_call_site_it_inserts_into()
 	{
 		Assert.Equal("(\n\t\ta,\n\t\t\"-\",\n\t\tb)", Rewrite(WrappedCall, Inserted, Dash));
@@ -214,7 +214,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// parameter right did not move it.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_the_whitespace_in_front_of_an_argument_it_names()
 	{
 		// A new optional in front of second is what forces second to be named at all: an argument
@@ -229,7 +229,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// takes the break and the indentation with it, because for a named argument they sit on the
 	/// name.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_the_whitespace_in_front_of_an_argument_it_stops_naming()
 	{
 		var call = "public static class Fixture\n"
@@ -249,7 +249,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// and a block body have to give the same answer. Asserted together rather than separately,
 	/// because the claim is that they agree.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Answers_the_same_inside_an_expression_body_and_a_block()
 	{
 		var block = """
@@ -274,7 +274,7 @@ public sealed class CallSiteShapeMatrixTests
 	/// The lambda is a different symbol from the method holding it, and the reference search reaches
 	/// inside it all the same.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Rewrites_a_call_written_inside_a_lambda()
 	{
 		var source = """

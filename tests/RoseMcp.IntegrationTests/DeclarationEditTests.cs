@@ -12,7 +12,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class DeclarationEditTests
 {
-	[Fact]
+	[Test]
 	public async Task Replaces_a_summary_written_as_plain_text()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -37,7 +37,7 @@ public sealed class DeclarationEditTests
 	/// XML is passed through as written, one line per line, with the file's own indentation and
 	/// prefix. A repository that writes long comments needs the multi-line form to be the easy one.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Writes_multi_line_xml_in_the_files_own_style()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -59,7 +59,7 @@ public sealed class DeclarationEditTests
 	/// <summary>
 	/// A member with no comment gets one, and is told so rather than left to infer it from a diff.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Adds_a_comment_where_there_was_none()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -84,7 +84,7 @@ public sealed class DeclarationEditTests
 	/// documents -- a change to the whole neighbourhood from a call that promised to touch a sentence,
 	/// and one nothing reports.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Leaves_the_blank_line_above_a_comment_where_it_was()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -107,7 +107,7 @@ public sealed class DeclarationEditTests
 	/// The same where there was no comment to replace: it goes immediately above the declaration,
 	/// under the blank line rather than over it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Puts_a_new_comment_under_the_blank_line_above_the_member()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -130,7 +130,7 @@ public sealed class DeclarationEditTests
 	/// XML that opens a tag it never closes is CS1570, a build error where the analyzers are turned
 	/// up. Refused before the file is opened, so nothing is written.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_xml_that_does_not_parse()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -145,7 +145,7 @@ public sealed class DeclarationEditTests
 		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
 	}
 
-	[Fact]
+	[Test]
 	public async Task Adds_an_attribute_that_was_not_there()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -181,11 +181,11 @@ public sealed class DeclarationEditTests
 	/// the first one with content on it rather than the first one there is.
 	/// </para>
 	/// </summary>
-	[Theory]
-	[InlineData("Obsolete(\n\t\"use Greet\",\n\terror: false)")]
-	[InlineData("\t\tObsolete(\n\t\t\t\"use Greet\",\n\t\t\terror: false)")]
-	[InlineData("\nObsolete(\n\t\"use Greet\",\n\terror: false)")]
-	[InlineData("\n\t\tObsolete(\n\t\t\t\"use Greet\",\n\t\t\terror: false)")]
+	[Test]
+	[Arguments("Obsolete(\n\t\"use Greet\",\n\terror: false)")]
+	[Arguments("\t\tObsolete(\n\t\t\t\"use Greet\",\n\t\t\terror: false)")]
+	[Arguments("\nObsolete(\n\t\"use Greet\",\n\terror: false)")]
+	[Arguments("\n\t\tObsolete(\n\t\t\t\"use Greet\",\n\t\t\terror: false)")]
 	public async Task Keeps_the_shape_of_a_wrapped_attribute(string attribute)
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -208,7 +208,7 @@ public sealed class DeclarationEditTests
 	/// declaration and the body is none of its business, but both go through the same indentation
 	/// pass -- so the body is what says whether that pass reached further than it was asked to.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Leaves_a_wrapped_expression_body_alone_when_it_writes_an_attribute()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -235,7 +235,7 @@ public sealed class DeclarationEditTests
 	/// type on the same line, because that is where a parameter's attribute sits and a line break
 	/// there is layout nothing downstream has a rule about.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Writes_an_attribute_onto_a_parameter()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -256,7 +256,7 @@ public sealed class DeclarationEditTests
 	/// writing the attribute onto the declaration and reporting success -- which is the shape of
 	/// failure that looks exactly like the change working.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_a_parameter_the_member_does_not_have()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -274,7 +274,7 @@ public sealed class DeclarationEditTests
 	/// Replacing one of several attributes of a name would compile and change the wrong case, which
 	/// is the failure with no symptom. It is refused, and the refusal lists what it found.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_to_set_where_several_attributes_share_a_name()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -295,7 +295,7 @@ public sealed class DeclarationEditTests
 	/// Removing the only attribute in a bracket takes the bracket with it. An empty [] does not
 	/// compile, and leaving one would be a syntax error written by a tool that parses everything.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Removes_an_attribute_and_its_brackets()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -318,7 +318,7 @@ public sealed class DeclarationEditTests
 	/// Obsolete and ObsoleteAttribute are the same attribute, and a caller should not have to know
 	/// which spelling the file used.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Matches_an_attribute_whether_or_not_it_is_spelled_with_the_suffix()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -340,7 +340,7 @@ public sealed class DeclarationEditTests
 	/// An attribute that does not parse is refused before the file is opened, the same promise every
 	/// other write here makes.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_an_attribute_that_does_not_parse()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
@@ -362,7 +362,7 @@ public sealed class DeclarationEditTests
 		return session.MutateAsync(
 			(snapshot, token) => DeclarationEditService.ReplaceDocCommentAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static Task<MemberEditResult> AttributeAsync(
@@ -389,9 +389,9 @@ public sealed class DeclarationEditTests
 		return session.MutateAsync(
 			(snapshot, token) => DeclarationEditService.SetAttributeAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static Task<string> ReadAsync(FixtureSolution fixture, string file) =>
-		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current.CancellationToken);
+		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current!.Execution.CancellationToken);
 }

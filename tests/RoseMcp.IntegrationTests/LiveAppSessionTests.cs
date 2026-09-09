@@ -28,6 +28,15 @@ namespace RoseMcp.IntegrationTests;
 /// it stops the class overlapping <em>anything</em>, not just itself.
 /// </para>
 /// </summary>
+/// <remarks>
+/// Each probe is shared for the whole assembly and each gets a source of its own rather than one
+/// shared gate. They drive different processes and share no package, provider or window, so there is
+/// nothing to serialise between them -- only within each. Sharing one would serialise three suites
+/// that never contend.
+/// </remarks>
+[Category("LiveApp")]
+[ClassDataSource<UwpProbeApp, WinUiProbeApp, UwpModernProbeApp>(
+	Shared = [SharedType.PerAssembly, SharedType.PerAssembly, SharedType.PerAssembly])]
 public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, UwpModernProbeApp uwpModern)
 {
 	/// <summary>
@@ -41,11 +50,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// nothing but throw a distinctively named exception on a loop for the debugger to catch.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Attaches_to_a_dotnet_process_and_captures_an_exception()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -102,11 +111,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// cannot then use would be worse than no list.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task A_session_belongs_to_the_client_that_started_it()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -158,11 +167,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// this exists to avoid.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Waiting_for_an_event_answers_when_it_arrives_rather_than_on_a_timeout()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -202,11 +211,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// on BreakpointHit with no breakpoint set is exactly "wait for the next stop" against a target
 	/// that never stops.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Waiting_for_an_event_that_does_not_happen_comes_back_empty()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -239,11 +248,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// the more useful assertion of the two, because a close that reports a reason is a bug report
 	/// while a dead child process is a mystery.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Closing_a_session_detaches_cleanly_and_leaves_the_target_running()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -268,11 +277,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// nothing into something whose answer is now acted on: getting this case wrong would make every
 	/// close after a target exits report a detach failure and fail rose_debug_detach outright.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Closing_a_session_whose_target_has_already_exited_is_not_a_detach_failure()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
@@ -300,11 +309,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// records each hit in the event stream with its message, never pauses the target, and can be
 	/// removed. This is the low-friction, non-freezing default for a turn-based agent.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Tracepoint_binds_logs_hits_and_can_be_removed()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -382,11 +391,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// earliest events -- the process-created notice and the first exceptions -- are captured, which
 	/// attaching after the fact cannot see. Detaching leaves the launched process running.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Launches_a_dotnet_process_under_the_debugger_and_captures_startup()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		var target = new LiveAppTarget
 		{
@@ -452,10 +461,10 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// against its absence, which is what the first draft of this did.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
 	public async Task A_live_app_host_takes_the_target_it_launched_when_its_client_goes_away()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		var start = new ProcessStartInfo(LiveAppHostLauncher.ResolveHostPath(ExpectedArchitecture, new BrokerOptions()))
 		{
@@ -581,14 +590,14 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// emulation while the broker is ARM64, which is the exact case classic UWP needs; on an x64 machine
 	/// it is a same-architecture x64 attach. Skips where the x64 .NET runtime is unavailable.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Attaches_to_a_target_of_a_different_architecture()
 	{
 		EnsureX64HostBuilt();
 		var x64Target = EnsureX64ProbeTargetBuilt();
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProcess(x64Target);
 		try
@@ -596,7 +605,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			await Task.Delay(1500, cancellationToken);
 			if (child.HasExited)
 			{
-				Assert.Skip($"The x64 probe target exited (code {child.ExitCode}); the x64 .NET runtime is not available here.");
+				Skip.Test($"The x64 probe target exited (code {child.ExitCode}); the x64 .NET runtime is not available here.");
 			}
 
 			var target = new LiveAppTarget
@@ -643,14 +652,14 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// question that is about none of them.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
 	public async Task Attaches_to_an_x86_target()
 	{
 		EnsureX86HostBuilt();
 		var x86Target = EnsureX86ProbeTargetBuilt();
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProcess(x86Target);
 
@@ -660,7 +669,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 			if (child.HasExited)
 			{
-				Assert.Skip($"The x86 probe target exited (code {child.ExitCode}); the x86 .NET runtime is not available here.");
+				Skip.Test($"The x86 probe target exited (code {child.ExitCode}); the x86 .NET runtime is not available here.");
 			}
 
 			var target = new LiveAppTarget
@@ -704,14 +713,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// runs x64 emulated on ARM64 -- then capture the exception its Tick throws. Skips where the UWP
 	/// build toolchain or app registration is not available, so the suite stays green without them.
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicOwnApp]
 	public async Task Launches_and_debugs_the_classic_uwp_probe_app()
 	{
-		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current!.Execution.CancellationToken);
 		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		try
 		{
 			var target = new LiveAppTarget
@@ -749,14 +759,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// OnLaunched, before the window shows; an attach that lands a beat after activation would have missed
 	/// it, so catching it proves the resume stub attached from the runtime's first breath.
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicOwnApp]
 	public async Task Captures_the_classic_uwp_probe_apps_startup_from_birth()
 	{
-		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current!.Execution.CancellationToken);
 		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		try
 		{
 			var target = new LiveAppTarget
@@ -798,11 +809,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// to establish it, and to give the seams work (#75) something to run against.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[WinUiProbe]
 	public async Task Launches_and_debugs_the_unpackaged_winui_probe_app()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: false, cancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: false, cancellationToken);
 
 		await using var manager = CreateManager();
 
@@ -840,11 +852,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// needs the work folder granted to ALL APPLICATION PACKAGES.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[WinUiProbe]
 	public async Task Launches_and_debugs_the_packaged_winui_probe_app()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: true, needsXamlProvider: false, cancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var turn = await winui.TakeAsync(packaged: true, needsXamlProvider: false, cancellationToken);
 
 		await using var manager = CreateManager();
 
@@ -886,11 +899,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// UI thread, and that lives in the provider seam rather than here.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[WinUiProbe]
 	public async Task Reads_the_xaml_tree_of_a_winui_app_it_launched()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		await using var manager = CreateManager();
 
@@ -947,11 +961,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// already running by the time anyone asks about it -- so it is worth its own test rather than
 	/// being assumed to follow from the launched one.
 	/// </remarks>
-	[Fact]
+	[Test]
+	[WinUiProbe]
 	public async Task Reads_the_xaml_tree_of_a_winui_app_it_attached_to()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		// Started outside the session on purpose: nothing about this process was arranged for us.
 		using var child = StartProcess(turn.ExecutablePath);
@@ -1006,11 +1021,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// dropping the pipe under a live session, and the pipe belongs to the host process.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[WinUiProbe]
 	public async Task Reads_the_xaml_tree_again_after_the_first_session_closed_the_pipe()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		using var child = StartProcess(turn.ExecutablePath);
 
@@ -1084,11 +1100,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </para>
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[WinUiProbe]
 	public async Task Bounds_the_wait_on_the_xaml_injection_call_and_names_the_channel()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		using var child = StartProcess(turn.ExecutablePath);
 
@@ -1145,11 +1162,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// field was not being read off the path actually taken.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[WinUiProbe]
 	public async Task The_second_xaml_read_of_a_session_is_served_over_the_pipe()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		using var child = StartProcess(turn.ExecutablePath);
 
@@ -1205,10 +1223,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// twice makes the second a second read either way.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[ClassicSession]
 	public async Task A_uwp_xaml_read_reaches_the_pipe_from_inside_the_app_container()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		await using var turn = await probe.TakeSessionAsync(cancellationToken);
 
 		await turn.Session.ReadXamlTreeAsync(cancellationToken);
@@ -1243,10 +1262,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// framework hosts it does not change what is under test here.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[ClassicOwnApp]
 	public async Task The_tap_releases_its_interfaces_when_the_session_detaches()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, cancellationToken);
 
 		var logs = new RecordingLoggerFactory();
@@ -1296,11 +1316,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// was ever exercised past the tree.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[WinUiProbe]
 	public async Task Reads_and_edits_properties_on_a_winui_app()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
-		using var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var turn = await winui.TakeAsync(packaged: false, needsXamlProvider: true, cancellationToken);
 
 		using var child = StartProcess(turn.ExecutablePath);
 		await using var manager = CreateManager();
@@ -1389,10 +1410,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// it builds, and the fixture builds it for the host's.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[ModernUwpProbe]
 	public async Task Launches_and_debugs_the_modern_uwp_probe_app()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var turn = await uwpModern.TakeAsync(needsXamlProvider: false, cancellationToken);
 
 		await using var manager = CreateManager();
@@ -1444,10 +1466,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// not need, since reading a tree and reading a property of it are the same operation twice.
 	/// </para>
 	/// </remarks>
-	[Fact]
+	[Test]
+	[ModernUwpProbe]
 	public async Task Reads_the_xaml_tree_of_a_modern_uwp_app()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var turn = await uwpModern.TakeAsync(needsXamlProvider: true, cancellationToken);
 
 		await using var manager = CreateManager();
@@ -1506,10 +1529,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// AppContainer, enumerates on the UI thread, and reports the tree back through the host to the
 	/// broker. Skips where the UWP build toolchain or the C++ toolset is absent.
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSlot(0)]
 	public async Task Reads_the_live_visual_tree_of_the_classic_uwp_probe()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase C, reading only. It asserts on the elements the markup declares, so it neither needs a
 		// slot nor minds one being busy: what it looks for is furniture, and no phase C test edits
@@ -1568,10 +1592,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// concrete string value -- that framework defaults are filtered out unless asked for, and that it
 	/// all rides through the host to the broker. Skips where the UWP or C++ toolchain is absent.
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSlot(1)]
 	public async Task Reads_the_properties_of_a_xaml_element()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase C, and one that reads the app's declared furniture rather than building its own. It
 		// has to: half of what it asserts is source info -- which file and line declared the element --
@@ -1651,10 +1676,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// Skips where the UWP or C++ toolchain is absent.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSlot(2)]
 	public async Task Reads_a_corner_radius_the_framework_renders_as_nothing()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase C: builds what it reads in a slot of its own. The values are the ones the shared Pane
 		// carries, but owning the element means this cannot be disturbed by a test editing that one,
@@ -1722,14 +1748,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// Skips where the UWP or C++ toolchain is absent.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicOwnApp]
 	public async Task Names_the_install_location_a_uwp_session_activated()
 	{
-		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
 		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		try
 		{
 			var target = new LiveAppTarget
@@ -1796,10 +1823,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// </list>
 	/// Skips where the UWP or C++ toolchain is absent.
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSlot(3)]
 	public async Task Live_edits_a_property_on_the_uwp_probe()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase C: both edits land on elements this test built in its own slot, so it neither disturbs
 		// the app's furniture nor depends on that furniture still carrying the values the markup gave
@@ -1868,10 +1896,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// success either way -- so the first Border is read back as well, and has to be untouched.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSlot(4)]
 	public async Task Live_edits_an_unnamed_element_by_its_address()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// The second of two unnamed siblings, which is the case this exists for: an element the markup
 		// never named, told from its twin by position under a named anchor. The anchor is this test's
@@ -1927,10 +1956,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// The survivor's Background is what tells them apart.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSlot(5)]
 	public async Task Removes_an_element_from_the_live_tree()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Two unnamed siblings in this test's own slot, and the second one goes. Built here rather than
 		// cut out of the app's markup: a removal is the edit that most needs to be nobody else's, since
@@ -1994,10 +2024,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// back off the running app, and so is the nested child it was given.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicOwnApp]
 	public async Task Adds_removes_and_retypes_in_one_apply()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
 		var aumid = lease.Aumid;
 
 		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
@@ -2025,7 +2056,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			.Replace("Text=\"ticks: 0\"", "Text=\"ticks: 0\" Opacity=\"0.5\"");
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		try
 		{
 			var session = await manager.StartAsync(
@@ -2089,10 +2120,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// property chain under the same spelling the markup used is a fact about the framework and had
 	/// never been asked.
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicOwnApp]
 	public async Task Sets_an_attached_property_on_the_live_tree()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
 		var aumid = lease.Aumid;
 
 		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
@@ -2102,7 +2134,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		var newXaml = oldXaml.Replace("Grid.Row=\"0\"", "Grid.Row=\"1\"");
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		try
 		{
 			var session = await manager.StartAsync(
@@ -2160,10 +2192,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// with <c>ThemeResource</c>, the form that re-evaluates.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSession]
 	public async Task Replaces_a_keyed_resource_on_the_live_tree()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
 		// and has no owner smaller than the app. The turn checks on the way out that the app was
@@ -2241,10 +2274,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// read that file expecting what is checked in.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicOwnApp]
 	public async Task Applies_successive_file_edits_to_the_running_app()
 	{
-		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current.CancellationToken);
+		using var lease = await probe.LeaseAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
 		var aumid = lease.Aumid;
 
 		var sourcePath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
@@ -2252,7 +2286,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		var editable = Path.Combine(Path.GetTempPath(), $"rose-reload-{Guid.NewGuid():N}.xaml");
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		try
 		{
 			var target = new LiveAppTarget
@@ -2354,10 +2388,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// the two want different content in the one request file.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSession]
 	public async Task Serves_two_xaml_calls_in_flight_together()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
 		// and has no owner smaller than the app. The turn checks on the way out that the app was
@@ -2445,10 +2480,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// exists to verify, since an applied property need not have appeared in the first read.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSlot(6)]
 	public async Task A_second_properties_read_reports_what_reading_the_first_created()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase C, and the awkward one. The whole assertion is about what the *first* properties read
 		// of an element returns, so it needs an element nothing has read -- and there are two ways to
@@ -2534,10 +2570,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// empty rather than stale or invented -- the click is a human action, so this stops at the armed
 	/// state rather than driving the mouse on a live desktop.
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSession]
 	public async Task Arms_interactive_select_mode_on_the_classic_uwp_probe()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
 		// and has no owner smaller than the app. The turn checks on the way out that the app was
@@ -2619,10 +2656,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// Skips where the UWP or C++ toolchain is absent.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSession]
 	public async Task Selects_a_xaml_element_by_handle_without_a_click()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
 		// and has no owner smaller than the app. The turn checks on the way out that the app was
@@ -2671,10 +2709,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// A handle that names something real but not an element -- a Brush has one too -- is refused with
 	/// a sentence rather than drawing an outline round nothing.
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSession]
 	public async Task Refuses_to_select_a_handle_that_is_not_an_element()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
 		// and has no owner smaller than the app. The turn checks on the way out that the app was
@@ -2713,10 +2752,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// Testable at all only because of #46: a click is a human action, and this suite cannot make one.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicSession]
 	public async Task Clears_a_selection_whose_element_leaves_the_tree()
 	{
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
 		// and has no owner smaller than the app. The turn checks on the way out that the app was
@@ -2779,11 +2819,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>A target that has already gone is reported faulted, not thrown.</summary>
-	[Fact]
+	[Test]
 	public async Task Reports_a_missing_target_as_faulted()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		// A process id that is essentially certain not to exist.
 		var target = new LiveAppTarget
@@ -2799,15 +2839,168 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>
+	/// A XAML request against a target this session is holding is refused, immediately and by name,
+	/// rather than spending the endpoint's whole budget failing.
+	/// </summary>
+	/// <remarks>
+	/// The endpoint is created by the target's own UI thread, and InitializeXamlDiagnosticsEx does not
+	/// return until that thread has sited the tap -- so a stopped target cannot serve a XAML request at
+	/// all. Before this was checked, the two bounds decided the outcome between them: the endpoint gets
+	/// twenty seconds and a held target releases itself after thirty, so the request always expired
+	/// first and then reported that the app was still starting or had no XAML UI. Both are false of an
+	/// app that is stopped, and one of them is false of any app with a window.
+	/// <para>
+	/// It launches its own app rather than taking the shared one, because a target held at a breakpoint
+	/// is app-global state with no smaller owner, and a test that failed between the stop and the
+	/// resume would hand on an app that answers nothing.
+	/// </para>
+	/// </remarks>
+	[Test]
+	[ClassicOwnApp]
+	public async Task Refuses_a_xaml_request_while_the_target_is_stopped()
+	{
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
+		var aumid = turn.Aumid;
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = aumid,
+					Description = "uwp probe",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// The timer tick, which the probe runs forever, so the breakpoint is certain to be hit.
+			var breakpoint = await session.SetBreakpointAsync(
+				"Rose.ProbeApp.UwpClassic!Rose.ProbeApp.UwpClassic.MainPage.Tick",
+				autoContinueSeconds: null,
+				condition: null,
+				cancellationToken);
+
+			Assert.True(breakpoint.Bound, $"the breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(stop);
+
+			var refused = Stopwatch.StartNew();
+			var whileStopped = await session.ReadXamlTreeAsync(cancellationToken);
+			refused.Stop();
+
+			Assert.Empty(whileStopped.Nodes);
+			Assert.NotNull(whileStopped.Detail);
+			Assert.Contains("stopped", whileStopped.Detail!);
+
+			// The number that matters: refused rather than waited out. The endpoint's own bound is twenty
+			// seconds, so anything in that region means the guard did not fire and the old failure is back.
+			Assert.True(
+				refused.Elapsed < TimeSpan.FromSeconds(5),
+				$"expected an immediate refusal, not a wait for the endpoint; took {refused.Elapsed.TotalSeconds:0.0}s");
+
+			// And the guard is not a one-way door: resumed, the same read works.
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			Assert.True(await session.ContinueAsync(cancellationToken));
+
+			var afterResume = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(
+				afterResume.Detail is null,
+				$"expected a tree once the target was resumed, got detail: {afterResume.Detail}");
+			Assert.NotEmpty(afterResume.Nodes);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			probe.StopApp();
+		}
+	}
+
+	/// <summary>
+	/// A XAML failure carries the target's own heartbeat, which is what separates a target that is not
+	/// answering from a target that is not running.
+	/// </summary>
+	/// <remarks>
+	/// The two are indistinguishable from outside the process and easy to confuse for a long time. A
+	/// UWP app frozen by PLM -- which is what happens to a backgrounded app whose package has no debug
+	/// mode, and a detach removes debug mode -- stops all its threads through a job object without
+	/// marking any of them suspended, so its CPU time, its thread states and its unresponsive window
+	/// all look exactly like an app that is running and wedged. The debug events stopping is the one
+	/// difference, so their age is reported beside every XAML failure.
+	/// <para>
+	/// An ordinary .NET target is the honest way to test it: it has no XAML at all, so the endpoint
+	/// genuinely never appears, and it throws on a loop, so it is demonstrably executing while we wait.
+	/// That is the combination the message has to describe correctly -- not answering, but alive.
+	/// </para>
+	/// </remarks>
+	[Test]
+	public async Task A_xaml_failure_reports_how_long_ago_the_target_last_ran()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "probe target",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// Let the target throw at least once, so there is a heartbeat to report.
+			var beat = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance,
+				cancellationToken);
+			Assert.NotNull(beat);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.Empty(tree.Nodes);
+			Assert.NotNull(tree.Detail);
+			Assert.Contains("last debug event", tree.Detail!);
+
+			// The number, not just the sentence. An event inside the endpoint's own budget proves the
+			// target was executing throughout the wait that just failed -- which is the whole distinction
+			// this exists to draw, and the bound is that budget rather than a figure picked here.
+			var match = System.Text.RegularExpressions.Regex.Match(tree.Detail!, @"was (\d+(?:\.\d+)?)s ago");
+			Assert.True(match.Success, $"the detail should quote the heartbeat's age; got: {tree.Detail}");
+
+			var age = double.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+			Assert.InRange(age, 0, 20);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// A stopping breakpoint (issue #6): set at a method by name, it holds the target on hit and
 	/// records the stop with its stack; continuing resumes it, and detach leaves it running. This is
 	/// the interactive counterpart to a tracepoint.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Stopping_breakpoint_holds_the_target_and_continue_resumes_it()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -2870,11 +3063,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// held once the condition holds. The probe increments its argument each loop, so a condition on a
 	/// value well beyond the count reached by attach time proves the earlier hits were skipped.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Conditional_breakpoint_stops_only_when_the_condition_holds()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -2921,11 +3114,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// into the argument's object graph -- <c>state.Label</c> and <c>state.Inner.Count</c> -- reading
 	/// fields directly, no debuggee code run. A missing field is a clean error, not a throw.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Evaluates_a_field_access_expression_at_a_stop()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -2979,11 +3172,11 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// Stepping (issue #6): once held at a breakpoint, a step resumes the target briefly and holds it
 	/// again at the next location, which arrives as a StepComplete event with a fresh stack.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Step_from_a_stop_lands_a_step_complete_with_a_stack()
 	{
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		using var child = StartProbeTarget();
 		try
@@ -3089,7 +3282,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		{
 			if (child.HasExited)
 			{
-				Assert.Skip(
+				Skip.Test(
 					$"The probe app exited with code {child.ExitCode} before it could be attached to, which on WinUI "
 						+ "is usually the Windows App Runtime failing to bootstrap.");
 			}
@@ -3101,7 +3294,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
 		}
 
-		Assert.Skip("The probe app did not open a window within 30 seconds.");
+		Skip.Test("The probe app did not open a window within 30 seconds.");
 	}
 
 	private static string ProbeTargetPath()
@@ -3123,14 +3316,15 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	/// mid-life session where a from-birth one was asked for, which is the entire reason to launch.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
+	[ClassicOwnApp]
 	public async Task Refuses_to_launch_a_uwp_app_that_is_already_running()
 	{
-		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current.CancellationToken);
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: false, TestContext.Current!.Execution.CancellationToken);
 		var aumid = turn.Aumid;
 
 		await using var manager = CreateManager();
-		var cancellationToken = TestContext.Current.CancellationToken;
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		try
 		{
 			// Started outside the debugger, the way a person would: shell:AppsFolder is how a packaged
@@ -3142,7 +3336,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 			if (!await WaitForProbeProcessAsync(cancellationToken))
 			{
-				Assert.Skip("The UWP probe app did not start outside the debugger.");
+				Skip.Test("The UWP probe app did not start outside the debugger.");
 			}
 
 			var session = await manager.StartAsync(

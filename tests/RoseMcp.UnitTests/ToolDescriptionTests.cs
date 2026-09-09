@@ -19,7 +19,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class ToolDescriptionTests
 {
-	[Fact]
+	[Test]
 	public void The_two_hosts_describe_every_shared_tool_identically()
 	{
 		var broker = Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);
@@ -40,7 +40,7 @@ public sealed class ToolDescriptionTests
 	/// A one-liner naming the operation is the shape a description takes when nobody asked what the
 	/// caller would otherwise have done instead.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Every_tool_says_more_than_its_own_name()
 	{
 		foreach (var (name, description) in Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly))
@@ -55,30 +55,30 @@ public sealed class ToolDescriptionTests
 	/// otherwise reach for something that quietly does not work, and the description is the only
 	/// place that can say so before the choice is made.
 	/// </summary>
-	[Theory]
-	[InlineData(ToolNames.FindReferences, "text search")]
-	[InlineData(ToolNames.FindImplementations, "Grep cannot")]
-	[InlineData(ToolNames.RenameSymbol, "find-and-replace")]
-	[InlineData(ToolNames.MoveMember, "rather than adding it to the new type")]
-	[InlineData(ToolNames.MoveTypeToFile, "rather than reading a file and writing two")]
-	[InlineData(ToolNames.FormatDocuments, "by any other means")]
-	[InlineData(ToolNames.ApplyCodeFix, "rather than editing each occurrence")]
-	[InlineData(ToolNames.ReplaceDocComment, "rather than rose_replace_member or a text edit")]
-	[InlineData(ToolNames.SetAttribute, "rather than splicing text into the brackets")]
-	[InlineData(ToolNames.ReplaceMember, "instead of a text edit")]
-	[InlineData(ToolNames.ReplaceBody, "rather than a line-range edit")]
-	[InlineData(ToolNames.AddFile, "rather than writing the file")]
-	[InlineData(ToolNames.DeleteMember, "rather than cutting a line range")]
-	[InlineData(ToolNames.Outline, "instead of reading the file")]
-	[InlineData(ToolNames.ProjectGraph, "nothing else does")]
-	[InlineData(ToolNames.AddMember, "rather than finding the closing brace")]
-	[InlineData(ToolNames.ChangeSignature, "an edit per layer")]
-	[InlineData(ToolNames.Diagnostics, "in place of building after every change")]
-	[InlineData(ToolNames.ListGeneratedDocuments, "no file search")]
-	[InlineData(ToolNames.ReadGeneratedDocument, "no other way")]
-	[InlineData(ToolNames.BuildFreshness, "a green build")]
-	[InlineData(ToolNames.AddUsing, "rather than editing the import block")]
-	[InlineData(ToolNames.ResolveName, "not reachable through rose_apply_code_fix")]
+	[Test]
+	[Arguments(ToolNames.FindReferences, "text search")]
+	[Arguments(ToolNames.FindImplementations, "Grep cannot")]
+	[Arguments(ToolNames.RenameSymbol, "find-and-replace")]
+	[Arguments(ToolNames.MoveMember, "rather than adding it to the new type")]
+	[Arguments(ToolNames.MoveTypeToFile, "rather than reading a file and writing two")]
+	[Arguments(ToolNames.FormatDocuments, "by any other means")]
+	[Arguments(ToolNames.ApplyCodeFix, "rather than editing each occurrence")]
+	[Arguments(ToolNames.ReplaceDocComment, "rather than rose_replace_member or a text edit")]
+	[Arguments(ToolNames.SetAttribute, "rather than splicing text into the brackets")]
+	[Arguments(ToolNames.ReplaceMember, "instead of a text edit")]
+	[Arguments(ToolNames.ReplaceBody, "rather than a line-range edit")]
+	[Arguments(ToolNames.AddFile, "rather than writing the file")]
+	[Arguments(ToolNames.DeleteMember, "rather than cutting a line range")]
+	[Arguments(ToolNames.Outline, "instead of reading the file")]
+	[Arguments(ToolNames.ProjectGraph, "nothing else does")]
+	[Arguments(ToolNames.AddMember, "rather than finding the closing brace")]
+	[Arguments(ToolNames.ChangeSignature, "an edit per layer")]
+	[Arguments(ToolNames.Diagnostics, "in place of building after every change")]
+	[Arguments(ToolNames.ListGeneratedDocuments, "no file search")]
+	[Arguments(ToolNames.ReadGeneratedDocument, "no other way")]
+	[Arguments(ToolNames.BuildFreshness, "a green build")]
+	[Arguments(ToolNames.AddUsing, "rather than editing the import block")]
+	[Arguments(ToolNames.ResolveName, "not reachable through rose_apply_code_fix")]
 	public void Says_what_the_caller_would_otherwise_have_done(string tool, string expected)
 	{
 		var descriptions = Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);
@@ -91,7 +91,7 @@ public sealed class ToolDescriptionTests
 	/// configuration it does not declare resolves no references, and every file reports that
 	/// System.Object is missing. Status is where that has to be findable.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Status_points_at_the_configuration_when_everything_looks_broken()
 	{
 		var status = Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly)[ToolNames.WorkspaceStatus];
@@ -107,7 +107,7 @@ public sealed class ToolDescriptionTests
 	/// accepted was stated only on the side no client can see. Order as well as names, because the
 	/// worker is also driven standalone by an MCP client.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void The_two_hosts_declare_the_same_arguments_for_every_shared_tool()
 	{
 		var broker = Parameters(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);
@@ -172,7 +172,7 @@ public sealed class ToolDescriptionTests
 	/// since the next tool to return a list will be written by someone who has not read this.
 	/// </para>
 	/// </summary>
-	[Fact]
+	[Test]
 	public void No_tool_returns_a_bare_collection()
 	{
 		foreach (var (name, returnType) in ReturnTypes(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly))
@@ -185,7 +185,7 @@ public sealed class ToolDescriptionTests
 	}
 
 	/// <summary>The worker's tools travel the same channel to the broker, so they answer to it too.</summary>
-	[Fact]
+	[Test]
 	public void No_worker_tool_returns_a_bare_collection()
 	{
 		foreach (var (name, returnType) in ReturnTypes(typeof(WorkspaceHost).Assembly))

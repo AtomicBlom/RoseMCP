@@ -11,7 +11,7 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class MoveTypeTests
 {
-	[Fact]
+	[Test]
 	public async Task Moves_a_type_into_a_file_named_after_it()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -25,7 +25,7 @@ public sealed class MoveTypeTests
 		Assert.True(result.Applied);
 		Assert.True(File.Exists(target), $"{target} was not written");
 
-		var moved = await File.ReadAllTextAsync(target, TestContext.Current.CancellationToken);
+		var moved = await File.ReadAllTextAsync(target, TestContext.Current!.Execution.CancellationToken);
 
 		// The namespace and the declaration, and the doc comment that belongs to it.
 		Assert.Contains("namespace Shapes;", moved, StringComparison.Ordinal);
@@ -41,7 +41,7 @@ public sealed class MoveTypeTests
 	/// The using went across with the type that needed it and left the file that no longer does.
 	/// Getting this wrong in either direction is a build error where the analyzers are turned up.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Moves_the_using_the_type_needed_and_drops_it_from_the_file_it_left()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -50,9 +50,9 @@ public sealed class MoveTypeTests
 		var result = await MoveAsync(session, fixture, "Circle");
 
 		var moved = await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Circle.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("MultiType", "Shapes", "Circle.cs"), TestContext.Current!.Execution.CancellationToken);
 		var remaining = await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("using System.Globalization;", moved, StringComparison.Ordinal);
 		Assert.DoesNotContain("using System.Globalization;", remaining, StringComparison.Ordinal);
@@ -67,7 +67,7 @@ public sealed class MoveTypeTests
 	/// Tabs, CRLF and the blank line between members, all as the fixture wrote them. A move that
 	/// reformats is a move nobody can review.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Keeps_the_formatting_it_found()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -76,9 +76,9 @@ public sealed class MoveTypeTests
 		await MoveAsync(session, fixture, "Circle");
 
 		var moved = await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Circle.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("MultiType", "Shapes", "Circle.cs"), TestContext.Current!.Execution.CancellationToken);
 		var remaining = await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("\r\n", moved, StringComparison.Ordinal);
 		Assert.DoesNotContain("\n\n", moved.Replace("\r\n", "\n").Replace("\n\n", "<blank>"), StringComparison.Ordinal);
@@ -94,7 +94,7 @@ public sealed class MoveTypeTests
 	/// The point of doing this with a compiler rather than a text editor: both halves still compile,
 	/// and everything that used the moved type still binds to it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Leaves_the_solution_compiling()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -113,7 +113,7 @@ public sealed class MoveTypeTests
 	/// it is invisible until something forces a reload -- the exact staleness this server exists to
 	/// avoid.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Watches_the_file_it_created_for_later_edits()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -122,32 +122,32 @@ public sealed class MoveTypeTests
 		await MoveAsync(session, fixture, "Circle");
 
 		var target = fixture.Path("MultiType", "Shapes", "Circle.cs");
-		var text = await File.ReadAllTextAsync(target, TestContext.Current.CancellationToken);
+		var text = await File.ReadAllTextAsync(target, TestContext.Current!.Execution.CancellationToken);
 
 		// Edited behind the workspace's back, exactly as an agent's own file tools would.
 		await File.WriteAllTextAsync(
-			target, text.Replace("Math.PI", "Math.Pie", StringComparison.Ordinal), TestContext.Current.CancellationToken);
+			target, text.Replace("Math.PI", "Math.Pie", StringComparison.Ordinal), TestContext.Current!.Execution.CancellationToken);
 
 		var diagnostics = await DiagnoseAsync(session);
 
 		Assert.Contains(diagnostics.Diagnostics, diagnostic => diagnostic.Id == "CS0117");
 	}
 
-	[Fact]
+	[Test]
 	public async Task Writes_nothing_when_previewing()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var before = await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		var result = await MoveAsync(session, fixture, "Circle", apply: false);
 
 		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.False(File.Exists(fixture.Path("MultiType", "Shapes", "Circle.cs")));
 		Assert.Equal(before, await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current.CancellationToken));
+			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken));
 
 		// The diff still describes both halves of the move that did not happen.
 		Assert.Contains("+++ ", result.Diff, StringComparison.Ordinal);
@@ -159,7 +159,7 @@ public sealed class MoveTypeTests
 	/// Moving the last type out would leave a file holding nothing but usings. Deleting files is a
 	/// bigger hammer than a move should reach for, so this says what was meant instead.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Refuses_to_empty_a_file()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -172,7 +172,7 @@ public sealed class MoveTypeTests
 		Assert.Contains("Rename the file", error.Message, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Refuses_to_write_over_a_file_that_exists()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -188,7 +188,7 @@ public sealed class MoveTypeTests
 	/// The names in the file, when the one asked for is not among them. A caller that mistyped a
 	/// name can fix it from the message rather than reading the file again.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Says_what_the_file_declares_when_the_type_is_not_there()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -207,7 +207,7 @@ public sealed class MoveTypeTests
 	/// with the gap where the import used to be, and the file the type moved into starts with the
 	/// gaps where somebody else's imports were -- which here is a build error, not an untidiness.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Closes_the_gap_a_removed_using_leaves()
 	{
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
@@ -216,9 +216,9 @@ public sealed class MoveTypeTests
 		await MoveAsync(session, fixture, "Circle");
 
 		var moved = await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Circle.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("MultiType", "Shapes", "Circle.cs"), TestContext.Current!.Execution.CancellationToken);
 		var remaining = await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current.CancellationToken);
+			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		// The type that needed the import took it, and kept it at the top where it belongs.
 		Assert.StartsWith("using System.Globalization;\r\n\r\nnamespace Shapes;", moved, StringComparison.Ordinal);
@@ -247,14 +247,14 @@ public sealed class MoveTypeTests
 
 		return session.MutateAsync(
 			(snapshot, token) => MoveTypeService.MoveAsync(snapshot, request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 
 	private static async Task<DiagnosticsResult> DiagnoseAsync(WorkspaceSession session)
 	{
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		return await new DiagnosticsService(NullLogger<DiagnosticsService>.Instance).AnalyseAsync(
-			snapshot, new DiagnosticsRequest(), TestContext.Current.CancellationToken);
+			snapshot, new DiagnosticsRequest(), TestContext.Current!.Execution.CancellationToken);
 	}
 }

@@ -61,7 +61,7 @@ public sealed class WinUiXamlStubTests
 		}
 		""";
 
-	[Fact]
+	[Test]
 	public void Recognises_a_winui_project_by_the_types_it_references()
 	{
 		var document = XamlDocumentReader.Read("Widget.xaml", """
@@ -80,7 +80,7 @@ public sealed class WinUiXamlStubTests
 	/// The shape of RoseMcp.Tray's MainWindow.g.i.cs: a Window base reached through the root
 	/// namespace, private fields, and a third-party control named through a using: prefix.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Declares_the_base_type_and_a_private_field_for_every_named_element()
 	{
 		var markup = """
@@ -130,7 +130,7 @@ public sealed class WinUiXamlStubTests
 	/// it would be a field of a type the markup never names, and WPF's own docstring records what
 	/// the other mistake costs.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Types_a_named_root_element_as_the_element_the_markup_writes()
 	{
 		var markup = """
@@ -156,7 +156,7 @@ public sealed class WinUiXamlStubTests
 	/// writes the implementing half is CS0759 without one, and its parameter is typed in this
 	/// dialect's own root namespace.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Declares_the_unload_hook_the_markup_compiler_would_have()
 	{
 		var emission = Emit(
@@ -181,7 +181,7 @@ public sealed class WinUiXamlStubTests
 	/// and got neither. Emitting it unconditionally would put a member on classes the real generator
 	/// leaves alone.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Declares_the_compiled_binding_members_only_where_the_markup_binds()
 	{
 		var withBind = Emit(
@@ -216,7 +216,7 @@ public sealed class WinUiXamlStubTests
 	/// which satisfies the compiler equally and keeps the emitter to one generated type per file.
 	/// Nothing hand-written calls either.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Gives_an_application_definition_the_entry_point_its_markup_compiler_would_have()
 	{
 		var emission = Emit(
@@ -238,7 +238,7 @@ public sealed class WinUiXamlStubTests
 	/// reachable from the class itself, which is the difference from the WPF version of this test
 	/// and the reason that one reads a field from a second class and this one does not.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_a_compilation_that_binds_and_reports_nothing()
 	{
 		var markup = """
@@ -287,7 +287,7 @@ public sealed class WinUiXamlStubTests
 		var complete = Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework, behind, emission.Source);
 
 		Assert.Empty(complete
-			.GetDiagnostics(TestContext.Current.CancellationToken)
+			.GetDiagnostics(TestContext.Current!.Execution.CancellationToken)
 			.Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
 	}
 

@@ -6,16 +6,16 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class GeneratedDocumentTests
 {
-	[Fact]
+	[Test]
 	public async Task Lists_and_reads_documents_the_generator_produced()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
 		fixture.Build("WithGenerator", "Gen", "Gen.csproj");
 
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var list = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current.CancellationToken);
+		var list = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(
 			["GreetableAttribute.g.cs", "Widget.Greeting.g.cs"],
@@ -29,13 +29,13 @@ public sealed class GeneratedDocumentTests
 				"generated code has no file on disk to open"));
 
 		var content = await GeneratedDocumentService.ReadAsync(
-			snapshot, "Widget.Greeting.g.cs", null, TestContext.Current.CancellationToken);
+			snapshot, "Widget.Greeting.g.cs", null, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("public string Greet()", content.Text, StringComparison.Ordinal);
 		Assert.Contains("from a source generator", content.Text, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Reflects_a_change_to_generator_input_without_a_reload()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -44,54 +44,54 @@ public sealed class GeneratedDocumentTests
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var before = await GeneratedDocumentService.ReadAsync(
-			await session.ReadAsync(TestContext.Current.CancellationToken),
+			await session.ReadAsync(TestContext.Current!.Execution.CancellationToken),
 			"Widget.Greeting.g.cs",
 			null,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("Hello,", before.Text, StringComparison.Ordinal);
 
 		// Change the attribute argument the generator reads, out of band.
 		var widget = fixture.Path("WithGenerator", "Consumer", "Widget.cs");
-		var source = await File.ReadAllTextAsync(widget, TestContext.Current.CancellationToken);
+		var source = await File.ReadAllTextAsync(widget, TestContext.Current!.Execution.CancellationToken);
 		await File.WriteAllTextAsync(
 			widget, source.Replace("[Greetable(\"Hello\")]", "[Greetable(\"Goodbye\")]"),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		var after = await GeneratedDocumentService.ReadAsync(
-			await session.ReadAsync(TestContext.Current.CancellationToken),
+			await session.ReadAsync(TestContext.Current!.Execution.CancellationToken),
 			"Widget.Greeting.g.cs",
 			null,
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("Goodbye,", after.Text, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Explains_itself_when_the_hint_name_is_wrong()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
 		fixture.Build("WithGenerator", "Gen", "Gen.csproj");
 
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Assert.ThrowsAsync<ArgumentException>(
-			() => GeneratedDocumentService.ReadAsync(snapshot, "Nope.g.cs", null, TestContext.Current.CancellationToken));
+			() => GeneratedDocumentService.ReadAsync(snapshot, "Nope.g.cs", null, TestContext.Current!.Execution.CancellationToken));
 
 		// A bare "not found" would leave the caller guessing at the naming convention.
 		Assert.Contains("Widget.Greeting.g.cs", error.Message, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Says_why_the_list_is_empty_when_the_generator_is_not_built()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
 
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var list = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current.CancellationToken);
+		var list = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Empty(list.Documents);
 		Assert.Contains(list.Notices, notice => notice.Contains("rose_workspace_status", StringComparison.Ordinal));

@@ -36,14 +36,6 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 	/// <summary>The layout's executable, which is also its process name -- what <see cref="StopApp"/> kills.</summary>
 	private const string ProcessName = "Rose.ProbeApp.UwpModern";
 
-	/// <summary>
-	/// One modern UWP test at a time. The app is single-instance, and activating it while an instance
-	/// is running foregrounds that instance rather than launching a process -- so a from-birth
-	/// debugger would wait for a startup that never comes, which is the failure
-	/// <c>Uwp.FindRunningProcesses</c> exists to explain.
-	/// </summary>
-	private readonly SemaphoreSlim _oneAtATime = new(1, 1);
-
 	private readonly Lock _gate = new();
 
 	private bool _builtProbed;
@@ -54,31 +46,31 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 	private string? _aumid;
 
 	/// <summary>
-	/// Takes the modern UWP probe for one test: waits its turn, makes sure everything it needs is
-	/// built and registered, and hands back the AUMID. Skips the calling test where the machine cannot
-	/// provide it.
+	/// Takes the modern UWP probe for one test: makes sure everything it needs is built and
+	/// registered, and hands back the AUMID. Skips the calling test where the machine cannot provide
+	/// it.
+	/// <para>
+	/// One test at a time, but not because of anything here. The app is single-instance, and activating
+	/// it while an instance is running foregrounds that instance rather than launching a process -- so a
+	/// from-birth debugger would wait for a startup that never comes, which is the failure
+	/// <c>Uwp.FindRunningProcesses</c> exists to explain. A caller declares <c>[ModernUwpProbe]</c>, a
+	/// constraint key nothing else holds, which serialises these tests and leaves them free to run
+	/// alongside the other two probes.
+	/// </para>
 	/// </summary>
 	/// <param name="needsXamlProvider">
 	/// True for the tests that go on to read the visual tree, which need the native provider as well
 	/// as the app. False for those that only launch and debug it, so a machine with the .NET SDK and
 	/// the Windows SDK but no C++ toolset still runs those.
 	/// </param>
-	/// <param name="cancellationToken">Cancels waiting for the turn.</param>
+	/// <param name="cancellationToken">Observed before any building starts.</param>
 	public async Task<Turn> TakeAsync(bool needsXamlProvider, CancellationToken cancellationToken)
 	{
-		await _oneAtATime.WaitAsync(cancellationToken);
+		await Task.Yield();
+		cancellationToken.ThrowIfCancellationRequested();
 
-		try
-		{
-			var (directory, aumid) = Prepare(needsXamlProvider);
-			return new Turn(this, directory, aumid);
-		}
-		catch
-		{
-			// A skip throws, and a turn nobody holds must not be left locked (#113).
-			_oneAtATime.Release();
-			throw;
-		}
+		var (directory, aumid) = Prepare(needsXamlProvider);
+		return new Turn(directory, aumid);
 	}
 
 	private (string Directory, string Aumid) Prepare(bool needsXamlProvider)
@@ -87,7 +79,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 		{
 			if (needsXamlProvider && !ProviderBuilt())
 			{
-				Assert.Skip("The UWP XAML provider could not be built (no C++ toolset, or no Windows SDK).");
+				Skip.Test("The UWP XAML provider could not be built (no C++ toolset, or no Windows SDK).");
 			}
 
 			// A modern UWP app runs as whatever it was built for, so the host matches it. On x64 that is
@@ -102,7 +94,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 
 			if (_built is null)
 			{
-				Assert.Skip(
+				Skip.Test(
 					"The modern UWP probe app could not be built: it needs full MSBuild from a Visual Studio "
 						+ "install and the Windows SDK's XAML compiler, which dotnet build cannot substitute for.");
 			}
@@ -113,7 +105,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 				_aumid = Register(_built!);
 			}
 
-			if (_aumid is null) Assert.Skip("The modern UWP probe app could not be registered (developer mode may be off).");
+			if (_aumid is null) Skip.Test("The modern UWP probe app could not be registered (developer mode may be off).");
 
 			return (_built!, _aumid!);
 		}
@@ -278,7 +270,7 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 	/// <summary>
 	/// One test's turn with the probe. It ends with the app closed, whether the test closed it or not.
 	/// </summary>
-	public sealed class Turn(UwpModernProbeApp probe, string directory, string aumid) : IDisposable
+	public sealed class Turn(string directory, string aumid) : IDisposable
 	{
 		/// <summary>Where the app was built, which is also the registered layout.</summary>
 		public string Directory => directory;
@@ -288,7 +280,6 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 		public void Dispose()
 		{
 			StopApp();
-			probe._oneAtATime.Release();
 		}
 	}
 

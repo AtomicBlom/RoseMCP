@@ -6,7 +6,7 @@ namespace RoseMcp.UnitTests;
 
 public sealed class BuildPropertiesTests
 {
-	[Fact]
+	[Test]
 	public void Leaves_msbuild_alone_when_the_solution_declares_nothing()
 	{
 		var build = BuildProperties.Select(Options(), SolutionConfigurations.None);
@@ -17,7 +17,7 @@ public sealed class BuildPropertiesTests
 		Assert.Null(build.Notice);
 	}
 
-	[Fact]
+	[Test]
 	public void Leaves_msbuild_alone_when_the_solution_declares_the_defaults()
 	{
 		var declared = new SolutionConfigurations
@@ -38,7 +38,7 @@ public sealed class BuildPropertiesTests
 	/// silent: the projects load, and only the in-solution references quietly fail to resolve. Nothing
 	/// downstream can say so unless it knows the value was a guess.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Records_that_a_platform_was_chosen_rather_than_asked_for()
 	{
 		var declared = new SolutionConfigurations
@@ -52,7 +52,7 @@ public sealed class BuildPropertiesTests
 		Assert.True(build.PlatformWasChosen);
 	}
 
-	[Fact]
+	[Test]
 	public void Does_not_call_a_platform_chosen_when_the_caller_named_it()
 	{
 		var declared = new SolutionConfigurations
@@ -72,7 +72,7 @@ public sealed class BuildPropertiesTests
 	/// Nor when there was nothing to choose. A solution declaring AnyCPU leaves MSBuild's default
 	/// alone, and a default is not a guess.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Does_not_call_msbuilds_own_default_a_chosen_platform()
 	{
 		var build = BuildProperties.Select(Options(), SolutionConfigurations.None);
@@ -85,7 +85,7 @@ public sealed class BuildPropertiesTests
 	/// not fail. Every project reports loaded, because each resolved the framework; what they did not
 	/// resolve is each other. The unresolved paths are the only evidence there is.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Suspects_the_platform_it_chose_when_the_unresolved_paths_are_under_it()
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
@@ -108,7 +108,7 @@ public sealed class BuildPropertiesTests
 	/// A caller who named the platform has already decided. Telling them their own answer looks wrong
 	/// is a different and much noisier thing, and this is a degraded reason -- it has to stay rare.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Says_nothing_about_a_platform_the_caller_asked_for()
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]) with { PlatformWasChosen = false };
@@ -120,7 +120,7 @@ public sealed class BuildPropertiesTests
 	/// The choice being right is the ordinary case, and it must be silent: a solution that declares
 	/// only ARM64 on an ARM64 machine with everything built is not degraded.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Says_nothing_when_no_unresolved_path_is_under_the_chosen_platform()
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
@@ -133,7 +133,7 @@ public sealed class BuildPropertiesTests
 	}
 
 	/// <summary>Posix separators too, so this reads the same on Linux.</summary>
-	[Fact]
+	[Test]
 	public void Recognises_the_chosen_platform_in_a_posix_path()
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
@@ -145,7 +145,7 @@ public sealed class BuildPropertiesTests
 	/// A platform name appearing in prose is not a path under it. The suspicion is a degraded reason,
 	/// so a false one costs the word its meaning.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Does_not_take_the_platform_name_in_prose_for_an_output_path()
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
@@ -160,7 +160,7 @@ public sealed class BuildPropertiesTests
 		Available = new SolutionConfigurations { Platforms = declared },
 	};
 
-	[Fact]
+	[Test]
 	public void Picks_a_declared_configuration_when_the_solution_has_no_plain_Debug()
 	{
 		var declared = new SolutionConfigurations
@@ -188,7 +188,7 @@ public sealed class BuildPropertiesTests
 	/// so the wrong platform is survivable -- but it changes conditional compilation, and matching the
 	/// machine is what a person expects.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Prefers_this_machines_architecture_over_whatever_is_declared_first()
 	{
 		var host = RuntimeInformation.OSArchitecture.ToString();
@@ -209,7 +209,7 @@ public sealed class BuildPropertiesTests
 		Assert.NotEqual(listedFirst, build.Platform, StringComparer.OrdinalIgnoreCase);
 	}
 
-	[Fact]
+	[Test]
 	public void Falls_back_to_the_first_declared_platform_when_the_machines_is_not_offered()
 	{
 		var declared = new SolutionConfigurations { Configurations = ["Debug"], Platforms = ["Itanium", "MIPS"] };
@@ -219,7 +219,7 @@ public sealed class BuildPropertiesTests
 		Assert.Equal("Itanium", build.Platform);
 	}
 
-	[Fact]
+	[Test]
 	public void Honours_a_requested_configuration_the_solution_does_not_declare()
 	{
 		var declared = new SolutionConfigurations { Configurations = ["Debug-2024"], Platforms = ["x64"] };
@@ -232,7 +232,7 @@ public sealed class BuildPropertiesTests
 		Assert.Contains("not one this solution declares", build.Notice);
 	}
 
-	[Fact]
+	[Test]
 	public void Carries_pinned_properties_into_both_the_build_and_the_restore()
 	{
 		var options = new WorkerOptions
@@ -250,7 +250,7 @@ public sealed class BuildPropertiesTests
 		Assert.Contains("RevitVersion=2027", build.Describe());
 	}
 
-	[Fact]
+	[Test]
 	public void Takes_what_a_config_file_pins()
 	{
 		var pinned = new WorkspaceConfigFile
@@ -272,7 +272,7 @@ public sealed class BuildPropertiesTests
 		Assert.Contains("rosemcp.json", build.Notice);
 	}
 
-	[Fact]
+	[Test]
 	public void Prefers_what_was_asked_for_over_what_a_config_file_pins()
 	{
 		var pinned = new WorkspaceConfigFile
@@ -300,7 +300,7 @@ public sealed class BuildPropertiesTests
 		Assert.Equal("x64", build.Platform);
 	}
 
-	[Fact]
+	[Test]
 	public void Finds_a_config_file_beside_the_solution()
 	{
 		var root = Directory.CreateTempSubdirectory("rosemcp-config-");
@@ -326,7 +326,7 @@ public sealed class BuildPropertiesTests
 	/// installer solution declaring no build types at all. A file named after one of them must not
 	/// speak for the other.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Prefers_the_file_named_after_this_solution()
 	{
 		var root = Directory.CreateTempSubdirectory("rosemcp-config-");
@@ -356,7 +356,7 @@ public sealed class BuildPropertiesTests
 	/// solution rather than to a tree, so a file at a repository root would be a guess applied to
 	/// every solution beneath it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Ignores_a_config_file_above_the_solution()
 	{
 		var root = Directory.CreateTempSubdirectory("rosemcp-config-");
@@ -373,7 +373,7 @@ public sealed class BuildPropertiesTests
 		}
 	}
 
-	[Fact]
+	[Test]
 	public void Treats_an_unreadable_config_file_as_absent()
 	{
 		var root = Directory.CreateTempSubdirectory("rosemcp-config-");

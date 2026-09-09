@@ -11,7 +11,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class SymbolAddressTests
 {
-	[Fact]
+	[Test]
 	public void Takes_the_last_segment_as_the_name()
 	{
 		var address = SymbolAddress.Parse("RoseMcp.Broker.LiveAppSession.ReadEventsAsync");
@@ -21,7 +21,7 @@ public sealed class SymbolAddressTests
 		Assert.Null(address.Parameters);
 	}
 
-	[Fact]
+	[Test]
 	public void Accepts_a_bare_name()
 	{
 		var address = SymbolAddress.Parse("ReadEventsAsync");
@@ -34,11 +34,11 @@ public sealed class SymbolAddressTests
 	/// Putting one together, which is the direction a result needs. What was reported before was the
 	/// reading format -- return type first, parameters named -- and none of it parsed back.
 	/// </summary>
-	[Theory]
-	[InlineData("Shop.Till", "Shop.Till")]
-	[InlineData("Shop.Till.Total", "Shop.Till.Total")]
-	[InlineData("Shop.Till.Ring", "Shop.Till.Ring(string, int)")]
-	[InlineData("Shop.Till.Wrap", "Shop.Till.Wrap()")]
+	[Test]
+	[Arguments("Shop.Till", "Shop.Till")]
+	[Arguments("Shop.Till.Total", "Shop.Till.Total")]
+	[Arguments("Shop.Till.Ring", "Shop.Till.Ring(string, int)")]
+	[Arguments("Shop.Till.Wrap", "Shop.Till.Wrap()")]
 	public void Spells_an_address_a_caller_can_write(string name, string expected) =>
 		Assert.Equal(expected, SymbolAddress.Of(Symbol(name)));
 
@@ -47,10 +47,10 @@ public sealed class SymbolAddressTests
 	/// matches to the symbol it came from. Asserting the round trip rather than the string is what
 	/// makes this a contract instead of a snapshot of a display format.
 	/// </summary>
-	[Theory]
-	[InlineData("Shop.Till.Ring")]
-	[InlineData("Shop.Till.Wrap")]
-	[InlineData("Shop.Till.Total")]
+	[Test]
+	[Arguments("Shop.Till.Ring")]
+	[Arguments("Shop.Till.Wrap")]
+	[Arguments("Shop.Till.Total")]
 	public void Reads_back_the_address_it_spelled(string name)
 	{
 		var symbol = Symbol(name);
@@ -65,7 +65,7 @@ public sealed class SymbolAddressTests
 	/// invite a call that cannot work: it is declared inside a member rather than as one, so no
 	/// declaration search could find it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Spells_no_address_for_something_nothing_can_name()
 	{
 		var method = (IMethodSymbol)Symbol("Shop.Till.Ring");
@@ -111,10 +111,10 @@ public sealed class SymbolAddressTests
 	/// Type arguments are dropped, so a caller does not have to know how the declaration spells its
 	/// type parameters to name a member of it.
 	/// </summary>
-	[Theory]
-	[InlineData("Cache<string>.Add")]
-	[InlineData("Cache<TKey, TValue>.Add")]
-	[InlineData("Outer<T>.Inner<U>.Add")]
+	[Test]
+	[Arguments("Cache<string>.Add")]
+	[Arguments("Cache<TKey, TValue>.Add")]
+	[Arguments("Outer<T>.Inner<U>.Add")]
 	public void Ignores_type_arguments(string requested)
 	{
 		var address = SymbolAddress.Parse(requested);
@@ -123,7 +123,7 @@ public sealed class SymbolAddressTests
 		Assert.DoesNotContain("<", string.Join(".", address.Path), StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Separates_a_parameter_list_from_the_name()
 	{
 		var address = SymbolAddress.Parse("Log.Write(string, int)");
@@ -137,7 +137,7 @@ public sealed class SymbolAddressTests
 	/// A generic parameter carries commas of its own, and splitting on those would turn one
 	/// parameter into two and match nothing.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Splits_only_the_commas_that_separate_parameters()
 	{
 		var address = SymbolAddress.Parse("Log.Write(Func<int, string>, IReadOnlyList<int[]>)");
@@ -149,29 +149,29 @@ public sealed class SymbolAddressTests
 	/// Empty parentheses are a constraint and their absence is not: one asks for the overload taking
 	/// nothing, the other asks for whichever there is.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Tells_no_parameters_apart_from_no_parameter_list()
 	{
 		Assert.Empty(SymbolAddress.Parse("Session.Close()").Parameters!);
 		Assert.Null(SymbolAddress.Parse("Session.Close").Parameters);
 	}
 
-	[Fact]
+	[Test]
 	public void Drops_a_global_alias()
 	{
 		Assert.Equal(["RoseMcp", "Worker", "Whitespace"], SymbolAddress.Parse("global::RoseMcp.Worker.Whitespace").Path);
 	}
 
-	[Theory]
-	[InlineData("")]
-	[InlineData("   ")]
-	[InlineData(".")]
+	[Test]
+	[Arguments("")]
+	[Arguments("   ")]
+	[Arguments(".")]
 	public void Refuses_a_name_that_names_nothing(string requested)
 	{
 		Assert.Throws<ArgumentException>(() => SymbolAddress.Parse(requested));
 	}
 
-	[Fact]
+	[Test]
 	public void Refuses_a_parameter_list_that_was_never_opened()
 	{
 		Assert.Throws<ArgumentException>(() => SymbolAddress.Parse("Log.Write string)"));
@@ -181,9 +181,9 @@ public sealed class SymbolAddressTests
 	/// Both constructor spellings, and both leaving the address pointing at the type, since that is
 	/// the name the constructor is declared under.
 	/// </summary>
-	[Theory]
-	[InlineData("RoseMcp.Worker.Whitespace.Whitespace")]
-	[InlineData("RoseMcp.Worker.Whitespace..ctor")]
+	[Test]
+	[Arguments("RoseMcp.Worker.Whitespace.Whitespace")]
+	[Arguments("RoseMcp.Worker.Whitespace..ctor")]
 	public void Reads_a_constructor_as_its_type(string requested)
 	{
 		var address = SymbolAddress.Parse(requested);
@@ -193,7 +193,7 @@ public sealed class SymbolAddressTests
 		Assert.Equal(["RoseMcp", "Worker", "Whitespace"], address.Path);
 	}
 
-	[Fact]
+	[Test]
 	public void Reads_a_static_constructor()
 	{
 		var address = SymbolAddress.Parse("RoseMcp.Worker.Whitespace..cctor");
@@ -206,7 +206,7 @@ public sealed class SymbolAddressTests
 	/// A parameter list picks the overload, and separating it happens before the constructor
 	/// spelling is read, so both halves of Type.Type(int) survive.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_the_parameter_list_of_a_constructor()
 	{
 		var address = SymbolAddress.Parse("LiveAppSessionTests.LiveAppSessionTests(UwpProbeApp, WinUiProbeApp)");
@@ -221,15 +221,15 @@ public sealed class SymbolAddressTests
 	/// path. Only the last two matching means one, because C# forbids a member sharing the name of
 	/// the type enclosing it.
 	/// </summary>
-	[Theory]
-	[InlineData("RoseMcp.Worker.Whitespace.Shift")]
-	[InlineData("Whitespace.Whitespace.Shift")]
+	[Test]
+	[Arguments("RoseMcp.Worker.Whitespace.Shift")]
+	[Arguments("Whitespace.Whitespace.Shift")]
 	public void Leaves_an_ordinary_member_alone(string requested)
 	{
 		Assert.Equal(ConstructorKind.None, SymbolAddress.Parse(requested).Constructor);
 	}
 
-	[Fact]
+	[Test]
 	public void Refuses_a_constructor_with_no_type()
 	{
 		Assert.Throws<ArgumentException>(() => SymbolAddress.Parse("..ctor"));

@@ -24,7 +24,7 @@ public sealed class CodeFixTests
 		}
 		""";
 
-	[Fact]
+	[Test]
 	public async Task Applies_a_fix_the_projects_own_analyzers_ship()
 	{
 		using var fixture = Prepare(out var path);
@@ -36,20 +36,20 @@ public sealed class CodeFixTests
 		Assert.True(result.Applied, string.Join(" ", result.Notices));
 		Assert.NotEmpty(result.FixTitle);
 
-		var fixedText = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var fixedText = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Contains("static int Value()", fixedText, StringComparison.Ordinal);
 	}
 
 	/// <summary>Document scope really is one document: the other file keeps its diagnostic.</summary>
-	[Fact]
+	[Test]
 	public async Task Fixes_every_occurrence_in_the_scope_asked_for()
 	{
 		using var fixture = Prepare(out var path);
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var result = await ApplyAsync(session, "CA1822", path);
-		var fixedText = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+		var fixedText = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		// Both members in the file, not just the one the fix started from.
 		Assert.Contains("static int Value()", fixedText, StringComparison.Ordinal);
@@ -57,7 +57,7 @@ public sealed class CodeFixTests
 		Assert.Equal([path], result.ChangedFiles);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Previews_without_writing()
 	{
 		using var fixture = Prepare(out var path);
@@ -67,10 +67,10 @@ public sealed class CodeFixTests
 
 		Assert.False(result.Applied, "a preview writes nothing");
 		Assert.NotEmpty(result.Diff);
-		Assert.Equal(Fixable, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
+		Assert.Equal(Fixable, await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken));
 	}
 
-	[Fact]
+	[Test]
 	public async Task Says_so_rather_than_failing_when_nothing_can_fix_the_id()
 	{
 		using var fixture = Prepare(out var path);
@@ -83,14 +83,14 @@ public sealed class CodeFixTests
 		Assert.NotEmpty(result.Notices);
 	}
 
-	[Fact]
+	[Test]
 	public async Task Lists_what_is_fixable_in_a_file()
 	{
 		using var fixture = Prepare(out var path);
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
-		var list = await CodeFixService.ListAsync(snapshot, Catalog(), path, TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var list = await CodeFixService.ListAsync(snapshot, Catalog(), path, TestContext.Current!.Execution.CancellationToken);
 
 		var fix = list.Fixes.FirstOrDefault(candidate => candidate.DiagnosticId == "CA1822");
 
@@ -106,7 +106,7 @@ public sealed class CodeFixTests
 	/// still the original file -- so loading from it would hold the user's own analyzer open for the
 	/// life of the worker, which is exactly what shadow copying exists to prevent.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Finds_fixers_without_locking_the_analyzer_it_read_them_from()
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
@@ -116,7 +116,7 @@ public sealed class CodeFixTests
 		var loader = new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance);
 
 		await using var session = await TestSession.OpenAsync(fixture, analyzerLoader: loader);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var catalog = new CodeFixCatalog(loader, NullLogger<CodeFixCatalog>.Instance);
 		var project = snapshot.Solution.Projects.First(candidate => candidate.Name == "Consumer");
@@ -133,12 +133,12 @@ public sealed class CodeFixTests
 	/// process, so GetTypes throws -- and 830 of its 831 types, including all 140 fixers, are in the
 	/// exception. Discarding that was hiding 112 IDE ids and 119 compiler ones.
 	/// </summary>
-	[Fact]
+	[Test]
 	public async Task Reaches_the_ide_fixes_that_ship_beside_the_code_style_analyzers()
 	{
 		using var fixture = Prepare(out _);
 		await using var session = await TestSession.OpenAsync(fixture);
-		var snapshot = await session.ReadAsync(TestContext.Current.CancellationToken);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var project = snapshot.Solution.Projects.First(candidate => candidate.Name == "Core");
 		var ids = Catalog().FixableIds(project);
@@ -182,6 +182,6 @@ public sealed class CodeFixTests
 		return session.MutateAsync(
 			(snapshot, token) => CodeFixService.ApplyAsync(
 				snapshot, Catalog(), request, session.NoteSelfWrite, token),
-			TestContext.Current.CancellationToken);
+			TestContext.Current!.Execution.CancellationToken);
 	}
 }

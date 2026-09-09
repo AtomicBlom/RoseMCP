@@ -11,7 +11,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class MemberSyntaxTests
 {
-	[Fact]
+	[Test]
 	public void Parses_the_members_the_code_declares()
 	{
 		var members = Parse("public int Count { get; set; }\n\npublic void Reset() => Count = 0;");
@@ -26,7 +26,7 @@ public sealed class MemberSyntaxTests
 	/// its own leaves a file that parses perfectly, with a type nobody asked for at the top level --
 	/// so the shape has to be checked rather than only the syntax.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_code_that_would_land_outside_the_member()
 	{
 		var error = Assert.Throws<ArgumentException>(() => Parse("public void M() { } } public class Escaped {"));
@@ -35,7 +35,7 @@ public sealed class MemberSyntaxTests
 	}
 
 	/// <summary>An unbalanced brace on its own is a parse error, and reported as one.</summary>
-	[Fact]
+	[Test]
 	public void Refuses_a_stray_closing_brace()
 	{
 		var error = Assert.Throws<ArgumentException>(() => Parse("public void M()\n{\n}\n}"));
@@ -43,7 +43,7 @@ public sealed class MemberSyntaxTests
 		Assert.Contains("does not parse", error.Message, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Refuses_a_brace_that_is_never_closed_and_says_where()
 	{
 		var error = Assert.Throws<ArgumentException>(() => Parse("public void M()\n{\n\tif (true)\n\t{\n"));
@@ -56,7 +56,7 @@ public sealed class MemberSyntaxTests
 	/// The escapes that leaked into source and cost nine compile errors were this: a shell ate one
 	/// layer of quoting and what landed was not C#. It is caught here rather than at the build.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_source_with_escapes_left_in_it()
 	{
 		var error = Assert.Throws<ArgumentException>(() => Parse("public string M() => \\$\"{Value}\";"));
@@ -68,7 +68,7 @@ public sealed class MemberSyntaxTests
 	/// A using directive inside a member position is a scope mistake rather than a typing one, so
 	/// the message says what the tool writes instead of leaving a parser error to be decoded.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Says_that_a_using_directive_is_not_a_member()
 	{
 		var error = Assert.Throws<ArgumentException>(() => Parse("using System.Text;\n\npublic void M() { }"));
@@ -80,7 +80,7 @@ public sealed class MemberSyntaxTests
 	/// A comment after the last member attaches to the closing brace of its container, so it belongs
 	/// to no member and would vanish. Silently losing a comment is invisible in a diff nobody reads.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_a_comment_that_would_be_dropped()
 	{
 		var error = Assert.Throws<ArgumentException>(() => Parse("public void M() { }\n\n// and another thing"));
@@ -88,7 +88,7 @@ public sealed class MemberSyntaxTests
 		Assert.Contains("belongs to no member", error.Message, StringComparison.Ordinal);
 	}
 
-	[Fact]
+	[Test]
 	public void Refuses_code_that_declares_nothing()
 	{
 		Assert.Throws<ArgumentException>(() => Parse("// just a comment"));
@@ -99,7 +99,7 @@ public sealed class MemberSyntaxTests
 	/// The documentation comment has to arrive attached to the member, or replacing a declaration
 	/// would drop the documentation the caller wrote for it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_a_documentation_comment_with_the_member_it_describes()
 	{
 		var members = Parse("/// <summary>Counts.</summary>\npublic int Count { get; set; }");
@@ -113,11 +113,11 @@ public sealed class MemberSyntaxTests
 	/// member is not a declaration anywhere else, and a bodiless method is only ordinary inside an
 	/// interface.
 	/// </summary>
-	[Theory]
-	[InlineData("enum", "Blue = 3")]
-	[InlineData("interface", "double Area();")]
-	[InlineData("struct", "public readonly int X;")]
-	[InlineData("record", "public int Y { get; init; }")]
+	[Test]
+	[Arguments("enum", "Blue = 3")]
+	[Arguments("interface", "double Area();")]
+	[Arguments("struct", "public readonly int X;")]
+	[Arguments("record", "public int Y { get; init; }")]
 	public void Parses_a_member_in_the_container_it_belongs_to(string keyword, string code)
 	{
 		Assert.Single(MemberSyntax.Parse(code, keyword, null));
@@ -127,22 +127,22 @@ public sealed class MemberSyntaxTests
 	/// An enum member parses only against an enum, which is the case the container keyword exists
 	/// for: a class wrapper turns the same text into a field with no type and rejects it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_an_enum_member_offered_to_a_class()
 	{
 		Assert.Throws<ArgumentException>(() => Parse("Blue = 3"));
 	}
 
-	[Theory]
-	[InlineData("class C { }", "class")]
-	[InlineData("interface I { }", "interface")]
-	[InlineData("enum E { }", "enum")]
-	[InlineData("record R { }", "record")]
-	[InlineData("record struct S { }", "record struct")]
+	[Test]
+	[Arguments("class C { }", "class")]
+	[Arguments("interface I { }", "interface")]
+	[Arguments("enum E { }", "enum")]
+	[Arguments("record R { }", "record")]
+	[Arguments("record struct S { }", "record struct")]
 	public void Reports_the_keyword_a_container_was_declared_with(string declaration, string expected)
 	{
-		var tree = CSharpSyntaxTree.ParseText(declaration, cancellationToken: TestContext.Current.CancellationToken);
-		var unit = (CompilationUnitSyntax)tree.GetRoot(TestContext.Current.CancellationToken);
+		var tree = CSharpSyntaxTree.ParseText(declaration, cancellationToken: TestContext.Current!.Execution.CancellationToken);
+		var unit = (CompilationUnitSyntax)tree.GetRoot(TestContext.Current!.Execution.CancellationToken);
 		var type = (BaseTypeDeclarationSyntax)unit.Members[0];
 
 		Assert.Equal(expected, MemberSyntax.KeywordOf(type));
@@ -155,7 +155,7 @@ public sealed class MemberSyntaxTests
 	/// opinion either, so code written for column zero lands a level short of its neighbours and
 	/// nothing complains.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Shifts_wrapped_lines_to_the_indentation_of_where_they_are_going()
 	{
 		var members = MemberSyntax.Parse(
@@ -178,7 +178,7 @@ public sealed class MemberSyntaxTests
 	/// wrote at column zero, and the two have to be the same request -- which is why the baseline
 	/// comes off before the destination's indentation goes on.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Treats_code_already_indented_for_its_destination_the_same_way()
 	{
 		var atColumnZero = MemberSyntax.Parse(
@@ -197,7 +197,7 @@ public sealed class MemberSyntaxTests
 	/// hands over. Its first line carries the level it was written at, so that is the baseline, and
 	/// every wrapped line keeps the relation it had to it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Measures_a_moved_declaration_against_the_indentation_it_arrives_with()
 	{
 		var members = MemberSyntax.Parse(
@@ -216,7 +216,7 @@ public sealed class MemberSyntaxTests
 	/// The line inside a string is content, not layout. Shifting it changes what the program says,
 	/// and in a raw literal it changes how much is stripped from every other line of the value.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_the_lines_inside_a_multi_line_literal_where_they_are()
 	{
 		var members = MemberSyntax.Parse(
@@ -236,7 +236,7 @@ public sealed class MemberSyntaxTests
 	/// an artefact of the transport -- and produces a file dotnet format rejects while no build says
 	/// anything.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Rewrites_a_lone_line_feed_to_the_destination_ending()
 	{
 		var rewritten = 0;
@@ -259,7 +259,7 @@ public sealed class MemberSyntaxTests
 	/// A carriage return the caller wrote deliberately survives, so a file that is otherwise LF can
 	/// still be given a CRLF literal.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_a_carriage_return_the_caller_supplied()
 	{
 		var rewritten = 0;
@@ -280,7 +280,7 @@ public sealed class MemberSyntaxTests
 	/// delimiter's indentation comes off every line, so shifting content and delimiter together changes
 	/// nothing about what the string says and everything about where it sits.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Indents_a_raw_literal_with_the_member_around_it()
 	{
 		var members = MemberSyntax.Parse(
@@ -299,7 +299,7 @@ public sealed class MemberSyntaxTests
 	/// A verbatim literal does not move, because its interior whitespace is its value and no delimiter
 	/// rule takes it back out again.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Leaves_a_verbatim_literal_where_it_is()
 	{
 		var members = MemberSyntax.Parse(

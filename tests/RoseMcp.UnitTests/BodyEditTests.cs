@@ -13,7 +13,7 @@ public sealed class BodyEditTests
 	/// lands underneath it. Two comments, one of them the one the caller meant to remove, and nothing
 	/// in the result says so. Refused instead, naming the payload that can do it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_an_anchor_carrying_a_comment()
 	{
 		var error = Assert.Throws<ArgumentException>(
@@ -30,7 +30,7 @@ public sealed class BodyEditTests
 	/// where the code was, which is the only way to comment a body without re-emitting it, and it
 	/// duplicates nothing.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Takes_a_comment_in_the_replacement()
 	{
 		var body = BodyEdit.Anchored("{\n\treturn 1;\n}", "return 1;", "// because\nreturn 2;");
@@ -43,7 +43,7 @@ public sealed class BodyEditTests
 	/// A comment inside the anchor rather than above it is the same problem: the tokens either side
 	/// match, the comment between them does not, and the replacement is spliced across it.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_a_comment_between_the_tokens_of_an_anchor()
 	{
 		var error = Assert.Throws<ArgumentException>(

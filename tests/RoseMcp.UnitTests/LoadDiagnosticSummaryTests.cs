@@ -11,7 +11,7 @@ public sealed class LoadDiagnosticSummaryTests
 		"Msbuild failed when processing the file '{0}' with message: Error occurred while getting package "
 			+ "vulnerability data: Unable to load the service index for source {1}.";
 
-	[Fact]
+	[Test]
 	public void Folds_complaints_that_differ_only_in_the_file_they_name()
 	{
 		var folded = LoadDiagnosticSummary.Fold(
@@ -30,7 +30,7 @@ public sealed class LoadDiagnosticSummaryTests
 	}
 
 	/// <summary>The URL varies too, and it varies independently of the file.</summary>
-	[Fact]
+	[Test]
 	public void Folds_complaints_that_differ_only_in_the_url_they_name()
 	{
 		var folded = LoadDiagnosticSummary.Fold(
@@ -46,7 +46,7 @@ public sealed class LoadDiagnosticSummaryTests
 	/// The whole risk of folding: a distinct failure quietly merged into the noisy family. Two
 	/// different complaints about the same file must stay two lines.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_complaints_that_differ_in_anything_but_a_path()
 	{
 		var folded = LoadDiagnosticSummary.Fold(
@@ -59,7 +59,7 @@ public sealed class LoadDiagnosticSummaryTests
 	}
 
 	/// <summary>Kind is part of the identity: the same text as a warning and as a failure is two facts.</summary>
-	[Fact]
+	[Test]
 	public void Keeps_the_same_message_reported_under_two_kinds_apart()
 	{
 		var folded = LoadDiagnosticSummary.Fold(
@@ -76,7 +76,7 @@ public sealed class LoadDiagnosticSummaryTests
 	/// reference among five hundred audit failures is the interesting line, and sorting by count would
 	/// bury it as thoroughly as the raw list did.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Keeps_shapes_in_the_order_they_first_appeared()
 	{
 		var folded = LoadDiagnosticSummary.Fold(
@@ -91,7 +91,7 @@ public sealed class LoadDiagnosticSummaryTests
 	}
 
 	/// <summary>A message that occurs once reads exactly as it did before any of this existed.</summary>
-	[Fact]
+	[Test]
 	public void Leaves_a_message_that_occurs_once_exactly_as_it_was()
 	{
 		var folded = LoadDiagnosticSummary.Fold([("Warning", "A lone complaint.")]);
@@ -99,7 +99,7 @@ public sealed class LoadDiagnosticSummaryTests
 		Assert.Equal("[Warning] A lone complaint.", Assert.Single(folded));
 	}
 
-	[Fact]
+	[Test]
 	public void Says_nothing_about_nothing()
 	{
 		Assert.Empty(LoadDiagnosticSummary.Fold([]));
@@ -109,7 +109,7 @@ public sealed class LoadDiagnosticSummaryTests
 	/// Prose is not a path. Generalising too eagerly would merge complaints that differ, which is the
 	/// one failure of this whole idea that has no symptom.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Does_not_mistake_a_slash_in_prose_for_a_path()
 	{
 		var folded = LoadDiagnosticSummary.Fold(
@@ -122,7 +122,7 @@ public sealed class LoadDiagnosticSummaryTests
 	}
 
 	/// <summary>Posix paths fold too, so this reads the same on Linux as it does here.</summary>
-	[Fact]
+	[Test]
 	public void Folds_posix_paths_as_well_as_windows_ones()
 	{
 		var folded = LoadDiagnosticSummary.Fold(
@@ -134,7 +134,7 @@ public sealed class LoadDiagnosticSummaryTests
 		Assert.Single(folded);
 	}
 
-	[Fact]
+	[Test]
 	public void Caps_the_shapes_it_lists_and_says_how_many_it_left_out()
 	{
 		var many = Enumerable.Range(0, 45)

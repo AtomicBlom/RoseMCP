@@ -14,7 +14,7 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class RelayRetryPolicyTests
 {
-	[Fact]
+	[Test]
 	public void Retries_nothing_until_the_tool_list_has_arrived()
 	{
 		var policy = new RelayRetryPolicy();
@@ -24,7 +24,7 @@ public sealed class RelayRetryPolicyTests
 		Assert.False(policy.MayRetry("rose_rename_symbol"), "a writing tool is not retried before the list arrives");
 	}
 
-	[Fact]
+	[Test]
 	public void Retries_a_read_only_tool_and_not_a_writing_one()
 	{
 		var policy = new RelayRetryPolicy();
@@ -41,7 +41,7 @@ public sealed class RelayRetryPolicyTests
 	/// unknown is no: one clear failure the caller can repeat is cheaper than a second edit nobody
 	/// asked for.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Refuses_a_tool_it_was_told_nothing_about()
 	{
 		var policy = new RelayRetryPolicy();
@@ -56,7 +56,7 @@ public sealed class RelayRetryPolicyTests
 	/// The tray's surface is what it says it is now, not the union of everything it has ever said: a
 	/// tool that stops being read-only across a tray upgrade must stop being retried.
 	/// </summary>
-	[Fact]
+	[Test]
 	public void Replaces_what_it_knew_rather_than_merging()
 	{
 		var policy = new RelayRetryPolicy();

@@ -244,6 +244,67 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
+	/// The same guard, on a solution where the call sites already pass the new argument. That is what
+	/// an author writing the call before the parameter has, and the refusal was false of exactly those
+	/// sites: they have something to pass, and the change is what they are waiting for. It fired
+	/// before any call site had been read, so it could not know.
+	/// <para>
+	/// The sites are left exactly as written, because a call site that does not bind is one where
+	/// nothing is known about which argument means what -- and each is reported, so a site that was
+	/// broken for some other reason is not quietly counted as fixed.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Adds_a_required_parameter_when_the_call_sites_already_pass_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		// The call site written ahead of the parameter, which is the shape this is about.
+		await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Arrowed.Call",
+			Code = "=> Describe(\"one\", \"two\", \"three\");",
+			Verify = false,
+		});
+
+		var result = await ChangeAsync(
+			session,
+			"Library.Arrowed.Describe(string, string)",
+			"string first, string second, string third");
+
+		Assert.True(result.Applied);
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		Assert.Contains("string third", text, StringComparison.Ordinal);
+		Assert.Contains("Describe(\"one\", \"two\", \"three\")", text, StringComparison.Ordinal);
+
+		// Reported rather than silently skipped, and it compiles now that the parameter is there.
+		Assert.NotEmpty(result.UnchangedCallSites);
+		Assert.Empty(result.IntroducedDiagnostics);
+	}
+
+	/// <summary>
+	/// Nothing to break is not the same as something to break. A member no call site binds to takes a
+	/// required parameter without argument, since the refusal exists to protect call sites and there
+	/// are none.
+	/// </summary>
+	[Test]
+	public async Task Adds_a_required_parameter_to_a_member_nothing_calls()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Arrowed.Spread", "string first, string second, string third, bool loud");
+
+		Assert.True(result.Applied);
+		Assert.Contains("bool loud", await ReadAsync(fixture, "Arrowed.cs"), StringComparison.Ordinal);
+		Assert.Empty(result.IntroducedDiagnostics);
+	}
+
+	/// <summary>
 	/// The declarations that have to move together. Changing only the one named does not compile,
 	/// and the override calls its parameter something else -- so its own name has to survive, or
 	/// the change would rename it without saying so.
@@ -441,6 +502,19 @@ public sealed class ChangeSignatureTests
 
 		return session.MutateAsync(
 			(snapshot, token) => ChangeSignatureService.ChangeAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token),
+			TestContext.Current!.Execution.CancellationToken);
+	}
+
+	/// <summary>
+	/// A member edit, for setting up a call site that is written before the parameter it passes.
+	/// </summary>
+	private static Task<MemberEditResult> EditAsync(WorkspaceSession session, MemberEditRequest request)
+	{
+		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
+
+		return session.MutateAsync(
+			(snapshot, token) => MemberEditService.EditAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
 			TestContext.Current!.Execution.CancellationToken);
 	}

@@ -197,6 +197,34 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
+	/// Why a XAML request cannot be served at this instant, or null when it can be.
+	/// <para>
+	/// A target this session is holding is the case worth naming, and it is the one thing a debugger can
+	/// know that nothing else can. <c>InitializeXamlDiagnosticsEx</c> does not return until the target's
+	/// own UI thread has created and sited the tap, so a stopped target cannot serve the request at all
+	/// -- and the bounds guarantee the shape of the failure rather than merely risking it: the endpoint
+	/// is given twenty seconds and a held target auto-continues after thirty, so every such request
+	/// expires first, and then blames the app for having no XAML UI. Visual Studio does not meet this
+	/// because it is the debugger as well as the diagnostics client. So are we; the signal was simply
+	/// never asked for.
+	/// </para>
+	/// </summary>
+	private string? WhyXamlIsUnservable()
+	{
+		CorDebugSession? session;
+		lock (_gate)
+		{
+			session = _session;
+		}
+
+		if (session?.IsStoppedAtBreakpoint != true) return null;
+
+		return "The target is stopped, so its UI thread cannot serve a XAML request: the diagnostics "
+			+ "endpoint is created by that thread and this session is holding it. Resume the target and ask "
+			+ "again -- a held target also releases itself on the auto-continue timer.";
+	}
+
+	/// <summary>
 	/// Injects the XAML diagnostics provider into the target and returns a snapshot of its live visual
 	/// tree. Optionally rooted at a named element (its subtree only) and paged, since a real app's tree is
 	/// large. Returns a tree carrying only a detail (no nodes) when the target has no XAML UI or the
@@ -217,6 +245,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		{
 			return new LiveXamlTree { Detail = "This session has no target process to inspect." };
 		}
+
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlTree { Detail = held };
 
 		var tree = _xaml.ReadTree(pid);
 		if (tree.Detail is not null) return tree;
@@ -287,6 +317,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlProperties { Handle = handle, Detail = "This session has no target process to inspect." };
 		}
 
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlProperties { Handle = handle, Detail = held };
+
 		return _xaml.ReadProperties(pid, handle, includeDefaults);
 	}
 
@@ -312,6 +344,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		{
 			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
 		}
+
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
 		return arm
 			? _xaml.EnterSelectMode(pid, includeAllElements, justMyXaml)
@@ -353,6 +387,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
 		}
 
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
+
 		return _xaml.ClearSelection(pid);
 	}
 
@@ -373,6 +409,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		{
 			return new LiveXamlSelection { Detail = "This session has no target process to inspect." };
 		}
+
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
 		return _xaml.SelectByHandle(pid, handle);
 	}
@@ -395,6 +433,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		{
 			return new LiveXamlApplyResult { Detail = "This session has no target process to inspect." };
 		}
+
+		if (WhyXamlIsUnservable() is { } held) return new LiveXamlApplyResult { Detail = held };
 
 		return _xaml.ApplyEdits(pid, oldXaml, newXaml, filePath);
 	}

@@ -2838,6 +2838,92 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>
+	/// A XAML request against a target this session is holding is refused, immediately and by name,
+	/// rather than spending the endpoint's whole budget failing.
+	/// </summary>
+	/// <remarks>
+	/// The endpoint is created by the target's own UI thread, and InitializeXamlDiagnosticsEx does not
+	/// return until that thread has sited the tap -- so a stopped target cannot serve a XAML request at
+	/// all. Before this was checked, the two bounds decided the outcome between them: the endpoint gets
+	/// twenty seconds and a held target releases itself after thirty, so the request always expired
+	/// first and then reported that the app was still starting or had no XAML UI. Both are false of an
+	/// app that is stopped, and one of them is false of any app with a window.
+	/// <para>
+	/// It launches its own app rather than taking the shared one, because a target held at a breakpoint
+	/// is app-global state with no smaller owner, and a test that failed between the stop and the
+	/// resume would hand on an app that answers nothing.
+	/// </para>
+	/// </remarks>
+	[Test]
+	[ClassicOwnApp]
+	public async Task Refuses_a_xaml_request_while_the_target_is_stopped()
+	{
+		await using var turn = await probe.TakeAppAsync(needsXamlProvider: true, TestContext.Current!.Execution.CancellationToken);
+		var aumid = turn.Aumid;
+
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.LaunchUwp,
+					AppUserModelId = aumid,
+					Description = "uwp probe",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// The timer tick, which the probe runs forever, so the breakpoint is certain to be hit.
+			var breakpoint = await session.SetBreakpointAsync(
+				"Rose.ProbeApp.UwpClassic!Rose.ProbeApp.UwpClassic.MainPage.Tick",
+				autoContinueSeconds: null,
+				condition: null,
+				cancellationToken);
+
+			Assert.True(breakpoint.Bound, $"the breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(stop);
+
+			var refused = Stopwatch.StartNew();
+			var whileStopped = await session.ReadXamlTreeAsync(cancellationToken);
+			refused.Stop();
+
+			Assert.Empty(whileStopped.Nodes);
+			Assert.NotNull(whileStopped.Detail);
+			Assert.Contains("stopped", whileStopped.Detail!);
+
+			// The number that matters: refused rather than waited out. The endpoint's own bound is twenty
+			// seconds, so anything in that region means the guard did not fire and the old failure is back.
+			Assert.True(
+				refused.Elapsed < TimeSpan.FromSeconds(5),
+				$"expected an immediate refusal, not a wait for the endpoint; took {refused.Elapsed.TotalSeconds:0.0}s");
+
+			// And the guard is not a one-way door: resumed, the same read works.
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			Assert.True(await session.ContinueAsync(cancellationToken));
+
+			var afterResume = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.True(
+				afterResume.Detail is null,
+				$"expected a tree once the target was resumed, got detail: {afterResume.Detail}");
+			Assert.NotEmpty(afterResume.Nodes);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			probe.StopApp();
+		}
+	}
+
+	/// <summary>
 	/// A stopping breakpoint (issue #6): set at a method by name, it holds the target on hit and
 	/// records the stop with its stack; continuing resumes it, and detach leaves it running. This is
 	/// the interactive counterpart to a tracepoint.

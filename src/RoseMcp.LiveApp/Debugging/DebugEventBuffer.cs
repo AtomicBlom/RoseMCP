@@ -64,6 +64,29 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 	}
 
 	/// <summary>
+	/// When the newest event arrived and what kind it was, or null if nothing has been recorded.
+	/// <para>
+	/// It answers one question nothing else here can: whether the target is still executing. A target's
+	/// own process state cannot say, because the way a UWP app stops is a job-object freeze -- the
+	/// system stops every thread in the group without marking any of them suspended, so a frozen app
+	/// and a wedged one are indistinguishable by CPU time, thread state, or window responsiveness. What
+	/// separates them is that a frozen app stops producing events. So the age of this is the
+	/// discriminator, and it is why a failure in the XAML channel reports it.
+	/// </para>
+	/// </summary>
+	public (DateTime When, LiveDebugEventKind Kind)? Newest()
+	{
+		lock (_gate)
+		{
+			if (_events.Count == 0) return null;
+
+			// The ring is a Queue, so the newest is the last enqueued rather than the head.
+			var newest = _events.Last();
+			return (newest.TimestampUtc, newest.Kind);
+		}
+	}
+
+	/// <summary>
 	/// Releases every reader this event answers. Called with the gate held, and it only completes the
 	/// tasks -- the waiter re-reads for itself afterwards, so the page it gets is built the same way a
 	/// polled one is rather than by a second path that could differ.

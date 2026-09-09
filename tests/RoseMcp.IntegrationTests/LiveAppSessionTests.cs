@@ -2924,6 +2924,73 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>
+	/// A XAML failure carries the target's own heartbeat, which is what separates a target that is not
+	/// answering from a target that is not running.
+	/// </summary>
+	/// <remarks>
+	/// The two are indistinguishable from outside the process and easy to confuse for a long time. A
+	/// UWP app frozen by PLM -- which is what happens to a backgrounded app whose package has no debug
+	/// mode, and a detach removes debug mode -- stops all its threads through a job object without
+	/// marking any of them suspended, so its CPU time, its thread states and its unresponsive window
+	/// all look exactly like an app that is running and wedged. The debug events stopping is the one
+	/// difference, so their age is reported beside every XAML failure.
+	/// <para>
+	/// An ordinary .NET target is the honest way to test it: it has no XAML at all, so the endpoint
+	/// genuinely never appears, and it throws on a loop, so it is demonstrably executing while we wait.
+	/// That is the combination the message has to describe correctly -- not answering, but alive.
+	/// </para>
+	/// </remarks>
+	[Test]
+	public async Task A_xaml_failure_reports_how_long_ago_the_target_last_ran()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(
+				new LiveAppTarget
+				{
+					Kind = LiveAppTargetKind.AttachProcess,
+					ProcessId = child.Id,
+					Description = "probe target",
+				},
+				cancellationToken);
+
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// Let the target throw at least once, so there is a heartbeat to report.
+			var beat = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance,
+				cancellationToken);
+			Assert.NotNull(beat);
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+
+			Assert.Empty(tree.Nodes);
+			Assert.NotNull(tree.Detail);
+			Assert.Contains("last debug event", tree.Detail!);
+
+			// The number, not just the sentence. An event inside the endpoint's own budget proves the
+			// target was executing throughout the wait that just failed -- which is the whole distinction
+			// this exists to draw, and the bound is that budget rather than a figure picked here.
+			var match = System.Text.RegularExpressions.Regex.Match(tree.Detail!, @"was (\d+(?:\.\d+)?)s ago");
+			Assert.True(match.Success, $"the detail should quote the heartbeat's age; got: {tree.Detail}");
+
+			var age = double.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+			Assert.InRange(age, 0, 20);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// A stopping breakpoint (issue #6): set at a method by name, it holds the target on hit and
 	/// records the stop with its stack; continuing resumes it, and detach leaves it running. This is
 	/// the interactive counterpart to a tracepoint.

@@ -225,6 +225,35 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
+	/// A failed XAML detail with the target's own heartbeat added, which is what separates the two
+	/// causes the channel's HRESULT cannot.
+	/// <para>
+	/// A handshake that fails means either a target that is executing and not serving diagnostics, or a
+	/// target that is not executing at all -- and the second is easy to reach without noticing. PLM
+	/// freezes a UWP app that is backgrounded with no debug mode on its package, and this session lifts
+	/// debug mode whenever it detaches while deliberately leaving the app running. A frozen app cannot
+	/// be told from a wedged one by anything about the process: a job-object freeze stops its threads
+	/// without marking them suspended, its CPU time stops climbing either way, and its window stops
+	/// repainting either way. What it does do is stop producing debug events, so their age says which
+	/// of the two this is.
+	/// </para>
+	/// </summary>
+	private string WithTargetHeartbeat(string detail)
+	{
+		if (_events.Newest() is not { } newest) return detail;
+
+		var age = DateTime.UtcNow - newest.When;
+
+		// Seconds rather than a verdict. Which ages are suspicious depends on what the target does when
+		// it is idle -- a probe on a timer is silent for milliseconds, a real app for minutes -- and a
+		// threshold picked here would be a guess presented as a diagnosis.
+		return detail
+			+ $" The target's last debug event ({newest.Kind}) was {age.TotalSeconds:0.0}s ago: if that is not "
+			+ "recent, the target is not executing rather than not answering -- a UWP app is frozen by PLM "
+			+ "when it is backgrounded and its package has no debug mode, which a detach removes.";
+	}
+
+	/// <summary>
 	/// Injects the XAML diagnostics provider into the target and returns a snapshot of its live visual
 	/// tree. Optionally rooted at a named element (its subtree only) and paged, since a real app's tree is
 	/// large. Returns a tree carrying only a detail (no nodes) when the target has no XAML UI or the
@@ -249,7 +278,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlTree { Detail = held };
 
 		var tree = _xaml.ReadTree(pid);
-		if (tree.Detail is not null) return tree;
+		if (tree.Detail is not null) return tree with { Detail = WithTargetHeartbeat(tree.Detail) };
 
 		IReadOnlyList<LiveXamlNode> matched = tree.Nodes;
 		if (!string.IsNullOrWhiteSpace(rootName))
@@ -319,7 +348,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlProperties { Handle = handle, Detail = held };
 
-		return _xaml.ReadProperties(pid, handle, includeDefaults);
+		var properties = _xaml.ReadProperties(pid, handle, includeDefaults);
+		return properties.Detail is null
+			? properties
+			: properties with { Detail = WithTargetHeartbeat(properties.Detail) };
 	}
 
 	/// <summary>
@@ -347,9 +379,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
-		return arm
+		var mode = arm
 			? _xaml.EnterSelectMode(pid, includeAllElements, justMyXaml)
 			: _xaml.ExitSelectMode(pid);
+
+		return mode.Detail is null ? mode : mode with { Detail = WithTargetHeartbeat(mode.Detail) };
 	}
 
 	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>
@@ -389,7 +423,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
-		return _xaml.ClearSelection(pid);
+		var cleared = _xaml.ClearSelection(pid);
+		return cleared.Detail is null ? cleared : cleared with { Detail = WithTargetHeartbeat(cleared.Detail) };
 	}
 
 	/// <summary>
@@ -412,7 +447,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
-		return _xaml.SelectByHandle(pid, handle);
+		var selected = _xaml.SelectByHandle(pid, handle);
+		return selected.Detail is null ? selected : selected with { Detail = WithTargetHeartbeat(selected.Detail) };
 	}
 
 	/// <summary>
@@ -436,7 +472,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlApplyResult { Detail = held };
 
-		return _xaml.ApplyEdits(pid, oldXaml, newXaml, filePath);
+		var applied = _xaml.ApplyEdits(pid, oldXaml, newXaml, filePath);
+		return applied.Detail is null ? applied : applied with { Detail = WithTargetHeartbeat(applied.Detail) };
 	}
 
 	/// <summary>

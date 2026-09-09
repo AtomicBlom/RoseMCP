@@ -89,7 +89,6 @@ public sealed class ToolSurfaceTests
 		ToolNames.XamlDeselect,
 		ToolNames.XamlProperties,
 		ToolNames.XamlSelectElement,
-		ToolNames.XamlSelectMode,
 		ToolNames.XamlSelection,
 		ToolNames.XamlTree,
 	];

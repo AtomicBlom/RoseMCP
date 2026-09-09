@@ -108,8 +108,10 @@ public static class ServiceCollectionExtensions
 		relaunch -- what Visual Studio calls XAML Hot Reload -- and the first call for a file records
 		only a baseline, so make it before editing; the change lives on the objects in the tree
 		rather than in the app's markup, so it is gone if the app rebuilds that part of the UI.
-		rose_xaml_selection reads what the user clicked -- read it before asking them to point, since
-		they can arm the in-app toolbar themselves -- and rose_xaml_select_mode arms the click.
+		rose_xaml_selection reads what the user clicked: the toolbar is already in their app, so read
+		this before asking them to point at anything, and read it again rather than asking twice.
+		rose_xaml_select_element picks an element outright, by handle or name, which is how to reach
+		one without involving them at all.
 		""";
 
 	public static IMcpServerBuilder AddRoseMcpBroker(

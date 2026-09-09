@@ -183,7 +183,11 @@ public static class ToolNames
 	/// <summary>Live-edit a running XAML app: apply a file's changes to its live visual tree.</summary>
 	public const string XamlApply = "rose_xaml_apply";
 
-	/// <summary>Enter interactive select mode: the next click in the app picks that element.</summary>
+	/// <summary>
+	/// Arming select mode, which the broker deliberately does not declare: the toolbar is how a person
+	/// arms it, and an agent doing so can only end by asking them to click something anyway. The name
+	/// is kept because the host still serves the verb and the integration tests drive it.
+	/// </summary>
 	public const string XamlSelectMode = "rose_xaml_select_mode";
 
 	/// <summary>Read the element the user picked by clicking it in the running app.</summary>
@@ -195,9 +199,11 @@ public static class ToolNames
 	/// <summary>
 	/// Select an element by its handle, reaching what a click cannot.
 	/// <para>
-	/// Spelled out rather than <c>rose_xaml_select</c>, which is one word from
-	/// <see cref="XamlSelectMode"/> and means something quite different: that one arms and waits for
-	/// a person, this one selects now. Two names a suffix apart is how the wrong one gets called.
+	/// Spelled out rather than <c>rose_xaml_select</c>, because selecting an element and arming a mode
+	/// that waits for a person to click one are different acts, and two names a suffix apart is how the
+	/// wrong one gets called. Only this one is offered: arming is the person's own decision, made on
+	/// the in-app toolbar, and an agent that arms it can only follow up by telling them to go and click
+	/// something.
 	/// </para>
 	/// </summary>
 	public const string XamlSelectElement = "rose_xaml_select_element";
@@ -234,7 +240,6 @@ public static class ToolNames
 		[XamlTree] = LiveAppXamlTree,
 		[XamlProperties] = LiveAppXamlProperties,
 		[XamlApply] = LiveAppXamlApply,
-		[XamlSelectMode] = LiveAppXamlSelectMode,
 		[XamlSelection] = LiveAppXamlSelection,
 		[XamlDeselect] = LiveAppXamlDeselect,
 		[XamlSelectElement] = LiveAppXamlSelectElement,

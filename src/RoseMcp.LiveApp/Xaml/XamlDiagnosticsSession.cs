@@ -373,6 +373,25 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
+	/// Loads the provider and puts the in-app toolbar up, without asking it anything. Returns null when
+	/// it is there, or the sentence saying why it is not.
+	/// </summary>
+	/// <remarks>
+	/// The toolbar is for the person at the app, and it is worth having whether or not an agent ever
+	/// asks a XAML question. Waiting for the first <c>rose_xaml_*</c> call to install it makes a tool
+	/// for a human depend on a machine having had the thought first.
+	/// <para>
+	/// Everything else here loads the provider as a side effect of needing it. This is the same load,
+	/// asked for on its own, so a caller that wants the toolbar early does not have to invent a
+	/// question to get it.
+	/// </para>
+	/// </remarks>
+	public string? AttachTooling(int pid)
+	{
+		lock (_requests) return EnsureProvider(pid);
+	}
+
+	/// <summary>
 	/// Reads the element that was picked, if any. Deliberately does not inject: the toolbar is resident
 	/// and owns the selection, and the person may have picked without this side being involved at all --
 	/// which is the case this exists for. That is also why the mode is asked of the provider rather than

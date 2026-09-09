@@ -734,6 +734,60 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				Fault($"{options.Target.Kind} is not implemented in this build.");
 				break;
 		}
+
+		AttachUiTooling();
+	}
+
+	/// <summary>
+	/// Loads the XAML provider in the background, so the in-app toolbar is there for a person to use
+	/// without an agent having asked a XAML question first.
+	/// </summary>
+	/// <remarks>
+	/// Best effort in every direction: it never blocks the attach, never fails it, and gives up quietly
+	/// on a target with no XAML in it, which is most of them -- a debugger attaches to anything. The
+	/// stack is read from the target's own loaded modules before anything is injected, so a console app
+	/// costs a module list and nothing more.
+	/// <para>
+	/// A launched app has usually not built a tree yet, and the diagnostics endpoint does not exist
+	/// until it has, so this is expected to fail sometimes and says nothing when it does. The path that
+	/// loads the provider on the first XAML call is still there and still correct, which is what makes
+	/// giving up cheap: the worst case is the behaviour that came before this.
+	/// </para>
+	/// </remarks>
+	private void AttachUiTooling()
+	{
+		int? targetProcessId;
+		lock (_gate)
+		{
+			if (_state != LiveAppSessionState.Ready) return;
+
+			targetProcessId = _targetProcessId;
+			_xaml ??= new XamlDiagnosticsSession(logger);
+		}
+
+		if (targetProcessId is not { } pid) return;
+
+		var xaml = _xaml;
+		_ = Task.Run(() =>
+		{
+			try
+			{
+				var unready = xaml.AttachTooling(pid);
+				if (unready is null)
+				{
+					logger.LogInformation("XAML tooling attached to pid {Pid}; the in-app toolbar is up.", pid);
+					return;
+				}
+
+				logger.LogDebug("XAML tooling was not attached to pid {Pid}: {Detail}", pid, unready);
+			}
+			catch (Exception exception)
+			{
+				// Swallowed rather than faulted. This session is a debugger session that happens to be
+				// able to inspect XAML, and a target with none is not a broken session.
+				logger.LogDebug(exception, "Attaching XAML tooling to pid {Pid} failed.", pid);
+			}
+		});
 	}
 
 	private void EstablishAttach(int? processId)

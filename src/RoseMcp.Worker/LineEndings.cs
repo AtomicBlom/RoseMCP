@@ -13,7 +13,31 @@ namespace RoseMcp.Worker;
 public static class LineEndings
 {
 	/// <summary>
+	/// Every terminator a text file can hold, in the order ties are broken. Exhaustive, since
+	/// <see cref="Terminators"/> produces nothing else, so iterating it needs no dictionary and gives
+	/// the same answer whatever order the file happens to hold them in.
+	/// </summary>
+	private static readonly string[] Kinds = ["\r\n", "\n", "\r"];
+
+	/// <summary>
 	/// How many lines changed terminator and what they changed to, or null where none did.
+	/// <para>
+	/// Counted per kind rather than compared line by line, because a positional comparison lines up
+	/// only while the two files have the same lines. Remove an import above a literal written with
+	/// bare LFs and every position from there on is offset by one: each of the file's CRLFs is then
+	/// compared against an LF that has been inside that literal all along, and a CRLF repository is
+	/// told its endings were rewritten to LF. Nothing had been. That is the one message a caller
+	/// relies on to know what happened to their endings, and a wrong direction there is worse than
+	/// silence.
+	/// </para>
+	/// <para>
+	/// Counting says it without needing the lines to correspond. A kind that lost terminators is a
+	/// kind lines were rewritten away from, and the kind that gained the most is where they went, so
+	/// the count is of endings that stopped being what they were. A file that only gained lines has
+	/// lost nothing and a file that only lost lines has gained nothing, and neither is reported --
+	/// both are changes a diff shows in full, which is the whole reason this exists for the one it
+	/// cannot show.
+	/// </para>
 	/// </summary>
 	/// <param name="before">The file as it was.</param>
 	/// <param name="after">The file as it is now.</param>
@@ -22,27 +46,24 @@ public static class LineEndings
 		var was = Terminators(before);
 		var now = Terminators(after);
 
-		// Compared by position, which lines up only while the content is otherwise the same. Where
-		// lines were added or removed the tail of this comparison is meaningless -- but it is also
-		// not needed, because a change of that shape is one the diff already shows.
-		var shared = Math.Min(was.Count, now.Count);
-		var moved = new List<string>();
+		var lost = 0;
+		var gained = 0;
+		var to = string.Empty;
 
-		for (var index = 0; index < shared; index++)
+		foreach (var kind in Kinds)
 		{
-			if (!string.Equals(was[index], now[index], StringComparison.Ordinal)) moved.Add(now[index]);
+			var moved = Count(now, kind) - Count(was, kind);
+
+			if (moved < 0) lost -= moved;
+			if (moved <= gained) continue;
+
+			gained = moved;
+			to = kind;
 		}
 
-		if (moved.Count == 0) return null;
+		if (lost == 0 || to.Length == 0) return null;
 
-		// The commonest of the new terminators. A file rewritten to two different endings at once is
-		// not a thing any formatter does, and naming the majority beats naming whichever came last.
-		var to = moved
-			.GroupBy(ending => ending, StringComparer.Ordinal)
-			.OrderByDescending(group => group.Count())
-			.First().Key;
-
-		return (moved.Count, Name(to));
+		return (lost, Name(to));
 	}
 
 	/// <summary>The name a person would use, so a notice reads as advice rather than as escaping.</summary>
@@ -76,4 +97,8 @@ public static class LineEndings
 
 		return endings;
 	}
+
+	/// <summary>How many of <paramref name="endings"/> are <paramref name="kind"/>.</summary>
+	private static int Count(IReadOnlyList<string> endings, string kind) =>
+		endings.Count(ending => string.Equals(ending, kind, StringComparison.Ordinal));
 }

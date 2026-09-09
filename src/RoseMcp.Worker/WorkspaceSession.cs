@@ -29,6 +29,16 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		new UnboundedChannelOptions { SingleReader = true });
 
 	private readonly DiskSynchronizer _synchronizer = new();
+
+	/// <summary>
+	/// Paths written by the mutation in flight, and the gate over them. Collected here rather than
+	/// returned by the mutation because the callback is handed to the services by the tool layer, so
+	/// this is the one place every write passes through.
+	/// </summary>
+	private readonly List<string> _selfWritten = [];
+
+	private readonly Lock _selfWriteGate = new();
+
 	private readonly SolutionWatcher _watcher;
 	private readonly CancellationTokenSource _shutdown = new();
 	private readonly SolutionLoader _loader;
@@ -97,9 +107,18 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 	/// <summary>
 	/// Tells the watcher a write is about to be ours, so it is absorbed silently instead of
-	/// bouncing back on the next barrier as an external edit.
+	/// bouncing back on the next barrier as an external edit, and remembers the path so the
+	/// tracking table can be restamped once the write has landed.
 	/// </summary>
-	public void NoteSelfWrite(string path) => _watcher.NoteSelfWrite(path);
+	public void NoteSelfWrite(string path)
+	{
+		_watcher.NoteSelfWrite(path);
+
+		lock (_selfWriteGate)
+		{
+			_selfWritten.Add(path);
+		}
+	}
 
 	/// <summary>
 	/// Drains pending mutations, reconciles with disk, and returns the resulting snapshot. This is
@@ -120,6 +139,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		{
 			var snapshot = await ReconcileAsync(token);
 			var result = await mutation(snapshot, token);
+			var written = TakeSelfWrites();
 
 			if (result.Solution is not null)
 			{
@@ -129,10 +149,33 @@ public sealed class WorkspaceSession : IAsyncDisposable
 				// A mutation is the only thing that can add a document, and an untracked document is
 				// one whose later edits nobody would notice.
 				_synchronizer.TrackNew(_current);
+
+				// The snapshot and disk now say the same thing, so the stamps have to as well.
+				// Skipped where no solution was adopted: disk moved and the snapshot did not, and
+				// only the sweep can be trusted to reconcile that.
+				_synchronizer.AcceptSelfWrites(written);
 			}
 
 			return result.Value;
 		}, cancellationToken);
+	}
+
+	/// <summary>
+	/// Takes the paths the mutation just wrote and clears the list. Drained whether or not the
+	/// snapshot was adopted, so a dry run or a failure cannot leave paths behind for the next
+	/// mutation to restamp on its behalf.
+	/// </summary>
+	private List<string> TakeSelfWrites()
+	{
+		lock (_selfWriteGate)
+		{
+			if (_selfWritten.Count == 0) return [];
+
+			var written = new List<string>(_selfWritten);
+			_selfWritten.Clear();
+
+			return written;
+		}
 	}
 
 	/// <summary>

@@ -29,6 +29,13 @@ public sealed class SolutionWatcher : IDisposable
 
 	private static readonly TimeSpan BulkChangeWindow = TimeSpan.FromMilliseconds(500);
 
+	/// <summary>
+	/// How long a write of ours goes on suppressing events for its file. Long enough to cover the
+	/// several events one rewrite raises, and short enough that a later external edit to the same
+	/// file is still heard promptly -- which the stat sweep would catch either way.
+	/// </summary>
+	private static readonly TimeSpan SelfWriteWindow = TimeSpan.FromSeconds(5);
+
 	private static readonly char[] SeparatorChars = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
 
 	private static readonly HashSet<string> IgnoredDirectories =
@@ -37,7 +44,7 @@ public sealed class SolutionWatcher : IDisposable
 	private readonly Lock _gate = new();
 	private readonly string _solutionPath;
 	private readonly string _root;
-	private readonly string? _gitDirectory;
+	private readonly GitDirectory? _gitDirectory;
 	private readonly ILogger<SolutionWatcher> _logger;
 
 	private FileSystemWatcher? _watcher;
@@ -49,14 +56,24 @@ public sealed class SolutionWatcher : IDisposable
 	{
 		_solutionPath = Path.GetFullPath(solutionPath);
 		_root = Path.GetDirectoryName(_solutionPath) ?? ".";
-		_gitDirectory = FindGitDirectory(_root);
+		_gitDirectory = GitDirectory.Find(_root);
 		_logger = logger;
 
 		Start();
 	}
 
-	/// <summary>Files this worker wrote itself, so its own edits do not bounce back as external ones.</summary>
-	private readonly HashSet<string> _selfWrites = new(StringComparer.OrdinalIgnoreCase);
+	/// <summary>
+	/// Files this worker wrote itself and when, so its own edits do not bounce back as external ones.
+	/// <para>
+	/// Held for a window rather than dropped on the first matching event, because one rewrite raises
+	/// more than one event: with this watcher's NotifyFilter, ten rewrites of existing files raise
+	/// eighteen. Dropping on the first leaks the rest, which then count toward the bulk-change
+	/// threshold and force the very reload the suppression exists to avoid. Ignoring a genuine
+	/// external write to the same file inside the window costs nothing, because the stat sweep is
+	/// what makes a read correct and the watcher only decides how soon it hears.
+	/// </para>
+	/// </summary>
+	private readonly Dictionary<string, DateTime> _selfWrites = new(StringComparer.OrdinalIgnoreCase);
 
 	/// <summary>
 	/// Files seen appearing since the last barrier. Bounded: past <see cref="CreationsRemembered"/>
@@ -64,11 +81,15 @@ public sealed class SolutionWatcher : IDisposable
 	/// </summary>
 	private readonly HashSet<string> _created = new(StringComparer.OrdinalIgnoreCase);
 
+	/// <summary>
+	/// Records that the write about to land on this path is ours, so it is absorbed silently rather
+	/// than bouncing back on the next barrier as an external edit.
+	/// </summary>
 	public void NoteSelfWrite(string path)
 	{
 		lock (_gate)
 		{
-			_selfWrites.Add(Path.GetFullPath(path));
+			_selfWrites[Path.GetFullPath(path)] = DateTime.UtcNow;
 		}
 	}
 
@@ -88,6 +109,7 @@ public sealed class SolutionWatcher : IDisposable
 
 			_pending = WatchSignal.None;
 			_created.Clear();
+			PruneSelfWrites();
 
 			if (!File.Exists(_solutionPath))
 				signal |= WatchSignal.SolutionMissing;
@@ -136,7 +158,7 @@ public sealed class SolutionWatcher : IDisposable
 
 		lock (_gate)
 		{
-			if (_selfWrites.Remove(e.FullPath)) return;
+			if (IsSelfWrite(e.FullPath)) return;
 
 			var now = DateTime.UtcNow;
 			if (now - _windowStartedUtc > BulkChangeWindow)
@@ -163,11 +185,42 @@ public sealed class SolutionWatcher : IDisposable
 				}
 			}
 
-			// A checkout rewrites HEAD or index, which says the working tree is being replaced
-			// wholesale rather than edited. Either way individual events stop being meaningful.
-			var treeReplaced = IsGitInternal(e.FullPath) && IsGitTreeMarker(e.FullPath);
+			// A checkout rewrites HEAD, which says the working tree is being replaced wholesale
+			// rather than edited, and individual events stop being meaningful.
+			var treeReplaced = _gitDirectory?.IsTreeReplaced(e.FullPath) ?? false;
 
 			if (_eventsInWindow > BulkChangeThreshold || treeReplaced) _pending |= WatchSignal.FullResyncRequired;
+		}
+	}
+
+	/// <summary>
+	/// Whether this event is one of our own writes, still inside its window. Called under the gate.
+	/// An expired entry is dropped as it is found, so a file written repeatedly never accumulates.
+	/// </summary>
+	private bool IsSelfWrite(string path)
+	{
+		if (!_selfWrites.TryGetValue(path, out var written)) return false;
+		if (DateTime.UtcNow - written <= SelfWriteWindow) return true;
+
+		_selfWrites.Remove(path);
+
+		return false;
+	}
+
+	/// <summary>
+	/// Drops self-write entries whose window has passed. A file written once and never touched again
+	/// raises no further event to expire its entry, so without this the table grows for the life of
+	/// the process -- which is hours, editing C#.
+	/// </summary>
+	private void PruneSelfWrites()
+	{
+		if (_selfWrites.Count == 0) return;
+
+		var cutoff = DateTime.UtcNow - SelfWriteWindow;
+
+		foreach (var (path, written) in _selfWrites.ToArray())
+		{
+			if (written < cutoff) _selfWrites.Remove(path);
 		}
 	}
 
@@ -200,14 +253,7 @@ public sealed class SolutionWatcher : IDisposable
 	/// True while git holds its index lock, or a merge or rebase is part-way through. Reconciling
 	/// then would read a tree that is half old and half new, so the barrier waits it out.
 	/// </summary>
-	private bool GitOperationInFlight()
-	{
-		if (_gitDirectory is null) return false;
-
-		return File.Exists(Path.Combine(_gitDirectory, "index.lock"))
-			|| File.Exists(Path.Combine(_gitDirectory, "MERGE_HEAD"))
-			|| File.Exists(Path.Combine(_gitDirectory, "REBASE_HEAD"));
-	}
+	private bool GitOperationInFlight() => _gitDirectory?.OperationInFlight() ?? false;
 
 	/// <summary>
 	/// Paths that never feed the snapshot. Build output churns constantly and would trip the
@@ -218,7 +264,7 @@ public sealed class SolutionWatcher : IDisposable
 		// Restore rewriting the assets file means the reference graph moved, so that one counts.
 		if (path.EndsWith("project.assets.json", StringComparison.OrdinalIgnoreCase)) return false;
 
-		if (IsGitInternal(path)) return !IsGitTreeMarker(path);
+		if (_gitDirectory is { } git && git.Contains(path)) return !git.IsTreeReplaced(path);
 
 		foreach (var segment in path.Split(SeparatorChars, StringSplitOptions.RemoveEmptyEntries))
 		{
@@ -226,34 +272,6 @@ public sealed class SolutionWatcher : IDisposable
 		}
 
 		return false;
-	}
-
-	private bool IsGitInternal(string path) =>
-		_gitDirectory is not null && path.StartsWith(_gitDirectory, StringComparison.OrdinalIgnoreCase);
-
-	/// <summary>
-	/// HEAD and index are the two git files that imply the working tree is being replaced. The
-	/// rest of .git -- objects, logs, packed refs -- churns during a fetch that touches no source
-	/// at all, so treating any .git write as a resync trigger would be far too eager.
-	/// </summary>
-	private static bool IsGitTreeMarker(string path)
-	{
-		var name = Path.GetFileName(path);
-		return name.Equals("HEAD", StringComparison.Ordinal) || name.Equals("index", StringComparison.Ordinal);
-	}
-
-	private static string? FindGitDirectory(string start)
-	{
-		var directory = new DirectoryInfo(start);
-		while (directory is not null)
-		{
-			var candidate = Path.Combine(directory.FullName, ".git");
-			if (Directory.Exists(candidate)) return candidate;
-
-			directory = directory.Parent;
-		}
-
-		return null;
 	}
 
 	public void Dispose() => _watcher?.Dispose();

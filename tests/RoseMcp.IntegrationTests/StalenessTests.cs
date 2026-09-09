@@ -37,6 +37,43 @@ public sealed class StalenessTests
 	}
 
 	/// <summary>
+	/// The other half of the sweep: a file this worker wrote is already in the snapshot, so reading
+	/// it back off disk is work with nothing at the end of it.
+	/// <para>
+	/// The tracking table kept the stamp from before the write, so the next barrier found every file
+	/// the mutation had touched, re-read it, advanced the revision and reported it as somebody
+	/// else's edit. Throwing the compilation away is what that costs, since every source generator
+	/// then runs again -- and on a project with XAML that is every stub re-emitted, for text nothing
+	/// had changed.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_write_of_our_own_is_not_read_back_as_an_external_change()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var request = new RenameRequest
+		{
+			Target = new SymbolTarget { Symbol = "Core.Calculator.Multiply" },
+			NewName = "Times",
+		};
+
+		var result = await session.MutateAsync(
+			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.True(result.Applied);
+		Assert.True(result.ChangedFiles.Count > 1, "the rename has to write more than one file for this to be worth asserting");
+
+		var settled = session.Revision;
+		var after = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		Assert.DoesNotContain(after.Notices, notice => notice.Contains("external file change", StringComparison.Ordinal));
+		Assert.Equal(settled, after.Revision);
+	}
+
+	/// <summary>
 	/// Absorbing an edit is the server working, not a reason to distrust it.
 	/// <para>
 	/// These notices were being appended to degradedReasons, so almost every status call after an

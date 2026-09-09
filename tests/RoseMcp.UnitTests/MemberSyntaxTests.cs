@@ -244,9 +244,9 @@ public sealed class MemberSyntaxTests
 		var members = MemberSyntax.Parse(
 			"public const string Text = \"\"\"\nfirst\nsecond\n\"\"\";\n",
 			"class",
-			options: null,
-			indent: "\t",
-			lineEnding: "\r\n",
+			null,
+			"\t",
+			"\r\n",
 			count => rewritten = count);
 
 		var written = Assert.Single(members).ToFullString();
@@ -267,9 +267,9 @@ public sealed class MemberSyntaxTests
 		MemberSyntax.Parse(
 			"public const string Text = \"\"\"\r\nfirst\r\n\"\"\";\r\n",
 			"class",
-			options: null,
-			indent: "\t",
-			lineEnding: "\n",
+			null,
+			"\t",
+			"\n",
 			count => rewritten = count);
 
 		Assert.Equal(0, rewritten);
@@ -286,13 +286,72 @@ public sealed class MemberSyntaxTests
 		var members = MemberSyntax.Parse(
 			"public const string Text = \"\"\"\nfirst\n\"\"\";\n",
 			"class",
-			options: null,
-			indent: "\t\t");
+			null,
+			"\t\t");
 
 		var written = Assert.Single(members).ToFullString();
 
 		Assert.Contains("\t\tfirst", written, StringComparison.Ordinal);
 		Assert.Contains("\t\t\"\"\"", written, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A blank line inside a raw literal comes out blank. Padding it changes the text of a string and
+	/// not what the string says -- the compiler trims a whitespace-only line to nothing whatever it
+	/// holds -- so nothing downstream reports it: no analyzer reads a literal's interior, and the diff
+	/// shows the member rewritten around it either way.
+	/// </summary>
+	[Test]
+	public void Leaves_a_raw_literals_blank_line_blank()
+	{
+		var members = MemberSyntax.Parse(
+			"public const string Text = \"\"\"\nfirst\n\nsecond\n\"\"\";\n",
+			"class",
+			options: null,
+			indent: "\t\t");
+
+		var written = Assert.Single(members).ToFullString();
+
+		Assert.Contains("\t\tfirst\n\n\t\tsecond", written, StringComparison.Ordinal);
+		Assert.DoesNotContain("first\n\t\t\n", written, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The lines that did move are counted, so a caller can be told. A literal that came out where it
+	/// went in reports nothing, which is what lets the two halves of the promise be told apart.
+	/// </summary>
+	[Test]
+	public void Counts_the_literal_lines_it_moved()
+	{
+		var moved = -1;
+
+		MemberSyntax.Parse(
+			"public const string Text = \"\"\"\nfirst\n\nsecond\n\"\"\";\n",
+			"class",
+			options: null,
+			indent: "\t\t",
+			reindented: count => moved = count);
+
+		// first, second, and the closing delimiter. The blank line stayed where it was.
+		Assert.Equal(3, moved);
+	}
+
+	/// <summary>A literal already at the destination's indentation moved nothing, and says nothing.</summary>
+	[Test]
+	public void Says_nothing_about_a_literal_that_did_not_move()
+	{
+		var moved = -1;
+
+		// Written at the destination's own indentation, which is the shape the shift is the identity for:
+		// the baseline comes off and the same amount goes back on.
+		MemberSyntax.Parse(
+			"\t\tpublic const string Text = \"\"\"\n\t\t\t\tfirst\n\n\t\t\t\tsecond\n\t\t\t\t\"\"\";\n",
+			"class",
+			options: null,
+			indent: "\t\t",
+			reindented: count => moved = count);
+
+		Assert.Equal(-1, moved);
 	}
 
 	/// <summary>
@@ -305,8 +364,8 @@ public sealed class MemberSyntaxTests
 		var members = MemberSyntax.Parse(
 			"public const string Text = @\"first\nsecond\";\n",
 			"class",
-			options: null,
-			indent: "\t\t");
+			null,
+			"\t\t");
 
 		var written = Assert.Single(members).ToFullString();
 

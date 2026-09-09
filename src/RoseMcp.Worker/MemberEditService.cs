@@ -177,7 +177,8 @@ public static class MemberEditService
 			target.Document.Project.ParseOptions,
 			IndentAt(text, target.Declaration.SpanStart),
 			Whitespace.Dominant(text),
-			count => notices.Add(RewrittenEndings(count, text)));
+			count => notices.Add(RewrittenEndings(count, text)),
+			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		if (parsed.Count != 1)
 		{
@@ -332,6 +333,7 @@ public static class MemberEditService
 			fromTheFile ? indent : indent + rules.IndentUnit,
 			Whitespace.Dominant(text),
 			count => notices.Add(RewrittenEndings(count, text)),
+			count => notices.Add(MemberSyntax.ReindentedLiteral(count)),
 			copied: head,
 			baseline: fromTheFile ? indent : null);
 
@@ -452,7 +454,8 @@ public static class MemberEditService
 			document.Project.ParseOptions,
 			IndentFor(type, text, rules),
 			lineEnding,
-			count => notices.Add(RewrittenEndings(count, text)));
+			count => notices.Add(RewrittenEndings(count, text)),
+			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		GuardDuplicates(type, parsed);
 
@@ -1033,9 +1036,5 @@ public static class MemberEditService
 	/// is not line content, and inside a literal it is part of what the string says.
 	/// </summary>
 	private static string RewrittenEndings(int count, SourceText text) =>
-		$"Rewrote {count} line ending(s) in the code supplied to {LineEndings.Name(Whitespace.Dominant(text))}, "
-			+ "the ending this file uses. Every ending in it was a bare LF, which is what composing C# for "
-			+ "a tool argument produces without anyone deciding to -- but inside a string literal an "
-			+ "ending is part of the value, which is why this is said rather than left silent. Write one "
-			+ "CR LF anywhere in the code to keep every ending exactly as it arrived.";
+		MemberSyntax.RewrittenEndings(count, LineEndings.Name(Whitespace.Dominant(text)));
 }

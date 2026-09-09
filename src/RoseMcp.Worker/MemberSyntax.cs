@@ -52,6 +52,12 @@ public static class MemberSyntax
 	/// How many endings were changed, so a caller can say so. It is a change to what a literal says,
 	/// and it must not be silent.
 	/// </param>
+	/// <param name="reindented">
+	/// How many lines inside a multi-line raw literal moved, for the same reason. The value survives
+	/// it -- content and closing delimiter move together, and the delimiter's indentation is what is
+	/// stripped from the rest -- but the text inside a string is not the text that was supplied, and
+	/// a diff showing the member rewritten around it says nothing about which half changed.
+	/// </param>
 	/// <param name="copied">
 	/// The leading part of <paramref name="code"/> that came out of the file rather than from the
 	/// caller -- the signature, where only a body is being replaced. It is already indented for
@@ -81,6 +87,7 @@ public static class MemberSyntax
 		string indent = "",
 		string lineEnding = "",
 		Action<int>? rewritten = null,
+		Action<int>? reindented = null,
 		string copied = "",
 		string? baseline = null)
 	{
@@ -93,7 +100,15 @@ public static class MemberSyntax
 		// understood: which lines sit inside a multi-line literal decides which of them have to be
 		// left exactly as they arrived. The second parse is of text, in microseconds, against an edit
 		// that is about to compile a project.
-		var shifted = Shift(code, indent, Literals(members), lineEnding, rewritten, Copied(code, copied), baseline);
+		var shifted = Shift(
+			code,
+			indent,
+			Literals(members),
+			lineEnding,
+			rewritten,
+			reindented,
+			Copied(code, copied),
+			baseline);
 
 		return string.Equals(shifted, code, StringComparison.Ordinal)
 			? members
@@ -167,6 +182,39 @@ public static class MemberSyntax
 			.. trivia.SkipWhile(candidate =>
 				candidate.Kind() is SyntaxKind.WhitespaceTrivia or SyntaxKind.EndOfLineTrivia),
 		];
+
+	/// <summary>
+	/// Says that line endings in the supplied code were changed, because a diff cannot: a terminator
+	/// is not line content, and inside a literal it is part of what the string says.
+	/// <para>
+	/// Here rather than beside one caller, so every path that writes a member says the same sentence.
+	/// </para>
+	/// </summary>
+	/// <param name="count">How many endings were rewritten.</param>
+	/// <param name="ending">The name of the ending they were rewritten to.</param>
+	public static string RewrittenEndings(int count, string ending) =>
+		$"Rewrote {count} line ending(s) in the code supplied to {ending}, "
+			+ "the ending this file uses. Every ending in it was a bare LF, which is what composing C# for "
+			+ "a tool argument produces without anyone deciding to -- but inside a string literal an "
+			+ "ending is part of the value, which is why this is said rather than left silent. Write one "
+			+ "CR LF anywhere in the code to keep every ending exactly as it arrived.";
+
+	/// <summary>
+	/// Says that a multi-line raw literal was moved to sit with the code around it, which is the
+	/// other change to a string that nothing else reports.
+	/// <para>
+	/// What the string says is unchanged, and that is exactly why it needs saying: no analyzer reads a
+	/// literal's interior, the diff shows the member rewritten either way, and a caller comparing what
+	/// they sent against what landed would otherwise find a difference with no explanation for it.
+	/// </para>
+	/// </summary>
+	/// <param name="lines">How many lines inside the literal moved.</param>
+	public static string ReindentedLiteral(int lines) =>
+		$"Re-indented {lines} line(s) inside a multi-line raw string literal, so the literal sits with the "
+			+ "code around it. What the string says is unchanged, because its value is what is left once the "
+			+ "closing delimiter's indentation comes off every line and the delimiter moved with the content "
+			+ "-- but the text inside the literal is not the text that was supplied, and no diff separates "
+			+ "the two. Its blank lines were left exactly as they arrived.";
 
 	/// <summary>
 	/// The parameters <paramref name="text"/> declares, taken as what goes between the parentheses,
@@ -371,7 +419,11 @@ public static class MemberSyntax
 	/// delimiter rule to take it back out again. A raw literal's is moved with everything else,
 	/// because its value is what remains once the closing delimiter's indentation has been stripped
 	/// from every line -- so shifting the content and the delimiter by the same amount leaves the
-	/// value identical while putting the literal at the indentation of the code around it.
+	/// value identical while putting the literal at the indentation of the code around it. A blank
+	/// line inside one is left exactly as supplied all the same, since padding it changes the text of
+	/// a string and not what the string says: the compiler trims a whitespace-only line to nothing
+	/// whatever it holds. What did move is counted, because a caller cannot see it -- the diff shows
+	/// the member being rewritten either way, and a literal's interior is content no analyzer reads.
 	/// </para>
 	/// <para>
 	/// Endings are rewritten to <paramref name="lineEnding"/>, literals included, but only when
@@ -391,6 +443,7 @@ public static class MemberSyntax
 		Literal literals,
 		string lineEnding,
 		Action<int>? rewritten,
+		Action<int>? reindented,
 		int copied,
 		string? given)
 	{
@@ -398,6 +451,7 @@ public static class MemberSyntax
 		var written = lines.Skip(copied).ToArray();
 		var baseline = given ?? Baseline([.. written.Select(line => line.Content)]);
 		var changed = 0;
+		var moved = 0;
 
 		var wanted = written.All(line => line.Ending is "" or "\n") ? lineEnding : string.Empty;
 
@@ -411,16 +465,21 @@ public static class MemberSyntax
 
 			if (literals.Verbatim.Contains(index)) return line.Content + ending;
 
+			var raw = literals.Raw.Contains(index);
+
+			// Content of the same kind as the characters around it, and padding it is a change to the
+			// text of a string that nothing downstream reports.
+			if (raw && line.Content.Trim().Length == 0) return line.Content + ending;
+
 			var stripped = baseline.Length > 0 && line.Content.StartsWith(baseline, StringComparison.Ordinal)
 				? line.Content[baseline.Length..]
 				: line.Content;
 
 			// The first line's indentation comes from the trivia at the splice point, and padding a
-			// blank line only creates trailing whitespace for the next pass to strip again. A raw
-			// literal's own blank line is padded, because there it is content and the delimiter's
-			// indentation is about to be taken back off it.
-			var content = literals.Raw.Contains(index) || stripped.Trim().Length > 0;
-			var prefixed = index > 0 && content ? indent + stripped : stripped;
+			// blank line only creates trailing whitespace for the next pass to strip again.
+			var prefixed = index > 0 && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+
+			if (raw && !string.Equals(prefixed, line.Content, StringComparison.Ordinal)) moved++;
 
 			return prefixed + ending;
 		});
@@ -428,6 +487,7 @@ public static class MemberSyntax
 		var result = string.Concat(shifted);
 
 		if (changed > 0) rewritten?.Invoke(changed);
+		if (moved > 0) reindented?.Invoke(moved);
 
 		return result;
 	}

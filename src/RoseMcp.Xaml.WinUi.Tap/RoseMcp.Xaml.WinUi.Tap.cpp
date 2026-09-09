@@ -243,6 +243,18 @@ static void RoseTapCaptureDispatcher(::IInspectable* raw)
 	Log(g_uiQueue ? L"SetSite: holding the UI dispatcher" : L"SetSite: no DispatcherQueue available");
 }
 
+// The walk runs on the body's own thread and must not be dispatched.
+//
+// WinUI 3's AdviseVisualTreeChange enqueues the enumeration onto the UI thread and blocks the caller
+// until it finishes, with no check for already being on it, so asking for it from the UI thread
+// deadlocks the one thread that can serve it. The enumeration arrives on the UI thread whoever asks,
+// which is also what keeps the node list to a single writer.
+static bool RoseTapRunWalk(const std::function<void()>& walk)
+{
+	walk();
+	return true;
+}
+
 static void RoseTapRunTapBody(std::function<void()> body)
 {
 	std::thread([body = std::move(body)]()

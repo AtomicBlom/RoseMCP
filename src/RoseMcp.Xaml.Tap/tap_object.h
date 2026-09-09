@@ -166,14 +166,18 @@ public:
 	/// </remarks>
 	void ServeRequest()
 	{
-		// Synchronous callbacks, but not necessarily on this thread: UWP calls back here, WinUI 3 calls
-		// back on the UI thread while this one waits. Either way the walk is done when it returns.
-		const HRESULT hr = m_tree->AdviseVisualTreeChange(this);
-		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
+		// The walk, on whichever thread this framework needs it on. The provider is the only half that
+		// knows which that is, and getting it wrong deadlocks on one framework and races on the other.
+		if (!RoseTapRunWalk([this]() { Walk(); }))
+		{
+			Log(L"the tree walk could not be dispatched, so this injection has no tree");
+			return;
+		}
 
-		// Everything past the walk reads or writes live XAML, so it goes back to the thread that owns
-		// it. The snapshot is written there too: it costs nothing beside the rest, and dividing the work
-		// by which individual lines happen to touch an element is how the next edit gets it wrong.
+		// Everything past the walk reads or writes live XAML, so it goes to the thread that owns it.
+		// The division is exact rather than cautious: the walk is the only part whose thread the two
+		// frameworks disagree about, and dividing the rest by which individual lines happen to touch an
+		// element is how the next edit gets it wrong.
 		RoseTapRunOnUiThread([this]()
 		{
 			// The toolbar is installed once and left there. The snapshot filters it out of every tree, so
@@ -201,9 +205,24 @@ public:
 		});
 
 		// This instance is the one the reader should answer from now on, and only then is it safe to
-		// have a reader at all.
+		// have a reader at all: a request served before the walk would answer from an empty tree.
 		SetActiveTap(this);
 		StartPipeReader();
+	}
+
+	/// <summary>
+	/// Enumerates the tree into the node list, and leaves this tap advised for everything after.
+	/// </summary>
+	/// <remarks>
+	/// The enumeration arrives on the UI thread on both frameworks, which is what keeps the node list
+	/// to a single writer: UWP delivers it inline to whoever asked and the provider therefore asks from
+	/// the UI thread, while WinUI 3 enqueues it onto the UI thread whoever asks. The two get there by
+	/// opposite routes, so where to ask from is the provider's decision and not this file's.
+	/// </remarks>
+	void Walk()
+	{
+		const HRESULT hr = m_tree->AdviseVisualTreeChange(this);
+		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
 	}
 
 	/// <summary>

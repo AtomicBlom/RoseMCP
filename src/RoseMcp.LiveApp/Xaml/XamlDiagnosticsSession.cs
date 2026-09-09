@@ -70,6 +70,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// a slower session rather than a broken one.
 	private XamlProviderPipe? _pipe;
 
+	// How many times this session has loaded the provider. One is the intent and the ordinary case;
+	// anything more means the pipe dropped and the channel was rebuilt.
+	private int _injections;
+
 
 	// Whether the target's diagnostics endpoint has ever answered this session. It separates two
 	// failures that share an HRESULT and mean opposite things: ERROR_NOT_FOUND before any read is an
@@ -942,8 +946,24 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	{
 		if (_pipe?.Connected == true) return null;
 
+		// Said, because one injection per session is the invariant and this is the only thing that can
+		// break it. A pipe that drops sends the next call back through injection, which loads a second
+		// tap into the app -- the condition that used to accumulate one per request. The previous tap
+		// stands itself down, so the cost is bounded, but a session doing this repeatedly is a channel
+		// failing quietly and it should not take a memory graph to notice.
+		if (_injections > 0)
+		{
+			logger.LogWarning(
+				"Injecting into pid {Pid} again (injection {Count}) because the XAML provider's pipe is not connected. "
+					+ "One injection per session is the intent; more than one means the channel dropped.",
+				pid,
+				_injections + 1);
+		}
+
 		var (_, error) = Inject(pid);
 		if (error is not null) return error;
+
+		_injections++;
 
 		if (_pipe?.Connected != true)
 		{

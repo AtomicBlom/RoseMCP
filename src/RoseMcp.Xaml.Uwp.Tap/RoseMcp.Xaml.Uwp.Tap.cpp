@@ -153,9 +153,35 @@ static void RoseTapCaptureDispatcher(::IInspectable* raw)
 	Log(g_dispatcher ? L"SetSite: holding the UI dispatcher" : L"SetSite: no CoreDispatcher available");
 }
 
+// Posted to the UI thread, so SetSite returns at once. Posted rather than run on a thread of its own,
+// which is the part that is not a preference.
+//
+// SetSite is called inline from inside InitializeXamlDiagnosticsEx: a blocking cross-process call
+// served by the app's UI thread, reached while our own DLL is being brought into the process. Running
+// the body here holds that call open for as long as the walk and the toolbar take, and everything the
+// app has queued waits behind it. Starting a thread to escape that asks the loader for a lock the
+// injecting thread may be holding, and a loader deadlock does not fail, it stops -- taking the UI
+// thread with it, which is the whole of the app.
+//
+// Posting costs neither. It returns immediately, and the body runs on the next pump, by which time the
+// injection call has returned. The work still happens on the UI thread, which on UWP is where it has to
+// happen: the enumeration arrives on whichever thread asks for it, and asking from anywhere else puts a
+// second writer on the node list.
+//
+// A target that gives no dispatcher is served inline, as before. That is worse for the app and is the
+// only thing left that can be done for it.
 static void RoseTapRunTapBody(std::function<void()> body)
 {
-	body();
+	if (!g_dispatcher)
+	{
+		Log(L"SetSite: no dispatcher to post the tap body to, so it runs inside the injection call");
+		body();
+		return;
+	}
+
+	g_dispatcher.RunAsync(
+		winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,
+		[body = std::move(body)]() { body(); });
 }
 
 // Blocking on the async action is safe off the UI thread and only there; on it, it would throw, and
@@ -179,10 +205,24 @@ static bool RoseTapRunOnUiThread(const std::function<void()>& work)
 	}
 	catch (...)
 	{
-		// A dispatcher whose window has gone, most likely. The caller answers with an empty frame and
-		// the host falls back to the file channel rather than hanging.
+		// A dispatcher whose window has gone, most likely. The caller answers with an empty frame,
+		// which the host reports rather than hanging on.
 		return false;
 	}
+}
+
+// The tree walk is asked for from the UI thread here, because UWP enumerates inline on whichever
+// thread asks.
+//
+// Advising from anywhere else would deliver OnVisualTreeChange there while the app goes on delivering
+// live mutations to the same handler on the UI thread. Two writers to one node list is a data race, and
+// an intermittent one, which is the shape that survives a test suite. The body is already on the UI
+// thread by the time this runs, so it resolves inline; it goes through the dispatcher anyway for the
+// one path that has no dispatcher to post to. WinUI 3 cannot do this and must advise off the UI thread,
+// which is why this is a seam and not a rule.
+static bool RoseTapRunWalk(const std::function<void()>& walk)
+{
+	return RoseTapRunOnUiThread(walk);
 }
 
 // The two layers that need the aliases and the class id above: the overlay is written against the

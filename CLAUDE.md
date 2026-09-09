@@ -536,6 +536,32 @@ reclaim memory or pick up a rebuilt generator.
   handler that does any work, however many injections a session makes, and the removal handling stays
   where #51 needs it: the tap that is answering is still advised between requests, so a selection whose
   element leaves the tree is still noticed.
+- **Nothing starts a thread from inside the injection call, and the tap body does not run there
+  either.** `SetSite` is reached inline from inside `InitializeXamlDiagnosticsEx` on UWP: a blocking
+  cross-process call served by the app's UI thread, arriving while our own DLL is being brought into
+  the process. Two things must not happen there. Running the body holds that call open for the length
+  of the walk and the toolbar, so everything the app has queued waits behind us, in somebody else's
+  application. And starting a thread asks the loader for a lock the injecting thread may be holding,
+  which does not fail -- it stops, taking the UI thread and therefore the whole app with it, which is
+  exactly the shape of a target that wedges and never recovers.
+  <br>
+  So the body is *posted* to the UI thread and `SetSite` returns at once. The work still happens on the
+  UI thread, because UWP delivers the enumeration to whichever thread asks for it and asking from
+  anywhere else puts a second writer on the node list. What moves is only when it happens: after the
+  injection call has returned, on an ordinary pump, which is also where the pipe reader's thread is now
+  created. Do not "improve" this by giving the body a thread of its own -- that was tried, and the
+  first suite run with it produced a wedge with `InitializeXamlDiagnosticsEx` not returning, which had
+  not been seen in fifteen runs before or since. WinUI 3 is the opposite case and needs its own thread,
+  because its `AdviseVisualTreeChange` enqueues onto the UI thread and blocks the caller; that is why
+  where the walk happens is a seam each provider fills rather than a rule this file states.
+- **The tap is never ejected from the target.** Visual Studio unadvises once and then unloads its tap
+  with `CreateRemoteThread(FreeLibrary)`, and the difference is deliberate rather than unfinished. Our
+  overlay stays in the app's visual tree on purpose so the toolbar survives a session, the reader
+  thread is running our code, and the framework may still hold the tap as a callback if an unadvise did
+  not take. Unloading under any of those is a crash in an application that is not ours, which this
+  codebase ranks below a leak. Visual Studio can eject because it tears its whole UI down first. What
+  we do instead is give the two framework interfaces back at teardown -- on the detach verb, and on the
+  pipe closing under a host that was killed -- and leave the DLL loaded.
 - **Injection loads the provider; every request is a message.** The host used to inject per request,
   because the work happens on the app's UI thread and `InitializeXamlDiagnosticsEx` was the only way
   onto it. That made a session's twenty-fourth call its twenty-fourth injection, and since the

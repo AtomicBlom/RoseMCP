@@ -377,15 +377,15 @@ reclaim memory or pick up a rebuilt generator.
   read-only and is not quite, though nothing the app draws changes.
 - **One XAML request at a time, and the lock has to be re-entrant.** The live-app host serves MCP
   calls concurrently -- measured, not assumed: two tree reads issued together finished in 118ms
-  against a warm single read of 112ms -- and every XAML request shares one work folder, one
-  `request.txt` and one generation counter. Ten concurrent pairs against the probe produced three
-  outcomes: a `request.txt` that could not be written because the other call held it, several
-  fifteen-second waits for a snapshot the other call's injection had already consumed, and once a
-  tree of 22 elements where the app has 24, returned with no detail set. The last is why this is a
-  lock and not a documented limitation, since a truncated tree hands out handles for a tree that is
-  not there. Serialised rather than given a folder each, because the provider keeps its work folder
-  in a global and does everything on the app's UI thread, so two folders would need a different
-  provider and would buy no parallelism from a single-threaded consumer. It must be re-entrant --
+  against a warm single read of 112ms -- and every XAML request shares one pipe, which carries one
+  request and one reply at a time. The measurement was taken against a channel of files and the
+  conclusion outlived it: ten concurrent pairs against the probe produced several fifteen-second waits
+  for a snapshot the other call had already consumed, and once a tree of 22 elements where the app has
+  24, returned with no detail set. The last is why this is a lock and not a documented limitation,
+  since a truncated tree hands out handles for a tree that is not there, and a pipe fails no better --
+  two requests interleaved on one stream pair each reply with the wrong question. Serialised rather
+  than given a channel each, because the provider does everything on the app's UI thread, so a second
+  pipe would buy no parallelism from a single-threaded consumer. It must be re-entrant --
   `System.Threading.Lock`, which is what the rest of this codebase uses: selecting by handle finishes
   by calling `ReadSelection`, which takes the lock again on the same thread, and a `SemaphoreSlim`
   would deadlock that forever. Do not conclude from a passing
@@ -536,16 +536,36 @@ reclaim memory or pick up a rebuilt generator.
   handler that does any work, however many injections a session makes, and the removal handling stays
   where #51 needs it: the tap that is answering is still advised between requests, so a selection whose
   element leaves the tree is still noticed.
-- **A provider marker answers one request, and the generation is what says which.** Every handshake
-  through the work folder is "does this file exist", the host deletes the marker before injecting, and
-  `TryDelete` swallows its failures -- so the number the host stamps on the request and the provider
-  echoes back is the only thing separating this answer from the last one (#57, #89). Two things about
-  that are not mechanical. The tree snapshot is written *before* the request is read, so hoisting the
-  read is part of the stamp: otherwise the marker carries the previous request's number and the host
-  rejects a perfectly good tree as stale, which presents as a timeout blaming the app's diagnostics
-  layer. And `selection.ready` deliberately carries no generation at all, because it records a click,
-  which outlives the injection that armed select mode by design -- stamping it would have the read that
-  goes looking for it reject its own answer. One file cannot both answer a request and survive one.
+- **Injection loads the provider; every request is a message.** The host used to inject per request,
+  because the work happens on the app's UI thread and `InitializeXamlDiagnosticsEx` was the only way
+  onto it. That made a session's twenty-fourth call its twenty-fourth injection, and since the
+  framework never asks a tap to stand down, its twenty-fourth advised sink -- each one receiving every
+  mutation in the app, holding a tree copy that only grows, and costing the UI thread that the next
+  injection needs in order to be sited at all. One tap for the life of a session is not a thing to
+  maintain, it is what falls out of injecting once.
+  <br>
+  So injection carries no request at all. It stages the provider, loads it, walks the tree and puts
+  the toolbar up; everything after that -- the tree, an element's properties, a batch of edits, arming
+  and disarming select mode, picking by handle, clearing a pick, and reading what is picked -- is a
+  length-prefixed UTF-8 frame on a named pipe the host created and the provider connected back on. A
+  reply read from the pipe a request went out on is that request's answer by construction, which is
+  what makes the generation stamp unnecessary rather than merely unused: every handshake through the
+  folder was "does this file exist", so the host had to number each request and have the provider echo
+  it back to tell this answer from the last one.
+  <br>
+  **A read may fall back to the other channel and a batch may not**, and that asymmetry is the thing
+  to preserve if a fallback is ever reintroduced. Asking for a tree twice costs a second answer.
+  Sending a batch twice puts a second copy of everything it adds into the app, and a missing reply
+  cannot distinguish "never ran" from "ran, and the answer was lost" -- so a batch is reported as
+  unanswered, never retried on another channel.
+  <br>
+  Two things are answered rather than pushed, and both for the same reason: a pick outlives the
+  request that armed it, because the person clicks when they click. The mode, the candidate rows and
+  the note saying why a selection went away come back in one reply, because read separately they can
+  describe a state that never existed at any instant. And arming waits for a layout pass before it
+  answers, since a capture layer's extent means nothing until XAML has arranged it -- the wait happens
+  on the reader thread, which is not the thread doing the arranging, and a caller already on the UI
+  thread must never wait there.
 - **Which XAML framework a target is running is asked of the target, and the order of the asking is
   the trick.** The live half had no idea: it hard-coded UWP in four places -- the
   `Windows.UI.Xaml.dll` DllImport, the provider file name, the CLSID, and the AppContainer grants --

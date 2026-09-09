@@ -43,7 +43,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// while reporting the wrong channel.
 	private const string PipeChannel = "pipe";
 
-	private const string WorkFolderChannel = "work folder";
 
 	// Every wait on the provider, and the sentence each produces when it expires. Long enough for a
 	// XAML app to get its first tree up, short enough that a target which genuinely has no XAML UI
@@ -71,14 +70,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// a slower session rather than a broken one.
 	private XamlProviderPipe? _pipe;
 
-	// The number stamped on the request being served, and echoed back by the provider on everything it
-	// writes. Every handshake here used to be "does this file exist", with the host deleting the marker
-	// before injecting -- so a delete that silently failed left the wait satisfied by the *previous*
-	// request's marker, and the host went on to read an answer written before it asked the question.
-	// The comment on TryDelete claimed the ready-marker wait handled an undeletable stale file; it
-	// could not, because existence is the same either way. A number the host chose can tell them apart
-	// (#57).
-	private long _generation;
 
 	// Whether the target's diagnostics endpoint has ever answered this session. It separates two
 	// failures that share an HRESULT and mean opposite things: ERROR_NOT_FOUND before any read is an
@@ -95,19 +86,20 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	// One request at a time, and this is measured rather than defensive (#93). The host serves MCP
 	// calls concurrently -- two tree reads issued together finish in the time of one, where serialised
-	// they would take twice as long -- and everything below shares one work folder, one request.txt
-	// and one generation counter, so two in flight collide on all three.
+	// they would take twice as long -- and everything below shares one pipe, which carries one request
+	// and one reply at a time.
 	//
-	// What that looked like, on ten concurrent pairs against the probe: a request.txt that could not be
-	// written because the other call held it, several fifteen-second waits for a snapshot the other
-	// call's injection had already consumed, and once a tree of 22 elements where the app has 24,
-	// returned with no detail set. That last one is the reason this is a lock and not a documented
-	// limitation: a truncated tree reported as success feeds handles to every other tool.
+	// The measurement was taken against a channel of files and the conclusion outlived it. On ten
+	// concurrent pairs against the probe: several fifteen-second waits for a snapshot the other call had
+	// already consumed, and once a tree of 22 elements where the app has 24, returned with no detail
+	// set. That last one is why this is a lock and not a documented limitation: a truncated tree
+	// reported as success feeds handles to every other tool. A pipe fails differently and no better --
+	// two requests interleaved on one stream pair each reply with the wrong question.
 	//
-	// Serialising rather than giving each request its own folder, because the provider keeps its work
-	// folder in a global and does everything on the app's UI thread. Two folders would need a different
-	// provider, and would buy no parallelism from a single-threaded consumer. The wait can be long --
-	// the endpoint timeout is twenty seconds -- and a slow correct answer is the trade being made.
+	// Serialising rather than giving each request a channel of its own, because the provider does
+	// everything on the app's UI thread. A second pipe would buy no parallelism from a single-threaded
+	// consumer. The wait can be long -- the endpoint timeout is twenty seconds -- and a slow correct
+	// answer is the trade being made.
 	//
 	// It has to be a re-entrant lock, and that is load-bearing: selecting by handle finishes by
 	// calling ReadSelection, which takes this lock again on the same thread. System.Threading.Lock
@@ -128,36 +120,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlTree ReadTreeCore(int pid)
 	{
-		// The pipe first, where the provider is already resident: no injection, no marker, no file.
-		// This is the whole point of #50 -- the provider does its work on the app's UI thread, so
-		// every request used to re-inject to get onto that thread, and a resident reader reaching it
-		// through the dispatcher makes a read a message instead.
-		if (_pipe?.Connected == true && _pipe.Request("tree", _bounds.Snapshot) is { } served)
-		{
-			var fromPipe = ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
-			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", fromPipe.Count, pid);
-			return new LiveXamlTree { Nodes = fromPipe, Channel = PipeChannel };
-		}
+		var unready = EnsureProvider(pid);
+		if (unready is not null) return new LiveXamlTree { Detail = unready };
 
-		var (workDir, error) = Inject(pid, "tree");
-		if (error is not null) return new LiveXamlTree { Detail = error };
+		var served = _pipe!.Request("tree", _bounds.Snapshot);
+		if (served is null) return new LiveXamlTree { Detail = Unanswered("a tree") };
 
-		if (!WaitForMarker(Path.Combine(workDir!, "tree.ready"), _bounds.Snapshot))
-		{
-			return new LiveXamlTree { Detail = MarkerTimedOut("write a tree snapshot") };
-		}
-
-		try
-		{
-			var nodes = ParseTree(File.ReadLines(Path.Combine(workDir!, "tree.tsv"), Encoding.UTF8));
-			logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid}.", nodes.Count, pid);
-			return new LiveXamlTree { Nodes = nodes, Channel = WorkFolderChannel };
-		}
-		catch (Exception exception)
-		{
-			logger.LogWarning(exception, "Reading the XAML tree snapshot failed.");
-			return new LiveXamlTree { Detail = $"Could not read the tree snapshot: {exception.Message}" };
-		}
+		var nodes = ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+		logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", nodes.Count, pid);
+		return new LiveXamlTree { Nodes = nodes, Channel = PipeChannel };
 	}
 
 	/// <summary>
@@ -175,11 +146,14 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	{
 		var request = includeDefaults ? $"properties {handle} all" : $"properties {handle}";
 
-		// The pipe first, where the provider is resident (#50). The reply is a status line and then
-		// the rows, so "the chain could not be read" stays distinguishable from "read it and there
-		// was nothing" -- a distinction the marker file made with the word "error" and an empty reply
-		// could not make at all.
-		if (_pipe?.Connected == true && _pipe.Request(request, _bounds.Snapshot) is { } served)
+		var unready = EnsureProvider(pid);
+		if (unready is not null) return new LiveXamlProperties { Handle = handle, Detail = unready };
+
+		// The reply is a status line and then the rows, so "the chain could not be read" stays
+		// distinguishable from "read it and there was nothing" -- a distinction an empty reply cannot
+		// make at all.
+		var served = _pipe!.Request(request, _bounds.Snapshot);
+		if (served is not null)
 		{
 			var lines = served.Split('\n', StringSplitOptions.RemoveEmptyEntries);
 			if (lines.Length > 0 && lines[0] == "error")
@@ -201,25 +175,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			}
 		}
 
-		var (workDir, error) = Inject(pid, request);
-		if (error is not null) return new LiveXamlProperties { Handle = handle, Detail = error };
-
-		if (!WaitForMarker(Path.Combine(workDir!, "properties.ready"), _bounds.Snapshot))
-		{
-			return new LiveXamlProperties { Handle = handle, Detail = MarkerTimedOut("write the properties") };
-		}
-
-		try
-		{
-			var properties = ParseProperties(File.ReadLines(Path.Combine(workDir!, "properties.tsv"), Encoding.UTF8), handle);
-			logger.LogInformation("Read {Count} propert(y/ies) for handle {Handle} from pid {Pid}.", properties.Count, handle, pid);
-			return properties;
-		}
-		catch (Exception exception)
-		{
-			logger.LogWarning(exception, "Reading the XAML properties failed.");
-			return new LiveXamlProperties { Handle = handle, Detail = $"Could not read the properties: {exception.Message}" };
-		}
+		return new LiveXamlProperties { Handle = handle, Detail = Unanswered($"the properties of handle {handle}") };
 	}
 
 	/// <summary>
@@ -255,18 +211,12 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlSelection ExitSelectModeCore(int pid)
 	{
-		// Safe to try the pipe and fall back, unlike an apply: disarming twice is disarming. Every verb
-		// here is idempotent, which is what lets them take the cheap channel first and the certain one
-		// after, and is exactly what a batch of structural edits is not.
-		if (_pipe?.Connected != true || _pipe.Request("idle", _bounds.Snapshot) is null)
-		{
-			var (workDir, error) = Inject(pid, "idle");
-			if (error is not null) return new LiveXamlSelection { Detail = error };
+		var unready = EnsureProvider(pid);
+		if (unready is not null) return new LiveXamlSelection { Detail = unready };
 
-			if (!WaitForMarker(Path.Combine(workDir!, "idle.ready"), _bounds.Snapshot))
-			{
-				return new LiveXamlSelection { Detail = MarkerTimedOut("report select mode disarmed") };
-			}
+		if (_pipe!.Request("idle", _bounds.Snapshot) is null)
+		{
+			return new LiveXamlSelection { Detail = Unanswered("select mode to be disarmed") };
 		}
 
 		// Answered from the provider's own state rather than from the fact that it acknowledged, for
@@ -283,36 +233,25 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			+ (includeAllElements ? " all" : string.Empty)
 			+ (justMyXaml ? " myxaml" : " nomyxaml");
 
-		int width;
-		int height;
+		var unready = EnsureProvider(pid);
+		if (unready is not null) return new LiveXamlSelection { Detail = unready };
 
 		// The provider reports the extent XAML arranged its capture layer at, and a zero is checked
 		// rather than assumed: an overlay that exists but was given no area is armed, invisible, and
 		// cannot be clicked -- which is indistinguishable from working if all you check is that it
 		// armed. That exact state shipped once, so it is now a reported failure.
 		//
-		// Over the pipe the provider waits for the layout pass before it answers, so the extent in the
-		// reply is the arranged one. Arming is idempotent, so falling back costs nothing but a second
-		// arming of an already-armed mode.
-		if (_pipe?.Connected == true && _pipe.Request(request, _bounds.Snapshot) is { } served)
+		// The provider waits for the layout pass before answering, so the extent in the reply is the
+		// arranged one rather than whatever it was before XAML got to it.
+		var served = _pipe!.Request(request, _bounds.Snapshot);
+		if (served is null)
 		{
-			var fields = served.Trim().Split('\t');
-			width = fields.Length > 1 && int.TryParse(fields[1], out var armedWidth) ? armedWidth : 0;
-			height = fields.Length > 2 && int.TryParse(fields[2], out var armedHeight) ? armedHeight : 0;
+			return new LiveXamlSelection { Detail = Unanswered("select mode to be armed") };
 		}
-		else
-		{
-			var (workDir, error) = Inject(pid, request);
-			if (error is not null) return new LiveXamlSelection { Detail = error };
 
-			var readyFile = Path.Combine(workDir!, "select.ready");
-			if (!WaitForMarker(readyFile, _bounds.Snapshot))
-			{
-				return new LiveXamlSelection { Detail = MarkerTimedOut("arm select mode (the app may have no diagnostics UI layer)") };
-			}
-
-			(width, height) = ReadArmedExtent(readyFile);
-		}
+		var fields = served.Trim().Split('\t');
+		var width = fields.Length > 1 && int.TryParse(fields[1], out var armedWidth) ? armedWidth : 0;
+		var height = fields.Length > 2 && int.TryParse(fields[2], out var armedHeight) ? armedHeight : 0;
 		if (width <= 0 || height <= 0)
 		{
 			return new LiveXamlSelection
@@ -361,29 +300,16 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlSelection ClearSelectionCore(int pid)
 	{
-		bool had;
-		if (_pipe?.Connected == true && _pipe.Request("deselect", _bounds.Snapshot) is { } served)
-		{
-			had = served.Trim() == "cleared";
-		}
-		else
-		{
-			var (workDir, error) = Inject(pid, "deselect");
-			if (error is not null) return new LiveXamlSelection { Detail = error };
+		var unready = EnsureProvider(pid);
+		if (unready is not null) return new LiveXamlSelection { Detail = unready };
 
-			var readyFile = Path.Combine(workDir!, "deselect.ready");
-			if (!WaitForMarker(readyFile, _bounds.Snapshot))
-			{
-				return new LiveXamlSelection
-				{
-					Detail = MarkerTimedOut("confirm the deselect (the app may have no diagnostics UI layer)"),
-				};
-			}
-
-			// The first token, not the whole line: the marker carries the generation after its verdict,
-			// and comparing the line entire would read every clear as "nothing was selected".
-			had = Verdict(readyFile) == "cleared";
+		var served = _pipe!.Request("deselect", _bounds.Snapshot);
+		if (served is null)
+		{
+			return new LiveXamlSelection { Detail = Unanswered("the deselect to be confirmed") };
 		}
+
+		var had = served.Trim() == "cleared";
 
 		var (mode, justMyXaml, _) = OverlayState();
 
@@ -418,35 +344,19 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlSelection SelectByHandleCore(int pid, ulong handle)
 	{
-		bool selected;
-		if (_pipe?.Connected == true && _pipe.Request($"selecthandle {handle}", _bounds.Snapshot) is { } served)
-		{
-			selected = served.Trim() == "selected";
-		}
-		else
-		{
-			var (workDir, error) = Inject(pid, $"selecthandle {handle}");
-			if (error is not null) return new LiveXamlSelection { Detail = error };
+		var unready = EnsureProvider(pid);
+		if (unready is not null) return new LiveXamlSelection { Detail = unready };
 
-			// A marker of its own, and the difference is fifteen seconds. Waiting on selection.ready
-			// reasons that the provider writes the selection files and nothing else -- true, and that is
-			// the problem: it writes them only when it has a selection to record. A handle naming something
-			// that is not an element, or something since gone from the tree, produces no file at all, so
-			// the refusal arrives as a snapshot timeout. One file cannot both answer a request and survive
-			// one. A "no" costs what a "yes" costs.
-			var readyFile = Path.Combine(workDir!, "selecthandle.ready");
-			if (!WaitForMarker(readyFile, _bounds.Snapshot))
-			{
-				return new LiveXamlSelection
-				{
-					Detail = MarkerTimedOut($"answer about handle {handle}"),
-				};
-			}
-
-			selected = Verdict(readyFile) == "selected";
+		// A refusal costs what an answer costs, which a channel of files could not manage: the provider
+		// writes a selection only when it has one to record, so a handle naming something that is not an
+		// element produced no file and the refusal arrived as a timeout. A reply always arrives.
+		var served = _pipe!.Request($"selecthandle {handle}", _bounds.Snapshot);
+		if (served is null)
+		{
+			return new LiveXamlSelection { Detail = Unanswered($"an answer about handle {handle}") };
 		}
 
-		if (!selected)
+		if (served.Trim() != "selected")
 		{
 			return new LiveXamlSelection
 			{
@@ -459,46 +369,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// The first word of a provider request. The verb decides what a request means to this side; the
-	/// tokens after it are the provider's business.
-	/// </summary>
-	private static string Verb(string request)
-	{
-		var space = request.IndexOf(' ', StringComparison.Ordinal);
-
-		return space < 0 ? request : request[..space];
-	}
-
-	/// <summary>
-	/// The first line of a provider ready file, trimmed, or empty when it could not be read. A file
-	/// that has just appeared can still be mid-write, and an unreadable confirmation is better treated
-	/// as no answer than as one.
-	/// </summary>
-	private static string ReadFirstLine(string path)
-	{
-		try
-		{
-			return File.ReadLines(path).FirstOrDefault()?.Trim() ?? string.Empty;
-		}
-		catch (IOException)
-		{
-			return string.Empty;
-		}
-	}
-
-	/// <summary>
-	/// The first token of a ready file: what the provider decided, without the generation it stamped
-	/// after it. Read as a token rather than as the whole line, because the line grew a second field
-	/// and an equality test against it would quietly answer "no" to every question.
-	/// </summary>
-	private static string Verdict(string path) =>
-		ReadFirstLine(path).Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
-
-	/// <summary>
 	/// Reads the element that was picked, if any. Deliberately does not inject: the toolbar is resident
 	/// and owns the selection, and the person may have picked without this side being involved at all --
-	/// which is the case this exists for. That is also why the armed state is read from the provider's
-	/// own state file rather than remembered here.
+	/// which is the case this exists for. That is also why the mode is asked of the provider rather than
+	/// remembered here.
 	/// </summary>
 	public LiveXamlSelection ReadSelection()
 	{
@@ -507,37 +381,20 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlSelection ReadSelectionCore()
 	{
-		if (_workDir is null)
+		if (_pipe?.Connected != true)
 		{
 			return new LiveXamlSelection { Detail = "No XAML tool has run against this session yet, so the in-app toolbar is not installed." };
 		}
 
-		// This call deliberately does not inject. Over the pipe that costs nothing, because the provider
-		// answers from what it holds; from the work folder it means the state file was written for
-		// whatever request went last, which is the current state and can be trusted -- unless the provider
-		// never stamped it with that request's generation, in which case it is not this side's answer.
+		// This call deliberately does not inject, and over the pipe that costs nothing: the provider
+		// answers from what it holds, and a reply read from the pipe the request went out on is this
+		// request's answer by construction.
 		var report = SelectionOverPipe();
+		if (report is null) return new LiveXamlSelection { Detail = Unanswered("what is selected") };
 
-		string mode;
-		bool justMyXaml;
-		bool known;
-		List<string> rows;
-		string gone;
+		var (mode, justMyXaml, rows, gone) = (report.Mode, report.JustMyXaml, report.Rows, report.Gone);
 
-		if (report is not null)
-		{
-			(mode, justMyXaml, known, rows, gone) = (report.Mode, report.JustMyXaml, true, report.Rows, report.Gone);
-		}
-		else
-		{
-			(mode, justMyXaml, known) = ReadOverlayState();
-
-			var selectionFile = Path.Combine(_workDir, "selection.tsv");
-			rows = File.Exists(selectionFile) ? [.. File.ReadLines(selectionFile, Encoding.UTF8)] : [];
-			gone = rows.Count == 0 ? ReadFirstLine(Path.Combine(_workDir, "selection.gone")) : string.Empty;
-		}
-
-		var armed = known && mode == "select";
+		var armed = mode == "select";
 		if (rows.Count == 0)
 		{
 			// A selection that went away on its own says why. Without this the answer is "nothing has been
@@ -624,29 +481,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Parses the provider's "armed &lt;width&gt;x&lt;height&gt;" marker. An unreadable or unexpected
-	/// marker reports zero, which the caller treats as a failure -- the safe direction, since the whole
-	/// point of the number is to catch an overlay that cannot be used.
-	/// </summary>
-	private static (int Width, int Height) ReadArmedExtent(string readyFile)
-	{
-		try
-		{
-			var parts = File.ReadAllText(readyFile).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-			if (parts.Length < 2) return (0, 0);
-
-			var extent = parts[1].Split('x');
-			if (extent.Length != 2) return (0, 0);
-
-			return (int.TryParse(extent[0], out var width) ? width : 0, int.TryParse(extent[1], out var height) ? height : 0);
-		}
-		catch (IOException)
-		{
-			return (0, 0);
-		}
-	}
-
-	/// <summary>
 	/// The last tree snapshot indexed by handle, for joining source info onto a selection. Empty when
 	/// no tree has been read: a selection is still perfectly usable without it, so a missing snapshot
 	/// costs the file and line rather than the answer.
@@ -655,21 +489,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	{
 		try
 		{
-			// The same tree every other read asks for, and over the same channel. Reading the snapshot file
-			// instead would answer from whenever an injection last wrote it, which with the writes on the
-			// pipe can be the whole session ago.
-			if (_pipe?.Connected == true && _pipe.Request("tree", _bounds.Snapshot) is { } served)
-			{
-				return ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-					.ToDictionary(node => node.Handle);
-			}
+			// The same tree every other read asks for, and over the same channel. It is joined onto the
+			// selection for source info and addresses, which exist in the tree and nowhere else.
+			if (_pipe?.Connected != true) return [];
 
-			var treeFile = Path.Combine(_workDir!, "tree.tsv");
-			if (!File.Exists(treeFile)) return [];
+			var served = _pipe.Request("tree", _bounds.Snapshot);
+			if (served is null) return [];
 
-			return ParseTree(File.ReadLines(treeFile, Encoding.UTF8)).ToDictionary(node => node.Handle);
+			return ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+				.ToDictionary(node => node.Handle);
 		}
-		catch (Exception exception) when (exception is IOException or ArgumentException)
+		catch (ArgumentException)
 		{
 			return [];
 		}
@@ -680,23 +510,22 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// ever a hint about a UI the person controls, and no tool should fail because it is missing.
 	/// </summary>
 	/// <summary>
-	/// What the overlay is doing, asked of the provider over the pipe and read from its state file when
-	/// there is no pipe.
+	/// What the overlay is doing, asked of the provider.
 	/// </summary>
 	/// <remarks>
-	/// The provider's own report either way, never what this side last asked for. The person can change
-	/// the mode from the toolbar without the host being in the conversation at all, so a reply that
-	/// echoed the request would contradict the next read with nothing to say which was right.
+	/// The provider's own report, never what this side last asked for. The person can change the mode
+	/// from the toolbar without the host being in the conversation at all, so a reply that echoed the
+	/// request would contradict the next read with nothing to say which was right.
 	/// <para>
-	/// A pipe answer needs no generation check. The file needs one because every value in it is legal,
-	/// so a line left by an earlier request is a wrong answer with nothing to mark it as one; a reply
-	/// read from the pipe the request went out on is this request's answer by construction.
+	/// Known, unless the provider did not answer. It needs no generation stamp: a reply read from the
+	/// pipe the request went out on is this request's answer by construction, which is what a file left
+	/// in a folder can never be.
 	/// </para>
 	/// </remarks>
 	private (string Mode, bool JustMyXaml, bool Known) OverlayState()
 	{
 		var report = SelectionOverPipe();
-		return report is not null ? (report.Mode, report.JustMyXaml, true) : ReadOverlayState();
+		return report is not null ? (report.Mode, report.JustMyXaml, true) : ("idle", true, false);
 	}
 
 	/// <summary>
@@ -729,38 +558,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	/// The overlay's answer about the pick, as one reply rather than three files.
 	private sealed record OverlayReport(string Mode, bool JustMyXaml, string Gone, List<string> Rows);
-
-	private (string Mode, bool JustMyXaml, bool Known) ReadOverlayState()
-	{
-		try
-		{
-			var stateFile = Path.Combine(_workDir!, "overlay.state");
-			if (!File.Exists(stateFile)) return ("idle", true, false);
-
-			// "<mode> justMyXaml=<0|1> gen=<n>". Tokenised, not compared whole: the file gained the
-			// toggle and a parser matching the entire line against "select" then read every armed
-			// overlay as idle, which the select-mode test caught precisely because it asserts the
-			// provider's own report rather than what this side last asked for.
-			var line = File.ReadAllText(stateFile).Trim();
-			var tokens = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-			var mode = tokens.Length > 0 ? tokens[0] : "idle";
-			var justMyXaml = !tokens.Contains("justMyXaml=0", StringComparer.Ordinal);
-
-			// Believed only when the provider wrote it for the request this side last sent. Every
-			// value in this file is legal, so a line left by an earlier request is a wrong answer
-			// with nothing to mark it as one -- and the defaults returned when the file is missing
-			// are legal too, which made "not written yet" and "written as true" the same reading.
-			// Whoever asks now gets to hear that it cannot be said (#57).
-			var generation = GenerationIn(line);
-			var known = generation is null || generation == _generation;
-
-			return (mode, justMyXaml, known);
-		}
-		catch (IOException)
-		{
-			return ("idle", true, false);
-		}
-	}
 
 	/// <summary>
 	/// Live-edits the target by diffing two XAML versions and applying the edits to its visual tree (#12).
@@ -871,51 +668,26 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
 		if (commands.Count > 0)
 		{
-			// The channel is chosen before the batch is sent, and only one of them ever carries it.
-			//
-			// A read may try the pipe and fall back to the work folder, because asking twice costs a
-			// second answer and nothing else. A batch may not: a structural edit is not idempotent, so a
-			// request that timed out after the provider had already run it, followed by an injection of
-			// the same batch, puts a second copy of everything this batch adds into the app. A null reply
-			// cannot tell "not served" from "served and lost", so a connected pipe owns the batch outright
-			// and says so when it fails.
-			if (_pipe?.Connected == true)
+			var unready = EnsureProvider(pid);
+			if (unready is not null) return new LiveXamlApplyResult { Detail = unready };
+
+			var served = _pipe!.Request("apply\n" + string.Join("\n", commands), _bounds.Snapshot);
+			if (served is null)
 			{
-				var served = _pipe.Request("apply\n" + string.Join("\n", commands), _bounds.Snapshot);
-				if (served is null)
+				// Not retried anywhere, and the baseline is deliberately left where it was. A structural
+				// edit is not idempotent, and a missing reply cannot tell "never ran" from "ran, and the
+				// answer was lost" -- so resending would put a second copy of everything this batch adds
+				// into the app. The message says what that costs the caller.
+				return new LiveXamlApplyResult
 				{
-					// The baseline is deliberately left where it was, and the message says what that costs.
-					return new LiveXamlApplyResult
-					{
-						Detail = "The XAML provider did not answer the apply on its pipe. The edits may or may not "
-							+ "have reached the app, so applying the same change again could add a second copy of "
-							+ "anything this one was adding.",
-					};
-				}
-
-				statuses = ParseApplyResults(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
-				logger.LogInformation("Applied {Count} XAML command(s) to pid {Pid} over the pipe.", commands.Count, pid);
+					Detail = Unanswered("a batch of edits to be applied")
+						+ " The edits may or may not have reached the app, so applying the same change again could "
+						+ "add a second copy of anything this one was adding.",
+				};
 			}
-			else
-			{
-				var (workDir, error) = Inject(pid, "apply", commands);
-				if (error is not null) return new LiveXamlApplyResult { Detail = error };
 
-				if (!WaitForMarker(Path.Combine(workDir!, "apply.ready"), _bounds.Snapshot))
-				{
-					// The commands were injected, so they may well have run; this side just cannot say. So
-					// the next apply resends them, which is the caller's retry -- and for anything this
-					// batch was adding, a retry that lands twice is a second copy.
-					return new LiveXamlApplyResult
-					{
-						Detail = MarkerTimedOut("report the apply")
-							+ " The edits may or may not have reached the app, so applying the same change again could "
-							+ "add a second copy of anything this one was adding.",
-					};
-				}
-
-				statuses = ParseApplyResults(File.ReadLines(Path.Combine(workDir!, "apply.tsv"), Encoding.UTF8));
-			}
+			statuses = ParseApplyResults(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+			logger.LogInformation("Applied {Count} XAML command(s) to pid {Pid} over the pipe.", commands.Count, pid);
 		}
 
 		// Advanced whether or not every edit took, and that is the deliberate half. The app has been
@@ -1153,12 +925,48 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Stages the provider, leaves the request for it, clears any stale output, and injects. Returns the
-	/// working folder, or an error string when the provider is unavailable, staging fails, or injection
-	/// is rejected. Each request re-injects because the provider does its work on the app's UI thread at
-	/// SetSite.
+	/// Makes sure the provider is loaded and answering on its pipe, injecting once if it is not. Returns
+	/// null when it is ready, or the sentence saying why it is not.
 	/// </summary>
-	private (string? WorkDir, string? Error) Inject(int pid, string request, IReadOnlyList<string>? commands = null)
+	/// <remarks>
+	/// Injection loads the provider and does nothing else. Every request is a message, because the work
+	/// has to happen on the app's UI thread and injection was only ever the way onto that thread before
+	/// there was a resident reader that could reach it through the dispatcher.
+	/// <para>
+	/// Once per session rather than once per call, which is the whole of what made a session accumulate
+	/// advised taps -- each one receiving every mutation in the app, holding a copy of its tree, and
+	/// costing the UI thread the next injection needs.
+	/// </para>
+	/// </remarks>
+	private string? EnsureProvider(int pid)
+	{
+		if (_pipe?.Connected == true) return null;
+
+		var (_, error) = Inject(pid);
+		if (error is not null) return error;
+
+		if (_pipe?.Connected != true)
+		{
+			return "The XAML provider loaded but did not connect back on its pipe, which is how every request "
+				+ $"reaches it. It was given {_bounds.Greeting.TotalSeconds:0.##}s to connect.";
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// What to tell a caller whose provider is connected and did not answer. Distinct from every other
+	/// failure here: the provider is loaded and its pipe is up, so what has stopped is the app's UI
+	/// thread, which is the one thing none of the other messages would send anyone to look at.
+	/// </summary>
+	private string Unanswered(string what) =>
+		XamlChannelBounds.TimedOut($"the XAML provider, asked for {what}", _bounds.Snapshot);
+
+	/// <summary>
+	/// Stages the provider and injects it. Returns the working folder, or an error string when the
+	/// provider is unavailable, staging fails, or injection is rejected.
+	/// </summary>
+	private (string? WorkDir, string? Error) Inject(int pid)
 	{
 		var (tap, tapError) = ResolveTap(pid);
 		if (tap is null) return (null, tapError);
@@ -1179,54 +987,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			logger.LogWarning(exception, "Staging the XAML provider sandbox folder failed.");
 			return (null, $"Could not stage the XAML provider: {exception.Message}");
-		}
-
-		foreach (var stale in new[] { "tree.tsv", "tree.ready", "properties.tsv", "properties.ready", "apply.tsv", "apply.ready", "commands.tsv", "idle.ready" })
-		{
-			TryDelete(Path.Combine(workDir, stale));
-		}
-
-		// A selection outlives an injection, because the toolbar holding it does: reading the tree must
-		// not throw away an element the person picked minutes ago. Arming a fresh pick clears it, and
-		// so does an explicit deselect.
-		//
-		// Matched on the verb rather than the whole line, which is what this got wrong. The request
-		// arming select mode always carries at least one token -- "select myxaml" is the minimum
-		// EnterSelectMode can build -- so an equality test against "select" never once fired. The
-		// consequence was quiet in the worst way: arming reported success, and rose_xaml_selection
-		// then answered with the *previous* pick until a new click happened to land.
-		var clearsSelection = Verb(request) is "select" or "selecthandle" or "deselect";
-		if (clearsSelection)
-		{
-			foreach (var stale in new[]
-			{
-				"select.ready", "selection.tsv", "selection.ready", "selecthandle.ready", "deselect.ready", "selection.gone",
-			})
-			{
-				TryDelete(Path.Combine(workDir, stale));
-			}
-		}
-
-		try
-		{
-			if (commands is not null)
-			{
-				// No explicit encoding: the default is UTF-8 without a BOM, which the provider's narrow
-				// command reader expects; Encoding.UTF8 would prepend a BOM and corrupt the first op.
-				File.WriteAllLines(Path.Combine(workDir, "commands.tsv"), commands);
-			}
-
-			// The generation goes on a second line, which the provider echoes onto what it writes
-			// back. A second line rather than another token or another file: the provider reads the
-			// request from the first line only, so nothing that parses a verb can be disturbed by
-			// this -- and one of those parsers matches on the line's own suffix ("properties <handle>
-			// all"), which an appended token would have broken silently.
-			_generation++;
-			File.WriteAllText(Path.Combine(workDir, "request.txt"), $"{request}\n{_generation}\n");
-		}
-		catch (Exception exception)
-		{
-			return (null, $"Could not write the provider request: {exception.Message}");
 		}
 
 		// Retried, because the common failure here is transient and a one-shot message called it fatal.
@@ -1259,9 +1019,8 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 				NoteProviderPipe();
 
 				logger.LogInformation(
-					"The target's XAML diagnostics endpoint answered in {HandshakeMs}ms for '{Request}' on pid {Pid}.",
+					"The target's XAML diagnostics endpoint answered in {HandshakeMs}ms on pid {Pid}.",
 					handshake.ElapsedMilliseconds,
-					Verb(request),
 					pid);
 
 				_endpointAnswered = true;
@@ -1300,10 +1059,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 					+ "target has no XAML UI.";
 
 		logger.LogWarning(
-			"The target's XAML diagnostics endpoint did not answer within {HandshakeMs}ms for '{Request}' on pid {Pid} "
+			"The target's XAML diagnostics endpoint did not answer within {HandshakeMs}ms on pid {Pid} "
 				+ "(0x{Hr:x8}); it had answered before in this session: {Answered}.",
 			handshake.ElapsedMilliseconds,
-			Verb(request),
 			pid,
 			hr,
 			_endpointAnswered);
@@ -1738,82 +1496,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		}
 
 		return builder.ToString();
-	}
-
-	/// <summary>
-	/// Waits for a marker the provider wrote <em>for this request</em>.
-	/// <para>
-	/// Existence alone was the test, and it is not enough. The host deletes the marker before
-	/// injecting, so a file that exists afterwards normally does mean the provider has answered --
-	/// but <see cref="TryDelete"/> swallows its failures, and the moment one fails the wait is
-	/// satisfied instantly by the previous request's marker. Nothing downstream can tell the
-	/// difference, so arming reports success and the read that follows returns the arm before it,
-	/// which is a legal value and a wrong answer.
-	/// </para>
-	/// <para>
-	/// A marker carrying no generation at all is accepted: that is a provider older than this host,
-	/// and refusing it would turn a version skew into a timeout blaming the app's diagnostics layer.
-	/// A marker carrying a <em>different</em> generation is precisely the stale one this rejects.
-	/// </para>
-	/// </summary>
-	private bool WaitForMarker(string path, TimeSpan timeout)
-	{
-		var deadline = DateTime.UtcNow + timeout;
-		while (true)
-		{
-			if (IsCurrent(path)) return true;
-			if (DateTime.UtcNow >= deadline) return false;
-
-			Thread.Sleep(100);
-		}
-	}
-
-	/// <summary>
-	/// What to tell a caller whose marker never arrived. The channel is the provider's work folder,
-	/// which is a different thing from the pipe and from the injection call -- all three come back as
-	/// an empty result with a detail, so the detail is the only place they can be told apart.
-	/// </summary>
-	/// <param name="expected">What the provider was asked for, in the caller's terms.</param>
-	private string MarkerTimedOut(string expected) =>
-		XamlChannelBounds.TimedOut("the XAML provider's work folder", _bounds.Snapshot)
-			+ $" The provider was injected but did not {expected}.";
-
-	private bool IsCurrent(string path)
-	{
-		if (!File.Exists(path)) return false;
-
-		var generation = GenerationIn(ReadFirstLine(path));
-
-		return generation is null || generation == _generation;
-	}
-
-	/// <summary>The <c>gen=</c> token the provider stamped on a line, or null when it carries none.</summary>
-	private static long? GenerationIn(string line)
-	{
-		foreach (var token in line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-		{
-			if (token.StartsWith("gen=", StringComparison.Ordinal) && long.TryParse(token.AsSpan(4), out var generation))
-			{
-				return generation;
-			}
-		}
-
-		return null;
-	}
-
-	private static void TryDelete(string path)
-	{
-		try
-		{
-			if (File.Exists(path)) File.Delete(path);
-		}
-		catch (Exception)
-		{
-			// Not fatal, and no longer load-bearing: what a failure here used to produce was a wait
-			// satisfied by the stale file it had just failed to remove. The generation on the marker
-			// is what catches that now, so this is best-effort tidying rather than the thing keeping
-			// the handshake honest.
-		}
 	}
 
 	/// <summary>

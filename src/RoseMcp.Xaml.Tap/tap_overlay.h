@@ -133,7 +133,6 @@ public:
 
 			Build();
 			m_layer.Children().Append(m_root);
-			WriteState();
 
 			const auto bounds = Extent();
 			Log(L"overlay: toolbar installed on a " + std::wstring(winrt::get_class_name(m_layer))
@@ -257,7 +256,6 @@ public:
 		Chrome();
 		if (m_selecting)
 		{
-			WriteState();
 			WriteArmed();
 			return true;
 		}
@@ -316,7 +314,6 @@ public:
 			m_selecting = true;
 			BeginOperation(Operation::Select);
 			Chrome();
-			WriteState();
 			Log(L"overlay: select mode armed");
 			return true;
 		}
@@ -367,16 +364,6 @@ public:
 		return m_armedKnown;
 	}
 
-	/// Rewrites the state file, whatever the request was. Called at the end of every injection so
-	/// that the file always carries the generation of the request that has just been served -- which
-	/// is what lets the host tell a current answer from one left behind by the previous request. A
-	/// request that changes nothing about the mode still has to leave that proof behind, or reading
-	/// the state after a plain tree call would come back as "cannot say".
-	void RefreshState()
-	{
-		WriteState();
-	}
-
 	// Clears the pick: the mark on screen and the record on disk, which have to go together or
 	// this is a lie. Hiding the box alone leaves rose_xaml_selection reporting a selection the
 	// person can no longer see; deleting the files alone leaves a mark pointing at nothing.
@@ -389,11 +376,6 @@ public:
 	bool Deselect()
 	{
 		const bool had = Clear(nullptr);
-
-		// Written after the clearing, so the host can confirm rather than assume -- and carrying
-		// whether there was anything to clear, because "cleared" and "nothing was selected" are
-		// different answers to the same request.
-		WriteMarker(L"deselect.ready", had ? L"cleared" : L"nothing");
 
 		Log(had ? L"overlay: selection cleared" : L"overlay: deselect with nothing selected");
 		return had;
@@ -513,7 +495,6 @@ public:
 		EndOperation(Operation::Select);
 		ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
 		Chrome();
-		WriteState();
 	}
 
 private:
@@ -1365,7 +1346,6 @@ private:
 	{
 		m_justMyXaml = !m_justMyXaml;
 		Chrome();
-		WriteState();
 		Log(std::wstring(L"overlay: just-my-XAML ") + (m_justMyXaml ? L"on" : L"off"));
 	}
 
@@ -2523,20 +2503,6 @@ private:
 		// requests, and the host only finds out when it next asks.
 		if (goneReason && had) m_goneReason = goneReason;
 
-		if (!g_workDir.empty())
-		{
-			// Removed rather than emptied. The host waits on selection.ready existing, so a truncated
-			// one would still read as a selection that had arrived and merely say nothing about it.
-			_wremove((g_workDir + L"\\selection.ready").c_str());
-			_wremove((g_workDir + L"\\selection.tsv").c_str());
-
-			if (goneReason && had)
-			{
-				std::wofstream gone(g_workDir + L"\\selection.gone", std::ios::trunc);
-				if (gone) gone << goneReason << L"\n";
-			}
-		}
-
 		Chrome();
 		return had;
 	}
@@ -2572,7 +2538,7 @@ private:
 			node = xmedia::VisualTreeHelper::GetParent(node);
 		}
 
-		PublishSelection(rows.str(), handle);
+		PublishSelection(rows.str());
 
 		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" row(s) from the tree");
 	}
@@ -2639,36 +2605,24 @@ private:
 			selected = (m_justMyXaml && topmostApp != 0) ? topmostApp : topmost;
 		}
 
-		PublishSelection(file.str(), selected);
+		PublishSelection(file.str());
 		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" candidate(s)");
 
 		return selected;
 	}
 
 	/// <summary>
-	/// Keeps the recorded selection where a later request can read it, and mirrors it into the work
-	/// folder for a host still reading files.
+	/// Keeps the recorded selection where a later request can read it.
 	/// </summary>
 	/// <remarks>
-	/// The rows are held rather than only written, because a pick outlives the request that armed it by
-	/// design: the person clicks whenever they click, and the host asks afterwards. A file is one way to
-	/// answer that later question and the pipe is another, so the answer lives here and each channel is
-	/// a way of handing it over.
+	/// Held rather than written, because a pick outlives the request that armed it by design: the person
+	/// clicks whenever they click, and the host asks afterwards. Holding it is what lets that later
+	/// question be answered on the same channel as every other one.
 	/// </remarks>
-	void PublishSelection(std::string rows, InstanceHandle selected)
+	void PublishSelection(std::string rows)
 	{
 		m_selectionRows = std::move(rows);
 		m_goneReason.clear();
-
-		if (g_workDir.empty()) return;
-
-		{
-			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
-			if (file) file << m_selectionRows;
-		}
-
-		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
-		if (ready) ready << selected << L"\n";
 	}
 
 	InstanceHandle WriteCandidate(std::ostream& file, xaml::UIElement const& candidate)
@@ -2701,24 +2655,6 @@ private:
 			|| typeName.rfind(L"Microsoft.UI.Xaml.", 0) == 0;
 	}
 
-	// The mode, on disk, because the person can change it from the toolbar without the host being in
-	// the conversation at all -- so the host has to be able to ask, rather than remember what it set.
-	void WriteState()
-	{
-		if (g_workDir.empty()) return;
-
-		std::wofstream state(g_workDir + L"\\overlay.state", std::ios::trunc);
-		if (!state) return;
-
-		state << (m_selecting ? L"select" : L"idle") << L" justMyXaml=" << (m_justMyXaml ? L"1" : L"0");
-
-		// Appended, never inserted: the host tokenises this line, so a reader that does not know
-		// about the generation goes on working and one that does can tell whose answer this is.
-		if (!g_generation.empty()) state << L" gen=" << g_generation;
-
-		state << L"\n";
-	}
-
 	// "armed <width>x<height>", the extent XAML arranged the capture layer at. A zero here is the
 	// whole bug this reports: select mode that is on, invisible, and cannot be pointed at.
 	void WriteArmed()
@@ -2738,11 +2674,6 @@ private:
 		}
 
 		m_armedSignal.notify_all();
-
-		if (!g_workDir.empty())
-		{
-			WriteMarker(L"select.ready", L"armed " + std::to_wstring(width) + L"x" + std::to_wstring(height));
-		}
 
 		Log(L"overlay: capture layer arranged at " + std::to_wstring(width) + L"x" + std::to_wstring(height));
 	}

@@ -39,40 +39,7 @@ static std::wstring g_workDir;
 // overlap.
 static std::wstring g_pipeName;
 
-// The host's number for the request being served, echoed into everything written back so the host
-// can tell a file this request produced from one left behind by the last (#57).
-//
-// It is needed because every handshake here was "does this file exist", and the host clears the
-// marker before injecting -- so the moment that clear silently fails, the wait is satisfied by the
-// *previous* request's marker and the host reads an answer written before it asked the question.
-// Existence cannot distinguish those; a number the host chose can. Carried as the text the host
-// wrote rather than parsed, since nothing on this side has any reason to do arithmetic on it.
-static std::wstring g_generation;
 static std::mutex g_logMutex;
-
-// A ".ready" marker, plus the generation of the request it answers.
-//
-// One function for all of them so the next one added cannot forget the stamp, which is exactly how
-// this got left half done: #57 gave the overlay's markers a generation and the tree, properties and
-// apply handshakes kept answering on existence alone (#89). Continuous hot reload is what makes that
-// matter -- a stale apply.ready reports the *previous* apply's per-edit outcomes as this one's, and
-// in a loop that applies the same property over and over the keys line up, so it reads as success.
-//
-// Deliberately not used for selection.ready. That file records a click, which outlives the injection
-// that armed select mode by design, so stamping it with the generation current when the click
-// happened would have the read that goes looking for it reject its own answer as stale. The two
-// needs are contradictory in one file; separating them is the fix, and it is not this one.
-static void WriteMarker(const std::wstring& name, const std::wstring& payload)
-{
-	if (g_workDir.empty()) return;
-
-	std::wofstream marker(g_workDir + L"\\" + name, std::ios::trunc);
-	if (!marker) return;
-
-	marker << payload;
-	if (!g_generation.empty()) marker << L" gen=" << g_generation;
-	marker << L"\n";
-}
 
 static std::wstring Hex(HRESULT hr)
 {

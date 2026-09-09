@@ -847,7 +847,7 @@ So, working in this repository:
 ### What this method has already turned up
 
 An agent session that added the whole live-app debugging and XAML surface to this repository -- ten
-commits, 109 unit and 144 integration tests -- used **zero `rose_*` tools on this repository's own
+commits, and the unit and integration tests that came with them -- used **zero `rose_*` tools on this repository's own
 code.** Every read was `grep`; every check was `dotnet build`, used as a syntax checker dozens of
 times at 14--25 seconds a go, while `rose_diagnostics` sat unused.
 

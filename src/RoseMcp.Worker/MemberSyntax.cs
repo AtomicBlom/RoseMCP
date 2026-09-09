@@ -518,23 +518,34 @@ public static class MemberSyntax
 		return string.Empty;
 	}
 
+	/// <summary>The whitespace a line begins with, which is nothing for a line that begins with content.</summary>
+	private static string Leading(string line) =>
+		line[..(line.Length - line.TrimStart(' ', '\t').Length)];
+
 	/// <summary>
-	/// <paramref name="indent"/> when the fragment's own lines already carry it, and null when the
-	/// baseline has to be read from the code instead.
+	/// <paramref name="indent"/> when the fragment's own lines were written for the destination, and
+	/// null when the baseline has to be read from the code instead.
 	/// <para>
-	/// A fragment is spliced into a line that already carries its indentation, so its first line is
-	/// written flush and cannot say what the rest was written against. A caller who read the file and
-	/// indented the rest for the destination therefore has a baseline nowhere on the line the baseline
-	/// is read from, and adding the destination's indentation to lines that already have it puts every
-	/// wrapped line a whole extra level in for each level of the destination's depth.
+	/// A spliced fragment's first line is written flush -- there is nothing else to write it against
+	/// -- so a caller who indented the rest of it for the destination has a fragment whose baseline is
+	/// nowhere on the line the baseline is read from, and every wrapped line then keeps the level it
+	/// already had and gains another. That is what put six tabs at eleven and three at five.
 	/// </para>
 	/// <para>
-	/// Lines sitting at the destination or deeper are the evidence for that, and a line at exactly the
-	/// destination is counted with them: a second statement written for the destination sits there, and
-	/// reading it as flush-relative is the doubling this exists to prevent. The cost is that a wrapped
-	/// line written one level in against a destination only one level deep comes out flush with the
-	/// line it continues, which reads worse and means the same -- the other reading breaks the same
-	/// fragment worse, and by more the deeper the destination is.
+	/// Two conditions, and both are needed. The first line has to carry no indentation of its own: one
+	/// that does is the fragment's baseline, written deliberately, and the caller indented everything
+	/// against it -- an attribute written at two tabs with its arguments at three wants those
+	/// arguments one level in from wherever it lands, not at the destination. And every other line has
+	/// to sit <em>strictly deeper</em> than the destination: a line at exactly the destination's
+	/// indentation is what a fragment written flush produces when the destination is one level deep,
+	/// which is the ordinary case for a member's attribute, and reading that as absolute would flatten
+	/// every wrapped line onto the line it continues.
+	/// </para>
+	/// <para>
+	/// What is left over is a fragment written flush whose next line sits at exactly the destination
+	/// -- a sibling statement indented for where it goes. It is indistinguishable from the flush case
+	/// above by anything here, and it is not what a wrapped continuation looks like, so it keeps the
+	/// doubling (#189).
 	/// </para>
 	/// <para>
 	/// A literal's lines are not layout and are passed over, since their whitespace is the value.
@@ -551,13 +562,18 @@ public static class MemberSyntax
 		string indent)
 	{
 		if (indent.Length == 0 || first < 0) return null;
+		if (Leading(lines[first].Content).Length > 0) return null;
 
 		var found = false;
 
 		for (var index = first + 1; index < lines.Count; index++)
 		{
 			if (untouched.Contains(index) || lines[index].Content.Trim().Length == 0) continue;
-			if (!lines[index].Content.StartsWith(indent, StringComparison.Ordinal)) return null;
+
+			var leading = Leading(lines[index].Content);
+
+			if (leading.Length <= indent.Length) return null;
+			if (!leading.StartsWith(indent, StringComparison.Ordinal)) return null;
 
 			found = true;
 		}

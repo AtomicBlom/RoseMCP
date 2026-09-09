@@ -74,6 +74,43 @@ public sealed class BodyEditTests
 	}
 
 	/// <summary>
+	/// The other half of the same question, and the one the first fix traded away. A replacement
+	/// written flush with its continuation one level in wants that level added to the destination's,
+	/// not replaced by it -- so against a destination only one tab deep, a continuation at one tab has
+	/// to come out at two. Reading it as written-for-the-destination flattens it onto the line it
+	/// continues, which is why a line at exactly the destination's indentation is not evidence.
+	/// </summary>
+	[Test]
+	public void Keeps_a_flush_replacements_own_wrapping_at_a_shallow_destination()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\tSend(one);\n}",
+			"Send(one);",
+			"Send(\n\tone,\n\ttwo);");
+
+		Assert.Contains("\n\t\tone,", body, StringComparison.Ordinal);
+		Assert.Contains("\n\t\ttwo);", body, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A fragment whose first line carries indentation of its own is written against that, whatever
+	/// the destination is: the caller chose a baseline and indented everything to it, so the levels
+	/// between its lines are what they meant. Taking the destination off instead would put a line one
+	/// level in from a two-tab first line at the destination itself.
+	/// </summary>
+	[Test]
+	public void Measures_a_replacement_against_its_own_first_line_when_it_has_one()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\tSend(one);\n}",
+			"Send(one);",
+			"\t\tSend(\n\t\t\tone,\n\t\t\ttwo);");
+
+		Assert.Contains("\n\t\tone,", body, StringComparison.Ordinal);
+		Assert.DoesNotContain("\n\t\t\tone,", body, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// The text path matches exactly, endings included, because inside a comment or a literal an
 	/// ending is the content being edited. That is right and it made the path unreachable: every file
 	/// here is CRLF and C# composed for a JSON argument is LF, so an anchor spanning two lines never

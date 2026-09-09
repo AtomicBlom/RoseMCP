@@ -111,9 +111,15 @@ public static class Whitespace
 	}
 
 	/// <summary>The line ending most of this file already uses, for when .editorconfig does not say.</summary>
-	public static string Dominant(SourceText text)
+	public static string Dominant(SourceText text) => Dominant(text.ToString());
+
+	/// <summary>
+	/// The line ending most of <paramref name="source"/> uses, for when .editorconfig does not say.
+	/// Taken as text rather than as a document, so a payload that is not a file yet can be asked the
+	/// same question.
+	/// </summary>
+	public static string Dominant(string source)
 	{
-		var source = text.ToString();
 		var crlf = 0;
 		var lf = 0;
 		var cr = 0;

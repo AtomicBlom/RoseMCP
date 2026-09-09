@@ -146,6 +146,36 @@ public sealed class WrittenLiteralTests
 	}
 
 	/// <summary>
+	/// The acceptance for includeTrivia being reachable at all: a CRLF file, a needle composed for a
+	/// JSON argument and therefore all bare LFs, one match. Matching exactly is right -- inside a
+	/// literal an ending is the content being edited -- and it left the path refusing every attempt,
+	/// since no file here is LF and no JSON argument carries a CR without being made to.
+	/// </summary>
+	[Test]
+	public async Task Matches_a_line_feed_needle_inside_a_literal_in_a_carriage_return_file()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Literal.Report",
+			Find = "first\n\n\t\t\t\t\t\tsecond",
+			Replace = "first\n\n\t\t\t\t\t\tthird",
+			IncludeTrivia = true,
+		});
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var text = await ReadAsync(fixture, "Literal.cs");
+
+		Assert.Equal("first\r\n\r\nthird", Value(text));
+		Assert.DoesNotContain("second", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
 	/// A literal inside an attribute argument, which goes through the same splice as the anchored
 	/// payload and for the same reason.
 	/// </summary>

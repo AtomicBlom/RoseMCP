@@ -72,4 +72,67 @@ public sealed class BodyEditTests
 		Assert.Contains("\n\t\t\t\t\t\tone,", body, StringComparison.Ordinal);
 		Assert.DoesNotContain("\t\t\t\t\t\t\tone,", body, StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// The text path matches exactly, endings included, because inside a comment or a literal an
+	/// ending is the content being edited. That is right and it made the path unreachable: every file
+	/// here is CRLF and C# composed for a JSON argument is LF, so an anchor spanning two lines never
+	/// matched and the refusal named a difference the caller could not see.
+	/// <para>
+	/// A needle whose every ending is a bare LF is normalised to the body's, which is the same rule
+	/// every other supplied payload goes through -- the LF is an artefact of composing a string, not a
+	/// decision.
+	/// </para>
+	/// </summary>
+	[Test]
+	public void Matches_a_line_feed_needle_against_a_carriage_return_body()
+	{
+		var rewritten = 0;
+
+		var body = BodyEdit.Anchored(
+			"{\r\n\tvar text = \"\"\"\r\n\t\tfirst\r\n\t\tsecond\r\n\t\t\"\"\";\r\n}",
+			"first\n\t\tsecond",
+			"first\n\t\tthird",
+			includeTrivia: true,
+			count => rewritten = count);
+
+		Assert.Contains("\t\tfirst\r\n\t\tthird\r\n", body, StringComparison.Ordinal);
+		Assert.DoesNotContain("second", body, StringComparison.Ordinal);
+		Assert.Equal(1, rewritten);
+	}
+
+	/// <summary>
+	/// A needle carrying a carriage return is left exactly as written, which is how to reach an ending
+	/// the file does not use -- the same escape hatch as every other payload, and the reason the rule
+	/// can be a condition rather than an argument.
+	/// </summary>
+	[Test]
+	public void Leaves_a_needle_that_carries_a_carriage_return_alone()
+	{
+		var thrown = Assert.Throws<ArgumentException>(() => BodyEdit.Anchored(
+			"{\r\n\t// one\n\t// two\r\n}",
+			"// one\r\n\t// two",
+			"// three",
+			includeTrivia: true));
+
+		Assert.Contains("does not contain", thrown.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The words inside a block comment, which is what this path exists for and what the token stream
+	/// cannot see at all. One trivia node, so the ending between its lines is content rather than the
+	/// gap between two comments -- an anchor spanning two <c>//</c> comments covers the second one's
+	/// delimiter and is refused, which is the straddle guard doing its job.
+	/// </summary>
+	[Test]
+	public void Reaches_the_text_inside_a_block_comment()
+	{
+		var body = BodyEdit.Anchored(
+			"{\r\n\t/* counts what is\r\n\t   there */\r\n\treturn 1;\r\n}",
+			"counts what is\n\t   there",
+			"counts what was\n\t   asked for",
+			includeTrivia: true);
+
+		Assert.Contains("/* counts what was\r\n\t   asked for */", body, StringComparison.Ordinal);
+	}
 }

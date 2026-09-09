@@ -402,7 +402,12 @@ public static class MemberEditService
 		{
 			var body = text.ToString(TextSpan.FromBounds(bodyStart, declaration.Span.End)).TrimEnd(';', ' ', '\t');
 
-			return BodyEdit.Anchored(body, find, request.Replace ?? string.Empty, request.IncludeTrivia);
+			return BodyEdit.Anchored(
+				body,
+				find,
+				request.Replace ?? string.Empty,
+				request.IncludeTrivia,
+				count => notices.Add(RewrittenEndings(count, text)));
 		}
 
 		if (request.Position is not { } position) return request.Code;

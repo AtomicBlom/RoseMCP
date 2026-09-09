@@ -34,6 +34,7 @@ namespace RoseMcp.IntegrationTests;
 /// nothing to serialise between them -- only within each. Sharing one would serialise three suites
 /// that never contend.
 /// </remarks>
+[Category("LiveApp")]
 [ClassDataSource<UwpProbeApp, WinUiProbeApp, UwpModernProbeApp>(
 	Shared = [SharedType.PerAssembly, SharedType.PerAssembly, SharedType.PerAssembly])]
 public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, UwpModernProbeApp uwpModern)

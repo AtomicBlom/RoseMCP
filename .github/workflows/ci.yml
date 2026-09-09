@@ -107,10 +107,12 @@ jobs:
       - name: Build
         run: dotnet build RoseMcp.slnx --configuration Debug --no-restore
 
-      # The test project is an executable, which is how the class filter is reachable at all: -class-
-      # is the xunit v3 runner's own exclusion flag and dotnet test does not forward it.
+      # Excluded by category, not by class name, because that is the exclusion TUnit supports: a tree
+      # filter negates a property with [Category!=...], while negating a path segment matches nothing
+      # at all. The category is on LiveAppSessionTests itself, so this covers exactly the class the
+      # old xunit -class- flag did -- 386 tests discovered, 50 of them in that class, 336 left.
       - name: Integration tests, excluding the live-app suite
-        run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe -class- 'RoseMcp.IntegrationTests.LiveAppSessionTests'
+        run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/*/*[Category!=LiveApp]'
 
   # The native XAML providers, for every architecture a shipped install can carry.
   #

@@ -28,6 +28,12 @@ public static class TestProjects
 		"xunit.core",
 		"xunit.v3.core",
 		"xunit.assert",
+
+		// The assertion assembly on its own counts, because a runner and an assertion library are
+		// separable: this repository runs TUnit and asserts with xunit, so a project can carry either
+		// name without the other.
+		"xunit.v3.assert",
+		"TUnit.Core",
 		"nunit.framework",
 		"Microsoft.VisualStudio.TestPlatform.TestFramework",
 		"Microsoft.TestPlatform.TestFramework",
@@ -36,8 +42,17 @@ public static class TestProjects
 	/// <summary>True where the project references a test framework.</summary>
 	public static bool IsTest(Project project) =>
 		project.MetadataReferences.Any(reference =>
-			reference.Display is { Length: > 0 } display && Matches(Path.GetFileNameWithoutExtension(display)));
+			reference.Display is { Length: > 0 } display && Recognises(Path.GetFileNameWithoutExtension(display)));
 
-	private static bool Matches(string assembly) =>
-		Frameworks.Contains(assembly, StringComparer.OrdinalIgnoreCase);
+	/// <summary>
+	/// Whether one assembly name belongs to a test framework.
+	/// <para>
+	/// Public so the list can be checked against a real test project's references rather than against
+	/// itself. A list of names fails invisibly when it goes stale: changing this repository's runner
+	/// left every one of its own test projects unrecognised, and nothing complained, because the only
+	/// code that read the list was the code that agreed with it.
+	/// </para>
+	/// </summary>
+	public static bool Recognises(string assemblyName) =>
+		Frameworks.Contains(assemblyName, StringComparer.OrdinalIgnoreCase);
 }

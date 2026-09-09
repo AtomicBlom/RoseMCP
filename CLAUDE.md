@@ -679,14 +679,14 @@ Deploy over the running instance, or build release zips:
 `%LOCALAPPDATA%/BinaryVibrance/RoseMCP` -- the same vendor/product folder the logs live under.
 Where a machine keeps its install is that machine's business, so no path is committed here.
 
-Tests are split by what they cost. `RoseMcp.UnitTests` runs no MSBuild and starts no child process:
-373 tests in under two seconds, so it is worth running on every change. It does touch disk, in the
-handful of tests that write a temp file or stage a directory layout to prove a path is read the way
-the code says. `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real
-design-time builds and starts real workers -- 355 tests in about four and a half minutes, of which
-the 44 in `LiveAppSessionTests` are most of the wall clock. `RoseMcp.TestSupport` holds the doubles
-both need. Put a test where its cost puts it: a test that needs a `FixtureSolution` or a
-`TestSession` is an integration test however small it looks.
+Tests are split by what they cost. `RoseMcp.UnitTests` runs no MSBuild and starts no child process,
+and finishes in a couple of seconds, so it is worth running on every change. It does touch disk, in
+the handful of tests that write a temp file or stage a directory layout to prove a path is read the
+way the code says. `RoseMcp.IntegrationTests` loads real solutions from `tests/fixtures`, runs real
+design-time builds and starts real workers, and takes minutes rather than seconds -- most of it the
+live-app suite in `LiveAppSessionTests`. `RoseMcp.TestSupport` holds the doubles both need. Put a
+test where its cost puts it: a test that needs a `FixtureSolution` or a `TestSession` is an
+integration test however small it looks.
 
 The live-app tests are the expensive part, and they are phased by what each one can share (D33, D35).
 A launch of the UWP probe costs about 6.5 seconds and the XAML work in a test costs about 1.2, so the
@@ -728,9 +728,10 @@ lock of its own (D36). And **a fixture check that can hang is worse than the bug
 it, or a failing test becomes a wedged suite.
 
 A fifth, learned later and the hard way: **green once is not green.** This suite was reported passing
-off a single run and was in fact failing one or two of thirty-one, from three unrelated causes that
-only repeats made visible (D36). A flake rate is a measurement like any other and needs more than one
-sample. One of those three is worth stating as its own rule, because it is easy to write again:
+off a single run and was in fact failing one or two live-app tests a run, from three unrelated causes
+that only repeats made visible (D36). A flake rate is a measurement like any other and needs more
+than one sample. One of those three is worth stating as its own rule, because it is easy to write
+again:
 **a fixture's timer has to outlast the whole suite, not one test.** `DebugProbeTarget` self-terminated
 after 120 seconds, which was ample when a live-app test had the machine to itself and became wrong
 the moment they shared it -- the tests that end by asserting their target is still running failed on

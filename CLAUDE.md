@@ -316,9 +316,11 @@ reclaim memory or pick up a rebuilt generator.
   The index is asked of the collection rather than taken from the diff, and that is not tidiness. In
   the test that proves this, the add runs first and inserts at 1, so the element the removal names has
   moved to 2 by the time it runs -- the markup index would have removed the element just added, and
-  reported success. Removal also has to be *forgotten* from the node list, closed over descendants,
-  because that list is append-only: `OnVisualTreeChange` appends on Add and removes nothing on Remove,
-  so the next edit in the same batch would otherwise resolve against a tree that no longer exists.
+  reported success. Removal also has to be *forgotten* from the node list at once, closed over
+  descendants, rather than left to the framework's own Remove callback: that callback is what keeps the
+  list true over a session, but it arrives when the framework gets to it, and the next edit in the same
+  batch resolves against the list now. Forgetting twice costs nothing, since the second finds the
+  subtree already gone.
   <br>
   Markup is taken apart in `RoseMcp.XamlDiff`, not in the host: the host cannot be unit tested, since
   it targets Windows and the test projects cannot see inside it, and the ordering this depends on --
@@ -498,6 +500,42 @@ reclaim memory or pick up a rebuilt generator.
   works. Failures are reported and belong to the caller. Whether the file has changed since the app
   started is evidence about the file and nothing more, so it is three-valued -- a process that will not
   give its start time makes that unknown, not "changed".
+- **The tap's node list follows the tree, and a resident tap is the reason that matters.** The walk at
+  advise builds it, and every add after that appends. Nothing erased on a remove, which was survivable
+  only because a fresh provider per injection re-walked from empty several times a session: re-injection
+  was quietly acting as the tree refresh, and nothing said so. Serve reads from the pipe between
+  injections and the refresh disappears with them, so the list has to be maintained from the mutation
+  stream it is already subscribed to -- otherwise a tree read reports elements the framework has already
+  let go, confidently, and an address computed from them resolves to the wrong element. Removals close
+  over descendants, because removing a `Border` removes the `TextBlock` inside it and the framework need
+  not say so twice; a second removal of a subtree already gone is a no-op, which is what makes the
+  belt-and-braces safe.
+- **A tap cannot be unadvised while its app goes on being inspected, so a superseded one is stood down
+  instead.** The framework creates a provider per injection and asks none of them to stand down --
+  `SetSite(nullptr)` is never called -- so every tap a session injects stays advised for the life of the
+  app, receiving every mutation in it and appending every add to a tree copy of its own that is never
+  cleared. Two tool calls were measured leaving two advised taps receiving 12 and 6 mutations. That is
+  megabytes per tool call inside somebody else's application, and under suite load it is worse than a
+  leak, because the delivery is on the UI thread and the UI thread is what has to serve the next
+  injection.
+  <br>
+  `UnadviseVisualTreeChange` is not the fix, and this was measured three ways rather than reasoned
+  about. It empties the handle map the diagnostics session mints element and value handles from, and it
+  leaves the service enumerating nothing for the next callback advised on it. Unadvising the outgoing
+  tap after the incoming one walks takes a brush read from `#FF445566` to the handle it was addressed
+  by; unadvising before it walks takes the walk itself to zero elements; and keeping one instance and
+  advising it again does both, because the framework enumerates for a callback it has not seen and
+  leaves one it has registered for nothing. Against a baseline of one failing live-app test, those
+  three cost four, seven and nine. Every one of them is a confident wrong answer rather than a failure,
+  which is the shape this repository is least willing to ship.
+  <br>
+  So nothing calls into the framework. A superseded tap keeps its registration, returns from
+  `OnVisualTreeChange` at once, and gives back its node list -- which is where all of the cost was.
+  Standing down happens on the UI thread, because that is where the callbacks it guards arrive and
+  clearing the list from another thread races a walk appending to it. What remains is one tree and one
+  handler that does any work, however many injections a session makes, and the removal handling stays
+  where #51 needs it: the tap that is answering is still advised between requests, so a selection whose
+  element leaves the tree is still noticed.
 - **A provider marker answers one request, and the generation is what says which.** Every handshake
   through the work folder is "does this file exist", the host deletes the marker before injecting, and
   `TryDelete` swallows its failures -- so the number the host stamps on the request and the provider

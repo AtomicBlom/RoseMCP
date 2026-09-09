@@ -754,24 +754,51 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
 		if (commands.Count > 0)
 		{
-			var (workDir, error) = Inject(pid, "apply", commands);
-			if (error is not null) return new LiveXamlApplyResult { Detail = error };
-
-			if (!WaitForMarker(Path.Combine(workDir!, "apply.ready"), _bounds.Snapshot))
+			// The channel is chosen before the batch is sent, and only one of them ever carries it.
+			//
+			// A read may try the pipe and fall back to the work folder, because asking twice costs a
+			// second answer and nothing else. A batch may not: a structural edit is not idempotent, so a
+			// request that timed out after the provider had already run it, followed by an injection of
+			// the same batch, puts a second copy of everything this batch adds into the app. A null reply
+			// cannot tell "not served" from "served and lost", so a connected pipe owns the batch outright
+			// and says so when it fails.
+			if (_pipe?.Connected == true)
 			{
-				// The baseline is deliberately left where it was, and the message says what that costs.
-				// The commands were injected, so they may well have run; this side just cannot say. So
-				// the next apply resends them, which is the caller's retry -- and for anything this
-				// batch was adding, a retry that lands twice is a second copy.
-				return new LiveXamlApplyResult
+				var served = _pipe.Request("apply\n" + string.Join("\n", commands), _bounds.Snapshot);
+				if (served is null)
 				{
-					Detail = MarkerTimedOut("report the apply")
-						+ " The edits may or may not have reached the app, so applying the same change again could "
-						+ "add a second copy of anything this one was adding.",
-				};
-			}
+					// The baseline is deliberately left where it was, and the message says what that costs.
+					return new LiveXamlApplyResult
+					{
+						Detail = "The XAML provider did not answer the apply on its pipe. The edits may or may not "
+							+ "have reached the app, so applying the same change again could add a second copy of "
+							+ "anything this one was adding.",
+					};
+				}
 
-			statuses = ParseApplyResults(Path.Combine(workDir!, "apply.tsv"));
+				statuses = ParseApplyResults(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+				logger.LogInformation("Applied {Count} XAML command(s) to pid {Pid} over the pipe.", commands.Count, pid);
+			}
+			else
+			{
+				var (workDir, error) = Inject(pid, "apply", commands);
+				if (error is not null) return new LiveXamlApplyResult { Detail = error };
+
+				if (!WaitForMarker(Path.Combine(workDir!, "apply.ready"), _bounds.Snapshot))
+				{
+					// The commands were injected, so they may well have run; this side just cannot say. So
+					// the next apply resends them, which is the caller's retry -- and for anything this
+					// batch was adding, a retry that lands twice is a second copy.
+					return new LiveXamlApplyResult
+					{
+						Detail = MarkerTimedOut("report the apply")
+							+ " The edits may or may not have reached the app, so applying the same change again could "
+							+ "add a second copy of anything this one was adding.",
+					};
+				}
+
+				statuses = ParseApplyResults(File.ReadLines(Path.Combine(workDir!, "apply.tsv"), Encoding.UTF8));
+			}
 		}
 
 		// Advanced whether or not every edit took, and that is the deliberate half. The app has been
@@ -989,10 +1016,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		return "applied";
 	}
 
-	private static Dictionary<string, string> ParseApplyResults(string applyFile)
+	private static Dictionary<string, string> ParseApplyResults(IEnumerable<string> lines)
 	{
 		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
-		foreach (var line in File.ReadLines(applyFile, Encoding.UTF8))
+		foreach (var line in lines)
 		{
 			if (line.Length == 0) continue;
 

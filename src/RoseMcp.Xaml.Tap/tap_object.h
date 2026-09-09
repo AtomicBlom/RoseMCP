@@ -312,6 +312,34 @@ public:
 			return reply;
 		}
 
+		if (request == L"apply" || request.rfind(L"apply\n", 0) == 0)
+		{
+			// The batch rides in the frame, one command per line after the verb. Through the work folder it
+			// needs a staged commands.tsv read back with a narrow stream, which is a second encoding decision
+			// on a path that already had one. A frame is UTF-8 at both ends.
+			const size_t split = request.find(L'\n');
+
+			std::vector<std::wstring> lines;
+			if (split != std::wstring::npos)
+			{
+				std::wstringstream stream(request.substr(split + 1));
+				std::wstring line;
+				while (std::getline(stream, line, L'\n')) lines.push_back(line);
+			}
+
+			const std::vector<Command> commands = ParseCommands(lines);
+
+			std::string rows;
+			if (!RoseTapRunOnUiThread([&] { rows = ApplyBatch(commands); })) return std::string();
+
+			Log(L"pipe: applied " + std::to_wstring(commands.size()) + L" command(s)");
+
+			// An empty batch still answers with something. An empty frame means "not served here", and a
+			// caller reading this one as a refusal falls back to injecting the same batch -- which for
+			// anything the batch adds is a second copy.
+			return rows.empty() ? std::string("\n") : rows;
+		}
+
 		if (request == L"detach")
 		{
 			// Asked for rather than inferred, so the host can say it happened. The pipe closing is the
@@ -354,6 +382,41 @@ public:
 		return released;
 	}
 
+	/// <summary>
+	/// Stands this tap down as a later injection takes over: it stays advised, because it cannot do
+	/// otherwise, but it stops keeping a copy of the tree and stops acting on what it is told.
+	/// </summary>
+	/// <remarks>
+	/// A tap cannot be unadvised while its app goes on being inspected. UnadviseVisualTreeChange empties
+	/// the handle map the diagnostics session mints element and value handles from, and leaves the
+	/// service enumerating nothing for the next callback advised on it -- so a brush read comes back as
+	/// the number it was addressed by rather than a colour, and the next injection walks an empty tree.
+	/// Both are confident wrong answers rather than failures. So a provider is created per injection and
+	/// every one of them stays a sink for the life of the app.
+	/// <para>
+	/// What that costs is what this removes. Each sink appends every add to a tree copy of its own, never
+	/// cleared, and every mutation in the app is delivered to all of them on the UI thread -- the thread
+	/// the next injection needs in order to be sited at all. Standing the old ones down leaves N sinks
+	/// costing one tree and one handler that does any work.
+	/// </para>
+	/// <para>
+	/// On the UI thread, because that is where the callbacks arrive: clearing the node list from another
+	/// thread races a walk appending to it. A thread that cannot be reached leaves the tap holding its
+	/// tree and says so, which is the same trade EndSession makes.
+	/// </para>
+	/// </remarks>
+	bool StandDown()
+	{
+		if (!RoseTapRunOnUiThread([&] { Retire(); }))
+		{
+			Log(L"retired: could not reach the UI thread, so this tap keeps its copy of the tree");
+			return false;
+		}
+
+		Log(L"retired: stood down, holding no tree");
+		return true;
+	}
+
 	HRESULT STDMETHODCALLTYPE GetSite(REFIID riid, void** ppv) override
 	{
 		if (!m_diagnostics) return E_FAIL;
@@ -363,13 +426,24 @@ public:
 	HRESULT STDMETHODCALLTYPE OnVisualTreeChange(
 		ParentChildRelation relation, VisualElement element, VisualMutationType mutationType) override
 	{
+		// A tap that has been stood down is still advised, because nothing can unadvise it, so this is
+		// where it stops costing anything. Answering and doing nothing is the whole of standing down.
+		if (m_retired) return S_OK;
+
 		if (mutationType != Add)
 		{
 			// A selection whose element has left the tree is stale in both halves -- the mark drawn
 			// over the app and the handle the host will keep calling with -- so the overlay is told.
-			// It matches on the handle and does nothing when it is not the selected one, which is
-			// what makes this safe to run once per advised tap (#68).
+			// It matches on the handle and does nothing when it is not the selected one.
 			Overlay().ClearIfRemoved(element.Handle);
+
+			// And the node list follows the tree it describes. A list that only ever grows is accurate
+			// for exactly as long as something else refreshes it, which is what a fresh walk per
+			// injection quietly does; a resident tap answering reads between injections has no such
+			// refresh, and reports elements the framework has already let go. Closed over descendants,
+			// because removing a Border removes the TextBlock inside it and the framework is not
+			// required to say so twice -- and if it does, the second call finds nothing left to drop.
+			ForgetSubtree(element.Handle);
 			return S_OK;
 		}
 
@@ -803,11 +877,17 @@ private:
 	// Applies each command from commands.tsv and writes apply.tsv -- one row per command with its
 	// outcome (applied / target not found / property not found / a failure code) -- so the host can
 	// report per-command results to the agent (#12).
-	void ApplyCommands()
+	/// <summary>
+	/// Runs a batch and returns one result row per command, in the order they were given.
+	/// </summary>
+	/// <remarks>
+	/// The rows are the answer whichever channel asked for the batch: over the pipe they are the reply
+	/// frame, and through the work folder they are what apply.tsv holds. One builder, because a result
+	/// that meant one thing on one channel and something else on the other is a difference nothing would
+	/// show until an edit reported the wrong outcome.
+	/// </remarks>
+	std::string ApplyBatch(const std::vector<Command>& commands)
 	{
-		if (g_workDir.empty()) return;
-
-		const std::vector<Command> commands = ReadCommands();
 		Log(L"applying " + std::to_wstring(commands.size()) + L" command(s)");
 
 		// Slots live for one batch and no longer. They name instances that have been built but not
@@ -816,33 +896,43 @@ private:
 		// half-built element be reached by another's command.
 		m_slots.clear();
 
+		std::string rows;
+		for (const auto& command : commands)
+		{
+			std::wstring status;
+			if (command.op == L"SetProperty") status = ApplySetProperty(command);
+			else if (command.op == L"ClearProperty") status = ApplyClearProperty(command);
+			else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
+			else if (command.op == L"CreateInstance") status = ApplyCreate(command);
+			else if (command.op == L"AddChild") status = ApplyAddChild(command);
+			else if (command.op == L"ReplaceResource") status = ApplyReplaceResource(command);
+			else status = L"unsupported op";
+
+			// The arg goes on the end, after the status. It is there because the host keys these results
+			// by what it sent, and op-target-property alone stops being unique the moment one slot gets
+			// two children: both rows would be "AddChild <slot> <blank>", and the second child's outcome
+			// would overwrite the first's.
+			const std::wstring row = command.op + L'\t' + Escape(command.target.c_str()) + L'\t'
+				+ Escape(command.property.c_str()) + L'\t' + status + L'\t' + Escape(command.arg.c_str());
+			rows += Utf8(row);
+			rows += '\n';
+		}
+
+		return rows;
+	}
+
+	void ApplyCommands()
+	{
+		if (g_workDir.empty()) return;
+
+		const std::vector<Command> commands = ReadCommands();
+		const std::string rows = ApplyBatch(commands);
+
 		const std::wstring finalPath = g_workDir + L"\\apply.tsv";
 		const std::wstring tempPath = finalPath + L".tmp";
 		{
 			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
-			for (const auto& command : commands)
-			{
-				std::wstring status;
-				if (command.op == L"SetProperty") status = ApplySetProperty(command);
-				else if (command.op == L"ClearProperty") status = ApplyClearProperty(command);
-				else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
-				else if (command.op == L"CreateInstance") status = ApplyCreate(command);
-				else if (command.op == L"AddChild") status = ApplyAddChild(command);
-				else if (command.op == L"ReplaceResource") status = ApplyReplaceResource(command);
-				else status = L"unsupported op";
-
-				if (file)
-				{
-					// The arg goes on the end, after the status, so a reader of the older four-field row
-					// is unaffected. It is there because the host keys these results by what it sent,
-					// and op-target-property alone stops being unique the moment one slot gets two
-					// children: both rows would be "AddChild <slot> <blank>", and the second child's
-					// outcome would overwrite the first's.
-					const std::wstring row = command.op + L'\t' + Escape(command.target.c_str()) + L'\t'
-						+ Escape(command.property.c_str()) + L'\t' + status + L'\t' + Escape(command.arg.c_str());
-					file << Utf8(row) << '\n';
-				}
-			}
+			if (file) file << rows;
 		}
 
 		_wremove(finalPath.c_str());
@@ -1274,17 +1364,25 @@ private:
 	// framework has already let go.
 	void ForgetSubtree(InstanceHandle root)
 	{
-		std::set<InstanceHandle> doomed{ root };
-		for (bool grew = true; grew; )
-		{
-			grew = false;
-			for (const auto& node : m_nodes)
-			{
-				if (doomed.count(node.Handle)) continue;
-				if (doomed.count(node.Parent) == 0) continue;
+		// Children by parent, built once and walked down. Rescanning the whole list once per level is
+		// affordable for an edit this tap made and is not for one the app made: this runs on the UI
+		// thread for every element the app lets go, and an app lets go of elements continuously.
+		std::map<InstanceHandle, std::vector<InstanceHandle>> children;
+		for (const auto& node : m_nodes) children[node.Parent].push_back(node.Handle);
 
-				doomed.insert(node.Handle);
-				grew = true;
+		std::set<InstanceHandle> doomed{ root };
+		std::vector<InstanceHandle> pending{ root };
+		while (!pending.empty())
+		{
+			const InstanceHandle current = pending.back();
+			pending.pop_back();
+
+			const auto found = children.find(current);
+			if (found == children.end()) continue;
+
+			for (const InstanceHandle child : found->second)
+			{
+				if (doomed.insert(child).second) pending.push_back(child);
 			}
 		}
 
@@ -1675,16 +1773,12 @@ private:
 		CoTaskMemFree(values);
 	}
 
-	std::vector<Command> ReadCommands()
+	// One command per line, seven tab-separated fields. Shared by both channels, so a command means the
+	// same thing whichever way it arrived.
+	std::vector<Command> ParseCommands(const std::vector<std::wstring>& lines)
 	{
 		std::vector<Command> commands;
-		if (g_workDir.empty()) return commands;
-
-		std::wifstream file(g_workDir + L"\\commands.tsv");
-		if (!file) return commands;
-
-		std::wstring line;
-		while (std::getline(file, line))
+		for (std::wstring line : lines)
 		{
 			if (!line.empty() && line.back() == L'\r') line.pop_back();
 			if (line.empty()) continue;
@@ -1703,6 +1797,20 @@ private:
 		return commands;
 	}
 
+	std::vector<Command> ReadCommands()
+	{
+		if (g_workDir.empty()) return {};
+
+		std::wifstream file(g_workDir + L"\\commands.tsv");
+		if (!file) return {};
+
+		std::vector<std::wstring> lines;
+		std::wstring line;
+		while (std::getline(file, line)) lines.push_back(line);
+
+		return ParseCommands(lines);
+	}
+
 	// Gives back the framework's two interfaces, and says whether there was anything to give back.
 	//
 	// Unadvising first is not tidiness: releasing m_tree while the framework still holds this tap as
@@ -1711,6 +1819,18 @@ private:
 	// The overlay is untouched by this. It takes its own reference to IXamlDiagnostics when it is
 	// installed, precisely so a click can resolve to a handle long after the injection that drew it
 	// is over, so the toolbar outlives the release rather than being broken by it.
+	// Sets the flag and gives back what the tap was holding for the tree it no longer answers about.
+	// The vector is the expensive half by a distance, so it is shrunk rather than merely emptied.
+	void Retire()
+	{
+		m_retired = true;
+
+		m_nodes.clear();
+		m_nodes.shrink_to_fit();
+		m_byName.clear();
+		m_slots.clear();
+	}
+
 	bool Unadvise()
 	{
 		const bool held = m_tree != nullptr || m_diagnostics != nullptr;
@@ -1723,6 +1843,9 @@ private:
 	}
 
 	std::atomic<long> m_refs{ 1 };
+	// Whether a later injection has taken over. Read and written on the UI thread alone, which is where
+	// the callbacks it guards arrive.
+	bool m_retired = false;
 	IXamlDiagnostics* m_diagnostics = nullptr;
 	IVisualTreeService* m_tree = nullptr;
 	std::vector<TreeNode> m_nodes;
@@ -1737,9 +1860,14 @@ private:
 	std::map<std::wstring, InstanceHandle> m_slots;
 };
 
-// Points the reader at the instance that has just been sited, releasing the one before it. A
+// Points the reader at the instance that has just been sited, and stands the one before it down. A
 // reference is held for as long as it is the answering instance, so the reader cannot be left with a
 // pointer to a released provider.
+//
+// Standing down rather than unadvising, and the difference is not a preference: a tap cannot be
+// unadvised while the app goes on being inspected without emptying the diagnostics session's handle
+// map underneath the tap that replaces it. What it can do is stop keeping a tree and stop acting on
+// what it is told, which is where all of the cost is.
 static void SetActiveTap(RoseTap* tap)
 {
 	RoseTap* previous = nullptr;
@@ -1750,7 +1878,11 @@ static void SetActiveTap(RoseTap* tap)
 		if (g_active) g_active->AddRef();
 	}
 
-	if (previous) previous->Release();
+	if (!previous) return;
+
+	if (previous != tap) previous->StandDown();
+
+	previous->Release();
 }
 
 // The reader thread. One per process, started by the first injection that has a pipe to read, and it

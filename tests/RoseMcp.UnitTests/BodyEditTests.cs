@@ -51,4 +51,25 @@ public sealed class BodyEditTests
 
 		Assert.Contains("carries a comment", error.Message, StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// A replacement whose continuation lines were written for the destination gets the destination's
+	/// indentation put on top of them, twice over. The first line of a spliced fragment is written
+	/// flush, because the splice point already carries the indentation of the line it lands on -- so
+	/// reading the baseline from that line finds nothing to take off, and every wrapped line keeps the
+	/// level it already had and gains another. Silently: a continuation line is not a statement, so
+	/// Roslyn's formatter has no rule that moves one back and neither IDE0055 nor dotnet format has an
+	/// opinion about where a wrapped argument list sits.
+	/// </summary>
+	[Test]
+	public void Does_not_stack_the_destination_indent_on_a_replacement_written_for_it()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\t\t\t\t\tSend(one);\n}",
+			"Send(one);",
+			"Send(\n\t\t\t\t\t\tone,\n\t\t\t\t\t\ttwo);");
+
+		Assert.Contains("\n\t\t\t\t\t\tone,", body, StringComparison.Ordinal);
+		Assert.DoesNotContain("\t\t\t\t\t\t\tone,", body, StringComparison.Ordinal);
+	}
 }

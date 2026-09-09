@@ -237,6 +237,14 @@ public static class MemberSyntax
 	/// column zero with the indentation already written sitting on the line above.
 	/// </para>
 	/// <para>
+	/// That is also why the baseline cannot simply be read from the first line. A spliced fragment's
+	/// first line is written flush -- there is nothing else to write it against -- so a caller who
+	/// indented the rest of it for the destination has a fragment whose baseline is not on the line the
+	/// baseline is read from, and every wrapped line then keeps the level it already had and gains
+	/// another. <see cref="Written"/> catches that shape: lines already sitting at the destination or
+	/// deeper say the fragment was written for the destination, whatever its first line says.
+	/// </para>
+	/// <para>
 	/// The lines of a multi-line literal keep both: leading whitespace there is the value in a
 	/// verbatim literal and decides how much is stripped from a raw one, so moving one such line and
 	/// not another changes what the program says rather than how it reads. Found here rather than
@@ -248,12 +256,13 @@ public static class MemberSyntax
 	public static string Reindented(string code, string indent)
 	{
 		var lines = Split(code);
-		var baseline = Baseline([.. lines.Select(line => line.Content)]);
-
-		if (baseline.Length == 0 && indent.Length == 0) return code;
-
 		var untouched = LiteralLines(code);
 		var first = lines.ToList().FindIndex(line => line.Content.Trim().Length > 0);
+
+		var baseline = Written(lines, first, untouched, indent)
+			?? Baseline([.. lines.Select(line => line.Content)]);
+
+		if (baseline.Length == 0 && indent.Length == 0) return code;
 
 		var shifted = lines
 			.Select((line, index) => (Line: line, Index: index))
@@ -447,6 +456,53 @@ public static class MemberSyntax
 		}
 
 		return string.Empty;
+	}
+
+	/// <summary>
+	/// <paramref name="indent"/> when the fragment's own lines already carry it, and null when the
+	/// baseline has to be read from the code instead.
+	/// <para>
+	/// A fragment is spliced into a line that already carries its indentation, so its first line is
+	/// written flush and cannot say what the rest was written against. A caller who read the file and
+	/// indented the rest for the destination therefore has a baseline nowhere on the line the baseline
+	/// is read from, and adding the destination's indentation to lines that already have it puts every
+	/// wrapped line a whole extra level in for each level of the destination's depth.
+	/// </para>
+	/// <para>
+	/// Lines sitting at the destination or deeper are the evidence for that, and a line at exactly the
+	/// destination is counted with them: a second statement written for the destination sits there, and
+	/// reading it as flush-relative is the doubling this exists to prevent. The cost is that a wrapped
+	/// line written one level in against a destination only one level deep comes out flush with the
+	/// line it continues, which reads worse and means the same -- the other reading breaks the same
+	/// fragment worse, and by more the deeper the destination is.
+	/// </para>
+	/// <para>
+	/// A literal's lines are not layout and are passed over, since their whitespace is the value.
+	/// </para>
+	/// </summary>
+	/// <param name="lines">The fragment's lines, each with its own ending.</param>
+	/// <param name="first">The index of its first line with content, which is the spliced one.</param>
+	/// <param name="untouched">The lines that sit inside a multi-line literal.</param>
+	/// <param name="indent">The indentation of the code the fragment is going beside.</param>
+	private static string? Written(
+		IReadOnlyList<(string Content, string Ending)> lines,
+		int first,
+		IReadOnlySet<int> untouched,
+		string indent)
+	{
+		if (indent.Length == 0 || first < 0) return null;
+
+		var found = false;
+
+		for (var index = first + 1; index < lines.Count; index++)
+		{
+			if (untouched.Contains(index) || lines[index].Content.Trim().Length == 0) continue;
+			if (!lines[index].Content.StartsWith(indent, StringComparison.Ordinal)) return null;
+
+			found = true;
+		}
+
+		return found ? indent : null;
 	}
 
 	/// <summary>

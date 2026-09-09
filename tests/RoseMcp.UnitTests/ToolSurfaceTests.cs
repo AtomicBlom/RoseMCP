@@ -257,10 +257,14 @@ public sealed class ToolSurfaceTests
 
 	/// <summary>
 	/// The tools the instructions do not route, named so adding one is a decision. Each is the other
-	/// half of a pair whose first half is routed -- you list or remove what you have just set, deselect
-	/// what you have selected, select by a handle a read has already given you -- so a session that
-	/// reached the naming tool has the counterpart in that tool's own description. rose_workspace_close
-	/// is housekeeping nothing else depends on.
+	/// half of a pair whose first half is routed -- you list or remove what you have just set, you
+	/// deselect what you have selected -- so a session that reached the naming tool has the counterpart
+	/// in that tool's own description. rose_workspace_close is housekeeping nothing else depends on.
+	/// <para>
+	/// rose_xaml_select_element was here on the reasoning that a read hands out the handle it takes.
+	/// That held while arming select mode was routed beside it; with arming gone from the surface,
+	/// selecting by handle is the only way an agent picks an element at all, and nothing else names it.
+	/// </para>
 	/// </summary>
 	private static readonly string[] Unrouted =
 	[
@@ -271,7 +275,6 @@ public sealed class ToolSurfaceTests
 		ToolNames.DebugRemoveTracepoint,
 		ToolNames.WorkspaceClose,
 		ToolNames.XamlDeselect,
-		ToolNames.XamlSelectElement,
 	];
 
 	/// <summary>

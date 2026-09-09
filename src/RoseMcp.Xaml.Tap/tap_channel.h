@@ -25,6 +25,7 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
+#include <condition_variable>
 #include <cstdlib>
 #include <cmath>
 #include <chrono>

@@ -266,6 +266,13 @@ public:
 		{
 			m_capture = xcontrols::Grid();
 
+			// The layer about to be inserted has not been arranged, and the extent of the one before it is
+			// not an answer about this one.
+			{
+				std::lock_guard<std::mutex> guard(m_armedMutex);
+				m_armedKnown = false;
+			}
+
 			// A faint wash, not a plain Transparent: this is the "select mode is on" affordance, and a
 			// layer that swallows every click while looking like nothing at all is a layer that reads
 			// as the app having hung.
@@ -326,6 +333,38 @@ public:
 	{
 		m_justMyXaml = justMyXaml;
 		Chrome();
+	}
+
+	/// The pick as rows, the mode, and why the last selection went away: everything a later request
+	/// needs to answer "what is selected", with no file in between. Rows are in the shape the work
+	/// folder writes, so one parser on the host serves whichever channel carried them.
+	const std::string& SelectionRows() const { return m_selectionRows; }
+	const std::wstring& GoneReason() const { return m_goneReason; }
+	bool Selecting() const { return m_selecting; }
+	bool JustMyXaml() const { return m_justMyXaml; }
+
+	/// <summary>
+	/// Waits for the capture layer to be arranged, and reports the extent it was given.
+	/// </summary>
+	/// <remarks>
+	/// Arming inserts the layer; XAML arranges it on the next layout pass, and its size means nothing
+	/// until then -- which is why the extent is reported from SizeChanged rather than by the call that
+	/// armed. A caller on the reader thread can wait for that pass, because the thread doing the
+	/// arranging is not this one. A caller already on the UI thread must never wait here, since the pass
+	/// it is waiting for is the work it is itself blocking.
+	/// <para>
+	/// The extent is the answer worth having. Select mode that is on, invisible and cannot be pointed at
+	/// is indistinguishable from a working one if all that is checked is that it armed.
+	/// </para>
+	/// </remarks>
+	bool WaitForArmedExtent(int& width, int& height, unsigned int timeoutMs)
+	{
+		std::unique_lock<std::mutex> guard(m_armedMutex);
+		m_armedSignal.wait_for(guard, std::chrono::milliseconds(timeoutMs), [this] { return m_armedKnown; });
+
+		width = m_armedWidth;
+		height = m_armedHeight;
+		return m_armedKnown;
 	}
 
 	/// Rewrites the state file, whatever the request was. Called at the end of every injection so
@@ -2478,6 +2517,11 @@ private:
 		m_overSelection = false;
 		m_selectionRect = {};
 		m_selectedHandle = 0;
+		m_selectionRows.clear();
+
+		// The note outlives this call, because nothing is waiting on it: the element went away between
+		// requests, and the host only finds out when it next asks.
+		if (goneReason && had) m_goneReason = goneReason;
 
 		if (!g_workDir.empty())
 		{
@@ -2486,8 +2530,6 @@ private:
 			_wremove((g_workDir + L"\\selection.ready").c_str());
 			_wremove((g_workDir + L"\\selection.tsv").c_str());
 
-			// The note outlives this call, because nothing is waiting on it: the element went away
-			// between requests, and the host only finds out when it next asks.
 			if (goneReason && had)
 			{
 				std::wofstream gone(g_workDir + L"\\selection.gone", std::ios::trunc);
@@ -2513,31 +2555,24 @@ private:
 	/// answering a question nobody asked.
 	void RecordFromTree(xaml::UIElement const& element, InstanceHandle handle)
 	{
-		if (g_workDir.empty()) return;
-
 		unsigned int written = 0;
+		std::ostringstream rows;
 
+		xaml::DependencyObject node = element;
+		while (node && written < 16)
 		{
-			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
-			if (!file) return;
-
-			xaml::DependencyObject node = element;
-			while (node && written < 16)
+			if (const auto candidate = node.try_as<xaml::UIElement>())
 			{
-				if (const auto candidate = node.try_as<xaml::UIElement>())
-				{
-					if (IsOurs(candidate)) break; // Walked out of the app and into our own overlay.
+				if (IsOurs(candidate)) break; // Walked out of the app and into our own overlay.
 
-					WriteCandidate(file, candidate);
-					written++;
-				}
-
-				node = xmedia::VisualTreeHelper::GetParent(node);
+				WriteCandidate(rows, candidate);
+				written++;
 			}
+
+			node = xmedia::VisualTreeHelper::GetParent(node);
 		}
 
-		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
-		if (ready) ready << handle << L"\n";
+		PublishSelection(rows.str(), handle);
 
 		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" row(s) from the tree");
 	}
@@ -2566,16 +2601,12 @@ private:
 	/// costs a few more rows in a file that is written once per click.
 	InstanceHandle Record(xaml::UIElement const& element, winrt::Windows::Foundation::Point const& point)
 	{
-		if (g_workDir.empty()) return 0;
-
 		const auto root = Content();
 		InstanceHandle selected = 0;
 		unsigned int written = 0;
 
+		std::ostringstream file;
 		{
-			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
-			if (!file) return 0;
-
 			InstanceHandle topmost = 0;
 			InstanceHandle topmostApp = 0;
 
@@ -2608,14 +2639,39 @@ private:
 			selected = (m_justMyXaml && topmostApp != 0) ? topmostApp : topmost;
 		}
 
-		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
-		if (ready) ready << selected << L"\n";
+		PublishSelection(file.str(), selected);
 		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" candidate(s)");
 
 		return selected;
 	}
 
-	InstanceHandle WriteCandidate(std::ofstream& file, xaml::UIElement const& candidate)
+	/// <summary>
+	/// Keeps the recorded selection where a later request can read it, and mirrors it into the work
+	/// folder for a host still reading files.
+	/// </summary>
+	/// <remarks>
+	/// The rows are held rather than only written, because a pick outlives the request that armed it by
+	/// design: the person clicks whenever they click, and the host asks afterwards. A file is one way to
+	/// answer that later question and the pipe is another, so the answer lives here and each channel is
+	/// a way of handing it over.
+	/// </remarks>
+	void PublishSelection(std::string rows, InstanceHandle selected)
+	{
+		m_selectionRows = std::move(rows);
+		m_goneReason.clear();
+
+		if (g_workDir.empty()) return;
+
+		{
+			std::ofstream file((g_workDir + L"\\selection.tsv").c_str(), std::ios::trunc | std::ios::binary);
+			if (file) file << m_selectionRows;
+		}
+
+		std::wofstream ready(g_workDir + L"\\selection.ready", std::ios::trunc);
+		if (ready) ready << selected << L"\n";
+	}
+
+	InstanceHandle WriteCandidate(std::ostream& file, xaml::UIElement const& candidate)
 	{
 		InstanceHandle handle = 0;
 		if (m_diagnostics)
@@ -2667,12 +2723,26 @@ private:
 	// whole bug this reports: select mode that is on, invisible, and cannot be pointed at.
 	void WriteArmed()
 	{
-		if (g_workDir.empty() || !m_capture) return;
+		if (!m_capture) return;
 
 		const int width = static_cast<int>(m_capture.ActualWidth());
 		const int height = static_cast<int>(m_capture.ActualHeight());
 
-		WriteMarker(L"select.ready", L"armed " + std::to_wstring(width) + L"x" + std::to_wstring(height));
+		// Recorded before anything is written, and whether or not there is a folder to write to: this is
+		// what a caller waiting on the extent is waiting for, and it must not depend on a channel.
+		{
+			std::lock_guard<std::mutex> guard(m_armedMutex);
+			m_armedWidth = width;
+			m_armedHeight = height;
+			m_armedKnown = true;
+		}
+
+		m_armedSignal.notify_all();
+
+		if (!g_workDir.empty())
+		{
+			WriteMarker(L"select.ready", L"armed " + std::to_wstring(width) + L"x" + std::to_wstring(height));
+		}
 
 		Log(L"overlay: capture layer arranged at " + std::to_wstring(width) + L"x" + std::to_wstring(height));
 	}
@@ -2713,6 +2783,21 @@ private:
 	// Which element is selected, so a removal can be recognised. The handle and not the name:
 	// a Remove callback carries an empty Name, measured, so matching on one would never fire.
 	InstanceHandle m_selectedHandle = 0;
+
+	// The pick, as the rows that describe it, and the reason the last one went away. Both are answers to
+	// a question asked after the fact, so they are held rather than derived on demand: the elements a
+	// click landed on cannot be recovered once the pointer has moved.
+	std::string m_selectionRows;
+	std::wstring m_goneReason;
+
+	// The extent the capture layer was arranged at, and the signal that says it is known. Arming and
+	// knowing the size are two moments rather than one, so a caller off the UI thread waits for the
+	// second instead of reading a zero and calling that a failure.
+	std::mutex m_armedMutex;
+	std::condition_variable m_armedSignal;
+	bool m_armedKnown = false;
+	int m_armedWidth = 0;
+	int m_armedHeight = 0;
 
 	// The picked element itself, held so its mark can be re-measured when the app moves it, and the
 	// subscription that says when to.

@@ -312,6 +312,79 @@ public:
 			return reply;
 		}
 
+		// The overlay verbs. Each of these was a request the host made by injecting, purely because the
+		// work has to happen on the app's UI thread and injection was the only way onto it. A resident
+		// reader reaches the same thread through the dispatcher, so they are messages.
+		//
+		// selecthandle is matched before the arming verb, and the arming match requires the space: a
+		// handle is not one of the flags select parses, and "selecthandle 1" must not be read as arming.
+		if (request.rfind(L"selecthandle ", 0) == 0)
+		{
+			const InstanceHandle handle = static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10));
+
+			bool selected = false;
+			if (!RoseTapRunOnUiThread([&] { selected = Overlay().SelectByHandle(handle); })) return std::string();
+
+			return selected ? std::string("selected\n") : std::string("none\n");
+		}
+
+		if (request == L"select" || request.rfind(L"select ", 0) == 0)
+		{
+			if (!RoseTapRunOnUiThread([&]
+			{
+				// Tokenised rather than suffix-matched: "all" asks for elements the framework would not
+				// hit-test, and "nomyxaml" turns off the preference for the app's own markup. A flag the
+				// person set on the toolbar is left alone unless the request actually mentions it.
+				bool includeAll = false;
+				for (const auto& token : Tokens(request))
+				{
+					if (token == L"all") includeAll = true;
+					else if (token == L"myxaml") Overlay().SetJustMyXaml(true);
+					else if (token == L"nomyxaml") Overlay().SetJustMyXaml(false);
+				}
+
+				Overlay().BeginSelect(includeAll);
+			})) return std::string();
+
+			// Waited for here rather than inside the dispatch, because the pass being waited for runs on
+			// the thread the dispatch would be holding.
+			int width = 0;
+			int height = 0;
+			Overlay().WaitForArmedExtent(width, height, 5000);
+
+			return "armed\t" + std::to_string(width) + "\t" + std::to_string(height) + "\n";
+		}
+
+		if (request == L"idle")
+		{
+			if (!RoseTapRunOnUiThread([&] { Overlay().EndSelect(); })) return std::string();
+			return std::string("idle\n");
+		}
+
+		if (request == L"deselect")
+		{
+			bool had = false;
+			if (!RoseTapRunOnUiThread([&] { had = Overlay().Deselect(); })) return std::string();
+			return had ? std::string("cleared\n") : std::string("nothing\n");
+		}
+
+		if (request == L"selection")
+		{
+			// The mode on the first line, then the candidate rows in the shape the work folder writes them,
+			// so one parser on the host serves either channel. Asked for rather than pushed: a pick outlives
+			// the request that armed it by design, because the person clicks when they click.
+			std::string reply;
+			if (!RoseTapRunOnUiThread([&]
+			{
+				reply = std::string(Overlay().Selecting() ? "select" : "idle")
+					+ "\t" + (Overlay().JustMyXaml() ? "1" : "0")
+					+ "\t" + Utf8(Escape(Overlay().GoneReason().c_str())) + "\n"
+					+ Overlay().SelectionRows();
+			})) return std::string();
+
+			return reply;
+		}
+
 		if (request == L"apply" || request.rfind(L"apply\n", 0) == 0)
 		{
 			// The batch rides in the frame, one command per line after the verb. Through the work folder it

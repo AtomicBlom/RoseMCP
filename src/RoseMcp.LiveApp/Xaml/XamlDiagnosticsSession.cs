@@ -255,12 +255,18 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlSelection ExitSelectModeCore(int pid)
 	{
-		var (workDir, error) = Inject(pid, "idle");
-		if (error is not null) return new LiveXamlSelection { Detail = error };
-
-		if (!WaitForMarker(Path.Combine(workDir!, "idle.ready"), _bounds.Snapshot))
+		// Safe to try the pipe and fall back, unlike an apply: disarming twice is disarming. Every verb
+		// here is idempotent, which is what lets them take the cheap channel first and the certain one
+		// after, and is exactly what a batch of structural edits is not.
+		if (_pipe?.Connected != true || _pipe.Request("idle", _bounds.Snapshot) is null)
 		{
-			return new LiveXamlSelection { Detail = MarkerTimedOut("report select mode disarmed") };
+			var (workDir, error) = Inject(pid, "idle");
+			if (error is not null) return new LiveXamlSelection { Detail = error };
+
+			if (!WaitForMarker(Path.Combine(workDir!, "idle.ready"), _bounds.Snapshot))
+			{
+				return new LiveXamlSelection { Detail = MarkerTimedOut("report select mode disarmed") };
+			}
 		}
 
 		// Answered from the provider's own state rather than from the fact that it acknowledged, for
@@ -277,20 +283,36 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			+ (includeAllElements ? " all" : string.Empty)
 			+ (justMyXaml ? " myxaml" : " nomyxaml");
 
-		var (workDir, error) = Inject(pid, request);
-		if (error is not null) return new LiveXamlSelection { Detail = error };
-
-		var readyFile = Path.Combine(workDir!, "select.ready");
-		if (!WaitForMarker(readyFile, _bounds.Snapshot))
-		{
-			return new LiveXamlSelection { Detail = MarkerTimedOut("arm select mode (the app may have no diagnostics UI layer)") };
-		}
+		int width;
+		int height;
 
 		// The provider reports the extent XAML arranged its capture layer at, and a zero is checked
 		// rather than assumed: an overlay that exists but was given no area is armed, invisible, and
 		// cannot be clicked -- which is indistinguishable from working if all you check is that it
 		// armed. That exact state shipped once, so it is now a reported failure.
-		var (width, height) = ReadArmedExtent(readyFile);
+		//
+		// Over the pipe the provider waits for the layout pass before it answers, so the extent in the
+		// reply is the arranged one. Arming is idempotent, so falling back costs nothing but a second
+		// arming of an already-armed mode.
+		if (_pipe?.Connected == true && _pipe.Request(request, _bounds.Snapshot) is { } served)
+		{
+			var fields = served.Trim().Split('\t');
+			width = fields.Length > 1 && int.TryParse(fields[1], out var armedWidth) ? armedWidth : 0;
+			height = fields.Length > 2 && int.TryParse(fields[2], out var armedHeight) ? armedHeight : 0;
+		}
+		else
+		{
+			var (workDir, error) = Inject(pid, request);
+			if (error is not null) return new LiveXamlSelection { Detail = error };
+
+			var readyFile = Path.Combine(workDir!, "select.ready");
+			if (!WaitForMarker(readyFile, _bounds.Snapshot))
+			{
+				return new LiveXamlSelection { Detail = MarkerTimedOut("arm select mode (the app may have no diagnostics UI layer)") };
+			}
+
+			(width, height) = ReadArmedExtent(readyFile);
+		}
 		if (width <= 0 || height <= 0)
 		{
 			return new LiveXamlSelection
@@ -305,7 +327,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		// rose_xaml_selection reads the provider's own state file, so an arming response that merely
 		// echoed the request would contradict that read with nothing to say which of them was right.
 		// Answering from the recorded value makes the two agree by construction.
-		var (mode, recorded, known) = ReadOverlayState();
+		var (mode, recorded, known) = OverlayState();
 		if (!known || mode != "select")
 		{
 			return new LiveXamlSelection
@@ -339,23 +361,31 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlSelection ClearSelectionCore(int pid)
 	{
-		var (workDir, error) = Inject(pid, "deselect");
-		if (error is not null) return new LiveXamlSelection { Detail = error };
-
-		var readyFile = Path.Combine(workDir!, "deselect.ready");
-		if (!WaitForMarker(readyFile, _bounds.Snapshot))
+		bool had;
+		if (_pipe?.Connected == true && _pipe.Request("deselect", _bounds.Snapshot) is { } served)
 		{
-			return new LiveXamlSelection
+			had = served.Trim() == "cleared";
+		}
+		else
+		{
+			var (workDir, error) = Inject(pid, "deselect");
+			if (error is not null) return new LiveXamlSelection { Detail = error };
+
+			var readyFile = Path.Combine(workDir!, "deselect.ready");
+			if (!WaitForMarker(readyFile, _bounds.Snapshot))
 			{
-				Detail = MarkerTimedOut("confirm the deselect (the app may have no diagnostics UI layer)"),
-			};
+				return new LiveXamlSelection
+				{
+					Detail = MarkerTimedOut("confirm the deselect (the app may have no diagnostics UI layer)"),
+				};
+			}
+
+			// The first token, not the whole line: the marker carries the generation after its verdict,
+			// and comparing the line entire would read every clear as "nothing was selected".
+			had = Verdict(readyFile) == "cleared";
 		}
 
-		var (mode, justMyXaml, _) = ReadOverlayState();
-
-		// The first token, not the whole line: the marker now carries the generation after its
-		// verdict, and comparing the line entire would read every clear as "nothing was selected".
-		var had = Verdict(readyFile) == "cleared";
+		var (mode, justMyXaml, _) = OverlayState();
 
 		return new LiveXamlSelection
 		{
@@ -388,26 +418,35 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 	private LiveXamlSelection SelectByHandleCore(int pid, ulong handle)
 	{
-		var (workDir, error) = Inject(pid, $"selecthandle {handle}");
-		if (error is not null) return new LiveXamlSelection { Detail = error };
-
-		// A marker of its own, and the difference is fifteen seconds (#89). This used to wait on
-		// selection.ready, reasoning that the provider writes the selection files and nothing else --
-		// true, and that is the problem: it writes them only when it has a selection to record. A
-		// handle naming something that is not an element, or something since gone from the tree,
-		// produced no file at all, so the refusal arrived as a snapshot timeout. One file cannot both
-		// answer a request and survive one, which is the same lesson selection.ready taught from the
-		// other side. A "no" now costs what a "yes" costs.
-		var readyFile = Path.Combine(workDir!, "selecthandle.ready");
-		if (!WaitForMarker(readyFile, _bounds.Snapshot))
+		bool selected;
+		if (_pipe?.Connected == true && _pipe.Request($"selecthandle {handle}", _bounds.Snapshot) is { } served)
 		{
-			return new LiveXamlSelection
+			selected = served.Trim() == "selected";
+		}
+		else
+		{
+			var (workDir, error) = Inject(pid, $"selecthandle {handle}");
+			if (error is not null) return new LiveXamlSelection { Detail = error };
+
+			// A marker of its own, and the difference is fifteen seconds. Waiting on selection.ready
+			// reasons that the provider writes the selection files and nothing else -- true, and that is
+			// the problem: it writes them only when it has a selection to record. A handle naming something
+			// that is not an element, or something since gone from the tree, produces no file at all, so
+			// the refusal arrives as a snapshot timeout. One file cannot both answer a request and survive
+			// one. A "no" costs what a "yes" costs.
+			var readyFile = Path.Combine(workDir!, "selecthandle.ready");
+			if (!WaitForMarker(readyFile, _bounds.Snapshot))
 			{
-				Detail = MarkerTimedOut($"answer about handle {handle}"),
-			};
+				return new LiveXamlSelection
+				{
+					Detail = MarkerTimedOut($"answer about handle {handle}"),
+				};
+			}
+
+			selected = Verdict(readyFile) == "selected";
 		}
 
-		if (Verdict(readyFile) != "selected")
+		if (!selected)
 		{
 			return new LiveXamlSelection
 			{
@@ -613,6 +652,57 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// What the in-app toolbar says its mode is. Absent or unreadable counts as idle: the file is only
 	/// ever a hint about a UI the person controls, and no tool should fail because it is missing.
 	/// </summary>
+	/// <summary>
+	/// What the overlay is doing, asked of the provider over the pipe and read from its state file when
+	/// there is no pipe.
+	/// </summary>
+	/// <remarks>
+	/// The provider's own report either way, never what this side last asked for. The person can change
+	/// the mode from the toolbar without the host being in the conversation at all, so a reply that
+	/// echoed the request would contradict the next read with nothing to say which was right.
+	/// <para>
+	/// A pipe answer needs no generation check. The file needs one because every value in it is legal,
+	/// so a line left by an earlier request is a wrong answer with nothing to mark it as one; a reply
+	/// read from the pipe the request went out on is this request's answer by construction.
+	/// </para>
+	/// </remarks>
+	private (string Mode, bool JustMyXaml, bool Known) OverlayState()
+	{
+		var report = SelectionOverPipe();
+		return report is not null ? (report.Mode, report.JustMyXaml, true) : ReadOverlayState();
+	}
+
+	/// <summary>
+	/// Everything the overlay knows about the pick, in one exchange: the mode, whether it is filtering to
+	/// the app's own markup, why the last selection went away, and the rows behind the current one.
+	/// Null when there is no pipe or it did not answer, which sends the caller to the work folder.
+	/// </summary>
+	/// <remarks>
+	/// One request rather than one per fact, because the facts have to agree. Read separately from three
+	/// files, a mode from one and rows from another can describe a state that never existed at any
+	/// instant. A single frame is consistent by construction.
+	/// </remarks>
+	private OverlayReport? SelectionOverPipe()
+	{
+		if (_pipe?.Connected != true) return null;
+
+		var served = _pipe.Request("selection", _bounds.Snapshot);
+		if (served is null) return null;
+
+		var lines = served.Split('\n');
+		var header = lines[0].Split('\t');
+		if (header.Length < 2) return null;
+
+		return new OverlayReport(
+			header[0],
+			header[1] == "1",
+			header.Length > 2 ? Unescape(header[2]) : string.Empty,
+			[.. lines.Skip(1).Where(line => line.Length > 0)]);
+	}
+
+	/// The overlay's answer about the pick, as one reply rather than three files.
+	private sealed record OverlayReport(string Mode, bool JustMyXaml, string Gone, List<string> Rows);
+
 	private (string Mode, bool JustMyXaml, bool Known) ReadOverlayState()
 	{
 		try

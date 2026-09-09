@@ -810,7 +810,14 @@ public static class MemberEditService
 
 		if (existing > 0)
 		{
-			yield return $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics for those.";
+			// The count is analyzer-inclusive wherever the edit wrote, and rose_diagnostics leaves
+			// analyzers out by default -- so the bare advice sent a caller to a tool that answered 0
+			// about 297 errors, which reads as the two disagreeing rather than as a default.
+			yield return verification.AnalyzedProjects.Count == 0
+				? $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics for those."
+				: $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics with "
+					+ "includeAnalyzers=true for those, since this count includes the analyzer diagnostics it "
+					+ "leaves out by default.";
 		}
 
 		// The namespace itself, where the compilation could work it out. This is the answer the caller

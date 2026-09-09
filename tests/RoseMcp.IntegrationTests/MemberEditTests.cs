@@ -998,6 +998,40 @@ public sealed class MemberEditTests
 		Assert.Contains("@\"one\r\ntwo\";", text, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// The count of errors that were already there names the argument needed to see them. A write tool
+	/// runs the analyzers where it wrote, so its count includes diagnostics rose_diagnostics leaves out
+	/// by default -- and the bare advice sent a caller to a tool that answered 0 about 297 errors,
+	/// which reads as the two tools disagreeing rather than as a default they had not been told about.
+	/// </summary>
+	[Test]
+	public async Task Names_the_argument_that_shows_the_errors_it_counted()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		// One error to be pre-existing by the time the second edit runs.
+		var broken = await EditAsync(session, Request(
+			MemberEditKind.Add,
+			"Library.Prose",
+			"public static string Missing() => Absent.Name;"));
+
+		Assert.NotEmpty(broken.IntroducedDiagnostics);
+
+		var result = await ReplaceAsync(
+			session,
+			"Library.Prose.Label",
+			"public static string Label()\n{\n\treturn \"count\";\n}");
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		Assert.Contains(
+			result.Notices,
+			notice => notice.Contains("were there before this edit", StringComparison.Ordinal)
+				&& notice.Contains("includeAnalyzers=true", StringComparison.Ordinal));
+	}
+
 	private static Task<MemberEditResult> ReplaceAsync(WorkspaceSession session, string symbol, string code) =>
 		EditAsync(session, Request(MemberEditKind.Replace, symbol, code));
 

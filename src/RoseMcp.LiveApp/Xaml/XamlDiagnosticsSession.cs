@@ -512,19 +512,37 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return new LiveXamlSelection { Detail = "No XAML tool has run against this session yet, so the in-app toolbar is not installed." };
 		}
 
-		// This call deliberately does not inject, so the state file it reads was written for whatever
-		// request went last. That is the current state and can be trusted -- unless the provider never
-		// stamped it with that request's generation, which means it is not this side's answer to read.
-		var (mode, justMyXaml, known) = ReadOverlayState();
-		var armed = known && mode == "select";
-		var selectionFile = Path.Combine(_workDir, "selection.tsv");
-		if (!File.Exists(selectionFile))
-		{
-			// A selection that went away on its own says why (#51). Without this the answer is
-			// "nothing has been picked yet", which is true and useless: something *was* picked, the
-			// app took it away, and the caller is left wondering whether their select ever worked.
-			var gone = ReadFirstLine(Path.Combine(_workDir, "selection.gone"));
+		// This call deliberately does not inject. Over the pipe that costs nothing, because the provider
+		// answers from what it holds; from the work folder it means the state file was written for
+		// whatever request went last, which is the current state and can be trusted -- unless the provider
+		// never stamped it with that request's generation, in which case it is not this side's answer.
+		var report = SelectionOverPipe();
 
+		string mode;
+		bool justMyXaml;
+		bool known;
+		List<string> rows;
+		string gone;
+
+		if (report is not null)
+		{
+			(mode, justMyXaml, known, rows, gone) = (report.Mode, report.JustMyXaml, true, report.Rows, report.Gone);
+		}
+		else
+		{
+			(mode, justMyXaml, known) = ReadOverlayState();
+
+			var selectionFile = Path.Combine(_workDir, "selection.tsv");
+			rows = File.Exists(selectionFile) ? [.. File.ReadLines(selectionFile, Encoding.UTF8)] : [];
+			gone = rows.Count == 0 ? ReadFirstLine(Path.Combine(_workDir, "selection.gone")) : string.Empty;
+		}
+
+		var armed = known && mode == "select";
+		if (rows.Count == 0)
+		{
+			// A selection that went away on its own says why. Without this the answer is "nothing has been
+			// picked yet", which is true and useless: something *was* picked, the app took it away, and the
+			// caller is left wondering whether their select ever worked.
 			return new LiveXamlSelection
 			{
 				Armed = armed,
@@ -545,7 +563,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			var candidates = new List<LiveXamlSelectionCandidate>();
 			var byHandle = ReadTreeIndex();
 
-			foreach (var line in File.ReadLines(selectionFile, Encoding.UTF8))
+			foreach (var line in rows)
 			{
 				var fields = line.Split('\t');
 				if (fields.Length < 3 || !ulong.TryParse(fields[0], out var handle)) continue;
@@ -637,6 +655,15 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	{
 		try
 		{
+			// The same tree every other read asks for, and over the same channel. Reading the snapshot file
+			// instead would answer from whenever an injection last wrote it, which with the writes on the
+			// pipe can be the whole session ago.
+			if (_pipe?.Connected == true && _pipe.Request("tree", _bounds.Snapshot) is { } served)
+			{
+				return ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+					.ToDictionary(node => node.Handle);
+			}
+
 			var treeFile = Path.Combine(_workDir!, "tree.tsv");
 			if (!File.Exists(treeFile)) return [];
 

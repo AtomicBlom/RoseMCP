@@ -244,10 +244,10 @@ public sealed class MemberSyntaxTests
 		var members = MemberSyntax.Parse(
 			"public const string Text = \"\"\"\nfirst\nsecond\n\"\"\";\n",
 			"class",
-			null,
-			"\t",
-			"\r\n",
-			count => rewritten = count);
+			options: null,
+			indent: "\t",
+			lineEnding: "\r\n",
+			rewritten: count => rewritten = count);
 
 		var written = Assert.Single(members).ToFullString();
 
@@ -267,10 +267,10 @@ public sealed class MemberSyntaxTests
 		MemberSyntax.Parse(
 			"public const string Text = \"\"\"\r\nfirst\r\n\"\"\";\r\n",
 			"class",
-			null,
-			"\t",
-			"\n",
-			count => rewritten = count);
+			options: null,
+			indent: "\t",
+			lineEnding: "\n",
+			rewritten: count => rewritten = count);
 
 		Assert.Equal(0, rewritten);
 	}
@@ -286,8 +286,8 @@ public sealed class MemberSyntaxTests
 		var members = MemberSyntax.Parse(
 			"public const string Text = \"\"\"\nfirst\n\"\"\";\n",
 			"class",
-			null,
-			"\t\t");
+			options: null,
+			indent: "\t\t");
 
 		var written = Assert.Single(members).ToFullString();
 
@@ -364,8 +364,8 @@ public sealed class MemberSyntaxTests
 		var members = MemberSyntax.Parse(
 			"public const string Text = @\"first\nsecond\";\n",
 			"class",
-			null,
-			"\t\t");
+			options: null,
+			indent: "\t\t");
 
 		var written = Assert.Single(members).ToFullString();
 

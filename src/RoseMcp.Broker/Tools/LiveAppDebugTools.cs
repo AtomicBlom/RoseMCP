@@ -517,37 +517,6 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	}
 
 	[McpServerTool(
-		Name = ToolNames.XamlSelectMode,
-		Title = "Enter XAML select mode",
-		ReadOnly = false,
-		Destructive = false,
-		Idempotent = true,
-		OpenWorld = false,
-		UseStructuredContent = true)]
-	[Description(
-		"Arms select mode on a running XAML app: the next click picks that element instead of reaching "
-			+ "the app. Use it to get at an element by asking the user to click the one they mean, then "
-			+ "rose_xaml_selection for which it was. Read the selection first -- the user can arm it "
-			+ "themselves from the in-app toolbar, so \"look at the element I selected\" may already have "
-			+ "an answer waiting. The selection carries the whole stack under the click, topmost first, "
-			+ "so you can walk down to a templated child or up to the container without arming again. "
-			+ "Arming lays a pointer-capturing layer over the app, so disarm with arm=false when you "
-			+ "have finished.")]
-	public async Task<LiveXamlSelection> XamlSelectModeAsync(
-		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.IncludeAllElementsArgument)]
-		bool includeAllElements = false,
-		[Description(ToolDescriptions.JustMyXamlArgument)]
-		bool justMyXaml = true,
-		[Description(ToolDescriptions.ArmArgument)]
-		bool arm = true,
-		CancellationToken cancellationToken = default)
-	{
-		var session = Require(sessionId);
-		return await session.EnterXamlSelectModeAsync(includeAllElements, justMyXaml, arm, cancellationToken);
-	}
-
-	[McpServerTool(
 		Name = ToolNames.XamlSelection,
 		Title = "Read the selected XAML element",
 		ReadOnly = true,
@@ -579,7 +548,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(
-		"Clears the picked element and the mark drawn over the running app, and disarms select mode. "
+		"Clears the picked element and the mark drawn over the running app. "
 			+ "Call it when you have finished with a selection: the mark stays on screen until "
 			+ "something clears it, and a person left looking at it has no way to know the tool is done "
 			+ "with it.")]

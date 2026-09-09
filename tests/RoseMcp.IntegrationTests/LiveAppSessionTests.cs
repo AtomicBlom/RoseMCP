@@ -1186,10 +1186,13 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 				},
 				cancellationToken);
 
+			// The first read injects, because that is what loads the provider, and is then answered on the
+			// pipe like every other request. Injection carries no request of its own, so a read that came
+			// back from the work folder would mean the provider had not connected.
 			var first = await session.ReadXamlTreeAsync(cancellationToken);
 
 			Assert.True(first.Detail is null, $"expected a tree, got detail: {first.Detail}");
-			Assert.Equal("work folder", first.Channel);
+			Assert.Equal("pipe", first.Channel);
 
 			var second = await session.ReadXamlTreeAsync(cancellationToken);
 

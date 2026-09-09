@@ -131,13 +131,6 @@ public:
 			return E_NOINTERFACE;
 		}
 
-		// Read the request first, because reading it is also what learns the generation it carries --
-		// and the tree snapshot below is written before anything is dispatched, so it would otherwise
-		// be stamped with the *previous* request's number and rejected by the host as stale. Not
-		// hypothetical: it is what the continuous-apply test caught within the hour of the stamp being
-		// added, and it presented as a tree read that timed out and blamed the app's diagnostics layer.
-		const std::wstring request = ReadRequest();
-
 		// Handed to the provider rather than run here, because where the rest of this may run is the
 		// one thing the two frameworks genuinely disagree about (#76). WinUI 3 dispatches tap creation
 		// onto the UI thread, and its AdviseVisualTreeChange enqueues the walk *back* onto that thread
@@ -151,9 +144,9 @@ public:
 		// lasting reference, so returning before advising leaves nothing owning us, and the body would
 		// then run against a destroyed object -- which it did, reading a thread id that was never set.
 		AddRef();
-		RoseTapRunTapBody([this, request]()
+		RoseTapRunTapBody([this]()
 		{
-			ServeRequest(request);
+			ServeRequest();
 			Release();
 		});
 
@@ -161,7 +154,8 @@ public:
 	}
 
 	/// <summary>
-	/// One injection's work: walk the tree, then serve the request the host left in the work folder.
+	/// One injection's work: walk the tree and put the toolbar up. Nothing else, because injection loads
+	/// this provider and every request after that arrives on the pipe.
 	/// </summary>
 	/// <remarks>
 	/// Split out of SetSite so the two halves can run on different threads, which WinUI 3 requires
@@ -170,22 +164,24 @@ public:
 	/// because the framework dispatches for the walk alone -- "during normal operation it is the
 	/// caller's responsibility to dispatch to the correct thread", in its own words.
 	/// </remarks>
-	void ServeRequest(const std::wstring& request)
+	void ServeRequest()
 	{
-		// Synchronous callbacks, but not necessarily on this thread: UWP calls back here, WinUI 3 calls
-		// back on the UI thread while this one waits. Either way the walk is done when it returns.
-		const HRESULT hr = m_tree->AdviseVisualTreeChange(this);
-		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
-
-		// Everything past the walk reads or writes live XAML, so it goes back to the thread that owns
-		// it. The snapshot is written there too: it costs nothing beside the rest, and dividing the work
-		// by which individual lines happen to touch an element is how the next edit gets it wrong.
-		RoseTapRunOnUiThread([this, &request]()
+		// The walk, on whichever thread this framework needs it on. The provider is the only half that
+		// knows which that is, and getting it wrong deadlocks on one framework and races on the other.
+		if (!RoseTapRunWalk([this]() { Walk(); }))
 		{
-			WriteTreeSnapshot();
+			Log(L"the tree walk could not be dispatched, so this injection has no tree");
+			return;
+		}
 
-			// The toolbar is installed once and left there. It goes in after the snapshot so the very first
-			// tree cannot contain it, and the snapshot filters it out of every one after that.
+		// Everything past the walk reads or writes live XAML, so it goes to the thread that owns it.
+		// The division is exact rather than cautious: the walk is the only part whose thread the two
+		// frameworks disagree about, and dividing the rest by which individual lines happen to touch an
+		// element is how the next edit gets it wrong.
+		RoseTapRunOnUiThread([this]()
+		{
+			// The toolbar is installed once and left there. The snapshot filters it out of every tree, so
+			// what it costs is an element in the app that the app did not put there.
 			//
 			// Handed the elements out of the walk, because WinUI 3 asks which XamlRoot a diagnostics
 			// layer is wanted for and the only reliable answer is an element already known to be in the
@@ -206,88 +202,38 @@ public:
 			}
 
 			Overlay().SetSources(std::move(sources));
-
-			if (request.rfind(L"properties ", 0) == 0)
-			{
-				// "properties <handle>" gives the set (non-default) properties; a trailing " all" includes
-				// the framework defaults too. Filtering defaults out keeps the interesting values from being
-				// pushed past the row cap on an element with hundreds of properties.
-				const bool includeDefaults = request.size() >= 4 && request.compare(request.size() - 4, 4, L" all") == 0;
-				WriteProperties(static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 11, nullptr, 10)), includeDefaults);
-			}
-			else if (request.rfind(L"selecthandle ", 0) == 0)
-			{
-				// Checked before the arming verb below, and named without a space after "select" so the
-				// two cannot be confused: arming parses its tokens as flags, and a handle is not one.
-				const bool selected = Overlay().SelectByHandle(
-					static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10)));
-
-				// Answered either way, on a marker of its own. selection.ready is only written when
-				// there is a selection to record, so a handle resolving to nothing left the host
-				// waiting out its whole timeout for a refusal it could have had at once (#89).
-				WriteMarker(L"selecthandle.ready", selected ? L"selected" : L"none");
-			}
-			else if (request == L"idle")
-			{
-				// The toolbar's Idle button, reachable from the agent. Arming and disarming are one
-				// switch with two positions, and only one of them had a verb: an agent could arm
-				// select mode and then had no way out of it, because the overlay's capture layer is
-				// only torn down here and picking an element by handle does not go through the click
-				// path that ends it. That left a modal, pointer-capturing overlay over the app with
-				// nothing but a human click to lift it. Clearing the pick is a separate act and stays
-				// separate -- armed and picked are two pieces of state, and collapsing them would take
-				// away "clear this and let me pick again".
-				Overlay().EndSelect();
-				WriteMarker(L"idle.ready", L"idle");
-			}
-			else if (request == L"deselect")
-			{
-				// The same act as the toolbar button, so the mark and the recorded selection go together
-				// whichever end asks. An agent that has finished with an element, and #51's tree watcher
-				// noticing the element is gone, both want exactly this.
-				Overlay().Deselect();
-			}
-			else if (request == L"apply")
-			{
-				ApplyCommands();
-			}
-			else if (request == L"select" || request.rfind(L"select ", 0) == 0)
-			{
-				// Arming from the agent and arming from the toolbar are the same act; whichever happens,
-				// the overlay writes select.ready and the host reads the pick back the same way.
-				//
-				// Tokenised rather than suffix-matched: "all" asks for elements the framework would not
-				// hit-test (explicit, never the default -- see Beneath), and "nomyxaml" turns off the
-				// preference for the app's own markup. A flag the person set on the toolbar is left alone
-				// unless the request actually mentions it.
-				bool includeAll = false;
-				for (const auto& token : Tokens(request))
-				{
-					if (token == L"all") includeAll = true;
-					else if (token == L"myxaml") Overlay().SetJustMyXaml(true);
-					else if (token == L"nomyxaml") Overlay().SetJustMyXaml(false);
-				}
-
-				Overlay().BeginSelect(includeAll);
-			}
-
-			// Last, and for every request rather than only the ones that change the mode. The state file
-			// is how the host asks what the toolbar is doing, and its answer is only usable if the host
-			// can tell it was written for the question just asked -- so every injection leaves that proof
-			// behind, including a tree or properties read that touches the mode not at all.
-			Overlay().RefreshState();
 		});
 
 		// This instance is the one the reader should answer from now on, and only then is it safe to
-		// have a reader at all.
+		// have a reader at all: a request served before the walk would answer from an empty tree.
 		SetActiveTap(this);
 		StartPipeReader();
 	}
 
 	/// <summary>
-	/// One request off the pipe, answered. An empty reply means "not served here", which is what lets
-	/// the pipe carry one verb at a time while the rest still go through the files (#50).
+	/// Enumerates the tree into the node list, and leaves this tap advised for everything after.
 	/// </summary>
+	/// <remarks>
+	/// The enumeration arrives on the UI thread on both frameworks, which is what keeps the node list
+	/// to a single writer: UWP delivers it inline to whoever asked and the provider therefore asks from
+	/// the UI thread, while WinUI 3 enqueues it onto the UI thread whoever asks. The two get there by
+	/// opposite routes, so where to ask from is the provider's decision and not this file's.
+	/// </remarks>
+	void Walk()
+	{
+		const HRESULT hr = m_tree->AdviseVisualTreeChange(this);
+		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
+	}
+
+	/// <summary>
+	/// One request off the pipe, answered. Every request the host makes arrives here; injection only
+	/// loads this provider.
+	/// </summary>
+	/// <remarks>
+	/// An empty reply means the request was not understood, which a caller reports rather than retries.
+	/// Every verb below therefore answers with something even when the answer is "nothing", because a
+	/// caller that read a refusal as a lost message would send a batch of structural edits twice.
+	/// </remarks>
 	std::string Serve(const std::wstring& request)
 	{
 		if (request == L"tree")
@@ -310,6 +256,107 @@ public:
 			if (!RoseTapRunOnUiThread([&] { reply = PropertiesReply(handle, includeDefaults); })) return std::string();
 
 			return reply;
+		}
+
+		// The overlay verbs. Each of these was a request the host made by injecting, purely because the
+		// work has to happen on the app's UI thread and injection was the only way onto it. A resident
+		// reader reaches the same thread through the dispatcher, so they are messages.
+		//
+		// selecthandle is matched before the arming verb, and the arming match requires the space: a
+		// handle is not one of the flags select parses, and "selecthandle 1" must not be read as arming.
+		if (request.rfind(L"selecthandle ", 0) == 0)
+		{
+			const InstanceHandle handle = static_cast<InstanceHandle>(_wcstoui64(request.c_str() + 13, nullptr, 10));
+
+			bool selected = false;
+			if (!RoseTapRunOnUiThread([&] { selected = Overlay().SelectByHandle(handle); })) return std::string();
+
+			return selected ? std::string("selected\n") : std::string("none\n");
+		}
+
+		if (request == L"select" || request.rfind(L"select ", 0) == 0)
+		{
+			if (!RoseTapRunOnUiThread([&]
+			{
+				// Tokenised rather than suffix-matched: "all" asks for elements the framework would not
+				// hit-test, and "nomyxaml" turns off the preference for the app's own markup. A flag the
+				// person set on the toolbar is left alone unless the request actually mentions it.
+				bool includeAll = false;
+				for (const auto& token : Tokens(request))
+				{
+					if (token == L"all") includeAll = true;
+					else if (token == L"myxaml") Overlay().SetJustMyXaml(true);
+					else if (token == L"nomyxaml") Overlay().SetJustMyXaml(false);
+				}
+
+				Overlay().BeginSelect(includeAll);
+			})) return std::string();
+
+			// Waited for here rather than inside the dispatch, because the pass being waited for runs on
+			// the thread the dispatch would be holding.
+			int width = 0;
+			int height = 0;
+			Overlay().WaitForArmedExtent(width, height, 5000);
+
+			return "armed\t" + std::to_string(width) + "\t" + std::to_string(height) + "\n";
+		}
+
+		if (request == L"idle")
+		{
+			if (!RoseTapRunOnUiThread([&] { Overlay().EndSelect(); })) return std::string();
+			return std::string("idle\n");
+		}
+
+		if (request == L"deselect")
+		{
+			bool had = false;
+			if (!RoseTapRunOnUiThread([&] { had = Overlay().Deselect(); })) return std::string();
+			return had ? std::string("cleared\n") : std::string("nothing\n");
+		}
+
+		if (request == L"selection")
+		{
+			// The mode on the first line, then the candidate rows in the shape the work folder writes them,
+			// so one parser on the host serves either channel. Asked for rather than pushed: a pick outlives
+			// the request that armed it by design, because the person clicks when they click.
+			std::string reply;
+			if (!RoseTapRunOnUiThread([&]
+			{
+				reply = std::string(Overlay().Selecting() ? "select" : "idle")
+					+ "\t" + (Overlay().JustMyXaml() ? "1" : "0")
+					+ "\t" + Utf8(Escape(Overlay().GoneReason().c_str())) + "\n"
+					+ Overlay().SelectionRows();
+			})) return std::string();
+
+			return reply;
+		}
+
+		if (request == L"apply" || request.rfind(L"apply\n", 0) == 0)
+		{
+			// The batch rides in the frame, one command per line after the verb. Through the work folder it
+			// needs a staged commands.tsv read back with a narrow stream, which is a second encoding decision
+			// on a path that already had one. A frame is UTF-8 at both ends.
+			const size_t split = request.find(L'\n');
+
+			std::vector<std::wstring> lines;
+			if (split != std::wstring::npos)
+			{
+				std::wstringstream stream(request.substr(split + 1));
+				std::wstring line;
+				while (std::getline(stream, line, L'\n')) lines.push_back(line);
+			}
+
+			const std::vector<Command> commands = ParseCommands(lines);
+
+			std::string rows;
+			if (!RoseTapRunOnUiThread([&] { rows = ApplyBatch(commands); })) return std::string();
+
+			Log(L"pipe: applied " + std::to_wstring(commands.size()) + L" command(s)");
+
+			// An empty batch still answers with something. An empty frame means "not served here", and a
+			// caller reading this one as a refusal falls back to injecting the same batch -- which for
+			// anything the batch adds is a second copy.
+			return rows.empty() ? std::string("\n") : rows;
 		}
 
 		if (request == L"detach")
@@ -354,6 +401,41 @@ public:
 		return released;
 	}
 
+	/// <summary>
+	/// Stands this tap down as a later injection takes over: it stays advised, because it cannot do
+	/// otherwise, but it stops keeping a copy of the tree and stops acting on what it is told.
+	/// </summary>
+	/// <remarks>
+	/// A tap cannot be unadvised while its app goes on being inspected. UnadviseVisualTreeChange empties
+	/// the handle map the diagnostics session mints element and value handles from, and leaves the
+	/// service enumerating nothing for the next callback advised on it -- so a brush read comes back as
+	/// the number it was addressed by rather than a colour, and the next injection walks an empty tree.
+	/// Both are confident wrong answers rather than failures. So a provider is created per injection and
+	/// every one of them stays a sink for the life of the app.
+	/// <para>
+	/// What that costs is what this removes. Each sink appends every add to a tree copy of its own, never
+	/// cleared, and every mutation in the app is delivered to all of them on the UI thread -- the thread
+	/// the next injection needs in order to be sited at all. Standing the old ones down leaves N sinks
+	/// costing one tree and one handler that does any work.
+	/// </para>
+	/// <para>
+	/// On the UI thread, because that is where the callbacks arrive: clearing the node list from another
+	/// thread races a walk appending to it. A thread that cannot be reached leaves the tap holding its
+	/// tree and says so, which is the same trade EndSession makes.
+	/// </para>
+	/// </remarks>
+	bool StandDown()
+	{
+		if (!RoseTapRunOnUiThread([&] { Retire(); }))
+		{
+			Log(L"retired: could not reach the UI thread, so this tap keeps its copy of the tree");
+			return false;
+		}
+
+		Log(L"retired: stood down, holding no tree");
+		return true;
+	}
+
 	HRESULT STDMETHODCALLTYPE GetSite(REFIID riid, void** ppv) override
 	{
 		if (!m_diagnostics) return E_FAIL;
@@ -363,13 +445,24 @@ public:
 	HRESULT STDMETHODCALLTYPE OnVisualTreeChange(
 		ParentChildRelation relation, VisualElement element, VisualMutationType mutationType) override
 	{
+		// A tap that has been stood down is still advised, because nothing can unadvise it, so this is
+		// where it stops costing anything. Answering and doing nothing is the whole of standing down.
+		if (m_retired) return S_OK;
+
 		if (mutationType != Add)
 		{
 			// A selection whose element has left the tree is stale in both halves -- the mark drawn
 			// over the app and the handle the host will keep calling with -- so the overlay is told.
-			// It matches on the handle and does nothing when it is not the selected one, which is
-			// what makes this safe to run once per advised tap (#68).
+			// It matches on the handle and does nothing when it is not the selected one.
 			Overlay().ClearIfRemoved(element.Handle);
+
+			// And the node list follows the tree it describes. A list that only ever grows is accurate
+			// for exactly as long as something else refreshes it, which is what a fresh walk per
+			// injection quietly does; a resident tap answering reads between injections has no such
+			// refresh, and reports elements the framework has already let go. Closed over descendants,
+			// because removing a Border removes the TextBlock inside it and the framework is not
+			// required to say so twice -- and if it does, the second call finds nothing left to drop.
+			ForgetSubtree(element.Handle);
 			return S_OK;
 		}
 
@@ -433,35 +526,6 @@ private:
 		return rows;
 	}
 
-	void WriteTreeSnapshot()
-	{
-		if (g_workDir.empty()) return;
-
-		const std::wstring finalPath = g_workDir + L"\\tree.tsv";
-		const std::wstring tempPath = finalPath + L".tmp";
-		size_t written = 0;
-		{
-			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
-			if (!file)
-			{
-				Log(L"could not open tree.tsv.tmp for writing");
-				return;
-			}
-
-			file << TreeSnapshotRows(written);
-		}
-
-		_wremove(finalPath.c_str());
-		if (_wrename(tempPath.c_str(), finalPath.c_str()) != 0)
-		{
-			Log(L"could not rename tree.tsv.tmp to tree.tsv");
-			return;
-		}
-
-		WriteMarker(L"tree.ready", std::to_wstring(written));
-		Log(L"wrote tree.tsv with " + std::to_wstring(written) + L" element(s)");
-	}
-
 	// The handles of our own toolbar's elements, empty whenever the layer is not enumerated at all.
 	// Enumeration is parent-before-child in practice, but this closes over the subtree rather than
 	// assuming it, since one missed pass would leak our UI into the answer.
@@ -493,34 +557,6 @@ private:
 		}
 
 		return excluded;
-	}
-
-	// The host writes one line saying what it wants of this injection (a tree is always written; a
-	// "properties <handle>" line asks for that element's property chain as well).
-	// The request is the first line, and the host's generation for it the second. Two lines of one
-	// file rather than a file each, because the first line is all the verb parsing has ever read --
-	// so a second line costs nothing and cannot disturb it, and "properties <handle> all" still
-	// matches on its own suffix.
-	std::wstring ReadRequest()
-	{
-		g_generation.clear();
-
-		if (g_workDir.empty()) return std::wstring();
-
-		std::wifstream file(g_workDir + L"\\request.txt");
-		std::wstring line;
-		if (!file || !std::getline(file, line)) return std::wstring();
-
-		if (!line.empty() && line.back() == L'\r') line.pop_back();
-
-		std::wstring generation;
-		if (std::getline(file, generation))
-		{
-			if (!generation.empty() && generation.back() == L'\r') generation.pop_back();
-			g_generation = generation;
-		}
-
-		return line;
 	}
 
 	// One element's property chain: every effective (non-overridden) value with its type, provenance
@@ -767,47 +803,20 @@ private:
 		return "ok\n" + rows.str();
 	}
 
-	void WriteProperties(InstanceHandle handle, bool includeDefaults)
-	{
-		if (g_workDir.empty()) return;
-
-		const std::wstring finalPath = g_workDir + L"\\properties.tsv";
-		const std::wstring tempPath = finalPath + L".tmp";
-		unsigned int written = 0;
-		{
-			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
-			if (!file)
-			{
-				Log(L"could not open properties.tsv.tmp for writing");
-				return;
-			}
-
-			if (!EmitProperties(file, handle, includeDefaults, written))
-			{
-				WriteMarker(L"properties.ready", L"error");
-				return;
-			}
-		}
-
-		_wremove(finalPath.c_str());
-		if (_wrename(tempPath.c_str(), finalPath.c_str()) != 0)
-		{
-			Log(L"could not rename properties.tsv.tmp to properties.tsv");
-			return;
-		}
-
-		WriteMarker(L"properties.ready", std::to_wstring(written));
-		Log(L"wrote properties.tsv with " + std::to_wstring(written) + L" propert(y/ies) for handle " + std::to_wstring(handle));
-	}
-
 	// Applies each command from commands.tsv and writes apply.tsv -- one row per command with its
 	// outcome (applied / target not found / property not found / a failure code) -- so the host can
 	// report per-command results to the agent (#12).
-	void ApplyCommands()
+	/// <summary>
+	/// Runs a batch and returns one result row per command, in the order they were given.
+	/// </summary>
+	/// <remarks>
+	/// The rows are the answer whichever channel asked for the batch: over the pipe they are the reply
+	/// frame, and through the work folder they are what apply.tsv holds. One builder, because a result
+	/// that meant one thing on one channel and something else on the other is a difference nothing would
+	/// show until an edit reported the wrong outcome.
+	/// </remarks>
+	std::string ApplyBatch(const std::vector<Command>& commands)
 	{
-		if (g_workDir.empty()) return;
-
-		const std::vector<Command> commands = ReadCommands();
 		Log(L"applying " + std::to_wstring(commands.size()) + L" command(s)");
 
 		// Slots live for one batch and no longer. They name instances that have been built but not
@@ -816,43 +825,29 @@ private:
 		// half-built element be reached by another's command.
 		m_slots.clear();
 
-		const std::wstring finalPath = g_workDir + L"\\apply.tsv";
-		const std::wstring tempPath = finalPath + L".tmp";
+		std::string rows;
+		for (const auto& command : commands)
 		{
-			std::ofstream file(tempPath.c_str(), std::ios::trunc | std::ios::binary);
-			for (const auto& command : commands)
-			{
-				std::wstring status;
-				if (command.op == L"SetProperty") status = ApplySetProperty(command);
-				else if (command.op == L"ClearProperty") status = ApplyClearProperty(command);
-				else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
-				else if (command.op == L"CreateInstance") status = ApplyCreate(command);
-				else if (command.op == L"AddChild") status = ApplyAddChild(command);
-				else if (command.op == L"ReplaceResource") status = ApplyReplaceResource(command);
-				else status = L"unsupported op";
+			std::wstring status;
+			if (command.op == L"SetProperty") status = ApplySetProperty(command);
+			else if (command.op == L"ClearProperty") status = ApplyClearProperty(command);
+			else if (command.op == L"RemoveChild") status = ApplyRemoveChild(command);
+			else if (command.op == L"CreateInstance") status = ApplyCreate(command);
+			else if (command.op == L"AddChild") status = ApplyAddChild(command);
+			else if (command.op == L"ReplaceResource") status = ApplyReplaceResource(command);
+			else status = L"unsupported op";
 
-				if (file)
-				{
-					// The arg goes on the end, after the status, so a reader of the older four-field row
-					// is unaffected. It is there because the host keys these results by what it sent,
-					// and op-target-property alone stops being unique the moment one slot gets two
-					// children: both rows would be "AddChild <slot> <blank>", and the second child's
-					// outcome would overwrite the first's.
-					const std::wstring row = command.op + L'\t' + Escape(command.target.c_str()) + L'\t'
-						+ Escape(command.property.c_str()) + L'\t' + status + L'\t' + Escape(command.arg.c_str());
-					file << Utf8(row) << '\n';
-				}
-			}
+			// The arg goes on the end, after the status. It is there because the host keys these results
+			// by what it sent, and op-target-property alone stops being unique the moment one slot gets
+			// two children: both rows would be "AddChild <slot> <blank>", and the second child's outcome
+			// would overwrite the first's.
+			const std::wstring row = command.op + L'\t' + Escape(command.target.c_str()) + L'\t'
+				+ Escape(command.property.c_str()) + L'\t' + status + L'\t' + Escape(command.arg.c_str());
+			rows += Utf8(row);
+			rows += '\n';
 		}
 
-		_wremove(finalPath.c_str());
-		if (_wrename(tempPath.c_str(), finalPath.c_str()) != 0)
-		{
-			Log(L"could not rename apply.tsv.tmp to apply.tsv");
-			return;
-		}
-
-		WriteMarker(L"apply.ready", std::to_wstring(commands.size()));
+		return rows;
 	}
 
 	// The host sends the type it thinks the value should be, inferred from the property's name and the
@@ -1274,17 +1269,25 @@ private:
 	// framework has already let go.
 	void ForgetSubtree(InstanceHandle root)
 	{
-		std::set<InstanceHandle> doomed{ root };
-		for (bool grew = true; grew; )
-		{
-			grew = false;
-			for (const auto& node : m_nodes)
-			{
-				if (doomed.count(node.Handle)) continue;
-				if (doomed.count(node.Parent) == 0) continue;
+		// Children by parent, built once and walked down. Rescanning the whole list once per level is
+		// affordable for an edit this tap made and is not for one the app made: this runs on the UI
+		// thread for every element the app lets go, and an app lets go of elements continuously.
+		std::map<InstanceHandle, std::vector<InstanceHandle>> children;
+		for (const auto& node : m_nodes) children[node.Parent].push_back(node.Handle);
 
-				doomed.insert(node.Handle);
-				grew = true;
+		std::set<InstanceHandle> doomed{ root };
+		std::vector<InstanceHandle> pending{ root };
+		while (!pending.empty())
+		{
+			const InstanceHandle current = pending.back();
+			pending.pop_back();
+
+			const auto found = children.find(current);
+			if (found == children.end()) continue;
+
+			for (const InstanceHandle child : found->second)
+			{
+				if (doomed.insert(child).second) pending.push_back(child);
 			}
 		}
 
@@ -1675,16 +1678,12 @@ private:
 		CoTaskMemFree(values);
 	}
 
-	std::vector<Command> ReadCommands()
+	// One command per line, seven tab-separated fields. Shared by both channels, so a command means the
+	// same thing whichever way it arrived.
+	std::vector<Command> ParseCommands(const std::vector<std::wstring>& lines)
 	{
 		std::vector<Command> commands;
-		if (g_workDir.empty()) return commands;
-
-		std::wifstream file(g_workDir + L"\\commands.tsv");
-		if (!file) return commands;
-
-		std::wstring line;
-		while (std::getline(file, line))
+		for (std::wstring line : lines)
 		{
 			if (!line.empty() && line.back() == L'\r') line.pop_back();
 			if (line.empty()) continue;
@@ -1711,6 +1710,18 @@ private:
 	// The overlay is untouched by this. It takes its own reference to IXamlDiagnostics when it is
 	// installed, precisely so a click can resolve to a handle long after the injection that drew it
 	// is over, so the toolbar outlives the release rather than being broken by it.
+	// Sets the flag and gives back what the tap was holding for the tree it no longer answers about.
+	// The vector is the expensive half by a distance, so it is shrunk rather than merely emptied.
+	void Retire()
+	{
+		m_retired = true;
+
+		m_nodes.clear();
+		m_nodes.shrink_to_fit();
+		m_byName.clear();
+		m_slots.clear();
+	}
+
 	bool Unadvise()
 	{
 		const bool held = m_tree != nullptr || m_diagnostics != nullptr;
@@ -1723,6 +1734,9 @@ private:
 	}
 
 	std::atomic<long> m_refs{ 1 };
+	// Whether a later injection has taken over. Read and written on the UI thread alone, which is where
+	// the callbacks it guards arrive.
+	bool m_retired = false;
 	IXamlDiagnostics* m_diagnostics = nullptr;
 	IVisualTreeService* m_tree = nullptr;
 	std::vector<TreeNode> m_nodes;
@@ -1737,9 +1751,14 @@ private:
 	std::map<std::wstring, InstanceHandle> m_slots;
 };
 
-// Points the reader at the instance that has just been sited, releasing the one before it. A
+// Points the reader at the instance that has just been sited, and stands the one before it down. A
 // reference is held for as long as it is the answering instance, so the reader cannot be left with a
 // pointer to a released provider.
+//
+// Standing down rather than unadvising, and the difference is not a preference: a tap cannot be
+// unadvised while the app goes on being inspected without emptying the diagnostics session's handle
+// map underneath the tap that replaces it. What it can do is stop keeping a tree and stop acting on
+// what it is told, which is where all of the cost is.
 static void SetActiveTap(RoseTap* tap)
 {
 	RoseTap* previous = nullptr;
@@ -1750,7 +1769,11 @@ static void SetActiveTap(RoseTap* tap)
 		if (g_active) g_active->AddRef();
 	}
 
-	if (previous) previous->Release();
+	if (!previous) return;
+
+	if (previous != tap) previous->StandDown();
+
+	previous->Release();
 }
 
 // The reader thread. One per process, started by the first injection that has a pipe to read, and it

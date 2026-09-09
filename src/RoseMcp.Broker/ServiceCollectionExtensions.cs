@@ -109,7 +109,8 @@ public static class ServiceCollectionExtensions
 		only a baseline, so make it before editing; the change lives on the objects in the tree
 		rather than in the app's markup, so it is gone if the app rebuilds that part of the UI.
 		rose_xaml_selection reads what the user clicked -- read it before asking them to point, since
-		they can arm the in-app toolbar themselves -- and rose_xaml_select_mode arms the click.
+		the toolbar is already in their app -- and rose_xaml_select_element picks one outright by
+		handle or name, involving nobody.
 		""";
 
 	public static IMcpServerBuilder AddRoseMcpBroker(

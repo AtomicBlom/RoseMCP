@@ -34,6 +34,10 @@ public sealed class XamlProviderPipe : IDisposable
 	private readonly ILogger _logger;
 	private NamedPipeServerStream? _server;
 
+	// Whether a provider has ever held the far end. Disconnect refuses a stream that was never
+	// connected, so hanging up before listening again has to know which case this is.
+	private bool _hadClient;
+
 	public XamlProviderPipe(ILogger logger)
 	{
 		_logger = logger;
@@ -100,6 +104,13 @@ public sealed class XamlProviderPipe : IDisposable
 	/// sent, or null if it never arrived -- which is the whole question this class exists to answer
 	/// before any request is moved onto it.
 	/// </summary>
+	/// <remarks>
+	/// A provider that has connected and gone leaves the stream in a state that refuses the next
+	/// connection until it is disconnected, so this hangs up first. Without that, a session whose pipe
+	/// drops is over: the host re-injects, a fresh provider dials the same name, and nothing is
+	/// listening -- which reads as a provider that failed to load rather than as a channel that was
+	/// never reopened.
+	/// </remarks>
 	public string? WaitForProvider(TimeSpan timeout)
 	{
 		if (_server is null) return null;
@@ -108,6 +119,14 @@ public sealed class XamlProviderPipe : IDisposable
 		{
 			if (!_server.IsConnected)
 			{
+				// Only where one has actually been and gone: Disconnect throws on a stream that was
+				// never connected, and this is the ordinary first-connection path.
+				if (_hadClient)
+				{
+					_server.Disconnect();
+					_hadClient = false;
+				}
+
 				var waiting = _server.WaitForConnectionAsync();
 				if (!waiting.Wait(timeout))
 				{
@@ -116,6 +135,7 @@ public sealed class XamlProviderPipe : IDisposable
 				}
 			}
 
+			_hadClient = true;
 			return ReadFrame(timeout);
 		}
 		catch (Exception exception)

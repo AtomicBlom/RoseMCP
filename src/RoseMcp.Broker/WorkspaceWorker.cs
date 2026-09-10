@@ -159,7 +159,13 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 		logger.LogInformation("Starting a worker for {SolutionPath}.", solutionPath);
 
-		var client = await McpClient.CreateAsync(transport, loggerFactory: loggerFactory, cancellationToken: cancellationToken);
+		// The handshake budget is set rather than inherited: the SDK defaults to 60 seconds, which a
+		// cold worker loses to its own design-time build when several start at once.
+		var client = await McpClient.CreateAsync(
+			transport,
+			new McpClientOptions { InitializationTimeout = options.WorkerHandshakeTimeout },
+			loggerFactory,
+			cancellationToken);
 
 		var worker = new WorkspaceWorker(solutionPath, client, activities, logger);
 		await worker.RefreshProcessInfoAsync(cancellationToken);

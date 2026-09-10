@@ -422,6 +422,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 		IReadOnlyDictionary<string, object?> arguments,
 		CancellationToken cancellationToken)
 	{
+		// The worker's twin: which live-app tools a session reaches for is worth being able to count.
+		// A live-app session has an id of its own, so it says that as well as the origin directory.
+		_logger.LogInformation(
+			"Forwarding {Tool} to live-app session {SessionId} for {Origin}.",
+			tool,
+			SessionId,
+			CallOrigin.Directory ?? "(no origin)");
+
 		// Not CallToolAsync: it abandons the wait without telling the host, which then finishes the
 		// work anyway. The same reasoning as the worker's SendAsync.
 		var result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress: null, cancellationToken);

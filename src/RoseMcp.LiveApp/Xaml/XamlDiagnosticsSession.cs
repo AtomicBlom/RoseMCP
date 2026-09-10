@@ -1589,29 +1589,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Finds the tap's provider DLL for this host's architecture: an explicit override, a published
-	/// layout beside the host (<c>xaml-provider/&lt;rid&gt;</c>), or the repo build output. Null when
-	/// none is present, so the caller can report it rather than fault.
+	/// Finds the tap's provider DLL for this host's architecture. The deciding is in
+	/// <see cref="XamlProviderPath"/>, where a test can reach it; what is here is the two facts only a
+	/// running host knows -- where it is installed and which RID it is.
 	/// </summary>
-	private static string? ResolveProviderPath(XamlTap tap)
-	{
-		var configured = Environment.GetEnvironmentVariable("ROSEMCP_XAML_PROVIDER");
-		if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return Path.GetFullPath(configured);
-
-		var rid = RuntimeInformation.RuntimeIdentifier;
-		var alongside = Path.Combine(AppContext.BaseDirectory, "xaml-provider", rid, tap.ProviderFileName);
-		if (File.Exists(alongside)) return alongside;
-
-		var repositoryRoot = FindRepositoryRoot();
-		if (repositoryRoot is null) return null;
-
-		var providerBin = Path.Combine(repositoryRoot, "src", tap.ProviderProjectName, "bin", ProviderPlatform());
-		if (!Directory.Exists(providerBin)) return null;
-
-		return Directory.EnumerateFiles(providerBin, tap.ProviderFileName, SearchOption.AllDirectories)
-			.OrderByDescending(File.GetLastWriteTimeUtc)
-			.FirstOrDefault();
-	}
+	private static string? ResolveProviderPath(XamlTap tap) => XamlProviderPath.Resolve(new XamlProviderLookup(
+		Environment.GetEnvironmentVariable("ROSEMCP_XAML_PROVIDER"),
+		AppContext.BaseDirectory,
+		RuntimeInformation.RuntimeIdentifier,
+		ProviderPlatform(),
+		tap.ProviderFileName,
+		tap.ProviderProjectName));
 
 	/// <summary>The provider build platform matching this host's architecture (x64 or arm64).</summary>
 	private static string ProviderPlatform() => RuntimeInformation.ProcessArchitecture switch
@@ -1619,17 +1607,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		Architecture.Arm64 => "arm64",
 		_ => "x64",
 	};
-
-	private static string? FindRepositoryRoot()
-	{
-		var directory = new DirectoryInfo(AppContext.BaseDirectory);
-		while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
-		{
-			directory = directory.Parent;
-		}
-
-		return directory?.FullName;
-	}
 
 	/// <summary>
 	/// <c>InitializeXamlDiagnosticsEx</c> as a delegate rather than a <c>DllImport</c>, because the

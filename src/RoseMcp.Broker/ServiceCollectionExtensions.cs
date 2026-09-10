@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -6,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 
 using RoseMcp.Broker.Tools;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Broker;
 
@@ -20,14 +20,9 @@ public static class ServiceCollectionExtensions
 {
 	/// <summary>
 	/// What the client is told during initialize. MinVer stamps it from the git tag at build time, so
-	/// a version in a bug report names a commit. The build metadata after '+' is dropped -- it is the
-	/// commit hash, which belongs in a log rather than in a handshake.
+	/// a version in a bug report names a commit.
 	/// </summary>
-	private static readonly string ServerVersion =
-		typeof(ServiceCollectionExtensions).Assembly
-			.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-			?.InformationalVersion.Split('+')[0]
-		?? "0.0.0";
+	private static readonly string ServerVersion = HostVersion.Of(typeof(ServiceCollectionExtensions).Assembly);
 
 	/// <summary>
 	/// Sent to the client during initialize, which means the model reads it before it decides how to

@@ -41,6 +41,9 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	private bool _registered;
 	private string? _aumid;
 
+	/// <summary>Why registration failed, so the skip can say it rather than guess at a cause.</summary>
+	private string? _registrationFailure;
+
 	/// <summary>
 	/// Takes the WinUI probe for one test: makes sure everything it needs is built, and hands back
 	/// where it was built. Skips the calling test where the machine cannot provide it.
@@ -89,10 +92,13 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 			if (packaged && !_registered)
 			{
 				_registered = true;
-				_aumid = Register(output!);
+				_aumid = Register(output!, out _registrationFailure);
 			}
 
-			if (packaged && _aumid is null) Skip.Test("The WinUI probe app could not be registered (developer mode may be off).");
+			if (packaged && _aumid is null)
+			{
+				Skip.Test($"The WinUI probe app could not be registered: {_registrationFailure}");
+			}
 
 			return output!;
 		}
@@ -158,7 +164,12 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 				$"Building the WinUI probe app failed (exit {build.ExitCode}):{Environment.NewLine}{build.Output}");
 		}
 
-		var bin = Path.Combine(ProbeDirectory(), "bin", Configuration());
+		// Each shape has its own output root, so this cannot pick up the other one's binary. Sharing
+		// them is what let an unpackaged caller launch a packaged build and die on REGDB_E_CLASSNOTREG
+		// before showing a window, which reads as a broken machine rather than a build collision (#180).
+		var bin = packaged
+			? Path.Combine(ProbeDirectory(), "bin", "packaged", Configuration())
+			: Path.Combine(ProbeDirectory(), "bin", Configuration());
 		var exe = !Directory.Exists(bin)
 			? null
 			: Directory.EnumerateFiles(bin, "Rose.ProbeApp.WinUi.exe", SearchOption.AllDirectories)
@@ -175,28 +186,18 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Registers the packaged layout and returns its AUMID, or null where registration is not
-	/// permitted, so the test skips rather than failing on an environment limit.
+	/// Registers the packaged layout and returns its AUMID, or null with the reason it could not.
 	/// <para>
 	/// The layout is the build output directory itself: a WinUI 3 desktop build writes
 	/// AppxManifest.xml beside the exe, with none of the staging the classic UWP probe needs, because
 	/// it has no split between a managed assembly and a native CoreCLR apphost.
 	/// </para>
 	/// </summary>
-	private static string? Register(string layoutDirectory)
+	private static string? Register(string layoutDirectory, out string? failure)
 	{
-		var manifest = Path.Combine(layoutDirectory, "AppxManifest.xml");
-		if (!File.Exists(manifest)) return null;
+		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, out failure);
 
-		var script =
-			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
-				+ $"$p = Get-AppxPackage '{PackageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
-		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
-
-		var pfnLine = output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
-		if (pfnLine is null) return null;
-
-		return $"{pfnLine["PFN: ".Length..].Trim()}!App";
+		return family is null ? null : $"{family}!App";
 	}
 
 	/// <summary>

@@ -51,6 +51,19 @@
     <ProbePackaged Condition=" '$(ProbePackaged)' == '' ">false</ProbePackaged>
     <WindowsPackageType Condition=" '$(ProbePackaged)' != 'true' ">None</WindowsPackageType>
 
+    <!--
+      The two shapes get their own output root, and that is load-bearing rather than tidiness.
+      Sharing one meant a packaged build wrote its exe over the unpackaged one and staged a second
+      copy under AppX, so an unpackaged caller could launch a binary carrying the DeploymentManager
+      auto-initializer. That is the packaged path: it needs package identity, and without it the app
+      dies at startup on REGDB_E_CLASSNOTREG before it ever shows a window.
+
+      It reads as a broken machine rather than a build collision, because the crash is inside the
+      Windows App SDK initialiser on a machine whose runtime is installed correctly, which is why it
+      went unexplained for so long (#180).
+    -->
+    <BaseOutputPath Condition=" '$(ProbePackaged)' == 'true' ">bin\packaged\</BaseOutputPath>
+
     <!-- No signing: the tests register the loose layout, which needs no certificate, so no .pfx
          lives in the repository. No .msix either, since registering the layout is enough and is what
          the UWP probe already does. -->

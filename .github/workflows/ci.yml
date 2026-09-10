@@ -80,10 +80,11 @@ jobs:
   #
   # Expect this to be slow rather than merely long: #39 records that these tests share no workspace
   # fixtures, so the solution loads contend for a runner with four cores where the developer box has
-  # twelve. The timeout is the cap, not the target.
+  # twelve. The timeout is the cap, not the target, and it allows for the bounded parallelism below
+  # trading wall time for finishing at all.
   integration:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -111,8 +112,16 @@ jobs:
       # filter negates a property with [Category!=...], while negating a path segment matches nothing
       # at all. The category is on LiveAppSessionTests itself, so this covers exactly the class the
       # old xunit -class- flag did -- 386 tests discovered, 50 of them in that class, 336 left.
+      # Parallelism is bounded rather than left to TUnit's auto-detected optimum, which counts tests
+      # and not the processes they start. Sampling BrokerTests alone on a developer box found 28
+      # concurrent RoseMcp.Worker processes for 27 tests, each running a real design-time build; the
+      # same filter under this limit peaks at 7. On four cores the unbounded version starves the
+      # workers' own MCP handshake, which gets 60 seconds and fails the call rather than waiting, so
+      # a run dies with TimeoutException: Initialization timed out on whichever tests happened to
+      # start a worker during the spike -- a different set each run, which is what makes it read as
+      # flakiness rather than as load. Three and not four, because one test can hold several workers.
       - name: Integration tests, excluding the live-app suite
-        run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/*/*[Category!=LiveApp]'
+        run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --maximum-parallel-tests 3 --treenode-filter '/*/*/*/*[Category!=LiveApp]'
 
       # The Windows-only half, which is its own project because it takes a compile reference on
       # RoseMcp.LiveApp (net10.0-windows). Keeping that out of the project above is what leaves the

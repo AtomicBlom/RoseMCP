@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -180,4 +182,193 @@ internal static class TestToolchain
 		=> AppContext.BaseDirectory.Contains($"{Path.DirectorySeparatorChar}Release{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
 			? "Release"
 			: "Debug";
+
+	/// <summary>
+	/// Registers a loose AppX layout and returns its package family name, installing any framework it
+	/// depends on that this machine does not have.
+	/// </summary>
+	/// <param name="manifest">The layout's AppxManifest.xml.</param>
+	/// <param name="packageName">The package identity name, to read the family name back by.</param>
+	/// <param name="failure">Why it could not be registered, when it could not.</param>
+	/// <remarks>
+	/// A framework dependency is the one registration failure that is neither a bug nor a limit of the
+	/// machine: it is a package sitting unregistered in the Windows SDK, and installing it is a single
+	/// call. Leaving it to the person means an acceptance test skips for as long as nobody reads an
+	/// event log -- <c>Microsoft.VCLibs.140.00.Debug</c> was installed for x64 only on an ARM64 machine
+	/// here, and the two modern-UWP tests skipped every run until somebody looked.
+	/// <para>
+	/// Which framework is asked of Windows rather than worked out from the manifest. The deployment
+	/// error names the package, the architecture and the minimum version it wants, which is more than a
+	/// manifest read would give and cannot drift from what the deployment engine actually enforces.
+	/// </para>
+	/// <para>
+	/// One retry, and then it says what it could not do. Installing a framework twice is harmless but a
+	/// loop that keeps trying hides a failure that is not about frameworks at all.
+	/// </para>
+	/// </remarks>
+	internal static string? RegisterAppxLayout(string manifest, string packageName, out string? failure)
+	{
+		failure = null;
+
+		if (!File.Exists(manifest))
+		{
+			failure = $"there is no AppxManifest.xml at {manifest}";
+			return null;
+		}
+
+		var registered = TryRegister(manifest, packageName, out var reported);
+		if (registered is not null) return registered;
+
+		if (MissingFramework(reported) is not { } wanted)
+		{
+			failure = reported;
+			return null;
+		}
+
+		if (InstallFramework(wanted, out var installFailure) is false)
+		{
+			failure = $"{reported} Installing {wanted.Name} for {wanted.Architecture} failed: {installFailure}";
+			return null;
+		}
+
+		registered = TryRegister(manifest, packageName, out reported);
+		if (registered is not null) return registered;
+
+		failure = $"{reported} {wanted.Name} for {wanted.Architecture} was installed first, so this is not the missing framework.";
+		return null;
+	}
+
+	/// <summary>
+	/// One attempt at registering the layout: the package family name, or null with whatever the
+	/// deployment engine said.
+	/// </summary>
+	private static string? TryRegister(string manifest, string packageName, out string reported)
+	{
+		var script =
+			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
+				+ $"$p = Get-AppxPackage '{packageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
+
+		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
+
+		var lines = output.Split('\n').Select(line => line.Trim()).ToArray();
+		var pfn = lines.FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
+
+		if (pfn is not null)
+		{
+			reported = string.Empty;
+			return pfn["PFN: ".Length..].Trim();
+		}
+
+		reported = lines.FirstOrDefault(line => line.StartsWith("ERROR: ", StringComparison.Ordinal))
+			?? "Add-AppxPackage reported nothing and the package is not registered.";
+
+		return null;
+	}
+
+	/// <summary>
+	/// The framework a deployment error is asking for, or null where it is asking for something else.
+	/// </summary>
+	/// <remarks>
+	/// Read out of the message Windows writes for ERROR_INSTALL_RESOLVE_DEPENDENCY_FAILED, which names
+	/// the package and the architectures that would satisfy it:
+	/// <code>
+	/// Provide the framework "Microsoft.VCLibs.140.00.Debug" published by "CN=Microsoft Corporation,
+	/// ..." with neutral or ARM64 processor architecture and minimum version 14.0.33519.0, along with
+	/// this package to install.
+	/// </code>
+	/// Parsing prose is not something to do lightly, and it earns it here: the alternative is a list of
+	/// framework names kept in the fixture by hand, which is a guess about what the deployment engine
+	/// wants rather than a reading of what it asked for, and it goes stale the first time a probe gains
+	/// a dependency.
+	/// </remarks>
+	private static FrameworkDependency? MissingFramework(string reported)
+	{
+		var name = Regex.Match(reported, @"Provide the framework ""([^""]+)""");
+		if (!name.Success) return null;
+
+		var architecture = Regex.Match(reported, @"with neutral or (\w+) processor architecture");
+
+		return new FrameworkDependency(
+			name.Groups[1].Value,
+			architecture.Success ? architecture.Groups[1].Value : RuntimeInformation.ProcessArchitecture.ToString());
+	}
+
+	/// <summary>A framework package a layout needs, as the deployment engine described it.</summary>
+	private readonly record struct FrameworkDependency(string Name, string Architecture);
+
+	/// <summary>
+	/// Installs a framework package from the Windows SDK, or says why it could not.
+	/// </summary>
+	/// <remarks>
+	/// The SDK ships these under <c>ExtensionSDKs</c>, one folder per architecture, and the file names
+	/// do not match the package names -- <c>Microsoft.VCLibs.140.00.Debug</c> is
+	/// <c>Microsoft.VCLibs.arm64.Debug.14.00.appx</c> on disk. So the search matches on the parts that
+	/// do carry over: the family (the name up to its version), the architecture folder, and whether the
+	/// wanted package is the Debug flavour, which is a different package identity rather than a
+	/// different build of one.
+	/// </remarks>
+	private static bool InstallFramework(FrameworkDependency wanted, out string failure)
+	{
+		failure = string.Empty;
+
+		var roots = new[]
+		{
+			Path.Combine(
+				Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+				"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
+			Path.Combine(
+				Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+				"Microsoft SDKs", "Windows Kits", "10", "ExtensionSDKs"),
+		};
+
+		// "Microsoft.VCLibs.140.00.Debug" -> "Microsoft.VCLibs", which is the ExtensionSDKs folder.
+		var family = string.Join('.', wanted.Name.Split('.').Take(2));
+		var debug = wanted.Name.Contains(".Debug", StringComparison.OrdinalIgnoreCase);
+
+		var candidate = roots
+			.Where(Directory.Exists)
+			.SelectMany(root => SafeFiles(Path.Combine(root, family), "*.appx"))
+			.Where(path => path.Contains(wanted.Architecture, StringComparison.OrdinalIgnoreCase))
+			.Where(path => path.Contains(".Debug", StringComparison.OrdinalIgnoreCase) == debug)
+			.OrderByDescending(File.GetLastWriteTimeUtc)
+			.FirstOrDefault();
+
+		if (candidate is null)
+		{
+			failure = $"no {wanted.Name} package for {wanted.Architecture} was found under the Windows SDK's "
+				+ $"ExtensionSDKs\\{family}. Install it by hand, or install the Windows SDK component that ships it.";
+			return false;
+		}
+
+		var (_, output) = RunProcess(
+			"powershell",
+			$"-NoProfile -NonInteractive -Command \"try {{ Add-AppxPackage -Path '{candidate}' -ErrorAction Stop }} "
+				+ "catch { Write-Output ('ERROR: ' + $_.Exception.Message) }\"");
+
+		var error = output.Split('\n').Select(line => line.Trim())
+			.FirstOrDefault(line => line.StartsWith("ERROR: ", StringComparison.Ordinal));
+
+		if (error is null) return true;
+
+		failure = $"{error} (from {candidate})";
+		return false;
+	}
+
+	/// <summary>
+	/// Every file under a directory that may not be there, because a machine without a given Windows
+	/// SDK component simply has no folder for it and that is not an error worth throwing over.
+	/// </summary>
+	private static IEnumerable<string> SafeFiles(string directory, string pattern)
+	{
+		if (!Directory.Exists(directory)) return [];
+
+		try
+		{
+			return Directory.EnumerateFiles(directory, pattern, SearchOption.AllDirectories);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			return [];
+		}
+	}
 }

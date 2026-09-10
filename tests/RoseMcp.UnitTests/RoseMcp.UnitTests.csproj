@@ -21,6 +21,9 @@
     <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlStubs\RoseMcp.XamlStubs.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlDiff\RoseMcp.XamlDiff.csproj" />
+    <!-- The UI's testable half. Deliberately not RoseMcp.Ui, which is net10.0-windows and could not
+         be referenced from here at all: that split is what makes the rows and formatting testable. -->
+    <ProjectReference Include="..\..\src\RoseMcp.Ui.Core\RoseMcp.Ui.Core.csproj" />
     <ProjectReference Include="..\RoseMcp.TestSupport\RoseMcp.TestSupport.csproj" />
   </ItemGroup>
 

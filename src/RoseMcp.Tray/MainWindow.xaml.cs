@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Windows.Input;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -9,14 +8,14 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media.Imaging;
 
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
+using RoseMcp.Ui;
+using RoseMcp.Ui.Core;
 
 using Windows.ApplicationModel.DataTransfer;
-using Windows.Graphics;
 
 namespace RoseMcp.Tray;
 
@@ -91,42 +90,26 @@ public sealed partial class MainWindow : Window
 	private WorkspaceManager Manager => _app.Services.GetRequiredService<WorkspaceManager>();
 
 	/// <summary>
-	/// Puts the same icon on the tray, the window and the header.
+	/// Puts the shared icon on the window and its art on the marks inside it, then the tray icon,
+	/// which is the one part no other window needs.
 	/// <para>
-	/// Loaded from a real .ico rather than generated from text. The generated version depended on
-	/// a font-size-to-canvas ratio that could not be checked without looking at the taskbar, and it
-	/// went from a four-pixel smudge to nothing at all across one change. A file has pixels that can
-	/// be verified before shipping. The marks inside the window come from a PNG of the same art,
-	/// because an image decoder handed a multi-frame .ico picks its own frame.
+	/// The tray asks for the 32-pixel frame rather than the 16: the file has a purpose-drawn image at
+	/// each size, so asking for the larger one means Windows only ever scales down, which is far
+	/// kinder than scaling up on a high-DPI taskbar.
 	/// </para>
 	/// </summary>
 	private void ApplyIcon()
 	{
-		var assets = Path.Combine(AppContext.BaseDirectory, "Assets");
-		var icon = Path.Combine(assets, "rose-mcp.ico");
-		var mark = Path.Combine(assets, "rose-mcp.png");
+		var icon = WindowChrome.ApplyIcon(this, TitleMark, EmptyMark);
+		if (icon is null) return;
 
 		try
 		{
-			if (File.Exists(icon))
-			{
-				// 32 rather than 16: the file has a purpose-drawn frame at each size, and asking for
-				// the larger one means Windows only ever scales down, which is far kinder than scaling
-				// up on a high-DPI taskbar.
-				Tray.Icon = new System.Drawing.Icon(icon, 32, 32);
-				AppWindow.SetIcon(icon);
-			}
-
-			if (File.Exists(mark))
-			{
-				var image = new BitmapImage(new Uri(mark));
-				TitleMark.Source = image;
-				EmptyMark.Source = image;
-			}
+			Tray.Icon = new System.Drawing.Icon(icon, 32, 32);
 		}
 		catch (Exception exception) when (exception is IOException or ArgumentException)
 		{
-			Debug.WriteLine($"Could not apply the icon: {exception.Message}");
+			Debug.WriteLine($"Could not apply the tray icon: {exception.Message}");
 		}
 	}
 
@@ -134,20 +117,8 @@ public sealed partial class MainWindow : Window
 	/// WinUI's default window is sized for an application; this is a status panel. Sizes are in
 	/// logical pixels and scaled here, because AppWindow works in physical ones.
 	/// </summary>
-	private void ApplySize()
-	{
-		var scale = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
-
-		AppWindow.Resize(new SizeInt32(Scale(InitialWidth), Scale(InitialHeight)));
-
-		if (AppWindow.Presenter is OverlappedPresenter presenter)
-		{
-			presenter.PreferredMinimumWidth = Scale(MinimumWidth);
-			presenter.PreferredMinimumHeight = Scale(MinimumHeight);
-		}
-
-		int Scale(int logical) => (int)Math.Round(logical * scale);
-	}
+	private void ApplySize() =>
+		WindowChrome.ApplySize(this, InitialWidth, InitialHeight, MinimumWidth, MinimumHeight);
 
 	private void Refresh()
 	{
@@ -219,7 +190,7 @@ public sealed partial class MainWindow : Window
 		var troubled = summaries.Count(summary => summary.State is WorkspaceState.Degraded or WorkspaceState.Faulted);
 		if (troubled > 0) parts.Add(troubled == 1 ? "1 needs attention" : $"{troubled} need attention");
 
-		return string.Join(WorkspaceRow.Separator, parts);
+		return string.Join(Format.Separator, parts);
 	}
 
 	/// <summary>
@@ -389,9 +360,6 @@ public sealed partial class MainWindow : Window
 			Debug.WriteLine($"Could not open Explorer: {exception.Message}");
 		}
 	}
-
-	[DllImport("user32.dll")]
-	private static extern uint GetDpiForWindow(nint hwnd);
 
 	private sealed class ShowWindowCommand(MainWindow window) : ICommand
 	{

@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace RoseMcp.Tray;
+namespace RoseMcp.Ui.Core;
 
 /// <summary>
 /// The smallest thing that lets a row be updated in place rather than replaced.

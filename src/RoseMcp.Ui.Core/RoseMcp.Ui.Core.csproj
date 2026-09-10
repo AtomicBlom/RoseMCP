@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The half of the UI that is not WinUI: the rows a window binds to, the formatting they hold,
+       the merge that keeps them alive across a refresh, and the loop that polls. Plain net10.0 and
+       nothing but Contracts, so the unit tests can reference it, which is the whole reason it is
+       a project of its own rather than part of RoseMcp.Ui. A net10.0 test project cannot reference
+       a net10.0-windows assembly, and this repository has settled that question twice already:
+       XamlStackModules lives in Contracts and markup parsing lives in RoseMcp.XamlDiff for exactly
+       this reason. Anything here that reaches for a WinUI type belongs next door. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\RoseMcp.Contracts\RoseMcp.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

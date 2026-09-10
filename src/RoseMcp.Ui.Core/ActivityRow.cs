@@ -1,6 +1,6 @@
 using RoseMcp.Contracts;
 
-namespace RoseMcp.Tray;
+namespace RoseMcp.Ui.Core;
 
 /// <summary>
 /// One operation as the window shows it: what was asked for, how long it has been going, how far

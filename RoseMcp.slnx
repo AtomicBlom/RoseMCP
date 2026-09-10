@@ -8,6 +8,10 @@
     <Project Path="src/RoseMcp.Solutions/RoseMcp.Solutions.csproj" />
     <Project Path="src/RoseMcp.XamlDiff/RoseMcp.XamlDiff.csproj" />
     <Project Path="src/RoseMcp.XamlStubs/RoseMcp.XamlStubs.csproj" />
+    <Project Path="src/RoseMcp.Ui.Core/RoseMcp.Ui.Core.csproj" />
+    <Project Path="src/RoseMcp.Ui/RoseMcp.Ui.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="src/RoseMcp.Tray/RoseMcp.Tray.csproj">
       <Platform Project="x64" />
     </Project>

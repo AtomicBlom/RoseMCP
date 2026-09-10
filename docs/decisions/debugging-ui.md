@@ -62,6 +62,42 @@ read is a message, or absent, so the next read pays an injection. `Lost` is a re
 than a tidy-up -- a pipe that drops sends the next call back through injection, which the host already
 warns about, and a session doing it repeatedly is a channel failing quietly.
 
+## The shared UI is two projects, split by what a test can reach
+
+**Decision.** `RoseMcp.Ui.Core` is plain `net10.0` and holds everything testable: the rows a window
+binds to, the formatting they carry, the merge that keeps them alive across a refresh, and the poll
+loop. `RoseMcp.Ui` is `net10.0-windows` with `UseWinUI` and holds the resource dictionaries, the
+window chrome and the crash handler. Both apps reference both.
+
+**Why not one project.** A `net10.0` test project cannot reference a `net10.0-windows` assembly at
+all, so anything in the WinUI half is code no unit test can see. This repository has already settled
+that question twice, in the same direction: `XamlStackModules` lives in Contracts and markup parsing
+lives in `RoseMcp.XamlDiff`, both because the host that owns the behaviour cannot be referenced from
+a test. The split is what makes the rows and the formatting testable, and the 489-test unit suite
+covers them on Linux as a result.
+
+**What stays in the tray.** `WorkspaceRow`, because it reaches for `InfoBarSeverity`;
+`StartupRegistration`, because an inspector does not start with Windows; and `TrayOptions`.
+
+## A referenced project's assets land under its project name, and the library owns that path
+
+**Decision.** The icon lives once, in `RoseMcp.Ui/Assets/`, and `RoseUiAssets` is the single place
+that spells where it ends up at runtime: `RoseMcp.Ui/Assets/` beside the consuming app's exe, not
+`Assets/`.
+
+**Why not what it looks like.** WinUI copies a referenced project's `Content` into each referencing
+app's output under a folder named for the project. Neither `Link` nor `TargetPath` on the app's own
+item moves it, which cost three build cycles to establish. Two ways out were rejected: duplicating
+the files per app makes the pixels exist twice for no gain, and letting each app spell the path
+encodes the surprise once per app. The chosen shape has the same structure as the `ms-appx` URI the
+XAML already uses, so both halves agree.
+
+**One thing that follows.** A shared resource dictionary is merged as
+`ms-appx:///RoseMcp.Ui/Themes/Rose.xaml`, and it must be merged *after* `XamlControlsResources`,
+because every style in it is `BasedOn` a stock WinUI one and that resolves at parse time up the merge
+chain. Getting the order wrong fails to parse, and the only symptom is the process disappearing
+during the `App` constructor -- which is why the crash handler landed in the same change.
+
 ## Only UWP and WinUI targets get a XAML tab
 
 **Decision.** The host probes the target's loaded modules for its `XamlStack` when it establishes the

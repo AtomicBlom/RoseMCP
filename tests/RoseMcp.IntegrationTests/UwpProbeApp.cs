@@ -756,39 +756,13 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Registers the loose UWP layout and returns its AUMID, or null with the reason it could not.
-	/// <para>
-	/// The reason is returned rather than discarded. It was captured all along and thrown away, so the
-	/// skip named developer mode, which sends the reader to a setting that is often already correct
-	/// and closes the question. A skip that says it does not know is worth more than one that invents
-	/// a cause.
-	/// </para>
+	/// Registers the staged UWP layout and returns its AUMID, or null with the reason it could not.
 	/// </summary>
 	private static string? Register(string layoutDirectory, out string? failure)
 	{
-		failure = null;
+		var family = RegisterAppxLayout(Path.Combine(layoutDirectory, "AppxManifest.xml"), PackageName, out failure);
 
-		var manifest = Path.Combine(layoutDirectory, "AppxManifest.xml");
-		if (!File.Exists(manifest))
-		{
-			failure = $"there is no AppxManifest.xml in {layoutDirectory}";
-			return null;
-		}
-
-		var script =
-			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
-				+ $"$p = Get-AppxPackage '{PackageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
-		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
-
-		var lines = output.Split('\n').Select(line => line.Trim()).ToArray();
-		var pfnLine = lines.FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
-
-		if (pfnLine is not null) return $"{pfnLine["PFN: ".Length..].Trim()}!App";
-
-		failure = lines.FirstOrDefault(line => line.StartsWith("ERROR: ", StringComparison.Ordinal))
-			?? "Add-AppxPackage reported nothing and the package is not registered";
-
-		return null;
+		return family is null ? null : $"{family}!App";
 	}
 
 	/// <summary>

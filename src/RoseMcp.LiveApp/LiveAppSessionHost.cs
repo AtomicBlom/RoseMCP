@@ -755,9 +755,10 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// costs a module list and nothing more.
 	/// <para>
 	/// A launched app has usually not built a tree yet, and the diagnostics endpoint does not exist
-	/// until it has, so this is expected to fail sometimes and says nothing when it does. The path that
-	/// loads the provider on the first XAML call is still there and still correct, which is what makes
-	/// giving up cheap: the worst case is the behaviour that came before this.
+	/// until it has, so this is expected to fail sometimes and says nothing when it does. Giving up is
+	/// only cheap because the stack detection re-probes while it is Unknown: this runs the moment a
+	/// session goes Ready, so on a launched app it asks before the framework has loaded, and a cached
+	/// negative from that one look would answer every XAML call the session went on to serve.
 	/// </para>
 	/// </remarks>
 	private void AttachUiTooling()

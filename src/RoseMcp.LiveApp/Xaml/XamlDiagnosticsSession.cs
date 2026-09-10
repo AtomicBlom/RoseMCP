@@ -1556,7 +1556,12 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	{
 		if (_tap is not null && _initialise is not null) return (_tap, null);
 
-		_stack ??= XamlStackProbe.Detect(pid);
+		// Re-probed while it is Unknown, which is "could not be determined" rather than "no XAML" and so
+		// is not an answer worth keeping. A launched app is asked the moment its session goes Ready, well
+		// before it has loaded a XAML framework, and caching that one early look made it the answer for
+		// every XAML call the session went on to serve: an app with 116 modules kept being described from
+		// the 25 it had at startup. An attached app never showed it, because by then the app is up.
+		if (_stack is null or { Stack: XamlStack.Unknown }) _stack = XamlStackProbe.Detect(pid);
 
 		var tap = XamlTaps.For(_stack.Stack);
 		if (tap is null) return (null, $"{XamlTaps.NoTapReason(_stack.Stack)} ({_stack.Reason}).");

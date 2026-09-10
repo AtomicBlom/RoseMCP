@@ -154,6 +154,52 @@ public static class OperatorApi
 			"/sessions/{sessionId}/step",
 			async (string sessionId, StepRequest body, LiveAppSessionManager sessions, HttpContext context) =>
 				Json(await Require(sessions, sessionId).StepDetailedAsync(body.Mode, context.RequestAborted)));
+
+		operators.MapPost(
+			"/sessions/{sessionId}/hold",
+			async (string sessionId, HoldRequest body, LiveAppSessionManager sessions, HttpContext context) =>
+				Json(await Require(sessions, sessionId).HoldAsync(body.Seconds, body.Release, context.RequestAborted)));
+
+		operators.MapGet(
+			"/sessions/{sessionId}/frames",
+			async (
+				string sessionId,
+				LiveAppSessionManager sessions,
+				HttpContext context,
+				int? threadId = null,
+				int offset = 0,
+				int? limit = null) =>
+				Json(await Require(sessions, sessionId).ReadFramesAsync(threadId, offset, limit, context.RequestAborted)));
+
+		operators.MapGet(
+			"/sessions/{sessionId}/frames/{frameIndex}/variables",
+			async (
+				string sessionId,
+				int frameIndex,
+				LiveAppSessionManager sessions,
+				HttpContext context,
+				int? threadId = null) =>
+				Json(await Require(sessions, sessionId).ReadFrameVariablesAsync(
+					frameIndex, threadId, context.RequestAborted)));
+
+		// The path is a query argument rather than a route segment because it carries dots and
+		// brackets, and a segment holding those is one nobody can read or escape reliably.
+		operators.MapGet(
+			"/sessions/{sessionId}/values",
+			async (
+				string sessionId,
+				string path,
+				LiveAppSessionManager sessions,
+				HttpContext context,
+				int frameIndex = 0,
+				int? threadId = null) =>
+				Json(await Require(sessions, sessionId).ExpandValueAsync(
+					path, frameIndex, threadId, context.RequestAborted)));
+
+		operators.MapGet(
+			"/sessions/{sessionId}/threads",
+			async (string sessionId, LiveAppSessionManager sessions, HttpContext context) =>
+				Json(await Require(sessions, sessionId).ReadThreadsAsync(context.RequestAborted)));
 	}
 
 	/// <summary>Reading and pointing at a live visual tree.</summary>

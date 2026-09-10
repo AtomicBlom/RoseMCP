@@ -86,12 +86,11 @@ public static class MethodTokens
 	}
 
 	/// <summary>
-	/// The instance fields of a type and its bases, outermost type last, for listing what an object
-	/// value holds.
+	/// The fields a type declares, for listing what a value holds.
 	/// <para>
-	/// Bases included, because a field declared on a base class is as much a part of the object as
-	/// one declared on it. Each field carries the module and type token it was declared on, since
-	/// reading it needs the declaring class rather than the value's own.
+	/// This type's own only. A base class's fields are as much a part of the object, but the base
+	/// may be declared in another module, so walking the chain is the caller's -- it holds the live
+	/// type and can ask the runtime for each level rather than guessing at a type reference.
 	/// </para>
 	/// </summary>
 	public static IReadOnlyList<FieldMember> Fields(string modulePath, int typeToken)

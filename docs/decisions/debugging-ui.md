@@ -151,3 +151,72 @@ and merges the scope it was declared in, and CI runs the unit suite in Release a
 `CompiledModule` emits a small assembly at `OptimizationLevel.Debug` with the source beside the
 assertions about its lines, and the fixture the live-app test stops on carries `NoOptimization` for
 the same reason.
+## Stop inspection answers with a state, never a refusal
+
+**Decision.** Frames, a frame's variables, an expanded value, the thread list and the hold all return
+a `LiveExecutionReport`: an execution state, the stop they were read at, and a `Detail` sentence.
+Asking any of them while the target is running answers `Running` with an empty result and the reason,
+rather than throwing.
+
+**Why not refuse.** A stop ends for reasons the caller did not cause -- the safety timer, a hold
+expiring, an agent continuing -- so a reader that polls a stop will hit the running case routinely.
+An error there reads as a broken call and sends someone to the logs; a state reads as what it is.
+Bad *arguments* still throw, because a frame index past the end of a stack is the caller's mistake
+and the two must not be confused.
+
+**Why every report echoes the stop.** Everything a debugger hands out is valid only within the stop
+it came from -- `CorDebugValue` and `CorDebugFrame` are invalidated the moment the target moves. A
+reader holding frames from one stop and variables from the next has a view that never existed, and
+`LiveStop.EventSequence` is the only thing that makes that detectable.
+
+## A value is addressed by slot, and the grammar is shared
+
+**Decision.** `ValuePath` -- `arg:0`, `local:2` or a bare name, then `.field` and `[3]` -- lives in
+`RoseMcp.Contracts` beside `LiveVariable.Path`, which is the only thing that produces one. Every
+variable the debugger reports carries the path that expands it, and `rose_debug_evaluate` resolves
+the same grammar through the same resolver as an expansion.
+
+**Why a slot rather than a name.** A name is not always unique or even present: a compiler temporary
+has none, and two sibling blocks reuse one slot under different names. The slot is what the runtime
+addresses, so it always works, and a caller that has a name can still use it.
+
+**Why in Contracts.** It is a pure function over strings, which is the exception that already put
+`XamlStackModules` and `ToolArgumentShape` there: the host that owns the behaviour is
+`net10.0-windows`, so a grammar living beside it is a grammar no test can see. Resolving a parsed
+path against live `CorDebugValue`s stays in the host, where it cannot be tested without a target.
+The rule that keeps this honest is unchanged -- nothing holding state, touching Roslyn, or knowing
+what a tool does goes in Contracts.
+
+**One consequence worth stating.** Because an expansion lists the fields of the exact type *and every
+base above it*, resolving a path had to walk the same chain. It used to ask the value's own class
+only, so a base class's field could be listed by an expansion and then fail to resolve when the
+caller passed its path back -- the two surfaces disagreeing about what an object holds.
+
+## Stop inspection is not offered to agents
+
+**Decision.** The five inspection tools are host-internal and reached only through `/operator`. They
+are deliberately absent from `ToolNames.LiveAppPairs`, so the parity test fails if anyone adds one
+there without a broker tool to match.
+
+**Why.** An agent asks a question and reads one answer, which the stop event's captured frame and
+`rose_debug_evaluate` already serve. A person scrolls a stack, opens a tree, and needs the target to
+stay still while they do it -- which means the hold. A hold an agent forgets to release is somebody's
+application frozen for up to ten minutes, and an agent has no way to notice it has walked away.
+
+**What the hold costs the agent surface, and why it is loud.** An agent's `rose_debug_continue`
+during a hold succeeds and releases it, rather than being refused: a continue means continue. But a
+hold that vanishes silently is a reader's stack disappearing with nothing to explain it, so the
+resume says so in `LiveContinueResult.Detail` and in the event stream, and the XAML refusal names the
+hold when one is in place -- because the usual advice, wait for the auto-continue timer, is wrong
+while a hold is suspending it.
+
+## A stack says what it could not represent
+
+**Decision.** A frame carries `SkippedBefore`, the count of native, internal or dynamic frames
+immediately below it that the runtime gives no IL frame for, plus `Mapping` (how well the instruction
+pointer maps to IL) and `Symbols` (whether the module had symbols, and if not, why).
+
+**Why.** Dropping unrepresentable frames silently turns a stack with a native transition in it into a
+complete-looking stack with a surprising caller, which is the same shape of confident wrong answer as
+a stale PDB. `Mapping` matters for the same reason: every value but `Exact` means the line beside it
+is an approximation, and optimised code maps approximately as a matter of course.

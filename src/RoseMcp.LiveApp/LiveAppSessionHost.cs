@@ -28,6 +28,13 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	private static readonly TimeSpan UwpRuntimeReadyTimeout = TimeSpan.FromSeconds(30);
 	private static readonly TimeSpan UwpStartupTimeout = TimeSpan.FromSeconds(30);
 
+	/// <summary>
+	/// What an inspection answers with when this host has no target at all. Said as a running
+	/// report rather than thrown, so a caller polling a session it is about to lose reads the same
+	/// shape of answer it reads at every other moment.
+	/// </summary>
+	private const string NotAttachedDetail = "This session is not attached to a target, so there is nothing to read.";
+
 	private readonly Lock _gate = new();
 	private readonly DebugEventBuffer _events = new();
 	private LiveAppSessionState _state = LiveAppSessionState.Starting;
@@ -265,6 +272,93 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			?? new LiveEvaluation { Expression = expression, Error = "This session is not attached to a target." };
 	}
 
+	/// <summary>A page of a stopped thread's call stack, with file and line where symbols allow.</summary>
+	public LiveStackFrames ReadFrames(int? threadId, int offset, int? limit)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveStackFrames
+			{
+				Execution = LiveExecutionState.Running,
+				Detail = NotAttachedDetail,
+				ThreadId = threadId,
+				Offset = offset,
+				Total = 0,
+				Truncated = false,
+			};
+		}
+
+		return session.ReadFrames(threadId, offset, limit);
+	}
+
+	/// <summary>One frame's arguments and locals, named from the module's symbols where there are any.</summary>
+	public LiveFrameVariables ReadFrameVariables(int frameIndex, int? threadId)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveFrameVariables
+			{
+				Execution = LiveExecutionState.Running,
+				Detail = NotAttachedDetail,
+				FrameIndex = frameIndex,
+				ThreadId = threadId,
+				Symbols = LiveSymbolState.NoSymbols,
+				Truncated = false,
+			};
+		}
+
+		return session.ReadFrameVariables(frameIndex, threadId);
+	}
+
+	/// <summary>What is inside a value: an object's fields, or an array's elements.</summary>
+	public LiveValueExpansion ExpandValue(string path, int frameIndex, int? threadId)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveValueExpansion
+			{
+				Execution = LiveExecutionState.Running,
+				Detail = NotAttachedDetail,
+				Path = path,
+				Total = 0,
+				Truncated = false,
+			};
+		}
+
+		return session.Expand(path, frameIndex, threadId);
+	}
+
+	/// <summary>Every managed thread of the stopped target, the held one first.</summary>
+	public LiveThreadList ReadThreads()
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveThreadList { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail };
+		}
+
+		return session.ReadThreads();
+	}
+
+	/// <summary>Takes or releases an operator's hold, which suspends the stop's safety timer.</summary>
+	public LiveHoldResult Hold(int? seconds, bool release)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveHoldResult { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail, Applied = false };
+		}
+
+		return session.Hold(seconds is { } requested ? TimeSpan.FromSeconds(requested) : null, release);
+	}
+
+	/// <summary>The debug session, or null when this host has no target.</summary>
+	private CorDebugSession? Attached()
+	{
+		lock (_gate)
+		{
+			return _session;
+		}
+	}
+
 	/// <summary>
 	/// Why a XAML request cannot be served at this instant, or null when it can be.
 	/// <para>
@@ -277,20 +371,23 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// because it is the debugger as well as the diagnostics client. So are we; the signal was simply
 	/// never asked for.
 	/// </para>
+	/// <para>
+	/// A stop an operator is holding names the hold, because the advice differs: an ordinary stop
+	/// frees itself on the safety timer and waiting works, while a held one does not and waiting is
+	/// the wrong thing to do.
+	/// </para>
 	/// </summary>
 	private string? WhyXamlIsUnservable()
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		if (Attached()?.CurrentStop() is not { } stop) return null;
 
-		if (session?.IsStoppedAtBreakpoint != true) return null;
+		var freed = stop.Resume == LiveStopResume.HeldByOperator
+			? "An operator is holding this stop, so the auto-continue timer will not free it: release the hold "
+				+ "or continue the target."
+			: "Resume the target and ask again -- a held target also releases itself on the auto-continue timer.";
 
 		return "The target is stopped, so its UI thread cannot serve a XAML request: the diagnostics "
-			+ "endpoint is created by that thread and this session is holding it. Resume the target and ask "
-			+ "again -- a held target also releases itself on the auto-continue timer.";
+			+ "endpoint is created by that thread and this session is holding it. " + freed;
 	}
 
 	/// <summary>

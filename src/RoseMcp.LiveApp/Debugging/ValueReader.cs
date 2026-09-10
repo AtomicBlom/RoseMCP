@@ -7,21 +7,25 @@ using RoseMcp.Symbols;
 namespace RoseMcp.LiveApp.Debugging;
 
 /// <summary>
-/// Renders a stopped frame's variable to a type name and a short value string, for the locals and
-/// arguments captured at a breakpoint. Fixed-size primitives and strings get real values; an object
+/// Renders a stopped frame's variable to a type name, a short value string, and whether there is
+/// anything inside it worth expanding. Fixed-size primitives and strings get real values; an object
 /// is shown by its type only, rendered as <c>{TypeName}</c>, because reading an object's own ToString
-/// needs func-eval (a later slice), and a struct or enum shows its type without a decoded value. Every
-/// read is defensive: a value that cannot be read reports so rather than throwing, so one unreadable
-/// local does not lose the rest of the frame.
+/// means running the debuggee's code, which nothing here does. Every read is defensive: a value that
+/// cannot be read reports so rather than throwing, so one unreadable local does not lose the rest of
+/// the frame.
 /// </summary>
 internal static class ValueReader
 {
 	private const int MaxStringLength = 200;
 	private const int MaxDepth = 2;
 
-	public static (string? TypeName, string? Value) Read(CorDebugValue value) => Read(value, 0);
+	/// <summary>
+	/// Reads a value. <c>HasChildren</c> says whether expanding it would yield anything, so a tree
+	/// can show an expander only where there is something behind it without paying a read per row.
+	/// </summary>
+	public static (string? TypeName, string? Value, bool HasChildren) Read(CorDebugValue value) => Read(value, 0);
 
-	private static (string? TypeName, string? Value) Read(CorDebugValue value, int depth)
+	private static (string? TypeName, string? Value, bool HasChildren) Read(CorDebugValue value, int depth)
 	{
 		try
 		{
@@ -29,32 +33,60 @@ internal static class ValueReader
 
 			if (value is CorDebugReferenceValue reference)
 			{
-				if (reference.IsNull) return (FriendlyType(elementType), "null");
-				if (depth >= MaxDepth) return (FriendlyType(elementType), "(...)");
+				if (reference.IsNull) return (FriendlyType(elementType), "null", false);
+
+				// Past the depth limit there is still something there, so it is expandable even
+				// though the value string says nothing about it.
+				if (depth >= MaxDepth) return (FriendlyType(elementType), "(...)", true);
+
 				return Read(reference.Dereference(), depth + 1);
 			}
 
 			if (value is CorDebugStringValue stringValue)
 			{
-				return ("string", Quote(stringValue.GetString(stringValue.Length)));
+				return ("string", Quote(stringValue.GetString(stringValue.Length)), false);
 			}
+
+			if (value is CorDebugArrayValue arrayValue)
+			{
+				var count = Count(arrayValue);
+				return (FriendlyType(elementType), $"{{{FriendlyType(elementType)}[{count}]}}", count > 0);
+			}
+
+			if (value is CorDebugBoxValue) return (FriendlyType(elementType), "(boxed)", true);
 
 			if (value is CorDebugObjectValue objectValue)
 			{
 				var typeName = ObjectTypeName(objectValue) ?? FriendlyType(elementType);
-				return (typeName, $"{{{typeName}}}");
+
+				// Reported as expandable without asking whether the type declares a field. The check
+				// is a metadata read per value on a path a person is waiting on, and being wrong
+				// costs an expander that opens onto nothing.
+				return (typeName, $"{{{typeName}}}", true);
 			}
 
 			if (value is CorDebugGenericValue genericValue && TryReadPrimitive(genericValue, elementType, out var text))
 			{
-				return (FriendlyType(elementType), text);
+				return (FriendlyType(elementType), text, false);
 			}
 
-			return (FriendlyType(elementType), null);
+			return (FriendlyType(elementType), null, false);
 		}
 		catch (Exception)
 		{
-			return (null, "(unreadable)");
+			return (null, "(unreadable)", false);
+		}
+	}
+
+	private static int Count(CorDebugArrayValue value)
+	{
+		try
+		{
+			return value.Count;
+		}
+		catch (Exception)
+		{
+			return 0;
 		}
 	}
 

@@ -349,6 +349,35 @@ public static class ToolDescriptions
 	public const string EvaluateExpressionArgument =
 		"A field-access expression, e.g. this.field or state.Inner.Count.";
 
+	public const string FrameThreadIdArgument =
+		"The thread to read, or omitted for the one the debugger is holding. rose_live_app_threads lists them.";
+
+	public const string FrameOffsetArgument =
+		"Where in the stack to start, zero being the innermost frame. Omitted starts at the innermost.";
+
+	public const string FrameLimitArgument =
+		"How many frames to return. Omitted returns a page of the innermost ones.";
+
+	public const string FrameIndexArgument =
+		"Which frame, by its index in the stack rose_live_app_frames reports for this thread.";
+
+	/// <summary>
+	/// The grammar a value carries and a caller passes back. Spelled out because the slot forms are
+	/// not guessable, and passing back a variable's own path is the reliable way to reach a value
+	/// whose name is a compiler temporary or is shared between two blocks.
+	/// </summary>
+	public const string ValuePathArgument =
+		"The value to expand, as the path a variable reported: arg:0 or local:2 for a frame's own "
+			+ "values, then .field and [3] into what they hold. The name of an argument or local also "
+			+ "works as a root.";
+
+	public const string HoldSecondsArgument =
+		"How long to suspend the stop's auto-continue timer for, capped at ten minutes. Omitted holds "
+			+ "for five.";
+
+	public const string HoldReleaseArgument =
+		"True gives the stop back to its safety timer instead of holding it.";
+
 	/// <summary>
 	/// How a live element is named to the tools that read one. All three spellings, because a caller
 	/// has all three to hand -- the tree and the selection report a handle and an address, and an

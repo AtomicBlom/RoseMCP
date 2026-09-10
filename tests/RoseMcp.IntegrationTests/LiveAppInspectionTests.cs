@@ -161,6 +161,305 @@ public sealed class LiveAppInspectionTests
 		}
 	}
 
+	/// <summary>
+	/// A structured stack, which is what a person reads rather than the flat strings an event
+	/// carries: frame 0 is the method the breakpoint bound to, with the file and line its symbols
+	/// give, and frame 1 is what called it.
+	/// <para>
+	/// The stop's own sequence is echoed on the answer. That is what lets a reader tell a stack read
+	/// at this stop from one read at the last, and everything a debugger hands out -- frames, values,
+	/// threads -- is valid only within the stop it came from.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Frames_at_a_stop_carry_file_and_line()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
+			var stop = await StopOnInspectAsync(session, cancellationToken);
+
+			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
+
+			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);
+			Assert.NotNull(frames.Stop);
+			Assert.Equal(stop.Hit.Sequence, frames.Stop!.EventSequence);
+			Assert.True(frames.Frames.Count >= 2, $"expected Inspect and its caller, got {frames.Frames.Count} frame(s)");
+
+			var inspect = frames.Frames[0];
+			Assert.Equal(0, inspect.Index);
+			Assert.True(inspect.IsActive, "frame 0 of the held thread is the active frame");
+			Assert.Equal("DebugProbeTarget.Program.Inspect", inspect.MethodFullName);
+			Assert.Equal("DebugProbeTarget.dll", inspect.Module);
+			Assert.Equal(LiveSymbolState.Resolved, inspect.Symbols);
+			Assert.NotNull(inspect.Source);
+			Assert.EndsWith("Program.cs", inspect.Source!.File);
+			Assert.True(inspect.Source.Line > 0, "a resolved frame has a real line");
+
+			// The caller, which is what makes a stack worth reading rather than one frame.
+			Assert.Equal("DebugProbeTarget.Program.Main", frames.Frames[1].MethodFullName);
+			Assert.False(frames.Frames[1].IsActive);
+
+			// Paging is over the same walk, so an offset picks up where the first page's index left off.
+			var second = await session.ReadFramesAsync(null, 1, 1, cancellationToken);
+			Assert.Equal(1, second.Offset);
+			Assert.Equal(frames.Total, second.Total);
+			Assert.Equal("DebugProbeTarget.Program.Main", Assert.Single(second.Frames).MethodFullName);
+
+			await session.RemoveBreakpointAsync(stop.BreakpointId, cancellationToken);
+			await session.ResumeAsync(cancellationToken);
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// Walking an object graph by path: a frame's variables carry the path that expands each of
+	/// them, expanding gives children carrying theirs, and a path a caller composes reaches the same
+	/// value. A path that names nothing says which step failed rather than answering emptily.
+	/// </summary>
+	[Test]
+	public async Task A_value_expands_by_path()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
+			var stop = await StopOnInspectAsync(session, cancellationToken);
+
+			var frame = await session.ReadFrameVariablesAsync(0, null, cancellationToken);
+			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frame.Execution);
+			Assert.Equal("DebugProbeTarget.Program.Inspect", frame.MethodFullName);
+			Assert.Equal(LiveSymbolState.Resolved, frame.Symbols);
+
+			var state = frame.Variables.First(variable => variable.Name == "state");
+			Assert.Equal("arg:0", state.Path);
+			Assert.True(state.HasChildren, "an object argument is expandable");
+
+			// A primitive local is not, which is what stops a tree offering an expander onto nothing.
+			var innerCount = frame.Variables.First(variable => variable.Name == "innerCount");
+			Assert.Equal("local:0", innerCount.Path);
+			Assert.False(innerCount.HasChildren);
+
+			// The object's own fields, read from memory. No property getter runs, so what is listed
+			// is what the object holds.
+			var fields = await session.ExpandValueAsync(state.Path, 0, null, cancellationToken);
+			Assert.Equal("DebugProbeTarget.ProbeState", fields.TypeName);
+			Assert.Contains(fields.Children, child => child.Name == "Count" && child.Kind == "field");
+			Assert.Contains(fields.Children, child => child.Name == "Label" && child.Value == "\"beat\"");
+
+			var marks = fields.Children.First(child => child.Name == "Marks");
+			Assert.Equal("arg:0.Marks", marks.Path);
+			Assert.True(marks.HasChildren, "a non-empty array is expandable");
+
+			// An array expands to elements, each addressed by index.
+			var elements = await session.ExpandValueAsync(marks.Path, 0, null, cancellationToken);
+			Assert.Equal(3, elements.Total);
+			Assert.False(elements.Truncated);
+			Assert.Equal(["[0]", "[1]", "[2]"], elements.Children.Select(element => element.Name));
+			Assert.Equal("8", elements.Children[1].Value);
+			Assert.Equal("arg:0.Marks[1]", elements.Children[1].Path);
+
+			// A path composed rather than echoed reaches the same value, which is the round trip the
+			// grammar exists for.
+			var nested = await session.ExpandValueAsync("arg:0.Inner", 0, null, cancellationToken);
+			Assert.Contains(nested.Children, child => child.Name == "Count" && child.Value == "-1");
+
+			// And a step that resolves nothing names itself rather than reporting an empty value. The
+			// type is whatever the boundary converted it to; what matters is that the sentence survived.
+			var refusal = await Assert.ThrowsAnyAsync<Exception>(
+				async () => await session.ExpandValueAsync("arg:0.Nope", 0, null, cancellationToken));
+			Assert.Contains("Nope", refusal.Message);
+
+			await session.RemoveBreakpointAsync(stop.BreakpointId, cancellationToken);
+			await session.ResumeAsync(cancellationToken);
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A hold suspends the safety timer, which is the whole point of it: a person reading a stack
+	/// must not have it move under them two seconds in. The breakpoint here asks for a two-second
+	/// auto-continue and the target is still held well past it.
+	/// </summary>
+	[Test]
+	public async Task An_operator_hold_suspends_auto_continue()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
+
+			var breakpoint = await session.SetBreakpointAsync(
+				"DebugProbeTarget.Program.Inspect", autoContinueSeconds: 2, condition: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+
+			var hit = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(hit);
+
+			var held = await session.HoldAsync(20, release: false, cancellationToken);
+			Assert.True(held.Applied);
+			Assert.NotNull(held.Stop);
+			Assert.Equal(LiveStopResume.HeldByOperator, held.Stop!.Resume);
+
+			// Well past the two seconds the breakpoint asked for, and still held.
+			await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+
+			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
+			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);
+			Assert.Equal(LiveStopResume.HeldByOperator, frames.Stop!.Resume);
+
+			// Releasing gives the stop back to the timer, which then fires within its own interval.
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			var released = await session.HoldAsync(null, release: true, cancellationToken);
+			Assert.True(released.Applied);
+
+			var resumed = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.SessionNotice && entry.Message.Contains("Auto-continued"),
+				cancellationToken,
+				startCursor: hit!.Sequence);
+			Assert.NotNull(resumed);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited, "the target is still running after being held and released");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// An agent's continue during a person's hold succeeds and says so. Refusing would be worse -- a
+	/// continue means continue -- but a hold that vanishes silently is a reader's stack disappearing
+	/// with nothing to explain it, which is the failure this sentence exists to prevent.
+	/// </summary>
+	[Test]
+	public async Task A_continue_during_a_hold_releases_it_loudly()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
+			var stop = await StopOnInspectAsync(session, cancellationToken);
+
+			var held = await session.HoldAsync(60, release: false, cancellationToken);
+			Assert.True(held.Applied);
+
+			await session.RemoveBreakpointAsync(stop.BreakpointId, cancellationToken);
+			var resumed = await session.ResumeAsync(cancellationToken);
+
+			Assert.True(resumed.Continued);
+			Assert.NotNull(resumed.Detail);
+			Assert.Contains("hold", resumed.Detail!, StringComparison.OrdinalIgnoreCase);
+
+			// And the target really is running again, not merely reported as such.
+			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
+			Assert.Equal(LiveExecutionState.Running, frames.Execution);
+			Assert.Null(frames.Stop);
+			Assert.Empty(frames.Frames);
+			Assert.NotNull(frames.Detail);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// Threads are readable at a stop and not while running, and the running case says so rather
+	/// than refusing: enumerating threads needs the runtime synchronized, and synchronizing it to
+	/// answer a question nobody asked would stop somebody's application.
+	/// </summary>
+	[Test]
+	public async Task Threads_are_listed_at_a_stop_and_reported_as_unreadable_while_running()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
+
+			var running = await session.ReadThreadsAsync(cancellationToken);
+			Assert.Equal(LiveExecutionState.Running, running.Execution);
+			Assert.Empty(running.Threads);
+			Assert.NotNull(running.Detail);
+
+			var stop = await StopOnInspectAsync(session, cancellationToken);
+
+			var stopped = await session.ReadThreadsAsync(cancellationToken);
+			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, stopped.Execution);
+			Assert.NotEmpty(stopped.Threads);
+
+			// The held thread is first, and it is the one the stop names.
+			var first = stopped.Threads[0];
+			Assert.True(first.IsStopped, "the held thread leads the list");
+			Assert.Equal(stopped.Stop!.ThreadId, first.Id);
+			Assert.Equal("DebugProbeTarget.Program.Inspect", first.TopFrame);
+
+			// Only one thread is the held one, whatever else the runtime is running.
+			Assert.Single(stopped.Threads.Where(thread => thread.IsStopped));
+
+			await session.RemoveBreakpointAsync(stop.BreakpointId, cancellationToken);
+			await session.ResumeAsync(cancellationToken);
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// Sets a breakpoint on the probe's <c>Inspect</c> and waits for the hit that holds the target.
+	/// Both halves come back: the event's sequence identifies the stop, and the breakpoint's id is
+	/// what the caller removes before resuming so the loop does not stop again immediately.
+	/// </summary>
+	private static async Task<(LiveDebugEvent Hit, string BreakpointId)> StopOnInspectAsync(
+		LiveAppSession session,
+		CancellationToken cancellationToken)
+	{
+		var breakpoint = await session.SetBreakpointAsync(
+			"DebugProbeTarget.Program.Inspect", autoContinueSeconds: null, condition: null, cancellationToken);
+		Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+
+		var hit = await WaitForEventAsync(
+			session,
+			entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+			cancellationToken);
+		Assert.NotNull(hit);
+
+		return (hit!, breakpoint.Id);
+	}
+
 	private static LiveAppTarget Attach(int processId) => new()
 	{
 		Kind = LiveAppTargetKind.AttachProcess,

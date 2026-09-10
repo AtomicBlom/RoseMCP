@@ -106,6 +106,28 @@ public static class ToolNames
 	public const string LiveAppEvaluate = "rose_live_app_evaluate";
 
 	/// <summary>
+	/// Live-app-host-only. The broker forwards this to read a page of a stopped thread's call stack.
+	/// <para>
+	/// Deliberately absent from <see cref="LiveAppPairs"/>: the operator API reaches it and no
+	/// agent-facing <c>rose_debug_*</c> tool pairs with it. Adding it there without a broker tool
+	/// fails the parity test, which is exactly the guard that map exists to be.
+	/// </para>
+	/// </summary>
+	public const string LiveAppFrames = "rose_live_app_frames";
+
+	/// <summary>Live-app-host-only, inspector-facing. One frame's arguments and locals.</summary>
+	public const string LiveAppFrameVariables = "rose_live_app_frame_variables";
+
+	/// <summary>Live-app-host-only, inspector-facing. What is inside a value, by path.</summary>
+	public const string LiveAppExpand = "rose_live_app_expand";
+
+	/// <summary>Live-app-host-only, inspector-facing. The stopped target's managed threads.</summary>
+	public const string LiveAppThreads = "rose_live_app_threads";
+
+	/// <summary>Live-app-host-only, inspector-facing. Takes or releases an operator's hold on a stop.</summary>
+	public const string LiveAppHold = "rose_live_app_hold";
+
+	/// <summary>
 	/// Live-app-host-only. The broker forwards this to inject the XAML diagnostics provider into the
 	/// target and read a snapshot of its live visual tree.
 	/// </summary>

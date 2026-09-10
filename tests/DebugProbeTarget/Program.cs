@@ -83,8 +83,9 @@ internal static class Program
 internal sealed class RoseDebugProbeException() : Exception("rose debug probe");
 
 /// <summary>
-/// A small object graph the evaluation test drills into. Public fields (not properties) so a field-access
-/// evaluator can read them without running a getter.
+/// A small object graph the evaluation and expansion tests drill into. Public fields (not
+/// properties) so a field-access reader can get at them without running a getter, and one array so
+/// an indexed path has something real to index.
 /// </summary>
 internal sealed class ProbeState
 {
@@ -93,4 +94,7 @@ internal sealed class ProbeState
 	public string Label = "beat";
 
 	public ProbeState? Inner;
+
+	/// <summary>Three distinguishable values, so an off-by-one in an indexed path is visible.</summary>
+	public int[] Marks = [7, 8, 9];
 }

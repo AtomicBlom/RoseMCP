@@ -326,6 +326,38 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["expression"] = expression },
 			cancellationToken);
 
+	/// <summary>A page of a stopped thread's call stack, with file and line where symbols allow.</summary>
+	public Task<LiveStackFrames> ReadFramesAsync(int? threadId, int offset, int? limit, CancellationToken cancellationToken)
+		=> SendAsync<LiveStackFrames>(
+			ToolNames.LiveAppFrames,
+			new Dictionary<string, object?> { ["threadId"] = threadId, ["offset"] = offset, ["limit"] = limit },
+			cancellationToken);
+
+	/// <summary>One frame's arguments and locals, each carrying the path that expands it.</summary>
+	public Task<LiveFrameVariables> ReadFrameVariablesAsync(int frameIndex, int? threadId, CancellationToken cancellationToken)
+		=> SendAsync<LiveFrameVariables>(
+			ToolNames.LiveAppFrameVariables,
+			new Dictionary<string, object?> { ["frameIndex"] = frameIndex, ["threadId"] = threadId },
+			cancellationToken);
+
+	/// <summary>What is inside a value: an object's fields, or an array's elements.</summary>
+	public Task<LiveValueExpansion> ExpandValueAsync(string path, int frameIndex, int? threadId, CancellationToken cancellationToken)
+		=> SendAsync<LiveValueExpansion>(
+			ToolNames.LiveAppExpand,
+			new Dictionary<string, object?> { ["path"] = path, ["frameIndex"] = frameIndex, ["threadId"] = threadId },
+			cancellationToken);
+
+	/// <summary>Every managed thread of the stopped target, the held one first.</summary>
+	public Task<LiveThreadList> ReadThreadsAsync(CancellationToken cancellationToken)
+		=> SendAsync<LiveThreadList>(ToolNames.LiveAppThreads, cancellationToken);
+
+	/// <summary>Takes or releases an operator's hold, which suspends the stop's safety timer.</summary>
+	public Task<LiveHoldResult> HoldAsync(int? seconds, bool release, CancellationToken cancellationToken)
+		=> SendAsync<LiveHoldResult>(
+			ToolNames.LiveAppHold,
+			new Dictionary<string, object?> { ["seconds"] = seconds, ["release"] = release },
+			cancellationToken);
+
 	/// <summary>Injects the XAML provider into the target and reads a snapshot of its live visual tree.</summary>
 	public Task<LiveXamlTree> ReadXamlTreeAsync(CancellationToken cancellationToken)
 		=> ReadXamlTreeAsync(null, 0, 0, cancellationToken);
@@ -514,6 +546,10 @@ public sealed class LiveAppSession : IAsyncDisposable
 		}
 
 		if (arguments.TryGetValue("handle", out var handle) && handle is not null) return $"handle {handle}";
+
+		if (arguments.TryGetValue("frameIndex", out var frame) && frame is not null) return $"frame {frame}";
+
+		if (arguments.TryGetValue("release", out var release) && release is bool held) return held ? "release" : "hold";
 
 		// A long poll is the one call whose duration is expected rather than suspicious, so the row
 		// says how long it agreed to wait -- otherwise it reads as a call that has hung.

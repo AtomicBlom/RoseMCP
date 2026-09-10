@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Threading.Channels;
 
 using Microsoft.Extensions.Logging;
 
@@ -32,11 +33,28 @@ public sealed class XamlProviderPipe : IDisposable
 	private static readonly string[] AppContainerSids = ["S-1-15-2-1", "S-1-15-2-2"];
 
 	private readonly ILogger _logger;
-	private NamedPipeServerStream? _server;
 
-	// Whether a provider has ever held the far end. Disconnect refuses a stream that was never
-	// connected, so hanging up before listening again has to know which case this is.
-	private bool _hadClient;
+	/// <summary>
+	/// Every frame of a connection after its first: the reply to a request the host sent. Unbounded
+	/// because one request is in flight at a time, so nothing accumulates here that a caller is not
+	/// already waiting on.
+	/// </summary>
+	private readonly Channel<string> _replies = Channel.CreateUnbounded<string>(
+		new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+
+	private readonly CancellationTokenSource _stopping = new();
+
+	private NamedPipeServerStream? _server;
+	private Task? _pump;
+
+	/// <summary>
+	/// The greeting of the provider holding the far end. Replaced with a fresh, uncompleted source
+	/// when one goes, or a caller waiting for the next provider is handed the departed one's greeting
+	/// the moment it asks and takes a dead tap for a live one.
+	/// </summary>
+	private volatile TaskCompletionSource<string> _greeting = NewGreeting();
+
+	private volatile bool _connected;
 
 	public XamlProviderPipe(ILogger logger)
 	{
@@ -50,8 +68,18 @@ public sealed class XamlProviderPipe : IDisposable
 	/// <summary>The pipe name, without the <c>\\.\pipe\</c> prefix. Handed to the provider verbatim.</summary>
 	public string Name { get; }
 
-	/// <summary>Whether the provider has connected and is holding the far end.</summary>
-	public bool Connected => _server?.IsConnected ?? false;
+	/// <summary>
+	/// Whether a provider is holding the far end and has greeted the host, which is the whole of what
+	/// makes the channel able to carry a request.
+	/// <para>
+	/// Not <c>NamedPipeServerStream.IsConnected</c>, which is the server's own state rather than the
+	/// far end's and stays true after the provider's process has gone. Every decision the recovery
+	/// turns on is asked of this one property, so answering it from something that cannot observe a
+	/// departure is a session that never hangs up and never listens again -- reporting a dead tap as
+	/// present while every request on it spends its bound and times out.
+	/// </para>
+	/// </summary>
+	public bool Connected => _connected;
 
 	/// <summary>
 	/// Creates the pipe and starts listening. Separate from construction because a failure here is a
@@ -79,7 +107,7 @@ public sealed class XamlProviderPipe : IDisposable
 					AccessControlType.Allow));
 			}
 
-			_server = NamedPipeServerStreamAcl.Create(
+			var server = NamedPipeServerStreamAcl.Create(
 				Name,
 				PipeDirection.InOut,
 				maxNumberOfServerInstances: 1,
@@ -88,6 +116,9 @@ public sealed class XamlProviderPipe : IDisposable
 				inBufferSize: 0,
 				outBufferSize: 0,
 				security);
+
+			_server = server;
+			_pump = Task.Run(() => PumpAsync(server, _stopping.Token));
 
 			_logger.LogInformation("XAML provider pipe listening on {PipeName}.", Name);
 			return null;
@@ -100,78 +131,67 @@ public sealed class XamlProviderPipe : IDisposable
 	}
 
 	/// <summary>
-	/// Waits for the provider to connect, up to <paramref name="timeout"/>. Returns the greeting it
-	/// sent, or null if it never arrived -- which is the whole question this class exists to answer
-	/// before any request is moved onto it.
+	/// Waits for a provider to connect and greet the host, up to <paramref name="timeout"/>. Returns
+	/// the greeting, or null if none arrived -- which is the whole question this class exists to
+	/// answer before any request is moved onto it.
 	/// </summary>
 	/// <remarks>
-	/// A provider that has connected and gone leaves the stream in a state that refuses the next
-	/// connection until it is disconnected, so this hangs up first. Without that, a session whose pipe
-	/// drops is over: the host re-injects, a fresh provider dials the same name, and nothing is
-	/// listening -- which reads as a provider that failed to load rather than as a channel that was
-	/// never reopened.
+	/// Hanging up on a departed provider and listening for the next one happens where the departure is
+	/// observed rather than here. A re-injected provider dials this name as soon as it loads, and a
+	/// host that only re-listens when somebody asks is not listening then: the new tap finds nothing,
+	/// which reads as a provider that failed to load rather than as a channel nobody reopened.
 	/// </remarks>
 	public string? WaitForProvider(TimeSpan timeout)
 	{
 		if (_server is null) return null;
 
-		try
+		// Snapshotted, because the source is replaced when a provider goes and a wait that re-read the
+		// field would be answered by whichever connection happened to be current at the end.
+		var greeting = _greeting;
+		if (!greeting.Task.Wait(timeout))
 		{
-			if (!_server.IsConnected)
-			{
-				// Only where one has actually been and gone: Disconnect throws on a stream that was
-				// never connected, and this is the ordinary first-connection path.
-				if (_hadClient)
-				{
-					_server.Disconnect();
-					_hadClient = false;
-				}
-
-				var waiting = _server.WaitForConnectionAsync();
-				if (!waiting.Wait(timeout))
-				{
-					_logger.LogWarning("The XAML provider did not connect to {PipeName} within {Seconds}s.", Name, timeout.TotalSeconds);
-					return null;
-				}
-			}
-
-			_hadClient = true;
-			return ReadFrame(timeout);
-		}
-		catch (Exception exception)
-		{
-			_logger.LogWarning(exception, "Waiting for the XAML provider on {PipeName} failed.", Name);
+			_logger.LogWarning("The XAML provider did not connect to {PipeName} within {Seconds}s.", Name, timeout.TotalSeconds);
 			return null;
 		}
+
+		return greeting.Task.Result;
 	}
 
 	/// <summary>
 	/// Sends a request and returns the reply, or null when the provider is not there, does not
 	/// answer, or answers with an empty frame.
 	/// <para>
-	/// An empty reply means "not served on the pipe", which is what lets one verb move at a time: the
-	/// caller falls back to the file channel rather than failing, so the branch is never broken
-	/// halfway through the move.
-	/// </para>
-	/// <para>
-	/// No generation number, and that is the point of a pipe. Every handshake through the folder was
-	/// "does this file exist", so the host had to stamp a number on the request and have the provider
-	/// echo it back to tell this answer from the last one (#57, #89). A reply read from the pipe the
-	/// request went out on is *this* request's answer by construction.
+	/// No generation number, and that is the point of a pipe. Every handshake through a folder is
+	/// "does this file exist", so the host has to stamp a number on the request and have the provider
+	/// echo it back to tell this answer from the last one. A reply read from the pipe the request went
+	/// out on is <em>this</em> request's answer by construction.
 	/// </para>
 	/// <para>
 	/// Every step is bounded, and a step that expires says which pipe and how long it waited. It has
-	/// to be said rather than returned: a null here is indistinguishable from "the provider does not
-	/// serve this verb", the caller falls back to the work folder and answers correctly either way,
-	/// so a silent timeout is a channel that has stopped working with nothing anywhere to say so.
+	/// to be said as well as returned: a null here reaches the caller as one sentence about a request
+	/// that went unanswered, and which of the four steps stopped is the difference between a provider
+	/// that has gone and an app whose UI thread has.
 	/// </para>
 	/// </summary>
 	public string? Request(string request, TimeSpan timeout)
 	{
-		if (_server is null || !_server.IsConnected) return null;
+		var server = _server;
+		if (server is null || !_connected) return null;
 
 		try
 		{
+			// A reply left behind by a request that gave up would be handed to this one as its answer,
+			// which is the single failure a length-prefixed channel cannot detect for itself: the frame
+			// is well formed and answers a different question.
+			while (_replies.Reader.TryRead(out var stale))
+			{
+				_logger.LogWarning(
+					"Discarding a late XAML provider reply of {Length} chars on {PipeName} before asking for '{Request}'.",
+					stale.Length,
+					Name,
+					request);
+			}
+
 			var payload = Encoding.UTF8.GetBytes(request);
 			var header = new byte[4];
 			header[0] = (byte)(payload.Length & 0xFF);
@@ -179,16 +199,16 @@ public sealed class XamlProviderPipe : IDisposable
 			header[2] = (byte)((payload.Length >> 16) & 0xFF);
 			header[3] = (byte)((payload.Length >> 24) & 0xFF);
 
-			var writing = _server.WriteAsync(header, 0, 4);
+			var writing = server.WriteAsync(header, 0, 4);
 			if (!writing.Wait(timeout)) return TimedOut(request, timeout, "sending the length");
 
-			writing = _server.WriteAsync(payload, 0, payload.Length);
+			writing = server.WriteAsync(payload, 0, payload.Length);
 			if (!writing.Wait(timeout)) return TimedOut(request, timeout, "sending the request");
 
-			var flushing = _server.FlushAsync();
+			var flushing = server.FlushAsync();
 			if (!flushing.Wait(timeout)) return TimedOut(request, timeout, "flushing the request");
 
-			var reply = ReadFrame(timeout);
+			var reply = TakeReply(timeout);
 			if (reply is null) return TimedOut(request, timeout, "waiting for the reply");
 
 			return reply.Length == 0 ? null : reply;
@@ -201,15 +221,34 @@ public sealed class XamlProviderPipe : IDisposable
 	}
 
 	/// <summary>
+	/// The next frame the pump has read, or null if none arrives inside the bound. The pump owns every
+	/// read on the stream, so a request takes its answer from here rather than from the pipe: one
+	/// reader is what lets a departure be noticed between requests as well as during one.
+	/// </summary>
+	private string? TakeReply(TimeSpan timeout)
+	{
+		using var expiry = new CancellationTokenSource(timeout);
+
+		try
+		{
+			return _replies.Reader.ReadAsync(expiry.Token).AsTask().GetAwaiter().GetResult();
+		}
+		catch (Exception exception) when (exception is OperationCanceledException or ChannelClosedException)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>
 	/// Says which pipe stopped answering, at which step, and how long it was given, then returns null
-	/// so the caller falls back to the work folder. Always null: a timeout here is a slower session,
-	/// never a failed one, and the log line is the only place it is visible at all.
+	/// so the caller reports a request that went unanswered. The log line is the only place the step
+	/// is visible, and the step is what separates a provider that has gone from an app that has
+	/// stopped serving its UI thread.
 	/// </summary>
 	private string? TimedOut(string request, TimeSpan timeout, string step)
 	{
 		_logger.LogWarning(
-			"The XAML provider pipe {PipeName} timed out after {Seconds}s {Step} for '{Request}'; "
-				+ "this read falls back to the work folder.",
+			"The XAML provider pipe {PipeName} timed out after {Seconds}s {Step} for '{Request}'.",
 			Name,
 			timeout.TotalSeconds,
 			step,
@@ -219,17 +258,103 @@ public sealed class XamlProviderPipe : IDisposable
 	}
 
 	/// <summary>
-	/// One length-prefixed UTF-8 message. Length-prefixed because the file channel made an encoding
-	/// decision per file and paid for it twice -- a <c>wofstream</c> narrowing UTF-16 to ANSI so a
-	/// tree parsed as zero elements, and a command file needing UTF-8-without-BOM because the reader
-	/// was narrow. One framing removes the category.
+	/// Accepts a provider, reads every frame it sends, and listens again the moment it goes.
+	/// <para>
+	/// The read is what observes the far end: it comes back zero-length, or it fails. Nothing else on
+	/// this channel can say, which is why the read runs continuously rather than only inside a
+	/// request -- a provider that dies between calls would otherwise be noticed by nobody, and the
+	/// host would go on believing a dead tap was there.
+	/// </para>
+	/// <para>
+	/// Hanging up here rather than at the next call is the half that makes the recovery work. A
+	/// stream a departed client left behind refuses every connection until it is disconnected, and a
+	/// re-injected provider dials as soon as it loads.
+	/// </para>
 	/// </summary>
-	private string? ReadFrame(TimeSpan timeout)
+	private async Task PumpAsync(NamedPipeServerStream server, CancellationToken stopping)
 	{
-		if (_server is null) return null;
+		while (!stopping.IsCancellationRequested)
+		{
+			try
+			{
+				await server.WaitForConnectionAsync(stopping);
+			}
+			catch (Exception exception)
+			{
+				if (!stopping.IsCancellationRequested)
+				{
+					_logger.LogWarning(exception, "The XAML provider pipe {PipeName} stopped listening.", Name);
+				}
 
+				return;
+			}
+
+			// The first frame of a connection is the greeting, and it is the only one nothing asked
+			// for. Answered to WaitForProvider rather than queued, or the next request reads it as its
+			// own reply and every answer after that is one behind.
+			var greeted = false;
+			while (true)
+			{
+				var frame = await ReadFrameAsync(server, stopping);
+				if (frame is null) break;
+
+				if (greeted)
+				{
+					_replies.Writer.TryWrite(frame);
+					continue;
+				}
+
+				greeted = true;
+
+				// Before the source is completed, so a caller released by the greeting cannot look at
+				// Connected and be told the provider that just greeted it is not there.
+				_connected = true;
+				_greeting.TrySetResult(frame);
+
+				_logger.LogInformation("A XAML provider connected on {PipeName} and said: {Greeting}", Name, frame);
+			}
+
+			HangUp(server);
+		}
+	}
+
+	/// <summary>
+	/// Forgets the provider that has gone and puts the stream back to listening. What is left of its
+	/// connection is discarded first: a reply nobody collected answers a question the next provider
+	/// was never asked, and a completed greeting would tell the next caller a departed tap is up.
+	/// </summary>
+	private void HangUp(NamedPipeServerStream server)
+	{
+		_connected = false;
+		_greeting = NewGreeting();
+
+		while (_replies.Reader.TryRead(out _))
+		{
+		}
+
+		try
+		{
+			if (server.IsConnected) server.Disconnect();
+		}
+		catch (Exception exception) when (exception is IOException or InvalidOperationException or ObjectDisposedException)
+		{
+			// A stream the far end or our own teardown already took down. There is nothing left to
+			// hang up on, and the next WaitForConnectionAsync reports whichever of the two it was.
+		}
+
+		_logger.LogInformation("The XAML provider on {PipeName} has gone; listening for another.", Name);
+	}
+
+	/// <summary>
+	/// One length-prefixed UTF-8 message, or null when the provider has gone or sent something that is
+	/// not a frame. Length-prefixed because an encoding decision per file costs twice -- a
+	/// <c>wofstream</c> narrowing UTF-16 to ANSI so a tree parses as zero elements, and a command file
+	/// needing UTF-8-without-BOM because the reader is narrow. One framing removes the category.
+	/// </summary>
+	private async Task<string?> ReadFrameAsync(NamedPipeServerStream server, CancellationToken stopping)
+	{
 		var header = new byte[4];
-		if (!ReadExactly(header, timeout)) return null;
+		if (!await ReadExactlyAsync(server, header, stopping)) return null;
 
 		var length = BinaryPrimitivesLength(header);
 		if (length is < 0 or > 64 * 1024 * 1024)
@@ -239,23 +364,32 @@ public sealed class XamlProviderPipe : IDisposable
 		}
 
 		var payload = new byte[length];
-		return ReadExactly(payload, timeout) ? Encoding.UTF8.GetString(payload) : null;
+		return await ReadExactlyAsync(server, payload, stopping) ? Encoding.UTF8.GetString(payload) : null;
 	}
 
 	private static int BinaryPrimitivesLength(byte[] header) =>
 		header[0] | (header[1] << 8) | (header[2] << 16) | (header[3] << 24);
 
-	private bool ReadExactly(byte[] buffer, TimeSpan timeout)
+	/// <summary>
+	/// Fills the buffer, or reports that there is nobody on the far end. A zero-length read is the
+	/// provider closing its handle, and a failed one is its process going; both are the departure the
+	/// server's own connection state cannot see.
+	/// </summary>
+	private static async Task<bool> ReadExactlyAsync(NamedPipeServerStream server, byte[] buffer, CancellationToken stopping)
 	{
-		if (_server is null) return false;
-
 		var read = 0;
 		while (read < buffer.Length)
 		{
-			var reading = _server.ReadAsync(buffer, read, buffer.Length - read);
-			if (!reading.Wait(timeout)) return false;
+			int got;
+			try
+			{
+				got = await server.ReadAsync(buffer.AsMemory(read), stopping);
+			}
+			catch (Exception exception) when (exception is IOException or ObjectDisposedException or OperationCanceledException)
+			{
+				return false;
+			}
 
-			var got = reading.Result;
 			if (got <= 0) return false;
 
 			read += got;
@@ -264,10 +398,16 @@ public sealed class XamlProviderPipe : IDisposable
 		return true;
 	}
 
+	private static TaskCompletionSource<string> NewGreeting() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
 	public void Dispose()
 	{
+		_stopping.Cancel();
+
 		try
 		{
+			// Before the pump is waited on: a read blocked with nobody writing is ended by the handle
+			// closing, and waiting first would wait for the provider to say something it never will.
 			_server?.Dispose();
 		}
 		catch (Exception exception) when (exception is IOException or ObjectDisposedException)
@@ -275,6 +415,12 @@ public sealed class XamlProviderPipe : IDisposable
 			// A pipe whose far end went first. Nothing to reclaim that the handle close does not.
 		}
 
+		// Bounded, because the token is disposed next and a pump still inside a read would register on
+		// one that has gone. A pump that outlives the bound holds nothing but a closed handle.
+		_pump?.Wait(TimeSpan.FromSeconds(2));
+
 		_server = null;
+		_pump = null;
+		_stopping.Dispose();
 	}
 }

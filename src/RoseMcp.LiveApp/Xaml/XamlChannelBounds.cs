@@ -39,7 +39,7 @@ internal sealed record XamlChannelBounds
 	/// </summary>
 	public TimeSpan Injection { get; init; } = TimeSpan.FromSeconds(30);
 
-	/// <summary>How long the provider may take to write a snapshot into the work folder.</summary>
+	/// <summary>How long the provider may take to answer one request on the pipe.</summary>
 	public TimeSpan Snapshot { get; init; } = TimeSpan.FromSeconds(15);
 
 	/// <summary>How long the provider may take to connect back on the pipe and greet.</summary>

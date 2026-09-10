@@ -12,21 +12,21 @@ namespace RoseMcp.LiveApp.Xaml;
 
 /// <summary>
 /// Injects a XAML diagnostics provider into the target and reads back what it reports.
-/// <c>InitializeXamlDiagnosticsEx</c> loads the provider into the app by pid; the two ends then talk
-/// over a named pipe the provider connects back on, falling back to tab-separated files in a working
-/// folder this side stages. The provider must match the target's architecture, which is this host's
-/// architecture -- an x64 provider for a classic UWP app emulated on ARM64.
+/// <c>InitializeXamlDiagnosticsEx</c> loads the provider into the app by pid, out of a working folder
+/// this side stages; the two ends then talk over a named pipe the provider connects back on. The
+/// provider must match the target's architecture, which is this host's architecture -- an x64 provider
+/// for a classic UWP app emulated on ARM64.
 /// <para>
 /// Which provider, which library exports the initialiser, which class id, and whether that folder
-/// needs AppContainer grants are all asked of the target rather than assumed. They were four separate
-/// hard-codings of UWP, and their cost was not that WinUI 3 failed -- it is that it failed after a
-/// twenty-second wait, blaming the app for not being packaged. <see cref="XamlStackProbe"/> reads the
-/// framework DLLs the process has loaded and <see cref="XamlTaps"/> maps the answer to a tap, so a
-/// stack with no provider is refused immediately and by name.
+/// needs AppContainer grants are all asked of the target rather than assumed. Four separate
+/// hard-codings of UWP cost not that WinUI 3 failed -- it is that it failed after a twenty-second
+/// wait, blaming the app for not being packaged. <see cref="XamlStackProbe"/> reads the framework
+/// DLLs the process has loaded and <see cref="XamlTaps"/> maps the answer to a tap, so a stack with
+/// no provider is refused immediately and by name.
 /// </para>
 /// <para>
 /// One request at a time, and the lock is re-entrant. The host serves MCP calls concurrently while
-/// every XAML request shares one work folder, one request file and one generation counter, and two at
+/// every XAML request shares one pipe, which carries one request and one reply at a time, and two at
 /// once produced a tree of 22 elements where the app has 24 -- a truncated tree handing out handles
 /// for a tree that is not there. Re-entrant because selecting by handle finishes by reading the
 /// selection, which takes the lock again on the same thread.
@@ -65,9 +65,8 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// The XAML framework dll the initialiser is pointed at, resolved from the target, or null where
 	// the framework exports its own initialiser and needs no telling.
 	private string? _diagnosticsPath;
-	// The host end of the pipe the provider connects back on, and the fast path for every tree and
-	// properties read. The file channel stays as the fallback: a pipe an AppContainer cannot reach is
-	// a slower session rather than a broken one.
+	// The host end of the pipe the provider connects back on, and the only way a request reaches it.
+	// A pipe an AppContainer cannot reach is a session with no XAML in it, not a slower one.
 	private XamlProviderPipe? _pipe;
 
 	// How many times this session has loaded the provider. One is the intent and the ordinary case;
@@ -553,12 +552,13 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// <summary>
 	/// Everything the overlay knows about the pick, in one exchange: the mode, whether it is filtering to
 	/// the app's own markup, why the last selection went away, and the rows behind the current one.
-	/// Null when there is no pipe or it did not answer, which sends the caller to the work folder.
+	/// Null when there is no pipe or it did not answer, which the caller reports as a selection it could
+	/// not read.
 	/// </summary>
 	/// <remarks>
-	/// One request rather than one per fact, because the facts have to agree. Read separately from three
-	/// files, a mode from one and rows from another can describe a state that never existed at any
-	/// instant. A single frame is consistent by construction.
+	/// One request rather than one per fact, because the facts have to agree. Read as three exchanges, a
+	/// mode from one and rows from another can describe a state that never existed at any instant. A
+	/// single frame is consistent by construction.
 	/// </remarks>
 	private OverlayReport? SelectionOverPipe()
 	{
@@ -1158,29 +1158,24 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			+ "provider may still load if the app frees that thread.";
 
 	/// <summary>
-	/// Records whether the provider connected back on the pipe, which every tree and properties read tries
-	/// first. One that never connects costs each of those its fast path and nothing else, since the file
-	/// channel still answers -- so it is logged rather than treated as a failed injection.
+	/// Waits for the provider to connect back on the pipe, which every request rides. One that never
+	/// connects is logged here and refused by <see cref="EnsureProvider"/>, so the bound it was given
+	/// is the only thing that explains a session where nothing can reach the tap.
 	/// </summary>
 	private void NoteProviderPipe()
 	{
 		if (_pipe is null || _pipe.Connected) return;
 
-		var greeting = _pipe.WaitForProvider(_bounds.Greeting);
-		if (greeting is null)
+		// The pipe says what it read as the greeting; what is worth adding is how long it was given,
+		// because a provider loaded into a saturated UI thread and one that never loaded at all are
+		// the same silence until the bound is in the line.
+		if (_pipe.WaitForProvider(_bounds.Greeting) is null)
 		{
-			// The bound is in the line because this is the one failure here that costs nothing
-			// visible: the reads go on working over the work folder, so the only way anyone learns
-			// the fast path is gone is by reading how long it was given to appear.
 			logger.LogWarning(
-				"The XAML provider did not connect on {PipeName} within {Seconds}s; reads fall back to the work folder.",
+				"The XAML provider did not connect on {PipeName} within {Seconds}s; no request can reach it.",
 				_pipe.Name,
 				_bounds.Greeting.TotalSeconds);
-
-			return;
 		}
-
-		logger.LogInformation("The XAML provider connected on {PipeName} and said: {Greeting}", _pipe.Name, greeting);
 	}
 	private (string WorkDir, string StagedProvider) StageSandboxFolder(XamlTap tap, string provider)
 	{
@@ -1324,9 +1319,9 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// with "already released".
 	/// </para>
 	/// <para>
-	/// A session with no pipe cannot ask, and there is nothing else to ask through: the work folder
-	/// carries requests only into an injection, and injecting again to say "stop" would create a
-	/// third tap to release the second one's interfaces. That case is said rather than fixed.
+	/// A session with no pipe cannot ask, and there is nothing else to ask through: a request reaches
+	/// the provider on the pipe and nowhere else, and injecting again to say "stop" would load a second
+	/// tap to release the first one's interfaces. That case is said rather than fixed.
 	/// </para>
 	/// </summary>
 	public void EndProviderSession()

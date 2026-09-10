@@ -56,7 +56,6 @@ public sealed class XamlProviderPipeTests
 	/// </para>
 	/// </summary>
 	[Test]
-	[Skip("The reconnect does not work: XamlProviderPipe.Connected never goes false when the provider dies, so the host never hangs up and never listens again (#196). This asserts what should happen.")]
 	public async Task Listens_again_for_a_provider_that_reconnects_after_the_first_one_goes()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
@@ -79,7 +78,6 @@ public sealed class XamlProviderPipeTests
 	/// nothing.
 	/// </summary>
 	[Test]
-	[Skip("The reconnect does not work: XamlProviderPipe.Connected never goes false when the provider dies, so the host never hangs up and never listens again (#196). This asserts what should happen.")]
 	public async Task Serves_a_request_over_the_reconnected_pipe()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
@@ -186,7 +184,6 @@ public sealed class XamlProviderPipeTests
 	/// decision the reconnect turns on is asked of it.
 	/// </summary>
 	[Test]
-	[Skip("The reconnect does not work: XamlProviderPipe.Connected never goes false when the provider dies, so the host never hangs up and never listens again (#196). This asserts what should happen.")]
 	public async Task Reports_whether_it_still_believes_a_departed_provider_is_connected()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);

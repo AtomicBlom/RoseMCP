@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- The one test project that takes a compile reference on RoseMcp.LiveApp, which is
+         net10.0-windows. RoseMcp.IntegrationTests stays net10.0 so nothing forecloses running it
+         off Windows, and the Windows-only half lives here rather than retargeting that one. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- TUnit runs on Microsoft.Testing.Platform. The .NET 10 SDK dropped the VSTest bridge for
+         MTP projects, so dotnet test needs this opt-in. -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit.Core" />
+    <PackageReference Include="TUnit.Engine" />
+    <PackageReference Include="xunit.v3.assert" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- As a library, which is the whole point of this project existing. -->
+    <ProjectReference Include="..\..\src\RoseMcp.LiveApp\RoseMcp.LiveApp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="TUnit.Core" />
+
+    <!-- The assertion API by its own name, aliased rather than imported, because TUnit.Core also
+         reaches an Assert and an unqualified one would be ambiguous in every file. -->
+    <Using Include="Xunit.Assert" Alias="Assert" />
+  </ItemGroup>
+
+</Project>

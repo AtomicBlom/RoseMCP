@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Win32.SafeHandles;
 
 using RoseMcp.Contracts;
+using RoseMcp.Symbols;
 
 namespace RoseMcp.LiveApp.Debugging;
 
@@ -602,10 +603,13 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			if (ArgumentName(i, isStatic, parameterNames) == name) return arguments[i];
 		}
 
+		// Matched on the same name the variables were reported under, so a caller can pass back what
+		// they were shown. A slot number still resolves where there are no symbols to give a name.
+		var named = LocalNamesOf(frame);
 		var locals = frame.EnumerateLocalVariables().ToList();
 		for (var i = 0; i < locals.Count; i++)
 		{
-			if ($"local_{i}" == name) return locals[i];
+			if (LocalName(i, named) == name) return locals[i];
 		}
 
 		return null;
@@ -1090,9 +1094,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	/// <summary>
 	/// The top managed frame's arguments and locals, read while the thread is stopped. Argument names come
-	/// from metadata (an instance method's argument 0 is <c>this</c>); locals are numbered by slot,
-	/// <c>local_0</c> upwards, because nothing here reads a PDB (#83). Reading is defensive per variable,
-	/// so one unreadable value does not lose the rest of the frame.
+	/// from metadata (an instance method's argument 0 is <c>this</c>); local names come from the module's
+	/// portable PDB, resolved for the scopes covering the frame's own IL offset, and fall back to
+	/// <c>local_0</c> upwards by slot where there are no symbols to name them. Reading is defensive per
+	/// variable, so one unreadable value does not lose the rest of the frame.
 	/// </summary>
 	private IReadOnlyList<LiveVariable> ReadTopFrameVariables(CorDebugThread thread)
 	{
@@ -1117,11 +1122,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				variables.Add(new LiveVariable { Name = ArgumentName(i, isStatic, parameterNames), Kind = "argument", TypeName = typeName, Value = value });
 			}
 
+			var named = LocalNamesOf(frame);
 			var locals = frame.EnumerateLocalVariables().ToList();
 			for (var i = 0; i < locals.Count && variables.Count < MaxVariables; i++)
 			{
 				var (typeName, value) = ValueReader.Read(locals[i]);
-				variables.Add(new LiveVariable { Name = $"local_{i}", Kind = "local", TypeName = typeName, Value = value });
+				variables.Add(new LiveVariable { Name = LocalName(i, named), Kind = "local", TypeName = typeName, Value = value });
 			}
 		}
 		catch (Exception exception)
@@ -1144,6 +1150,47 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		return null;
 	}
+
+	/// <summary>
+	/// What a frame's locals are called, by slot, read from its module's portable PDB at the IL
+	/// offset the frame is stopped at. Empty when there are no symbols for the module.
+	/// <para>
+	/// The offset is not decoration. A slot is reused by locals in sibling blocks, so the names in
+	/// scope depend on where execution is -- asking for every name in the method would hand back two
+	/// names for one slot and pick between them arbitrarily.
+	/// </para>
+	/// </summary>
+	private static IReadOnlyDictionary<int, string> LocalNamesOf(CorDebugILFrame frame)
+	{
+		var none = new Dictionary<int, string>();
+
+		try
+		{
+			var function = frame.Function;
+			var moduleName = TryModuleName(function);
+			var methodToken = TryFunctionToken(function);
+
+			if (moduleName is null || methodToken is not { } token) return none;
+			if (SymbolCache.Shared.For(moduleName)?.Pdb is not { } pdb) return none;
+
+			return pdb.LocalNames(token, frame.IP.pnOffset);
+		}
+		catch (Exception)
+		{
+			return none;
+		}
+	}
+
+	/// <summary>
+	/// A local's name: what the PDB calls it, or its slot when there are no symbols.
+	/// <para>
+	/// The fallback is a real answer rather than a placeholder. A release build, a framework
+	/// assembly, or a PDB belonging to another build all leave a debugger with nothing but slots, and
+	/// a slot number is at least true -- which is why a mismatched PDB is refused rather than read.
+	/// </para>
+	/// </summary>
+	private static string LocalName(int slot, IReadOnlyDictionary<int, string> named) =>
+		named.TryGetValue(slot, out var name) ? name : $"local_{slot}";
 
 	private static string ArgumentName(int index, bool isStatic, IReadOnlyList<string> parameterNames)
 	{

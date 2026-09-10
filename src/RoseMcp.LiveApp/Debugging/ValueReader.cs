@@ -2,6 +2,8 @@ using System.Runtime.InteropServices;
 
 using ClrDebug;
 
+using RoseMcp.Symbols;
+
 namespace RoseMcp.LiveApp.Debugging;
 
 /// <summary>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Reading a module's metadata and its portable PDB: method tokens, local names, and the line a
+       given IL offset came from. Plain net10.0 and no package references at all, which is the point
+       of it being a project of its own: the live-app host that needs this is net10.0-windows, and a
+       net10.0 test project cannot reference one. Symbol reading is fiddly enough that a test has to
+       be able to reach it, so it lives here and the host takes a reference.
+
+       Nothing in here knows about a debugger. It reads files. -->
+
+</Project>

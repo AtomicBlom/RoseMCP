@@ -43,6 +43,11 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
   thing that loads one. Also derives the short workspace key.
 - **`RoseMcp.Logging`** -- library. The file sink, referenced only by the three launchable hosts
   so Serilog stays off the DTO assembly and the tests.
+- **`RoseMcp.Symbols`** -- library. Reads a module's metadata and its portable PDB: method tokens,
+  what a local is called at a given instruction, and which line an IL offset came from. Plain
+  `net10.0` and no package references, for the reason `RoseMcp.XamlDiff` exists: the live-app host
+  that needs it is `net10.0-windows`, and a rule living beside that host is a rule no test can see.
+  It knows nothing about a debugger; it reads files.
 - **`RoseMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, the
   activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts below.
 - **`RoseMcp.Server`** -- console host. `--transport stdio` (default) or `--transport http`.

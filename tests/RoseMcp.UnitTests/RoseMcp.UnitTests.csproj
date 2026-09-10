@@ -21,6 +21,10 @@
     <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlStubs\RoseMcp.XamlStubs.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlDiff\RoseMcp.XamlDiff.csproj" />
+    <!-- The symbol reader, for the same reason RoseMcp.Ui.Core exists: RoseMcp.LiveApp is
+         net10.0-windows and cannot be referenced from here, and reading a portable PDB correctly is
+         exactly the kind of thing a test has to be able to reach. -->
+    <ProjectReference Include="..\..\src\RoseMcp.Symbols\RoseMcp.Symbols.csproj" />
     <!-- The UI's testable half. Deliberately not RoseMcp.Ui, which is net10.0-windows and could not
          be referenced from here at all: that split is what makes the rows and formatting testable. -->
     <ProjectReference Include="..\..\src\RoseMcp.Ui.Core\RoseMcp.Ui.Core.csproj" />

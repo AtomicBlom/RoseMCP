@@ -1,22 +1,25 @@
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
-using System.Reflection.PortableExecutable;
 
-namespace RoseMcp.LiveApp.Debugging;
+namespace RoseMcp.Symbols;
 
 /// <summary>
-/// Metadata lookups done from the module file on disk with System.Reflection.Metadata, so the
-/// spike never has to touch IMetaDataImport. The debugger only needs tokens, and a token is the
-/// same whether it was read here or through COM.
+/// Metadata lookups done from the module file on disk with System.Reflection.Metadata, so nothing
+/// here has to touch IMetaDataImport. The debugger only needs tokens, and a token is the same
+/// whether it was read here or through COM.
+/// <para>
+/// Every lookup goes through <see cref="SymbolCache"/> rather than opening the file itself. Naming
+/// one method is one read, so a stack walk that names twenty frames and their locals was opening and
+/// parsing the same few assemblies dozens of times, on the path a person is waiting on.
+/// </para>
 /// </summary>
-internal static class MethodTokens
+public static class MethodTokens
 {
+	/// <summary>The method-def token for a type and method name, or null when the module has no such method.</summary>
 	public static int? Find(string modulePath, string typeName, string methodName)
 	{
-		using var stream = File.OpenRead(modulePath);
-		using var pe = new PEReader(stream);
-		var metadata = pe.GetMetadataReader();
+		if (Read(modulePath) is not { } metadata) return null;
 
 		foreach (var typeHandle in metadata.TypeDefinitions)
 		{
@@ -40,10 +43,10 @@ internal static class MethodTokens
 	{
 		try
 		{
-			using var stream = File.OpenRead(modulePath);
-			using var pe = new PEReader(stream);
-			var metadata = pe.GetMetadataReader();
+			if (Read(modulePath) is not { } metadata) return null;
+
 			var handle = (TypeDefinitionHandle)MetadataTokens.EntityHandle(typeToken);
+
 			return FullName(metadata, metadata.GetTypeDefinition(handle));
 		}
 		catch (Exception)
@@ -61,9 +64,8 @@ internal static class MethodTokens
 	{
 		try
 		{
-			using var stream = File.OpenRead(modulePath);
-			using var pe = new PEReader(stream);
-			var metadata = pe.GetMetadataReader();
+			if (Read(modulePath) is not { } metadata) return null;
+
 			var type = metadata.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.EntityHandle(typeToken));
 
 			foreach (var fieldHandle in type.GetFields())
@@ -84,6 +86,45 @@ internal static class MethodTokens
 	}
 
 	/// <summary>
+	/// The instance fields of a type and its bases, outermost type last, for listing what an object
+	/// value holds.
+	/// <para>
+	/// Bases included, because a field declared on a base class is as much a part of the object as
+	/// one declared on it. Each field carries the module and type token it was declared on, since
+	/// reading it needs the declaring class rather than the value's own.
+	/// </para>
+	/// </summary>
+	public static IReadOnlyList<FieldMember> Fields(string modulePath, int typeToken)
+	{
+		try
+		{
+			if (Read(modulePath) is not { } metadata) return [];
+
+			var type = metadata.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.EntityHandle(typeToken));
+			var fields = new List<FieldMember>();
+
+			foreach (var fieldHandle in type.GetFields())
+			{
+				var field = metadata.GetFieldDefinition(fieldHandle);
+				var isStatic = (field.Attributes & FieldAttributes.Static) != 0;
+
+				fields.Add(new FieldMember
+				{
+					Name = metadata.GetString(field.Name),
+					Token = MetadataTokens.GetToken(fieldHandle),
+					IsStatic = isStatic,
+				});
+			}
+
+			return fields;
+		}
+		catch (Exception)
+		{
+			return [];
+		}
+	}
+
+	/// <summary>
 	/// A method's parameter names in order and whether it is static, for naming a stopped frame's
 	/// arguments. An instance method's argument 0 is <c>this</c>, which these names do not include.
 	/// </summary>
@@ -91,9 +132,8 @@ internal static class MethodTokens
 	{
 		try
 		{
-			using var stream = File.OpenRead(modulePath);
-			using var pe = new PEReader(stream);
-			var metadata = pe.GetMetadataReader();
+			if (Read(modulePath) is not { } metadata) return (true, []);
+
 			var handle = (MethodDefinitionHandle)MetadataTokens.EntityHandle(methodToken);
 			var method = metadata.GetMethodDefinition(handle);
 			var isStatic = (method.Attributes & MethodAttributes.Static) != 0;
@@ -119,12 +159,12 @@ internal static class MethodTokens
 	{
 		try
 		{
-			using var stream = File.OpenRead(modulePath);
-			using var pe = new PEReader(stream);
-			var metadata = pe.GetMetadataReader();
+			if (Read(modulePath) is not { } metadata) return null;
+
 			var handle = (MethodDefinitionHandle)MetadataTokens.EntityHandle(methodToken);
 			var method = metadata.GetMethodDefinition(handle);
 			var typeName = FullName(metadata, metadata.GetTypeDefinition(method.GetDeclaringType()));
+
 			return $"{typeName}.{metadata.GetString(method.Name)}";
 		}
 		catch (Exception)
@@ -132,6 +172,8 @@ internal static class MethodTokens
 			return null;
 		}
 	}
+
+	private static MetadataReader? Read(string modulePath) => SymbolCache.Shared.For(modulePath)?.Metadata;
 
 	private static string FullName(MetadataReader metadata, TypeDefinition type)
 	{
@@ -145,4 +187,19 @@ internal static class MethodTokens
 		var ns = metadata.GetString(type.Namespace);
 		return ns.Length == 0 ? name : ns + "." + name;
 	}
+}
+
+/// <summary>One field on a type, as metadata describes it.</summary>
+public sealed record FieldMember
+{
+	public required string Name { get; init; }
+
+	/// <summary>The field-def token, which is what reads its value off an object.</summary>
+	public required int Token { get; init; }
+
+	/// <summary>
+	/// Whether it belongs to the type rather than an instance. Kept rather than filtered, so a
+	/// caller listing what an object holds can leave statics out and one asking about a type can not.
+	/// </summary>
+	public required bool IsStatic { get; init; }
 }

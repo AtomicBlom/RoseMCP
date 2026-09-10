@@ -111,3 +111,43 @@ injection -- so a status view could not say whether a target had XAML without pa
 to find out. Re-probing while `Unknown` matters because frameworks load late: a target attached at
 startup has not loaded `Windows.UI.Xaml.dll` yet, and a permanent `Unknown` from one early look would
 be a wrong answer rather than an unknown one.
+
+## Local names and lines come from the portable PDB, and a stale one is refused
+
+**Decision.** `RoseMcp.Symbols` reads a module's metadata and its portable PDB. A stopped frame's
+locals carry the names the source declares, resolved for the scopes covering that frame's own IL
+offset, and an IL offset resolves to a file and a line. A module with no symbols leaves locals as
+`local_0` upwards by slot, which is what they all were before.
+
+**Why the IL offset is not optional.** A slot is reused by locals in sibling blocks, so which name a
+slot has depends on where execution is. Naming every slot from every scope in the method at once
+hands back two names for one slot and picks between them arbitrarily -- the shape of failure this
+whole reader exists to remove, since the caller cannot tell a wrong name from a right one.
+
+**Why a mismatched PDB is refused rather than read.** A PDB left over from an earlier build reads
+perfectly well and answers with names and line numbers out of code that is not running: confident,
+plausible, and wrong. `PEReader.TryOpenAssociatedPortablePdb` checks the PDB's id against the
+module's debug directory, which is why symbols are opened through it rather than by opening the file
+next door. `PdbState` then separates "no symbols" from "somebody else's symbols", because the two
+send a reader to different places, and a null would say only that something was unknown.
+
+**Why a hidden sequence point is an answer.** A hidden point says the IL from here maps to no source
+at all -- compiler prologue, an `await`'s state-machine bookkeeping, an iterator's closing machinery.
+So it stops the search rather than being skipped: skipping to the last real point before it puts a
+frame on a line whose code is not executing.
+
+**Why the module file is prefetched and closed.** This runs in a process that lives for hours beside
+a developer who is rebuilding. A held handle on their output fails their next build with MSB3021,
+which is the same failure the analyzer loader shadow-copies to avoid.
+
+**Why the evaluator matches the name it reported.** `rose_debug_evaluate` resolves a root against the
+same names the stop's recorded frame reported, so a caller passes back what they were shown. A slot
+number still resolves, since a module without symbols reports slots and a caller reading an older
+event may hold one.
+
+**Why the tests compile their own module.** Read against the test assembly's own PDB, what these
+tests assert would depend on how the suite was built: optimised code loses a local to a stack temp
+and merges the scope it was declared in, and CI runs the unit suite in Release as well as Debug. So
+`CompiledModule` emits a small assembly at `OptimizationLevel.Debug` with the source beside the
+assertions about its lines, and the fixture the live-app test stops on carries `NoOptimization` for
+the same reason.

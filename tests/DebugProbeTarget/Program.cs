@@ -50,11 +50,21 @@ internal static class Program
 	/// Called once per loop with an object graph a debugger can stop on and evaluate: <c>state.Label</c>
 	/// and <c>state.Inner.Count</c> are stable field-access chains the evaluation test reads. Not inlined,
 	/// so a breakpoint has a real method to bind to and the argument is live at the stop.
+	/// <para>
+	/// <c>innerCount</c> is declared so a stop here has a local with a name to report. Naming it requires
+	/// reading the portable PDB, and a method whose only variable is its argument cannot tell a name read
+	/// from symbols apart from one read from metadata. Optimisation is off as well as inlining, because a
+	/// local nothing observes is a local the JIT is free to lose, and a Release run of the suite would
+	/// then leave nothing to name.
+	/// </para>
 	/// </summary>
-	[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+	[System.Runtime.CompilerServices.MethodImpl(
+		System.Runtime.CompilerServices.MethodImplOptions.NoInlining
+			| System.Runtime.CompilerServices.MethodImplOptions.NoOptimization)]
 	private static void Inspect(ProbeState state)
 	{
-		_ = state.Count;
+		var innerCount = state.Inner?.Count ?? 0;
+		_ = state.Count + innerCount;
 	}
 
 	/// <summary>

@@ -416,8 +416,9 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "or local name, then .field into the object graph. It reads fields from memory and runs "
 			+ "none of the debuggee's own code, so it never hangs or changes the target -- property "
 			+ "getters and method calls are deliberately not evaluated. Only valid while stopped. "
-			+ "Locals are local_0, local_1 and so on in slot order, which a breakpoint's recorded frame "
-			+ "names; arguments are named. Returns the value and its type, or why it did not resolve.")]
+			+ "Arguments and locals go by the names the breakpoint's recorded frame reports: the names "
+			+ "the source declares where the module has symbols beside it, and local_0, local_1 in slot "
+			+ "order where it has none. Returns the value and its type, or why it did not resolve.")]
 	public async Task<LiveEvaluation> EvaluateAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression,

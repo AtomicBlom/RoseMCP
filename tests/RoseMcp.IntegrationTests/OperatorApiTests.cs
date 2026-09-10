@@ -1,9 +1,9 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ModelContextProtocol.Client;
 using RoseMcp.Contracts;
+using static RoseMcp.IntegrationTests.ProbeTargetSession;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -161,31 +161,6 @@ public sealed class OperatorApiTests
 		{
 			if (!target.HasExited) target.Kill(entireProcessTree: true);
 		}
-	}
-
-	/// <summary>
-	/// A dedicated child process to attach to, rather than this test runner: attaching a debugger to
-	/// the process running the test perturbs it, and the probe does nothing but throw a distinctively
-	/// named exception on a loop.
-	/// </summary>
-	private static Process StartProbeTarget()
-	{
-		var executable = Path.Combine(
-			TestToolchain.RepositoryRoot(),
-			"tests",
-			"DebugProbeTarget",
-			"bin",
-			TestToolchain.Configuration(),
-			"net10.0",
-			OperatingSystem.IsWindows() ? "DebugProbeTarget.exe" : "DebugProbeTarget");
-
-		if (!File.Exists(executable))
-		{
-			throw new FileNotFoundException($"The probe target has not been built at {executable}.", executable);
-		}
-
-		return Process.Start(new ProcessStartInfo(executable) { UseShellExecute = false })
-			?? throw new InvalidOperationException("Could not start the probe target.");
 	}
 
 	/// <summary>

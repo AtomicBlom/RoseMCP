@@ -730,6 +730,19 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			});
 		}
 
+		// An edit that did not take is said in the notes as well as in its own row. The tool's contract is
+		// that the notes list edits worked out and not applied, so an empty notes list reads as a clean
+		// apply -- leaving the difference between applied and total as the only signal there was, which
+		// is the one a caller following the documentation never looks at.
+		foreach (var failed in results.Where(result => result.Status != "applied"))
+		{
+			var what = failed.Property is { Length: > 0 } property
+				? $"{failed.Kind} '{property}' on {failed.Target}"
+				: $"{failed.Kind} on {failed.Target}";
+
+			notes.Add($"{what} was not applied: {failed.Status}.");
+		}
+
 		return new LiveXamlApplyResult
 		{
 			Applied = results.Count(result => result.Status == "applied"),
@@ -913,6 +926,13 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// come back as a success -- and the caller would go looking for an element that exists and is in
 	/// nobody's tree.
 	/// </para>
+	/// <para>
+	/// A failure inside one of those commands names the command, because the row it lands in carries the
+	/// edit's own target and property. An inner SetProperty answering "property not found" reads, in a
+	/// SetResource row, as the resource key having been looked up as a property on the element that owns
+	/// the dictionary -- a confident wrong account of what went wrong, and one that sends the reader to
+	/// the wrong half of the system.
+	/// </para>
 	/// </summary>
 	private static string Outcome(List<string> keys, Dictionary<string, string> statuses)
 	{
@@ -921,10 +941,26 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		foreach (var key in keys)
 		{
 			var status = statuses.GetValueOrDefault(key, "not reported");
-			if (status != "applied") return status;
+			if (status == "applied") continue;
+
+			return keys.Count == 1 ? status : $"{status}, building it: {Describe(key)}";
 		}
 
 		return "applied";
+	}
+
+	/// <summary>
+	/// The command a result key stands for, in the words it was sent in. The key is the command's own
+	/// fields, so this needs nothing the plan did not already carry: op, what it was against, and the
+	/// property or the child it named.
+	/// </summary>
+	private static string Describe(string key)
+	{
+		var fields = key.Split('\t');
+		if (fields.Length < 4) return key;
+
+		var subject = fields[2].Length > 0 ? fields[2] : fields[3];
+		return subject.Length > 0 ? $"{fields[0]} {subject} on {fields[1]}" : $"{fields[0]} on {fields[1]}";
 	}
 
 	private static Dictionary<string, string> ParseApplyResults(IEnumerable<string> lines)

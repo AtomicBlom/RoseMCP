@@ -196,6 +196,27 @@ public static class XamlDiff
 	}
 
 	/// <summary>
+	/// The <c>FrameworkTemplate</c> family, whose content is compiled markup rather than an object
+	/// graph.
+	/// <para>
+	/// A resource is applied by building it out of <c>CreateInstance</c> and <c>AddChild</c> and then
+	/// swapping what its key resolves to, and a built template's property chain holds nothing either of
+	/// those can put content into: adding to a <c>DataTemplate</c> is refused for exposing no children
+	/// collection, and a <c>ControlTemplate</c>'s <c>TargetType</c> cannot be built as a value. So the
+	/// family is refused with the reason rather than decomposed into steps that fail inside it, where
+	/// the failure is reported against the resource key and reads as the key having been looked up as a
+	/// property.
+	/// </para>
+	/// </summary>
+	private static readonly HashSet<string> TemplateTypes = new(StringComparer.Ordinal)
+	{
+		"ControlTemplate",
+		"DataTemplate",
+		"ItemContainerTemplate",
+		"ItemsPanelTemplate",
+	};
+
+	/// <summary>
 	/// Resources are keyed rather than positional, so they are matched by <c>x:Key</c> and never by where
 	/// they sit -- reordering a dictionary means nothing, and two resources of one type are told apart by
 	/// nothing else.
@@ -228,6 +249,14 @@ public static class XamlDiff
 			}
 
 			if (was.ToString(SaveOptions.DisableFormatting) == markup) continue;
+
+			if (TemplateTypes.Contains(resource.Name.LocalName))
+			{
+				notes.Add($"The resource '{key}' on {AddressOf(owner)} is a {resource.Name.LocalName}, whose content "
+					+ "is compiled markup rather than an object graph, so a live edit has nothing to rebuild it "
+					+ "from. It reaches the app the next time the app is built.");
+				continue;
+			}
 
 			edits.Add(new XamlEdit
 			{

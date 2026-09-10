@@ -11,6 +11,19 @@
              and therefore testable. -->
         <Grid.Resources>
             <SolidColorBrush x:Key="ProbeAccent" Color="#FF445566" />
+            <!-- A template, which is the one resource shape a live edit cannot rebuild: its content
+                 is compiled markup rather than an object graph, so nothing CreateInstance and
+                 AddChild can reach holds it. Consumed by nothing on purpose. Realising it would put
+                 elements in the tree and renumber every positional address after them, and what is
+                 under test is what an apply says about the edit rather than what the app draws. -->
+            <DataTemplate x:Key="ProbeItemTemplate">
+                <Border Background="#FF556677" Padding="4">
+                    <TextBlock Text="templated" Foreground="#FF8FA6BF" FontSize="12" />
+                </Border>
+            </DataTemplate>
+            <ControlTemplate x:Key="ProbeControlTemplate" TargetType="ContentControl">
+                <Border Background="#FF667788" Padding="4" />
+            </ControlTemplate>
         </Grid.Resources>
         <StackPanel x:Name="Panel" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
             <Border x:Name="Pane" Background="#FF202830" Padding="24" CornerRadius="8">

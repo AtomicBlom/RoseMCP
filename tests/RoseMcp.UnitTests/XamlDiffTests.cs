@@ -137,6 +137,61 @@ public sealed class XamlDiffTests
 	}
 
 	/// <summary>
+	/// A template in a dictionary is said rather than attempted. Its content is compiled markup rather
+	/// than an object graph, and a resource is applied by building it out of <c>CreateInstance</c> and
+	/// <c>AddChild</c> -- a built <c>DataTemplate</c> exposes no children collection to add to, and a
+	/// <c>ControlTemplate</c>'s <c>TargetType</c> cannot be built as a value.
+	/// <para>
+	/// It is the reporting that makes this worth a refusal rather than a failed apply. The failure lands
+	/// in a <c>SetResource</c> row carrying the resource key as its property, so a status about a
+	/// property reads as the key having been looked up as one on the element that owns the dictionary.
+	/// Item templates are also where most of a list-heavy app's markup lives, so the failure looked like
+	/// live editing not working on the view.
+	/// </para>
+	/// </summary>
+	[Test]
+	[Arguments("DataTemplate", "")]
+	[Arguments("ControlTemplate", " TargetType=\"ContentControl\"")]
+	[Arguments("ItemsPanelTemplate", "")]
+	[Arguments("ItemContainerTemplate", "")]
+	public void Says_a_template_resource_cannot_be_rebuilt_rather_than_emitting_an_edit(string type, string attributes)
+	{
+		var result = Diff(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources>"
+				+ $"<{type} x:Key=\"Item\"{attributes}><Border Width=\"10\" /></{type}>"
+				+ "</Grid.Resources></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources>"
+				+ $"<{type} x:Key=\"Item\"{attributes}><Border Width=\"20\" /></{type}>"
+				+ "</Grid.Resources></Grid>");
+
+		Assert.Empty(result.Edits);
+
+		var note = Assert.Single(result.Notes);
+		Assert.Contains("Item", note);
+		Assert.Contains(type, note);
+	}
+
+	/// <summary>
+	/// And a resource that is not a template still is an edit, which is what says the refusal above is
+	/// about the template family rather than about resources holding elements.
+	/// </summary>
+	[Test]
+	public void Still_edits_a_resource_that_holds_an_element_and_is_not_a_template()
+	{
+		var edits = Compute(
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources>"
+				+ "<Border x:Key=\"Chip\" Width=\"10\" />"
+				+ "</Grid.Resources></Grid>",
+			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources>"
+				+ "<Border x:Key=\"Chip\" Width=\"20\" />"
+				+ "</Grid.Resources></Grid>");
+
+		var edit = Assert.Single(edits);
+		Assert.Equal(XamlEditKind.SetResource, edit.Kind);
+		Assert.Equal("Chip", edit.Property);
+	}
+
+	/// <summary>
 	/// A property written in element form does not occupy a child position. It did, so an element added
 	/// after a <c>Grid.RowDefinitions</c> was handed an index that counted something which is not its
 	/// sibling -- and went in at the wrong place, or nowhere.

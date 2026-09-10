@@ -30,7 +30,14 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
                   (TrayRelay, no workers of its own)
 ```
 
-- **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
+- **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker. Types, and no
+  package references at all, which is what lets every host reference it. Logic goes there only when
+  a test needs it and the host that owns it cannot be referenced -- `XamlStackModules`,
+  `ToolArgumentShape`, `XamlProviderPath` and `HostVersion` are the whole list, and each is a pure
+  function over strings or JSON with the host's own facts passed in. That exception exists because
+  three of the launchable hosts are `net10.0-windows` or reachable only as a child process, so a
+  rule living beside its host is a rule no test can see. It is not a licence for behaviour: anything
+  holding state, touching Roslyn, or knowing what a tool does belongs in the host.
 - **`RoseMcp.Solutions`** -- library. Reads solution files and `rosemcp.json` without MSBuild or
   Roslyn, so the broker can decide *which* solution a call means without taking a dependency on the
   thing that loads one. Also derives the short workspace key.

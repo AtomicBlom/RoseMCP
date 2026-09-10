@@ -382,8 +382,8 @@ reclaim memory or pick up a rebuilt generator.
   them:** that hides exactly what the apply-then-read-back loop exists to verify, since an applied
   property need not have appeared in the first read. It also means `rose_xaml_properties` is declared
   read-only and is not quite, though nothing the app draws changes.
-- **One XAML request at a time, and every path takes the lock exactly once.** The live-app host serves MCP
-  calls concurrently -- measured, not assumed: two tree reads issued together finished in 118ms
+- **One XAML request at a time, and every path takes the lock exactly once.** The live-app host
+  serves MCP calls concurrently -- measured, not assumed: two tree reads issued together finished in 118ms
   against a warm single read of 112ms -- and every XAML request shares one pipe, which carries one
   request and one reply at a time. The measurement was taken against a channel of files and the
   conclusion outlived it: ten concurrent pairs against the probe produced several fifteen-second waits
@@ -396,9 +396,8 @@ reclaim memory or pick up a rebuilt generator.
   once and calls a `Core` method that assumes it is held, so no path takes it twice -- which is what
   keeps the choice of lock free rather than load-bearing, since a `Core` method that took the lock
   itself would deadlock under a `SemaphoreSlim` and pass under `System.Threading.Lock`. Do not
-  conclude from a passing
-  concurrency test that the lock is unnecessary -- the silent failure appeared once in ten, and the
-  test was confirmed to fail with the locks removed.
+  conclude from a passing concurrency test that the lock is unnecessary -- the silent failure
+  appeared once in ten, and the test was confirmed to fail with the locks removed.
 - **A diagnostics UI layer is asked for by XamlRoot, and on WinUI 3 the one-argument call is the wrong
   one.** `IXamlDiagnostics::GetUiLayer` takes no argument, and its own documentation says why that is a
   problem: `IXamlDiagnostics2` exists to add "XamlRoot-based APIs to replace IXamlDiagnostics APIs that

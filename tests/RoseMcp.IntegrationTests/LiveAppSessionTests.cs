@@ -1665,7 +1665,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 			// The element's own declaration is real, and is where it has always belonged.
 			Assert.Equal("ms-appx:///MainPage.xaml", captionProperties.SourceFile);
-			Assert.Equal(17, captionProperties.SourceLine);
+			// The line is read out of the markup rather than written here as a number, because a
+			// number here is one that every edit to the probe above this element silently invalidates --
+			// and the failure it produces names this test rather than the edit that moved the line. The
+			// two sides stay independent: the tool reports what the markup compiler baked into the app,
+			// and this reads the file.
+			Assert.Equal(DeclarationLineOf("Caption"), captionProperties.SourceLine);
 		}
 	}
 
@@ -2250,6 +2255,70 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		}
 	}
 
+	/// <summary>
+	/// A template in a resource dictionary, which is the one resource shape a live edit cannot rebuild.
+	/// A resource is applied by building it out of <c>CreateInstance</c> and <c>AddChild</c> and then
+	/// swapping what its key resolves to; a template's content is compiled markup, and the property
+	/// chain of a built one holds nothing either of those can put it into.
+	/// <para>
+	/// Two template types rather than one, because the refusal is a rule about a family: measured
+	/// against a <c>DataTemplate</c> alone it would be a rule validated only by the case that motivated
+	/// it, and <c>ControlTemplate</c> is the nearest thing it also decides.
+	/// </para>
+	/// <para>
+	/// What matters is that it is said. Left to fail somewhere inside the template, the outcome arrives
+	/// as a <c>SetResource</c> row whose property is the resource key -- so a status of "property not
+	/// found" reads as the key having been looked up as a property on the element that owns the
+	/// dictionary, a confident wrong account of what went wrong. Item templates are also where most of a
+	/// list-heavy app's markup lives, so an unexplained empty apply there reads as live editing not
+	/// working on the view at all.
+	/// </para>
+	/// </summary>
+	[Test]
+	[ClassicSession]
+	public async Task Says_a_template_resource_cannot_be_rebuilt_live()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		// Phase B: a resource dictionary is app-wide and has no owner smaller than the app. Nothing here
+		// should reach it -- that is the assertion -- but an apply that got as far as ReplaceResource
+		// would, and a test cannot both check that and share the app.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
+		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
+		var oldXaml = File.ReadAllText(xamlPath);
+
+		const string DataTemplateWas = "<Border Background=\"#FF556677\" Padding=\"4\">";
+		const string ControlTemplateWas = "<Border Background=\"#FF667788\" Padding=\"4\" />";
+		Assert.Contains(DataTemplateWas, oldXaml);
+		Assert.Contains(ControlTemplateWas, oldXaml);
+
+		var newXaml = oldXaml
+			.Replace(DataTemplateWas, "<Border Background=\"#FF991122\" Padding=\"4\">")
+			.Replace(ControlTemplateWas, "<Border Background=\"#FF223399\" Padding=\"4\" />");
+
+		var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
+		Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+
+		var reported = string.Join(
+			" | ",
+			applied.Results.Select(result => $"{result.Kind} '{result.Property}' on {result.Target}: {result.Status}"));
+
+		Assert.True(
+			applied.Results.Count == 0,
+			$"a template resource has no live edit to report, and this reported: {reported}");
+
+		var notes = string.Join(" | ", applied.Notes);
+		foreach (var (key, type) in new[] { ("ProbeItemTemplate", "DataTemplate"), ("ProbeControlTemplate", "ControlTemplate") })
+		{
+			Assert.True(
+				applied.Notes.Any(note =>
+					note.Contains(key, StringComparison.Ordinal) && note.Contains(type, StringComparison.Ordinal)),
+				$"a note has to name {key} and say it is a {type}; notes were: {notes}");
+		}
+	}
+
 	/// <summary>The Background of whichever live element carries an address, read off the tree.</summary>
 	private static async Task<string?> BackgroundAtAsync(
 		LiveAppSession session,
@@ -2260,6 +2329,24 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		var node = tree.Nodes.Single(candidate => candidate.Address == address);
 		var properties = await session.ReadXamlPropertiesAsync(node.Handle, includeDefaults: false, cancellationToken);
 		return properties.Properties.FirstOrDefault(property => property.Name == "Background")?.Value;
+	}
+
+	/// <summary>
+	/// The one-based line of the classic probe's markup that declares an element with this
+	/// <c>x:Name</c>, so a test asserting source info does not carry a line number of its own.
+	/// </summary>
+	/// <param name="name">The <c>x:Name</c> of the element, which the probe gives every declared one.</param>
+	private static int DeclarationLineOf(string name)
+	{
+		var markup = File.ReadAllLines(Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml"));
+		var declaration = $"x:Name=\"{name}\"";
+
+		for (var line = 0; line < markup.Length; line++)
+		{
+			if (markup[line].Contains(declaration, StringComparison.Ordinal)) return line + 1;
+		}
+
+		throw new InvalidOperationException($"The classic probe's markup declares no element named {name}.");
 	}
 
 	/// <summary>

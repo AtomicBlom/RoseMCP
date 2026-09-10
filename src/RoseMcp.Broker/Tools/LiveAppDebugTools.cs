@@ -495,7 +495,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "last sent, so the loop is edit, apply, edit, apply. Reach for it instead of rebuilding and "
 			+ "relaunching to see a layout or a colour change. The first call for a file records a "
 			+ "baseline and applies nothing: make it before editing, or pass oldXaml with filePath. "
-			+ "Property changes, added and removed elements and changed resources all apply, to named "
+			+ "Property changes, added and removed elements and changed resources apply, to named "
 			+ "and unnamed elements alike -- an unnamed one by the address rose_xaml_tree and "
 			+ "rose_xaml_selection report. For markup not on disk, pass oldXaml and newXaml. Read the "
 			+ "notes: they list edits worked out but not applied, and a failed edit is not retried by "

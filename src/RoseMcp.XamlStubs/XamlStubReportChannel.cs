@@ -16,7 +16,9 @@ namespace RoseMcp.XamlStubs;
 /// The shape is duplicated on the worker's side rather than shared. This crosses an analyzer
 /// assembly boundary, and a shared type there means the host and the shadow copy must agree on an
 /// assembly identity -- exactly the version-matching problem the generator is built to avoid. Only
-/// the two constants below cross, and a const is compiled into the reader.
+/// the two names below cross; they are declared in <c>RoseMcp.Contracts</c> for the reader and
+/// repeated here so this assembly references nothing, and <c>XamlStubChannelTests</c> fails if the
+/// two spellings ever part company.
 /// </para>
 /// </summary>
 public static class XamlStubReportChannel

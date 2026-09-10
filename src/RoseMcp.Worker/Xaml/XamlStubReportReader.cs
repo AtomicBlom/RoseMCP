@@ -2,7 +2,7 @@ using System.Text.Json;
 
 using Microsoft.CodeAnalysis;
 
-using RoseMcp.XamlStubs;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Worker.Xaml;
 

@@ -351,21 +351,24 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.All(hitsOnly.Events, entry => Assert.Equal(LiveDebugEventKind.BreakpointHit, entry.Kind));
 
 			// The two things that make a filter usable rather than a trap: it says how much it passed
-			// over, and its cursor has moved past that -- so paging with it does not re-read forever.
+			// over, and paging with its cursor moves forward instead of re-reading forever.
 			Assert.True(hitsOnly.Skipped > 0, "the filter should report the events it passed over");
 
-			// Asserted about content rather than by comparing the two cursors (#124). The target goes on
-			// emitting between the two reads, so the numbers legitimately differ and the comparison raced
-			// about one run in three -- while saying nothing about the property that matters, which is
-			// that paging with the filtered cursor moves forward instead of re-reading.
 			var lastRead = hitsOnly.Events[^1].Sequence;
 
+			// At or past, never strictly past. NextCursor is how far reading got, so it equals the last
+			// returned sequence whenever the newest event examined was one the filter matched -- a fact
+			// about what the target emitted in the last millisecond rather than about the contract.
+			// Asserting strictly greater is asserting that the last event examined was skipped, which is
+			// a coin toss against a target emitting continuously, and says nothing about paging.
 			Assert.True(
-				hitsOnly.NextCursor > lastRead,
-				$"the filtered cursor ({hitsOnly.NextCursor}) should be past the last event it returned ({lastRead})");
+				hitsOnly.NextCursor >= lastRead,
+				$"the filtered cursor ({hitsOnly.NextCursor}) should be at or past the last event it returned ({lastRead})");
 
 			var nextPage = await session.ReadEventsAsync(hitsOnly.NextCursor, ["BreakpointHit"], limit: 500, cancellationToken);
 
+			// Paging forward is the property, and this checks it directly: reading is exclusive of the
+			// cursor, so nothing already returned can come back whether the two were equal or not.
 			Assert.DoesNotContain(nextPage.Events, entry => entry.Sequence <= lastRead);
 
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.

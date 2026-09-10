@@ -21,6 +21,21 @@ public sealed class BrokerOptions
 	/// </summary>
 	public string DefaultWorkspaceRoot { get; set; } = Environment.CurrentDirectory;
 
-	/// <summary>How long to wait for a worker to finish loading before giving up on it.</summary>
-	public TimeSpan StartupTimeout { get; set; } = TimeSpan.FromMinutes(10);
+	/// <summary>
+	/// How long a freshly started worker has to complete its MCP handshake.
+	/// <para>
+	/// Set explicitly because the SDK's own default is 60 seconds, and a worker begins loading its
+	/// solution the moment the process starts -- deliberately, so the design-time build overlaps the
+	/// handshake, but it means the two compete for the machine. With several workers doing that at
+	/// once, a cold one loses 60 seconds and the call fails rather than waits, reporting a timeout
+	/// that names the SDK and says nothing about load. Slow is the honest answer there; failing is
+	/// not, because nothing is wrong.
+	/// </para>
+	/// <para>
+	/// Long rather than unbounded. A worker whose process died takes its transport with it and fails
+	/// immediately, so this only governs one that is alive and silent, and that should be noticed
+	/// rather than waited on forever.
+	/// </para>
+	/// </summary>
+	public TimeSpan WorkerHandshakeTimeout { get; set; } = TimeSpan.FromMinutes(3);
 }

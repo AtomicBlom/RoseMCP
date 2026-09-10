@@ -174,6 +174,27 @@ public sealed class BrokerTests
 		Assert.Single(manager.Workers);
 	}
 
+	/// <summary>
+	/// The handshake budget is read from options rather than left to the SDK.
+	/// <para>
+	/// Asserted by making it fail, because the defect it guards is a property nothing reads: the
+	/// option existed, was documented, and was never passed anywhere, so every worker got the SDK's
+	/// 60 seconds and the setting promised a patience the code did not have. A test that only starts
+	/// a worker successfully cannot tell a wired option from a dead one -- both pass.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_worker_that_misses_the_handshake_budget_is_given_up_on()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager(workerHandshakeTimeout: TimeSpan.FromMilliseconds(1));
+
+		var failure = await Assert.ThrowsAnyAsync<Exception>(() => manager.GetOrStartAsync(
+			WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken));
+
+		Assert.Contains("timed out", failure.Message, StringComparison.OrdinalIgnoreCase);
+	}
+
 	[Test]
 	public async Task Restart_replaces_the_worker_process()
 	{
@@ -969,7 +990,9 @@ public sealed class BrokerTests
 		return ids;
 	}
 
-	private static WorkspaceManager CreateManager(string? defaultRoot = null) => new(
+	private static WorkspaceManager CreateManager(
+		string? defaultRoot = null,
+		TimeSpan? workerHandshakeTimeout = null) => new(
 		Options.Create(new BrokerOptions
 		{
 			// Somewhere with no solution, unless a test is specifically exercising discovery. It used
@@ -978,6 +1001,7 @@ public sealed class BrokerTests
 			// open worker before the root was ever consulted. Now that a bare call really does resolve
 			// from here, it has to mean what it says.
 			DefaultWorkspaceRoot = defaultRoot ?? NowhereDirectory.Path(),
+			WorkerHandshakeTimeout = workerHandshakeTimeout ?? new BrokerOptions().WorkerHandshakeTimeout,
 		}),
 		NullLoggerFactory.Instance,
 		NullLogger<WorkspaceManager>.Instance);

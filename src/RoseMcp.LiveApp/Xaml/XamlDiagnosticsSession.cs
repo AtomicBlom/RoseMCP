@@ -105,11 +105,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// consumer. The wait can be long -- the endpoint timeout is twenty seconds -- and a slow correct
 	// answer is the trade being made.
 	//
-	// It has to be a re-entrant lock, and that is load-bearing: selecting by handle finishes by
-	// calling ReadSelection, which takes this lock again on the same thread. System.Threading.Lock
-	// counts recursion and lets that through, as Monitor did; a SemaphoreSlim does not and would
-	// deadlock the call forever. Proven by Selects_a_xaml_element_by_handle_without_a_click, which
-	// walks exactly that path -- a non-re-entrant lock hangs it rather than failing an assertion.
+	// Every public entry point takes it once and calls a Core method that assumes it is held, so no
+	// path takes it twice and its re-entrancy is not relied on. That is worth keeping rather than
+	// merely true: a Core method that takes the lock itself would deadlock under a SemaphoreSlim and
+	// pass under this one, so the pairing is what makes the choice of lock free rather than load-bearing.
 	private readonly Lock _requests = new();
 
 	/// <summary>
@@ -369,7 +368,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			};
 		}
 
-		return ReadSelection();
+		return ReadSelectionCore();
 	}
 
 	/// <summary>

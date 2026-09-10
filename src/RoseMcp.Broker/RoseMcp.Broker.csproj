@@ -5,6 +5,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- For the operator API, which is minimal-API endpoints over the managers this library already
+         owns. It goes here rather than in each host because there are two hosts and the surface must
+         not differ between them. Both already carry this framework: the server is an ASP.NET Core
+         app and the tray hosts one, so nothing new is dragged into a deployment by it. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\RoseMcp.Contracts\RoseMcp.Contracts.csproj" />
     <ProjectReference Include="..\RoseMcp.Solutions\RoseMcp.Solutions.csproj" />
   </ItemGroup>

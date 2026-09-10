@@ -103,6 +103,34 @@ public sealed class RoseServerProcess : IDisposable
 	}
 
 	/// <summary>
+	/// Starts a server with environment variables of its own.
+	/// <para>
+	/// For the one setting a test has to know rather than discover: with no <c>ROSEMCP_TOKEN</c> an
+	/// http server mints its operator token and says so only in its log, so a test that wants to make
+	/// an authorised request has to choose the token itself.
+	/// </para>
+	/// </summary>
+	public static RoseServerProcess StartWith(
+		IReadOnlyDictionary<string, string> environment,
+		params string[] arguments)
+	{
+		var start = new ProcessStartInfo(ExecutablePath())
+		{
+			RedirectStandardInput = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+			UseShellExecute = false,
+		};
+
+		foreach (var argument in arguments) start.ArgumentList.Add(argument);
+		foreach (var (name, value) in environment) start.Environment[name] = value;
+
+		var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start RoseMcp.Server.");
+
+		return new RoseServerProcess(process);
+	}
+
+	/// <summary>
 	/// A loopback port nothing is listening on, taken by binding and releasing. The gap between
 	/// releasing and the server binding is a race in principle; in a test run on a developer's
 	/// machine nothing else is claiming ports in that window, and the alternative -- a fixed port --

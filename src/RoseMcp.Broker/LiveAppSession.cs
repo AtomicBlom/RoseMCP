@@ -292,6 +292,24 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["breakpointId"] = id },
 			cancellationToken);
 
+	/// <summary>
+	/// Resumes a held target and reports the whole outcome, not only whether anything was held.
+	/// <para>
+	/// The bool overloads below drop <see cref="LiveContinueResult.Detail"/>, which is the one thing a
+	/// person reading a stack needs to be told: their hold has just been released by somebody else's
+	/// resume. An agent asking to continue does not care, so both shapes exist.
+	/// </para>
+	/// </summary>
+	public Task<LiveContinueResult> ResumeAsync(CancellationToken cancellationToken)
+		=> SendAsync<LiveContinueResult>(ToolNames.LiveAppContinue, cancellationToken);
+
+	/// <summary>Steps a held target and reports the whole outcome. See <see cref="ResumeAsync"/>.</summary>
+	public Task<LiveContinueResult> StepDetailedAsync(string mode, CancellationToken cancellationToken)
+		=> SendAsync<LiveContinueResult>(
+			ToolNames.LiveAppStep,
+			new Dictionary<string, object?> { ["mode"] = mode },
+			cancellationToken);
+
 	public async Task<bool> ContinueAsync(CancellationToken cancellationToken)
 		=> (await SendAsync<LiveContinueResult>(ToolNames.LiveAppContinue, cancellationToken)).Continued;
 

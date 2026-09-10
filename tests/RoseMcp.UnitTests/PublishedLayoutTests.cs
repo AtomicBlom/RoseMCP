@@ -26,7 +26,8 @@ public sealed class PublishedLayoutTests : IDisposable
 
 	/// <summary>
 	/// The shape <c>Publish-Tree</c> writes: the broker flat in the install root, the tray one level
-	/// down in tray/, and a live-app host per runtime under live-app/&lt;rid&gt;/.
+	/// down in tray/, the inspector beside it in inspector/, and a live-app host per runtime under
+	/// live-app/&lt;rid&gt;/.
 	/// </summary>
 	public PublishedLayoutTests()
 	{
@@ -34,6 +35,7 @@ public sealed class PublishedLayoutTests : IDisposable
 		Stage("RoseMcp.Worker.exe");
 		Stage("RoseMcp.Worker");
 		Stage(Path.Combine("tray", "RoseMcp.Tray.exe"));
+		Stage(Path.Combine("inspector", "RoseMcp.Inspector.exe"));
 		Stage(Path.Combine("live-app", "win-x64", "RoseMcp.LiveApp.exe"));
 		Stage(Path.Combine("live-app", "win-x64", "RoseMcp.LiveApp"));
 		Stage(Path.Combine("live-app", "win-arm64", "RoseMcp.LiveApp.exe"));
@@ -66,6 +68,90 @@ public sealed class PublishedLayoutTests : IDisposable
 		var resolved = WorkerLauncher.ResolveWorkerPath(new BrokerOptions(), tray, searchRepository: false);
 
 		Assert.Equal(Path.GetDirectoryName(Path.GetFullPath(resolved)), Path.GetFullPath(_root));
+	}
+
+	/// <summary>
+	/// The inspector is a sibling of the tray's folder, not of the tray's exe, and the tray is what
+	/// launches it. That is the resolution that has to work on an install and cannot be seen from
+	/// inside the repository, where the development fallback answers whatever the layout says.
+	/// </summary>
+	[Test]
+	public void Finds_the_inspector_beside_the_trays_own_folder()
+	{
+		var tray = Path.Combine(_root, "tray");
+
+		var resolved = InspectorLauncher.ResolvePath(baseDirectory: tray, searchRepository: false);
+
+		Assert.NotNull(resolved);
+		Assert.Equal(
+			Path.GetFullPath(Path.Combine(_root, "inspector", "RoseMcp.Inspector.exe")),
+			Path.GetFullPath(resolved!));
+	}
+
+	/// <summary>
+	/// And from the install root, which is where a server rather than a tray would be asking.
+	/// </summary>
+	[Test]
+	public void Finds_the_inspector_from_the_install_root()
+	{
+		var resolved = InspectorLauncher.ResolvePath(baseDirectory: _root, searchRepository: false);
+
+		Assert.NotNull(resolved);
+		Assert.Equal(
+			Path.GetFullPath(Path.Combine(_root, "inspector", "RoseMcp.Inspector.exe")),
+			Path.GetFullPath(resolved!));
+	}
+
+	/// <summary>
+	/// Null rather than a throw, because an inspector that is not installed is an ordinary state:
+	/// the tray labels the menu item instead of offering something that cannot work.
+	/// </summary>
+	[Test]
+	public void Says_nothing_rather_than_failing_when_no_inspector_is_published()
+	{
+		var elsewhere = Path.Combine(_root, "live-app", "win-x64");
+
+		var resolved = InspectorLauncher.ResolvePath(baseDirectory: elsewhere, searchRepository: false);
+
+		Assert.Null(resolved);
+	}
+
+	/// <summary>
+	/// The command a person copies out of the tray. The exe is quoted because an install path
+	/// routinely has a space in it, and the session is only named when there is one to name.
+	/// </summary>
+	[Test]
+	public void Builds_a_command_line_a_shell_can_run()
+	{
+		var token = new OperatorToken("a-token");
+
+		var withSession = InspectorLauncher.CommandLine(
+			@"C:\Program Files\Rose\inspector\RoseMcp.Inspector.exe", "127.0.0.1", 5077, token, "session-abcd1234");
+
+		Assert.StartsWith("\"C:\\Program Files\\Rose\\inspector\\RoseMcp.Inspector.exe\"", withSession);
+		Assert.Contains("--port 5077", withSession);
+		Assert.Contains("--token a-token", withSession);
+		Assert.Contains("--session session-abcd1234", withSession);
+
+		var withoutSession = InspectorLauncher.CommandLine(
+			@"C:\Rose\RoseMcp.Inspector.exe", "127.0.0.1", 5077, token, sessionId: null);
+
+		Assert.DoesNotContain("--session", withoutSession);
+	}
+
+	/// <summary>
+	/// The arguments go across as a list rather than a string, so nothing is quoted and nothing can
+	/// be mis-split. A token that came back different because a shell re-parsed it would be refused
+	/// with no clue why.
+	/// </summary>
+	[Test]
+	public void Passes_arguments_as_a_list()
+	{
+		var arguments = InspectorLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1");
+
+		Assert.Equal(
+			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1"],
+			arguments);
 	}
 
 	/// <summary>

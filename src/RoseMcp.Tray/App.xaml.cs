@@ -33,6 +33,17 @@ public partial class App : Application
 
 	public TrayOptions Options { get; private set; } = new();
 
+	/// <summary>
+	/// The secret this run's operator API is gated on, and what the inspector is launched with.
+	/// <para>
+	/// Minted here rather than read from the environment, because the tray is the thing that knows
+	/// the person asking is at the keyboard: it hands the token only to a process it starts itself.
+	/// A new one every run, so an inspector left open from yesterday is told to reopen from the tray
+	/// rather than silently authorised.
+	/// </para>
+	/// </summary>
+	public OperatorToken OperatorToken { get; } = OperatorToken.Mint();
+
 	protected override async void OnLaunched(LaunchActivatedEventArgs args)
 	{
 		// Every line of this is inside the try. It is an async void override, so nothing awaits it and
@@ -81,6 +92,12 @@ public partial class App : Application
 			_broker.MapGet(
 				"/admin/sessions",
 				(LiveAppSessionManager sessions) => Results.Json(sessions.Describe(), ContractJson.Options));
+
+			// The operator surface every RoseMCP window reads a session through, gated on this run's
+			// token. Mapped after the admin endpoints and before the broker starts, which is the only
+			// ordering requirement: middleware and routes both have to be in place before a request
+			// can arrive.
+			_broker.MapRoseOperatorApi(OperatorToken);
 
 			await _broker.StartAsync();
 

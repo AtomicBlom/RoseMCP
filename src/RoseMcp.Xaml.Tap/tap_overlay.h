@@ -2107,10 +2107,12 @@ private:
 	// Asking where the pointer is, rather than who asked for the selection, because that is the
 	// question the answer actually turns on -- and it happens to answer both callers. A click lands
 	// under the pointer, so the mark should simply be there: fading up would pretend the pointer were
-	// still on its way to somewhere it already is. A selection made by handle, which is #46 and the
-	// way an agent will reach this, lands wherever the element happens to be, and appearing at full
+	// still on its way to somewhere it already is. A selection made by handle, which is the way an
+	// agent reaches this, lands wherever the element happens to be, and appearing at full
 	// strength somewhere the person is not looking is a flash in the corner of the eye rather than an
-	// answer. Today every path here is a click, so this always snaps; #46 gets the other half free.
+	// answer. Both paths reach here, so which one it was is never asked: the pointer's position is
+	// the whole question, and a selection by handle that happens to land under the pointer snaps
+	// for the same reason a click does.
 	void Reveal()
 	{
 		m_overSelection = Contains(m_selectionRect, m_pointer);

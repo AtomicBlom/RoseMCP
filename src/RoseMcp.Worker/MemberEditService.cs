@@ -115,8 +115,10 @@ public static class MemberEditService
 			{
 				progress?.Report("Working out which namespaces the code needs", 80);
 
-				solution = await ResolveImportsAsync(
-					snapshot, solution, written, path, verification.Introduced, notices, cancellationToken);
+				ResolvedImports.Imports imports;
+
+				(solution, imports) = await ResolveImportsAsync(
+					snapshot, solution, written, path, verification.Introduced, cancellationToken);
 
 				if (!ReferenceEquals(solution, finished.Solution))
 				{
@@ -126,6 +128,14 @@ public static class MemberEditService
 					verification = await EditVerification.RunAsync(
 						diagnostics, snapshot.Solution, solution, scope, path, cancellationToken);
 				}
+
+				// After the second compile, which is the first moment it can be said whether each import
+				// resolved the error it was fetched for rather than only which namespace it named.
+				notices.AddRange(
+					await ResolvedImports.ReportAsync(solution, imports, verification.Introduced, path, cancellationToken));
+
+				notices.AddRange(imports.Ambiguous);
+				notices.AddRange(imports.Unresolved);
 			}
 		}
 
@@ -541,21 +551,25 @@ public static class MemberEditService
 	}
 
 	/// <summary>
-	/// Works out what would import the names the edit left unresolved, adds the ones with a single
-	/// answer, and reports the rest.
+	/// Works out what would import the names the edit left unresolved and adds the ones with a single
+	/// answer, handing back what it applied so the caller can say whether each one worked.
 	/// <para>
 	/// The half <see cref="MissingImports"/> stops short of. Reporting the namespace and leaving the
 	/// caller to add it is a round trip at exactly the moment they were promised there would not be
 	/// one: the code was just written by this tool, and it does not compile.
 	/// </para>
+	/// <para>
+	/// It reports nothing itself, because whether an import resolved the error it was fetched for is
+	/// only answerable once the code has been compiled again with the import in place -- which happens
+	/// after this returns.
+	/// </para>
 	/// </summary>
-	private static async Task<Solution> ResolveImportsAsync(
+	private static async Task<(Solution Solution, ResolvedImports.Imports Imports)> ResolveImportsAsync(
 		WorkspaceSnapshot snapshot,
 		Solution solution,
 		Written written,
 		string path,
 		IReadOnlyList<DiagnosticEntry> introduced,
-		List<string> notices,
 		CancellationToken cancellationToken)
 	{
 		var imports = await ResolvedImports.ForAsync(
@@ -565,13 +579,11 @@ public static class MemberEditService
 			Looked,
 			cancellationToken);
 
-		notices.AddRange(imports.Added);
-		notices.AddRange(imports.Ambiguous);
-		notices.AddRange(imports.Unresolved);
+		if (!imports.AnythingToAdd) return (solution, imports);
 
-		return imports.AnythingToAdd
-			? await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, cancellationToken)
-			: solution;
+		var added = await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, cancellationToken);
+
+		return (added, imports);
 	}
 
 	/// <summary>

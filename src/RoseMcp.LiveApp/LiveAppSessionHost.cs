@@ -277,11 +277,12 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	{
 		int? targetProcessId;
 		string? installLocation;
+		XamlDiagnosticsSession xaml;
 		lock (_gate)
 		{
 			targetProcessId = _targetProcessId;
 			installLocation = _uwpInstallLocation;
-			_xaml ??= new XamlDiagnosticsSession(logger);
+			xaml = _xaml ??= new XamlDiagnosticsSession(logger);
 		}
 
 		if (targetProcessId is not { } pid)
@@ -291,7 +292,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlTree { Detail = held };
 
-		var tree = _xaml.ReadTree(pid);
+		var tree = xaml.ReadTree(pid);
 		if (tree.Detail is not null) return tree with { Detail = WithTargetHeartbeat(tree.Detail) };
 
 		IReadOnlyList<LiveXamlNode> matched = tree.Nodes;
@@ -349,10 +350,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	public LiveXamlProperties ReadXamlProperties(ulong handle, bool includeDefaults)
 	{
 		int? targetProcessId;
+		XamlDiagnosticsSession xaml;
 		lock (_gate)
 		{
 			targetProcessId = _targetProcessId;
-			_xaml ??= new XamlDiagnosticsSession(logger);
+			xaml = _xaml ??= new XamlDiagnosticsSession(logger);
 		}
 
 		if (targetProcessId is not { } pid)
@@ -362,7 +364,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlProperties { Handle = handle, Detail = held };
 
-		var properties = _xaml.ReadProperties(pid, handle, includeDefaults);
+		var properties = xaml.ReadProperties(pid, handle, includeDefaults);
 		return properties.Detail is null
 			? properties
 			: properties with { Detail = WithTargetHeartbeat(properties.Detail) };
@@ -380,10 +382,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	public LiveXamlSelection EnterXamlSelectMode(bool includeAllElements, bool justMyXaml, bool arm = true)
 	{
 		int? targetProcessId;
+		XamlDiagnosticsSession xaml;
 		lock (_gate)
 		{
 			targetProcessId = _targetProcessId;
-			_xaml ??= new XamlDiagnosticsSession(logger);
+			xaml = _xaml ??= new XamlDiagnosticsSession(logger);
 		}
 
 		if (targetProcessId is not { } pid)
@@ -394,8 +397,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
 		var mode = arm
-			? _xaml.EnterSelectMode(pid, includeAllElements, justMyXaml)
-			: _xaml.ExitSelectMode(pid);
+			? xaml.EnterSelectMode(pid, includeAllElements, justMyXaml)
+			: xaml.ExitSelectMode(pid);
 
 		return mode.Detail is null ? mode : mode with { Detail = WithTargetHeartbeat(mode.Detail) };
 	}
@@ -424,10 +427,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	public LiveXamlSelection ClearXamlSelection()
 	{
 		int? targetProcessId;
+		XamlDiagnosticsSession xaml;
 		lock (_gate)
 		{
 			targetProcessId = _targetProcessId;
-			_xaml ??= new XamlDiagnosticsSession(logger);
+			xaml = _xaml ??= new XamlDiagnosticsSession(logger);
 		}
 
 		if (targetProcessId is not { } pid)
@@ -437,7 +441,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
-		var cleared = _xaml.ClearSelection(pid);
+		var cleared = xaml.ClearSelection(pid);
 		return cleared.Detail is null ? cleared : cleared with { Detail = WithTargetHeartbeat(cleared.Detail) };
 	}
 
@@ -448,10 +452,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	public LiveXamlSelection SelectXamlElement(ulong handle)
 	{
 		int? targetProcessId;
+		XamlDiagnosticsSession xaml;
 		lock (_gate)
 		{
 			targetProcessId = _targetProcessId;
-			_xaml ??= new XamlDiagnosticsSession(logger);
+			xaml = _xaml ??= new XamlDiagnosticsSession(logger);
 		}
 
 		if (targetProcessId is not { } pid)
@@ -461,7 +466,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
-		var selected = _xaml.SelectByHandle(pid, handle);
+		var selected = xaml.SelectByHandle(pid, handle);
 		return selected.Detail is null ? selected : selected with { Detail = WithTargetHeartbeat(selected.Detail) };
 	}
 
@@ -473,10 +478,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	public LiveXamlApplyResult ApplyXaml(string? oldXaml, string? newXaml, string? filePath)
 	{
 		int? targetProcessId;
+		XamlDiagnosticsSession xaml;
 		lock (_gate)
 		{
 			targetProcessId = _targetProcessId;
-			_xaml ??= new XamlDiagnosticsSession(logger);
+			xaml = _xaml ??= new XamlDiagnosticsSession(logger);
 		}
 
 		if (targetProcessId is not { } pid)
@@ -486,7 +492,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlApplyResult { Detail = held };
 
-		var applied = _xaml.ApplyEdits(pid, oldXaml, newXaml, filePath);
+		var applied = xaml.ApplyEdits(pid, oldXaml, newXaml, filePath);
 		return applied.Detail is null ? applied : applied with { Detail = WithTargetHeartbeat(applied.Detail) };
 	}
 
@@ -757,17 +763,16 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	private void AttachUiTooling()
 	{
 		int? targetProcessId;
+		XamlDiagnosticsSession xaml;
 		lock (_gate)
 		{
 			if (_state != LiveAppSessionState.Ready) return;
 
 			targetProcessId = _targetProcessId;
-			_xaml ??= new XamlDiagnosticsSession(logger);
+			xaml = _xaml ??= new XamlDiagnosticsSession(logger);
 		}
 
 		if (targetProcessId is not { } pid) return;
-
-		var xaml = _xaml;
 		_ = Task.Run(() =>
 		{
 			try

@@ -48,6 +48,9 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	private string? _aumid;
 	private string? _layoutDirectory;
 
+	/// <summary>Why registration failed, so the skip can say it rather than guess at a cause.</summary>
+	private string? _registrationFailure;
+
 	/// <summary>
 	/// The AUMID of a registered, launchable probe app, having built everything it needs. Skips the
 	/// calling test where the environment cannot provide it, which is the same three skips these tests
@@ -73,17 +76,18 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
 			EnsureX64HostBuilt();
 
-			if (_registered)
+			if (!_registered)
 			{
-				if (_aumid is null) Skip.Test("The UWP probe app could not be registered (developer mode may be off).");
-				return _aumid!;
+				_registered = true;
+				_layoutDirectory = Stage(Build(msbuild!));
+				_aumid = Register(_layoutDirectory, out _registrationFailure);
 			}
 
-			_registered = true;
-			_layoutDirectory = Stage(Build(msbuild!));
-			_aumid = Register(_layoutDirectory);
+			if (_aumid is null)
+			{
+				Skip.Test($"The UWP probe app could not be registered: {_registrationFailure}");
+			}
 
-			if (_aumid is null) Skip.Test("The UWP probe app could not be registered (developer mode may be off).");
 			return _aumid!;
 		}
 	}
@@ -752,20 +756,52 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Registers the loose UWP layout and returns its AUMID, or null when registration is not permitted
-	/// (developer mode off), so the test can skip rather than fail on an environment limit.
+	/// Registers the loose UWP layout and returns its AUMID, or null with the reason it could not.
+	/// <para>
+	/// The reason is returned rather than discarded. It was captured all along and thrown away, so the
+	/// skip named developer mode, which sends the reader to a setting that is often already correct
+	/// and closes the question. A skip that says it does not know is worth more than one that invents
+	/// a cause.
+	/// </para>
 	/// </summary>
-	private static string? Register(string layoutDirectory)
+	private static string? Register(string layoutDirectory, out string? failure)
 	{
+		failure = null;
+
 		var manifest = Path.Combine(layoutDirectory, "AppxManifest.xml");
+		if (!File.Exists(manifest))
+		{
+			failure = $"there is no AppxManifest.xml in {layoutDirectory}";
+			return null;
+		}
+
 		var script =
 			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
 				+ $"$p = Get-AppxPackage '{PackageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
 		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
 
-		var pfnLine = output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
-		if (pfnLine is null) return null;
+		var lines = output.Split('\n').Select(line => line.Trim()).ToArray();
+		var pfnLine = lines.FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
 
-		return $"{pfnLine["PFN: ".Length..].Trim()}!App";
+		if (pfnLine is not null) return $"{pfnLine["PFN: ".Length..].Trim()}!App";
+
+		failure = lines.FirstOrDefault(line => line.StartsWith("ERROR: ", StringComparison.Ordinal))
+			?? "Add-AppxPackage reported nothing and the package is not registered";
+
+		return null;
 	}
+
+	/// <summary>
+	/// Whether this probe has ever come up in this run, which is what separates a machine that cannot
+	/// run these tests from an app that died this time.
+	/// <para>
+	/// Before the first success a launch failure is a fact about the machine and skips; after it, the
+	/// same failure is a test that silently did not run, which is the one outcome an acceptance test
+	/// must not report as green.
+	/// </para>
+	/// </summary>
+	public bool HasLaunched { get; private set; }
+
+	/// <summary>Records that the app came up, which arms the rule above for the rest of the run.</summary>
+	public void NoteLaunched() => HasLaunched = true;
 }

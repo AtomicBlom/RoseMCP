@@ -415,9 +415,19 @@ public sealed class XamlProviderPipe : IDisposable
 			// A pipe whose far end went first. Nothing to reclaim that the handle close does not.
 		}
 
-		// Bounded, because the token is disposed next and a pump still inside a read would register on
-		// one that has gone. A pump that outlives the bound holds nothing but a closed handle.
-		_pump?.Wait(TimeSpan.FromSeconds(2));
+		try
+		{
+			// Bounded, because the token is disposed next and a pump still inside a read would register
+			// on one that has gone. A pump that outlives the bound holds nothing but a closed handle.
+			_pump?.Wait(TimeSpan.FromSeconds(2));
+		}
+		catch (Exception exception)
+		{
+			// Whatever the pump ended on, it ended. Disposal is reached from a session tearing down and
+			// from a using block around a failing test, and a Dispose that throws replaces the reason
+			// either of those was disposing with a reason about the pipe.
+			_logger.LogDebug(exception, "The XAML provider pipe {PipeName} ended its reader with an error.", Name);
+		}
 
 		_server = null;
 		_pump = null;

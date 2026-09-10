@@ -1665,7 +1665,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 			// The element's own declaration is real, and is where it has always belonged.
 			Assert.Equal("ms-appx:///MainPage.xaml", captionProperties.SourceFile);
-			Assert.Equal(17, captionProperties.SourceLine);
+			// The line is read out of the markup rather than written here as a number, because a
+			// number here is one that every edit to the probe above this element silently invalidates --
+			// and the failure it produces names this test rather than the edit that moved the line. The
+			// two sides stay independent: the tool reports what the markup compiler baked into the app,
+			// and this reads the file.
+			Assert.Equal(DeclarationLineOf("Caption"), captionProperties.SourceLine);
 		}
 	}
 
@@ -2324,6 +2329,24 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		var node = tree.Nodes.Single(candidate => candidate.Address == address);
 		var properties = await session.ReadXamlPropertiesAsync(node.Handle, includeDefaults: false, cancellationToken);
 		return properties.Properties.FirstOrDefault(property => property.Name == "Background")?.Value;
+	}
+
+	/// <summary>
+	/// The one-based line of the classic probe's markup that declares an element with this
+	/// <c>x:Name</c>, so a test asserting source info does not carry a line number of its own.
+	/// </summary>
+	/// <param name="name">The <c>x:Name</c> of the element, which the probe gives every declared one.</param>
+	private static int DeclarationLineOf(string name)
+	{
+		var markup = File.ReadAllLines(Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml"));
+		var declaration = $"x:Name=\"{name}\"";
+
+		for (var line = 0; line < markup.Length; line++)
+		{
+			if (markup[line].Contains(declaration, StringComparison.Ordinal)) return line + 1;
+		}
+
+		throw new InvalidOperationException($"The classic probe's markup declares no element named {name}.");
 	}
 
 	/// <summary>

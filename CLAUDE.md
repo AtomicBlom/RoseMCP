@@ -120,6 +120,25 @@ reclaim memory or pick up a rebuilt generator.
   files instead has nothing claimed for it and the file is reported as not being in the build. The
   watcher's list of appearances is still used for one thing: a project or build file appearing, which
   no snapshot can represent and which sends the session round a reload.
+- **A fetch is not a checkout, and a write of ours is not somebody else's.** Both are ways of paying
+  a full design-time build of every project for nothing, and an idle checkout that nobody was editing
+  was paying it twice a minute. `.git/HEAD` is the whole tree-replaced signal, matched as a path:
+  matching the file name instead fires on `refs/remotes/origin/HEAD` and `logs/refs/remotes/origin/HEAD`,
+  which a background fetch writes without touching a line of source. The index is worse than
+  imprecise, it is the wrong file -- a plain `git status` rewrites it to refresh its stat cache, and
+  every IDE git integration runs that continuously *in reaction to file writes*, so counting it lets
+  an agent editing C# drive its own reloads. Nothing wider is needed, because a project file added,
+  removed or edited by any git operation reaches the structural sweep and file contents reach the
+  stat sweep. A linked worktree's `.git` is a file naming the real directory, so testing only for a
+  directory walks past it and leaves every worktree unable to say whether git is mid-operation.
+  <br>
+  The other half is our own writes coming back at us. One rewrite raises more than one watcher event,
+  so suppression that forgets the path on the first leaks the rest into the bulk-change threshold;
+  it is held for a window instead, which costs nothing because the stat sweep is what makes a read
+  correct and the watcher only decides how soon it hears. And the tracking table is restamped after a
+  mutation writes, or the next barrier re-reads every file the mutation just wrote, advances the
+  revision and calls it an external change -- which throws the compilation away and runs every source
+  generator again, on a XAML project every stub included, for text the snapshot already holds.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.
 - **A directory with two solutions is never resolved by guessing.** `SolutionResolver` used to sort
   by name and take the first, which in `D:\Drawboard\Revit` is a one-project installer sitting beside

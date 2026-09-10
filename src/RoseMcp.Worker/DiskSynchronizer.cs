@@ -184,11 +184,27 @@ public sealed class DiskSynchronizer
 	}
 
 	/// <summary>
-	/// Restamps a file after this worker wrote it, so the next sweep sees it as already current.
+	/// Restamps files this worker has just written, so the next sweep sees them as already current.
+	/// <para>
+	/// Without this the table still holds the stamp from before the write, so the next barrier finds
+	/// every file the mutation wrote and re-reads it as an external change: the revision advances, the
+	/// compilation is thrown away and every source generator runs again, all for text the snapshot
+	/// already holds. Called only where the snapshot was adopted along with the write, since that is
+	/// what makes the two agree.
+	/// </para>
 	/// </summary>
-	public void AcceptSelfWrite(DocumentId id, string path)
+	public void AcceptSelfWrites(IReadOnlyCollection<string> paths)
 	{
-		if (_documents.TryGetValue(id, out var tracked)) _documents[id] = tracked with { Stamp = FileStamp.For(path) };
+		if (paths.Count == 0) return;
+
+		var written = paths.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+		foreach (var (id, tracked) in _documents.ToArray())
+		{
+			if (!written.Contains(Path.GetFullPath(tracked.Path))) continue;
+
+			_documents[id] = tracked with { Stamp = FileStamp.For(tracked.Path) };
+		}
 	}
 
 	/// <summary>

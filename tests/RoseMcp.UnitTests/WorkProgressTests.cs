@@ -146,4 +146,40 @@ public sealed class WorkProgressTests
 			}
 		}
 	}
+
+	/// <summary>
+	/// A percentage going down is legitimate here, and a listener has to see it.
+	/// <para>
+	/// Shared work deliberately fans a reload's own scale into calls already in flight: a call sitting
+	/// at 75% of its own operation really is now waiting on a reload that has just started, and saying
+	/// 0 is the honest answer to "why is this taking so long". Clamping to the highest value seen
+	/// would pin that bar at whatever the last operation reached and leave it there for the rest of the
+	/// reload -- which is the fix that suggests itself for the out-of-order progress an SSE transport
+	/// produces, and is why this is asserted rather than left to be rediscovered.
+	/// </para>
+	/// </summary>
+	[Test]
+	public void Shared_work_passes_on_a_reset_to_a_new_operation()
+	{
+		var shared = new SharedWorkProgress();
+		var listener = new CapturingProgress();
+
+		using (shared.Begin("Loading Thing.sln"))
+		{
+			using var following = shared.Follow(listener);
+			shared.Report("Loaded Core (3/4)", 75);
+
+			// A reload starting under a call that was already three-quarters through its own work.
+			using var reloading = shared.Begin("Reloading the solution");
+			shared.Report("Loaded Core (1/4)", 25);
+		}
+
+		var percentages = listener.Reports.Select(report => report.Percent).ToList();
+
+		Assert.Contains(75d, percentages);
+		Assert.Contains(25d, percentages);
+		Assert.True(
+			percentages.IndexOf(75d) < percentages.IndexOf(25d),
+			"the reload's own scale must reach a listener that has already seen a higher percentage");
+	}
 }

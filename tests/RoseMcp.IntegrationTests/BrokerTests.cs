@@ -1022,4 +1022,45 @@ public sealed class BrokerTests
 		Assert.Contains("a string was sent", text, StringComparison.Ordinal);
 		Assert.DoesNotContain("System.String[]", text, StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// A change that reaches another solution says so, in the result the caller actually reads.
+	/// <para>
+	/// Roslyn renames within one <c>Solution</c> and writes to disk, where a sibling solution over the
+	/// same projects picks the new text up while still calling the old name from projects the renaming
+	/// solution never had. That sibling is not stale, it is broken -- and the only thing standing
+	/// between a caller and finding that out at the next build is a sentence in <c>Notices</c>.
+	/// </para>
+	/// <para>
+	/// End to end through a real worker rather than against <c>SolutionResolver.SiblingsSharing</c>,
+	/// which is what was already covered. Whether the overlap is found and whether the sentence reaches
+	/// the caller are two claims, and the second is the one no test made: attribution is added in
+	/// <c>WorkspaceManager</c>, after the worker has answered and to a result the worker knows nothing
+	/// about, so nothing inside the worker could fail if the wiring went.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_change_that_another_solution_also_compiles_says_so()
+	{
+		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
+		await using var manager = CreateManager();
+		var tools = new RoseMcp.Broker.Tools.BrokerAnalysisTools(manager);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var renamed = await tools.RenameSymbolAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbol: "Shared.Widget.Describe",
+			newName: "Explain",
+			filePath: null,
+			workspace: fixture.SolutionPath,
+			apply: true,
+			cancellationToken: cancellationToken);
+
+		Assert.True(renamed.Applied);
+
+		Assert.Contains(
+			renamed.Notices,
+			notice => notice.Contains("Repo.Installer.slnx", StringComparison.Ordinal)
+				&& notice.Contains("also compiles", StringComparison.Ordinal));
+	}
 }

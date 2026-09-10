@@ -16,7 +16,18 @@ public sealed record LiveDebugEventPage
 	/// <summary>The session's state now, so a reader learns of a fault or exit in the same call.</summary>
 	public required LiveAppSessionState State { get; init; }
 
-	/// <summary>The sequence of the newest event returned; pass it back as <c>after</c> next time.</summary>
+	/// <summary>
+	/// How far reading got, which is the sequence of the newest event <em>examined</em> -- matched or
+	/// skipped by the kind filter alike. Pass it back as <c>after</c> next time.
+	/// <para>
+	/// Not the newest event returned, and the difference is the whole reason a filtered read is usable:
+	/// the cursor advances over the events the filter passed over, so paging with it does not
+	/// re-deliver them forever. Where the last event examined happens to be one the filter matched,
+	/// this equals the last returned sequence; where it was skipped, it is past it. Reading is
+	/// exclusive of <c>after</c>, so both cases page forward correctly and neither is a stronger
+	/// promise than the other.
+	/// </para>
+	/// </summary>
 	public required long NextCursor { get; init; }
 
 	/// <summary>The sequence of the oldest event still buffered. A cursor below it missed events.</summary>

@@ -316,9 +316,10 @@ public:
 
 		if (request == L"selection")
 		{
-			// The mode on the first line, then the candidate rows in the shape the work folder writes them,
-			// so one parser on the host serves either channel. Asked for rather than pushed: a pick outlives
-			// the request that armed it by design, because the person clicks when they click.
+			// The mode on the first line, then the candidate rows. All three in one reply, because read
+			// separately they can describe a state that never existed at any instant. Asked for rather than
+			// pushed: a pick outlives the request that armed it by design, because the person clicks when
+			// they click.
 			std::string reply;
 			if (!RoseTapRunOnUiThread([&]
 			{
@@ -333,9 +334,8 @@ public:
 
 		if (request == L"apply" || request.rfind(L"apply\n", 0) == 0)
 		{
-			// The batch rides in the frame, one command per line after the verb. Through the work folder it
-			// needs a staged commands.tsv read back with a narrow stream, which is a second encoding decision
-			// on a path that already had one. A frame is UTF-8 at both ends.
+			// The batch rides in the frame, one command per line after the verb. A frame is UTF-8 at both
+			// ends, so the batch needs no encoding decision of its own.
 			const size_t split = request.find(L'\n');
 
 			std::vector<std::wstring> lines;
@@ -790,9 +790,8 @@ private:
 		return true;
 	}
 
-	// The same rows as a string, for the pipe. A leading status line so "could not read the chain" is
-	// distinguishable from "read it and there were no rows", which the marker file said with the word
-	// "error" and a reply of nothing at all could not.
+	// The same rows as a string, for the pipe. A leading status line, because "could not read the chain"
+	// and "read it and there were no rows" are different answers and an empty reply says both.
 	std::string PropertiesReply(InstanceHandle handle, bool includeDefaults)
 	{
 		std::ostringstream rows;
@@ -803,18 +802,11 @@ private:
 		return "ok\n" + rows.str();
 	}
 
-	// Applies each command from commands.tsv and writes apply.tsv -- one row per command with its
-	// outcome (applied / target not found / property not found / a failure code) -- so the host can
-	// report per-command results to the agent (#12).
 	/// <summary>
-	/// Runs a batch and returns one result row per command, in the order they were given.
+	/// Runs a batch and returns one result row per command, in the order they were given: applied,
+	/// target not found, property not found, or a failure code. Per command, because a batch that
+	/// reported only its own success would hide the one edit in it that did nothing.
 	/// </summary>
-	/// <remarks>
-	/// The rows are the answer whichever channel asked for the batch: over the pipe they are the reply
-	/// frame, and through the work folder they are what apply.tsv holds. One builder, because a result
-	/// that meant one thing on one channel and something else on the other is a difference nothing would
-	/// show until an edit reported the wrong outcome.
-	/// </remarks>
 	std::string ApplyBatch(const std::vector<Command>& commands)
 	{
 		Log(L"applying " + std::to_wstring(commands.size()) + L" command(s)");

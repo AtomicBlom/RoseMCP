@@ -30,7 +30,14 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
                   (TrayRelay, no workers of its own)
 ```
 
-- **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker.
+- **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker. Types, and no
+  package references at all, which is what lets every host reference it. Logic goes there only when
+  a test needs it and the host that owns it cannot be referenced -- `XamlStackModules`,
+  `ToolArgumentShape`, `XamlProviderPath` and `HostVersion` are the whole list, and each is a pure
+  function over strings or JSON with the host's own facts passed in. That exception exists because
+  three of the launchable hosts are `net10.0-windows` or reachable only as a child process, so a
+  rule living beside its host is a rule no test can see. It is not a licence for behaviour: anything
+  holding state, touching Roslyn, or knowing what a tool does belongs in the host.
 - **`RoseMcp.Solutions`** -- library. Reads solution files and `rosemcp.json` without MSBuild or
   Roslyn, so the broker can decide *which* solution a call means without taking a dependency on the
   thing that loads one. Also derives the short workspace key.
@@ -375,8 +382,8 @@ reclaim memory or pick up a rebuilt generator.
   them:** that hides exactly what the apply-then-read-back loop exists to verify, since an applied
   property need not have appeared in the first read. It also means `rose_xaml_properties` is declared
   read-only and is not quite, though nothing the app draws changes.
-- **One XAML request at a time, and the lock has to be re-entrant.** The live-app host serves MCP
-  calls concurrently -- measured, not assumed: two tree reads issued together finished in 118ms
+- **One XAML request at a time, and every path takes the lock exactly once.** The live-app host
+  serves MCP calls concurrently -- measured, not assumed: two tree reads issued together finished in 118ms
   against a warm single read of 112ms -- and every XAML request shares one pipe, which carries one
   request and one reply at a time. The measurement was taken against a channel of files and the
   conclusion outlived it: ten concurrent pairs against the probe produced several fifteen-second waits
@@ -385,12 +392,12 @@ reclaim memory or pick up a rebuilt generator.
   since a truncated tree hands out handles for a tree that is not there, and a pipe fails no better --
   two requests interleaved on one stream pair each reply with the wrong question. Serialised rather
   than given a channel each, because the provider does everything on the app's UI thread, so a second
-  pipe would buy no parallelism from a single-threaded consumer. It must be re-entrant --
-  `System.Threading.Lock`, which is what the rest of this codebase uses: selecting by handle finishes
-  by calling `ReadSelection`, which takes the lock again on the same thread, and a `SemaphoreSlim`
-  would deadlock that forever. Do not conclude from a passing
-  concurrency test that the lock is unnecessary -- the silent failure appeared once in ten, and the
-  test was confirmed to fail with the locks removed.
+  pipe would buy no parallelism from a single-threaded consumer. Every public entry point takes it
+  once and calls a `Core` method that assumes it is held, so no path takes it twice -- which is what
+  keeps the choice of lock free rather than load-bearing, since a `Core` method that took the lock
+  itself would deadlock under a `SemaphoreSlim` and pass under `System.Threading.Lock`. Do not
+  conclude from a passing concurrency test that the lock is unnecessary -- the silent failure
+  appeared once in ten, and the test was confirmed to fail with the locks removed.
 - **A diagnostics UI layer is asked for by XamlRoot, and on WinUI 3 the one-argument call is the wrong
   one.** `IXamlDiagnostics::GetUiLayer` takes no argument, and its own documentation says why that is a
   problem: `IXamlDiagnostics2` exists to add "XamlRoot-based APIs to replace IXamlDiagnostics APIs that
@@ -958,19 +965,21 @@ Enforced by `.editorconfig` where the analyzer can express them, by review where
 - **File-scoped namespaces**, matching the folder they live in (IDE0130). A directory rename is
   otherwise invisible to the compiler.
 - **Braces on their own line** -- Allman, everywhere.
-- **Conditionals get braces**, with one exception: a simple control-flow body kept on the same
-  line may go unbraced.
+- **A body on its own line gets braces.** A single simple statement kept on the same line as the
+  condition may go without them, whatever that statement is; anything that wraps is braced.
 
   ```csharp
-  if (document is null) return null;      // fine -- return/continue/break/throw
+  if (document is null) return null;             // fine
+  if (File.Exists(candidate)) yield return candidate;   // also fine -- not only control flow
   if (!TryResolve(path, out var project))
   {
-      return WorkspaceResult.NotFound(path);   // anything else gets braces
+      return WorkspaceResult.NotFound(path);     // a body on the next line is always braced
   }
   ```
 
-  `.editorconfig` can only express `csharp_prefer_braces = when_multiline`, which is close but
-  not exact. The rule above is the intent.
+  `.editorconfig` can only express `csharp_prefer_braces = when_multiline`, which allows the
+  unbraced next-line body this forbids. The rule above is the intent, and review is what enforces
+  the difference.
 - **Readable `if` statements.** Prefer an early-return guard over nesting; hoist a compound
   condition into a named local `bool` rather than packing three clauses into the `if`.
 

@@ -226,4 +226,19 @@ public sealed class WinUiProbeApp : IAsyncDisposable
 
 		return ValueTask.CompletedTask;
 	}
+
+	/// <summary>
+	/// Whether this probe has ever come up in this run, which is what separates a machine that cannot
+	/// run these tests from an app that died this time.
+	/// <para>
+	/// Before the first success a launch failure is a fact about the machine and skips; after it, the
+	/// same failure is a test that silently did not run, which is the one outcome an acceptance test
+	/// must not report as green. A machine where the Windows App Runtime never bootstraps (#180) never
+	/// sets this and goes on skipping.
+	/// </para>
+	/// </summary>
+	public bool HasLaunched { get; private set; }
+
+	/// <summary>Records that the app came up, which arms the rule above for the rest of the run.</summary>
+	public void NoteLaunched() => HasLaunched = true;
 }

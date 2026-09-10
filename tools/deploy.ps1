@@ -359,9 +359,24 @@ function Assert-WindowsPackage
         $hostRids.Count, ($hostRids -join ', '), $checked)
 }
 
+function Get-InstalledProcess
+{
+    # Only the processes running out of the install being replaced. A development tray on another
+    # port, or an editor session served by some other install, is not in the way of this publish --
+    # and stopping it, or waiting for it, is this script reaching outside what it was asked to
+    # replace. Matching by name alone did both: a deploy to one install died on "workers did not
+    # exit" naming a worker belonging to another one, which cannot exit because nothing asked it to.
+    param([string] $Name)
+
+    $root = [System.IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
+
+    return @(Get-Process -Name $Name -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) })
+}
+
 function Stop-Tray
 {
-    $running = @(Get-Process -Name 'RoseMcp.Tray' -ErrorAction SilentlyContinue)
+    $running = Get-InstalledProcess 'RoseMcp.Tray'
     if ($running.Count -eq 0) { return $false }
 
     Write-Host "  stopping tray (pid $($running.Id -join ', '))"
@@ -371,11 +386,11 @@ function Stop-Tray
     # because it holds RoseMcp.Worker.exe open.
     for ($i = 0; $i -lt 60; $i++)
     {
-        if (-not (Get-Process -Name 'RoseMcp.Worker' -ErrorAction SilentlyContinue)) { break }
+        if ((Get-InstalledProcess 'RoseMcp.Worker').Count -eq 0) { break }
         Start-Sleep -Milliseconds 250
     }
 
-    $stragglers = @(Get-Process -Name 'RoseMcp.Worker' -ErrorAction SilentlyContinue)
+    $stragglers = Get-InstalledProcess 'RoseMcp.Worker'
     if ($stragglers.Count -gt 0) { throw "workers did not exit: $($stragglers.Id -join ', ')" }
 
     return $true
@@ -387,9 +402,7 @@ function Stop-Servers
     # assemblies open, so publishing over them fails on the first DLL. Only the ones under this
     # destination: a server running from some other install is not in the way. Their clients start
     # a fresh one on the next call or on /mcp, and the tray they relay to is being replaced anyway.
-    $root = [System.IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
-    $running = @(Get-Process -Name 'RoseMcp.Server' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) })
+    $running = Get-InstalledProcess 'RoseMcp.Server'
     if ($running.Count -eq 0) { return $false }
 
     Write-Host "  stopping $($running.Count) stdio server(s) running from the install (pid $($running.Id -join ', '))"
@@ -398,7 +411,6 @@ function Stop-Servers
 
     return $true
 }
-
 function Start-Tray
 {
     $exe = "$Destination/tray/RoseMcp.Tray.exe"

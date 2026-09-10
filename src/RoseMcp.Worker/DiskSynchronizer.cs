@@ -3,6 +3,8 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
+using RoseMcp.Solutions;
+
 namespace RoseMcp.Worker;
 
 /// <summary>
@@ -21,13 +23,10 @@ public sealed class DiskSynchronizer
 
 	/// <summary>
 	/// Files whose appearance changes how projects evaluate, and which are not identified by their
-	/// extension. Deliberately named one by one: any new .json would otherwise force a reload, and
-	/// an agent writing code creates those for reasons that have nothing to do with the build.
+	/// extension. Named in <see cref="BuildInfluencingFiles.Structural"/> so the restore inputs and
+	/// the ambient-file sweep cannot drift from this one.
 	/// </summary>
-	private static readonly HashSet<string> StructuralNames = new(StringComparer.OrdinalIgnoreCase)
-	{
-		".editorconfig", "global.json", "nuget.config", "packages.config", "rosemcp.json",
-	};
+	private static readonly IReadOnlySet<string> StructuralNames = BuildInfluencingFiles.Structural;
 
 	/// <summary>
 	/// Directories that hold no source the project compiles. The same list the watcher ignores, for
@@ -65,13 +64,11 @@ public sealed class DiskSynchronizer
 			Track(project.AdditionalDocuments, TrackedDocumentKind.Additional);
 			Track(project.AnalyzerConfigDocuments, TrackedDocumentKind.AnalyzerConfig);
 
-			if (project.FilePath is { Length: > 0 } projectFile)
-				TrackStructural(projectFile);
+			if (project.FilePath is { Length: > 0 } projectFile) TrackStructural(projectFile);
 		}
 
 		TrackStructural(solutionPath);
-		foreach (var influence in BuildInfluencingFiles(solutionPath))
-			TrackStructural(influence);
+		foreach (var influence in AmbientFiles(solutionPath)) TrackStructural(influence);
 	}
 
 	/// <summary>
@@ -191,8 +188,7 @@ public sealed class DiskSynchronizer
 	/// </summary>
 	public void AcceptSelfWrite(DocumentId id, string path)
 	{
-		if (_documents.TryGetValue(id, out var tracked))
-			_documents[id] = tracked with { Stamp = FileStamp.For(path) };
+		if (_documents.TryGetValue(id, out var tracked)) _documents[id] = tracked with { Stamp = FileStamp.For(path) };
 	}
 
 	/// <summary>
@@ -515,25 +511,19 @@ public sealed class DiskSynchronizer
 	private void TrackStructural(string path) => _structuralFiles[Path.GetFullPath(path)] = FileStamp.For(path);
 
 	/// <summary>
-	/// Files that change how projects evaluate without appearing in any project. Editing
-	/// Directory.Packages.props rewrites the reference graph while every csproj stays untouched.
+	/// Files that change how projects evaluate without appearing in any project, from the solution's
+	/// own directory up. Editing <c>Directory.Packages.props</c> rewrites the reference graph while
+	/// every csproj stays untouched.
 	/// </summary>
-	private static IEnumerable<string> BuildInfluencingFiles(string solutionPath)
+	private static IEnumerable<string> AmbientFiles(string solutionPath)
 	{
-		string[] names =
-		[
-			"Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props",
-			"global.json", "nuget.config", "NuGet.config", "NuGet.Config",
-		];
-
 		var directory = Path.GetDirectoryName(Path.GetFullPath(solutionPath));
 		while (!string.IsNullOrEmpty(directory))
 		{
-			foreach (var name in names)
+			foreach (var name in BuildInfluencingFiles.Ambient)
 			{
 				var candidate = Path.Combine(directory, name);
-				if (File.Exists(candidate))
-					yield return candidate;
+				if (File.Exists(candidate)) yield return candidate;
 			}
 
 			directory = Path.GetDirectoryName(directory);

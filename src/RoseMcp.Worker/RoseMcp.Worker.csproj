@@ -18,7 +18,20 @@
     <!-- Not used as a library: this is the generator assembly, loaded at runtime as an
          AnalyzerFileReference from beside the worker. The reference is here so it builds first and
          lands in the output; only its const strings are compiled in. -->
-    <ProjectReference Include="..\RoseMcp.XamlStubs\RoseMcp.XamlStubs.csproj" />
+    <!-- Built and copied beside the worker, never compiled against. It is loaded at run time as an
+         AnalyzerFileReference out of this directory, and a compile reference would put the same
+         assembly in the load context twice. The two names that cross live in RoseMcp.Contracts as
+         consts, so nothing here needs its metadata.
+
+         OutputItemType is what still brings the DLL to the output directory. Without it,
+         ReferenceOutputAssembly="false" drops the copy as well as the reference, and the worker
+         then loads every XAML project with no stub generator at all. That failure is quiet by
+         design, since a missing generator is a warning rather than an error, so
+         PublishedLayoutTests asserts the file is there. -->
+    <ProjectReference Include="..\RoseMcp.XamlStubs\RoseMcp.XamlStubs.csproj"
+                      ReferenceOutputAssembly="false"
+                      OutputItemType="Content"
+                      CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

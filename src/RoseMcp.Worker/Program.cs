@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+using RoseMcp.Contracts;
+
 using RoseMcp.Logging;
 
 namespace RoseMcp.Worker;
@@ -43,7 +45,11 @@ internal static class Program
 		builder.Services.AddSingleton<WorkspaceHost>();
 		builder.Services.AddHostedService(services => services.GetRequiredService<WorkspaceHost>());
 		builder.Services
-			.AddMcpServer(server => server.ServerInfo = new() { Name = "rose-mcp-worker", Version = ThisAssembly.Version })
+			.AddMcpServer(server => server.ServerInfo = new()
+			{
+				Name = "rose-mcp-worker",
+				Version = HostVersion.Of(typeof(Program).Assembly),
+			})
 			.WithStdioServerTransport()
 			.WithToolsFromAssembly()
 			.WithToolErrorMessages(options.SolutionPath);

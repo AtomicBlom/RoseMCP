@@ -79,7 +79,14 @@ internal static class Program
 			builder.Services.AddSingleton<ILoggerFactory>(logging);
 
 			builder.Services
-				.AddMcpServer(server => server.ServerInfo = new() { Name = "rose-mcp", Version = "0.1.0" })
+				.AddMcpServer(server => server.ServerInfo = new()
+				{
+					Name = "rose-mcp",
+
+					// This process's own, not the tray's. A relay declares none of the tools it forwards, so
+					// the number worth telling a client is the one for the binary its client started.
+					Version = HostVersion.Of(typeof(Program).Assembly),
+				})
 				.WithStdioServerTransport()
 				.WithListToolsHandler((_, token) => relay.ListToolsAsync(token))
 				.WithCallToolHandler((context, token) => relay.CallToolAsync(context.Params!, context.Server, token))

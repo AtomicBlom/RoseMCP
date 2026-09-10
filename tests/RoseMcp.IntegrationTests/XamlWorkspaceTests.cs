@@ -227,4 +227,32 @@ public sealed class XamlWorkspaceTests
 		return await new DiagnosticsService(NullLogger<DiagnosticsService>.Instance).AnalyseAsync(
 			snapshot, new DiagnosticsRequest(), TestContext.Current!.Execution.CancellationToken);
 	}
+
+	/// <summary>
+	/// The stub generator has to sit beside the worker, because that is where the worker looks for it:
+	/// <c>AppContext.BaseDirectory</c> plus the file name, loaded as an <c>AnalyzerFileReference</c>.
+	/// <para>
+	/// Asserted because losing it is quiet in every direction. The worker treats a missing generator as
+	/// an enhancement it can do without, so it logs a warning and loads every XAML project unstubbed --
+	/// which presents as thousands of phantom errors about <c>InitializeComponent</c> and
+	/// <c>x:Name</c> fields in somebody's own app rather than as a file that did not ship. And the
+	/// reference that brings it here compiles nothing, so no build breaks if it stops copying.
+	/// </para>
+	/// <para>
+	/// Here rather than in the fast suite, and off this project's own output rather than the worker's:
+	/// the unit test project references the generator directly for the stub tests, so the file is in its
+	/// directory whatever the worker's project file says and the assertion could not fail. This project
+	/// gets it only by the copy under test.
+	/// </para>
+	/// </summary>
+	[Test]
+	public void The_xaml_stub_generator_travels_with_the_worker()
+	{
+		var worker = typeof(SolutionLoader).Assembly.Location;
+		var generator = Path.Combine(Path.GetDirectoryName(worker)!, "RoseMcp.XamlStubs.dll");
+
+		Assert.True(
+			File.Exists(generator),
+			$"the worker loads the stub generator from its own directory, and {generator} is not there");
+	}
 }

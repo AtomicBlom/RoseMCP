@@ -105,11 +105,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// consumer. The wait can be long -- the endpoint timeout is twenty seconds -- and a slow correct
 	// answer is the trade being made.
 	//
-	// It has to be a re-entrant lock, and that is load-bearing: selecting by handle finishes by
-	// calling ReadSelection, which takes this lock again on the same thread. System.Threading.Lock
-	// counts recursion and lets that through, as Monitor did; a SemaphoreSlim does not and would
-	// deadlock the call forever. Proven by Selects_a_xaml_element_by_handle_without_a_click, which
-	// walks exactly that path -- a non-re-entrant lock hangs it rather than failing an assertion.
+	// Every public entry point takes it once and calls a Core method that assumes it is held, so no
+	// path takes it twice and its re-entrancy is not relied on. That is worth keeping rather than
+	// merely true: a Core method that takes the lock itself would deadlock under a SemaphoreSlim and
+	// pass under this one, so the pairing is what makes the choice of lock free rather than load-bearing.
 	private readonly Lock _requests = new();
 
 	/// <summary>
@@ -369,7 +368,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			};
 		}
 
-		return ReadSelection();
+		return ReadSelectionCore();
 	}
 
 	/// <summary>
@@ -1590,29 +1589,17 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Finds the tap's provider DLL for this host's architecture: an explicit override, a published
-	/// layout beside the host (<c>xaml-provider/&lt;rid&gt;</c>), or the repo build output. Null when
-	/// none is present, so the caller can report it rather than fault.
+	/// Finds the tap's provider DLL for this host's architecture. The deciding is in
+	/// <see cref="XamlProviderPath"/>, where a test can reach it; what is here is the two facts only a
+	/// running host knows -- where it is installed and which RID it is.
 	/// </summary>
-	private static string? ResolveProviderPath(XamlTap tap)
-	{
-		var configured = Environment.GetEnvironmentVariable("ROSEMCP_XAML_PROVIDER");
-		if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return Path.GetFullPath(configured);
-
-		var rid = RuntimeInformation.RuntimeIdentifier;
-		var alongside = Path.Combine(AppContext.BaseDirectory, "xaml-provider", rid, tap.ProviderFileName);
-		if (File.Exists(alongside)) return alongside;
-
-		var repositoryRoot = FindRepositoryRoot();
-		if (repositoryRoot is null) return null;
-
-		var providerBin = Path.Combine(repositoryRoot, "src", tap.ProviderProjectName, "bin", ProviderPlatform());
-		if (!Directory.Exists(providerBin)) return null;
-
-		return Directory.EnumerateFiles(providerBin, tap.ProviderFileName, SearchOption.AllDirectories)
-			.OrderByDescending(File.GetLastWriteTimeUtc)
-			.FirstOrDefault();
-	}
+	private static string? ResolveProviderPath(XamlTap tap) => XamlProviderPath.Resolve(new XamlProviderLookup(
+		Environment.GetEnvironmentVariable("ROSEMCP_XAML_PROVIDER"),
+		AppContext.BaseDirectory,
+		RuntimeInformation.RuntimeIdentifier,
+		ProviderPlatform(),
+		tap.ProviderFileName,
+		tap.ProviderProjectName));
 
 	/// <summary>The provider build platform matching this host's architecture (x64 or arm64).</summary>
 	private static string ProviderPlatform() => RuntimeInformation.ProcessArchitecture switch
@@ -1620,17 +1607,6 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		Architecture.Arm64 => "arm64",
 		_ => "x64",
 	};
-
-	private static string? FindRepositoryRoot()
-	{
-		var directory = new DirectoryInfo(AppContext.BaseDirectory);
-		while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
-		{
-			directory = directory.Parent;
-		}
-
-		return directory?.FullName;
-	}
 
 	/// <summary>
 	/// <c>InitializeXamlDiagnosticsEx</c> as a delegate rather than a <c>DllImport</c>, because the

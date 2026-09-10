@@ -198,4 +198,55 @@ public sealed class BodyEditTests
 
 		Assert.Contains("/* counts what was\r\n\t   asked for */", body, StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// A replacement whose lines are written partly flush and partly at the destination's own
+	/// indentation has no reading that is right for all of them, and the fragment rule correctly
+	/// declines to call it written-for-the-destination -- so the flush reading is used and every line
+	/// already carrying the destination gains it a second time. Silently, because a continuation line
+	/// is not a statement: Roslyn's formatter has no rule that moves one back, and neither IDE0055 nor
+	/// dotnet format has an opinion about where a wrapped argument list sits.
+	/// <para>
+	/// So it is said. Applied as before, because there is no better reading to switch to and refusing
+	/// would block a payload nobody can rewrite without being told what is wrong with it, and the
+	/// sentence names the lines on each side.
+	/// </para>
+	/// </summary>
+	[Test]
+	public void Says_when_a_replacement_mixes_flush_and_destination_indentation()
+	{
+		var notices = new List<string>();
+
+		BodyEdit.Anchored(
+			"{\n\t\t\tSend(one);\n}",
+			"Send(one);",
+			"var q = source\n\t\t\t.Where(x => x)\n\t\t\t.ToList();\n_ = q;",
+			mixed: notices.Add);
+
+		var notice = Assert.Single(notices);
+
+		Assert.Contains("mixes", notice, StringComparison.Ordinal);
+		Assert.Contains("line 4", notice, StringComparison.Ordinal);
+		Assert.Contains("lines 2, 3", notice, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The shape the notice must not fire on: a fragment written flush whose own nesting happens to
+	/// reach the destination's depth. Every level between column zero and the destination is present,
+	/// which is what a nested block written flush looks like and what a fragment jumping straight from
+	/// column zero to the destination's indentation does not have.
+	/// </summary>
+	[Test]
+	public void Says_nothing_about_a_flush_replacement_whose_nesting_reaches_the_destination()
+	{
+		var notices = new List<string>();
+
+		BodyEdit.Anchored(
+			"{\n\t\tSend(one);\n}",
+			"Send(one);",
+			"if (a)\n{\n\tif (b)\n\t{\n\t\tC();\n\t}\n}",
+			mixed: notices.Add);
+
+		Assert.Empty(notices);
+	}
 }

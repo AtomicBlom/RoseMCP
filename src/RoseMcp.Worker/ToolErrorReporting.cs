@@ -1,6 +1,12 @@
+using System.Text.Json;
+
 using Microsoft.Extensions.DependencyInjection;
 
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Worker;
 
@@ -35,7 +41,7 @@ public static class ToolErrorReporting
 			}
 			catch (Exception exception) when (Explainable(exception))
 			{
-				throw new McpException($"{exception.Message} (workspace: {solutionPath})", exception);
+				throw new McpException($"{Named(context, exception)} (workspace: {solutionPath})", exception);
 			}
 		}));
 
@@ -47,4 +53,23 @@ public static class ToolErrorReporting
 		exception is not OperationCanceledException
 		and not McpException
 		&& !string.IsNullOrWhiteSpace(exception.Message);
+
+	/// <summary>
+	/// The message to forward: the argument the caller got wrong where the binder refused one, and
+	/// the exception's own words otherwise.
+	/// <para>
+	/// The binder's account of a malformed argument names a CLR type the caller never wrote and points
+	/// at the root of the document, which is the one refusal on this surface that says nothing about
+	/// what to send instead. The tool's own schema answers it, and asking only once the call has
+	/// already been refused means a schema this cannot read costs nothing.
+	/// </para>
+	/// </summary>
+	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception)
+	{
+		if (exception is not JsonException) return exception.Message;
+		if (context.MatchedPrimitive is not McpServerTool tool) return exception.Message;
+
+		return ToolArgumentShape.Mismatch(tool.ProtocolTool.InputSchema, context.Params?.Arguments)
+			?? exception.Message;
+	}
 }

@@ -981,4 +981,45 @@ public sealed class BrokerTests
 		}),
 		NullLoggerFactory.Instance,
 		NullLogger<WorkspaceManager>.Instance);
+
+	/// <summary>
+	/// A malformed argument names the argument, over the wire and through the whole stack rather than
+	/// in a unit test of the sentence.
+	/// <para>
+	/// The binder's own account is "The JSON value could not be converted to System.String[]. Path: $",
+	/// which is accurate and unusable: it names a CLR type the caller never wrote, points at the root
+	/// of the document rather than the property, and does not say which of the tool's several
+	/// string-ish arguments was the array. Every other refusal on this surface says what was wrong with
+	/// what was sent and what to send instead.
+	/// </para>
+	/// <para>
+	/// Deliberately failed rather than read hop by hop, because what this claims is compositional: the
+	/// tool's schema has to reach the filter, the filter has to run before the SDK's own wrapper, and
+	/// the message has to survive the trip back. Reading each of those cannot detect the one that is
+	/// missing.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Names_the_malformed_argument_rather_than_a_clr_type()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		using var server = RoseServerProcess.Start("--port", RoseServerProcess.FreePort().ToString());
+		await server.InitializeAsync(cancellationToken);
+
+		// arguments takes a list of strings; this sends the one element bare, which is the mistake.
+		using var reply = await server.CallToolAsync(
+			ToolNames.ChangeSignature,
+			$$"""
+			{"workspace":{{JsonSerializer.Serialize(fixture.SolutionPath)}},"symbol":"Simple.Greeter.Greet","parameters":"string name","arguments":"name=\"x\""}
+			""",
+			cancellationToken);
+
+		var text = reply.RootElement.GetRawText();
+
+		Assert.Contains("arguments takes a list of strings", text, StringComparison.Ordinal);
+		Assert.Contains("a string was sent", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("System.String[]", text, StringComparison.Ordinal);
+	}
 }

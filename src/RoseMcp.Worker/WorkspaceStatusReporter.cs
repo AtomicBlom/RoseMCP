@@ -343,8 +343,7 @@ public static class WorkspaceStatusReporter
 		var failures = workspaceDiagnostics.Count(diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure);
 		var anyImpaired = projects.Any(project => !project.LoadedSuccessfully);
 
-		if (failures > 0 && anyImpaired)
-			reasons.Add($"MSBuild reported {failures} load failure(s); see loadDiagnostics.");
+		if (failures > 0 && anyImpaired) reasons.Add($"MSBuild reported {failures} load failure(s); see loadDiagnostics.");
 
 		return reasons;
 	}

@@ -958,19 +958,21 @@ Enforced by `.editorconfig` where the analyzer can express them, by review where
 - **File-scoped namespaces**, matching the folder they live in (IDE0130). A directory rename is
   otherwise invisible to the compiler.
 - **Braces on their own line** -- Allman, everywhere.
-- **Conditionals get braces**, with one exception: a simple control-flow body kept on the same
-  line may go unbraced.
+- **A body on its own line gets braces.** A single simple statement kept on the same line as the
+  condition may go without them, whatever that statement is; anything that wraps is braced.
 
   ```csharp
-  if (document is null) return null;      // fine -- return/continue/break/throw
+  if (document is null) return null;             // fine
+  if (File.Exists(candidate)) yield return candidate;   // also fine -- not only control flow
   if (!TryResolve(path, out var project))
   {
-      return WorkspaceResult.NotFound(path);   // anything else gets braces
+      return WorkspaceResult.NotFound(path);     // a body on the next line is always braced
   }
   ```
 
-  `.editorconfig` can only express `csharp_prefer_braces = when_multiline`, which is close but
-  not exact. The rule above is the intent.
+  `.editorconfig` can only express `csharp_prefer_braces = when_multiline`, which allows the
+  unbraced next-line body this forbids. The rule above is the intent, and review is what enforces
+  the difference.
 - **Readable `if` statements.** Prefer an early-return guard over nesting; hoist a compound
   condition into a named local `bool` rather than packing three clauses into the `if`.
 

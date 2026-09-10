@@ -65,8 +65,7 @@ public sealed class DiskSynchronizer
 			Track(project.AdditionalDocuments, TrackedDocumentKind.Additional);
 			Track(project.AnalyzerConfigDocuments, TrackedDocumentKind.AnalyzerConfig);
 
-			if (project.FilePath is { Length: > 0 } projectFile)
-				TrackStructural(projectFile);
+			if (project.FilePath is { Length: > 0 } projectFile) TrackStructural(projectFile);
 		}
 
 		TrackStructural(solutionPath);
@@ -191,8 +190,7 @@ public sealed class DiskSynchronizer
 	/// </summary>
 	public void AcceptSelfWrite(DocumentId id, string path)
 	{
-		if (_documents.TryGetValue(id, out var tracked))
-			_documents[id] = tracked with { Stamp = FileStamp.For(path) };
+		if (_documents.TryGetValue(id, out var tracked)) _documents[id] = tracked with { Stamp = FileStamp.For(path) };
 	}
 
 	/// <summary>
@@ -532,8 +530,7 @@ public sealed class DiskSynchronizer
 			foreach (var name in names)
 			{
 				var candidate = Path.Combine(directory, name);
-				if (File.Exists(candidate))
-					yield return candidate;
+				if (File.Exists(candidate)) yield return candidate;
 			}
 
 			directory = Path.GetDirectoryName(directory);

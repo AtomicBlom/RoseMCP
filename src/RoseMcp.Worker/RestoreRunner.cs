@@ -46,8 +46,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		var (exitCode, output) = await RunAsync(solutionPath, build, cancellationToken);
 		var succeeded = exitCode == 0;
 
-		if (!succeeded)
-			logger.LogWarning("dotnet restore failed with exit code {ExitCode}.", exitCode);
+		if (!succeeded) logger.LogWarning("dotnet restore failed with exit code {ExitCode}.", exitCode);
 
 		return new RestoreReport
 		{
@@ -109,8 +108,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 			foreach (var name in (string[])["Directory.Packages.props", "Directory.Build.props", "Directory.Build.targets", "nuget.config", "global.json"])
 			{
 				var candidate = Path.Combine(directory, name);
-				if (File.Exists(candidate))
-					yield return candidate;
+				if (File.Exists(candidate)) yield return candidate;
 			}
 
 			directory = Path.GetDirectoryName(directory);

@@ -1,0 +1,77 @@
+# The debugging and XAML inspection UI is a separate process that reads the broker over http
+
+**Decision.** A person inspecting a debug session gets `RoseMcp.Inspector`, a WinUI 3 app of its own,
+launched from the tray and talking to the tray's in-process broker over a loopback http surface
+mounted at `/operator`. The tray grows a debug-sessions section beside its workspace cards; the
+inspector holds everything else -- the event tail, breakpoints, the call stack, locals, threads, and
+the live visual tree.
+
+**Why a second process rather than another tray window.** The tray *is* the broker. Restarting it
+drops every loaded solution and detaches every debug session, so iterating on a tree viewer inside it
+costs a full reload each time. A tree over several thousand nodes with a property grid is also a much
+larger crash surface than a status panel, and an unhandled binding exception there would take the
+workers with it. What the inspector may never be is a debugger of its own: a process has one
+debugger, so the inspector is always a client of a session some agent started.
+
+**Why it requires the tray.** A stdio broker has no listener to connect to, and its session lives and
+dies with one client. The inspector says so plainly when no tray answers rather than starting
+anything itself.
+
+## The operator surface is owner-agnostic and holds a token
+
+**Decision.** `/operator/*` resolves sessions through a new `LiveAppSessionManager.ForOperator`, which
+skips the ownership check `Find` applies, and every request must carry a bearer token the tray mints
+per run. The tray passes it to the inspector it launches and offers it as a copyable command line.
+
+**Why not reuse `Find`.** `CallSession.Id` comes from a call-tool filter reading the MCP transport's
+session id, so inside an ASP.NET endpoint it is null. `Find` compares that null against the owner
+recorded when the session started, so an operator endpoint would be refused for every session an
+agent started -- which is all of them.
+
+**Why a token rather than the loopback and Origin checks alone.** A session id is eight hex
+characters and the ownership check exists precisely because guessing one reaches somebody else's
+debugger. An endpoint that bypasses that check reintroduces the hole for any process running as this
+user, so it gets a secret that agents never see. Minted per run rather than persisted: an inspector
+holding yesterday's token should be told to relaunch from the tray, not silently authorised.
+
+## Execution state is orthogonal to session lifecycle
+
+**Decision.** `LiveAppSessionState` keeps meaning lifecycle -- `Starting`, `Ready`, `Faulted`,
+`Ended`. A new `LiveExecutionState` (`Running`, `StoppedAtBreakpoint`, `StoppedAtStep`) sits beside
+it, with a `LiveStop` carrying the thread, the breakpoint, the stop's own event sequence, and who
+will let the target go (`LiveStopResume.AutoContinue` or `HeldByOperator`) with a deadline.
+
+**Why the stop's event sequence is on it.** It is the stop's identity. A UI that re-reads frames
+needs to know it is looking at a *new* stop rather than the same one polled again, and the sequence
+of the `BreakpointHit` or `StepComplete` event that announced it is the only number both ends already
+agree on.
+
+**Why the hold is a resume mode rather than a fourth execution state.** A held target is still
+stopped at a breakpoint or a step, and the pill a reader wants says which. Folding the hold into the
+state loses the cause; putting it on `Resume` keeps both and makes the deadline mean one thing.
+
+## What the inspector reports about XAML is the provider's residency, not a channel
+
+**Decision.** The session reports `LiveXamlProvider` -- `None`, `Resident` or `Lost`.
+
+**Why not a channel.** A channel is what served one read, and there is only one channel now: the
+provider connects back on a named pipe and every request is a message on it. `LiveXamlTree.Channel`
+still answers "which channel served this read" for a caller who wants to see the fast path is there.
+What a status view needs is different and cheaper to act on: whether a provider is resident, so a
+read is a message, or absent, so the next read pays an injection. `Lost` is a real third state rather
+than a tidy-up -- a pipe that drops sends the next call back through injection, which the host already
+warns about, and a session doing it repeatedly is a channel failing quietly.
+
+## Only UWP and WinUI targets get a XAML tab
+
+**Decision.** The host probes the target's loaded modules for its `XamlStack` when it establishes the
+session, re-probing while the answer is `Unknown`, and reports the stack with the sentence that
+decided it. The inspector shows a XAML tab only for `Uwp` and `WinUi`, and otherwise puts one line in
+the header naming what the target is and why it cannot be inspected.
+
+**Why probe at establish rather than at the first XAML call.** The probe is a module-list read
+costing microseconds and needing nothing but a pid, and until now it only ran inside the first
+injection -- so a status view could not say whether a target had XAML without paying for an injection
+to find out. Re-probing while `Unknown` matters because frameworks load late: a target attached at
+startup has not loaded `Windows.UI.Xaml.dll` yet, and a permanent `Unknown` from one early look would
+be a wrong answer rather than an unknown one.

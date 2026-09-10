@@ -28,8 +28,17 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 		IReadOnlyCollection<LiveDebugEventKind>? Kinds,
 		TaskCompletionSource Arrived);
 
-	/// <summary>Records an event, assigning its sequence and timestamp, and dropping the oldest if full.</summary>
-	public void Append(
+	/// <summary>
+	/// Records an event, assigning its sequence and timestamp, and dropping the oldest if full.
+	/// Returns the sequence it assigned.
+	/// <para>
+	/// The sequence is returned because a stop needs it. A held target is identified by the sequence of
+	/// the event announcing the stop, and the caller that announces one is the only thing in a position
+	/// to know which sequence that was -- two hits of one breakpoint on one thread are otherwise
+	/// identical, so a reader could not tell a new stop from the same one polled again.
+	/// </para>
+	/// </summary>
+	public long Append(
 		LiveDebugEventKind kind,
 		string message,
 		int? threadId = null,
@@ -60,11 +69,14 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 			}
 
 			WakeWaitersFor(kind, sequence);
+
+			return sequence;
 		}
 	}
 
 	/// <summary>
-	/// When the newest event arrived and what kind it was, or null if nothing has been recorded.
+	/// When the newest event arrived, what kind it was and its sequence, or null if nothing has been
+	/// recorded.
 	/// <para>
 	/// It answers one question nothing else here can: whether the target is still executing. A target's
 	/// own process state cannot say, because the way a UWP app stops is a job-object freeze -- the
@@ -74,7 +86,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 	/// discriminator, and it is why a failure in the XAML channel reports it.
 	/// </para>
 	/// </summary>
-	public (DateTime When, LiveDebugEventKind Kind)? Newest()
+	public LiveHeartbeat? Newest()
 	{
 		lock (_gate)
 		{
@@ -82,7 +94,13 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 
 			// The ring is a Queue, so the newest is the last enqueued rather than the head.
 			var newest = _events.Last();
-			return (newest.TimestampUtc, newest.Kind);
+
+			return new LiveHeartbeat
+			{
+				Sequence = newest.Sequence,
+				TimestampUtc = newest.TimestampUtc,
+				Kind = newest.Kind,
+			};
 		}
 	}
 

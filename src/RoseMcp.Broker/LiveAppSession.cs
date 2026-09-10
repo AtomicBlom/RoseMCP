@@ -25,6 +25,12 @@ public sealed class LiveAppSession : IAsyncDisposable
 	private LiveAppInfo? _info;
 	private bool _alive = true;
 
+	// When the self-report above was read. Everything in a summary except the activity lists comes
+	// from it, so a reader acting on those fields needs to know which moment they describe -- a host
+	// that has stopped answering keeps describing itself accurately as of some moment, and without
+	// this there is nothing to say which.
+	private DateTime? _infoUtc;
+
 	private LiveAppSession(
 		string sessionId,
 		LiveAppTarget target,
@@ -101,26 +107,63 @@ public sealed class LiveAppSession : IAsyncDisposable
 		return session;
 	}
 
-	/// <summary>Re-reads the host's self-report. Cheap; the host loads nothing to answer it.</summary>
+	/// <summary>
+	/// Re-reads the host's self-report. Cheap; the host loads nothing to answer it.
+	/// <para>
+	/// Only a transport failure marks the session dead. A poll that timed out or was cancelled says
+	/// the host was slow, not that it is gone, and treating the two alike would report a busy host as
+	/// ended -- which is worse than a stale answer, because the summary already says how stale it is.
+	/// </para>
+	/// </summary>
 	public async Task RefreshInfoAsync(CancellationToken cancellationToken)
 	{
 		try
 		{
 			_info = await SendAsync<LiveAppInfo>(ToolNames.LiveAppInfo, cancellationToken);
+			_infoUtc = DateTime.UtcNow;
 		}
-		catch (Exception exception)
+		catch (Exception exception) when (IsTransportFailure(exception))
 		{
 			_alive = false;
 			_logger.LogDebug(exception, "Could not read live-app info for {Target}.", Target.Description);
 		}
+		catch (Exception exception)
+		{
+			_logger.LogDebug(
+				exception, "Reading live-app info for {Target} did not answer this time.", Target.Description);
+		}
 	}
 
+	/// <summary>
+	/// Whether an exception means the host is gone rather than merely slow. The pipe closing, the
+	/// client being disposed, or the process ending are all the first; a cancellation or a timeout is
+	/// the second, and so is anything the host itself refused, which it had to be alive to do.
+	/// <para>
+	/// The inner exception is checked as well, because the MCP client wraps a transport failure before
+	/// it reaches here and only the wrapper would otherwise be seen.
+	/// </para>
+	/// </summary>
+	private static bool IsTransportFailure(Exception exception) =>
+		exception is IOException or ObjectDisposedException
+		|| exception.InnerException is IOException or ObjectDisposedException;
+
+	/// <summary>
+	/// One row for a status view or an operator listing, from the host's last self-report plus what
+	/// this side knows: the target it was started for, when, and what it is doing.
+	/// <para>
+	/// A session whose host has never answered reports itself as running with an unknown XAML stack,
+	/// because that is what is true -- and <see cref="LiveAppSessionSummary.InfoAge"/> is null there,
+	/// which is how a reader tells "nothing has been asked yet" from "asked, and this is the answer".
+	/// </para>
+	/// </summary>
 	public LiveAppSessionSummary Describe()
 	{
 		var info = _info;
 		var state = !_alive
 			? LiveAppSessionState.Ended
 			: info?.State ?? LiveAppSessionState.Starting;
+
+		var now = DateTime.UtcNow;
 
 		return new LiveAppSessionSummary
 		{
@@ -132,10 +175,24 @@ public sealed class LiveAppSession : IAsyncDisposable
 			TargetProcessId = info?.TargetProcessId ?? Target.ProcessId,
 			InstallLocation = info?.InstallLocation,
 			StartedUtc = StartedUtc,
-			Uptime = DateTime.UtcNow - StartedUtc,
+			Uptime = now - StartedUtc,
 			Detail = info?.Detail,
 			Running = _activities.Running(SessionId),
 			Recent = _activities.Recent(SessionId),
+
+			// A session that has ended is not stopped at anything, whatever the last report said: the
+			// stop went with the process, and offering one a reader could ask about would be a stale
+			// answer they could act on.
+			Execution = state == LiveAppSessionState.Ended
+				? LiveExecutionState.Running
+				: info?.Execution ?? LiveExecutionState.Running,
+			Stop = state == LiveAppSessionState.Ended ? null : info?.Stop,
+			XamlStack = info?.XamlStack ?? XamlStack.Unknown,
+			XamlStackReason = info?.XamlStackReason ?? "the host has not reported on this session yet",
+			XamlProvider = info?.XamlProvider ?? LiveXamlProvider.None,
+			HostLogPath = info?.HostLogPath,
+			LastEventAge = info?.LastEvent is { } beat ? now - beat.TimestampUtc : null,
+			InfoAge = _infoUtc is { } read ? now - read : null,
 		};
 	}
 
@@ -417,6 +474,42 @@ public sealed class LiveAppSession : IAsyncDisposable
 	private Task<T> SendAsync<T>(string tool, CancellationToken cancellationToken)
 		=> SendAsync<T>(tool, EmptyArguments, cancellationToken);
 
+	/// <summary>
+	/// What a forwarded call is aimed at, in a few words, for the activity row a status view shows.
+	/// Null for a call that is about the session as a whole.
+	/// <para>
+	/// Read from the arguments rather than declared per tool, so a tool added later gets a target for
+	/// free if it names its subject the way the others do. A file path is reduced to its file name:
+	/// the row is a line in a card, and an absolute path pushes everything else off it.
+	/// </para>
+	/// </summary>
+	private static string? DescribeTarget(IReadOnlyDictionary<string, object?> arguments)
+	{
+		foreach (var name in (string[])["location", "element", "expression", "path", "breakpointId", "tracepointId", "mode"])
+		{
+			if (arguments.TryGetValue(name, out var value) && value?.ToString() is { Length: > 0 } named) return named;
+		}
+
+		if (arguments.TryGetValue("filePath", out var file) && file?.ToString() is { Length: > 0 } path)
+		{
+			return Path.GetFileName(path);
+		}
+
+		if (arguments.TryGetValue("handle", out var handle) && handle is not null) return $"handle {handle}";
+
+		// A long poll is the one call whose duration is expected rather than suspicious, so the row
+		// says how long it agreed to wait -- otherwise it reads as a call that has hung.
+		if (arguments.TryGetValue("waitSeconds", out var wait)
+			&& wait is not null
+			&& int.TryParse(wait.ToString(), out var seconds)
+			&& seconds > 0)
+		{
+			return $"waiting up to {seconds}s";
+		}
+
+		return null;
+	}
+
 	private async Task<T> SendAsync<T>(
 		string tool,
 		IReadOnlyDictionary<string, object?> arguments,
@@ -430,22 +523,42 @@ public sealed class LiveAppSession : IAsyncDisposable
 			SessionId,
 			CallOrigin.Directory ?? "(no origin)");
 
-		// Not CallToolAsync: it abandons the wait without telling the host, which then finishes the
-		// work anyway. The same reasoning as the worker's SendAsync.
-		var result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress: null, cancellationToken);
+		// Recorded the way a worker's calls are, so a status view can show what a debug session is
+		// doing rather than only what it is. The self-report is the one exception: it is the poll that
+		// keeps a summary fresh, so recording it would fill the recent list with the act of looking.
+		using var activity = tool == ToolNames.LiveAppInfo
+			? null
+			: _activities.Begin(SessionId, tool, DescribeTarget(arguments));
 
-		// Asked before the structured content, because a host that refused a call returns none -- so the
-		// reason it refused was being replaced by "returned no structured content", which names the
-		// consequence and not the cause.
-		if (ForwardedError.Message(result) is { } failed) throw new InvalidOperationException(failed);
-
-		if (result.StructuredContent is null)
+		try
 		{
-			throw new InvalidOperationException($"The live-app host returned no structured content for {tool}.");
-		}
+			// Not CallToolAsync: it abandons the wait without telling the host, which then finishes the
+			// work anyway. The same reasoning as the worker's SendAsync.
+			var result = await CancellableToolCall.InvokeAsync(_client, tool, arguments, progress: null, cancellationToken);
 
-		return result.StructuredContent.Value.Deserialize<T>(SerializerOptions)
-			?? throw new InvalidOperationException($"Could not read the live-app host's {tool} result.");
+			// Asked before the structured content, because a host that refused a call returns none -- so the
+			// reason it refused was being replaced by "returned no structured content", which names the
+			// consequence and not the cause.
+			if (ForwardedError.Message(result) is { } failed) throw new InvalidOperationException(failed);
+
+			if (result.StructuredContent is null)
+			{
+				throw new InvalidOperationException($"The live-app host returned no structured content for {tool}.");
+			}
+
+			return result.StructuredContent.Value.Deserialize<T>(SerializerOptions)
+				?? throw new InvalidOperationException($"Could not read the live-app host's {tool} result.");
+		}
+		catch (OperationCanceledException)
+		{
+			activity?.Complete(ActivityOutcome.Cancelled);
+			throw;
+		}
+		catch (Exception exception)
+		{
+			activity?.Complete(ActivityOutcome.Failed, exception.Message);
+			throw;
+		}
 	}
 
 	public async ValueTask DisposeAsync()

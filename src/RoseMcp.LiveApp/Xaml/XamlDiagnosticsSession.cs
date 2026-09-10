@@ -120,6 +120,36 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		lock (_requests) return ReadTreeCore(pid);
 	}
 
+	/// <summary>
+	/// Which XAML framework this session's target turned out to be, once anything has asked. Null until
+	/// the first request resolves a tap, because nothing before that has needed to know.
+	/// <para>
+	/// Exposed so a session's self-report can prefer what a real request found over its own probe. The
+	/// two read the same module list and normally agree; where they do not, this one is the answer that
+	/// a tap was actually chosen by.
+	/// </para>
+	/// </summary>
+	public XamlStackDetection? Stack => _stack;
+
+	/// <summary>
+	/// Whether a provider is resident, which is what decides the cost of the next request: a message
+	/// to a reader already in the app, or an injection first.
+	/// <para>
+	/// Three states rather than a bool, because a pipe that has dropped is not the same as one that was
+	/// never opened. Nothing injected is the ordinary state of a session nobody has asked about XAML;
+	/// a provider that has gone is a channel failing, and the next request will inject a second tap.
+	/// </para>
+	/// </summary>
+	public LiveXamlProvider Provider
+	{
+		get
+		{
+			if (_pipe?.Connected == true) return LiveXamlProvider.Resident;
+
+			return _injections > 0 ? LiveXamlProvider.Lost : LiveXamlProvider.None;
+		}
+	}
+
 	private LiveXamlTree ReadTreeCore(int pid)
 	{
 		var unready = EnsureProvider(pid);

@@ -69,6 +69,12 @@ public partial class App : Application
 			"/admin/workspaces",
 			(WorkspaceManager workspaces) => Results.Json(workspaces.Describe(), ContractJson.Options));
 
+		// The debug sessions beside the workspaces, from the same shared manager, exactly as the http
+		// server maps them. Two hosts serving the same broker should not answer different questions.
+		_broker.MapGet(
+			"/admin/sessions",
+			(LiveAppSessionManager sessions) => Results.Json(sessions.Describe(), ContractJson.Options));
+
 		await _broker.StartAsync();
 
 		_window = new MainWindow();

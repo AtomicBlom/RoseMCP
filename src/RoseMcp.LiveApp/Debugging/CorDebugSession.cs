@@ -31,6 +31,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private const int DefaultAutoContinueSeconds = 30;
 
 	/// <summary>
+	/// The longest an operator's hold can suspend the safety timer for. A hold exists so a stack does
+	/// not move while somebody reads it; a reader who walks away must not leave somebody's app frozen,
+	/// which is the reason the safety timer exists in the first place.
+	/// </summary>
+	private const int MaxHoldSeconds = 600;
+
+	/// <summary>What a hold lasts when the caller does not say. Long enough to read a stack and think.</summary>
+	private const int DefaultHoldSeconds = 300;
+
+	/// <summary>
 	/// How many times to try detaching before giving up. Failure under contention is plausibly
 	/// transient and a retry is far cheaper than what failing costs the person whose app it is.
 	/// </summary>
@@ -52,6 +62,33 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private string? _stoppedBindingId;
 	private CorDebugThread? _stoppedThread;
 	private Timer? _autoContinueTimer;
+
+	// The sequence of the event that announced the current stop, and when it happened. Together they
+	// are the stop's identity: two hits of one breakpoint on one thread are otherwise identical, so a
+	// reader polling this session could not tell a new stop from the same one seen again -- and that
+	// is exactly what decides whether frames and values have to be read afresh.
+	private long _stopEventSequence;
+
+	private DateTime _stoppedAtUtc;
+
+	// What the current stop's safety timeout was set to, kept so releasing a hold can re-arm the timer
+	// with the interval the breakpoint asked for rather than the default.
+	private int _autoContinueSeconds;
+
+	private DateTime _autoContinueAtUtc;
+
+	// When an operator's hold expires, or null when nothing is holding this stop. A hold suspends the
+	// safety timer so a person can read a stack without it moving under them; it is bounded because a
+	// reader who walks away must not leave somebody's app frozen indefinitely.
+	private DateTime? _holdUntilUtc;
+
+	private Timer? _holdTimer;
+
+	// Incremented on every stop, and captured by both timers. Timer.Dispose does not wait for a
+	// callback already running, so a tick queued before a hold was taken would otherwise resume the
+	// target under the person reading it. A callback whose generation has moved returns without
+	// touching anything.
+	private long _stopGeneration;
 
 	public int? TargetProcessId { get; private set; }
 
@@ -224,7 +261,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			// interface is safe to terminate -- already holds.
 			if (_process is null || _detached || _exited) return true;
 
-			DisposeTimer();
+			ClearStopTimers();
 			_stoppedAtBreakpoint = false;
 			_stoppedThread = null;
 
@@ -300,29 +337,38 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	public bool RemoveBreakpoint(string id) => RemoveBinding(id);
 
 	/// <summary>
-	/// Resumes a target held at a stopping breakpoint. Returns false when nothing was stopped. The
-	/// safety timer calls the same path, so whichever comes first resumes and the other is a no-op.
+	/// Resumes a target held at a breakpoint or a step, reporting whether anything was held and
+	/// whether the resume released an operator's hold. Racing the safety timer is harmless: whichever
+	/// arrives first clears the stop, and the loser finds nothing held.
 	/// </summary>
-	public bool Continue() => ContinueInternal(auto: false);
+	public LiveContinueResult Continue() => ContinueInternal(ResumeCause.Caller, generation: null);
 
 	/// <summary>
 	/// Steps the held thread: <c>in</c> into calls, <c>over</c> them, or <c>out</c> of the current
 	/// frame. It resumes the target so the step runs; a StepComplete callback then holds it again at
-	/// the new location. Returns false when nothing is currently stopped, and refuses a mode that is
-	/// none of the three rather than stepping over: a step moves the target, so treating a typo as the
-	/// common case moves it somewhere nobody asked and reports success.
+	/// the new location. Reports not having continued when nothing is currently stopped, and refuses a
+	/// mode that is none of the three rather than stepping over: a step moves the target, so treating a
+	/// typo as the common case moves it somewhere nobody asked and reports success.
+	/// <para>
+	/// A step out of a held stop releases an operator's hold on it, the same as a resume, because the
+	/// stop it was taken for is over. The stop the StepComplete callback creates is a new one and gets
+	/// the safety timer again.
+	/// </para>
 	/// </summary>
 	/// <exception cref="ArgumentException">The mode is not in, over or out.</exception>
-	public bool Step(string mode)
+	public LiveContinueResult Step(string mode)
 	{
 		// Parsed before the lock and before the try below, which turns anything thrown inside it into
-		// a plain false -- and "nothing was stopped to step" is the one answer a caller who mistyped
-		// the mode must not get.
+		// a plain "did not continue" -- and "nothing was stopped to step" is the one answer a caller
+		// who mistyped the mode must not get.
 		var direction = ArgumentValues.Step(mode);
 
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited) return false;
+			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited)
+			{
+				return new LiveContinueResult { Continued = false };
+			}
 
 			try
 			{
@@ -333,14 +379,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			catch (Exception exception)
 			{
 				logger.LogWarning(exception, "Issuing a {Mode} step failed.", mode);
-				return false;
+				return new LiveContinueResult { Continued = false };
 			}
+
+			var releasedHold = _holdUntilUtc is not null;
 
 			// Resume so the step executes; the StepComplete callback holds the target again.
 			_stoppedAtBreakpoint = false;
 			_stoppedBindingId = null;
 			_stoppedThread = null;
-			DisposeTimer();
+			ClearStopTimers();
 
 			try
 			{
@@ -349,10 +397,139 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			catch (Exception exception)
 			{
 				logger.LogWarning(exception, "Continuing for a step failed.");
-				return false;
+				return new LiveContinueResult { Continued = false };
 			}
 
-			return true;
+			return new LiveContinueResult
+			{
+				Continued = true,
+				Detail = releasedHold
+					? "The stop this stepped out of was being held for an operator, so that hold is released. "
+						+ "The stop the step lands on is a new one, under the safety timer again."
+					: null,
+			};
+		}
+	}
+
+	/// <summary>
+	/// What is asking a stop to end. It decides the sentence the event stream carries and whether a
+	/// hold stands in the way, and those differ for all three -- a resume reported as a safety timeout
+	/// sends a reader looking for a timer that did not fire.
+	/// </summary>
+	private enum ResumeCause
+	{
+		/// <summary>Somebody asked. Releases an operator's hold rather than being blocked by it.</summary>
+		Caller,
+
+		/// <summary>The safety timer. Does nothing while an operator holds the stop.</summary>
+		SafetyTimer,
+
+		/// <summary>The hold's own expiry, which is how a hold ends when nobody ends it.</summary>
+		HoldExpiry,
+	}
+
+	/// <summary>
+	/// The stop this session is holding, or null when the target is running. The one call a reader
+	/// needs to know whether frames, locals and threads can be asked for at all.
+	/// </summary>
+	public LiveStop? CurrentStop()
+	{
+		lock (_gate)
+		{
+			if (!_stoppedAtBreakpoint) return null;
+
+			return new LiveStop
+			{
+				// A stop with no binding is a completed step: nothing else reaches Hold without one.
+				State = _stoppedBindingId is null
+					? LiveExecutionState.StoppedAtStep
+					: LiveExecutionState.StoppedAtBreakpoint,
+				ThreadId = _stoppedThread is null ? null : TryThreadId(_stoppedThread),
+				BreakpointId = _stoppedBindingId,
+				EventSequence = _stopEventSequence,
+				StoppedAtUtc = _stoppedAtUtc,
+				Resume = _holdUntilUtc is null ? LiveStopResume.AutoContinue : LiveStopResume.HeldByOperator,
+				ResumeDeadlineUtc = _holdUntilUtc ?? _autoContinueAtUtc,
+			};
+		}
+	}
+
+	/// <summary>
+	/// Suspends the safety timer while somebody reads this stop, and reports the stop as it now
+	/// stands -- or null when there is nothing stopped to hold. Asking again extends it.
+	/// <para>
+	/// Bounded at <see cref="MaxHoldSeconds"/> however long is asked for, and the bound is the point
+	/// rather than a formality: the safety timer exists so an unattended stop cannot wedge somebody's
+	/// app, and a hold with no limit would hand that failure back under another name.
+	/// </para>
+	/// </summary>
+	public LiveStop? SetHold(TimeSpan? requested)
+	{
+		lock (_gate)
+		{
+			if (!_stoppedAtBreakpoint) return null;
+
+			var seconds = Math.Clamp(
+				(int)Math.Round((requested ?? TimeSpan.FromSeconds(DefaultHoldSeconds)).TotalSeconds),
+				1,
+				MaxHoldSeconds);
+
+			var generation = _stopGeneration;
+
+			// The safety timer goes rather than being left to fire into a guard, so there is one timer
+			// per stop and the deadline the caller is told is the one that will actually arrive.
+			_autoContinueTimer?.Dispose();
+			_autoContinueTimer = null;
+			_holdTimer?.Dispose();
+
+			_holdUntilUtc = DateTime.UtcNow.AddSeconds(seconds);
+			_holdTimer = new Timer(
+				_ => ContinueInternal(ResumeCause.HoldExpiry, generation),
+				null,
+				TimeSpan.FromSeconds(seconds),
+				Timeout.InfiniteTimeSpan);
+
+			buffer.Append(
+				LiveDebugEventKind.SessionNotice,
+				$"Held for an operator until {_holdUntilUtc:HH:mm:ss}Z; the auto-continue timer is suspended "
+					+ "until then or until something resumes the target.");
+
+			return CurrentStop();
+		}
+	}
+
+	/// <summary>
+	/// Gives a held stop back to the safety timer, re-armed with the interval its breakpoint asked
+	/// for. Reports the stop as it now stands, or null when nothing is stopped.
+	/// </summary>
+	public LiveStop? ReleaseHold()
+	{
+		lock (_gate)
+		{
+			if (!_stoppedAtBreakpoint) return null;
+			if (_holdUntilUtc is null) return CurrentStop();
+
+			var generation = _stopGeneration;
+
+			_holdTimer?.Dispose();
+			_holdTimer = null;
+			_holdUntilUtc = null;
+
+			// From now rather than from the stop, because the interval is how long an unattended stop
+			// may last and the stop has just stopped being unattended.
+			_autoContinueAtUtc = DateTime.UtcNow.AddSeconds(_autoContinueSeconds);
+			_autoContinueTimer?.Dispose();
+			_autoContinueTimer = new Timer(
+				_ => ContinueInternal(ResumeCause.SafetyTimer, generation),
+				null,
+				TimeSpan.FromSeconds(_autoContinueSeconds),
+				Timeout.InfiniteTimeSpan);
+
+			buffer.Append(
+				LiveDebugEventKind.SessionNotice,
+				$"The operator hold is released; the target auto-continues in {_autoContinueSeconds}s.");
+
+			return CurrentStop();
 		}
 	}
 
@@ -538,17 +715,39 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	private bool ContinueInternal(bool auto)
+	/// <summary>
+	/// Resumes a held target. <paramref name="generation"/> is the stop a timer was armed for, and is
+	/// null when a caller asked.
+	/// <para>
+	/// Two things separate a timer's resume from a caller's. A timer whose generation has moved belongs
+	/// to a stop that is already over, so it does nothing -- disposing a timer does not wait for a
+	/// callback already running, so this is what makes a hold safe rather than nearly safe. And the
+	/// safety timer must not fire while a person is holding the stop, which is the whole point of a
+	/// hold; the hold's own expiry is exempt from that, since it is the thing the hold ends with.
+	/// </para>
+	/// </summary>
+	private LiveContinueResult ContinueInternal(ResumeCause cause, long? generation)
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint || _process is null || _detached || _exited) return false;
+			if (!_stoppedAtBreakpoint || _process is null || _detached || _exited)
+			{
+				return new LiveContinueResult { Continued = false };
+			}
+
+			var supersededTimer = generation is { } armedFor && armedFor != _stopGeneration;
+			var blockedByHold = cause == ResumeCause.SafetyTimer && _holdUntilUtc is not null;
+
+			// Both are no-ops rather than refusals: nothing asked for them.
+			if (supersededTimer || blockedByHold) return new LiveContinueResult { Continued = false };
+
+			var releasedHold = cause == ResumeCause.Caller && _holdUntilUtc is not null;
 
 			_stoppedAtBreakpoint = false;
 			var id = _stoppedBindingId;
 			_stoppedBindingId = null;
 			_stoppedThread = null;
-			DisposeTimer();
+			ClearStopTimers();
 
 			try
 			{
@@ -557,14 +756,28 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			catch (Exception exception)
 			{
 				logger.LogWarning(exception, "Continuing from a stop failed.");
-				return false;
+				return new LiveContinueResult { Continued = false };
 			}
 
 			var where = id is null ? "a step" : $"breakpoint {id}";
-			buffer.Append(
-				LiveDebugEventKind.SessionNotice,
-				auto ? $"Auto-continued from {where} after the safety timeout." : $"Continued from {where}.");
-			return true;
+			var said = cause switch
+			{
+				ResumeCause.SafetyTimer => $"Auto-continued from {where} after the safety timeout.",
+				ResumeCause.HoldExpiry => $"Auto-continued from {where}: the operator hold on it expired.",
+				_ => $"Continued from {where}."
+					+ (releasedHold ? " The operator hold on it is released." : string.Empty),
+			};
+
+			buffer.Append(LiveDebugEventKind.SessionNotice, said);
+
+			return new LiveContinueResult
+			{
+				Continued = true,
+				Detail = releasedHold
+					? "The target was being held for an operator. It has resumed and the hold is released, so "
+						+ "anything reading that stop sees it end."
+					: null,
+			};
 		}
 	}
 
@@ -830,6 +1043,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// top-frame variables and arms the auto-continue safety timer. Returns false so the caller does not
 	/// continue -- the target stays stopped until <see cref="Continue"/>, <see cref="Step"/>, or the
 	/// timer fires. The walk happens before the lock because the thread is already stopped.
+	/// <para>
+	/// The event is appended before the timer is armed, because the sequence it comes back with is the
+	/// stop's identity and the fields describing the stop are not complete without it.
+	/// </para>
 	/// </summary>
 	private bool Hold(CorDebugThread thread, LiveDebugEventKind kind, string prefix, string? bindingId, int? autoContinueSeconds)
 	{
@@ -845,15 +1062,27 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			_stoppedThread = thread;
 
 			var seconds = autoContinueSeconds ?? DefaultAutoContinueSeconds;
-			DisposeTimer();
-			_autoContinueTimer = new Timer(_ => ContinueInternal(auto: true), null, TimeSpan.FromSeconds(seconds), Timeout.InfiniteTimeSpan);
 
-			buffer.Append(
+			// Before the timer is armed, so a callback that fires immediately cannot see a half-built
+			// stop, and so the generation the timer captures is this stop's.
+			var generation = ++_stopGeneration;
+			_autoContinueSeconds = seconds;
+			_stoppedAtUtc = DateTime.UtcNow;
+			_autoContinueAtUtc = _stoppedAtUtc.AddSeconds(seconds);
+
+			_stopEventSequence = buffer.Append(
 				kind,
 				$"{prefix} at {top} on thread {threadId?.ToString() ?? "?"} -- stopped; continue or step (auto-continues in {seconds}s).",
 				threadId: threadId,
 				frames: frames.Count > 0 ? frames : null,
 				variables: variables.Count > 0 ? variables : null);
+
+			ClearStopTimers();
+			_autoContinueTimer = new Timer(
+				_ => ContinueInternal(ResumeCause.SafetyTimer, generation),
+				null,
+				TimeSpan.FromSeconds(seconds),
+				Timeout.InfiniteTimeSpan);
 		}
 
 		return false;
@@ -1177,10 +1406,22 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	private void DisposeTimer()
+	/// <summary>
+	/// Stands down everything that would resume the current stop: the safety timer, an operator's hold
+	/// and its timer. Called wherever a stop ends or begins, so a new stop never inherits the previous
+	/// one's hold.
+	/// <para>
+	/// Disposing a timer does not wait for a callback already running, which is why the stop generation
+	/// exists rather than this being enough on its own.
+	/// </para>
+	/// </summary>
+	private void ClearStopTimers()
 	{
 		_autoContinueTimer?.Dispose();
 		_autoContinueTimer = null;
+		_holdTimer?.Dispose();
+		_holdTimer = null;
+		_holdUntilUtc = null;
 	}
 
 	/// <summary>Wraps a native event handle so it can be waited on or set through the BCL.</summary>

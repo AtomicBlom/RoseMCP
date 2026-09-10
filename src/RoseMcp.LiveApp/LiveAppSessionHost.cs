@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using RoseMcp.Contracts;
 using RoseMcp.LiveApp.Debugging;
 using RoseMcp.LiveApp.Xaml;
+using RoseMcp.Logging;
 
 namespace RoseMcp.LiveApp;
 
@@ -40,6 +41,12 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	private string? _uwpInstallLocation;
 	private XamlDiagnosticsSession? _xaml;
 
+	// Which XAML framework the target is running, once anything has established it. Kept because a
+	// process cannot change the framework it has loaded, so a known answer never needs asking again --
+	// and because the answer is what decides whether a XAML surface can be offered at all, which is a
+	// question a status view asks long before anything asks for a tree.
+	private XamlStackDetection? _xamlStack;
+
 	// Whether somebody has asked for the target to be left running. A detach is that request, and it
 	// is what separates an ordinary close -- where the app is meant to outlive the session -- from a
 	// client that went away, where a launched target has nobody left to end it.
@@ -54,10 +61,40 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		_ => TargetArchitecture.Unknown,
 	};
 
+	/// <summary>
+	/// What this host can say about itself and its target without doing any real work. The broker asks
+	/// on connect and then polls it, so it is also what a status view reads.
+	/// <para>
+	/// The XAML stack is resolved here rather than when the session was established, because a
+	/// framework loads late: a target attached at startup has not loaded its XAML DLL yet, and one
+	/// early look answered <see cref="XamlStack.Unknown"/> forever would be a wrong answer rather than
+	/// an unknown one. Re-probing while it is unknown costs a module-list read.
+	/// </para>
+	/// </summary>
 	public LiveAppInfo CurrentInfo()
 	{
+		int? targetProcessId;
+		XamlStackDetection? known;
+		XamlDiagnosticsSession? xaml;
 		lock (_gate)
 		{
+			targetProcessId = _targetProcessId;
+			known = _xamlStack;
+			xaml = _xaml;
+		}
+
+		// Outside the gate. It costs microseconds, but it is a call into another process and nothing
+		// else in this host should queue behind one.
+		var stack = ResolveXamlStack(targetProcessId, known, xaml);
+
+		lock (_gate)
+		{
+			_xamlStack = stack;
+
+			// Read once, because two calls could straddle a resume and describe a stop that was never
+			// in the state the pair of them imply.
+			var stop = _session?.CurrentStop();
+
 			return new LiveAppInfo
 			{
 				HostProcessId = Environment.ProcessId,
@@ -66,8 +103,38 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				TargetProcessId = _targetProcessId,
 				InstallLocation = _uwpInstallLocation,
 				Detail = _detail,
+				Execution = stop?.State ?? LiveExecutionState.Running,
+				Stop = stop,
+				XamlStack = stack?.Stack ?? XamlStack.Unknown,
+				XamlStackReason = stack?.Reason
+					?? "this session has no target process yet, so its loaded modules cannot be read",
+				XamlProvider = xaml?.Provider ?? LiveXamlProvider.None,
+				LastEvent = _events.Newest(),
+				HostLogPath = RoseFileLogging.Destination,
 			};
 		}
+	}
+
+	/// <summary>
+	/// Which XAML framework the target is running: what a real XAML request found, else what a previous
+	/// probe found, else a fresh probe.
+	/// <para>
+	/// A known answer is never re-probed, because a process cannot change the framework it has loaded.
+	/// An answer a request arrived at wins over this host's own probe: they read the same module list
+	/// and normally agree, and where they do not, the request's is the one a tap was chosen by. With no
+	/// target process there is nothing to read, and the previous answer -- usually none -- stands.
+	/// </para>
+	/// </summary>
+	private static XamlStackDetection? ResolveXamlStack(
+		int? targetProcessId,
+		XamlStackDetection? known,
+		XamlDiagnosticsSession? xaml)
+	{
+		if (xaml?.Stack is { Stack: not XamlStack.Unknown } fromRequest) return fromRequest;
+		if (known is { Stack: not XamlStack.Unknown }) return known;
+		if (targetProcessId is not { } pid) return known;
+
+		return XamlStackProbe.Detect(pid);
 	}
 
 	/// <summary>
@@ -168,7 +235,9 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			session = _session;
 		}
 
-		return new LiveContinueResult { Continued = session?.Continue() == true };
+		// The session's own result, forwarded rather than reduced to a bool: it carries whether the
+		// resume released an operator's hold, which nothing else would say.
+		return session?.Continue() ?? new LiveContinueResult { Continued = false };
 	}
 
 	/// <summary>Steps a target held at a breakpoint: "in", "over", or "out".</summary>
@@ -180,7 +249,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			session = _session;
 		}
 
-		return new LiveContinueResult { Continued = session?.Step(mode) == true };
+		return session?.Step(mode) ?? new LiveContinueResult { Continued = false };
 	}
 
 	/// <summary>Evaluates a field-access expression against the stopped frame; safe, no debuggee code runs.</summary>
@@ -247,7 +316,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	{
 		if (_events.Newest() is not { } newest) return detail;
 
-		var age = DateTime.UtcNow - newest.When;
+		var age = DateTime.UtcNow - newest.TimestampUtc;
 
 		// Logged as well as returned. The detail reaches whoever made the call; the log is where anyone
 		// reading a run afterwards is, and a wedge is diagnosed from the log long after the result is

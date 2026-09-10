@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
+using RoseMcp.Solutions;
 
 namespace RoseMcp.Worker;
 
@@ -98,6 +99,15 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 			.Where(File.Exists)];
 	}
 
+	/// <summary>
+	/// What a restore's freshness is measured against: the project itself, and the ambient files from
+	/// its directory up.
+	/// <para>
+	/// <see cref="BuildInfluencingFiles.Ambient"/> rather than the wider structural set, because an
+	/// <c>.editorconfig</c> decides what the analyzers and the formatter do and says nothing about
+	/// package resolution. Including it would re-run NuGet every time a formatting rule changed.
+	/// </para>
+	/// </summary>
 	private static IEnumerable<string> RestoreInputs(string projectPath)
 	{
 		yield return projectPath;
@@ -105,7 +115,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		var directory = Path.GetDirectoryName(Path.GetFullPath(projectPath));
 		while (!string.IsNullOrEmpty(directory))
 		{
-			foreach (var name in (string[])["Directory.Packages.props", "Directory.Build.props", "Directory.Build.targets", "nuget.config", "global.json"])
+			foreach (var name in BuildInfluencingFiles.Ambient)
 			{
 				var candidate = Path.Combine(directory, name);
 				if (File.Exists(candidate)) yield return candidate;
@@ -166,8 +176,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 	private static async Task AppendAsync(TextReader reader, StringBuilder sink)
 	{
 		var text = await reader.ReadToEndAsync();
-		lock (sink)
-			sink.Append(text);
+		lock (sink) sink.Append(text);
 	}
 
 	/// <summary>

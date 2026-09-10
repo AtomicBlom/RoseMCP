@@ -45,6 +45,9 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 	private bool _registered;
 	private string? _aumid;
 
+	/// <summary>Why registration failed, so the skip can say it rather than guess at a cause.</summary>
+	private string? _registrationFailure;
+
 	/// <summary>
 	/// Takes the modern UWP probe for one test: makes sure everything it needs is built and
 	/// registered, and hands back the AUMID. Skips the calling test where the machine cannot provide
@@ -102,10 +105,13 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 			if (!_registered)
 			{
 				_registered = true;
-				_aumid = Register(_built!);
+				_aumid = Register(_built!, out _registrationFailure);
 			}
 
-			if (_aumid is null) Skip.Test("The modern UWP probe app could not be registered (developer mode may be off).");
+			if (_aumid is null)
+			{
+				Skip.Test($"The modern UWP probe app could not be registered: {_registrationFailure}");
+			}
 
 			return (_built!, _aumid!);
 		}
@@ -184,30 +190,46 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Registers the build output directly and returns its AUMID, or null where registration is not
-	/// permitted, so the test skips rather than failing on an environment limit.
+	/// Registers the build output directly and returns its AUMID, or null with the reason it could not.
 	/// <para>
 	/// The build output <em>is</em> the runnable layout, which is the sharpest break from the classic
-	/// probe. That one produces a managed assembly and a native CoreCLR apphost in different folders
-	/// and needs its AppX layout staged from a build recipe before anything can register it. A modern
-	/// UWP build writes AppxManifest.xml beside a native apphost and coreclr.dll in one flat,
-	/// self-contained folder, so registering it needs no staging at all.
+	/// probe. That one produces a managed assembly and a native CoreCLR apphost in different folders and
+	/// needs its AppX layout staged from a build recipe before anything can register it. A modern UWP
+	/// build writes AppxManifest.xml beside a native apphost and coreclr.dll in one flat, self-contained
+	/// folder, so registering it needs no staging at all.
+	/// </para>
+	/// <para>
+	/// The reason is returned rather than discarded, and that is the point of the out parameter. The
+	/// failure was captured all along and thrown away, so the skip named developer mode -- which on this
+	/// machine is on. A skip that invents a cause sends the reader to a setting that is already correct
+	/// and closes the question, which is worse than one saying it does not know.
 	/// </para>
 	/// </summary>
-	private static string? Register(string layoutDirectory)
+	private static string? Register(string layoutDirectory, out string? failure)
 	{
+		failure = null;
+
 		var manifest = Path.Combine(layoutDirectory, "AppxManifest.xml");
-		if (!File.Exists(manifest)) return null;
+		if (!File.Exists(manifest))
+		{
+			failure = $"there is no AppxManifest.xml in {layoutDirectory}";
+			return null;
+		}
 
 		var script =
 			$"try {{ Add-AppxPackage -Register '{manifest}' -ErrorAction Stop }} catch {{ Write-Output ('ERROR: ' + $_.Exception.Message); exit 0 }}; "
 				+ $"$p = Get-AppxPackage '{PackageName}'; if ($p) {{ Write-Output ('PFN: ' + $p.PackageFamilyName) }}";
 		var (_, output) = RunProcess("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"");
 
-		var pfnLine = output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
-		if (pfnLine is null) return null;
+		var lines = output.Split('\n').Select(line => line.Trim()).ToArray();
+		var pfnLine = lines.FirstOrDefault(line => line.StartsWith("PFN: ", StringComparison.Ordinal));
 
-		return $"{pfnLine["PFN: ".Length..].Trim()}!App";
+		if (pfnLine is not null) return $"{pfnLine["PFN: ".Length..].Trim()}!App";
+
+		failure = lines.FirstOrDefault(line => line.StartsWith("ERROR: ", StringComparison.Ordinal))
+			?? "Add-AppxPackage reported nothing and the package is not registered";
+
+		return null;
 	}
 
 	/// <summary>

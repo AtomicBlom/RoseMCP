@@ -54,8 +54,7 @@ public static partial class SolutionFileReader
 		foreach (var line in File.ReadLines(solutionPath))
 		{
 			var match = ClassicProjectLine().Match(line);
-			if (match.Success)
-				yield return match.Groups["path"].Value;
+			if (match.Success) yield return match.Groups["path"].Value;
 		}
 	}
 

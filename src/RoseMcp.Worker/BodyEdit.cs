@@ -56,6 +56,10 @@ public static class BodyEdit
 	/// How many of the replacement's line endings were given the body's, so a caller can say so. It is a
 	/// change to what a literal says, and it must not be silent.
 	/// </param>
+	/// <param name="mixed">
+	/// That the replacement's own lines disagree about which baseline they were written at, so the
+	/// caller can be told rather than left with a splice whose indentation nothing downstream reports.
+	/// </param>
 	/// <exception cref="ArgumentException">
 	/// Nothing matched, more than one thing did, find carries a comment the token matching cannot see,
 	/// or the match straddles code and trivia.
@@ -65,7 +69,8 @@ public static class BodyEdit
 		string find,
 		string replace,
 		bool includeTrivia = false,
-		Action<int>? rewritten = null)
+		Action<int>? rewritten = null,
+		Action<string>? mixed = null)
 	{
 		if (string.IsNullOrWhiteSpace(find))
 		{
@@ -115,7 +120,7 @@ public static class BodyEdit
 		var start = present[at].SpanStart;
 		var end = present[at + wanted.Count - 1].Span.End;
 
-		return string.Concat(body.AsSpan(0, start), Placed(replace, IndentOf(body, start)), body.AsSpan(end));
+		return string.Concat(body.AsSpan(0, start), Placed(replace, IndentOf(body, start), mixed), body.AsSpan(end));
 	}
 
 	/// <summary>
@@ -376,9 +381,20 @@ public static class BodyEdit
 	/// and neither IDE0055 nor <c>dotnet format</c> has an opinion about where a wrapped argument list
 	/// sits.
 	/// </para>
+	/// <para>
+	/// A payload written half at one baseline and half at the other has no reading that is right for
+	/// all of it, and that is reported rather than refused: the doubling it produces is the same
+	/// invisible kind, and a caller who cannot see which lines disagree cannot rewrite them.
+	/// </para>
 	/// </summary>
-	private static string Placed(string replace, string indent) =>
-		replace.Length == 0 ? replace : MemberSyntax.Reindented(replace, indent);
+	private static string Placed(string replace, string indent, Action<string>? mixed)
+	{
+		if (replace.Length == 0) return replace;
+
+		if (MemberSyntax.MixedIndentation(replace, indent) is { } notice) mixed?.Invoke(notice);
+
+		return MemberSyntax.Reindented(replace, indent);
+	}
 
 	/// <summary>
 	/// The indentation of the line the match starts on, whether or not the match starts the line.

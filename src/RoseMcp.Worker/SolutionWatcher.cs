@@ -111,10 +111,8 @@ public sealed class SolutionWatcher : IDisposable
 			_created.Clear();
 			PruneSelfWrites();
 
-			if (!File.Exists(_solutionPath))
-				signal |= WatchSignal.SolutionMissing;
-			if (GitOperationInFlight())
-				signal |= WatchSignal.GitOperationInFlight;
+			if (!File.Exists(_solutionPath)) signal |= WatchSignal.SolutionMissing;
+			if (GitOperationInFlight()) signal |= WatchSignal.GitOperationInFlight;
 
 			return new WatchReport { Signal = signal, Created = created };
 		}

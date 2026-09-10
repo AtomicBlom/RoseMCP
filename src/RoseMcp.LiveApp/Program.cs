@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using RoseMcp.Contracts;
 using RoseMcp.LiveApp.Debugging;
 using RoseMcp.Logging;
 
@@ -41,7 +42,11 @@ internal static class Program
 		builder.Services.AddSingleton<LiveAppSessionHost>();
 		builder.Services.AddHostedService(services => services.GetRequiredService<LiveAppSessionHost>());
 		builder.Services
-			.AddMcpServer(server => server.ServerInfo = new() { Name = "rose-mcp-live-app", Version = "0.1.0" })
+			.AddMcpServer(server => server.ServerInfo = new()
+			{
+				Name = "rose-mcp-live-app",
+				Version = HostVersion.Of(typeof(Program).Assembly),
+			})
 			.WithStdioServerTransport()
 			.WithToolsFromAssembly()
 			.WithToolErrorMessages();

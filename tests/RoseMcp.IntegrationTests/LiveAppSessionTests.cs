@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -351,21 +352,24 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			Assert.All(hitsOnly.Events, entry => Assert.Equal(LiveDebugEventKind.BreakpointHit, entry.Kind));
 
 			// The two things that make a filter usable rather than a trap: it says how much it passed
-			// over, and its cursor has moved past that -- so paging with it does not re-read forever.
+			// over, and paging with its cursor moves forward instead of re-reading forever.
 			Assert.True(hitsOnly.Skipped > 0, "the filter should report the events it passed over");
 
-			// Asserted about content rather than by comparing the two cursors (#124). The target goes on
-			// emitting between the two reads, so the numbers legitimately differ and the comparison raced
-			// about one run in three -- while saying nothing about the property that matters, which is
-			// that paging with the filtered cursor moves forward instead of re-reading.
 			var lastRead = hitsOnly.Events[^1].Sequence;
 
+			// At or past, never strictly past. NextCursor is how far reading got, so it equals the last
+			// returned sequence whenever the newest event examined was one the filter matched -- a fact
+			// about what the target emitted in the last millisecond rather than about the contract.
+			// Asserting strictly greater is asserting that the last event examined was skipped, which is
+			// a coin toss against a target emitting continuously, and says nothing about paging.
 			Assert.True(
-				hitsOnly.NextCursor > lastRead,
-				$"the filtered cursor ({hitsOnly.NextCursor}) should be past the last event it returned ({lastRead})");
+				hitsOnly.NextCursor >= lastRead,
+				$"the filtered cursor ({hitsOnly.NextCursor}) should be at or past the last event it returned ({lastRead})");
 
 			var nextPage = await session.ReadEventsAsync(hitsOnly.NextCursor, ["BreakpointHit"], limit: 500, cancellationToken);
 
+			// Paging forward is the property, and this checks it directly: reading is exclusive of the
+			// cursor, so nothing already returned can come back whether the two were equal or not.
 			Assert.DoesNotContain(nextPage.Events, entry => entry.Sequence <= lastRead);
 
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.
@@ -3263,21 +3267,23 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 	}
 
 	/// <summary>
-	/// Waits for a launched probe to have a window, and says exactly what happened when it does not.
-	/// </summary>
-	/// <remarks>
-	/// Replaces a bare six-second sleep, which was wrong in both directions. It waited six seconds on
-	/// a machine that was ready in one, and on a machine where the app died at startup it waited the
-	/// same six and then attached to nothing -- so a WinUI probe that failed to bootstrap the Windows
-	/// App Runtime under load presented as a test hanging or failing on an attach, with the actual
-	/// cause two layers down and no message anywhere (#129).
+	/// Waits for the probe app to open a window, giving up as soon as the process is gone rather than
+	/// on a timer.
 	/// <para>
-	/// An app that exits is a fact about this machine rather than about the change under test, so it
-	/// skips with the exit code rather than failing. An app that is up but slow costs only the time it
-	/// actually needs.
+	/// It used to be a flat six-second sleep, which cost six seconds on a machine that was ready in
+	/// one, and on a machine where the app died at startup it waited the same six and then attached to
+	/// nothing -- so a WinUI probe that failed to bootstrap the Windows App Runtime under load
+	/// presented as a test hanging or failing on an attach, with the actual cause two layers down and
+	/// no message anywhere (#129).
 	/// </para>
-	/// </remarks>
-	private static async Task WaitForProbeWindowAsync(Process child, CancellationToken cancellationToken)
+	/// <para>
+	/// What a failure means depends on whether this probe has ever come up in this run. Before the
+	/// first success it is a fact about the machine and skips with the exit code; after it, the same
+	/// failure is an acceptance test that silently did not run, which is the one outcome this suite
+	/// must not report as green. An app that is up but slow costs only the time it actually needs.
+	/// </para>
+	/// </summary>
+	private async Task WaitForProbeWindowAsync(Process child, CancellationToken cancellationToken)
 	{
 		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
 
@@ -3285,19 +3291,24 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		{
 			if (child.HasExited)
 			{
-				Skip.Test(
+				Unavailable(
+					winui.HasLaunched,
 					$"The probe app exited with code {child.ExitCode} before it could be attached to, which on WinUI "
 						+ "is usually the Windows App Runtime failing to bootstrap.");
 			}
 
 			child.Refresh();
 
-			if (child.MainWindowHandle != nint.Zero) return;
+			if (child.MainWindowHandle != nint.Zero)
+			{
+				winui.NoteLaunched();
+				return;
+			}
 
 			await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
 		}
 
-		Skip.Test("The probe app did not open a window within 30 seconds.");
+		Unavailable(winui.HasLaunched, "The probe app did not open a window within 30 seconds.");
 	}
 
 	private static string ProbeTargetPath()
@@ -3339,8 +3350,10 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 			if (!await WaitForProbeProcessAsync(cancellationToken))
 			{
-				Skip.Test("The UWP probe app did not start outside the debugger.");
+				Unavailable(probe.HasLaunched, "The UWP probe app did not start outside the debugger.");
 			}
+
+			probe.NoteLaunched();
 
 			var session = await manager.StartAsync(
 				new LiveAppTarget
@@ -3463,5 +3476,33 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 				lock (lines) lines.Add(line);
 			}
 		}
+	}
+
+	/// <summary>
+	/// Skips or fails, on the one question that separates the two: has this app ever come up in this
+	/// run?
+	/// <para>
+	/// A machine that cannot run these tests never produces a first success and goes on skipping,
+	/// which is what keeps a laptop without the WinUI tooling, or one where the Windows App Runtime
+	/// never bootstraps (#180), out of the red. A run that produced a first success and then could not
+	/// is reporting something real, and a skip there is an acceptance test reading as green while it
+	/// did not run.
+	/// </para>
+	/// </summary>
+	/// <param name="hasLaunched">Whether the fixture has seen its app come up in this run.</param>
+	/// <param name="reason">What happened, said the same way either side of the rule.</param>
+	[DoesNotReturn]
+	private static void Unavailable(bool hasLaunched, string reason)
+	{
+		if (hasLaunched)
+		{
+			Assert.Fail($"{reason} It came up earlier in this run, so this is a failure rather than a limit of this machine.");
+		}
+
+		Skip.Test(reason);
+
+		// Skip.Test throws, and the compiler cannot know that from an attribute the framework does not
+		// carry. Marking this method as not returning is what lets the callers read as guards.
+		throw new InvalidOperationException(reason);
 	}
 }

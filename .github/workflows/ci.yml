@@ -114,6 +114,12 @@ jobs:
       - name: Integration tests, excluding the live-app suite
         run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/*/*[Category!=LiveApp]'
 
+      # The Windows-only half, which is its own project because it takes a compile reference on
+      # RoseMcp.LiveApp (net10.0-windows). Keeping that out of the project above is what leaves the
+      # door open to running the rest off Windows.
+      - name: Integration tests that need Windows
+        run: ./tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/RoseMcp.IntegrationTests.Windows.exe
+
   # The native XAML providers, for every architecture a shipped install can carry.
   #
   # Its own job because nothing else here compiles a line of the C++: the taps are built by their own

@@ -847,4 +847,96 @@ public static class MemberSyntax
 
 		return line;
 	}
+
+	/// <summary>
+	/// A sentence naming the lines that cannot be read the way the rest of <paramref name="code"/> is,
+	/// or null where the fragment reads consistently.
+	/// <para>
+	/// A fragment written flush and a fragment written for the destination are both understood, and a
+	/// fragment that is half of each is neither: <see cref="Written"/> declines it, so the baseline
+	/// falls back to the first line and every line already carrying the destination gains it again.
+	/// There is no better reading to switch to -- a fragment spanning a dedent below the splice point
+	/// is absolute by construction, and one written flush cannot express "one level out" at all -- so
+	/// what is left is to say which lines are on which side rather than to apply the doubling in
+	/// silence. A continuation line is not a statement, so nothing downstream reports it: Roslyn's
+	/// formatter has no rule that moves one back, and neither IDE0055 nor <c>dotnet format</c> has an
+	/// opinion about where a wrapped argument list sits.
+	/// </para>
+	/// <para>
+	/// Every level between column zero and the destination has to be absent for this to be the mixed
+	/// shape. A block written flush whose own nesting happens to reach the destination's depth passes
+	/// through those levels on the way -- so it is ordinary nesting and is left alone, which is the
+	/// difference between the two and the reason this is narrow enough to be worth saying at all.
+	/// </para>
+	/// </summary>
+	/// <param name="code">The fragment as the caller wrote it.</param>
+	/// <param name="indent">The indentation of the code it is going beside.</param>
+	public static string? MixedIndentation(string code, string indent)
+	{
+		if (indent.Length == 0) return null;
+
+		var lines = Split(code);
+		var untouched = LiteralLines(code);
+		var first = lines.ToList().FindIndex(line => line.Content.Trim().Length > 0);
+
+		if (first < 0) return null;
+
+		// A first line carrying indentation is the fragment's own baseline, deliberately written, and
+		// every other line is measured against it -- so there is nothing here to be inconsistent with.
+		if (Leading(lines[first].Content).Length > 0) return null;
+		if (Written(lines, first, untouched, indent) is not null) return null;
+
+		var flush = new List<int>();
+		var placed = new List<int>();
+
+		for (var index = first + 1; index < lines.Count; index++)
+		{
+			if (untouched.Contains(index) || lines[index].Content.Trim().Length == 0) continue;
+
+			var leading = Leading(lines[index].Content);
+
+			if (leading.Length == 0)
+			{
+				flush.Add(index);
+			}
+			else if (leading.StartsWith(indent, StringComparison.Ordinal))
+			{
+				placed.Add(index);
+			}
+			else
+			{
+				// A level the destination does not reach: the fragment is nested rather than mixed.
+				return null;
+			}
+		}
+
+		if (flush.Count == 0 || placed.Count == 0) return null;
+
+		return $"The replacement mixes {Lines(flush)} written flush ({Snippet(lines, flush[0])}) with "
+			+ $"{Lines(placed)} written at the destination's own indentation ({Snippet(lines, placed[0])}). "
+			+ "The flush reading was used, so the indented lines land one level deeper than the rest. "
+			+ "Write every line at one baseline or the other.";
+	}
+
+	/// <summary>
+	/// "line 4" or "lines 2, 3", counting from one so the numbers match what the caller wrote rather
+	/// than the array they were found in. Past three it stops listing and says how many there are.
+	/// </summary>
+	private static string Lines(IReadOnlyList<int> indexes) => indexes.Count switch
+	{
+		1 => $"line {indexes[0] + 1}",
+		<= 3 => $"lines {string.Join(", ", indexes.Select(index => index + 1))}",
+		_ => $"{indexes.Count} lines from line {indexes[0] + 1}",
+	};
+
+	/// <summary>
+	/// One line's content, trimmed and shortened, so the sentence can point at a line without carrying
+	/// a wrapped argument list into an error message.
+	/// </summary>
+	private static string Snippet(IReadOnlyList<(string Content, string Ending)> lines, int index)
+	{
+		var content = lines[index].Content.Trim();
+
+		return content.Length <= 40 ? $"'{content}'" : $"'{content[..37]}...'";
+	}
 }

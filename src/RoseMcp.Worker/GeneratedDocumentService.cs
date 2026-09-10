@@ -2,7 +2,6 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 
 using RoseMcp.Contracts;
-using RoseMcp.XamlStubs;
 
 namespace RoseMcp.Worker;
 

@@ -189,6 +189,16 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		IProgress<ProgressNotificationValue>? progress = null,
 		string? operation = null)
 	{
+		// One line per forwarded call, so which rose_* tools a session actually reaches for is
+		// measurable from the files already being written rather than from anybody's recollection. The
+		// origin directory is the closest thing to a session identity a worker call has -- it is a
+		// working directory in practice -- and it is null for a client with no relay in front of it.
+		_logger.LogInformation(
+			"Forwarding {Tool} to {WorkspaceKey} for {Origin}.",
+			tool,
+			Key,
+			CallOrigin.Directory ?? "(no origin)");
+
 		using var activity = _activities.Begin(SolutionPath, operation ?? tool, DescribeTarget(arguments), progress);
 
 		try

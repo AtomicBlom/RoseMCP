@@ -151,4 +151,93 @@ public sealed class PublishedLayoutTests : IDisposable
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 		File.WriteAllBytes(path, []);
 	}
+
+	/// <summary>
+	/// The provider beside the host, which is what a deploy produces:
+	/// <c>live-app/&lt;rid&gt;/xaml-provider/&lt;rid&gt;/</c>. This is the case that has to work on an
+	/// install, and the one the repository fallback used to hide -- inside a checkout it always found
+	/// something, so the suite could not tell a correct layout from a broken one.
+	/// </summary>
+	[Test]
+	public void Finds_the_xaml_provider_beside_the_live_app_host()
+	{
+		Stage(Path.Combine("live-app", "win-x64", "xaml-provider", "win-x64", "RoseMcp.Xaml.Uwp.Tap.dll"));
+
+		var resolved = XamlProviderPath.Resolve(Lookup(Path.Combine(_root, "live-app", "win-x64")));
+
+		Assert.Equal(
+			Path.Combine(_root, "live-app", "win-x64", "xaml-provider", "win-x64", "RoseMcp.Xaml.Uwp.Tap.dll"),
+			resolved);
+	}
+
+	/// <summary>
+	/// An install whose provider did not ship says so rather than guessing, so the caller can name the
+	/// architecture it wanted. A host outside a checkout has no third place to look.
+	/// </summary>
+	[Test]
+	public void Says_nothing_when_no_provider_is_installed()
+	{
+		Assert.Null(XamlProviderPath.Resolve(Lookup(Path.Combine(_root, "live-app", "win-x64"))));
+	}
+
+	/// <summary>
+	/// A provider for another architecture is not an answer. Injecting it would load a DLL the target
+	/// cannot execute, which fails inside somebody else's process rather than here.
+	/// </summary>
+	[Test]
+	public void Does_not_take_a_provider_built_for_another_architecture()
+	{
+		Stage(Path.Combine("live-app", "win-x64", "xaml-provider", "win-arm64", "RoseMcp.Xaml.Uwp.Tap.dll"));
+
+		Assert.Null(XamlProviderPath.Resolve(Lookup(Path.Combine(_root, "live-app", "win-x64"))));
+	}
+
+	/// <summary>
+	/// The override wins, and only when it names a file that is there. A path pointing at nothing falls
+	/// through to the layout rather than failing: it is usually a stale environment variable, and the
+	/// install beside the host is still the right answer.
+	/// </summary>
+	[Test]
+	public void Prefers_an_override_that_exists_and_passes_over_one_that_does_not()
+	{
+		Stage(Path.Combine("live-app", "win-x64", "xaml-provider", "win-x64", "RoseMcp.Xaml.Uwp.Tap.dll"));
+		Stage(Path.Combine("elsewhere", "RoseMcp.Xaml.Uwp.Tap.dll"));
+
+		var host = Path.Combine(_root, "live-app", "win-x64");
+		var override_ = Path.Combine(_root, "elsewhere", "RoseMcp.Xaml.Uwp.Tap.dll");
+
+		Assert.Equal(override_, XamlProviderPath.Resolve(Lookup(host) with { Configured = override_ }));
+
+		Assert.Equal(
+			Path.Combine(host, "xaml-provider", "win-x64", "RoseMcp.Xaml.Uwp.Tap.dll"),
+			XamlProviderPath.Resolve(Lookup(host) with { Configured = Path.Combine(_root, "gone.dll") }));
+	}
+
+	/// <summary>
+	/// A UWP host and a WinUI host look in the same place for different files, so the file name is the
+	/// only thing separating them and a lookup that ignored it would inject the wrong tap.
+	/// </summary>
+	[Test]
+	public void Looks_for_the_provider_the_tap_names()
+	{
+		Stage(Path.Combine("live-app", "win-x64", "xaml-provider", "win-x64", "RoseMcp.Xaml.WinUi.Tap.dll"));
+
+		var host = Path.Combine(_root, "live-app", "win-x64");
+
+		Assert.Null(XamlProviderPath.Resolve(Lookup(host)));
+		Assert.NotNull(XamlProviderPath.Resolve(
+			Lookup(host) with { ProviderFileName = "RoseMcp.Xaml.WinUi.Tap.dll" }));
+	}
+
+	/// <summary>
+	/// A staged host, which is outside any checkout, so the repository fallback finds nothing and the
+	/// published layout is the only thing being asked about.
+	/// </summary>
+	private static XamlProviderLookup Lookup(string baseDirectory) => new(
+		Configured: null,
+		BaseDirectory: baseDirectory,
+		RuntimeIdentifier: "win-x64",
+		Platform: "x64",
+		ProviderFileName: "RoseMcp.Xaml.Uwp.Tap.dll",
+		ProviderProjectName: "RoseMcp.Xaml.Uwp.Tap");
 }

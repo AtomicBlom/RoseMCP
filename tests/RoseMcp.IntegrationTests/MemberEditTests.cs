@@ -1605,4 +1605,39 @@ public sealed class MemberEditTests
 
 		Assert.Contains("Pass one of code", thrown.Message, StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// An import fetched for a name and the error it was fetched for surviving are two facts the
+	/// result used to carry side by side without joining them: "imported Library.Extras, the only
+	/// namespace anything of that name is in" beside an error about the same name, and nothing saying
+	/// the first had not fixed the second.
+	/// <para>
+	/// The join is decidable rather than a guess -- an import for a name that still does not bind is
+	/// the wrong import -- and it is what turns the outcome a sole candidate is allowed to have into
+	/// one sentence rather than two facts the caller has to put together. Here the only thing called
+	/// <c>Shouted</c> is a method, the code uses the name as a type, and the namespace is right about
+	/// where the name lives and wrong about what it is.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Says_when_an_import_did_not_resolve_the_error_it_was_fetched_for()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public Shouted? Loud() => null;",
+		});
+
+		Assert.Contains(result.IntroducedDiagnostics, entry => entry.Id == "CS0246");
+
+		Assert.Contains(
+			result.Notices,
+			notice => notice.Contains("Shouted", StringComparison.Ordinal)
+				&& notice.Contains("Library.Extras", StringComparison.Ordinal)
+				&& notice.Contains("did not resolve", StringComparison.Ordinal));
+	}
 }

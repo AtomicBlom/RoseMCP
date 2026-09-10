@@ -107,10 +107,10 @@ static HANDLE g_pipe = INVALID_HANDLE_VALUE;
 // running two. The thread itself is detached and never held: nothing joins it, and a joinable
 // std::thread reaching static destruction is std::terminate inside the app being inspected.
 static std::atomic<bool> g_pipeRunning{ false };
-// One length-prefixed UTF-8 message, which is the whole framing. Every message through the folder
-// made its own encoding decision and the record shows the cost twice: a wofstream narrowing UTF-16
-// to ANSI so a tree parsed as zero elements, and commands.tsv needing UTF-8-without-BOM because the
-// reader was narrow. One frame format removes the category.
+// One length-prefixed UTF-8 message, which is the whole framing. Fixing the encoding once removes a
+// category of failure rather than an instance: a per-message decision produces a narrowing to ANSI
+// that parses a tree as zero elements, and a payload that needs UTF-8 without a BOM because the
+// reader on the other side is narrow -- both of which read as the data being wrong.
 static bool WriteFrame(const std::string& payload)
 {
 	if (g_pipe == INVALID_HANDLE_VALUE) return false;

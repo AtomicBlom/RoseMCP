@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
+using RoseMcp.Settings;
 using RoseMcp.Ui;
 using RoseMcp.Ui.Core;
 using RoseMcp.Ui.Core.Inspector;
@@ -342,6 +343,61 @@ public sealed partial class MainWindow : Window
 			var folder = RoseLogFile.DirectoryFor("LiveApp");
 			Directory.CreateDirectory(folder);
 			Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+		}
+		catch (Exception exception)
+		{
+			Report(exception);
+		}
+	}
+
+	/// <summary>
+	/// Reads the preference on opening rather than holding it, because the tray writes this file
+	/// too: a toggle showing what this window last set would disagree with the tray's within a
+	/// minute of somebody using the other one.
+	/// </summary>
+	private void OnSettingsOpening(object sender, object args) =>
+		ShowOnAttach.IsChecked = RoseSettingsFile.Read().ShowInspectorOnAttach;
+
+	/// <summary>
+	/// Turns the "show the inspector when the debugger attaches" preference on or off, for every
+	/// host on this machine.
+	/// <para>
+	/// The item is put back to what the file says rather than to what was clicked, so a write that
+	/// did not land shows as a toggle that did not move. A checkbox claiming a preference the next
+	/// attach will not honour is worse than one that visibly refused.
+	/// </para>
+	/// </summary>
+	private void OnToggleShowInspectorOnAttach(object sender, RoutedEventArgs args)
+	{
+		var wanted = sender is ToggleMenuFlyoutItem { IsChecked: true };
+
+		if (!RoseSettingsFile.Write(RoseSettingsFile.Read() with { ShowInspectorOnAttach = wanted }))
+		{
+			ShowNotice(
+				$"Could not write {RoseSettingsFile.PathFor()}, so that preference is unchanged.",
+				InfoBarSeverity.Warning);
+		}
+
+		ShowOnAttach.IsChecked = RoseSettingsFile.Read().ShowInspectorOnAttach;
+	}
+
+	/// <summary>
+	/// Shows the preferences file in Explorer. It is plain JSON and a person is allowed to read or
+	/// edit it, which is most of the reason it is a file rather than something in the registry.
+	/// </summary>
+	private void OnOpenSettingsFile(object sender, RoutedEventArgs args)
+	{
+		try
+		{
+			var path = RoseSettingsFile.PathFor();
+
+			if (!File.Exists(path))
+			{
+				// Written on demand, so "open the settings file" is never an item that opens nothing.
+				RoseSettingsFile.Write(RoseSettingsFile.Read());
+			}
+
+			Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
 		}
 		catch (Exception exception)
 		{

@@ -43,6 +43,25 @@
 					<Button x:Name="DetachButton" Style="{StaticResource ChipButtonStyle}" Click="OnDetach"
 						Content="Detach" IsEnabled="False"
 						ToolTipService.ToolTip="End the session. The target keeps running." />
+
+					<!-- A flyout rather than a toggle in the header, because what is in it is not about
+					     this session: it is a preference every RoseMCP host on the machine reads. -->
+					<Button x:Name="SettingsButton" Style="{StaticResource IconButtonStyle}"
+						ToolTipService.ToolTip="Settings">
+						<Button.Content>
+							<FontIcon Glyph="&#xE713;" FontSize="13" />
+						</Button.Content>
+						<Button.Flyout>
+							<MenuFlyout Opening="OnSettingsOpening">
+								<ToggleMenuFlyoutItem x:Name="ShowOnAttach"
+									Text="Show inspector when the debugger attaches"
+									Click="OnToggleShowInspectorOnAttach" />
+								<MenuFlyoutSeparator />
+								<MenuFlyoutItem x:Name="OpenSettingsFile" Text="Open the settings file"
+									Click="OnOpenSettingsFile" />
+							</MenuFlyout>
+						</Button.Flyout>
+					</Button>
 				</StackPanel>
 
 				<TextBlock x:Name="FactsText" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0"

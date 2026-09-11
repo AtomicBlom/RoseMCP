@@ -1003,13 +1003,20 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var (module, token) = FrameIdentity(frame);
 		var offset = IlOffsetOf(frame);
 		var (state, source) = SymbolsOf(module, token, offset);
+		var parts = module is null || token is null ? null : MethodTokens.MethodParts(module, token.Value);
 
 		return new LiveStackFrame
 		{
 			Index = index,
 			ThreadId = threadId,
 			Module = module is null ? null : Path.GetFileName(module),
-			MethodFullName = module is null || token is null ? null : MethodTokens.MethodFullName(module, token.Value),
+			MethodFullName = parts is { } named ? $"{named.TypeName}.{named.MethodName}" : null,
+
+			// Composed from the parts rather than by joining the two fields above, which cannot be
+			// taken apart again: a type name is full of dots and a constructor's name begins with one.
+			Location = module is null || parts is not { } addressed
+				? null
+				: $"{Path.GetFileNameWithoutExtension(module)}!{addressed.TypeName}.{addressed.MethodName}",
 			IlOffset = offset,
 			Mapping = MappingOf(frame),
 			Symbols = state,

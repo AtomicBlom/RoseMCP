@@ -79,6 +79,7 @@
 		<SelectorBar x:Name="Tabs" Grid.Row="3" Margin="14,0,14,8" SelectionChanged="OnTabChosen">
 			<SelectorBarItem x:Name="EventsTab" Text="Events" IsSelected="True" />
 			<SelectorBarItem x:Name="BreakpointsTab" Text="Breakpoints" />
+			<SelectorBarItem x:Name="StackTab" Text="Stack" />
 		</SelectorBar>
 
 		<!-- Panes are toggled by visibility rather than navigated to. A Frame recreates a page on
@@ -87,6 +88,7 @@
 		<Grid Grid.Row="4" Margin="14,0,14,0">
 			<panes:EventsPane x:Name="Events" />
 			<panes:BreakpointsPane x:Name="Breakpoints" Visibility="Collapsed" />
+			<panes:StackPane x:Name="Stack" Visibility="Collapsed" />
 
 			<!-- Shown instead of the panes when there is no session to show them for. -->
 			<StackPanel x:Name="EmptyState" Spacing="10" MaxWidth="520" VerticalAlignment="Center"

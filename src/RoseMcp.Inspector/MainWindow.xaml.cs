@@ -65,6 +65,7 @@ public sealed partial class MainWindow : Window
 
 		Events.Attach(_client, Report);
 		Breakpoints.Attach(_client, Report);
+		Stack.Attach(_client, Report);
 
 		_sessionPoll = new PollLoop(RefreshAsync, SessionInterval, Report);
 
@@ -90,6 +91,11 @@ public sealed partial class MainWindow : Window
 			_sessionPoll.Stop();
 			Events.Showing(false);
 			Breakpoints.Showing(false);
+
+			// Hiding the stack pane is also what gives back the hold it was keeping, so the target
+			// is not left stopped because somebody closed the window on it.
+			Stack.Showing(false);
+
 			_client.Dispose();
 		};
 	}
@@ -182,6 +188,7 @@ public sealed partial class MainWindow : Window
 
 			Events.Bind(_inspected);
 			Breakpoints.Bind(_inspected);
+			Stack.Bind(_inspected);
 
 			EmptyState.Visibility = Visibility.Collapsed;
 			DetachButton.IsEnabled = true;
@@ -193,24 +200,33 @@ public sealed partial class MainWindow : Window
 		}
 
 		ShowHeader(_row);
+
+		// The stack pane is the one thing that acts on a stop rather than describing it: a sequence
+		// it has not read yet is a new place the target is sitting, and it reads the frames there.
+		Stack.Observe(_row);
 	}
 
 	private void OnTabChosen(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowTab();
 
 	/// <summary>
 	/// Shows the chosen pane and hides the rest, and tells each whether it is the visible one --
-	/// a pane that cannot see the screen must not be polling on the reader's behalf.
+	/// a pane that cannot see the screen must not be polling on the reader's behalf, and the stack
+	/// pane must not be holding the target still for a tab nobody is looking at.
 	/// </summary>
 	private void ShowTab()
 	{
-		var events = Tabs.SelectedItem == EventsTab;
 		var bound = _inspected is not null;
+		var events = bound && Tabs.SelectedItem == EventsTab;
+		var breakpoints = bound && Tabs.SelectedItem == BreakpointsTab;
+		var stack = bound && Tabs.SelectedItem == StackTab;
 
-		Events.Visibility = events && bound ? Visibility.Visible : Visibility.Collapsed;
-		Breakpoints.Visibility = !events && bound ? Visibility.Visible : Visibility.Collapsed;
+		Events.Visibility = events ? Visibility.Visible : Visibility.Collapsed;
+		Breakpoints.Visibility = breakpoints ? Visibility.Visible : Visibility.Collapsed;
+		Stack.Visibility = stack ? Visibility.Visible : Visibility.Collapsed;
 
-		Events.Showing(events && bound);
-		Breakpoints.Showing(!events && bound);
+		Events.Showing(events);
+		Breakpoints.Showing(breakpoints);
+		Stack.Showing(stack);
 	}
 
 	private void ShowHeader(SessionRow row)

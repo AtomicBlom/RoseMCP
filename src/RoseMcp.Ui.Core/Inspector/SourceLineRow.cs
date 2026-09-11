@@ -37,6 +37,12 @@ public sealed class SourceLineRow
 	/// </summary>
 	public bool IsContinuation { get; init; }
 
+	/// <summary>
+	/// Whether execution is sitting on this line. Only ever true for a stopped frame's source, and
+	/// it is what a step is watched through: the value of a step is seeing the highlight move.
+	/// </summary>
+	public bool IsCurrent { get; init; }
+
 	/// <summary>Whether a breakpoint can be set from this row at all.</summary>
 	public bool IsBreakable => Location is not null;
 

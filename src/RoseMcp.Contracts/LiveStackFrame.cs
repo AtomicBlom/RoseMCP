@@ -20,6 +20,18 @@ public sealed record LiveStackFrame
 	/// <summary>The method, as <c>Namespace.Type.Method</c>. Null when metadata could not name it.</summary>
 	public string? MethodFullName { get; init; }
 
+	/// <summary>
+	/// The method in the spelling the rest of the debugger addresses one by:
+	/// <c>Assembly!Namespace.Type.Method</c>. Null when metadata could not name it.
+	/// <para>
+	/// Composed here rather than left to a caller to assemble from <see cref="Module"/> and
+	/// <see cref="MethodFullName"/>, because that cannot be done correctly from the outside. The two
+	/// are joined with a dot and a type name is full of dots, so splitting them apart again names a
+	/// type that does not exist for a constructor -- and gets a lambda right only by luck.
+	/// </para>
+	/// </summary>
+	public string? Location { get; init; }
+
 	/// <summary>Where in the method's IL execution is, or null when the runtime would not say.</summary>
 	public int? IlOffset { get; init; }
 

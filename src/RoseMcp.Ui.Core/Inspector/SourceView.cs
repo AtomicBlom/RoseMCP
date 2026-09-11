@@ -28,7 +28,12 @@ public static class SourceView
 	/// </para>
 	/// </summary>
 	/// <param name="source">The method as the host read it.</param>
-	public static IReadOnlyList<SourceLineRow> Build(LiveMethodSource source)
+	/// <param name="currentLine">
+	/// The line execution is sitting on, for a stopped frame, or null when nothing is stopped there.
+	/// Every row of that line is marked, including a continuation: the highlight says where the
+	/// target is, and it is on the line rather than in one of the methods compiled from it.
+	/// </param>
+	public static IReadOnlyList<SourceLineRow> Build(LiveMethodSource source, int? currentLine = null)
 	{
 		if (source.Lines.Count == 0) return [];
 
@@ -43,6 +48,7 @@ public static class SourceView
 		{
 			var line = source.FirstLine + index;
 			var text = source.Lines[index];
+			var isCurrent = currentLine == line;
 
 			if (!byLine.TryGetValue(line, out var positions))
 			{
@@ -51,6 +57,7 @@ public static class SourceView
 					Line = line,
 					LineLabel = line.ToString().PadLeft(width),
 					Text = text,
+					IsCurrent = isCurrent,
 				});
 
 				continue;
@@ -75,6 +82,7 @@ public static class SourceView
 					Note = elsewhere ? owner.Key : string.Empty,
 					OffsetLabel = Format.IlOffset(earliest.IlOffset),
 					IsContinuation = !first,
+					IsCurrent = isCurrent,
 				});
 
 				first = false;

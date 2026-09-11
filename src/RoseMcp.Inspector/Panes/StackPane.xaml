@@ -1,0 +1,109 @@
+<UserControl
+	x:Class="RoseMcp.Inspector.Panes.StackPane"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:inspector="using:RoseMcp.Ui.Core.Inspector">
+
+	<Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
+
+		<!-- Stepping is what the source view is for, so the two are in front of each other. -->
+		<Grid Grid.Row="0" ColumnSpacing="10" ColumnDefinitions="Auto,*,Auto">
+			<StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+				<Button x:Name="ContinueButton" Style="{StaticResource ChipButtonStyle}"
+					Content="Continue" Click="OnContinue"
+					ToolTipService.ToolTip="Let the target run on." />
+				<Button x:Name="StepInButton" Style="{StaticResource ChipButtonStyle}"
+					Content="Step in" Click="OnStepIn"
+					ToolTipService.ToolTip="Into the call on this line, or to the next line if there is none." />
+				<Button x:Name="StepOverButton" Style="{StaticResource ChipButtonStyle}"
+					Content="Step over" Click="OnStepOver"
+					ToolTipService.ToolTip="To the next line of this method, running any call on the way." />
+				<Button x:Name="StepOutButton" Style="{StaticResource ChipButtonStyle}"
+					Content="Step out" Click="OnStepOut"
+					ToolTipService.ToolTip="Until this method returns, and stop in whatever called it." />
+			</StackPanel>
+
+			<TextBlock x:Name="HoldText" Grid.Column="1" VerticalAlignment="Center"
+				Style="{StaticResource CaptionTextBlockStyle}"
+				Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+			<Button x:Name="ReleaseButton" Grid.Column="2" Style="{StaticResource ChipButtonStyle}"
+				Content="Release" Click="OnRelease" Visibility="Collapsed"
+				ToolTipService.ToolTip="Give the stop back to its own safety timer." />
+		</Grid>
+
+		<!-- A stack is never yanked away. The target continuing is ordinary (a timer, a step, an
+		     agent) and a pane that emptied itself would lose a reader's place with no explanation. -->
+		<InfoBar x:Name="StaleBar" Grid.Row="1" IsOpen="False" IsClosable="False" Severity="Informational"
+			Message="The target continued: a step, the safety timer, or an agent. These frames are from the stop before." />
+
+		<Grid Grid.Row="2" ColumnSpacing="12" ColumnDefinitions="320,*">
+
+			<Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="6">
+				<TextBlock Grid.Row="0" x:Name="FramesCaption" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+				<ListView Grid.Row="1" x:Name="FrameRows" SelectionMode="Single"
+					SelectionChanged="OnFrameChosen"
+					ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+					<ListView.ItemTemplate>
+						<DataTemplate x:DataType="inspector:FrameRow">
+							<Grid ColumnSpacing="8" ColumnDefinitions="Auto,*" Padding="0,4">
+								<TextBlock Grid.Column="0" Text="{x:Bind IndexLabel}" VerticalAlignment="Top"
+									Style="{StaticResource MonoTextBlockStyle}"
+									Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+								<StackPanel Grid.Column="1" Spacing="1">
+									<TextBlock Text="{x:Bind Method}" TextTrimming="CharacterEllipsis" />
+									<TextBlock Text="{x:Bind Where}" Visibility="{x:Bind HasWhere}"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+									<TextBlock Text="{x:Bind Note}" Visibility="{x:Bind HasNote}" TextWrapping="Wrap"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+								</StackPanel>
+							</Grid>
+						</DataTemplate>
+					</ListView.ItemTemplate>
+				</ListView>
+			</Grid>
+
+			<Grid Grid.Column="1" RowDefinitions="Auto,Auto,*" RowSpacing="6">
+				<TextBlock Grid.Row="0" x:Name="SourceCaption" Style="{StaticResource BodyStrongTextBlockStyle}"
+					TextTrimming="CharacterEllipsis" />
+
+				<TextBlock Grid.Row="1" x:Name="SourceDetail" TextWrapping="Wrap" Visibility="Collapsed"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+				<Border Grid.Row="2" CornerRadius="4" BorderThickness="1"
+					BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+					Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+					<ScrollViewer x:Name="SourceScroll" VerticalScrollBarVisibility="Auto"
+						HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto">
+						<ItemsRepeater x:Name="SourceRows">
+							<ItemsRepeater.Layout>
+								<StackLayout Spacing="0" />
+							</ItemsRepeater.Layout>
+							<ItemsRepeater.ItemTemplate>
+								<DataTemplate x:DataType="inspector:SourceLineRow">
+									<Grid Padding="8,1">
+										<!-- Behind the text rather than on it, so the line execution
+										     is on stays as readable as every other line. -->
+										<Border Visibility="{x:Bind IsCurrent}" CornerRadius="2" Margin="-4,0"
+											Background="{ThemeResource RoseAccentBrush}" Opacity="0.28" />
+										<Grid ColumnSpacing="12" ColumnDefinitions="Auto,*">
+											<TextBlock Grid.Column="0" Text="{x:Bind LineLabel}"
+												Style="{StaticResource MonoTextBlockStyle}"
+												Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+											<TextBlock Grid.Column="1" Text="{x:Bind Text}"
+												Style="{StaticResource MonoTextBlockStyle}" />
+										</Grid>
+									</Grid>
+								</DataTemplate>
+							</ItemsRepeater.ItemTemplate>
+						</ItemsRepeater>
+					</ScrollViewer>
+				</Border>
+			</Grid>
+		</Grid>
+	</Grid>
+</UserControl>

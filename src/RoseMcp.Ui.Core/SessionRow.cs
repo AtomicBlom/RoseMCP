@@ -283,7 +283,7 @@ public sealed class SessionRow : Observable
 		Heartbeat = _lastEventAge is { } age ? $"last event {Format.Age(age + since)}" : "no events yet";
 
 		ResumeLabel = _resumeDeadlineUtc is { } deadline
-			? DescribeResume(IsHeld, Format.Countdown(deadline - utcNow))
+			? DescribeResume(IsHeld, deadline - utcNow)
 			: string.Empty;
 	}
 
@@ -430,7 +430,11 @@ public sealed class SessionRow : Observable
 			&& !already.Contains(activity.Id));
 	}
 
-	private static string DescribeResume(bool held, string countdown) => held
-		? $"held for you{Format.Separator}{countdown} left"
-		: $"auto-continues in {countdown}";
+	/// <summary>
+	/// How long before this session's stop ends, deferred to the one place that says it: the stack
+	/// pane counts the same deadline down beside the stack it is reading, and two copies of the
+	/// sentence would disagree the first time either was reworded.
+	/// </summary>
+	private static string DescribeResume(bool held, TimeSpan remaining) =>
+		Inspector.HoldCountdown.Describe(held, remaining);
 }

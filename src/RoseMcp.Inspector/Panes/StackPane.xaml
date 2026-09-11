@@ -66,7 +66,7 @@
 				</ListView>
 			</Grid>
 
-			<Grid Grid.Column="1" RowDefinitions="Auto,Auto,*" RowSpacing="6">
+			<Grid Grid.Column="1" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="6">
 				<TextBlock Grid.Row="0" x:Name="SourceCaption" Style="{StaticResource BodyStrongTextBlockStyle}"
 					TextTrimming="CharacterEllipsis" />
 
@@ -103,6 +103,42 @@
 						</ItemsRepeater>
 					</ScrollViewer>
 				</Border>
+
+				<TextBlock Grid.Row="3" x:Name="VariablesCaption" Margin="0,4,0,0"
+					Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+				<Grid Grid.Row="4" RowDefinitions="Auto,Auto" RowSpacing="4">
+					<TextBlock Grid.Row="0" x:Name="VariablesDetail" TextWrapping="Wrap" Visibility="Collapsed"
+						Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+					<!-- ItemsSource mode, so the tree virtualises and keyboard navigation comes free.
+					     HasUnrealizedChildren is what puts an expander on a value nobody has opened yet. -->
+					<TreeView Grid.Row="1" x:Name="VariableRows" MaxHeight="300"
+						SelectionMode="None" Expanding="OnValueExpanding">
+						<TreeView.ItemTemplate>
+							<DataTemplate x:DataType="inspector:VariableNode">
+								<TreeViewItem ItemsSource="{x:Bind Children}"
+									HasUnrealizedChildren="{x:Bind HasUnrealizedChildren, Mode=OneWay}">
+									<StackPanel Orientation="Horizontal" Spacing="8">
+										<TextBlock Text="{x:Bind Name}" Style="{StaticResource MonoTextBlockStyle}" />
+										<TextBlock Text="{x:Bind Value}" Style="{StaticResource MonoTextBlockStyle}"
+											Foreground="{ThemeResource RoseAccentBrush}" />
+										<TextBlock Text="{x:Bind TypeName}" Style="{StaticResource CaptionTextBlockStyle}"
+											VerticalAlignment="Center"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										<ProgressRing IsActive="{x:Bind IsLoading, Mode=OneWay}"
+											Visibility="{x:Bind IsLoading, Mode=OneWay}" Width="12" Height="12" />
+										<TextBlock Text="{x:Bind LoadDetail, Mode=OneWay}"
+											Visibility="{x:Bind HasLoadDetail, Mode=OneWay}"
+											Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+									</StackPanel>
+								</TreeViewItem>
+							</DataTemplate>
+						</TreeView.ItemTemplate>
+					</TreeView>
+				</Grid>
 			</Grid>
 		</Grid>
 	</Grid>

@@ -105,7 +105,7 @@ public sealed partial class StackPane : UserControl
 			_stop = stop;
 			Show(stop);
 
-			await ShowSourceAsync(stop);
+			await ShowFrameAsync(stop);
 		}
 		catch (Exception exception)
 		{
@@ -117,21 +117,32 @@ public sealed partial class StackPane : UserControl
 		}
 	}
 
-	/// <summary>Reads the selected frame's source, or says why there is none to read.</summary>
-	private async Task ShowSourceAsync(StopInspection stop)
+	/// <summary>
+	/// Reads what the selected frame is made of: its source, and its arguments and locals. Both are
+	/// per frame, so both are re-read when the selection moves and neither on the poll.
+	/// </summary>
+	private async Task ShowFrameAsync(StopInspection stop)
 	{
 		if (_client is not { } client || _session is not { } session) return;
 		if (stop.Selected is not { } frame) return;
 
-		if (frame.Location is not { } location)
-		{
-			stop.ShowNothing("This frame has no method metadata could name, so there is no source to find.");
-			ShowSource(stop);
-			return;
-		}
-
 		try
 		{
+			// The values first. They are what a step is taken to look at, and the source beside them
+			// is already recognisable from the frame row's own file and line.
+			var variables = await client.FrameVariablesAsync(
+				session.SessionId, frame.Index, stop.ThreadId, CancellationToken.None);
+
+			stop.Show(frame, variables);
+			ShowVariables(stop);
+
+			if (frame.Location is not { } location)
+			{
+				stop.ShowNothing("This frame is in a method metadata could not name, so there is no source to find.");
+				ShowSource(stop);
+				return;
+			}
+
 			var source = await client.MethodSourceAsync(session.SessionId, location, CancellationToken.None);
 			stop.Show(frame, source);
 			ShowSource(stop);
@@ -151,6 +162,7 @@ public sealed partial class StackPane : UserControl
 			: $"Call stack ({Format.Count(stop.Frames.Count, "frame")})";
 
 		ShowSource(stop);
+		ShowVariables(stop);
 	}
 
 	private void ShowSource(StopInspection? stop)
@@ -163,6 +175,58 @@ public sealed partial class StackPane : UserControl
 		SourceDetail.Visibility = detail.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
 		BringCurrentIntoView(stop);
+	}
+
+	private void ShowVariables(StopInspection? stop)
+	{
+		VariableRows.ItemsSource = stop?.Variables;
+		VariablesCaption.Text = stop is null || stop.Variables.Count == 0
+			? "Values"
+			: $"Values ({Format.Count(stop.Variables.Count, "value")})";
+
+		var detail = stop?.VariablesDetail ?? string.Empty;
+		VariablesDetail.Text = detail;
+		VariablesDetail.Visibility = detail.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+	}
+
+	/// <summary>
+	/// Fetches what is inside a value the reader has just opened.
+	/// <para>
+	/// The tree asks once per node, because <c>HasUnrealizedChildren</c> goes false as soon as the
+	/// answer lands. Nothing here runs debuggee code: the host reads fields and elements out of
+	/// memory, so opening a value cannot change what the stop was taken to look at.
+	/// </para>
+	/// </summary>
+	private async void OnValueExpanding(TreeView sender, TreeViewExpandingEventArgs args)
+	{
+		if (_client is not { } client || _session is not { } session) return;
+		if (_stop is not { } stop) return;
+		if (args.Item is not VariableNode node || !node.HasUnrealizedChildren || node.IsLoading) return;
+
+		node.Loading();
+
+		try
+		{
+			var expansion = await client.ValueAsync(
+				session.SessionId,
+				node.Path,
+				stop.Selected?.Index ?? 0,
+				stop.ThreadId,
+				CancellationToken.None);
+
+			if (expansion.Execution == LiveExecutionState.Running)
+			{
+				node.Failed(expansion.Detail ?? "The target is no longer stopped, so this value is gone.");
+				return;
+			}
+
+			node.Fill(expansion);
+		}
+		catch (Exception exception)
+		{
+			node.Failed(exception.Message);
+			_report?.Invoke(exception);
+		}
 	}
 
 	/// <summary>
@@ -212,7 +276,7 @@ public sealed partial class StackPane : UserControl
 		if (ReferenceEquals(frame, stop.Selected)) return;
 
 		stop.Selected = frame;
-		await ShowSourceAsync(stop);
+		await ShowFrameAsync(stop);
 	}
 
 	private async void OnContinue(object sender, RoutedEventArgs args) => await ResumeAsync(null);

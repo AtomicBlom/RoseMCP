@@ -22,6 +22,10 @@ public sealed class StopInspection : Observable
 	private string _sourceDetail = string.Empty;
 	private bool _hasSourceDetail;
 
+	private string _variablesDetail = string.Empty;
+
+	private bool _hasVariablesDetail;
+
 	public StopInspection(LiveStackFrames frames)
 	{
 		StopSequence = frames.Stop?.EventSequence ?? 0;
@@ -98,5 +102,79 @@ public sealed class StopInspection : Observable
 		Source = [];
 		SourceDetail = detail;
 		HasSourceDetail = detail.Length > 0;
+	}
+
+	/// <summary>
+	/// The selected frame's arguments and locals. Replaced when the selection moves, and empty until
+	/// they have been read.
+	/// </summary>
+	public ObservableCollection<VariableNode> Variables { get; } = [];
+
+	/// <summary>What the host said about the variables that the list does not. Empty when nothing.</summary>
+	public string VariablesDetail
+	{
+		get => _variablesDetail;
+		private set => Set(ref _variablesDetail, value);
+	}
+
+	public bool HasVariablesDetail
+	{
+		get => _hasVariablesDetail;
+		private set => Set(ref _hasVariablesDetail, value);
+	}
+
+	/// <summary>
+	/// Takes the variables read for the selected frame.
+	/// <para>
+	/// Dropped when the frame they were read for is no longer the selected one, for the same reason
+	/// the source is: clicking down a stack starts a read per frame and they do not come back in the
+	/// order they were asked for.
+	/// </para>
+	/// </summary>
+	public void Show(FrameRow frame, LiveFrameVariables variables)
+	{
+		if (!ReferenceEquals(frame, Selected)) return;
+
+		Variables.Clear();
+		foreach (var variable in variables.Variables)
+		{
+			Variables.Add(new VariableNode(variable));
+		}
+
+		VariablesDetail = DescribeVariables(variables);
+		HasVariablesDetail = VariablesDetail.Length > 0;
+	}
+
+	/// <summary>Forgets the variables, for a frame whose values cannot be read at all.</summary>
+	public void ShowNoVariables(string detail)
+	{
+		Variables.Clear();
+		VariablesDetail = detail;
+		HasVariablesDetail = detail.Length > 0;
+	}
+
+	/// <summary>
+	/// What a list of variables does not say for itself. Symbols are the one worth a caption: without
+	/// them every local is <c>local_0</c> upwards by slot, which reads as the code having no names
+	/// rather than as this machine not having the PDB.
+	/// </summary>
+	private static string DescribeVariables(LiveFrameVariables variables)
+	{
+		if (variables.Detail is { Length: > 0 } detail) return detail;
+
+		var parts = new List<string>();
+
+		if (variables.Truncated) parts.Add("more values than are shown");
+
+		if (variables.Symbols == LiveSymbolState.NoSymbols)
+		{
+			parts.Add("no symbols for this module, so locals are numbered by slot rather than named");
+		}
+		else if (variables.Symbols == LiveSymbolState.SymbolsMismatched)
+		{
+			parts.Add("the symbols belong to another build, so they are refused and locals are numbered by slot");
+		}
+
+		return string.Join(Format.Separator, parts);
 	}
 }

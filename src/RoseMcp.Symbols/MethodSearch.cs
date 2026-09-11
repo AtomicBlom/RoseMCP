@@ -133,7 +133,8 @@ public static class MethodSearch
 
 	/// <summary>
 	/// A hit written up for the caller. Done after the sort and the cut, because the display name is
-	/// a parse of two strings and a broad query matches thousands of methods nobody will be shown.
+	/// a parse of two strings and the signature is a metadata read, and a broad query matches
+	/// thousands of methods nobody will be shown.
 	/// </summary>
 	private static MethodCandidate Describe(Hit hit) => new()
 	{
@@ -143,6 +144,7 @@ public static class MethodSearch
 		TypeName = hit.TypeName,
 		MethodName = hit.MethodName,
 		DisplayName = MethodDisplayName.Of(hit.TypeName, hit.MethodName),
+		Signature = $"({string.Join(", ", MethodTokens.ParameterNames(hit.ModulePath, hit.Token).Names)})",
 		Token = hit.Token,
 		HasSymbols = hit.HasSymbols,
 		Rank = hit.Rank,

@@ -128,6 +128,18 @@ public static class ToolNames
 	public const string LiveAppHold = "rose_live_app_hold";
 
 	/// <summary>
+	/// Live-app-host-only, inspector-facing. Finds methods by name across the target's loaded
+	/// modules, for an autocomplete over somewhere to put a breakpoint.
+	/// </summary>
+	public const string LiveAppSearchMethods = "rose_live_app_search_methods";
+
+	/// <summary>
+	/// Live-app-host-only, inspector-facing. A method's source and the positions inside it a
+	/// breakpoint can be set at.
+	/// </summary>
+	public const string LiveAppMethodSource = "rose_live_app_method_source";
+
+	/// <summary>
 	/// Live-app-host-only. The broker forwards this to inject the XAML diagnostics provider into the
 	/// target and read a snapshot of its live visual tree.
 	/// </summary>

@@ -85,4 +85,29 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 		[Description(ToolDescriptions.HoldSecondsArgument)] int? seconds = null,
 		[Description(ToolDescriptions.HoldReleaseArgument)] bool release = false)
 		=> host.Hold(seconds, release);
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppSearchMethods,
+		Title = "Find a method to break in",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Methods of the target's loaded modules matching a partial name, best first.")]
+	public LiveMethodMatches SearchMethods(
+		[Description(ToolDescriptions.MethodQueryArgument)] string query,
+		[Description(ToolDescriptions.MethodSearchLimitArgument)] int limit = 30)
+		=> host.SearchMethods(query, limit);
+
+	[McpServerTool(
+		Name = ToolNames.LiveAppMethodSource,
+		Title = "Read a method's source and breakable positions",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("A method's source text with every position inside it a breakpoint can be set at.")]
+	public LiveMethodSource MethodSource(
+		[Description(ToolDescriptions.MethodSourceLocationArgument)] string location)
+		=> host.ReadMethodSource(location);
 }

@@ -118,6 +118,8 @@ public sealed class ToolSurfaceTests
 		ToolNames.LiveAppExpand,
 		ToolNames.LiveAppThreads,
 		ToolNames.LiveAppHold,
+		ToolNames.LiveAppSearchMethods,
+		ToolNames.LiveAppMethodSource,
 		ToolNames.LiveAppXamlTree,
 		ToolNames.LiveAppXamlProperties,
 		ToolNames.LiveAppXamlApply,

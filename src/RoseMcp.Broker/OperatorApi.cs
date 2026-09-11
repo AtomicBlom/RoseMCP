@@ -200,6 +200,26 @@ public static class OperatorApi
 			"/sessions/{sessionId}/threads",
 			async (string sessionId, LiveAppSessionManager sessions, HttpContext context) =>
 				Json(await Require(sessions, sessionId).ReadThreadsAsync(context.RequestAborted)));
+
+		// Both of these read module files rather than the target, so they answer while it is running
+		// and while it is wedged -- which is when somebody most wants to set a breakpoint.
+		operators.MapGet(
+			"/sessions/{sessionId}/methods",
+			async (
+				string sessionId,
+				string query,
+				LiveAppSessionManager sessions,
+				HttpContext context,
+				int limit = 30) =>
+				Json(await Require(sessions, sessionId).SearchMethodsAsync(query, limit, context.RequestAborted)));
+
+		// The location is a query argument for the same reason a value path is: it carries dots,
+		// brackets, an exclamation mark and sometimes angle brackets, and no route segment survives
+		// all of those legibly.
+		operators.MapGet(
+			"/sessions/{sessionId}/methods/source",
+			async (string sessionId, string location, LiveAppSessionManager sessions, HttpContext context) =>
+				Json(await Require(sessions, sessionId).ReadMethodSourceAsync(location, context.RequestAborted)));
 	}
 
 	/// <summary>Reading and pointing at a live visual tree.</summary>

@@ -338,7 +338,8 @@ public static class ToolDescriptions
 	/// </summary>
 	public const string TracepointLocationArgument =
 		"The method to trace, as the same Namespace.Type.Method the rose_* tools take, with Assembly! "
-			+ "in front where the assembly name is not the namespace's first segment.";
+			+ "in front where the assembly name is not the namespace's first segment. Add @IL_001f to "
+			+ "log inside it rather than at its start.";
 
 	public const string LogMessageArgument =
 		"Optional message logged on each hit (literal text; expression interpolation comes later).";
@@ -350,7 +351,8 @@ public static class ToolDescriptions
 
 	public const string BreakpointLocationArgument =
 		"The method to break on, as the same Namespace.Type.Method the rose_* tools take, with "
-			+ "Assembly! in front where the assembly name is not the namespace's first segment.";
+			+ "Assembly! in front where the assembly name is not the namespace's first segment. Add "
+			+ "@IL_001f to stop inside it rather than at its start.";
 
 	public const string AutoContinueSecondsArgument =
 		"Seconds a hit is held before the target auto-continues on its own; default 30.";
@@ -390,6 +392,17 @@ public static class ToolDescriptions
 
 	public const string HoldReleaseArgument =
 		"True gives the stop back to its safety timer instead of holding it.";
+
+	public const string MethodQueryArgument =
+		"Part of a method's name, optionally qualified: Refresh, or Widget.Refresh. The pieces match "
+			+ "in order, anywhere in the name. Under two characters is refused.";
+
+	public const string MethodSearchLimitArgument =
+		"How many matches to return, best first. The total says how many there were.";
+
+	public const string MethodSourceLocationArgument =
+		"The method to read, as Assembly!Namespace.Type.Method. Any @IL_001f on the end is ignored: "
+			+ "the whole method is read either way.";
 
 	/// <summary>
 	/// How a live element is named to the tools that read one. All three spellings, because a caller

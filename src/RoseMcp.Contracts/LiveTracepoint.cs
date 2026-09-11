@@ -17,6 +17,19 @@ public sealed record LiveTracepoint
 	/// <summary>Whether it is bound to a loaded method yet. An unbound one binds when its module loads.</summary>
 	public required bool Bound { get; init; }
 
+	/// <summary>
+	/// The instruction it was asked to log at inside the method, when a position was picked rather
+	/// than the method named. Null means its first instruction.
+	/// </summary>
+	public int? IlOffset { get; init; }
+
+	/// <summary>
+	/// Where in source it actually bound, once it has. Null while unbound, or when the module has no
+	/// symbols to say. A location names a method and two overloads share one, so this is how somebody
+	/// sees that it went somewhere other than where they meant.
+	/// </summary>
+	public LiveSourcePosition? Source { get; init; }
+
 	/// <summary>How many times it has been hit so far.</summary>
 	public required long HitCount { get; init; }
 

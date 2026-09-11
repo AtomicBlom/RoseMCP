@@ -201,6 +201,41 @@ public sealed class OperatorClient : IDisposable
 	public Task<LiveThreadList> ThreadsAsync(string sessionId, CancellationToken cancellationToken) =>
 		GetAsync<LiveThreadList>($"/operator/sessions/{sessionId}/threads", Quick, cancellationToken);
 
+	/// <summary>
+	/// Methods of the target's loaded modules matching what has been typed, best first.
+	/// <para>
+	/// Budgeted like any other quick read rather than given room to be slow. It reads every loaded
+	/// module's metadata, which is not free, but it is what a person is waiting on between keystrokes
+	/// -- an answer that takes longer than the ten seconds here is one they have already typed past.
+	/// </para>
+	/// </summary>
+	public Task<LiveMethodMatches> MethodsAsync(
+		string sessionId,
+		string query,
+		int limit,
+		CancellationToken cancellationToken)
+	{
+		// Escaped because a qualified query carries dots, and a pasted one can carry anything.
+		var escaped = Uri.EscapeDataString(query);
+
+		return GetAsync<LiveMethodMatches>(
+			$"/operator/sessions/{sessionId}/methods?query={escaped}&limit={limit}", Quick, cancellationToken);
+	}
+
+	/// <summary>A method's source and the positions inside it a breakpoint can be set at.</summary>
+	public Task<LiveMethodSource> MethodSourceAsync(
+		string sessionId,
+		string location,
+		CancellationToken cancellationToken)
+	{
+		// A location carries an exclamation mark, dots, plus signs and the angle brackets of a
+		// generated name. None of those may reach the query string unescaped.
+		var escaped = Uri.EscapeDataString(location);
+
+		return GetAsync<LiveMethodSource>(
+			$"/operator/sessions/{sessionId}/methods/source?location={escaped}", Quick, cancellationToken);
+	}
+
 	public Task<LiveXamlTree> XamlTreeAsync(string sessionId, CancellationToken cancellationToken) =>
 		GetAsync<LiveXamlTree>($"/operator/sessions/{sessionId}/xaml/tree", Xaml, cancellationToken);
 

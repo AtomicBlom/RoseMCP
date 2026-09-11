@@ -460,6 +460,148 @@ public sealed class LiveAppInspectionTests
 		return (hit!, breakpoint.Id);
 	}
 
+	/// <summary>
+	/// Finding somewhere to put a breakpoint by typing part of a name, which is the whole of what an
+	/// agentic session has instead of an IDE to browse.
+	/// <para>
+	/// Against a running target and never a stopped one, because that is when it is used: somebody
+	/// types a name while the app is going about its business.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_method_is_found_by_name_across_the_targets_loaded_modules()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
+
+			var found = await session.SearchMethodsAsync("Inspect", 30, cancellationToken);
+
+			var match = found.Matches.FirstOrDefault(entry => entry.DisplayName == "Program.Inspect");
+			Assert.True(match is not null, $"Inspect should be found; detail: {found.Detail}");
+			Assert.Equal("DebugProbeTarget!DebugProbeTarget.Program.Inspect", match!.Location);
+			Assert.Equal("DebugProbeTarget", match.Module);
+			Assert.Equal("(state)", match.Signature);
+			Assert.True(match.HasSymbols, "the probe is built here, so its symbols are here");
+
+			// More than the probe's own assembly was read, which is what makes this a search over the
+			// target rather than over one file somebody already knew the name of.
+			Assert.True(found.ModulesSearched > 1, $"{found.ModulesSearched} modules were searched");
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A method's source with the positions inside it, and then a breakpoint at one of them that the
+	/// target really stops on.
+	/// <para>
+	/// The last assertion is the one that matters. Everything before it is our own reading of a PDB
+	/// agreeing with itself; only the frame read at the stop says the runtime stopped where somebody
+	/// pointed rather than at the method's first instruction, which is where every breakpoint used to
+	/// go and which would look identical in every other respect.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_breakpoint_stops_at_the_position_that_was_picked()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
+
+			var source = await session.ReadMethodSourceAsync(
+				"DebugProbeTarget!DebugProbeTarget.Program.Inspect", cancellationToken);
+
+			Assert.Equal(LiveSymbolState.Resolved, source.Symbols);
+			Assert.EndsWith("Program.cs", source.File);
+			Assert.True(source.Lines.Count > 0, $"the probe's source is on this machine; detail: {source.Detail}");
+
+			// The second statement of the body, which is not where the method starts -- so a
+			// breakpoint landing there cannot be the old method-entry behaviour wearing a new name.
+			var wanted = source.Lines
+				.Select((text, index) => (Text: text, Line: source.FirstLine + index))
+				.First(entry => entry.Text.Contains("state.Count + innerCount", StringComparison.Ordinal));
+
+			var position = source.Positions.First(entry => entry.Line == wanted.Line);
+			Assert.True(position.IlOffset > 0, $"IL_{position.IlOffset:x4} is past the method's first instruction");
+			Assert.Equal("Program.Inspect", position.DisplayName);
+
+			var breakpoint = await session.SetBreakpointAsync(
+				position.Location, autoContinueSeconds: null, condition: null, cancellationToken);
+
+			Assert.True(breakpoint.Bound, $"the picked position should bind; detail: {breakpoint.Detail}");
+			Assert.Equal(position.IlOffset, breakpoint.IlOffset);
+			Assert.NotNull(breakpoint.Source);
+			Assert.Equal(wanted.Line, breakpoint.Source!.Line);
+
+			var hit = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(hit);
+
+			var frames = await session.ReadFramesAsync(null, 0, 2, cancellationToken);
+			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);
+			Assert.NotEmpty(frames.Frames);
+			Assert.EndsWith("Program.Inspect", frames.Frames[0].MethodFullName);
+			Assert.NotNull(frames.Frames[0].Source);
+			Assert.Equal(wanted.Line, frames.Frames[0].Source!.Line);
+
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			Assert.True(await session.ContinueAsync(cancellationToken));
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A location naming a method that is not there, which is the ordinary result of typing one. It
+	/// comes back as a sentence rather than an error, because the panel asking has nothing to do with
+	/// an exception and a reader needs to know which of the two halves was wrong.
+	/// </summary>
+	[Test]
+	public async Task A_method_that_is_not_there_is_said_rather_than_thrown()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
+
+			var missing = await session.ReadMethodSourceAsync(
+				"DebugProbeTarget!DebugProbeTarget.Program.NotAMethod", cancellationToken);
+			Assert.Empty(missing.Lines);
+			Assert.Empty(missing.Positions);
+			Assert.Contains("declares no method", missing.Detail!);
+
+			var unloaded = await session.ReadMethodSourceAsync("Nowhere!Nowhere.Type.Method", cancellationToken);
+			Assert.Contains("No loaded module is named Nowhere", unloaded.Detail!);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
 	private static LiveAppTarget Attach(int processId) => new()
 	{
 		Kind = LiveAppTargetKind.AttachProcess,

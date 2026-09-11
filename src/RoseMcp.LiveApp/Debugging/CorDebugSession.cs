@@ -77,6 +77,23 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private readonly List<BreakpointBinding> _bindings = [];
 	private int _nextBindingId = 1;
 
+	/// <summary>
+	/// Every module file the target has loaded, so its metadata and symbols can be read off disk.
+	/// <para>
+	/// Kept rather than asked for each time, because asking means synchronizing the target and a
+	/// search runs on every keystroke of an autocomplete. What is inside a module is on disk, so once
+	/// the path is known nothing else about the answer needs the debuggee at all.
+	/// </para>
+	/// </summary>
+	private readonly List<string> _modulePaths = [];
+
+	/// <summary>
+	/// Whether the modules already loaded when this session attached have been enumerated. The load
+	/// callback covers everything after the attach; a process that was already running needs the one
+	/// walk, and it is taken lazily so a session nobody searches never pays for it.
+	/// </summary>
+	private bool _modulesEnumerated;
+
 	private DbgShim? _shim;
 	private CorDebug? _corDebug;
 	private CorDebugProcess? _process;
@@ -355,6 +372,124 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		{
 			return [.. _bindings.Where(binding => binding.StopOnHit).Select(DescribeBreakpoint)];
 		}
+	}
+
+	/// <summary>
+	/// Finds methods by name across the target's loaded modules, best first, for choosing somewhere
+	/// to put a breakpoint without an IDE to browse.
+	/// <para>
+	/// The reading happens outside the session's lock and outside the debuggee. Which modules are
+	/// loaded is the only thing the target is asked, and that is asked once; everything after it is
+	/// metadata on disk. So this answers while the target is running, which is what an autocomplete
+	/// needs -- and it answers while the target is wedged, which is when somebody most wants to set a
+	/// breakpoint.
+	/// </para>
+	/// </summary>
+	/// <exception cref="ArgumentException">The limit is below one.</exception>
+	public LiveMethodMatches SearchMethods(string? query, int limit)
+	{
+		if (limit < 1) throw new ArgumentException("limit must be at least 1.", nameof(limit));
+
+		var typed = query?.Trim() ?? string.Empty;
+		var paths = ModulePaths();
+		var found = MethodSearch.Search(paths, typed, limit);
+
+		return new LiveMethodMatches
+		{
+			Query = typed,
+			Matches = [.. found.Matches.Select(DescribeMatch)],
+			Total = found.Total,
+			ModulesSearched = found.ModulesSearched,
+			Detail = SearchDetail(typed, paths.Count, found),
+		};
+	}
+
+	/// <summary>
+	/// A method's source and every position inside it a breakpoint can be set at.
+	/// <para>
+	/// The positions cover the lambdas, local functions and state machines written inside the method
+	/// as well as the method itself, because that is where the instructions for those lines actually
+	/// live. Each carries the location that breaks there, so picking a line inside a lambda produces
+	/// a breakpoint in the lambda without anybody having to know its name.
+	/// </para>
+	/// <para>
+	/// Every way this can come up short -- no such module, no such method, no symbols, symbols from
+	/// another build, a source file this machine never had -- is a sentence and an empty listing
+	/// rather than a refusal, because a breakpoint at the method's first instruction is still
+	/// available in all of them.
+	/// </para>
+	/// </summary>
+	/// <exception cref="ArgumentException">The location does not parse.</exception>
+	public LiveMethodSource ReadMethodSource(string location)
+	{
+		var parsed = SymbolLocation.Parse(location);
+		var displayName = MethodDisplayName.Of(parsed.TypeName, parsed.MethodName);
+		var module = parsed.ModuleSimpleName;
+
+		var modulePath = ModulePaths().FirstOrDefault(path =>
+			string.Equals(Path.GetFileNameWithoutExtension(path), module, StringComparison.OrdinalIgnoreCase));
+
+		if (modulePath is null)
+		{
+			return NoMethodSource(
+				location, displayName, module, LiveSymbolState.NoSymbols, $"No loaded module is named {module}.");
+		}
+
+		var symbols = SymbolCache.Shared.For(modulePath);
+		var token = MethodTokens.Find(modulePath, parsed.TypeName, parsed.MethodName);
+		if (symbols is null || token is null)
+		{
+			return NoMethodSource(
+				location,
+				displayName,
+				module,
+				LiveSymbolState.NoSymbols,
+				$"{Path.GetFileName(modulePath)} declares no method {parsed.TypeName}.{parsed.MethodName}.");
+		}
+
+		if (symbols.Pdb is null)
+		{
+			var state = symbols.PdbState == PdbState.Mismatched
+				? LiveSymbolState.SymbolsMismatched
+				: LiveSymbolState.NoSymbols;
+
+			return NoMethodSource(
+				location,
+				displayName,
+				module,
+				state,
+				(symbols.PdbProblem ?? $"{Path.GetFileName(modulePath)} has no symbols on this machine.")
+					+ " A breakpoint on this method still stops at its first instruction.");
+		}
+
+		var region = MethodRegion.Of(symbols.Pdb.Extents(), token.Value);
+		if (MethodRegion.Lines(region) is not { } span)
+		{
+			return NoMethodSource(
+				location,
+				displayName,
+				module,
+				LiveSymbolState.NoSequencePoint,
+				"The symbols record no source for this method, which is what an abstract, external or "
+					+ "generated one looks like. A breakpoint on it still stops at its first instruction.");
+		}
+
+		var excerpt = SourceLines.Read(span.File, span.FirstLine, span.LastLine);
+
+		return new LiveMethodSource
+		{
+			Location = location,
+			DisplayName = displayName,
+			Module = module,
+			Symbols = LiveSymbolState.Resolved,
+			File = span.File,
+			FirstLine = excerpt.FirstLine,
+			Lines = excerpt.Lines,
+			Positions = PositionsIn(region, modulePath, module, span.File),
+			Detail = excerpt.HasText
+				? excerpt.Problem
+				: $"{excerpt.Problem} The positions below are still exact; only the text is missing.",
+		};
 	}
 
 	public bool RemoveTracepoint(string id) => RemoveBinding(id);
@@ -2048,11 +2183,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				foreach (var module in EnumerateModules(_process))
 				{
 					loaded.Add(SimpleName(module));
+					RememberModule(module);
+
 					foreach (var binding in _bindings)
 					{
 						if (!binding.Bound) TryBind(binding, module);
 					}
 				}
+
+				// This walk is the one a name search would otherwise have to take for itself.
+				_modulesEnumerated = true;
 
 				ExplainUnbound(loaded);
 			}
@@ -2077,9 +2217,102 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	/// <summary>Binds unbound bindings against a module as it loads; called from a stopped callback.</summary>
+	/// <summary>
+	/// Notes a module's file, so its metadata and symbols can be read without touching the target
+	/// again. A dynamic or in-memory module is skipped: there is no file to read it out of.
+	/// </summary>
+	private void RememberModule(CorDebugModule module)
+	{
+		string path;
+
+		try
+		{
+			if (module.IsDynamic || module.IsInMemory) return;
+
+			path = module.Name;
+		}
+		catch (Exception)
+		{
+			return;
+		}
+
+		if (string.IsNullOrWhiteSpace(path)) return;
+
+		lock (_gate)
+		{
+			if (!_modulePaths.Contains(path, StringComparer.OrdinalIgnoreCase)) _modulePaths.Add(path);
+		}
+	}
+
+	/// <summary>
+	/// The target's loaded module files, walking the ones that predate this session's attach the
+	/// first time anybody asks.
+	/// </summary>
+	private IReadOnlyList<string> ModulePaths()
+	{
+		lock (_gate)
+		{
+			if (!_modulesEnumerated) EnumerateLoadedModules();
+
+			return [.. _modulePaths];
+		}
+	}
+
+	/// <summary>
+	/// Walks the target's modules once, async-breaking it to a synchronized state to do so.
+	/// <para>
+	/// The stop and the continue are a pair, which is what makes this safe to call while the target
+	/// is held at a breakpoint: the stop count goes up and back down and the target stays exactly as
+	/// stopped as it was.
+	/// </para>
+	/// </summary>
+	private void EnumerateLoadedModules()
+	{
+		if (_process is null || _detached || _exited) return;
+
+		var stopped = false;
+		try
+		{
+			_process.Stop(0);
+			stopped = true;
+
+			foreach (var module in EnumerateModules(_process))
+			{
+				RememberModule(module);
+			}
+
+			_modulesEnumerated = true;
+		}
+		catch (Exception exception)
+		{
+			logger.LogDebug(exception, "Enumerating the target's loaded modules failed.");
+		}
+		finally
+		{
+			if (stopped)
+			{
+				try
+				{
+					_process.Continue(fIsOutOfBand: false);
+				}
+				catch (Exception exception)
+				{
+					logger.LogDebug(exception, "Continue after enumerating modules failed.");
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// Takes in a module as it loads: notes its file, and binds anything waiting for it. Called from
+	/// a stopped callback.
+	/// </summary>
 	private void BindModule(CorDebugModule module)
 	{
+		// Before the early return below, because the list of modules is wanted by a name search
+		// whether or not anything is waiting to bind.
+		RememberModule(module);
+
 		lock (_gate)
 		{
 			if (_bindings.TrueForAll(binding => binding.Bound)) return;
@@ -2113,21 +2346,36 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return;
 		}
 
+		var offset = binding.Location.IlOffset;
+
 		try
 		{
 			var function = module.GetFunctionFromToken(token.Value);
-			var breakpoint = function.CreateBreakpoint();
+
+			// A named method binds at its first instruction; a picked position binds inside the IL,
+			// which is the only way to stop on a line that is not the method's first.
+			var breakpoint = offset is { } instruction
+				? function.ILCode.CreateBreakpoint(instruction)
+				: function.CreateBreakpoint();
+
 			breakpoint.Activate(true);
 
 			binding.Breakpoint = breakpoint;
 			binding.Token = token.Value;
+			binding.ModulePath = module.Name;
+			binding.Source = SourceAt(module.Name, token.Value, offset ?? 0);
 			binding.Detail = null;
 			buffer.Append(LiveDebugEventKind.SessionNotice, $"{binding.Id} bound at {binding.Raw}.");
 			logger.LogInformation("Binding {Id} bound at {Location} (token 0x{Token:x8}).", binding.Id, binding.Raw, token.Value);
 		}
 		catch (Exception exception)
 		{
-			binding.Detail = $"bind failed: {exception.Message}";
+			// An offset the method's IL does not contain is the failure worth naming apart. It comes
+			// back as an HRESULT about setting a breakpoint, which says nothing about the number
+			// being wrong, and it is the one thing a caller composing a location by hand gets wrong.
+			binding.Detail = offset is { } bad
+				? $"bind failed at IL_{bad:x4}: {exception.Message}. The offset must be one this method's symbols report."
+				: $"bind failed: {exception.Message}";
 			logger.LogDebug(exception, "Binding {Id} at {Location} failed.", binding.Id, binding.Raw);
 		}
 	}
@@ -2240,6 +2488,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		Id = binding.Id,
 		Location = binding.Raw,
 		Bound = binding.Bound,
+		IlOffset = binding.Location.IlOffset,
+		Source = binding.Source,
 		HitCount = binding.HitCount,
 		LogMessage = binding.LogMessage,
 		LogEveryNthHit = binding.LogEveryNthHit,
@@ -2253,11 +2503,122 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		Location = binding.Raw,
 		StopOnHit = binding.StopOnHit,
 		Bound = binding.Bound,
+		IlOffset = binding.Location.IlOffset,
+		Source = binding.Source,
 		HitCount = binding.HitCount,
 		AutoContinueSeconds = binding.AutoContinueSeconds ?? DefaultAutoContinueSeconds,
 		Condition = binding.ConditionText,
 		Detail = binding.Bound ? null : binding.Detail,
 	};
+
+	private static LiveMethodMatch DescribeMatch(MethodCandidate candidate) => new()
+	{
+		Location = candidate.Location,
+		DisplayName = candidate.DisplayName,
+		Signature = candidate.Signature,
+		Module = candidate.Module,
+		HasSymbols = candidate.HasSymbols,
+	};
+
+	/// <summary>
+	/// What a reader needs to know about a search that the list of matches does not say. Null when
+	/// the answer speaks for itself, since a caption that is always there is one nobody reads.
+	/// </summary>
+	private static string? SearchDetail(string query, int modules, MethodSearchResult found)
+	{
+		if (!MethodQuery.IsWorthSearching(query))
+		{
+			return $"Type at least {MethodQuery.ShortestQuery} characters. A shorter query matches most "
+				+ "of a framework, and reading every loaded module to say so is the cost of the answer.";
+		}
+
+		if (modules == 0)
+		{
+			return "No modules are known yet. The target reports them as it loads them, so this fills in "
+				+ "once it is running.";
+		}
+
+		return found.ModulesUnreadable > 0
+			? $"{found.ModulesUnreadable} of {modules} loaded modules were not searched: a native library "
+				+ "or one built in memory has no metadata on disk to read."
+			: null;
+	}
+
+	/// <summary>
+	/// Every place in a region where execution can stop, in source order, each naming the method its
+	/// instructions belong to rather than the one somebody was reading.
+	/// </summary>
+	private static IReadOnlyList<LiveMethodPosition> PositionsIn(
+		IReadOnlyList<MethodExtent> region,
+		string modulePath,
+		string module,
+		string file)
+	{
+		var positions = new List<LiveMethodPosition>();
+
+		foreach (var extent in region)
+		{
+			var parts = MethodTokens.MethodParts(modulePath, extent.MethodToken);
+			var owner = parts is { } named ? $"{module}!{named.TypeName}.{named.MethodName}" : null;
+			var label = parts is { } shown ? MethodDisplayName.Of(shown.TypeName, shown.MethodName) : null;
+
+			// A method whose metadata will not name it cannot be addressed, so its lines are not
+			// offered. Offering a position nothing can be set at is worse than leaving the line plain.
+			if (owner is null || label is null) continue;
+
+			foreach (var point in extent.Points)
+			{
+				if (point.Position is not { } at) continue;
+				if (!string.Equals(at.File, file, StringComparison.OrdinalIgnoreCase)) continue;
+
+				positions.Add(new LiveMethodPosition
+				{
+					Location = $"{owner}@IL_{point.Offset:x4}",
+					DisplayName = label,
+					IlOffset = point.Offset,
+					Line = at.Line,
+					Column = at.Column,
+					EndLine = at.EndLine,
+					EndColumn = at.EndColumn,
+				});
+			}
+		}
+
+		return [.. positions.OrderBy(position => position.Line).ThenBy(position => position.Column)];
+	}
+
+	/// <summary>A method that cannot be shown, saying why. Its first instruction is still breakable at.</summary>
+	private static LiveMethodSource NoMethodSource(
+		string location,
+		string displayName,
+		string module,
+		LiveSymbolState symbols,
+		string detail) => new()
+		{
+			Location = location,
+			DisplayName = displayName,
+			Module = module,
+			Symbols = symbols,
+			FirstLine = 0,
+			Lines = [],
+			Positions = [],
+			Detail = detail,
+		};
+
+	/// <summary>Where an instruction came from in source, or null when the symbols cannot say.</summary>
+	private static LiveSourcePosition? SourceAt(string modulePath, int methodToken, int ilOffset)
+	{
+		if (SymbolCache.Shared.For(modulePath)?.Pdb?.Position(methodToken, ilOffset) is not { } at) return null;
+
+		return new LiveSourcePosition
+		{
+			File = at.File,
+			Line = at.Line,
+			Column = at.Column,
+			EndLine = at.EndLine,
+			EndColumn = at.EndColumn,
+		};
+	}
 
 	private static string DescribeExceptionType(CorDebugThread thread)
 	{
@@ -2325,6 +2686,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		/// <summary>The bound method's metadata token, used to match a hit back to this binding.</summary>
 		public int? Token { get; set; }
+
+		/// <summary>The module file it bound in, for reading the symbols that say where that was.</summary>
+		public string? ModulePath { get; set; }
+
+		/// <summary>
+		/// Where in source it bound, read once at bind rather than on each listing: a listing is
+		/// polled while a panel is open and the answer cannot change while the module is loaded.
+		/// </summary>
+		public LiveSourcePosition? Source { get; set; }
 
 		public CorDebugFunctionBreakpoint? Breakpoint { get; set; }
 

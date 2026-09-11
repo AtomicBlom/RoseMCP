@@ -28,6 +28,16 @@ public sealed record MethodCandidate
 	/// <summary>The same method as a person says it, accessors and constructors named as such.</summary>
 	public required string DisplayName { get; init; }
 
+	/// <summary>
+	/// The parameter names in brackets, as <c>(seed, text)</c>.
+	/// <para>
+	/// It is what tells two overloads apart in a list, since they share a name and therefore share
+	/// the location string as well. Names rather than types because metadata has them to hand and a
+	/// person picking from a list recognises the name they wrote.
+	/// </para>
+	/// </summary>
+	public required string Signature { get; init; }
+
 	/// <summary>The method-def token.</summary>
 	public required int Token { get; init; }
 

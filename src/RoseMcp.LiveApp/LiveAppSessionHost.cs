@@ -350,6 +350,45 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return session.Hold(seconds is { } requested ? TimeSpan.FromSeconds(requested) : null, release);
 	}
 
+	/// <summary>Methods of the target's loaded modules matching a typed query, best first.</summary>
+	public LiveMethodMatches SearchMethods(string? query, int limit)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveMethodMatches
+			{
+				Query = query ?? string.Empty,
+				Matches = [],
+				Total = 0,
+				ModulesSearched = 0,
+				Detail = NotAttachedDetail,
+			};
+		}
+
+		return session.SearchMethods(query, limit);
+	}
+
+	/// <summary>A method's source and the positions inside it a breakpoint can be set at.</summary>
+	public LiveMethodSource ReadMethodSource(string location)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveMethodSource
+			{
+				Location = location,
+				DisplayName = location,
+				Module = string.Empty,
+				Symbols = LiveSymbolState.NoSymbols,
+				FirstLine = 0,
+				Lines = [],
+				Positions = [],
+				Detail = NotAttachedDetail,
+			};
+		}
+
+		return session.ReadMethodSource(location);
+	}
+
 	/// <summary>The debug session, or null when this host has no target.</summary>
 	private CorDebugSession? Attached()
 	{

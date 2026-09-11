@@ -154,7 +154,18 @@ public static class MethodTokens
 	}
 
 	/// <summary>The declaring type's full name plus the method name, for a method-def token.</summary>
-	public static string? MethodFullName(string modulePath, int methodToken)
+	public static string? MethodFullName(string modulePath, int methodToken) =>
+		MethodParts(modulePath, methodToken) is { } parts ? $"{parts.TypeName}.{parts.MethodName}" : null;
+
+	/// <summary>
+	/// A method's declaring type and its own name, separately, for a method-def token.
+	/// <para>
+	/// Separately because the joined form cannot be taken apart again. A type name contains dots and
+	/// so does <c>.ctor</c>, so splitting <c>MyApp.Widget..ctor</c> at the last one names a type that
+	/// does not exist and a method called nothing.
+	/// </para>
+	/// </summary>
+	public static (string TypeName, string MethodName)? MethodParts(string modulePath, int methodToken)
 	{
 		try
 		{
@@ -162,9 +173,10 @@ public static class MethodTokens
 
 			var handle = (MethodDefinitionHandle)MetadataTokens.EntityHandle(methodToken);
 			var method = metadata.GetMethodDefinition(handle);
-			var typeName = FullName(metadata, metadata.GetTypeDefinition(method.GetDeclaringType()));
 
-			return $"{typeName}.{metadata.GetString(method.Name)}";
+			return (
+				FullName(metadata, metadata.GetTypeDefinition(method.GetDeclaringType())),
+				metadata.GetString(method.Name));
 		}
 		catch (Exception)
 		{

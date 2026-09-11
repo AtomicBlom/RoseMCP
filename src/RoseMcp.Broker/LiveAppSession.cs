@@ -373,6 +373,20 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["seconds"] = seconds, ["release"] = release },
 			cancellationToken);
 
+	/// <summary>Methods of the target's loaded modules matching a typed query, best first.</summary>
+	public Task<LiveMethodMatches> SearchMethodsAsync(string query, int limit, CancellationToken cancellationToken)
+		=> SendAsync<LiveMethodMatches>(
+			ToolNames.LiveAppSearchMethods,
+			new Dictionary<string, object?> { ["query"] = query, ["limit"] = limit },
+			cancellationToken);
+
+	/// <summary>A method's source and the positions inside it a breakpoint can be set at.</summary>
+	public Task<LiveMethodSource> ReadMethodSourceAsync(string location, CancellationToken cancellationToken)
+		=> SendAsync<LiveMethodSource>(
+			ToolNames.LiveAppMethodSource,
+			new Dictionary<string, object?> { ["location"] = location },
+			cancellationToken);
+
 	/// <summary>Injects the XAML provider into the target and reads a snapshot of its live visual tree.</summary>
 	public Task<LiveXamlTree> ReadXamlTreeAsync(CancellationToken cancellationToken)
 		=> ReadXamlTreeAsync(null, 0, 0, cancellationToken);

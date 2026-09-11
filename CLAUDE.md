@@ -33,11 +33,11 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 - **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker. Types, and no
   package references at all, which is what lets every host reference it. Logic goes there only when
   a test needs it and the host that owns it cannot be referenced -- `XamlStackModules`,
-  `ToolArgumentShape`, `XamlProviderPath`, `ValuePath` and `HostVersion` are the whole list,
-  and each is a pure function over strings or JSON with the host's own facts passed in. That
-  exception exists because three of the launchable hosts are `net10.0-windows` or reachable only
-  as a child process, so a rule living beside its host is a rule no test can see. It is not a
-  licence for behaviour: anything holding state, touching Roslyn, or knowing what a tool does
+  `ToolArgumentShape`, `XamlProviderPath`, `ValuePath`, `SymbolLocation` and `HostVersion`
+  are the whole list, and each is a pure function over strings or JSON with the host's own facts
+  passed in. That exception exists because three of the launchable hosts are `net10.0-windows` or
+  reachable only as a child process, so a rule living beside its host is a rule no test can see. It
+  is not a licence for behaviour: anything holding state, touching Roslyn, or knowing what a tool does
   belongs in the host.
 - **`RoseMcp.Solutions`** -- library. Reads solution files and `rosemcp.json` without MSBuild or
   Roslyn, so the broker can decide *which* solution a call means without taking a dependency on the
@@ -45,10 +45,12 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 - **`RoseMcp.Logging`** -- library. The file sink, referenced only by the three launchable hosts
   so Serilog stays off the DTO assembly and the tests.
 - **`RoseMcp.Symbols`** -- library. Reads a module's metadata and its portable PDB: method tokens,
-  what a local is called at a given instruction, and which line an IL offset came from. Plain
-  `net10.0` and no package references, for the reason `RoseMcp.XamlDiff` exists: the live-app host
-  that needs it is `net10.0-windows`, and a rule living beside that host is a rule no test can see.
-  It knows nothing about a debugger; it reads files.
+  what a local is called at a given instruction, which line an IL offset came from, which methods
+  match a typed name, and which compiled methods make up the body of one somebody is reading -- a
+  lambda's and an async method's are elsewhere, which is what a breakpoint inside either has to
+  find. Plain `net10.0` and no package references, for the reason `RoseMcp.XamlDiff` exists: the
+  live-app host that needs it is `net10.0-windows`, and a rule living beside that host is a rule
+  no test can see. It knows nothing about a debugger; it reads files.
 - **`RoseMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, the
   activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts below.
 - **`RoseMcp.Server`** -- console host. `--transport stdio` (default) or `--transport http`.

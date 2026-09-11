@@ -220,3 +220,73 @@ pointer maps to IL) and `Symbols` (whether the module had symbols, and if not, w
 complete-looking stack with a surprising caller, which is the same shape of confident wrong answer as
 a stale PDB. `Mapping` matters for the same reason: every value but `Exact` means the line beside it
 is an approximation, and optimised code maps approximately as a matter of course.
+## A breakpoint is chosen by reading the method, not by spelling its name
+
+**Decision.** The panel searches the target's loaded modules by name, shows the chosen method's
+source, and sets the breakpoint on the line somebody clicks.
+
+**Why.** An agentic session has no IDE open beside it, so the old text box asked a person to remember
+a namespace, a type and a method exactly, and a location that is one character out does not bind. The
+search is over the modules the target has actually loaded, which is also the honest scope: a method
+in code the target has not reached yet is not there to find, and the panel says so rather than
+reporting an empty result as a spelling mistake.
+
+**Why it reads files and not the debuggee.** Which modules are loaded is the only thing the target is
+asked, once, in a balanced stop and continue that leaves a held target exactly as held as it was.
+Everything after that is metadata and source on disk. So a search answers between keystrokes while
+the app runs, and answers while the app is wedged -- which is when somebody most wants a breakpoint.
+
+## A position names the method its instructions are in, which is not always the one on screen
+
+**Decision.** The positions offered for a method cover the lambdas, local functions and state
+machines written inside it, and each carries the location that breaks there. A line with places to
+stop in more than one method is more than one row, and a row whose method is not the one being read
+says which method it is.
+
+**Why.** A line inside a lambda compiles into a method of the compiler's own, and a line after an
+`await` into a state machine's `MoveNext`. Those are exactly the lines somebody most wants to break
+on, and a picker that offered only the named method's own sequence points would refuse them while
+appearing to work. Picking one of several silently is worse still: the breakpoint lands in code
+nobody pointed at, and the only symptom is the target stopping somewhere unexpected.
+
+**What that cost.** An `async` method has no sequence points at all. A region seeded on the named
+method's own extent therefore finds nothing for it, and the emptiness reads as a method with no code
+in it -- so the state machines the PDB links to a method are a seed and not merely a step.
+
+## The instruction offset rides in the location
+
+**Decision.** A location may end in `@IL_001F`, and that is how a picked position is carried, rather
+than as an argument of its own.
+
+**Why.** What a breakpoint reports is then what sets the same breakpoint again. It also keeps the
+agent-facing and host-facing tools declaring the same arguments, which the parity test checks, and
+the capability reaches an agent for free rather than being a second grammar nobody documented.
+
+**Why it is strict.** The marker is anchored past the last dot, so something spelled like it inside a
+generated type's name is part of the name. A marker that is there and unreadable is refused rather
+than dropped, because falling back to the method's first instruction is a stop in the wrong place
+reported as a success, and nothing downstream could tell the difference. `SymbolLocation` moved to
+`Contracts` to be tested at all, for the reason `ValuePath` is there.
+
+## Where a breakpoint bound is reported, and overloads are not disambiguated
+
+**Decision.** A breakpoint and a tracepoint each carry the file and line they actually bound at. A
+location naming a method with several overloads still binds to whichever metadata lists first.
+
+**Why.** A location names a method, and two overloads share one, so the grammar cannot express which
+was meant. Reporting where it landed is what lets somebody see it went somewhere other than where
+they meant -- which is the whole of the problem, since an overload breakpoint that binds to the wrong
+one is otherwise indistinguishable from a working one. Making the grammar carry a parameter list is
+the real fix and is a change to every layer that parses a location.
+
+## Missing source is a sentence, not a refusal
+
+**Decision.** No such module, no symbols, symbols from another build, or a source file this machine
+never had: each is a sentence and an empty listing, and the method's first instruction stays
+available to break at.
+
+**Why.** A PDB records the path of whichever machine compiled the module, so anything out of a
+package or off a build agent names a directory that was never here. That is the ordinary state of
+most of what a target loads rather than a fault, and hiding those methods from the search would mean
+the one thing a name-addressed breakpoint has always been able to do -- stop at a method's entry --
+stopped being offered for them.

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The debugging and XAML inspection window. A separate process from the tray on purpose: the
+       tray is the broker, so restarting it drops every loaded solution and detaches every debug
+       session, and a tree view over several thousand nodes is a far larger crash surface than a
+       status panel. This is always a client of a session some agent started, because a process has
+       one debugger and so the inspector can never own one. -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Overrides the repo-wide net10.0. WinUI needs a Windows target framework. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier Condition=" '$(RuntimeIdentifier)' == '' ">win-x64</RuntimeIdentifier>
+    <Platforms>x64;ARM64</Platforms>
+    <UseWinUI>true</UseWinUI>
+    <!-- Unpackaged, so it is xcopy-runnable beside the tray with no MSIX in the way. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- XAML code generation produces warnings we do not control. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- The generated entry point cannot claim the single-instance key before the app starts, and
+         claiming it afterwards is too late: a second launch would already have built a window.
+         Program.cs is the entry point instead. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />
+    <ProjectReference Include="..\RoseMcp.Ui\RoseMcp.Ui.csproj" />
+    <ProjectReference Include="..\RoseMcp.Ui.Core\RoseMcp.Ui.Core.csproj" />
+  </ItemGroup>
+
+</Project>

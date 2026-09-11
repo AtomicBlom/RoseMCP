@@ -1,0 +1,108 @@
+<UserControl
+	x:Class="RoseMcp.Inspector.Panes.EventsPane"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:contracts="using:RoseMcp.Contracts"
+	xmlns:inspector="using:RoseMcp.Ui.Core.Inspector">
+
+	<Grid RowDefinitions="Auto,Auto,*">
+
+		<!-- Filters. Stops and exceptions are what anyone is looking for in a tail this long, so
+		     they get a chip each; everything else is behind "all". -->
+		<StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6" Margin="0,0,0,8">
+			<Button x:Name="AllChip" Style="{StaticResource ChipButtonStyle}" Content="Everything" Click="OnFilterAll" />
+			<Button x:Name="StopsChip" Style="{StaticResource ChipButtonStyle}" Content="Stops" Click="OnFilterStops"
+				ToolTipService.ToolTip="Breakpoint hits and completed steps" />
+			<Button x:Name="ExceptionsChip" Style="{StaticResource ChipButtonStyle}" Content="Exceptions" Click="OnFilterExceptions" />
+			<Button x:Name="LogsChip" Style="{StaticResource ChipButtonStyle}" Content="Log output" Click="OnFilterLogs" />
+			<TextBlock x:Name="FilterNote" VerticalAlignment="Center" Margin="6,0,0,0"
+				Style="{StaticResource CaptionTextBlockStyle}"
+				Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+		</StackPanel>
+
+		<InfoBar x:Name="DroppedBar" Grid.Row="1" Margin="0,0,0,8" IsOpen="False" IsClosable="False"
+			Severity="Informational" />
+
+		<Grid Grid.Row="2">
+			<!-- Anchored at the bottom: as rows are appended the viewer keeps the end in view by
+			     itself, which is what a live tail wants and what scrolling by hand converges on
+			     slowly, because a virtualising repeater only knows the extent it has realised. -->
+			<ScrollViewer x:Name="Scroll" VerticalScrollBarVisibility="Auto" VerticalAnchorRatio="1.0">
+				<ItemsRepeater x:Name="Tail">
+					<ItemsRepeater.Layout>
+						<StackLayout Spacing="2" />
+					</ItemsRepeater.Layout>
+					<ItemsRepeater.ItemTemplate>
+						<DataTemplate x:DataType="inspector:EventRow">
+							<Border Style="{StaticResource CardStyle}" Padding="10,7">
+								<StackPanel Spacing="4">
+									<Grid ColumnSpacing="8" ColumnDefinitions="Auto,Auto,Auto,*">
+										<TextBlock Grid.Column="0" Text="{x:Bind Timestamp}" VerticalAlignment="Center"
+											Style="{StaticResource MonoCaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										<Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+											<TextBlock Text="{x:Bind KindLabel}" Style="{StaticResource CaptionTextBlockStyle}" />
+										</Border>
+										<TextBlock Grid.Column="2" Text="{x:Bind Thread}" Visibility="{x:Bind HasThread}"
+											VerticalAlignment="Center"
+											Style="{StaticResource MonoCaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										<TextBlock Grid.Column="3" Text="{x:Bind Message}" TextWrapping="Wrap"
+											VerticalAlignment="Center"
+											Style="{StaticResource BodyTextBlockStyle}" />
+									</Grid>
+
+									<TextBlock Text="{x:Bind ExceptionType}" Visibility="{x:Bind HasException}"
+										Margin="0,0,0,0"
+										Style="{StaticResource MonoCaptionTextBlockStyle}"
+										Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+
+									<Expander Visibility="{x:Bind HasDetail}" HorizontalAlignment="Stretch"
+										HorizontalContentAlignment="Left">
+										<Expander.Resources>
+											<ResourceDictionary Source="ms-appx:///RoseMcp.Ui/Themes/FlatExpander.xaml" />
+										</Expander.Resources>
+										<Expander.Header>
+											<TextBlock Text="{x:Bind DetailHeader}" Style="{StaticResource CaptionTextBlockStyle}" />
+										</Expander.Header>
+										<StackPanel Spacing="6">
+											<ItemsControl ItemsSource="{x:Bind Frames}">
+												<ItemsControl.ItemTemplate>
+													<DataTemplate x:DataType="x:String">
+														<TextBlock Text="{x:Bind}" TextTrimming="CharacterEllipsis"
+															Style="{StaticResource MonoCaptionTextBlockStyle}" />
+													</DataTemplate>
+												</ItemsControl.ItemTemplate>
+											</ItemsControl>
+											<ItemsControl ItemsSource="{x:Bind Variables}">
+												<ItemsControl.ItemTemplate>
+													<DataTemplate x:DataType="contracts:LiveVariable">
+														<Grid ColumnSpacing="8" ColumnDefinitions="Auto,Auto,*">
+															<TextBlock Grid.Column="0" Text="{x:Bind Name}"
+																Style="{StaticResource MonoCaptionTextBlockStyle}" />
+															<TextBlock Grid.Column="1" Text="{x:Bind TypeName}"
+																Style="{StaticResource MonoCaptionTextBlockStyle}"
+																Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+															<TextBlock Grid.Column="2" Text="{x:Bind Value}" TextTrimming="CharacterEllipsis"
+																Style="{StaticResource MonoCaptionTextBlockStyle}"
+																Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+														</Grid>
+													</DataTemplate>
+												</ItemsControl.ItemTemplate>
+											</ItemsControl>
+										</StackPanel>
+									</Expander>
+								</StackPanel>
+							</Border>
+						</DataTemplate>
+					</ItemsRepeater.ItemTemplate>
+				</ItemsRepeater>
+			</ScrollViewer>
+
+			<TextBlock x:Name="Empty" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420"
+				TextWrapping="Wrap" TextAlignment="Center"
+				Style="{StaticResource BodyTextBlockStyle}"
+				Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+		</Grid>
+	</Grid>
+</UserControl>

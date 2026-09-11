@@ -1,0 +1,122 @@
+<UserControl
+	x:Class="RoseMcp.Inspector.Panes.BreakpointsPane"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:inspector="using:RoseMcp.Ui.Core.Inspector">
+
+	<ScrollViewer VerticalScrollBarVisibility="Auto">
+		<StackPanel Spacing="14">
+
+			<!-- Stopping breakpoints. -->
+			<StackPanel Spacing="8">
+				<TextBlock Text="Breakpoints" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+				<Grid ColumnSpacing="8" ColumnDefinitions="*,120,Auto">
+					<TextBox x:Name="BreakpointLocation" Grid.Column="0" PlaceholderText="Namespace.Type.Method"
+						ToolTipService.ToolTip="The method to stop in. It binds when the module carrying it is loaded." />
+					<TextBox x:Name="BreakpointHold" Grid.Column="1" PlaceholderText="hold (s)"
+						ToolTipService.ToolTip="Seconds before the target releases itself. Empty holds until continued." />
+					<Button x:Name="AddBreakpoint" Grid.Column="2" Style="{StaticResource ChipButtonStyle}"
+						Content="Add" Click="OnAddBreakpoint" />
+				</Grid>
+
+				<TextBox x:Name="BreakpointCondition" PlaceholderText="condition (optional), such as count &gt; 3"
+					ToolTipService.ToolTip="Evaluated at the hit; the target only stops when it holds." />
+
+				<ItemsRepeater x:Name="BreakpointRows">
+					<ItemsRepeater.Layout>
+						<StackLayout Spacing="4" />
+					</ItemsRepeater.Layout>
+					<ItemsRepeater.ItemTemplate>
+						<DataTemplate x:DataType="inspector:BreakpointRow">
+							<Border Style="{StaticResource CardStyle}" Padding="10,8">
+								<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto,Auto,Auto">
+									<StackPanel Grid.Column="0" Spacing="2">
+										<TextBlock Text="{x:Bind Location}" TextTrimming="CharacterEllipsis"
+											Style="{StaticResource MonoTextBlockStyle}" />
+										<TextBlock Text="{x:Bind Conditions, Mode=OneWay}" Visibility="{x:Bind HasConditions, Mode=OneWay}"
+											Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+										<TextBlock Text="{x:Bind Detail, Mode=OneWay}" Visibility="{x:Bind HasDetail, Mode=OneWay}"
+											TextWrapping="Wrap"
+											Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+									</StackPanel>
+									<Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+										<TextBlock Text="{x:Bind BoundLabel, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" />
+									</Border>
+									<TextBlock Grid.Column="2" Text="{x:Bind Hits, Mode=OneWay}" VerticalAlignment="Center"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+									<Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Center"
+										Tag="{x:Bind Id}" Click="OnRemoveBreakpoint"
+										ToolTipService.ToolTip="Remove">
+										<FontIcon Glyph="&#xE711;" FontSize="12" />
+									</Button>
+								</Grid>
+							</Border>
+						</DataTemplate>
+					</ItemsRepeater.ItemTemplate>
+				</ItemsRepeater>
+
+				<TextBlock x:Name="NoBreakpoints" TextWrapping="Wrap"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+			</StackPanel>
+
+			<!-- Tracepoints. -->
+			<StackPanel Spacing="8">
+				<TextBlock Text="Tracepoints" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+				<Grid ColumnSpacing="8" ColumnDefinitions="*,*,90,Auto">
+					<TextBox x:Name="TracepointLocation" Grid.Column="0" PlaceholderText="Namespace.Type.Method" />
+					<TextBox x:Name="TracepointMessage" Grid.Column="1" PlaceholderText="message (optional)" />
+					<TextBox x:Name="TracepointEvery" Grid.Column="2" PlaceholderText="every Nth"
+						ToolTipService.ToolTip="Log only every Nth hit, for something that fires thousands of times." />
+					<Button x:Name="AddTracepoint" Grid.Column="3" Style="{StaticResource ChipButtonStyle}"
+						Content="Add" Click="OnAddTracepoint" />
+				</Grid>
+
+				<ItemsRepeater x:Name="TracepointRows">
+					<ItemsRepeater.Layout>
+						<StackLayout Spacing="4" />
+					</ItemsRepeater.Layout>
+					<ItemsRepeater.ItemTemplate>
+						<DataTemplate x:DataType="inspector:TracepointRow">
+							<Border Style="{StaticResource CardStyle}" Padding="10,8">
+								<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto,Auto,Auto">
+									<StackPanel Grid.Column="0" Spacing="2">
+										<TextBlock Text="{x:Bind Location}" TextTrimming="CharacterEllipsis"
+											Style="{StaticResource MonoTextBlockStyle}" />
+										<TextBlock Text="{x:Bind Behaviour, Mode=OneWay}"
+											Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+										<TextBlock Text="{x:Bind Detail, Mode=OneWay}" Visibility="{x:Bind HasDetail, Mode=OneWay}"
+											TextWrapping="Wrap"
+											Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+									</StackPanel>
+									<Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+										<TextBlock Text="{x:Bind BoundLabel, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" />
+									</Border>
+									<TextBlock Grid.Column="2" Text="{x:Bind Hits, Mode=OneWay}" VerticalAlignment="Center"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+									<Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Center"
+										Tag="{x:Bind Id}" Click="OnRemoveTracepoint"
+										ToolTipService.ToolTip="Remove">
+										<FontIcon Glyph="&#xE711;" FontSize="12" />
+									</Button>
+								</Grid>
+							</Border>
+						</DataTemplate>
+					</ItemsRepeater.ItemTemplate>
+				</ItemsRepeater>
+
+				<TextBlock x:Name="NoTracepoints" TextWrapping="Wrap"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+			</StackPanel>
+		</StackPanel>
+	</ScrollViewer>
+</UserControl>

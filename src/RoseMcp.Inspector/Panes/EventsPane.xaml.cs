@@ -140,7 +140,7 @@ public sealed partial class EventsPane : UserControl
 	private void OnFilterAll(object sender, RoutedEventArgs args) => ShowFilter(null, "everything");
 
 	private void OnFilterStops(object sender, RoutedEventArgs args) => ShowFilter(
-		[nameof(LiveDebugEventKind.BreakpointHit), nameof(LiveDebugEventKind.StepComplete)],
+		[nameof(LiveDebugEventKind.BreakpointHit), nameof(LiveDebugEventKind.StepComplete), nameof(LiveDebugEventKind.Paused)],
 		"stops only");
 
 	private void OnFilterExceptions(object sender, RoutedEventArgs args) => ShowFilter(

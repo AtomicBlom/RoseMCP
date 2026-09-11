@@ -330,16 +330,20 @@ public sealed class SessionRow : Observable
 
 	/// <summary>
 	/// What stopped the target and where, or nothing while it runs. The breakpoint is named because
-	/// it is what a reader removes or moves; a step has none, which the wording says rather than
-	/// leaving a blank where an id would be.
+	/// it is what a reader removes or moves; a step and a manual pause have none, which the wording
+	/// says rather than leaving a blank where an id would be.
 	/// </summary>
 	public static string DescribeExecution(LiveAppSessionSummary summary)
 	{
 		if (summary.Stop is not { } stop) return string.Empty;
 
-		var what = stop.State == LiveExecutionState.StoppedAtBreakpoint
-			? stop.BreakpointId is { Length: > 0 } id ? $"breakpoint {id}" : "a breakpoint"
-			: "a step";
+		var what = stop.State switch
+		{
+			LiveExecutionState.StoppedAtBreakpoint =>
+				stop.BreakpointId is { Length: > 0 } id ? $"breakpoint {id}" : "a breakpoint",
+			LiveExecutionState.PausedByOperator => "paused",
+			_ => "a step",
+		};
 
 		return stop.ThreadId is { } thread ? $"{what} on thread {thread}" : what;
 	}

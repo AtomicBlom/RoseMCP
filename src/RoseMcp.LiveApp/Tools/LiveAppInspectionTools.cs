@@ -87,6 +87,19 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 		=> host.Hold(seconds, release);
 
 	[McpServerTool(
+		Name = ToolNames.LiveAppBreak,
+		Title = "Pause the target",
+		ReadOnly = false,
+		Destructive = false,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description("Stop a running target where it stands, and report the stop that makes.")]
+	public LivePauseResult Break(
+		[Description(ToolDescriptions.PauseSecondsArgument)] int? autoContinueSeconds = null)
+		=> host.Break(autoContinueSeconds);
+
+	[McpServerTool(
 		Name = ToolNames.LiveAppSearchMethods,
 		Title = "Find a method to break in",
 		ReadOnly = true,

@@ -128,6 +128,12 @@ public static class ToolNames
 	public const string LiveAppHold = "rose_live_app_hold";
 
 	/// <summary>
+	/// Live-app-host-only, inspector-facing. Stops a running target where it stands, rather than
+	/// where a breakpoint would have put it.
+	/// </summary>
+	public const string LiveAppBreak = "rose_live_app_break";
+
+	/// <summary>
 	/// Live-app-host-only, inspector-facing. Finds methods by name across the target's loaded
 	/// modules, for an autocomplete over somewhere to put a breakpoint.
 	/// </summary>

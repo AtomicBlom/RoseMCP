@@ -91,6 +91,7 @@ public sealed partial class MainWindow : Window
 		Breakpoints.Attach(_client, Report);
 		Stack.Attach(_client, Report);
 		Threads.Attach(_client, Report);
+		Execution.Attach(_client, Report);
 		Xaml.Attach(_client, Report);
 
 		_sessionPoll = new PollLoop(RefreshAsync, SessionInterval, Report);
@@ -224,9 +225,11 @@ public sealed partial class MainWindow : Window
 			Breakpoints.Bind(_inspected);
 			Stack.Bind(_inspected, _holds);
 			Threads.Bind(_inspected, _holds);
+			Execution.Bind(_inspected, _holds);
 			Xaml.Bind(_inspected);
 
 			EmptyState.Visibility = Visibility.Collapsed;
+			Execution.Visibility = Visibility.Visible;
 			DetachButton.IsEnabled = true;
 			ShowTab();
 		}
@@ -256,6 +259,7 @@ public sealed partial class MainWindow : Window
 		// about its XAML at all.
 		Stack.Observe(_row);
 		Threads.Observe(_row);
+		Execution.Observe(_row);
 		Xaml.Observe(_row);
 	}
 
@@ -394,6 +398,10 @@ public sealed partial class MainWindow : Window
 		// The tab goes with the session. Left up, it offers a visual tree for a process this window
 		// is no longer about.
 		XamlTab.Visibility = Visibility.Collapsed;
+
+		// Nothing to pause or step, and the buttons would be about a process this window is no
+		// longer showing.
+		Execution.Visibility = Visibility.Collapsed;
 
 		DetachButton.IsEnabled = false;
 		OpenLogButton.IsEnabled = false;

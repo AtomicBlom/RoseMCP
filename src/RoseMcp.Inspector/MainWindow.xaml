@@ -3,13 +3,14 @@
 	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
 	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
 	xmlns:panes="using:RoseMcp.Inspector.Panes"
+	xmlns:controls="using:RoseMcp.Inspector.Controls"
 	Title="RoseMCP Inspector">
 
 	<Window.SystemBackdrop>
 		<MicaBackdrop />
 	</Window.SystemBackdrop>
 
-	<Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Padding="0,0,0,14">
+	<Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" Padding="0,0,0,14">
 
 		<!-- Title bar. Draggable region only; every control in it would otherwise eat the drag.
 		     It names the process being debugged, because there is one of these windows per process
@@ -74,9 +75,13 @@
 			</Grid>
 		</Border>
 
-		<InfoBar x:Name="Notice" Grid.Row="2" Margin="14,0,14,10" IsOpen="False" IsClosable="True" />
+		<!-- Above the tabs, because moving the target is a thing you do to the session rather
+		     than to a stack: wanting to continue while reading the event tail is the ordinary case. -->
+		<controls:ExecutionBar x:Name="Execution" Grid.Row="2" Margin="14,0,14,10" />
 
-		<SelectorBar x:Name="Tabs" Grid.Row="3" Margin="14,0,14,8" SelectionChanged="OnTabChosen">
+		<InfoBar x:Name="Notice" Grid.Row="3" Margin="14,0,14,10" IsOpen="False" IsClosable="True" />
+
+		<SelectorBar x:Name="Tabs" Grid.Row="4" Margin="14,0,14,8" SelectionChanged="OnTabChosen">
 			<SelectorBarItem x:Name="EventsTab" Text="Events" IsSelected="True" />
 			<SelectorBarItem x:Name="BreakpointsTab" Text="Breakpoints" />
 			<SelectorBarItem x:Name="StackTab" Text="Stack" />
@@ -87,7 +92,7 @@
 		<!-- Panes are toggled by visibility rather than navigated to. A Frame recreates a page on
 		     every visit, which would lose the event tail, any open expander, and the scroll
 		     position: all of which are the reader's place in what they were doing. -->
-		<Grid Grid.Row="4" Margin="14,0,14,0">
+		<Grid Grid.Row="5" Margin="14,0,14,0">
 			<panes:EventsPane x:Name="Events" />
 			<panes:BreakpointsPane x:Name="Breakpoints" Visibility="Collapsed" />
 			<panes:StackPane x:Name="Stack" Visibility="Collapsed" />

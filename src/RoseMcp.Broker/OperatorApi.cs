@@ -155,6 +155,13 @@ public static class OperatorApi
 			async (string sessionId, StepRequest body, LiveAppSessionManager sessions, HttpContext context) =>
 				Json(await Require(sessions, sessionId).StepDetailedAsync(body.Mode, context.RequestAborted)));
 
+		// No body: a pause takes the target where it is, and the only thing to say about it is how
+		// long an unattended one should last, which the default answers.
+		operators.MapPost(
+			"/sessions/{sessionId}/break",
+			async (string sessionId, LiveAppSessionManager sessions, HttpContext context, int? autoContinueSeconds = null) =>
+				Json(await Require(sessions, sessionId).BreakAsync(autoContinueSeconds, context.RequestAborted)));
+
 		operators.MapPost(
 			"/sessions/{sessionId}/hold",
 			async (string sessionId, HoldRequest body, LiveAppSessionManager sessions, HttpContext context) =>

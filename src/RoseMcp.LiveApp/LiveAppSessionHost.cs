@@ -350,6 +350,17 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return session.Hold(seconds is { } requested ? TimeSpan.FromSeconds(requested) : null, release);
 	}
 
+	/// <summary>Stops a running target where it stands, rather than where a breakpoint would.</summary>
+	public LivePauseResult Break(int? autoContinueSeconds)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LivePauseResult { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail, Paused = false };
+		}
+
+		return session.Break(autoContinueSeconds);
+	}
+
 	/// <summary>Methods of the target's loaded modules matching a typed query, best first.</summary>
 	public LiveMethodMatches SearchMethods(string? query, int limit)
 	{

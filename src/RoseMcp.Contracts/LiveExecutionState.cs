@@ -20,4 +20,15 @@ public enum LiveExecutionState
 
 	/// <summary>Held at the end of a step, which no breakpoint owns.</summary>
 	StoppedAtStep,
+
+	/// <summary>
+	/// Held wherever it happened to be, because somebody asked for it rather than because the code
+	/// reached anything.
+	/// <para>
+	/// Its own state rather than a step with no breakpoint, because how a target came to be stopped
+	/// is the first thing a reader wants: a stack that looks like nothing in particular is expected
+	/// here and alarming at a breakpoint.
+	/// </para>
+	/// </summary>
+	PausedByOperator,
 }

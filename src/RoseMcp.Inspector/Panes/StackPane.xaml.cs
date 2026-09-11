@@ -8,11 +8,12 @@ using RoseMcp.Ui.Core.Inspector;
 namespace RoseMcp.Inspector.Panes;
 
 /// <summary>
-/// A held target: where it is stopped, the stack that got it there, and the buttons that move it.
+/// A held target: where it is stopped, the stack that got it there, and what is in scope.
 /// <para>
 /// The source of the selected frame is beside the stack with the line execution is on lit, because
 /// that is what makes a step worth taking. A step whose only visible effect is an instruction offset
-/// changing is one nobody can follow.
+/// changing is one nobody can follow. What moves the target lives above the tabs rather than here:
+/// wanting to continue while reading the event tail is the ordinary case.
 /// </para>
 /// </summary>
 public sealed partial class StackPane : UserControl
@@ -27,15 +28,7 @@ public sealed partial class StackPane : UserControl
 	/// <summary>The stop the frames on screen were read at, so a newer one is noticed.</summary>
 	private long _readAt = -1;
 
-	/// <summary>Where the session is now, which a click on Release needs and the poll knows.</summary>
 	private long _stopSequence;
-
-	/// <summary>
-	/// The stop a reader handed back to its own timer, so the keeper is not asked for it again.
-	/// Per stop rather than a mode, because letting this stop go is not a decision about the next
-	/// one -- a reader who steps is asking to look at where the step landed.
-	/// </summary>
-	private long _releasedAt = -1;
 
 	private bool _visible;
 
@@ -57,7 +50,6 @@ public sealed partial class StackPane : UserControl
 		_holds = holds;
 		_stop = null;
 		_readAt = -1;
-		_releasedAt = -1;
 		_stopped = false;
 		StaleBar.Message = InspectorText.StopEnded;
 		Show(null);
@@ -76,10 +68,10 @@ public sealed partial class StackPane : UserControl
 	}
 
 	/// <summary>
-	/// Whether this pane needs the target kept where it is: only while somebody can see it, only while
-	/// there is a stop to hold, and not at a stop its reader has already handed back.
+	/// Whether this pane needs the target kept where it is: only while somebody can see it, and only
+	/// while there is a stop to hold.
 	/// </summary>
-	private bool Wanted => _visible && _stopped && _stopSequence != _releasedAt;
+	private bool Wanted => _visible && _stopped;
 
 	/// <summary>
 	/// Takes each poll of the session. Frames are re-read when the stop's sequence moves, and not
@@ -92,13 +84,6 @@ public sealed partial class StackPane : UserControl
 		_stopped = row.IsStopped;
 
 		var settled = _holds?.Want(this, Wanted) ?? Task.CompletedTask;
-
-		Steps(row.IsStopped);
-
-		// The keeper's word beats the session's when it has one: the session says what the target is
-		// doing, and the keeper says why this window could not make it wait.
-		HoldText.Text = _holds?.Detail is { Length: > 0 } why ? why : row.ResumeLabel;
-		ReleaseButton.Visibility = row.IsHeld ? Visibility.Visible : Visibility.Collapsed;
 
 		// Frames outlive the stop they came from, deliberately: the target continuing is ordinary,
 		// and a pane that emptied itself would take a reader's place with it and say nothing.
@@ -284,15 +269,6 @@ public sealed partial class StackPane : UserControl
 		});
 	}
 
-	/// <summary>Whether the target can be moved from here, which it can only be while it is stopped.</summary>
-	private void Steps(bool stopped)
-	{
-		ContinueButton.IsEnabled = stopped;
-		StepInButton.IsEnabled = stopped;
-		StepOverButton.IsEnabled = stopped;
-		StepOutButton.IsEnabled = stopped;
-	}
-
 	private async void OnFrameChosen(object sender, SelectionChangedEventArgs args)
 	{
 		if (_stop is not { } stop) return;
@@ -301,66 +277,5 @@ public sealed partial class StackPane : UserControl
 
 		stop.Selected = frame;
 		await ShowFrameAsync(stop);
-	}
-
-	private async void OnContinue(object sender, RoutedEventArgs args) => await ResumeAsync(null);
-
-	private async void OnStepIn(object sender, RoutedEventArgs args) => await ResumeAsync("in");
-
-	private async void OnStepOver(object sender, RoutedEventArgs args) => await ResumeAsync("over");
-
-	private async void OnStepOut(object sender, RoutedEventArgs args) => await ResumeAsync("out");
-
-	/// <summary>
-	/// Moves the target: a continue, or a step of one of the three kinds.
-	/// <para>
-	/// A step lands in a new stop with a sequence of its own, so nothing is re-read here. The next
-	/// poll sees the sequence move and reads the stack the step arrived at, which is the same path a
-	/// breakpoint hit takes.
-	/// </para>
-	/// </summary>
-	private async Task ResumeAsync(string? mode)
-	{
-		if (_client is not { } client || _session is not { } session) return;
-
-		try
-		{
-			Steps(false);
-
-			// The target is about to move, so it is no longer a stop this pane wants kept. Saying so
-			// before the release is what stops the next poll taking the hold straight back and the
-			// step then being answered by releasing it loudly.
-			_stopped = false;
-
-			if (_holds is { } holds) await holds.Want(this, Wanted);
-
-			var moved = mode is null
-				? await client.ContinueAsync(session.SessionId, CancellationToken.None)
-				: await client.StepAsync(session.SessionId, mode, CancellationToken.None);
-
-			if (moved.Detail is { Length: > 0 } detail)
-			{
-				_report?.Invoke(new OperatorException(OperatorFailure.Refused, detail));
-			}
-		}
-		catch (Exception exception)
-		{
-			_report?.Invoke(exception);
-		}
-	}
-
-	/// <summary>
-	/// Hands this stop back to its own safety timer, without moving the target.
-	/// <para>
-	/// Remembered against the stop rather than acted on once, or the next poll would want the hold
-	/// again and take it straight back. The next stop is a new decision, so stepping re-arms it.
-	/// </para>
-	/// </summary>
-	private async void OnRelease(object sender, RoutedEventArgs args)
-	{
-		if (_holds is not { } holds) return;
-
-		_releasedAt = _stopSequence;
-		await holds.Want(this, Wanted);
 	}
 }

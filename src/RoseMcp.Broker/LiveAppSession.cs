@@ -373,6 +373,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 			new Dictionary<string, object?> { ["seconds"] = seconds, ["release"] = release },
 			cancellationToken);
 
+	/// <summary>Stops a running target where it stands, rather than where a breakpoint would.</summary>
+	public Task<LivePauseResult> BreakAsync(int? autoContinueSeconds, CancellationToken cancellationToken)
+		=> SendAsync<LivePauseResult>(
+			ToolNames.LiveAppBreak,
+			new Dictionary<string, object?> { ["autoContinueSeconds"] = autoContinueSeconds },
+			cancellationToken);
+
 	/// <summary>Methods of the target's loaded modules matching a typed query, best first.</summary>
 	public Task<LiveMethodMatches> SearchMethodsAsync(string query, int limit, CancellationToken cancellationToken)
 		=> SendAsync<LiveMethodMatches>(

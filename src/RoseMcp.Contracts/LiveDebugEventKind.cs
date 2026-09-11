@@ -35,4 +35,11 @@ public enum LiveDebugEventKind
 
 	/// <summary>A step (in/over/out) finished and the target is held at the new location.</summary>
 	StepComplete,
+
+	/// <summary>
+	/// The target was stopped where it stood, because somebody asked rather than because the code
+	/// reached anything. Carries the stack and the top frame's variables like any other stop, since
+	/// where it happened to be is the whole of the answer.
+	/// </summary>
+	Paused,
 }

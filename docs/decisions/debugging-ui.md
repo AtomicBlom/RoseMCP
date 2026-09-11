@@ -399,3 +399,48 @@ visibly did not move.
 provider serves one request at a time on the app's own UI thread. A button clicked during a
 thirty-second tree read does nothing visible and then snaps back, which reads as a button that does
 not work.
+
+## A manual pause is its own state, not a step with nothing behind it
+
+**Decision.** Stopping a running target where it stands is `LiveExecutionState.PausedByOperator` and
+a `Paused` event, beside the breakpoint and step states rather than folded into either. The stop it
+makes is the same shape as a breakpoint's -- stack, top-frame variables, a safety timer -- and every
+reader of a stop is unchanged.
+
+**Why.** How a target came to be stopped is the first thing a reader wants, because it decides
+whether what they are looking at is surprising: a stack that looks like nothing in particular is
+expected when you pressed Pause and alarming at a breakpoint. It was available as a step with no
+breakpoint owning it, which is exactly the null the rest of this surface refuses -- and the session
+would have said "a step" about something nobody stepped. The kind also carries it into the event
+tail, where "paused" among the exceptions is what explains the gap in them.
+
+**Why the stop it makes is ordinary.** Everything downstream reads a stop rather than reasoning
+about what made one, so a pause that produced a differently shaped one would need every pane taught
+about it. It is on the safety timer for the same reason a breakpoint is: a pause nobody comes back
+to must not leave somebody's application frozen.
+
+**Why the window holds it anyway.** Somebody who presses Pause is by definition present, so the
+window takes the hold the moment the pause lands -- otherwise pausing from the events tab is a target
+that starts again half a minute later, which reads as the button not having worked. The hold is told
+which stop it is for before it is asked for: the keeper drops what it believes it holds when the stop
+moves, so taking one for a stop it has not heard of yet is a hold taken and then immediately taken
+again.
+
+**A stop taken and not kept goes back.** A breakpoint can arrive in the moment between asking and
+the stop taking effect, and it owns the stop it made. Ours is then a second stop on the same process,
+which one continue would not undo -- so it is given back and the caller is told about the stop that is
+really there. Same for a target with no managed thread to report the pause on.
+
+## What moves the target lives above the tabs
+
+**Decision.** Pause, Continue and the three steps are a bar over the whole window, not a toolbar
+inside the stack pane.
+
+**Why.** Moving a target is something you do to the session, not to a stack. Buried in one pane they
+were only reachable from the tab that is least useful while the target is running -- so wanting to
+pause while watching the event tail, or to continue after reading the visual tree, meant changing tab
+to press a button and changing back. The stack pane keeps only what describes a stop.
+
+**Why exactly one half is ever live.** Pause is for a running target and the rest are for a stopped
+one, and everything goes dead while a request is in flight: a second press is a step issued into a
+target that is already being moved.

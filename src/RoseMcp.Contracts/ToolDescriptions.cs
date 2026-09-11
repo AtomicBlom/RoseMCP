@@ -393,6 +393,10 @@ public static class ToolDescriptions
 	public const string HoldReleaseArgument =
 		"True gives the stop back to its safety timer instead of holding it.";
 
+	public const string PauseSecondsArgument =
+		"How long an unattended pause lasts before the target continues on its own. Omitted uses the "
+			+ "same safety interval a breakpoint gets.";
+
 	public const string MethodQueryArgument =
 		"Part of a method's name, optionally qualified: Refresh, or Widget.Refresh. The pieces match "
 			+ "in order, anywhere in the name. Under two characters is refused.";

@@ -20,6 +20,7 @@ public sealed class InspectorRowTests
 	[Arguments(LiveDebugEventKind.ExceptionFirstChance, EventRow.EventTone.Caution)]
 	[Arguments(LiveDebugEventKind.BreakpointHit, EventRow.EventTone.Notable)]
 	[Arguments(LiveDebugEventKind.StepComplete, EventRow.EventTone.Notable)]
+	[Arguments(LiveDebugEventKind.Paused, EventRow.EventTone.Notable)]
 	[Arguments(LiveDebugEventKind.SessionNotice, EventRow.EventTone.Notable)]
 	[Arguments(LiveDebugEventKind.ModuleLoaded, EventRow.EventTone.Neutral)]
 	[Arguments(LiveDebugEventKind.LogMessage, EventRow.EventTone.Neutral)]

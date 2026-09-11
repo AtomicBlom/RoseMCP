@@ -4,39 +4,13 @@
 	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
 	xmlns:inspector="using:RoseMcp.Ui.Core.Inspector">
 
-	<Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
-
-		<!-- Stepping is what the source view is for, so the two are in front of each other. -->
-		<Grid Grid.Row="0" ColumnSpacing="10" ColumnDefinitions="Auto,*,Auto">
-			<StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
-				<Button x:Name="ContinueButton" Style="{StaticResource ChipButtonStyle}"
-					Content="Continue" Click="OnContinue"
-					ToolTipService.ToolTip="Let the target run on." />
-				<Button x:Name="StepInButton" Style="{StaticResource ChipButtonStyle}"
-					Content="Step in" Click="OnStepIn"
-					ToolTipService.ToolTip="Into the call on this line, or to the next line if there is none." />
-				<Button x:Name="StepOverButton" Style="{StaticResource ChipButtonStyle}"
-					Content="Step over" Click="OnStepOver"
-					ToolTipService.ToolTip="To the next line of this method, running any call on the way." />
-				<Button x:Name="StepOutButton" Style="{StaticResource ChipButtonStyle}"
-					Content="Step out" Click="OnStepOut"
-					ToolTipService.ToolTip="Until this method returns, and stop in whatever called it." />
-			</StackPanel>
-
-			<TextBlock x:Name="HoldText" Grid.Column="1" VerticalAlignment="Center"
-				Style="{StaticResource CaptionTextBlockStyle}"
-				Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-
-			<Button x:Name="ReleaseButton" Grid.Column="2" Style="{StaticResource ChipButtonStyle}"
-				Content="Release" Click="OnRelease" Visibility="Collapsed"
-				ToolTipService.ToolTip="Give the stop back to its own safety timer." />
-		</Grid>
+	<Grid RowDefinitions="Auto,*" RowSpacing="10">
 
 		<!-- A stack is never yanked away. The target continuing is ordinary (a timer, a step, an
 		     agent) and a pane that emptied itself would lose a reader's place with no explanation. -->
-		<InfoBar x:Name="StaleBar" Grid.Row="1" IsOpen="False" IsClosable="False" Severity="Informational" />
+		<InfoBar x:Name="StaleBar" Grid.Row="0" IsOpen="False" IsClosable="False" Severity="Informational" />
 
-		<Grid Grid.Row="2" ColumnSpacing="12" ColumnDefinitions="320,*">
+		<Grid Grid.Row="1" ColumnSpacing="12" ColumnDefinitions="320,*">
 
 			<Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="6">
 				<TextBlock Grid.Row="0" x:Name="FramesCaption" Style="{StaticResource BodyStrongTextBlockStyle}" />

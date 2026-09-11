@@ -155,6 +155,14 @@ public sealed class OperatorClient : IDisposable
 			Quick,
 			cancellationToken);
 
+	/// <summary>
+	/// Stops a running target where it stands. Given the XAML budget rather than the quick one: the
+	/// reason somebody reaches for pause is an app that is busy or wedged, which is exactly when the
+	/// runtime takes its time reaching a point it can be stopped at.
+	/// </summary>
+	public Task<LivePauseResult> BreakAsync(string sessionId, CancellationToken cancellationToken) =>
+		PostAsync<object?, LivePauseResult>($"/operator/sessions/{sessionId}/break", null, Xaml, cancellationToken);
+
 	public Task<LiveStackFrames> FramesAsync(
 		string sessionId,
 		int? threadId,

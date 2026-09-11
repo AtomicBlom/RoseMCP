@@ -90,7 +90,10 @@ public sealed class EventRow
 	{
 		LiveDebugEventKind.ExceptionUnhandled or LiveDebugEventKind.ProcessExited => EventTone.Critical,
 		LiveDebugEventKind.ExceptionFirstChance => EventTone.Caution,
-		LiveDebugEventKind.BreakpointHit or LiveDebugEventKind.StepComplete or LiveDebugEventKind.SessionNotice =>
+		LiveDebugEventKind.BreakpointHit
+			or LiveDebugEventKind.StepComplete
+			or LiveDebugEventKind.Paused
+			or LiveDebugEventKind.SessionNotice =>
 			EventTone.Notable,
 		_ => EventTone.Neutral,
 	};

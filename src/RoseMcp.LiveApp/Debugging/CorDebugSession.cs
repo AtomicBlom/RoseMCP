@@ -32,6 +32,13 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private const int DefaultAutoContinueSeconds = 30;
 
 	/// <summary>
+	/// How long a manual pause waits for the runtime to reach a point it can be stopped at. Generous,
+	/// because the whole reason somebody reaches for pause is an app that is busy or wedged -- and a
+	/// bound rather than none, because a runtime that never gets there must not take the caller with it.
+	/// </summary>
+	private const int BreakTimeoutMilliseconds = 5000;
+
+	/// <summary>
 	/// The deepest a structured stack walk goes. A stack is bounded because a runaway recursion has
 	/// tens of thousands of frames and reading each one costs metadata lookups, on a path a person
 	/// is waiting on; the answer says it was cut short rather than implying the stack ended.
@@ -131,6 +138,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	// target under the person reading it. A callback whose generation has moved returns without
 	// touching anything.
 	private long _stopGeneration;
+
+	/// <summary>
+	/// How the target came to be stopped, which is not inferable from what else is recorded: a manual
+	/// pause and a completed step both arrive with no breakpoint owning them.
+	/// </summary>
+	private LiveExecutionState _stoppedAs = LiveExecutionState.Running;
 
 	public int? TargetProcessId { get; private set; }
 
@@ -600,10 +613,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			return new LiveStop
 			{
-				// A stop with no binding is a completed step: nothing else reaches Hold without one.
-				State = _stoppedBindingId is null
-					? LiveExecutionState.StoppedAtStep
-					: LiveExecutionState.StoppedAtBreakpoint,
+				State = _stoppedAs,
 				ThreadId = _stoppedThread is null ? null : TryThreadId(_stoppedThread),
 				BreakpointId = _stoppedBindingId,
 				EventSequence = _stopEventSequence,
@@ -613,6 +623,131 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			};
 		}
 	}
+
+	/// <summary>
+	/// Stops the target where it stands, rather than where a breakpoint would have put it.
+	/// <para>
+	/// The stop it makes is the same shape as a breakpoint's -- stack, top-frame variables, a safety
+	/// timer -- because everything downstream reads a stop rather than reasoning about what made one.
+	/// It is on the safety timer like any other, so a pause nobody comes back to frees the app.
+	/// </para>
+	/// </summary>
+	/// <param name="autoContinueSeconds">How long an unattended pause lasts, or null for the default.</param>
+	public LivePauseResult Break(int? autoContinueSeconds)
+	{
+		CorDebugProcess process;
+
+		lock (_gate)
+		{
+			if (_process is not { } live || _detached || _exited)
+			{
+				return NotPaused("There is no live target to pause: the session has detached, or the process has gone.");
+			}
+
+			if (_stoppedAtBreakpoint) return NotPaused("The target is already stopped.");
+
+			process = live;
+		}
+
+		try
+		{
+			// Outside the gate: this waits on the runtime to reach a point it can be stopped at, and
+			// holding the gate through it would block the very callbacks that get it there.
+			process.Stop(BreakTimeoutMilliseconds);
+		}
+		catch (Exception exception)
+		{
+			logger.LogWarning(exception, "Pausing pid {Pid} failed.", TargetProcessId);
+			return NotPaused($"The target could not be paused: {exception.Message}");
+		}
+
+		// A breakpoint can have arrived while the stop was being taken, and it owns the stop it made.
+		// Ours is then a second stop on the same process, which one continue would not undo -- so it
+		// goes back, and the caller is told about the stop that is really there.
+		lock (_gate)
+		{
+			if (_stoppedAtBreakpoint)
+			{
+				GiveBackStop(process);
+				return NotPaused("The target stopped on its own before the pause took effect.");
+			}
+		}
+
+		if (ThreadToPauseOn(process) is not { } thread)
+		{
+			GiveBackStop(process);
+			return NotPaused("The target has no managed thread to stop on, so there is nothing a debugger could show.");
+		}
+
+		Hold(thread, LiveDebugEventKind.Paused, "Paused", bindingId: null, autoContinueSeconds);
+
+		return new LivePauseResult
+		{
+			Execution = LiveExecutionState.PausedByOperator,
+			Stop = CurrentStop(),
+			Paused = true,
+		};
+	}
+
+	/// <summary>
+	/// The thread a manual pause reports itself on: the first with a managed frame, because a thread
+	/// with none has nothing a stack pane could show and the runtime has plenty of them.
+	/// </summary>
+	private CorDebugThread? ThreadToPauseOn(CorDebugProcess process)
+	{
+		CorDebugThread? any = null;
+
+		try
+		{
+			foreach (var thread in process.Threads)
+			{
+				any ??= thread;
+
+				if (WalkIlFrames(thread).Frames.Count > 0) return thread;
+			}
+		}
+		catch (Exception exception)
+		{
+			logger.LogDebug(exception, "Choosing a thread to pause pid {Pid} on failed.", TargetProcessId);
+		}
+
+		return any;
+	}
+
+	/// <summary>Undoes a stop this session took and then decided not to keep.</summary>
+	private void GiveBackStop(CorDebugProcess process)
+	{
+		try
+		{
+			process.Continue(fIsOutOfBand: false);
+		}
+		catch (Exception exception)
+		{
+			logger.LogWarning(exception, "Giving back an unused stop on pid {Pid} failed.", TargetProcessId);
+		}
+	}
+
+	/// <summary>A pause that did not happen, and the stop that is there instead when there is one.</summary>
+	private LivePauseResult NotPaused(string detail)
+	{
+		var stop = CurrentStop();
+
+		return new LivePauseResult
+		{
+			Execution = stop?.State ?? LiveExecutionState.Running,
+			Stop = stop,
+			Paused = false,
+			Detail = detail,
+		};
+	}
+
+	/// <summary>What a stop of this kind is, said once rather than inferred from what is missing.</summary>
+	private static LiveExecutionState StateOf(LiveDebugEventKind kind) => kind switch
+	{
+		LiveDebugEventKind.BreakpointHit => LiveExecutionState.StoppedAtBreakpoint,
+		LiveDebugEventKind.Paused => LiveExecutionState.PausedByOperator,
+		_ => LiveExecutionState.StoppedAtStep,
+	};
 
 	/// <summary>
 	/// Takes or releases an operator's hold on the current stop, and reports what the stop now is.
@@ -1982,6 +2117,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			_stoppedAtBreakpoint = true;
 			_stoppedBindingId = bindingId;
 			_stoppedThread = thread;
+			_stoppedAs = StateOf(kind);
 
 			var seconds = autoContinueSeconds ?? DefaultAutoContinueSeconds;
 

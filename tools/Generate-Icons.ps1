@@ -50,16 +50,14 @@ function New-AppIcon
 
     if ($Size -ge $MonogramFrom)
     {
-        if ($Mark -eq 'Lens')
-        {
-            # A positive stem gap and no halo, unlike the rose. A magnifier's handle joins its lens,
-            # so the ring is filled straight over the bars; the stem is kept clear by spacing rather
-            # than by a stroke that would cut the handle off from the lens.
-            return New-RoseMonogram -Size $Size -Bowl Lens -RoseRadius 0.320 -StemGap 0.045 -LeanDegrees 38
-        }
+        # The same numbers for both, so the two marks are the same composition with a different bowl.
+        # The lens sits where the rose sits: its extents put its left edge in the same place, so the
+        # channel the halo cuts out of the stem is the same channel.
+        $bowl = @{ RoseRadius = 0.320; StemGap = -0.005; LeanDegrees = 38; HaloWidth = 0.050 }
 
-        return New-RoseMonogram -Size $Size -RoseRadius 0.320 -StemGap -0.005 `
-            -LeanDegrees 38 -HaloWidth 0.050
+        if ($Mark -eq 'Lens') { return New-RoseMonogram -Size $Size -Bowl Lens @bowl }
+
+        return New-RoseMonogram -Size $Size @bowl
     }
 
     if ($Mark -eq 'Lens') { return New-LensIcon -Size $Size }

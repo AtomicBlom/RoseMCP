@@ -273,14 +273,21 @@ function New-RoseMonogram
     $g = $tile.Graphics
     $S = $Size
 
-    $bars = New-Object System.Drawing.Drawing2D.GraphicsPath
-    Add-SkewedBar -Path $bars -TopX (($StemX + $ox) * $S) -TopY (($Top + $oy) * $S) `
+    # Kept apart because the lens wants them on opposite sides of the halo: the stem is what the halo
+    # bites a channel out of, and the leg is what must survive it to stay joined to the lens.
+    $stem = New-Object System.Drawing.Drawing2D.GraphicsPath
+    Add-SkewedBar -Path $stem -TopX (($StemX + $ox) * $S) -TopY (($Top + $oy) * $S) `
         -BottomX (($StemX + $ox) * $S) -BottomY (($Bottom + $oy) * $S) -Width ($BarThickness * $S)
-    Add-SkewedBar -Path $bars -TopX (($legTopX + $ox) * $S) -TopY (($legTopY + $oy) * $S) `
+
+    $leg = New-Object System.Drawing.Drawing2D.GraphicsPath
+    Add-SkewedBar -Path $leg -TopX (($legTopX + $ox) * $S) -TopY (($legTopY + $oy) * $S) `
         -BottomX (($LegBottomX + $ox) * $S) -BottomY (($Bottom + $oy) * $S) -Width ($legW * $S)
 
     $white = New-Object System.Drawing.SolidBrush($script:Ink)
-    $g.FillPath($white, $bars)
+    $g.FillPath($white, $stem)
+
+    # The rose's leg goes under the halo with the stem; the lens's handle goes on top of it, after.
+    if ($Bowl -ne 'Lens') { $g.FillPath($white, $leg) }
 
     $rose = New-Object System.Drawing.Drawing2D.GraphicsPath
     $rose.FillMode = [System.Drawing.Drawing2D.FillMode]::Alternate
@@ -297,39 +304,39 @@ function New-RoseMonogram
         $rose.AddPolygon($pts)
     }
 
+    # Stroke first, fill second. Stroking afterwards widens every internal petal separation as
+    # well as the silhouette, and the rose falls apart into loose blobs. Stroking underneath lets
+    # the fill restore the interior exactly, so only the outward half of the stroke survives -- a
+    # clean halo against the bars and an untouched flower. A lens has no interior to spoil, and takes
+    # the same treatment for the same reason: it is what cuts the channel out of the stem.
+    $halo = New-Object System.Drawing.Pen($script:Tile, [float]($HaloWidth * 2 * $S))
+    $halo.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+    $g.DrawPath($halo, $rose)
+
+    $g.FillPath($white, $rose)
+    $halo.Dispose()
+
     if ($Bowl -eq 'Lens')
     {
-        # No halo, and the order is the opposite trick to the rose's. A magnifier's handle joins its
-        # lens -- haloing the ring cuts a crimson arc through the handle and leaves it floating, which
-        # is a Q with a detached tail. So the ring is filled straight over the bars, and the hole is
-        # then punched in tile colour: that hides the handle's buried top, which otherwise shows
-        # through the hole as a blob nothing explains. The stem stays clear by spacing instead.
-        $g.FillPath($white, $rose)
-
+        # The handle last, over the lens rather than under the halo. A magnifier's handle joins its
+        # lens: haloed with the stem it came away as a crimson arc, leaving a Q with a detached tail.
+        #
+        # Clipped out of the hole, because its top is buried at the lens centre to keep the angle
+        # honest, and an unclipped bar draws straight across the glass as a blob nothing explains.
+        # Excluding the hole is what makes burying the top free.
         $hole = New-Object System.Drawing.Drawing2D.GraphicsPath
         $inner = Get-LensInnerRadius -Radius ($RoseRadius * $S) -Thickness ($LensThickness * $S)
         $hole.AddEllipse([float]((($RoseCx + $ox) * $S) - $inner), [float]((($RoseCy + $oy) * $S) - $inner),
             [float](2 * $inner), [float](2 * $inner))
 
-        $punch = New-Object System.Drawing.SolidBrush($script:Tile)
-        $g.FillPath($punch, $hole)
-        $punch.Dispose(); $hole.Dispose()
-    }
-    else
-    {
-        # Stroke first, fill second. Stroking afterwards widens every internal petal separation as
-        # well as the silhouette, and the rose falls apart into loose blobs. Stroking underneath lets
-        # the fill restore the interior exactly, so only the outward half of the stroke survives -- a
-        # clean halo against the bars and an untouched flower.
-        $halo = New-Object System.Drawing.Pen($script:Tile, [float]($HaloWidth * 2 * $S))
-        $halo.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-        $g.DrawPath($halo, $rose)
+        $g.SetClip($hole, [System.Drawing.Drawing2D.CombineMode]::Exclude)
+        $g.FillPath($white, $leg)
+        $g.ResetClip()
 
-        $g.FillPath($white, $rose)
-        $halo.Dispose()
+        $hole.Dispose()
     }
 
-    $white.Dispose(); $rose.Dispose(); $bars.Dispose(); $g.Dispose()
+    $white.Dispose(); $rose.Dispose(); $stem.Dispose(); $leg.Dispose(); $g.Dispose()
     return $tile.Bitmap
 }
 

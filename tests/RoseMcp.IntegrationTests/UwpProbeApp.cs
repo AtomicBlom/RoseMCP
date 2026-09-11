@@ -508,14 +508,26 @@ public sealed class UwpProbeApp : IAsyncDisposable
 
 			// Best effort at putting it right, so one offending test does not cascade. It still
 			// fails below: cleaning up after it is not the same as it having been clean.
-			if (left.Selected || left.Armed) await Session.ClearXamlSelectionAsync(bounded.Token);
+			if (left.Selected) await Session.ClearXamlSelectionAsync(bounded.Token);
+
+			// Disarmed separately, because clearing the pick does not: armed and picked are two pieces
+			// of state, and the one that matters to the next test is the one that leaves the app unable
+			// to take a click.
+			if (left.Armed)
+			{
+				await Session.EnterXamlSelectModeAsync(
+					includeAllElements: false, justMyXaml: true, arm: false, bounded.Token);
+			}
 
 			Assert.False(
 				left.Selected,
 				$"this test left {left.Name ?? left.Address ?? "an element"} selected. A phase B test holds the "
 					+ "whole app, so it has to hand it back unselected.");
 
-			Assert.False(left.Armed, "this test left select mode armed. Disarm it before the test ends.");
+			Assert.False(
+				left.Armed,
+				$"this test left the overlay in {left.Mode} mode, which captures the pointer, so the app "
+					+ "cannot be clicked. Disarm it before the test ends.");
 		}
 	}
 

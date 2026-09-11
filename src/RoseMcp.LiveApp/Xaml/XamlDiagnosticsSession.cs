@@ -182,14 +182,14 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	}
 
 	/// <summary>
-	/// Arms select mode (#18) from this side. The in-app toolbar is already resident -- any XAML tool
-	/// installs it -- so this is the same act as pressing its Select Element button, and exists because
-	/// an agent chasing a visual path to an element should not have to ask a person to press it.
-	/// Confirms the overlay actually armed rather than assuming it.
+	/// Arms one of the overlay's pointer modes (#18, #19) from this side. The in-app toolbar is already
+	/// resident -- any XAML tool installs it -- so this is the same act as pressing its Select Element
+	/// or Rulers button, and exists because an agent chasing a visual path to an element should not
+	/// have to ask a person to press one. Confirms the overlay actually armed rather than assuming it.
 	/// </summary>
-	public LiveXamlSelection EnterSelectMode(int pid, bool includeAllElements, bool justMyXaml)
+	public LiveXamlSelection EnterSelectMode(int pid, bool includeAllElements, bool justMyXaml, string mode)
 	{
-		lock (_requests) return EnterSelectModeCore(pid, includeAllElements, justMyXaml);
+		lock (_requests) return EnterSelectModeCore(pid, includeAllElements, justMyXaml, mode);
 	}
 
 	/// <summary>
@@ -219,20 +219,29 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 		if (_pipe!.Request("idle", _bounds.Snapshot) is null)
 		{
-			return new LiveXamlSelection { Detail = Unanswered("select mode to be disarmed") };
+			return new LiveXamlSelection { Detail = Unanswered("the overlay to stop capturing the pointer") };
 		}
 
 		// Answered from the provider's own state rather than from the fact that it acknowledged, for
-		// the same reason arming is: a later rose_xaml_selection reads that state file, and a reply
-		// that merely echoed the request could contradict it with nothing to say which was right.
+		// the same reason arming is: a later rose_xaml_selection reads that state, and a reply that
+		// merely echoed the request could contradict it with nothing to say which was right.
 		var after = ReadSelectionCore();
-		return after with { Detail = after.Armed ? "Select mode is still armed." : "Select mode is off." };
+		return after with
+		{
+			Detail = after.Armed
+				? $"The overlay is still in {after.Mode} mode."
+				: "The overlay is idle; the app takes its own clicks again.",
+		};
 	}
-	private LiveXamlSelection EnterSelectModeCore(int pid, bool includeAllElements, bool justMyXaml)
+	private LiveXamlSelection EnterSelectModeCore(int pid, bool includeAllElements, bool justMyXaml, string mode)
 	{
-		// Tokens rather than flags in the name: the provider parses them, and a request that does not
-		// mention a toggle leaves whatever the person set on the toolbar alone.
+		// Both modes lay the same pointer-capturing layer over the app, so both are armed by the same
+		// verb with the mode as one more token. Tokens rather than flags in the name: the provider
+		// parses them, and a request that does not mention a toggle leaves whatever the person set on
+		// the toolbar alone.
+		var rulers = string.Equals(mode, "rulers", StringComparison.OrdinalIgnoreCase);
 		var request = "select"
+			+ (rulers ? " rulers" : string.Empty)
 			+ (includeAllElements ? " all" : string.Empty)
 			+ (justMyXaml ? " myxaml" : " nomyxaml");
 
@@ -249,7 +258,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		var served = _pipe!.Request(request, _bounds.Snapshot);
 		if (served is null)
 		{
-			return new LiveXamlSelection { Detail = Unanswered("select mode to be armed") };
+			return new LiveXamlSelection { Detail = Unanswered($"{(rulers ? "rulers" : "select")} mode to be armed") };
 		}
 
 		var fields = served.Trim().Split('\t');
@@ -259,31 +268,38 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		{
 			return new LiveXamlSelection
 			{
-				Detail = $"Select mode armed but its overlay was arranged at {width}x{height}, so nothing can be picked. "
-					+ "The app's diagnostics UI layer gave the overlay no area.",
+				Detail = $"The mode armed but its overlay was arranged at {width}x{height}, so nothing can be "
+					+ "pointed at. The app's diagnostics UI layer gave the overlay no area.",
 			};
 		}
 
 		// Reported from what the provider recorded, not from what was asked for. The two agree
 		// whenever the round trip worked, and the point is what happens when they do not: a later
-		// rose_xaml_selection reads the provider's own state file, so an arming response that merely
-		// echoed the request would contradict that read with nothing to say which of them was right.
+		// rose_xaml_selection reads the provider's own state, so an arming response that merely echoed
+		// the request would contradict that read with nothing to say which of them was right.
 		// Answering from the recorded value makes the two agree by construction.
-		var (mode, recorded, known) = OverlayState();
-		if (!known || mode != "select")
+		var (recordedMode, recorded, known) = OverlayState();
+		var wanted = rulers ? "rulers" : "select";
+		if (!known || recordedMode != wanted)
 		{
 			return new LiveXamlSelection
 			{
-				Detail = "Select mode was armed, but the toolbar has not confirmed it, so what it is filtering "
-					+ "cannot be reported. Read the selection again in a moment.",
+				Mode = known ? recordedMode : "idle",
+				Armed = known && recordedMode != "idle",
+				Detail = $"{wanted} mode was armed, but the toolbar has not confirmed it, so what it is "
+					+ "filtering cannot be reported. Read the selection again in a moment.",
 			};
 		}
 
 		return new LiveXamlSelection
 		{
 			Armed = true,
+			Mode = recordedMode,
 			JustMyXaml = recorded,
-			Detail = "Select mode is armed: click an element in the app, then read the selection.",
+			Detail = rulers
+				? "Rulers mode is armed: the picked element shows its margin and padding, and whatever "
+					+ "the pointer is over is measured against it. Clicking anchors somewhere else."
+				: "Select mode is armed: click an element in the app, then read the selection.",
 		};
 	}
 
@@ -318,7 +334,8 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 		return new LiveXamlSelection
 		{
-			Armed = mode == "select",
+			Armed = mode != "idle",
+			Mode = mode,
 			JustMyXaml = justMyXaml,
 			Detail = had
 				? "The selection was cleared; the outline over the app is gone."
@@ -416,7 +433,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 
 		var (mode, justMyXaml, rows, gone) = (report.Mode, report.JustMyXaml, report.Rows, report.Gone);
 
-		var armed = mode == "select";
+		// Any mode that is not idle has a layer over the app collecting the pointer, which is what a
+		// caller asking whether it is armed wants to know. Testing for select alone would report an
+		// app that cannot be clicked as one that can.
+		var armed = mode != "idle";
 		if (rows.Count == 0)
 		{
 			// A selection that went away on its own says why. Without this the answer is "nothing has been
@@ -425,11 +445,12 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return new LiveXamlSelection
 			{
 				Armed = armed,
+				Mode = mode,
 				JustMyXaml = justMyXaml,
 				Detail = gone.Length > 0
 					? gone
 					: armed
-						? "Select mode is armed; nothing has been picked yet."
+						? $"The overlay is in {mode} mode; nothing has been picked yet."
 						: "Nothing has been picked yet. Press Select Element on the in-app toolbar, or arm it from here.",
 			};
 		}
@@ -472,6 +493,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 				return new LiveXamlSelection
 				{
 					Armed = armed,
+					Mode = mode,
 					JustMyXaml = justMyXaml,
 					Detail = "The recorded selection could not be read."
 				};
@@ -482,6 +504,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			{
 				Selected = true,
 				Armed = armed,
+				Mode = mode,
 				JustMyXaml = justMyXaml,
 				Handle = picked.Handle,
 				TypeName = EmptyToNull(picked.TypeName),
@@ -496,6 +519,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			return new LiveXamlSelection
 			{
 				Armed = armed,
+				Mode = mode,
 				JustMyXaml = justMyXaml,
 				Detail = $"Could not read the selection: {exception.Message}",
 			};

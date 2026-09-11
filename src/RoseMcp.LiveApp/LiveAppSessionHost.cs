@@ -371,7 +371,8 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
-	/// Arms interactive select mode so the next click in the app picks that element, or disarms it.
+	/// Arms one of the overlay's pointer modes -- select, so the next click picks an element, or
+	/// rulers, so the picked one is measured from -- or disarms whichever is on.
 	/// <para>
 	/// Both positions of one switch, because the toolbar has always had both and only arming was
 	/// reachable from here. Arming lays a pointer-capturing layer over the app; picking by handle does
@@ -379,7 +380,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// that armed and changed its mind had left the app modal with no way back.
 	/// </para>
 	/// </summary>
-	public LiveXamlSelection EnterXamlSelectMode(bool includeAllElements, bool justMyXaml, bool arm = true)
+	public LiveXamlSelection EnterXamlSelectMode(
+		bool includeAllElements,
+		bool justMyXaml,
+		bool arm = true,
+		string mode = "select")
 	{
 		int? targetProcessId;
 		XamlDiagnosticsSession xaml;
@@ -396,11 +401,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 		if (WhyXamlIsUnservable() is { } held) return new LiveXamlSelection { Detail = held };
 
-		var mode = arm
-			? xaml.EnterSelectMode(pid, includeAllElements, justMyXaml)
+		var selection = arm
+			? xaml.EnterSelectMode(pid, includeAllElements, justMyXaml, mode)
 			: xaml.ExitSelectMode(pid);
 
-		return mode.Detail is null ? mode : mode with { Detail = WithTargetHeartbeat(mode.Detail) };
+		return selection.Detail is null ? selection : selection with { Detail = WithTargetHeartbeat(selection.Detail) };
 	}
 
 	/// <summary>Reads the element the user picked by clicking it in the running app.</summary>

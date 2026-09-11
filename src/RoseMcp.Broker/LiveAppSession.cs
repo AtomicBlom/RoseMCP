@@ -319,8 +319,16 @@ public sealed class LiveAppSession : IAsyncDisposable
 	public Task<LiveXamlSelection> EnterXamlSelectModeAsync(bool includeAllElements, bool justMyXaml, CancellationToken cancellationToken)
 		=> EnterXamlSelectModeAsync(includeAllElements, justMyXaml, arm: true, cancellationToken);
 
-	/// <summary>Arms interactive select mode, or disarms it -- the toolbar's two buttons.</summary>
-	public Task<LiveXamlSelection> EnterXamlSelectModeAsync(bool includeAllElements, bool justMyXaml, bool arm, CancellationToken cancellationToken)
+	/// <summary>
+	/// Arms one of the overlay's pointer modes, or disarms whichever is on -- the toolbar's buttons,
+	/// reached from here.
+	/// </summary>
+	public Task<LiveXamlSelection> EnterXamlSelectModeAsync(
+		bool includeAllElements,
+		bool justMyXaml,
+		bool arm,
+		CancellationToken cancellationToken,
+		string mode = "select")
 		=> SendAsync<LiveXamlSelection>(
 			ToolNames.LiveAppXamlSelectMode,
 			new Dictionary<string, object?>
@@ -328,6 +336,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 				["includeAllElements"] = includeAllElements,
 				["justMyXaml"] = justMyXaml,
 				["arm"] = arm,
+				["mode"] = mode,
 			},
 			cancellationToken);
 

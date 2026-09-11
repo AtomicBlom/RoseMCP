@@ -279,17 +279,24 @@ public:
 			if (!RoseTapRunOnUiThread([&]
 			{
 				// Tokenised rather than suffix-matched: "all" asks for elements the framework would not
-				// hit-test, and "nomyxaml" turns off the preference for the app's own markup. A flag the
-				// person set on the toolbar is left alone unless the request actually mentions it.
+				// hit-test, "nomyxaml" turns off the preference for the app's own markup, and "rulers"
+				// asks for the measuring mode rather than the picking one. A flag the person set on the
+				// toolbar is left alone unless the request actually mentions it.
 				bool includeAll = false;
+				bool rulers = false;
 				for (const auto& token : Tokens(request))
 				{
 					if (token == L"all") includeAll = true;
+					else if (token == L"rulers") rulers = true;
 					else if (token == L"myxaml") Overlay().SetJustMyXaml(true);
 					else if (token == L"nomyxaml") Overlay().SetJustMyXaml(false);
 				}
 
-				Overlay().BeginSelect(includeAll);
+				// Both modes lay the same pointer-capturing layer over the app, so both answer with the
+				// extent it was arranged at. includeAll is what a pick resolves through and rulers picks
+				// its anchor the same way, so it is set either way.
+				if (rulers) Overlay().BeginRulers(includeAll);
+				else Overlay().BeginSelect(includeAll);
 			})) return std::string();
 
 			// Waited for here rather than inside the dispatch, because the pass being waited for runs on
@@ -303,7 +310,7 @@ public:
 
 		if (request == L"idle")
 		{
-			if (!RoseTapRunOnUiThread([&] { Overlay().EndSelect(); })) return std::string();
+			if (!RoseTapRunOnUiThread([&] { Overlay().GoIdle(); })) return std::string();
 			return std::string("idle\n");
 		}
 
@@ -323,7 +330,10 @@ public:
 			std::string reply;
 			if (!RoseTapRunOnUiThread([&]
 			{
-				reply = std::string(Overlay().Selecting() ? "select" : "idle")
+				// The mode by name rather than a flag for one of them. Rulers captures the pointer
+				// exactly as select does, so a host that only knew about select would report an app it
+				// cannot click as idle.
+				reply = Utf8(Overlay().ModeName())
 					+ "\t" + (Overlay().JustMyXaml() ? "1" : "0")
 					+ "\t" + Utf8(Escape(Overlay().GoneReason().c_str())) + "\n"
 					+ Overlay().SelectionRows();

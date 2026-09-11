@@ -174,7 +174,12 @@ public static class MethodTokens
 
 	private static MetadataReader? Read(string modulePath) => SymbolCache.Shared.For(modulePath)?.Metadata;
 
-	private static string FullName(MetadataReader metadata, TypeDefinition type)
+	/// <summary>
+	/// A type's name as metadata spells it: namespace-qualified, with a <c>+</c> before each nesting
+	/// level. That spelling is the one a location string carries, so it is what a lookup compares
+	/// against and what a search hands back.
+	/// </summary>
+	internal static string FullName(MetadataReader metadata, TypeDefinition type)
 	{
 		var name = metadata.GetString(type.Name);
 		var declaring = type.GetDeclaringType();

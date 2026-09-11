@@ -123,38 +123,66 @@ public sealed class PortablePdb : IDisposable
 		try
 		{
 			var handle = (MethodDefinitionHandle)MetadataTokens.EntityHandle(methodToken);
-			var debugInformation = _pdb.GetMethodDebugInformation(handle);
-			var points = new List<SequencePointInfo>();
 
-			foreach (var point in debugInformation.GetSequencePoints())
-			{
-				if (point.IsHidden)
-				{
-					points.Add(new SequencePointInfo { Offset = point.Offset, IsHidden = true });
-					continue;
-				}
-
-				points.Add(new SequencePointInfo
-				{
-					Offset = point.Offset,
-					IsHidden = false,
-					Position = new SourcePosition
-					{
-						File = DocumentName(point.Document),
-						Line = point.StartLine,
-						Column = point.StartColumn,
-						EndLine = point.EndLine,
-						EndColumn = point.EndColumn,
-					},
-				});
-			}
-
-			return points;
+			return PointsOf(_pdb.GetMethodDebugInformation(handle));
 		}
 		catch (Exception)
 		{
 			return [];
 		}
+	}
+
+	/// <summary>
+	/// Every method in the module that has debug information, with the lines its code came from.
+	/// <para>
+	/// One pass over the whole PDB, because the question it answers -- which compiled methods make up
+	/// the body somebody is looking at -- cannot be asked of a single method. A lambda's body is a
+	/// method of its own with a name derived from nothing the caller holds, and an async method's
+	/// body is somewhere else entirely; both are found by their lines and by the kickoff link, and
+	/// both need the whole table to be found at all.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<MethodExtent> Extents()
+	{
+		var extents = new List<MethodExtent>();
+
+		foreach (var handle in _pdb.MethodDebugInformation)
+		{
+			try
+			{
+				var debugInformation = _pdb.GetMethodDebugInformation(handle);
+				var points = PointsOf(debugInformation);
+
+				// A method with no visible point has no source to show. That is most of them: every
+				// method the compiler emits without a body behind it has a row here and nothing in it.
+				var visible = points.Where(point => point.Position is not null).ToList();
+				if (visible.Count == 0) continue;
+
+				var file = visible[0].Position!.File;
+				var inFile = visible
+					.Where(point => string.Equals(point.Position!.File, file, StringComparison.OrdinalIgnoreCase))
+					.ToList();
+
+				var kickoff = debugInformation.GetStateMachineKickoffMethod();
+
+				extents.Add(new MethodExtent
+				{
+					MethodToken = MetadataTokens.GetToken(handle.ToDefinitionHandle()),
+					KickoffToken = kickoff.IsNil ? null : MetadataTokens.GetToken(kickoff),
+					File = file,
+					FirstLine = inFile.Min(point => point.Position!.Line),
+					LastLine = inFile.Max(point => point.Position!.EndLine),
+					Points = points,
+				});
+			}
+			catch (Exception)
+			{
+				// One unreadable row does not spoil the table. A method left out of the answer costs
+				// the reader that method; refusing the whole module costs them the file.
+			}
+		}
+
+		return extents;
 	}
 
 	/// <summary>Where an IL offset in a method came from, or null when it maps to no source.</summary>
@@ -166,6 +194,37 @@ public sealed class PortablePdb : IDisposable
 		if (handle.IsNil) return string.Empty;
 
 		return _pdb.GetString(_pdb.GetDocument(handle).Name);
+	}
+
+	/// <summary>One method's sequence points, in IL order, hidden ones kept as the markers they are.</summary>
+	private IReadOnlyList<SequencePointInfo> PointsOf(MethodDebugInformation debugInformation)
+	{
+		var points = new List<SequencePointInfo>();
+
+		foreach (var point in debugInformation.GetSequencePoints())
+		{
+			if (point.IsHidden)
+			{
+				points.Add(new SequencePointInfo { Offset = point.Offset, IsHidden = true });
+				continue;
+			}
+
+			points.Add(new SequencePointInfo
+			{
+				Offset = point.Offset,
+				IsHidden = false,
+				Position = new SourcePosition
+				{
+					File = DocumentName(point.Document),
+					Line = point.StartLine,
+					Column = point.StartColumn,
+					EndLine = point.EndLine,
+					EndColumn = point.EndColumn,
+				},
+			});
+		}
+
+		return points;
 	}
 
 	public void Dispose() => _provider.Dispose();

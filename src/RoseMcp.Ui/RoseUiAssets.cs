@@ -25,6 +25,19 @@ public static class RoseUiAssets
 	/// </summary>
 	public const string MarkFile = "rose-mcp.png";
 
+	/// <summary>
+	/// The inspector's icon: the same monogram with a lens where the rose goes.
+	/// <para>
+	/// Its own mark because the two run side by side and the taskbar is where somebody picks between
+	/// them. The composition is shared so they read as one family, and what differs is the one thing
+	/// that says which is which.
+	/// </para>
+	/// </summary>
+	public const string InspectorIconFile = "rose-inspector.ico";
+
+	/// <summary>The inspector's mark as a single-frame PNG; see <see cref="MarkFile"/>.</summary>
+	public const string InspectorMarkFile = "rose-inspector.png";
+
 	/// <summary>The directory this library's assets are copied to, beside the running app's exe.</summary>
 	public static string Directory => Path.Combine(AppContext.BaseDirectory, "RoseMcp.Ui", "Assets");
 

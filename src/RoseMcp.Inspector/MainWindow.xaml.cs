@@ -85,7 +85,9 @@ public sealed partial class MainWindow : Window
 		ExtendsContentIntoTitleBar = true;
 		SetTitleBar(TitleBarArea);
 		WindowChrome.ApplySize(this, InitialWidth, InitialHeight, MinimumWidth, MinimumHeight);
-		WindowChrome.ApplyIcon(this, TitleMark);
+		// The lens rather than the rose: this window and the tray sit side by side in the taskbar, and
+		// the icon is what somebody picks between them by.
+		WindowChrome.ApplyIcon(this, RoseUiAssets.InspectorIconFile, RoseUiAssets.InspectorMarkFile, TitleMark);
 
 		Events.Attach(_client, Report);
 		Breakpoints.Attach(_client, Report);

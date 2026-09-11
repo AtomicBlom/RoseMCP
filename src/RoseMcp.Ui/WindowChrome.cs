@@ -37,19 +37,34 @@ public static class WindowChrome
 	}
 
 	/// <summary>
-	/// Puts this product's icon on the window and its art into whichever <see cref="Image"/> elements
-	/// the caller draws marks with. Returns the icon's path when there was one, so a caller that also
-	/// needs it -- a tray icon wants an <c>HICON</c> at a chosen frame size -- does not resolve it a
-	/// second time.
+	/// Puts this product's own icon on the window; see
+	/// <see cref="ApplyIcon(Window, string, string, Image?[])"/>.
+	/// </summary>
+	public static string? ApplyIcon(Window window, params Image?[] marks) =>
+		ApplyIcon(window, RoseUiAssets.IconFile, RoseUiAssets.MarkFile, marks);
+
+	/// <summary>
+	/// Puts an icon on the window and its art into whichever <see cref="Image"/> elements the caller
+	/// draws marks with. Returns the icon's path when there was one, so a caller that also needs it --
+	/// a tray icon wants an <c>HICON</c> at a chosen frame size -- does not resolve it a second time.
+	/// <para>
+	/// Which mark is the caller's, because the two apps run side by side and the taskbar is where
+	/// somebody picks between them. The product's own is the default, so an app with no reason to care
+	/// says nothing.
+	/// </para>
 	/// <para>
 	/// A missing or unreadable asset leaves the window iconless rather than failing: an icon is the
 	/// least important thing a window does, and throwing here would take down an app over it.
 	/// </para>
 	/// </summary>
-	public static string? ApplyIcon(Window window, params Image?[] marks)
+	/// <param name="window">The window to icon.</param>
+	/// <param name="iconFile">The multi-frame icon, by name; see <see cref="RoseUiAssets"/>.</param>
+	/// <param name="markFile">The single-frame art for the marks drawn inside the window.</param>
+	/// <param name="marks">The elements to draw the mark into.</param>
+	public static string? ApplyIcon(Window window, string iconFile, string markFile, params Image?[] marks)
 	{
-		var icon = RoseUiAssets.For(RoseUiAssets.IconFile);
-		var mark = RoseUiAssets.For(RoseUiAssets.MarkFile);
+		var icon = RoseUiAssets.For(iconFile);
+		var mark = RoseUiAssets.For(markFile);
 
 		try
 		{

@@ -215,9 +215,16 @@ function New-RoseMonogram
     #>
     param(
         [int] $Size,
+        # What sits in the bowl. The composition is identical either way, because the two apps run
+        # side by side and the taskbar is where somebody picks between them: they want to read as
+        # one family, differing in the one thing that says which is which. With a lens the leg of
+        # the R stops being a leg and becomes the magnifier's handle, which is the whole idea.
+        [ValidateSet('Rose', 'Lens')] [string] $Bowl = 'Rose',
         [int] $N = 3, [int] $D = 2,
         [double] $Rotation = 90,
         [double] $RoseRadius = 0.300,
+        # Matched to the bars, so the lens reads as the same weight as the rest of the mark.
+        [double] $LensThickness = 0.105,
         [double] $RoseCy = 0.400,
         # Crimson distance from the stem's edge to the rose's white edge. Below HaloWidth the
         # halo bites into the stem, which reads as the bar passing behind the flower.
@@ -235,8 +242,11 @@ function New-RoseMonogram
     $legW = $BarThickness / [Math]::Cos($lean)
 
     # Measured at rotation 90, in units of R. Taller than wide -- rotating swaps these, and they
-    # were the unrotated pair for as long as the rotation was silently a no-op.
+    # were the unrotated pair for as long as the rotation was silently a no-op. A circle fills its
+    # radius in both directions, which is what shifts the lens a hair further off the stem than the
+    # rose sits: the spacing is derived from the extents rather than set, so it follows on its own.
     $ex = 0.9079; $ey = 1.0
+    if ($Bowl -eq 'Lens') { $ex = 1.0; $ey = 1.0 }
 
     # Place the rose off the stem rather than absolutely, so changing its size or the bar weight
     # cannot silently change the spacing.
@@ -272,22 +282,111 @@ function New-RoseMonogram
     $white = New-Object System.Drawing.SolidBrush($script:Ink)
     $g.FillPath($white, $bars)
 
-    [System.Drawing.PointF[]] $pts = Get-RosePoints -N $N -D $D -Cx (($RoseCx + $ox) * $S) `
-        -Cy (($RoseCy + $oy) * $S) -Radius ($RoseRadius * $S) -RotationDegrees $Rotation
-
     $rose = New-Object System.Drawing.Drawing2D.GraphicsPath
     $rose.FillMode = [System.Drawing.Drawing2D.FillMode]::Alternate
-    $rose.AddPolygon($pts)
-    # Stroke first, fill second. Stroking afterwards widens every internal petal separation as
-    # well as the silhouette, and the rose falls apart into loose blobs. Stroking underneath lets
-    # the fill restore the interior exactly, so only the outward half of the stroke survives -- a
-    # clean halo against the bars and an untouched flower.
-    $halo = New-Object System.Drawing.Pen($script:Tile, [float]($HaloWidth * 2 * $S))
-    $halo.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-    $g.DrawPath($halo, $rose)
 
-    $g.FillPath($white, $rose)
+    if ($Bowl -eq 'Lens')
+    {
+        Add-LensRing -Path $rose -Cx (($RoseCx + $ox) * $S) -Cy (($RoseCy + $oy) * $S) `
+            -Radius ($RoseRadius * $S) -Thickness ($LensThickness * $S)
+    }
+    else
+    {
+        [System.Drawing.PointF[]] $pts = Get-RosePoints -N $N -D $D -Cx (($RoseCx + $ox) * $S) `
+            -Cy (($RoseCy + $oy) * $S) -Radius ($RoseRadius * $S) -RotationDegrees $Rotation
+        $rose.AddPolygon($pts)
+    }
 
-    $halo.Dispose(); $white.Dispose(); $rose.Dispose(); $bars.Dispose(); $g.Dispose()
+    if ($Bowl -eq 'Lens')
+    {
+        # No halo, and the order is the opposite trick to the rose's. A magnifier's handle joins its
+        # lens -- haloing the ring cuts a crimson arc through the handle and leaves it floating, which
+        # is a Q with a detached tail. So the ring is filled straight over the bars, and the hole is
+        # then punched in tile colour: that hides the handle's buried top, which otherwise shows
+        # through the hole as a blob nothing explains. The stem stays clear by spacing instead.
+        $g.FillPath($white, $rose)
+
+        $hole = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $inner = Get-LensInnerRadius -Radius ($RoseRadius * $S) -Thickness ($LensThickness * $S)
+        $hole.AddEllipse([float]((($RoseCx + $ox) * $S) - $inner), [float]((($RoseCy + $oy) * $S) - $inner),
+            [float](2 * $inner), [float](2 * $inner))
+
+        $punch = New-Object System.Drawing.SolidBrush($script:Tile)
+        $g.FillPath($punch, $hole)
+        $punch.Dispose(); $hole.Dispose()
+    }
+    else
+    {
+        # Stroke first, fill second. Stroking afterwards widens every internal petal separation as
+        # well as the silhouette, and the rose falls apart into loose blobs. Stroking underneath lets
+        # the fill restore the interior exactly, so only the outward half of the stroke survives -- a
+        # clean halo against the bars and an untouched flower.
+        $halo = New-Object System.Drawing.Pen($script:Tile, [float]($HaloWidth * 2 * $S))
+        $halo.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+        $g.DrawPath($halo, $rose)
+
+        $g.FillPath($white, $rose)
+        $halo.Dispose()
+    }
+
+    $white.Dispose(); $rose.Dispose(); $bars.Dispose(); $g.Dispose()
+    return $tile.Bitmap
+}
+
+function Get-LensInnerRadius
+{
+    <#
+        The hole a lens leaves. Floored, so a thickness larger than the radius gives a disc with a
+        pinhole rather than an inverted ring, which is what a negative inner radius draws.
+    #>
+    param([double] $Radius, [double] $Thickness)
+
+    return [Math]::Max($Radius * 0.12, $Radius - $Thickness)
+}
+
+function Add-LensRing
+{
+    <#
+        A thick ring, as two concentric circles on one path under the even-odd fill rule: the outer
+        disc minus the inner one. Drawn as geometry rather than as a stroked circle so it composes
+        with the monogram's halo the way the rose does -- a stroke has no interior for the fill to
+        restore afterwards, and the halo would eat the ring instead of sitting outside it.
+    #>
+    param(
+        [System.Drawing.Drawing2D.GraphicsPath] $Path,
+        [double] $Cx, [double] $Cy, [double] $Radius, [double] $Thickness
+    )
+
+    $inner = Get-LensInnerRadius -Radius $Radius -Thickness $Thickness
+
+    $Path.AddEllipse([float]($Cx - $Radius), [float]($Cy - $Radius), [float](2 * $Radius), [float](2 * $Radius))
+    $Path.AddEllipse([float]($Cx - $inner), [float]($Cy - $inner), [float](2 * $inner), [float](2 * $inner))
+}
+
+function New-LensIcon
+{
+    <#
+        The small mark: the ring alone, the way New-RoseIcon draws the rose alone. At 16px a ring
+        survives where the rose does not, which is the one place the inspector's mark is the easier
+        of the two to read.
+    #>
+    param(
+        [int] $Size,
+        [double] $RadiusFraction = 0.34,
+        [double] $ThicknessFraction = 0.105
+    )
+
+    $tile = New-RoseTile -Size $Size
+    $g = $tile.Graphics
+
+    $ring = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $ring.FillMode = [System.Drawing.Drawing2D.FillMode]::Alternate
+    Add-LensRing -Path $ring -Cx ($Size / 2) -Cy ($Size / 2) -Radius ($Size * $RadiusFraction) `
+        -Thickness ($Size * $ThicknessFraction)
+
+    $brush = New-Object System.Drawing.SolidBrush($script:Ink)
+    $g.FillPath($brush, $ring)
+
+    $brush.Dispose(); $ring.Dispose(); $g.Dispose()
     return $tile.Bitmap
 }

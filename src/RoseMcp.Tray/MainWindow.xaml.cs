@@ -12,6 +12,7 @@ using Microsoft.UI.Xaml.Controls;
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.Logging;
+using RoseMcp.Settings;
 using RoseMcp.Ui;
 using RoseMcp.Ui.Core;
 
@@ -490,6 +491,44 @@ public sealed partial class MainWindow : Window
 			if (item is null) continue;
 
 			item.Text = installed ? "Open inspector" : "Open inspector (not installed)";
+		}
+
+		// Read on opening rather than held, because the inspector writes this file too: a toggle
+		// showing what the tray last set would disagree with the inspector's own after a minute.
+		var onAttach = RoseSettingsFile.Read().ShowInspectorOnAttach;
+
+		foreach (var item in (ToggleMenuFlyoutItem?[])[TrayShowInspectorOnAttach, WindowShowInspectorOnAttach])
+		{
+			if (item is null) continue;
+
+			item.IsChecked = onAttach;
+			item.IsEnabled = installed;
+		}
+	}
+
+	/// <summary>
+	/// Turns the "show the inspector when the debugger attaches" preference on or off, for every
+	/// host on this machine.
+	/// <para>
+	/// The menu item is put back to what the file says rather than to what was clicked, so a write
+	/// that did not land shows as a toggle that did not move. A checkbox claiming a preference the
+	/// next attach will not honour is worse than one that visibly refused.
+	/// </para>
+	/// </summary>
+	private void OnToggleShowInspectorOnAttach(object sender, RoutedEventArgs e)
+	{
+		var wanted = sender is ToggleMenuFlyoutItem { IsChecked: true };
+
+		if (!RoseSettingsFile.Write(RoseSettingsFile.Read() with { ShowInspectorOnAttach = wanted }))
+		{
+			ShowNotice($"Could not write {RoseSettingsFile.PathFor()}, so that preference is unchanged.");
+		}
+
+		var settled = RoseSettingsFile.Read().ShowInspectorOnAttach;
+
+		foreach (var item in (ToggleMenuFlyoutItem?[])[TrayShowInspectorOnAttach, WindowShowInspectorOnAttach])
+		{
+			if (item is not null) item.IsChecked = settled;
 		}
 	}
 

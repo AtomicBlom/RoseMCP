@@ -63,6 +63,16 @@ public partial class App : Application
 			builder.Logging.AddRoseFileLogging("Tray");
 			builder.WebHost.UseUrls($"http://{Options.Host}:{Options.Port}");
 
+			// Before AddRoseMcpBroker, so its TryAdd of the do-nothing presenter stands down. This
+			// host has an operator endpoint and a token, which is the whole precondition for being
+			// able to open an inspector at all.
+			builder.Services.AddSingleton<IInspectorPresenter>(services => new OperatorInspector(
+				Options.Host,
+				Options.Port,
+				OperatorToken,
+				services.GetRequiredService<ILogger<OperatorInspector>>(),
+				Options.InspectorPath));
+
 			builder.Services
 				.AddRoseMcpBroker(broker => broker.WorkerPath = Options.WorkerPath)
 				.WithHttpTransport();

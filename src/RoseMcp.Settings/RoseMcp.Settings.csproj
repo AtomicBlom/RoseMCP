@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- What a person has chosen, read and written by whichever host needs it. Plain net10.0 and no
+       package references, because the set of things that read it is the broker, the tray and the
+       inspector, and those have nothing else in common: the broker cannot reference a WinUI app
+       and the inspector does not reference the broker.
+
+       A project of its own rather than a file in Contracts, which holds types and pure functions.
+       This reads and writes a file, which is behaviour, and Contracts is explicitly not the place
+       for behaviour. -->
+
+</Project>

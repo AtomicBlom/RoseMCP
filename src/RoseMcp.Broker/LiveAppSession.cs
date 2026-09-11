@@ -31,6 +31,9 @@ public sealed class LiveAppSession : IAsyncDisposable
 	// this there is nothing to say which.
 	private DateTime? _infoUtc;
 
+	// The broker's own aside about this session, surfaced on the next Describe.
+	private volatile string? _notice;
+
 	private LiveAppSession(
 		string sessionId,
 		LiveAppTarget target,
@@ -177,6 +180,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 			StartedUtc = StartedUtc,
 			Uptime = now - StartedUtc,
 			Detail = info?.Detail,
+			Notice = _notice,
 			Running = _activities.Running(SessionId),
 			Recent = _activities.Recent(SessionId),
 
@@ -195,6 +199,17 @@ public sealed class LiveAppSession : IAsyncDisposable
 			InfoAge = _infoUtc is { } read ? now - read : null,
 		};
 	}
+
+	/// <summary>
+	/// Records something the broker has to say about this session that the host did not. It rides
+	/// on the next <see cref="Describe"/> as <see cref="LiveAppSessionSummary.Notice"/>.
+	/// <para>
+	/// The latest one wins rather than accumulating. These are asides about the session's
+	/// surroundings, not a second event stream: keeping a history of them would build a log nobody
+	/// reads beside one they already do.
+	/// </para>
+	/// </summary>
+	public void Note(string notice) => _notice = notice;
 
 	private static List<string> BuildArguments(LiveAppTarget target)
 	{

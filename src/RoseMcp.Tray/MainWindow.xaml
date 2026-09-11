@@ -78,6 +78,8 @@
 					<MenuFlyoutSeparator />
 					<ToggleMenuFlyoutItem x:Name="TrayStartWithWindows" Text="Start with Windows" Click="OnToggleStartWithWindows" />
 					<MenuFlyoutItem x:Name="TrayOpenInspector" Text="Open inspector" Click="OnOpenInspector" />
+					<ToggleMenuFlyoutItem x:Name="TrayShowInspectorOnAttach" Text="Show inspector when the debugger attaches"
+						Click="OnToggleShowInspectorOnAttach" />
 					<MenuFlyoutItem Text="Copy inspector command" Click="OnCopyInspectorCommand" />
 					<MenuFlyoutItem Text="Open log folder" Click="OnOpenLogs" />
 					<MenuFlyoutItem Text="Close all workspaces" Click="OnCloseAll" />
@@ -129,6 +131,13 @@
 									<FontIcon Glyph="&#xE7B3;" />
 								</MenuFlyoutItem.Icon>
 							</MenuFlyoutItem>
+							<ToggleMenuFlyoutItem x:Name="WindowShowInspectorOnAttach"
+								Text="Show inspector when the debugger attaches"
+								Click="OnToggleShowInspectorOnAttach">
+								<ToggleMenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE7B3;" />
+								</ToggleMenuFlyoutItem.Icon>
+							</ToggleMenuFlyoutItem>
 							<MenuFlyoutItem Text="Copy inspector command" Click="OnCopyInspectorCommand">
 								<MenuFlyoutItem.Icon>
 									<FontIcon Glyph="&#xE8C8;" />

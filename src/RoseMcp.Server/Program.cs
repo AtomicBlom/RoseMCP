@@ -115,6 +115,25 @@ internal static class Program
 		ConfigureLogging(builder.Logging);
 
 		builder.WebHost.UseUrls($"http://{options.Host}:{options.Port}");
+
+		// One token for both surfaces. ROSEMCP_TOKEN, when it is set, is what gates the whole server
+		// -- including the MCP endpoint -- and the operator API is gated on the same value, because a
+		// second secret for the same person on the same loopback port would be two things to get
+		// wrong rather than one.
+		//
+		// Minted before the services rather than after building them, because the inspector has to be
+		// handed it: a presenter registered without the token could start a window the server would
+		// then refuse.
+		var operatorToken = OperatorToken.FromEnvironmentOrMint(out var minted);
+
+		// Before AddRoseMcpBroker, so its TryAdd of the do-nothing presenter stands down. This host
+		// has an endpoint and a token, which is the whole precondition for opening an inspector.
+		builder.Services.AddSingleton<IInspectorPresenter>(services => new OperatorInspector(
+			options.Host,
+			options.Port,
+			operatorToken,
+			services.GetRequiredService<ILogger<OperatorInspector>>()));
+
 		builder.Services.AddRoseMcpBroker(broker => Apply(options, broker)).WithHttpTransport();
 
 		var application = builder.Build();
@@ -123,11 +142,6 @@ internal static class Program
 		// no later check would notice: a browser sends the token nowhere but sends Origin always.
 		application.Use(RefuseForeignOrigin);
 
-		// One token for both surfaces. ROSEMCP_TOKEN, when it is set, is what gates the whole server
-		// -- including the MCP endpoint -- and the operator API is gated on the same value, because a
-		// second secret for the same person on the same loopback port would be two things to get
-		// wrong rather than one.
-		var operatorToken = OperatorToken.FromEnvironmentOrMint(out var minted);
 		if (!minted) application.Use(RequireToken(operatorToken));
 
 		application.MapMcp();

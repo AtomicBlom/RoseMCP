@@ -39,6 +39,17 @@ public sealed record LiveAppSessionSummary
 	/// <summary>Why the session is faulted, when it is.</summary>
 	public string? Detail { get; init; }
 
+	/// <summary>
+	/// Something the broker has to say about this session that the host did not, and that is not a
+	/// fault: an inspector that was asked for and could not open is the case it exists for.
+	/// <para>
+	/// Kept apart from <see cref="Detail"/> on purpose. Detail means the session is broken and its
+	/// answers cannot be trusted; this means the session is fine and something beside it is not.
+	/// Folding the two would make every such notice read as a debugger that had failed.
+	/// </para>
+	/// </summary>
+	public string? Notice { get; init; }
+
 	public IReadOnlyList<WorkerActivity> Running { get; init; } = [];
 
 	public IReadOnlyList<WorkerActivity> Recent { get; init; } = [];

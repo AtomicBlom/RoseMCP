@@ -304,6 +304,19 @@ public static class ToolDescriptions
 	public const string ProcessIdArgument =
 		"The process id to attach to. Must be a local process owned by the current user.";
 
+	/// <summary>
+	/// Whether to open the inspector window on the new session.
+	/// <para>
+	/// Under the per-argument budget, so it says what the values mean and when to touch them, and
+	/// leaves out that only an http broker can honour it -- a caller that hits that gets the whole
+	/// sentence back in the session's notice, which is where it is actually useful.
+	/// </para>
+	/// </summary>
+	public const string ShowInspectorArgument =
+		"Open the RoseMCP Inspector on this session: userPreference (default) honours what the person "
+			+ "chose in the tray, always opens it, never does not. Leave it alone unless somebody asked "
+			+ "to see it, or asked not to be interrupted.";
+
 	public const string ExecutablePathArgument = "Path to a local .NET executable (.exe).";
 
 	public const string LaunchArgumentsArgument = "Optional command-line arguments.";

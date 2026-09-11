@@ -112,7 +112,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 
 		Directory.CreateDirectory(directory);
 
-		var path = Path.Combine(directory, "RoseMcp.LiveApp.exe");
+		var path = Path.Combine(directory, LiveAppHostLauncher.ExecutableName);
 		File.WriteAllBytes(path, []);
 		File.SetLastWriteTimeUtc(path, writtenUtc);
 

@@ -81,17 +81,33 @@ public static class Format
 	public static string IlOffset(int offset) => $"IL_{offset:X4}";
 
 	/// <summary>
+	/// What separates a directory from a file name in a path this reads, which is either character on
+	/// either operating system -- because the path is a record of where something was compiled rather
+	/// than a path on the machine reading it.
+	/// </summary>
+	private static readonly char[] PathSeparators = ['/', '\\'];
+
+	/// <summary>
 	/// A source position as <c>File.cs:42</c>, or an empty string when there is no line to give.
 	/// <para>
 	/// The file name only. A card is one line wide and an absolute path pushes everything else off
 	/// it; the full path belongs in the tooltip, where a reader who wants it can find it.
+	/// </para>
+	/// <para>
+	/// Both separators are cut on, rather than asking <see cref="Path.GetFileName(string?)"/>. The path
+	/// came out of a PDB or a XAML source record, so it was written by whichever machine compiled the
+	/// code and is a Windows path however it is being read -- and on Linux a backslash is an ordinary
+	/// character in a file name, so <c>GetFileName</c> hands the whole path back. The caption that
+	/// should read <c>MainPage.xaml:31</c> becomes an absolute path in a space that has room for
+	/// neither.
 	/// </para>
 	/// </summary>
 	public static string FileLine(string? file, int? line)
 	{
 		if (file is not { Length: > 0 }) return string.Empty;
 
-		var name = Path.GetFileName(file);
+		var cut = file.LastIndexOfAny(PathSeparators);
+		var name = cut < 0 ? file : file[(cut + 1)..];
 
 		return line is { } number ? $"{name}:{number}" : name;
 	}

@@ -13,6 +13,14 @@ public static class LiveAppHostLauncher
 {
 	private const string HostName = "RoseMcp.LiveApp";
 
+	/// <summary>
+	/// The hosts file name on this operating system. Public because a test that stages one has to
+	/// stage the name this looks for: hard-coding the Windows name there passes on Windows and fails
+	/// on Linux for a reason that has nothing to do with what it is testing.
+	/// </summary>
+	public static string ExecutableName =>
+		HostName + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
+
 	public static string ResolveHostPath(
 		TargetArchitecture architecture,
 		BrokerOptions options,
@@ -20,7 +28,7 @@ public static class LiveAppHostLauncher
 		bool searchRepository = true)
 	{
 		var rid = RuntimeIdentifierFor(architecture);
-		var executableName = HostName + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
+		var executableName = ExecutableName;
 
 		var configured = Environment.GetEnvironmentVariable("ROSEMCP_LIVEAPP_HOST");
 		if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return Path.GetFullPath(configured);

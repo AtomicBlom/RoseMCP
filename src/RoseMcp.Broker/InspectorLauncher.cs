@@ -15,6 +15,14 @@ public static class InspectorLauncher
 {
 	private const string InspectorName = "RoseMcp.Inspector";
 
+	/// <summary>
+	/// The inspectors file name on this operating system. Public for the reason
+	/// LiveAppHostLauncher.ExecutableName is: a test that stages one must stage the name this looks
+	/// for, or it is testing the extension rather than the layout.
+	/// </summary>
+	public static string ExecutableName =>
+		InspectorName + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
+
 	/// <summary>The folder a published inspector goes in, beside the tray's own.</summary>
 	private const string PublishedFolder = "inspector";
 
@@ -47,7 +55,7 @@ public static class InspectorLauncher
 			return Path.GetFullPath(fromEnvironment);
 		}
 
-		var executableName = InspectorName + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
+		var executableName = ExecutableName;
 		var from = baseDirectory ?? AppContext.BaseDirectory;
 
 		foreach (var root in new[] { Path.Combine(from, ".."), from })

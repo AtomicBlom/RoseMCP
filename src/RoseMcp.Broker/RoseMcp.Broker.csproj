@@ -7,9 +7,18 @@
   <ItemGroup>
     <!-- For the operator API, which is minimal-API endpoints over the managers this library already
          owns. It goes here rather than in each host because there are two hosts and the surface must
-         not differ between them. Both already carry this framework: the server is an ASP.NET Core
-         app and the tray hosts one, so nothing new is dragged into a deployment by it. -->
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+         not differ between them. Both already carry this framework themselves: the server is an
+         ASP.NET Core app and the tray asks for it by name.
+
+         PrivateAssets, so it stops here. A framework reference that flows makes every consumer an
+         ASP.NET app for the purpose of deciding what lands in its output folder, and the SDK then
+         leaves out the assemblies that framework provides, Microsoft.Extensions.Hosting among them,
+         because the shared framework will supply them at runtime. The integration test project is a
+         consumer, and it is also the directory the broker launches RoseMcp.Worker from. The worker
+         is a plain console app that needs Hosting on disk, and it died on startup unable to load it.
+         A developer machine hides this, because an output folder built before this reference was
+         added still has the file. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

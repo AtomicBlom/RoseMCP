@@ -113,6 +113,20 @@ public sealed class FormatTests
 		Assert.Equal(string.Empty, Format.FileLine(string.Empty, 42));
 	}
 
+	/// <summary>
+	/// Either separator, on either operating system. The path is a record of where something was
+	/// compiled rather than a path on the machine reading it, so a Windows path routinely arrives on a
+	/// Linux one -- and there a backslash is an ordinary character in a file name, so asking the
+	/// framework for the file name hands back the whole path and the caption becomes unreadable.
+	/// </summary>
+	[Test]
+	public void Takes_the_file_name_off_a_path_written_by_another_operating_system()
+	{
+		Assert.Equal("Widget.cs:42", Format.FileLine(@"D:\repo\src\Widget.cs", 42));
+		Assert.Equal("Widget.cs:42", Format.FileLine("/home/build/repo/src/Widget.cs", 42));
+		Assert.Equal("Widget.cs:42", Format.FileLine("Widget.cs", 42));
+	}
+
 	[Test]
 	public void Says_when_there_is_no_process()
 	{

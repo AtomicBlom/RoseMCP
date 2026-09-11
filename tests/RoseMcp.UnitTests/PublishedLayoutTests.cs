@@ -35,7 +35,7 @@ public sealed class PublishedLayoutTests : IDisposable
 		Stage("RoseMcp.Worker.exe");
 		Stage("RoseMcp.Worker");
 		Stage(Path.Combine("tray", "RoseMcp.Tray.exe"));
-		Stage(Path.Combine("inspector", "RoseMcp.Inspector.exe"));
+		Stage(Path.Combine("inspector", InspectorLauncher.ExecutableName));
 		Stage(Path.Combine("live-app", "win-x64", "RoseMcp.LiveApp.exe"));
 		Stage(Path.Combine("live-app", "win-x64", "RoseMcp.LiveApp"));
 		Stage(Path.Combine("live-app", "win-arm64", "RoseMcp.LiveApp.exe"));
@@ -84,7 +84,7 @@ public sealed class PublishedLayoutTests : IDisposable
 
 		Assert.NotNull(resolved);
 		Assert.Equal(
-			Path.GetFullPath(Path.Combine(_root, "inspector", "RoseMcp.Inspector.exe")),
+			Path.GetFullPath(Path.Combine(_root, "inspector", InspectorLauncher.ExecutableName)),
 			Path.GetFullPath(resolved!));
 	}
 
@@ -98,7 +98,7 @@ public sealed class PublishedLayoutTests : IDisposable
 
 		Assert.NotNull(resolved);
 		Assert.Equal(
-			Path.GetFullPath(Path.Combine(_root, "inspector", "RoseMcp.Inspector.exe")),
+			Path.GetFullPath(Path.Combine(_root, "inspector", InspectorLauncher.ExecutableName)),
 			Path.GetFullPath(resolved!));
 	}
 

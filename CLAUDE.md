@@ -59,6 +59,17 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
   rather than referenced as a library.
 - **`RoseMcp.Tray`** -- WinUI 3 tray app for http mode. Hosts the broker in-process, so its
   window reads the live `WorkspaceManager` directly rather than through an API.
+- **`RoseMcp.Ui.Core`** -- library. The half of both windows that is not WinUI: rows, formatting,
+  the poll loop, the in-place merge, and `OperatorClient`. Plain `net10.0` and referencing only
+  `Contracts`, so it runs in the fast suite -- which is the point, since a WinUI project is a
+  project no test can see inside.
+- **`RoseMcp.Ui`** -- WinUI class library. Themes, window chrome, the crash handler and the icon
+  assets, shared so a second window is the same product rather than a lookalike.
+- **`RoseMcp.Inspector`** -- WinUI 3 window for one debugged process: events, breakpoints, the
+  stack with its source and values, threads, and the live XAML tree. A **client** of the broker over
+  the http operator API, owning no session of its own -- see
+  `docs/decisions/the-inspector-is-a-client-of-the-broker.md`. A process has one debugger, so an
+  inspector that established its own could only inspect the sessions it created.
 
 The worker is a separate process because analyzer and generator assemblies cannot be unloaded
 once loaded, MSBuild resolution is per-process, and killing a worker is the only reliable way to
@@ -71,7 +82,7 @@ reclaim memory or pick up a rebuilt generator.
   protocol bug. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
   `Microsoft.Extensions.Logging` call sites, never a console sink, and there is a regression test
   asserting the pipeline writes nothing to stdout at all. Logs land in
-  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray}/[{solution}-]{yyyyMMdd-HHmmss}.log`
+  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray,Inspector}/[{solution}-]{yyyyMMdd-HHmmss}.log`
   -- under their own `Logs` folder, separate from the install that shares the same vendor/product
   parent, so promoting a build never touches a session's log files. UTC in the name and UTC in
   every line so the two cannot disagree. A worker's file names the

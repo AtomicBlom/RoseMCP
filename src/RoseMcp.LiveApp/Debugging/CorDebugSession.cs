@@ -2374,7 +2374,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			// back as an HRESULT about setting a breakpoint, which says nothing about the number
 			// being wrong, and it is the one thing a caller composing a location by hand gets wrong.
 			binding.Detail = offset is { } bad
-				? $"bind failed at IL_{bad:x4}: {exception.Message}. The offset must be one this method's symbols report."
+				? $"bind failed at IL_{bad:X4}: {exception.Message}. The offset must be one this method's symbols report."
 				: $"bind failed: {exception.Message}";
 			logger.LogDebug(exception, "Binding {Id} at {Location} failed.", binding.Id, binding.Raw);
 		}
@@ -2573,7 +2573,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 				positions.Add(new LiveMethodPosition
 				{
-					Location = $"{owner}@IL_{point.Offset:x4}",
+					Location = $"{owner}@IL_{point.Offset:X4}",
 					DisplayName = label,
 					IlOffset = point.Offset,
 					Line = at.Line,

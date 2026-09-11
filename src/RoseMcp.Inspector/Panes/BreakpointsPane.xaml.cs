@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -8,8 +10,14 @@ using RoseMcp.Ui.Core.Inspector;
 namespace RoseMcp.Inspector.Panes;
 
 /// <summary>
-/// The session's breakpoints and tracepoints: what is set, whether it has bound, how often it has
-/// fired, and the forms for adding another.
+/// Where a breakpoint goes, and what is already set.
+/// <para>
+/// Choosing where is a search and then a click in the method's own source, rather than a box to type
+/// a location into. Nothing about a location is memorable -- the namespace, the type and the method
+/// all have to be exact for it to bind -- and an agentic session has no IDE open beside it to read
+/// them out of. Clicking in the code also reaches the places a name cannot: a line inside a lambda
+/// compiles into a method of the compiler's own, and a breakpoint there has to name that method.
+/// </para>
 /// </summary>
 public sealed partial class BreakpointsPane : UserControl
 {
@@ -19,14 +27,40 @@ public sealed partial class BreakpointsPane : UserControl
 	/// </summary>
 	private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
 
+	/// <summary>
+	/// How long typing has to stop before a search runs. A search reads every loaded module's
+	/// metadata, so one per keystroke would spend most of its time answering queries nobody finished
+	/// typing -- and the answers would arrive out of order.
+	/// </summary>
+	private static readonly TimeSpan TypingSettles = TimeSpan.FromMilliseconds(300);
+
+	/// <summary>How many matches to ask for. A drop-down nobody scrolls past is the whole point of ranking them.</summary>
+	private const int Matches = 25;
+
+	private readonly ObservableCollection<LiveMethodMatch> _matches = [];
+
 	private OperatorClient? _client;
 	private Action<Exception>? _report;
 	private PollLoop? _poll;
 	private InspectedSession? _session;
 
+	/// <summary>Cancels the search a keystroke before this one started, so only the last one lands.</summary>
+	private CancellationTokenSource? _searching;
+
+	/// <summary>The method being read, which is what the source rows and the chosen position belong to.</summary>
+	private LiveMethodSource? _method;
+
+	/// <summary>
+	/// The location a breakpoint would be given: a position inside the method once one is clicked,
+	/// and the method itself until then.
+	/// </summary>
+	private string? _chosen;
+
 	public BreakpointsPane()
 	{
 		InitializeComponent();
+		MethodSearch.ItemsSource = _matches;
+		SearchStatus.Text = InspectorText.FindAMethod;
 		ShowState();
 	}
 
@@ -72,20 +106,155 @@ public sealed partial class BreakpointsPane : UserControl
 		NoTracepoints.Text = tracepoints == 0 ? InspectorText.NoTracepoints : string.Empty;
 		NoTracepoints.Visibility = tracepoints == 0 ? Visibility.Visible : Visibility.Collapsed;
 
-		// A caption above the rows, so what follows the form reads as a list of things that exist
-		// rather than as more of the form.
-		BreakpointCount.Text = breakpoints == 0 ? string.Empty : Format.Count(breakpoints, "breakpoint") + " set";
-		BreakpointCount.Visibility = breakpoints == 0 ? Visibility.Collapsed : Visibility.Visible;
-		TracepointCount.Text = tracepoints == 0 ? string.Empty : Format.Count(tracepoints, "tracepoint") + " set";
-		TracepointCount.Visibility = tracepoints == 0 ? Visibility.Collapsed : Visibility.Visible;
+		// Headings rather than counts hidden when empty: the two lists are what the bottom half is,
+		// and a section that disappears when it has nothing in it is one a reader stops looking for.
+		BreakpointCount.Text = breakpoints == 0 ? "Breakpoints" : $"Breakpoints ({breakpoints})";
+		TracepointCount.Text = tracepoints == 0 ? "Tracepoints" : $"Tracepoints ({tracepoints})";
+	}
+
+	/// <summary>
+	/// Searches after typing settles. The query is echoed on the answer, so one that arrives after
+	/// the box has moved on is dropped rather than replacing a newer list with an older one.
+	/// </summary>
+	private async void OnSearchTextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+	{
+		if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+		if (_client is not { } client || _session is not { } session) return;
+
+		var query = sender.Text;
+
+		var searching = new CancellationTokenSource();
+		var previous = Interlocked.Exchange(ref _searching, searching);
+		previous?.Cancel();
+		previous?.Dispose();
+
+		try
+		{
+			await Task.Delay(TypingSettles, searching.Token);
+
+			var found = await client.MethodsAsync(session.SessionId, query, Matches, searching.Token);
+			if (searching.Token.IsCancellationRequested) return;
+			if (!string.Equals(found.Query, MethodSearch.Text.Trim(), StringComparison.Ordinal)) return;
+
+			_matches.Clear();
+			foreach (var match in found.Matches)
+			{
+				_matches.Add(match);
+			}
+
+			SearchStatus.Text = DescribeSearch(found);
+		}
+		catch (OperationCanceledException)
+		{
+			// Another keystroke arrived. The search it started is the one that answers.
+		}
+		catch (Exception exception)
+		{
+			_report?.Invoke(exception);
+		}
+	}
+
+	/// <summary>What the list of matches does not say for itself.</summary>
+	private static string DescribeSearch(LiveMethodMatches found)
+	{
+		if (found.Detail is { Length: > 0 } detail) return detail;
+		if (found.Matches.Count == 0) return InspectorText.NoMethodsFound;
+
+		var counted = found.Total > found.Matches.Count
+			? $"{found.Matches.Count} of {found.Total} matches"
+			: Format.Count(found.Total, "match", "matches");
+
+		return $"{counted} across {Format.Count(found.ModulesSearched, "module")}.";
+	}
+
+	private async void OnSuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
+	{
+		if (args.SelectedItem is not LiveMethodMatch match) return;
+
+		// The box shows what was picked rather than the location that binds it. A location is a
+		// machine's spelling of the same thing and reads as line noise in a search box.
+		sender.Text = match.DisplayName;
+
+		await ShowMethodAsync(match.Location);
+	}
+
+	/// <summary>
+	/// Reads a method's source and its positions, and offers the method itself until a line is
+	/// clicked -- so a method whose source is not on this machine is still something to break in.
+	/// </summary>
+	private async Task ShowMethodAsync(string location)
+	{
+		if (_client is not { } client || _session is not { } session) return;
+
+		try
+		{
+			MethodSearch.IsEnabled = false;
+
+			var method = await client.MethodSourceAsync(session.SessionId, location, CancellationToken.None);
+			_method = method;
+			_chosen = method.Location;
+
+			MethodTitle.Text = method.DisplayName;
+			MethodFile.Text = method.File is { Length: > 0 } file ? file : method.Module;
+			ToolTipService.SetToolTip(MethodFile, method.File ?? method.Module);
+
+			var rows = SourceView.Build(method);
+			SourceRows.ItemsSource = rows;
+			SourceFrame.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+			var detail = rows.Count == 0
+				? $"{method.Detail} {InspectorText.NoSourceToPick}".Trim()
+				: method.Detail;
+
+			MethodDetail.Text = detail ?? string.Empty;
+			MethodDetail.Visibility = detail is { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+
+			ChosenPosition.Text = InspectorText.ChosenMethod(method.DisplayName);
+			MethodPanel.Visibility = Visibility.Visible;
+		}
+		catch (Exception exception)
+		{
+			_report?.Invoke(exception);
+		}
+		finally
+		{
+			MethodSearch.IsEnabled = true;
+		}
+	}
+
+	/// <summary>A line clicked in the source, which decides the instruction a breakpoint stops at.</summary>
+	private void OnPickPosition(object sender, RoutedEventArgs args)
+	{
+		if (sender is not FrameworkElement { Tag: string location }) return;
+		if (SourceRows.ItemsSource is not IReadOnlyList<SourceLineRow> rows) return;
+		if (rows.FirstOrDefault(row => row.Location == location) is not { } row) return;
+
+		_chosen = location;
+
+		// Named with the method the instructions are really in, which for a line inside a lambda is
+		// not the method on screen. A reader has no other way to see that.
+		ChosenPosition.Text = InspectorText.Chosen(
+			row.Note.Length > 0 ? row.Note : _method?.DisplayName ?? string.Empty,
+			row.Line,
+			row.OffsetLabel);
+	}
+
+	private void OnClearMethod(object sender, RoutedEventArgs args)
+	{
+		_method = null;
+		_chosen = null;
+		SourceRows.ItemsSource = null;
+		MethodPanel.Visibility = Visibility.Collapsed;
+		SourceFrame.Visibility = Visibility.Collapsed;
+		MethodSearch.Text = string.Empty;
+		_matches.Clear();
+		SearchStatus.Text = InspectorText.FindAMethod;
 	}
 
 	private async void OnAddBreakpoint(object sender, RoutedEventArgs args)
 	{
 		if (_client is not { } client || _session is not { } session) return;
-
-		var location = BreakpointLocation.Text.Trim();
-		if (location.Length == 0) return;
+		if (_chosen is not { } location) return;
 
 		try
 		{
@@ -96,14 +265,10 @@ public sealed partial class BreakpointsPane : UserControl
 				new SetBreakpointRequest
 				{
 					Location = location,
-					AutoContinueSeconds = Seconds(BreakpointHold.Text),
+					AutoContinueSeconds = Whole(BreakpointHold.Text),
 					Condition = Trimmed(BreakpointCondition.Text),
 				},
 				CancellationToken.None);
-
-			// Cleared only on success, so a refusal leaves what was typed there to be corrected.
-			BreakpointLocation.Text = string.Empty;
-			BreakpointCondition.Text = string.Empty;
 
 			// An unbound breakpoint is not a failure -- its module may not be loaded -- so the host's
 			// own sentence goes in front of the reader rather than an error.
@@ -140,9 +305,7 @@ public sealed partial class BreakpointsPane : UserControl
 	private async void OnAddTracepoint(object sender, RoutedEventArgs args)
 	{
 		if (_client is not { } client || _session is not { } session) return;
-
-		var location = TracepointLocation.Text.Trim();
-		if (location.Length == 0) return;
+		if (_chosen is not { } location) return;
 
 		try
 		{
@@ -154,12 +317,9 @@ public sealed partial class BreakpointsPane : UserControl
 				{
 					Location = location,
 					LogMessage = Trimmed(TracepointMessage.Text),
-					LogEveryNthHit = Seconds(TracepointEvery.Text),
+					LogEveryNthHit = Whole(TracepointEvery.Text),
 				},
 				CancellationToken.None);
-
-			TracepointLocation.Text = string.Empty;
-			TracepointMessage.Text = string.Empty;
 
 			if (!added.Bound && added.Detail is { } detail) _report?.Invoke(new OperatorException(OperatorFailure.Refused, detail));
 
@@ -192,7 +352,7 @@ public sealed partial class BreakpointsPane : UserControl
 	}
 
 	/// <summary>A whole number a box holds, or null for an empty or unreadable one.</summary>
-	private static int? Seconds(string? text) => int.TryParse(text?.Trim(), out var value) && value > 0 ? value : null;
+	private static int? Whole(string? text) => int.TryParse(text?.Trim(), out var value) && value > 0 ? value : null;
 
 	private static string? Trimmed(string? text) =>
 		string.IsNullOrWhiteSpace(text) ? null : text.Trim();

@@ -15,6 +15,10 @@ public sealed class TracepointRow : Observable
 	private bool _hasDetail;
 	private string _behaviour = string.Empty;
 
+	private string _source = string.Empty;
+
+	private bool _hasSource;
+
 	public TracepointRow(LiveTracepoint tracepoint)
 	{
 		Id = tracepoint.Id;
@@ -64,6 +68,22 @@ public sealed class TracepointRow : Observable
 		private set => Set(ref _behaviour, value);
 	}
 
+	/// <summary>
+	/// Where it actually bound, as <c>Program.cs:42</c>. A location names a method and two overloads
+	/// share one, so this is how somebody sees it went somewhere other than where they meant.
+	/// </summary>
+	public string Source
+	{
+		get => _source;
+		private set => Set(ref _source, value);
+	}
+
+	public bool HasSource
+	{
+		get => _hasSource;
+		private set => Set(ref _hasSource, value);
+	}
+
 	public void Update(LiveTracepoint tracepoint)
 	{
 		Bound = tracepoint.Bound;
@@ -72,6 +92,8 @@ public sealed class TracepointRow : Observable
 		Detail = tracepoint.Detail ?? string.Empty;
 		HasDetail = Detail.Length > 0;
 		Behaviour = DescribeBehaviour(tracepoint);
+		Source = Format.FileLine(tracepoint.Source?.File, tracepoint.Source?.Line);
+		HasSource = Source.Length > 0;
 	}
 
 	/// <summary>

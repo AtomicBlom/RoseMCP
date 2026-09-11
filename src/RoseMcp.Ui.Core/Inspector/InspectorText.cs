@@ -77,6 +77,36 @@ public static class InspectorText
 		"No tracepoints. A tracepoint logs and lets the target run, so it is what to reach for when "
 			+ "stopping the app would change what you are looking at.";
 
+	/// <summary>
+	/// The picker before anything has been typed. It says what the box searches, because "the
+	/// target's loaded modules" is not what a reader assumes: the answer covers the framework and
+	/// every package as well as their own code.
+	/// </summary>
+	public const string FindAMethod =
+		"Type part of a method or property name to search the target's loaded modules. Widget.Refresh "
+			+ "narrows it; two characters is the shortest search.";
+
+	/// <summary>A search that found nothing, which is the ordinary result of a name half-typed.</summary>
+	public const string NoMethodsFound =
+		"Nothing matches. The search covers the modules the target has loaded, so a method in code it "
+			+ "has not reached yet is not there to find.";
+
+	/// <summary>
+	/// A method whose source is not on this machine. It is the ordinary case for anything out of a
+	/// package, and the reader's next question is whether they can still break there -- so that is
+	/// the second half of the sentence rather than a footnote.
+	/// </summary>
+	public const string NoSourceToPick =
+		"There is no source here to pick a line from. Adding this sets a breakpoint at the method's "
+			+ "first instruction, which is what a breakpoint on a name has always been.";
+
+	/// <summary>Said beside the chosen position, so what will be added is legible before it is.</summary>
+	public static string Chosen(string displayName, int line, string offset) =>
+		$"{displayName} · line {line} · {offset}";
+
+	/// <summary>Said when the method itself is what was chosen, with no position inside it.</summary>
+	public static string ChosenMethod(string displayName) => $"{displayName} · its first instruction";
+
 	/// <summary>Said while a tree read is outstanding, because a wedged app makes it a long wait.</summary>
 	public const string ReadingTree =
 		"Reading the visual tree. A busy or wedged app can take up to 30 seconds to answer.";

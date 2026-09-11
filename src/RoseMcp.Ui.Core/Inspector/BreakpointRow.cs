@@ -17,6 +17,10 @@ public sealed class BreakpointRow : Observable
 	private string _conditions = string.Empty;
 	private bool _hasConditions;
 
+	private string _source = string.Empty;
+
+	private bool _hasSource;
+
 	public BreakpointRow(LiveBreakpoint breakpoint)
 	{
 		Id = breakpoint.Id;
@@ -79,6 +83,26 @@ public sealed class BreakpointRow : Observable
 		private set => Set(ref _hasConditions, value);
 	}
 
+	/// <summary>
+	/// Where it actually bound, as <c>Program.cs:42</c>.
+	/// <para>
+	/// It is the only thing that settles what a location could not. A location names a method and two
+	/// overloads share one, so a breakpoint set by name goes to whichever the metadata lists first --
+	/// and a file and line is how somebody sees it went somewhere other than where they meant.
+	/// </para>
+	/// </summary>
+	public string Source
+	{
+		get => _source;
+		private set => Set(ref _source, value);
+	}
+
+	public bool HasSource
+	{
+		get => _hasSource;
+		private set => Set(ref _hasSource, value);
+	}
+
 	public void Update(LiveBreakpoint breakpoint)
 	{
 		Bound = breakpoint.Bound;
@@ -88,6 +112,8 @@ public sealed class BreakpointRow : Observable
 		HasDetail = Detail.Length > 0;
 		Conditions = DescribeConditions(breakpoint);
 		HasConditions = Conditions.Length > 0;
+		Source = Format.FileLine(breakpoint.Source?.File, breakpoint.Source?.Line);
+		HasSource = Source.Length > 0;
 	}
 
 	/// <summary>

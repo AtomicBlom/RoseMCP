@@ -66,22 +66,40 @@ public static class InspectorLauncher
 	/// because base64url has no character a shell would touch.
 	/// </para>
 	/// </summary>
-	public static string CommandLine(string inspectorPath, string host, int port, OperatorToken token, string? sessionId)
+	public static string CommandLine(
+		string inspectorPath,
+		string host,
+		int port,
+		OperatorToken token,
+		string? sessionId,
+		int? targetProcessId = null)
 	{
-		var command = $"\"{inspectorPath}\" --host {host} --port {port} --token {token.Value}";
+		var arguments = string.Join(' ', Arguments(host, port, token, sessionId, targetProcessId));
 
-		return sessionId is { Length: > 0 } ? $"{command} --session {sessionId}" : command;
+		return $"\"{inspectorPath}\" {arguments}";
 	}
 
 	/// <summary>
 	/// The arguments the inspector is started with, as a list rather than a string, so nothing has to
 	/// be quoted and nothing can be mis-split.
+	/// <para>
+	/// The target's process id goes across as well as the session, even though the session implies it.
+	/// The inspector is one window per debugged process and claims its single-instance key on that
+	/// before it has spoken to the broker, and a key it would have to ask for is a key it cannot claim
+	/// in time -- by then a second window exists.
+	/// </para>
 	/// </summary>
-	public static IReadOnlyList<string> Arguments(string host, int port, OperatorToken token, string? sessionId)
+	public static IReadOnlyList<string> Arguments(
+		string host,
+		int port,
+		OperatorToken token,
+		string? sessionId,
+		int? targetProcessId = null)
 	{
 		var arguments = new List<string> { "--host", host, "--port", port.ToString(), "--token", token.Value };
 
 		if (sessionId is { Length: > 0 }) arguments.AddRange(["--session", sessionId]);
+		if (targetProcessId is { } pid) arguments.AddRange(["--target-pid", pid.ToString()]);
 
 		return arguments;
 	}
@@ -92,6 +110,12 @@ public static class InspectorLauncher
 	/// <c>UseShellExecute</c> is off so the arguments go across as a list: a token on a command line
 	/// the shell re-parses is a token that can come back different.
 	/// </para>
+	/// <para>
+	/// Starting a second one for a process that already has an inspector is not a problem to guard
+	/// against here. The inspector keys its single instance on the target, so the second launch
+	/// hands its arguments to the window that is open and exits -- which is what makes Inspect mean
+	/// "show me this" rather than "open another one of these".
+	/// </para>
 	/// </summary>
 	/// <exception cref="FileNotFoundException">The inspector is not installed.</exception>
 	public static Process Launch(
@@ -99,7 +123,8 @@ public static class InspectorLauncher
 		int port,
 		OperatorToken token,
 		string? sessionId = null,
-		string? configuredPath = null)
+		string? configuredPath = null,
+		int? targetProcessId = null)
 	{
 		var path = ResolvePath(configuredPath)
 			?? throw new FileNotFoundException(
@@ -108,7 +133,7 @@ public static class InspectorLauncher
 
 		var start = new ProcessStartInfo(path) { UseShellExecute = false };
 
-		foreach (var argument in Arguments(host, port, token, sessionId))
+		foreach (var argument in Arguments(host, port, token, sessionId, targetProcessId))
 		{
 			start.ArgumentList.Add(argument);
 		}

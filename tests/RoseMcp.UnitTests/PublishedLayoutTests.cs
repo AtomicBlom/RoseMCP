@@ -152,6 +152,12 @@ public sealed class PublishedLayoutTests : IDisposable
 		Assert.Equal(
 			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1"],
 			arguments);
+
+		// The target's pid rides along when the launcher knows it, because the inspector keys its
+		// single instance on the process and cannot ask anybody what that is in time.
+		Assert.Equal(
+			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1", "--target-pid", "4242"],
+			InspectorLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1", 4242));
 	}
 
 	/// <summary>

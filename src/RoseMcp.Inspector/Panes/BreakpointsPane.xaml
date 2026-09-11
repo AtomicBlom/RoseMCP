@@ -11,17 +11,33 @@
 			<StackPanel Spacing="8">
 				<TextBlock Text="Breakpoints" Style="{StaticResource BodyStrongTextBlockStyle}" />
 
-				<Grid ColumnSpacing="8" ColumnDefinitions="*,120,Auto">
-					<TextBox x:Name="BreakpointLocation" Grid.Column="0" PlaceholderText="Namespace.Type.Method"
-						ToolTipService.ToolTip="The method to stop in. It binds when the module carrying it is loaded." />
-					<TextBox x:Name="BreakpointHold" Grid.Column="1" PlaceholderText="hold (s)"
-						ToolTipService.ToolTip="Seconds before the target releases itself. Empty holds until continued." />
-					<Button x:Name="AddBreakpoint" Grid.Column="2" Style="{StaticResource ChipButtonStyle}"
-						Content="Add" Click="OnAddBreakpoint" />
-				</Grid>
+				<!-- The form is a card of its own. Loose beside the rows it reads as another one of
+				     them, only emptier: three boxes with grey text in them look exactly like three
+				     rows whose values have not loaded yet. -->
+				<Border Style="{StaticResource CardStyle}" Padding="12"
+					Background="{ThemeResource LayerOnAcrylicFillColorDefaultBrush}">
+					<StackPanel Spacing="8">
+						<TextBlock Text="Add a breakpoint" Style="{StaticResource CaptionTextBlockStyle}"
+							Foreground="{ThemeResource RoseAccentBrush}" />
+						<Grid ColumnSpacing="8" ColumnDefinitions="*,120,Auto">
+							<TextBox x:Name="BreakpointLocation" Grid.Column="0" Header="Method"
+								PlaceholderText="Namespace.Type.Method"
+								ToolTipService.ToolTip="The method to stop in. It binds when the module carrying it is loaded." />
+							<TextBox x:Name="BreakpointHold" Grid.Column="1" Header="Hold"
+								PlaceholderText="seconds"
+								ToolTipService.ToolTip="Seconds before the target releases itself. Empty holds until continued." />
+							<Button x:Name="AddBreakpoint" Grid.Column="2" Style="{StaticResource ChipButtonStyle}"
+								VerticalAlignment="Bottom" Content="Add" Click="OnAddBreakpoint" />
+						</Grid>
+						<TextBox x:Name="BreakpointCondition" Header="Condition"
+							PlaceholderText="optional, such as count &gt; 3"
+							ToolTipService.ToolTip="Evaluated at the hit; the target only stops when it holds." />
+					</StackPanel>
+				</Border>
 
-				<TextBox x:Name="BreakpointCondition" PlaceholderText="condition (optional), such as count &gt; 3"
-					ToolTipService.ToolTip="Evaluated at the hit; the target only stops when it holds." />
+				<TextBlock x:Name="BreakpointCount" Margin="0,4,0,0"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
 
 				<ItemsRepeater x:Name="BreakpointRows">
 					<ItemsRepeater.Layout>
@@ -68,14 +84,28 @@
 			<StackPanel Spacing="8">
 				<TextBlock Text="Tracepoints" Style="{StaticResource BodyStrongTextBlockStyle}" />
 
-				<Grid ColumnSpacing="8" ColumnDefinitions="*,*,90,Auto">
-					<TextBox x:Name="TracepointLocation" Grid.Column="0" PlaceholderText="Namespace.Type.Method" />
-					<TextBox x:Name="TracepointMessage" Grid.Column="1" PlaceholderText="message (optional)" />
-					<TextBox x:Name="TracepointEvery" Grid.Column="2" PlaceholderText="every Nth"
-						ToolTipService.ToolTip="Log only every Nth hit, for something that fires thousands of times." />
-					<Button x:Name="AddTracepoint" Grid.Column="3" Style="{StaticResource ChipButtonStyle}"
-						Content="Add" Click="OnAddTracepoint" />
-				</Grid>
+				<Border Style="{StaticResource CardStyle}" Padding="12"
+					Background="{ThemeResource LayerOnAcrylicFillColorDefaultBrush}">
+					<StackPanel Spacing="8">
+						<TextBlock Text="Add a tracepoint" Style="{StaticResource CaptionTextBlockStyle}"
+							Foreground="{ThemeResource RoseAccentBrush}" />
+						<Grid ColumnSpacing="8" ColumnDefinitions="*,*,100,Auto">
+							<TextBox x:Name="TracepointLocation" Grid.Column="0" Header="Method"
+								PlaceholderText="Namespace.Type.Method" />
+							<TextBox x:Name="TracepointMessage" Grid.Column="1" Header="Message"
+								PlaceholderText="optional" />
+							<TextBox x:Name="TracepointEvery" Grid.Column="2" Header="Every Nth"
+								PlaceholderText="all hits"
+								ToolTipService.ToolTip="Log only every Nth hit, for something that fires thousands of times." />
+							<Button x:Name="AddTracepoint" Grid.Column="3" Style="{StaticResource ChipButtonStyle}"
+								VerticalAlignment="Bottom" Content="Add" Click="OnAddTracepoint" />
+						</Grid>
+					</StackPanel>
+				</Border>
+
+				<TextBlock x:Name="TracepointCount" Margin="0,4,0,0"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
 
 				<ItemsRepeater x:Name="TracepointRows">
 					<ItemsRepeater.Layout>

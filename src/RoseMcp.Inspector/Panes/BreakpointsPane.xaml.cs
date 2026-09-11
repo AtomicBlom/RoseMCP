@@ -71,6 +71,13 @@ public sealed partial class BreakpointsPane : UserControl
 		NoBreakpoints.Visibility = breakpoints == 0 ? Visibility.Visible : Visibility.Collapsed;
 		NoTracepoints.Text = tracepoints == 0 ? InspectorText.NoTracepoints : string.Empty;
 		NoTracepoints.Visibility = tracepoints == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+		// A caption above the rows, so what follows the form reads as a list of things that exist
+		// rather than as more of the form.
+		BreakpointCount.Text = breakpoints == 0 ? string.Empty : Format.Count(breakpoints, "breakpoint") + " set";
+		BreakpointCount.Visibility = breakpoints == 0 ? Visibility.Collapsed : Visibility.Visible;
+		TracepointCount.Text = tracepoints == 0 ? string.Empty : Format.Count(tracepoints, "tracepoint") + " set";
+		TracepointCount.Visibility = tracepoints == 0 ? Visibility.Collapsed : Visibility.Visible;
 	}
 
 	private async void OnAddBreakpoint(object sender, RoutedEventArgs args)

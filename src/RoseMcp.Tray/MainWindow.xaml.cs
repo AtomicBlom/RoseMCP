@@ -223,19 +223,23 @@ public sealed partial class MainWindow : Window
 	{
 		if (sender is not FrameworkElement { Tag: string sessionId }) return;
 
-		OpenInspector(sessionId);
+		// The target's pid goes across as well as the session, because the inspector is one per
+		// debugged process and claims its single-instance key on that before it can ask anybody.
+		var row = _sessionRows.FirstOrDefault(session => session.SessionId == sessionId);
+
+		OpenInspector(sessionId, row?.TargetProcessId);
 	}
 
 	private void OnOpenInspector(object sender, RoutedEventArgs e) => OpenInspector(sessionId: null);
 
 	/// <summary>
-	/// Starts the inspector against this broker, on one session or on the list.
+	/// Starts the inspector against this broker, on one session or on whatever it finds.
 	/// <para>
 	/// A missing inspector is said rather than thrown: it is an optional app, and a tray that died
 	/// because a menu item pointed at something not installed would take every warm worker with it.
 	/// </para>
 	/// </summary>
-	private void OpenInspector(string? sessionId)
+	private void OpenInspector(string? sessionId, int? targetProcessId = null)
 	{
 		try
 		{
@@ -244,7 +248,8 @@ public sealed partial class MainWindow : Window
 				_app.Options.Port,
 				_app.OperatorToken,
 				sessionId,
-				_app.Options.InspectorPath);
+				_app.Options.InspectorPath,
+				targetProcessId);
 		}
 		catch (Exception exception) when (exception is FileNotFoundException or Win32Exception or InvalidOperationException)
 		{

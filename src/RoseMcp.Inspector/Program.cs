@@ -4,6 +4,8 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 
+using RoseMcp.Ui.Core.Inspector;
+
 namespace RoseMcp.Inspector;
 
 /// <summary>
@@ -24,18 +26,12 @@ namespace RoseMcp.Inspector;
 /// </summary>
 public static class Program
 {
-	/// <summary>
-	/// What the single instance is keyed on. A constant rather than the exe path, so an inspector
-	/// run from a build output and one from an install are still one inspector.
-	/// </summary>
-	private const string InstanceKey = "RoseMcp.Inspector";
-
 	[STAThread]
 	private static void Main()
 	{
 		WinRT.ComWrappersSupport.InitializeComWrappers();
 
-		if (HandedOver()) return;
+		if (HandedOver(KeyOf(Environment.GetCommandLineArgs().Skip(1).ToArray()))) return;
 
 		Application.Start(initialization =>
 		{
@@ -57,11 +53,11 @@ public static class Program
 	/// far better outcome than a process that exits without one.
 	/// </para>
 	/// </summary>
-	private static bool HandedOver()
+	private static bool HandedOver(string key)
 	{
 		try
 		{
-			var running = AppInstance.FindOrRegisterForKey(InstanceKey);
+			var running = AppInstance.FindOrRegisterForKey(key);
 			if (running.IsCurrent) return false;
 
 			Redirect(running, AppInstance.GetCurrent().GetActivatedEventArgs());
@@ -101,6 +97,27 @@ public static class Program
 
 		var handle = handed.SafeWaitHandle.DangerousGetHandle();
 		_ = CoWaitForMultipleObjects(CoWaitAlertable | CoWaitInputAvailable, HandOverMilliseconds, 1, [handle], out _);
+	}
+
+	/// <summary>
+	/// What this launch's single instance is keyed on: the process it is going to debug.
+	/// <para>
+	/// Read here rather than taken from the parsed options, because the key has to be claimed
+	/// before <c>Application.Start</c> and the options are not read until the App is constructed.
+	/// A command line that does not parse falls back to the app-wide key, which is the old
+	/// behaviour and is no worse than refusing to start.
+	/// </para>
+	/// </summary>
+	private static string KeyOf(string[] arguments)
+	{
+		try
+		{
+			return InspectorOptions.Parse(arguments).InstanceKey;
+		}
+		catch (ArgumentException)
+		{
+			return "RoseMcp.Inspector";
+		}
 	}
 
 	/// <summary>

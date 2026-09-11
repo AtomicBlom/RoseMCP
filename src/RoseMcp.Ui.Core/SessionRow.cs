@@ -56,6 +56,16 @@ public sealed class SessionRow : Observable
 
 	public string DisplayName { get; private set; } = string.Empty;
 
+	/// <summary>
+	/// The process being debugged, when the session has one.
+	/// <para>
+	/// Carried because it is what an inspector window is one of: the launcher has to name the
+	/// process rather than the session, so that detaching and attaching again reaches the window
+	/// already open on that program.
+	/// </para>
+	/// </summary>
+	public int? TargetProcessId { get; private set; }
+
 	public string StateLabel
 	{
 		get => _stateLabel;
@@ -220,6 +230,7 @@ public sealed class SessionRow : Observable
 	public void Update(LiveAppSessionSummary summary)
 	{
 		DisplayName = summary.TargetDescription;
+		TargetProcessId = summary.TargetProcessId;
 
 		var tone = ToneOf(summary);
 		StateLabel = DescribeState(summary);

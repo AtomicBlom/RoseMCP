@@ -46,6 +46,47 @@ public sealed class InspectorOptionsTests
 		Assert.Null(options.Token);
 	}
 
+	/// <summary>
+	/// What one inspector is one of. The process rather than the session, so detaching and
+	/// attaching again reaches the window already open on that program -- and because the title
+	/// names the process, two windows keyed on sessions would be two windows with one name.
+	/// </summary>
+	[Test]
+	public void The_instance_key_is_the_process_being_debugged()
+	{
+		var byProcess = InspectorOptions.Parse(["--session", "s1", "--target-pid", "4242"]);
+		Assert.Equal(4242, byProcess.TargetProcessId);
+		Assert.Equal("RoseMcp.Inspector:pid:4242", byProcess.InstanceKey);
+
+		// Two sessions over one process are one window, which is the whole point of keying on it.
+		Assert.Equal(
+			byProcess.InstanceKey,
+			InspectorOptions.Parse(["--session", "s2", "--target-pid", "4242"]).InstanceKey);
+
+		// Two processes are two windows.
+		Assert.NotEqual(
+			byProcess.InstanceKey,
+			InspectorOptions.Parse(["--session", "s1", "--target-pid", "77"]).InstanceKey);
+	}
+
+	/// <summary>
+	/// With no process named, the session is the next best identity, and with neither there is one
+	/// inspector. Both are fallbacks for a launch that did not come from the tray.
+	/// </summary>
+	[Test]
+	public void Without_a_process_the_key_falls_back()
+	{
+		Assert.Equal("RoseMcp.Inspector:session:s1", InspectorOptions.Parse(["--session", "s1"]).InstanceKey);
+		Assert.Equal("RoseMcp.Inspector", InspectorOptions.Parse([]).InstanceKey);
+	}
+
+	[Test]
+	public void A_target_pid_that_is_not_a_number_is_refused()
+	{
+		Assert.Throws<ArgumentException>(() => InspectorOptions.Parse(["--target-pid", "many"]));
+		Assert.Throws<ArgumentException>(() => InspectorOptions.Parse(["--target-pid"]));
+	}
+
 	[Test]
 	[Arguments("--nonsense")]
 	[Arguments("--port")]

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -30,6 +31,12 @@ public sealed partial class MainWindow : Window
 	/// </summary>
 	private static readonly TimeSpan SessionInterval = TimeSpan.FromSeconds(1);
 
+	/// <summary>
+	/// How long the close waits for the hold to be given back. Two seconds is several times what the
+	/// round trip takes and short enough that nobody reads it as a window refusing to close.
+	/// </summary>
+	private static readonly TimeSpan ReleaseBudget = TimeSpan.FromSeconds(2);
+
 	// Logical pixels. Wide enough for a stack beside a variable tree, which is the widest thing
 	// this window will have to show; the minimum keeps the header's two halves from colliding.
 	private const int InitialWidth = 980;
@@ -51,6 +58,16 @@ public sealed partial class MainWindow : Window
 	/// </summary>
 	private string? _sessionId;
 
+	/// <summary>
+	/// The one hold on the target, shared by the panes that read a stop. On the window rather than in
+	/// a pane because the host has one hold: two panes each taking their own would race, and the loser
+	/// would be a reader whose target resumed because somebody changed tab.
+	/// </summary>
+	private HoldKeeper? _holds;
+
+	/// <summary>Whether the close has already run its release, so the second one goes through.</summary>
+	private bool _closing;
+
 	public MainWindow()
 	{
 		InitializeComponent();
@@ -66,6 +83,7 @@ public sealed partial class MainWindow : Window
 		Events.Attach(_client, Report);
 		Breakpoints.Attach(_client, Report);
 		Stack.Attach(_client, Report);
+		Threads.Attach(_client, Report);
 
 		_sessionPoll = new PollLoop(RefreshAsync, SessionInterval, Report);
 
@@ -83,6 +101,8 @@ public sealed partial class MainWindow : Window
 		ShowEmpty(InspectorText.NoSessions, string.Empty);
 		_sessionPoll.Start();
 
+		AppWindow.Closing += OnWindowClosing;
+
 		// Everything this window polls stops with it. A loop left running against a closed window
 		// keeps asking the tray questions nobody will read, and holds the process alive to do it.
 		Closed += (_, _) =>
@@ -91,10 +111,8 @@ public sealed partial class MainWindow : Window
 			_sessionPoll.Stop();
 			Events.Showing(false);
 			Breakpoints.Showing(false);
-
-			// Hiding the stack pane is also what gives back the hold it was keeping, so the target
-			// is not left stopped because somebody closed the window on it.
 			Stack.Showing(false);
+			Threads.Showing(false);
 
 			_client.Dispose();
 		};
@@ -186,9 +204,17 @@ public sealed partial class MainWindow : Window
 			_row = new SessionRow(summary);
 			_inspected = new InspectedSession(summary.SessionId);
 
+			// One keeper per session, because a hold is about a target: carrying one across would let a
+			// pane give back a hold on a process this window is no longer about.
+			var sessionId = summary.SessionId;
+			_holds = new HoldKeeper(
+				(seconds, release, cancellationToken) => _client.HoldAsync(sessionId, seconds, release, cancellationToken),
+				Report);
+
 			Events.Bind(_inspected);
 			Breakpoints.Bind(_inspected);
-			Stack.Bind(_inspected);
+			Stack.Bind(_inspected, _holds);
+			Threads.Bind(_inspected, _holds);
 
 			EmptyState.Visibility = Visibility.Collapsed;
 			DetachButton.IsEnabled = true;
@@ -201,17 +227,22 @@ public sealed partial class MainWindow : Window
 
 		ShowHeader(_row);
 
-		// The stack pane is the one thing that acts on a stop rather than describing it: a sequence
-		// it has not read yet is a new place the target is sitting, and it reads the frames there.
+		// Before the panes, because the hold they are about to ask for belongs to the stop the target is
+		// at now: one taken at the last stop was cleared when the target continued.
+		_ = _holds?.AtStop(_row.StopSequence);
+
+		// These two act on a stop rather than describing it: a sequence they have not read yet is a new
+		// place the target is sitting, and they read what is there.
 		Stack.Observe(_row);
+		Threads.Observe(_row);
 	}
 
 	private void OnTabChosen(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowTab();
 
 	/// <summary>
 	/// Shows the chosen pane and hides the rest, and tells each whether it is the visible one --
-	/// a pane that cannot see the screen must not be polling on the reader's behalf, and the stack
-	/// pane must not be holding the target still for a tab nobody is looking at.
+	/// a pane that cannot see the screen must not be polling on the reader's behalf, and neither of
+	/// the two that read a stop must be holding the target still for a tab nobody is looking at.
 	/// </summary>
 	private void ShowTab()
 	{
@@ -219,14 +250,20 @@ public sealed partial class MainWindow : Window
 		var events = bound && Tabs.SelectedItem == EventsTab;
 		var breakpoints = bound && Tabs.SelectedItem == BreakpointsTab;
 		var stack = bound && Tabs.SelectedItem == StackTab;
+		var threads = bound && Tabs.SelectedItem == ThreadsTab;
 
 		Events.Visibility = events ? Visibility.Visible : Visibility.Collapsed;
 		Breakpoints.Visibility = breakpoints ? Visibility.Visible : Visibility.Collapsed;
 		Stack.Visibility = stack ? Visibility.Visible : Visibility.Collapsed;
+		Threads.Visibility = threads ? Visibility.Visible : Visibility.Collapsed;
 
+		// All four in one pass, in whatever order: the keeper reconciles after the pass rather than on
+		// the first pane to speak, so the arriving pane's claim on the hold is already in place when the
+		// leaving one gives its own up.
 		Events.Showing(events);
 		Breakpoints.Showing(breakpoints);
 		Stack.Showing(stack);
+		Threads.Showing(threads);
 	}
 
 	private void ShowHeader(SessionRow row)
@@ -248,10 +285,39 @@ public sealed partial class MainWindow : Window
 
 	private void Tick()
 	{
+		// The same clock that moves the countdown is what renews the hold behind it, so what a reader
+		// sees and what keeps the target still cannot disagree about how long is left.
+		_ = _holds?.Tick(DateTime.UtcNow);
+
 		if (_row is not { } row) return;
 
 		row.Tick(DateTime.UtcNow);
 		ShowHeader(row);
+	}
+
+	/// <summary>
+	/// Gives the hold back before the window goes, and waits for it.
+	/// <para>
+	/// Waiting is the point. Releasing on <c>Closed</c> and disposing the client in the same handler
+	/// cancels the request it just made, so the target stays stopped until the host's own cap expires
+	/// -- which is somebody's application frozen for minutes because a window was closed. The window
+	/// declines to close once, releases, then closes for real.
+	/// </para>
+	/// <para>
+	/// Budgeted, because a window that will not close is worse than a target that frees itself in a
+	/// few minutes: a tray that has stopped answering must not take the inspector with it.
+	/// </para>
+	/// </summary>
+	private async void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+	{
+		if (_closing || _holds is not { } holds) return;
+
+		args.Cancel = true;
+		_closing = true;
+
+		await Task.WhenAny(holds.ReleaseAsync(), Task.Delay(ReleaseBudget));
+
+		Close();
 	}
 
 	/// <summary>
@@ -278,8 +344,16 @@ public sealed partial class MainWindow : Window
 		EmptyState.Visibility = Visibility.Visible;
 		Events.Visibility = Visibility.Collapsed;
 		Breakpoints.Visibility = Visibility.Collapsed;
+		Stack.Visibility = Visibility.Collapsed;
+		Threads.Visibility = Visibility.Collapsed;
 		Events.Showing(false);
 		Breakpoints.Showing(false);
+
+		// Both of these give the hold back on being hidden, which is what matters here: the session
+		// going away is the case where a target would otherwise be left stopped with nothing watching.
+		Stack.Showing(false);
+		Threads.Showing(false);
+
 		DetachButton.IsEnabled = false;
 		OpenLogButton.IsEnabled = false;
 

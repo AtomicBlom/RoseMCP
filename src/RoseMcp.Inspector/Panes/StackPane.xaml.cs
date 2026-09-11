@@ -17,23 +17,30 @@ namespace RoseMcp.Inspector.Panes;
 /// </summary>
 public sealed partial class StackPane : UserControl
 {
-	/// <summary>
-	/// How long a hold is taken for. Long enough that reading a stack and opening a few values never
-	/// runs out, short enough that a reader who walks away does not leave somebody's application
-	/// frozen for the host's whole ten-minute cap.
-	/// </summary>
-	private static readonly TimeSpan HoldFor = TimeSpan.FromSeconds(120);
-
 	private OperatorClient? _client;
 	private Action<Exception>? _report;
 	private InspectedSession? _session;
+	private HoldKeeper? _holds;
 
 	private StopInspection? _stop;
 
 	/// <summary>The stop the frames on screen were read at, so a newer one is noticed.</summary>
 	private long _readAt = -1;
 
+	/// <summary>Where the session is now, which a click on Release needs and the poll knows.</summary>
+	private long _stopSequence;
+
+	/// <summary>
+	/// The stop a reader handed back to its own timer, so the keeper is not asked for it again.
+	/// Per stop rather than a mode, because letting this stop go is not a decision about the next
+	/// one -- a reader who steps is asking to look at where the step landed.
+	/// </summary>
+	private long _releasedAt = -1;
+
 	private bool _visible;
+
+	private bool _stopped;
+
 	private bool _reading;
 
 	public StackPane() => InitializeComponent();
@@ -44,25 +51,35 @@ public sealed partial class StackPane : UserControl
 		_report = report;
 	}
 
-	public void Bind(InspectedSession session)
+	public void Bind(InspectedSession session, HoldKeeper holds)
 	{
 		_session = session;
+		_holds = holds;
 		_stop = null;
 		_readAt = -1;
+		_releasedAt = -1;
+		_stopped = false;
+		StaleBar.Message = InspectorText.StopEnded;
 		Show(null);
 	}
 
 	/// <summary>
-	/// A pane nobody can see holds nothing. The hold exists so a reader can work, so it is released
-	/// the moment they look somewhere else -- otherwise a tab left in the background keeps somebody's
-	/// application stopped.
+	/// Becoming visible claims the hold and being hidden gives it up, both at once rather than on the
+	/// next poll. A pane that waited for its poll to claim would let the leaving pane's release go out
+	/// first, and the target is loose in between -- which is the whole failure the shared keeper
+	/// exists to prevent.
 	/// </summary>
 	public void Showing(bool visible)
 	{
 		_visible = visible;
-
-		if (!visible) Release();
+		_ = _holds?.Want(this, Wanted);
 	}
+
+	/// <summary>
+	/// Whether this pane needs the target kept where it is: only while somebody can see it, only while
+	/// there is a stop to hold, and not at a stop its reader has already handed back.
+	/// </summary>
+	private bool Wanted => _visible && _stopped && _stopSequence != _releasedAt;
 
 	/// <summary>
 	/// Takes each poll of the session. Frames are re-read when the stop's sequence moves, and not
@@ -71,8 +88,16 @@ public sealed partial class StackPane : UserControl
 	/// </summary>
 	public async void Observe(SessionRow row)
 	{
+		_stopSequence = row.StopSequence;
+		_stopped = row.IsStopped;
+
+		var settled = _holds?.Want(this, Wanted) ?? Task.CompletedTask;
+
 		Steps(row.IsStopped);
-		HoldText.Text = row.ResumeLabel;
+
+		// The keeper's word beats the session's when it has one: the session says what the target is
+		// doing, and the keeper says why this window could not make it wait.
+		HoldText.Text = _holds?.Detail is { Length: > 0 } why ? why : row.ResumeLabel;
 		ReleaseButton.Visibility = row.IsHeld ? Visibility.Visible : Visibility.Collapsed;
 
 		// Frames outlive the stop they came from, deliberately: the target continuing is ordinary,
@@ -81,10 +106,13 @@ public sealed partial class StackPane : UserControl
 
 		if (!_visible || !row.IsStopped || row.StopSequence == _readAt || _reading) return;
 
+		// After the hold, not beside it. A stack read under the safety timer can be answered and
+		// stale before the first frame is on screen.
+		await settled;
 		await ReadAsync(row.StopSequence);
 	}
 
-	/// <summary>Reads the stack at a stop, and takes a hold so it stays still while it is read.</summary>
+	/// <summary>Reads the stack at a stop, which the keeper is already holding still.</summary>
 	private async Task ReadAsync(long stopSequence)
 	{
 		if (_client is not { } client || _session is not { } session) return;
@@ -93,10 +121,6 @@ public sealed partial class StackPane : UserControl
 		{
 			_reading = true;
 			_readAt = stopSequence;
-
-			// The hold first. A stack read under the safety timer can be answered and stale before
-			// the first frame is on screen.
-			await client.HoldAsync(session.SessionId, (int)HoldFor.TotalSeconds, release: false, CancellationToken.None);
 
 			var frames = await client.FramesAsync(session.SessionId, null, 0, null, CancellationToken.None);
 			if (frames.Execution == LiveExecutionState.Running) return;
@@ -303,9 +327,12 @@ public sealed partial class StackPane : UserControl
 		{
 			Steps(false);
 
-			// The hold has to go first, or the step is issued into a target somebody is holding
-			// still and the stop it lands in is held by a hold taken for the stop before.
-			await client.HoldAsync(session.SessionId, null, release: true, CancellationToken.None);
+			// The target is about to move, so it is no longer a stop this pane wants kept. Saying so
+			// before the release is what stops the next poll taking the hold straight back and the
+			// step then being answered by releasing it loudly.
+			_stopped = false;
+
+			if (_holds is { } holds) await holds.Want(this, Wanted);
 
 			var moved = mode is null
 				? await client.ContinueAsync(session.SessionId, CancellationToken.None)
@@ -322,33 +349,18 @@ public sealed partial class StackPane : UserControl
 		}
 	}
 
-	private async void OnRelease(object sender, RoutedEventArgs args)
-	{
-		if (_client is not { } client || _session is not { } session) return;
-
-		try
-		{
-			await client.HoldAsync(session.SessionId, null, release: true, CancellationToken.None);
-		}
-		catch (Exception exception)
-		{
-			_report?.Invoke(exception);
-		}
-	}
-
 	/// <summary>
-	/// Gives a hold back without waiting for the answer or reporting a failure.
+	/// Hands this stop back to its own safety timer, without moving the target.
 	/// <para>
-	/// Called from the pane being hidden and from the window closing, neither of which has anywhere
-	/// to put an error and neither of which can wait. A hold that outlives this is bounded by the
-	/// host's own cap, so the worst case is a target that frees itself a couple of minutes later.
+	/// Remembered against the stop rather than acted on once, or the next poll would want the hold
+	/// again and take it straight back. The next stop is a new decision, so stepping re-arms it.
 	/// </para>
 	/// </summary>
-	private void Release()
+	private async void OnRelease(object sender, RoutedEventArgs args)
 	{
-		if (_client is not { } client || _session is not { } session) return;
+		if (_holds is not { } holds) return;
 
-		_ = client.HoldAsync(session.SessionId, null, release: true, CancellationToken.None)
-			.ContinueWith(static held => _ = held.Exception, TaskScheduler.Default);
+		_releasedAt = _stopSequence;
+		await holds.Want(this, Wanted);
 	}
 }

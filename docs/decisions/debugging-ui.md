@@ -290,3 +290,49 @@ package or off a build agent names a directory that was never here. That is the 
 most of what a target loads rather than a fault, and hiding those methods from the search would mean
 the one thing a name-addressed breakpoint has always been able to do -- stop at a method's entry --
 stopped being offered for them.
+
+## One hold, shared by the panes that read a stop
+
+**Decision.** The hold on a stopped target belongs to a `HoldKeeper` on the window, not to a pane.
+Panes say whether they want the target kept where it is, and the keeper reconciles: it takes one
+hold while anybody wants one and gives it back when nobody does.
+
+**Why.** The host has one hold, and the last request about it wins. Two panes each taking and
+releasing their own is not two holds, it is a race -- the stack pane released on being hidden gave
+away the hold the threads pane had just taken, and the target resumed under a reader who had done
+nothing but change tab. Wanting rather than doing is also what makes it safe to call from a poll: a
+pane says the same thing every second and only a change asks the host anything, and a pane that
+forgets to let go is corrected by its own next poll rather than leaving somebody's application
+stopped.
+
+**Why the reconcile is deferred by a yield.** Changing tab tells the arriving pane and the leaving
+one in a single pass. Acting on the first of those releases the hold and takes it again, and the
+target is free in between -- which was measured against the probe as a release and a re-take per
+switch in the host's own event log. Deferring to the end of the caller's block collapses the pass
+into one decision whatever order the panes are told in, so no call site has to remember an ordering.
+
+**Why a pane claims on becoming visible rather than on its next poll.** Claiming from the poll is a
+second of nothing wanted, and the leaving pane's release goes out inside it. Both halves have to
+happen in the same block or the deferral has nothing to collapse.
+
+## A hold outlives the window unless the close waits for it
+
+**Decision.** Closing the inspector cancels the close once, gives the hold back, waits up to two
+seconds, then closes for real.
+
+**Why.** Releasing on `Closed` and disposing the operator client in the same handler cancels the
+request that was just made, so the target stays stopped until the host's own cap expires -- minutes
+of somebody's application frozen because a window was closed, with nothing left on screen to say so.
+It is budgeted because a window that will not close is worse than a target that frees itself in a
+few minutes: a tray that has stopped answering must not take the inspector with it.
+
+## Threads are re-read when the stop moves, not on a timer
+
+**Decision.** The threads pane reads when the stop's sequence changes while it is visible, rather
+than polling every two seconds.
+
+**Why.** A stopped target's threads cannot go anywhere -- that is the same fact that makes the list
+answerable at all, since enumerating threads needs the runtime synchronized. A poll would spend a
+request a second on an answer that cannot have changed, at an application somebody is holding still.
+The session poll already carries the stop's sequence, so a new stop is noticed within a second
+either way.

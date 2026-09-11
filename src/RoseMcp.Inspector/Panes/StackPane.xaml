@@ -34,8 +34,7 @@
 
 		<!-- A stack is never yanked away. The target continuing is ordinary (a timer, a step, an
 		     agent) and a pane that emptied itself would lose a reader's place with no explanation. -->
-		<InfoBar x:Name="StaleBar" Grid.Row="1" IsOpen="False" IsClosable="False" Severity="Informational"
-			Message="The target continued: a step, the safety timer, or an agent. These frames are from the stop before." />
+		<InfoBar x:Name="StaleBar" Grid.Row="1" IsOpen="False" IsClosable="False" Severity="Informational" />
 
 		<Grid Grid.Row="2" ColumnSpacing="12" ColumnDefinitions="320,*">
 

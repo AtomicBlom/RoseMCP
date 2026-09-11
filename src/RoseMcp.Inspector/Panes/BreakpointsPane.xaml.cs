@@ -1,5 +1,3 @@
-using System.Collections.ObjectModel;
-
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -37,8 +35,6 @@ public sealed partial class BreakpointsPane : UserControl
 	/// <summary>How many matches to ask for. A drop-down nobody scrolls past is the whole point of ranking them.</summary>
 	private const int Matches = 25;
 
-	private readonly ObservableCollection<LiveMethodMatch> _matches = [];
-
 	private OperatorClient? _client;
 	private Action<Exception>? _report;
 	private PollLoop? _poll;
@@ -59,7 +55,6 @@ public sealed partial class BreakpointsPane : UserControl
 	public BreakpointsPane()
 	{
 		InitializeComponent();
-		MethodSearch.ItemsSource = _matches;
 		SearchStatus.Text = InspectorText.FindAMethod;
 		ShowState();
 	}
@@ -136,11 +131,16 @@ public sealed partial class BreakpointsPane : UserControl
 			if (searching.Token.IsCancellationRequested) return;
 			if (!string.Equals(found.Query, MethodSearch.Text.Trim(), StringComparison.Ordinal)) return;
 
-			_matches.Clear();
-			foreach (var match in found.Matches)
-			{
-				_matches.Add(match);
-			}
+			// Assigned rather than mutated in place. The drop-down opens off the assignment, so a
+			// bound collection that is cleared and refilled leaves the box with matches it never
+			// shows -- a search that says it found something and appears to have done nothing.
+			MethodSearch.ItemsSource = found.Matches;
+
+			// And opened by hand. The control opens its own list from inside TextChanged, which has
+			// returned long before this: the search waits for typing to settle and then for the
+			// answer. Without this the box holds matches it never shows, which is a search that
+			// reports what it found and appears to have done nothing.
+			MethodSearch.IsSuggestionListOpen = found.Matches.Count > 0;
 
 			SearchStatus.Text = DescribeSearch(found);
 		}
@@ -239,7 +239,18 @@ public sealed partial class BreakpointsPane : UserControl
 			row.OffsetLabel);
 	}
 
-	private void OnClearMethod(object sender, RoutedEventArgs args)
+	private void OnClearMethod(object sender, RoutedEventArgs args) => ClearMethod();
+
+	/// <summary>
+	/// Puts the picker back to an empty search box.
+	/// <para>
+	/// Done after a successful add as well as on the button, because the card is at its tallest
+	/// exactly when a breakpoint has just been made: leaving the method open pushes the list holding
+	/// the new row below the fold, so the one thing somebody wants to see is the one thing they have
+	/// to go looking for.
+	/// </para>
+	/// </summary>
+	private void ClearMethod()
 	{
 		_method = null;
 		_chosen = null;
@@ -247,7 +258,7 @@ public sealed partial class BreakpointsPane : UserControl
 		MethodPanel.Visibility = Visibility.Collapsed;
 		SourceFrame.Visibility = Visibility.Collapsed;
 		MethodSearch.Text = string.Empty;
-		_matches.Clear();
+		MethodSearch.ItemsSource = null;
 		SearchStatus.Text = InspectorText.FindAMethod;
 	}
 
@@ -274,6 +285,7 @@ public sealed partial class BreakpointsPane : UserControl
 			// own sentence goes in front of the reader rather than an error.
 			if (!set.Bound && set.Detail is { } detail) _report?.Invoke(new OperatorException(OperatorFailure.Refused, detail));
 
+			ClearMethod();
 			_poll?.Kick();
 		}
 		catch (Exception exception)
@@ -323,6 +335,7 @@ public sealed partial class BreakpointsPane : UserControl
 
 			if (!added.Bound && added.Detail is { } detail) _report?.Invoke(new OperatorException(OperatorFailure.Refused, detail));
 
+			ClearMethod();
 			_poll?.Kick();
 		}
 		catch (Exception exception)

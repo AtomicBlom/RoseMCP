@@ -7,10 +7,14 @@
 
 	<!-- Two halves, and the split is the point. What is being composed sits in a card of its own at
 	     the top; what is already set is a plain list below a rule. Loose together, a form of empty
-	     boxes reads as more rows whose values have not loaded yet. -->
-	<Grid RowDefinitions="Auto,Auto,*" RowSpacing="14">
+	     boxes reads as more rows whose values have not loaded yet.
+	     One scroll over both rather than a row each: the card grows when a method is chosen,
+	     and rows that share the height between them shrink the list to nothing exactly when
+	     somebody is about to add to it. -->
+	<ScrollViewer VerticalScrollBarVisibility="Auto">
+		<StackPanel Spacing="14">
 
-		<Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="12"
+		<Border Style="{StaticResource CardStyle}" Padding="12"
 			Background="{ThemeResource LayerOnAcrylicFillColorDefaultBrush}">
 			<StackPanel Spacing="10">
 				<TextBlock Text="Add a breakpoint or tracepoint" Style="{StaticResource CaptionTextBlockStyle}"
@@ -87,7 +91,7 @@
 										     chosen visible before anything is clicked. -->
 										<Button Click="OnPickPosition" Tag="{x:Bind Location}"
 											IsEnabled="{x:Bind IsBreakable}"
-											HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+											HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
 											Background="Transparent" BorderThickness="0" CornerRadius="0"
 											Padding="8,1">
 											<Grid ColumnSpacing="12" ColumnDefinitions="Auto,*,Auto">
@@ -145,9 +149,8 @@
 			</StackPanel>
 		</Border>
 
-		<Border Grid.Row="1" Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
+		<Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
-		<ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
 			<StackPanel Spacing="14">
 
 				<StackPanel Spacing="6">
@@ -244,6 +247,6 @@
 						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 				</StackPanel>
 			</StackPanel>
-		</ScrollViewer>
-	</Grid>
+		</StackPanel>
+	</ScrollViewer>
 </UserControl>

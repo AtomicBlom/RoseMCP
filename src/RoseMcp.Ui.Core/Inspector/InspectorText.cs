@@ -70,8 +70,8 @@ public static class InspectorText
 			: $"{dropped} earlier events were dropped by the host's buffer.";
 
 	public const string NoBreakpoints =
-		"No breakpoints. Add one by method name -- Namespace.Type.Method -- and it binds when the "
-			+ "module carrying it is loaded.";
+		"No breakpoints. Find a method above, then click the line to stop on; it binds when the module "
+			+ "carrying it is loaded.";
 
 	public const string NoTracepoints =
 		"No tracepoints. A tracepoint logs and lets the target run, so it is what to reach for when "

@@ -20,7 +20,6 @@ public sealed class XamlNodeRow : Observable
 	private string _where = string.Empty;
 	private bool _hasWhere;
 	private bool _isExpanded;
-	private bool _isSelected;
 	private bool _isOrphan;
 
 	public XamlNodeRow(LiveXamlNode node)
@@ -82,19 +81,13 @@ public sealed class XamlNodeRow : Observable
 		set => Set(ref _isExpanded, value);
 	}
 
-	public bool IsSelected
-	{
-		get => _isSelected;
-		set => Set(ref _isSelected, value);
-	}
-
 	/// <summary>
-	/// Whether this element names a parent the tree does not contain, so it is shown at the top
-	/// rather than under it.
+	/// Whether this element names a parent the tree cannot place it under -- absent from the snapshot,
+	/// or an ancestor of itself -- so it is shown at the top instead.
 	/// <para>
-	/// Said rather than hidden. An element with a parent nobody listed is the snapshot disagreeing
-	/// with itself, and dropping it would turn that into a tree quietly missing a subtree -- which
-	/// reads as a complete tree and is the one failure a reader cannot spot.
+	/// Said rather than hidden. An element with a parent nobody listed is the snapshot disagreeing with
+	/// itself, and dropping it would turn that into a tree quietly missing a subtree, which reads as a
+	/// complete tree and is the one failure a reader cannot spot.
 	/// </para>
 	/// </summary>
 	public bool IsOrphan
@@ -109,7 +102,7 @@ public sealed class XamlNodeRow : Observable
 		TypeName = node.TypeName;
 		Name = node.Name;
 		Address = node.Address;
-		Label = Describe(node.TypeName, node.Name);
+		Label = Describe(ShortNameOf(node.TypeName), node.Name);
 
 		Where = Format.FileLine(node.File, node.Line);
 		HasWhere = Where.Length > 0;
@@ -121,4 +114,20 @@ public sealed class XamlNodeRow : Observable
 	/// </summary>
 	public static string Describe(string typeName, string? name) =>
 		name is { Length: > 0 } named ? $"{typeName} #{named}" : typeName;
+
+	/// <summary>
+	/// A type without its namespace, which is what a tree row can show.
+	/// <para>
+	/// A WinUI tree is almost entirely <c>Microsoft.UI.Xaml.Controls</c>, so qualifying every row spends
+	/// the column on a prefix every row shares and then truncates the one word that differs -- which is
+	/// a list of elements nobody can tell apart. The full name is still on
+	/// <see cref="TypeName"/>, and is what the element's own header shows.
+	/// </para>
+	/// </summary>
+	public static string ShortNameOf(string typeName)
+	{
+		var dot = typeName.LastIndexOf('.');
+
+		return dot >= 0 && dot < typeName.Length - 1 ? typeName[(dot + 1)..] : typeName;
+	}
 }

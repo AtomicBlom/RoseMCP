@@ -43,6 +43,16 @@ public sealed class InspectedSession : Observable
 
 	public ObservableCollection<TracepointRow> Tracepoints { get; } = [];
 
+	/// <summary>
+	/// The live app's visual tree, the element selected in it, and that element's properties.
+	/// <para>
+	/// Per session rather than per pane, for the reason the tail is: a handle is stable for the life of
+	/// the element, so the expansion and the selection somebody built up are worth keeping across
+	/// anything that rebinds the pane. A target with no XAML simply never has it read.
+	/// </para>
+	/// </summary>
+	public XamlInspection Xaml { get; } = new();
+
 	/// <summary>Where the tail has read to, passed back as <c>after</c> on the next poll.</summary>
 	public long Cursor
 	{

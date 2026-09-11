@@ -336,3 +336,66 @@ answerable at all, since enumerating threads needs the runtime synchronized. A p
 request a second on an answer that cannot have changed, at an application somebody is holding still.
 The session poll already carries the stop's sequence, so a new stop is noticed within a second
 either way.
+
+## A visual tree is merged into the rows already on screen, never rebuilt
+
+**Decision.** A read of the tree brings the existing rows in line with it: a row is kept while its
+handle is still there, an element that has moved between parents is the same row either side, and a
+subtree that has gone takes the selection with it.
+
+**Why.** A handle is stable for the life of the element, so a row can outlive a read -- and the read
+that matters most is the one after a live edit, which is exactly when somebody is watching one
+element. Rebuilding closes every expander, drops the selection, and loses the scroll position, which
+is a reader's whole place in a tree of several hundred elements. It also makes the one thing this
+pane must never do easy: showing the properties of an element that is not in the tree any more. The
+selection is cleared and said rather than left standing.
+
+**Why an unplaceable element goes to the top rather than being dropped.** A handle listed twice, a
+parent nobody listed, and a parent that is its own descendant are all snapshots that do not quite
+describe a tree. Each has the same wrong answer available -- drop the element -- and taking it hands
+back a tree that reads as complete and is missing a subtree, which is the one failure a reader
+cannot spot. They are shown at the top and flagged.
+
+## Properties are grouped by what set them
+
+**Decision.** Local, then Style, then Inherited, then Animation, then anything else, then the
+framework's defaults, and alphabetical inside each. The framework's dozen provenances collapse into
+those five buckets, matched whole.
+
+**Why.** Provenance is what a reader acts on: the same value means different things set on the
+element, inherited from a parent, or handed over by a style nobody looking at the markup would think
+to open. Sorted by name alone, the two properties somebody actually set are buried among ninety
+defaults -- which is the state `includeDefaults` is turned on to escape and then regretted. Matched
+whole because a substring match files `DefaultStyle`, which is a style, under Default: a confident
+wrong answer about which file to go and edit. A provenance this does not know is shown as itself
+rather than guessed at.
+
+## The tree control deals in nodes at both ends, and says so nowhere
+
+**Decision.** The pane reads a click through `NodeFromContainer` and writes a selection through
+`SelectedNode`, never through `SelectedItem`.
+
+**Why.** `TreeView` in ItemsSource mode is documented to surface the data item. It surfaces the
+`TreeViewNode` wrapping it -- on a click, and as what the selection setter will accept. Both halves
+fail silently: a cast that did not match reads exactly like a click on empty space, and an item
+handed to the setter is ignored. Between them that is a pane where clicking a row highlights it and
+shows nothing, and where a pick in the app reads the right element and highlights no row. A node
+exists only once the control has built the row's container, so a reveal opens the ancestors and
+then waits a bounded handful of frames for one rather than selecting immediately.
+
+## The app is the truth about selection, and about select mode
+
+**Decision.** Armed, Just my XAML and what is selected are read from the app twice a second, and the
+toolbar follows what comes back rather than what was asked for.
+
+**Why.** The person can arm, pick and cancel from the app's own toolbar without this window being
+told, so what this side last requested proves nothing. The cost is that this window's own push comes
+back looking exactly like somebody's click, which would reveal and re-select the same element once a
+second forever -- so the handle last pushed is remembered and passed over. A toggle is put back to
+what the app said for the same reason: one showing a mode the app is not in is worse than one that
+visibly did not move.
+
+**Why the toolbar goes dead during a read.** Every call here queues on one gate, because the
+provider serves one request at a time on the app's own UI thread. A button clicked during a
+thirty-second tree read does nothing visible and then snaps back, which reads as a button that does
+not work.

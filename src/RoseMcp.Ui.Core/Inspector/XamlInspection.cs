@@ -143,7 +143,6 @@ public sealed class XamlInspection : Observable
 
 		// The element has gone. Said rather than left showing the properties of something that is
 		// not there any more, which is the shape of wrong this whole pane is built to avoid.
-		selected.IsSelected = false;
 		Selected = null;
 		Properties.Clear();
 		PropertiesDetail = "The element that was selected is not in the tree any more.";
@@ -151,22 +150,23 @@ public sealed class XamlInspection : Observable
 		ObservedNote = string.Empty;
 	}
 
-	/// <summary>Moves the selection, which is what decides whose properties are shown.</summary>
+	/// <summary>
+	/// Moves the selection, which is what decides whose properties are shown.
+	/// <para>
+	/// One record of it, here. A flag on the row as well would be a second, and the tree control keeps
+	/// its own -- three copies of one fact, which is how a row ends up highlighted while the pane
+	/// beside it says nothing is selected.
+	/// </para>
+	/// </summary>
 	public void Select(XamlNodeRow? row)
 	{
 		if (ReferenceEquals(row, Selected)) return;
-
-		if (Selected is { } previous) previous.IsSelected = false;
 
 		Selected = row;
 		Properties.Clear();
 		PropertiesDetail = string.Empty;
 		HasPropertiesDetail = false;
 		ObservedNote = string.Empty;
-
-		if (row is null) return;
-
-		row.IsSelected = true;
 	}
 
 	/// <summary>

@@ -130,7 +130,6 @@ public sealed class XamlTreeBuilderTests
 
 		Assert.Same(border, inspection.Row(2));
 		Assert.False(border.IsExpanded);
-		Assert.True(border.IsSelected);
 		Assert.Same(border, inspection.Selected);
 	}
 

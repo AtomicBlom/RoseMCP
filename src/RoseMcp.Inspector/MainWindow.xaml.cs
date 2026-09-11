@@ -53,6 +53,13 @@ public sealed partial class MainWindow : Window
 	private SessionRow? _row;
 
 	/// <summary>
+	/// The last summary read, kept only so the next one can be compared with it. An agent's live edit
+	/// completing in the activity list is the only signal either side has that the tree this window is
+	/// showing has been changed by somebody else.
+	/// </summary>
+	private LiveAppSessionSummary? _summary;
+
+	/// <summary>
 	/// The session this window is about, once it has one. Set from the command line, from a
 	/// redirected launch, or by adopting the only session there is.
 	/// </summary>
@@ -84,6 +91,7 @@ public sealed partial class MainWindow : Window
 		Breakpoints.Attach(_client, Report);
 		Stack.Attach(_client, Report);
 		Threads.Attach(_client, Report);
+		Xaml.Attach(_client, Report);
 
 		_sessionPoll = new PollLoop(RefreshAsync, SessionInterval, Report);
 
@@ -113,6 +121,7 @@ public sealed partial class MainWindow : Window
 			Breakpoints.Showing(false);
 			Stack.Showing(false);
 			Threads.Showing(false);
+			Xaml.Showing(false);
 
 			_client.Dispose();
 		};
@@ -215,6 +224,7 @@ public sealed partial class MainWindow : Window
 			Breakpoints.Bind(_inspected);
 			Stack.Bind(_inspected, _holds);
 			Threads.Bind(_inspected, _holds);
+			Xaml.Bind(_inspected);
 
 			EmptyState.Visibility = Visibility.Collapsed;
 			DetachButton.IsEnabled = true;
@@ -222,19 +232,31 @@ public sealed partial class MainWindow : Window
 		}
 		else
 		{
+			// Before the row takes the new summary, because what it compares is one summary against the
+			// one before it -- and an apply completing is the only signal either side has that an agent
+			// changed the tree this window is showing.
+			if (_summary is { } previous && SessionRow.AppliedXaml(previous, summary)) Xaml.AppliedXaml();
+
 			_row.Update(summary);
 		}
 
+		_summary = summary;
 		ShowHeader(_row);
+
+		// The XAML stack is probed lazily off the target's module list, so a session can gain its tab
+		// a second or two after it first appears -- and losing one is what a session ending looks like.
+		if (_row.HasXaml != (XamlTab.Visibility == Visibility.Visible)) ShowTab();
 
 		// Before the panes, because the hold they are about to ask for belongs to the stop the target is
 		// at now: one taken at the last stop was cleared when the target continued.
 		_ = _holds?.AtStop(_row.StopSequence);
 
-		// These two act on a stop rather than describing it: a sequence they have not read yet is a new
-		// place the target is sitting, and they read what is there.
+		// These act on a stop or on the tree rather than describing either: a sequence they have not
+		// read yet is a new place the target is sitting, and a target that has stopped cannot answer
+		// about its XAML at all.
 		Stack.Observe(_row);
 		Threads.Observe(_row);
+		Xaml.Observe(_row);
 	}
 
 	private void OnTabChosen(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowTab();
@@ -243,27 +265,40 @@ public sealed partial class MainWindow : Window
 	/// Shows the chosen pane and hides the rest, and tells each whether it is the visible one --
 	/// a pane that cannot see the screen must not be polling on the reader's behalf, and neither of
 	/// the two that read a stop must be holding the target still for a tab nobody is looking at.
+	/// <para>
+	/// The XAML tab is present only for a target whose framework the provider can serve. The header
+	/// says why for the rest, which is better than a tab that is there and answers nothing.
+	/// </para>
 	/// </summary>
 	private void ShowTab()
 	{
 		var bound = _inspected is not null;
+
+		XamlTab.Visibility = _row?.HasXaml == true ? Visibility.Visible : Visibility.Collapsed;
+
+		// A tab that has gone cannot stay selected, or the window shows no pane at all.
+		if (XamlTab.Visibility == Visibility.Collapsed && Tabs.SelectedItem == XamlTab) EventsTab.IsSelected = true;
+
 		var events = bound && Tabs.SelectedItem == EventsTab;
 		var breakpoints = bound && Tabs.SelectedItem == BreakpointsTab;
 		var stack = bound && Tabs.SelectedItem == StackTab;
 		var threads = bound && Tabs.SelectedItem == ThreadsTab;
+		var xaml = bound && Tabs.SelectedItem == XamlTab;
 
 		Events.Visibility = events ? Visibility.Visible : Visibility.Collapsed;
 		Breakpoints.Visibility = breakpoints ? Visibility.Visible : Visibility.Collapsed;
 		Stack.Visibility = stack ? Visibility.Visible : Visibility.Collapsed;
 		Threads.Visibility = threads ? Visibility.Visible : Visibility.Collapsed;
+		Xaml.Visibility = xaml ? Visibility.Visible : Visibility.Collapsed;
 
-		// All four in one pass, in whatever order: the keeper reconciles after the pass rather than on
-		// the first pane to speak, so the arriving pane's claim on the hold is already in place when the
-		// leaving one gives its own up.
+		// All of them in one pass, in whatever order: the keeper reconciles after the pass rather than
+		// on the first pane to speak, so the arriving pane's claim on the hold is already in place when
+		// the leaving one gives its own up.
 		Events.Showing(events);
 		Breakpoints.Showing(breakpoints);
 		Stack.Showing(stack);
 		Threads.Showing(threads);
+		Xaml.Showing(xaml);
 	}
 
 	private void ShowHeader(SessionRow row)
@@ -346,6 +381,7 @@ public sealed partial class MainWindow : Window
 		Breakpoints.Visibility = Visibility.Collapsed;
 		Stack.Visibility = Visibility.Collapsed;
 		Threads.Visibility = Visibility.Collapsed;
+		Xaml.Visibility = Visibility.Collapsed;
 		Events.Showing(false);
 		Breakpoints.Showing(false);
 
@@ -353,6 +389,11 @@ public sealed partial class MainWindow : Window
 		// going away is the case where a target would otherwise be left stopped with nothing watching.
 		Stack.Showing(false);
 		Threads.Showing(false);
+		Xaml.Showing(false);
+
+		// The tab goes with the session. Left up, it offers a visual tree for a process this window
+		// is no longer about.
+		XamlTab.Visibility = Visibility.Collapsed;
 
 		DetachButton.IsEnabled = false;
 		OpenLogButton.IsEnabled = false;

@@ -112,6 +112,19 @@ public static class InspectorText
 		"Reading the visual tree. A busy or wedged app can take up to 30 seconds to answer.";
 
 	/// <summary>
+	/// Why the XAML tab does nothing while the debugger has the target stopped. Worth saying in full
+	/// rather than greying the buttons out: "it is stopped" explains it, and the fix is two clicks
+	/// away on another tab.
+	/// </summary>
+	public const string XamlNeedsARunningTarget =
+		"The target is stopped, so it cannot answer about its visual tree: the XAML provider runs on the "
+			+ "app's own UI thread and the debugger is holding it. Continue it from the Stack tab first.";
+
+	/// <summary>Nothing is selected, which is the state the pane opens in.</summary>
+	public const string NoElementSelected =
+		"Pick an element in the tree, or use Pick from app and click one in the running app.";
+
+	/// <summary>
 	/// Said under an element's properties, not used to filter them. Reading an element materialises
 	/// its collection properties, so a later read reports as Local things the markup never set --
 	/// and hiding that would hide exactly what an apply-then-read-back loop exists to verify.

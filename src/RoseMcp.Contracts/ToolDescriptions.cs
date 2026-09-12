@@ -304,6 +304,19 @@ public static class ToolDescriptions
 	public const string ProcessIdArgument =
 		"The process id to attach to. Must be a local process owned by the current user.";
 
+	/// <summary>
+	/// Whether to open the inspector window on the new session.
+	/// <para>
+	/// Under the per-argument budget, so it says what the values mean and when to touch them, and
+	/// leaves out that only an http broker can honour it -- a caller that hits that gets the whole
+	/// sentence back in the session's notice, which is where it is actually useful.
+	/// </para>
+	/// </summary>
+	public const string ShowInspectorArgument =
+		"Open the RoseMCP Inspector on this session: userPreference (default) honours what the person "
+			+ "chose in the tray, always opens it, never does not. Leave it alone unless somebody asked "
+			+ "to see it, or asked not to be interrupted.";
+
 	public const string ExecutablePathArgument = "Path to a local .NET executable (.exe).";
 
 	public const string LaunchArgumentsArgument = "Optional command-line arguments.";
@@ -325,7 +338,8 @@ public static class ToolDescriptions
 	/// </summary>
 	public const string TracepointLocationArgument =
 		"The method to trace, as the same Namespace.Type.Method the rose_* tools take, with Assembly! "
-			+ "in front where the assembly name is not the namespace's first segment.";
+			+ "in front where the assembly name is not the namespace's first segment. Add @IL_001f to "
+			+ "log inside it rather than at its start.";
 
 	public const string LogMessageArgument =
 		"Optional message logged on each hit (literal text; expression interpolation comes later).";
@@ -337,7 +351,8 @@ public static class ToolDescriptions
 
 	public const string BreakpointLocationArgument =
 		"The method to break on, as the same Namespace.Type.Method the rose_* tools take, with "
-			+ "Assembly! in front where the assembly name is not the namespace's first segment.";
+			+ "Assembly! in front where the assembly name is not the namespace's first segment. Add "
+			+ "@IL_001f to stop inside it rather than at its start.";
 
 	public const string AutoContinueSecondsArgument =
 		"Seconds a hit is held before the target auto-continues on its own; default 30.";
@@ -348,6 +363,50 @@ public static class ToolDescriptions
 
 	public const string EvaluateExpressionArgument =
 		"A field-access expression, e.g. this.field or state.Inner.Count.";
+
+	public const string FrameThreadIdArgument =
+		"The thread to read, or omitted for the one the debugger is holding. rose_live_app_threads lists them.";
+
+	public const string FrameOffsetArgument =
+		"Where in the stack to start, zero being the innermost frame. Omitted starts at the innermost.";
+
+	public const string FrameLimitArgument =
+		"How many frames to return. Omitted returns a page of the innermost ones.";
+
+	public const string FrameIndexArgument =
+		"Which frame, by its index in the stack rose_live_app_frames reports for this thread.";
+
+	/// <summary>
+	/// The grammar a value carries and a caller passes back. Spelled out because the slot forms are
+	/// not guessable, and passing back a variable's own path is the reliable way to reach a value
+	/// whose name is a compiler temporary or is shared between two blocks.
+	/// </summary>
+	public const string ValuePathArgument =
+		"The value to expand, as the path a variable reported: arg:0 or local:2 for a frame's own "
+			+ "values, then .field and [3] into what they hold. The name of an argument or local also "
+			+ "works as a root.";
+
+	public const string HoldSecondsArgument =
+		"How long to suspend the stop's auto-continue timer for, capped at ten minutes. Omitted holds "
+			+ "for five.";
+
+	public const string HoldReleaseArgument =
+		"True gives the stop back to its safety timer instead of holding it.";
+
+	public const string PauseSecondsArgument =
+		"How long an unattended pause lasts before the target continues on its own. Omitted uses the "
+			+ "same safety interval a breakpoint gets.";
+
+	public const string MethodQueryArgument =
+		"Part of a method's name, optionally qualified: Refresh, or Widget.Refresh. The pieces match "
+			+ "in order, anywhere in the name. Under two characters is refused.";
+
+	public const string MethodSearchLimitArgument =
+		"How many matches to return, best first. The total says how many there were.";
+
+	public const string MethodSourceLocationArgument =
+		"The method to read, as Assembly!Namespace.Type.Method. Any @IL_001f on the end is ignored: "
+			+ "the whole method is read either way.";
 
 	/// <summary>
 	/// How a live element is named to the tools that read one. All three spellings, because a caller

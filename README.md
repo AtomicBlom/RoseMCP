@@ -286,6 +286,34 @@ identical whether it is idle or two minutes into a design-time build. The same d
 from `GET /admin/workspaces`. Closing the window hides it; the tray icon brings it back, and Exit
 in its menu is what stops the broker and, with it, every worker.
 
+Under the workspaces is a card per debug session — what is being debugged, whether its target is
+running or held and at what, which XAML framework it runs and whether a provider is resident in it,
+and how long ago it last said anything. `GET /admin/sessions` returns the same. **Inspect** on a
+card opens the inspector on it.
+
+### The inspector
+
+`RoseMcp.Inspector.exe` is a separate window for one debugged process: the event tail, breakpoints
+and tracepoints, the call stack with the source and the line execution is on, the values in scope,
+the managed threads, and — for a UWP or WinUI target — the live visual tree with every element's
+properties and what set each one. Pause, continue and the three steps sit above the tabs, so the
+target can be moved from wherever you are looking.
+
+It owns nothing. Everything it shows it reads over an http operator API the broker serves, so it
+can be closed and reopened while the sessions carry on, and it inspects sessions an agent started
+just as readily as ones it was opened on. The tray mints a token per run and hands it over; a
+window started by hand needs one, which **Copy inspector command** on a session's menu provides.
+
+```
+RoseMcp.Inspector.exe --port 5077 --token <token> [--session <id>]
+```
+
+The operator API is the same surface, under `/operator`, behind that bearer token: the sessions and
+their events, breakpoints and tracepoints, break/continue/step and the hold that suspends a stop's
+safety timer, frames and variables and value expansion, threads, and the XAML tree, properties and
+selection. It is not the agent surface — the agent tools are owner-scoped so one agent cannot drive
+another's session, and the operator is the person running the broker rather than any agent.
+
 ## Building from source
 
 Requires the .NET 10 SDK.

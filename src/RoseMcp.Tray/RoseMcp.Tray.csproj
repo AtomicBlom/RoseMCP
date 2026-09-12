@@ -31,15 +31,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Remove-then-Content, because the SDK already globs these as None and including
-         them twice is a duplicate-item error. -->
-    <None Remove="Assets\**" />
-    <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\RoseMcp.Broker\RoseMcp.Broker.csproj" />
+    <ProjectReference Include="..\RoseMcp.Settings\RoseMcp.Settings.csproj" />
     <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />
+    <ProjectReference Include="..\RoseMcp.Ui\RoseMcp.Ui.csproj" />
+    <ProjectReference Include="..\RoseMcp.Ui.Core\RoseMcp.Ui.Core.csproj" />
   </ItemGroup>
 
 </Project>

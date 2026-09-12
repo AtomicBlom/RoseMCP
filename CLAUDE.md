@@ -33,16 +33,24 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 - **`RoseMcp.Contracts`** -- DTOs and tool-name constants shared by broker and worker. Types, and no
   package references at all, which is what lets every host reference it. Logic goes there only when
   a test needs it and the host that owns it cannot be referenced -- `XamlStackModules`,
-  `ToolArgumentShape`, `XamlProviderPath` and `HostVersion` are the whole list, and each is a pure
-  function over strings or JSON with the host's own facts passed in. That exception exists because
-  three of the launchable hosts are `net10.0-windows` or reachable only as a child process, so a
-  rule living beside its host is a rule no test can see. It is not a licence for behaviour: anything
-  holding state, touching Roslyn, or knowing what a tool does belongs in the host.
+  `ToolArgumentShape`, `XamlProviderPath`, `ValuePath`, `SymbolLocation` and `HostVersion`
+  are the whole list, and each is a pure function over strings or JSON with the host's own facts
+  passed in. That exception exists because three of the launchable hosts are `net10.0-windows` or
+  reachable only as a child process, so a rule living beside its host is a rule no test can see. It
+  is not a licence for behaviour: anything holding state, touching Roslyn, or knowing what a tool does
+  belongs in the host.
 - **`RoseMcp.Solutions`** -- library. Reads solution files and `rosemcp.json` without MSBuild or
   Roslyn, so the broker can decide *which* solution a call means without taking a dependency on the
   thing that loads one. Also derives the short workspace key.
 - **`RoseMcp.Logging`** -- library. The file sink, referenced only by the three launchable hosts
   so Serilog stays off the DTO assembly and the tests.
+- **`RoseMcp.Symbols`** -- library. Reads a module's metadata and its portable PDB: method tokens,
+  what a local is called at a given instruction, which line an IL offset came from, which methods
+  match a typed name, and which compiled methods make up the body of one somebody is reading -- a
+  lambda's and an async method's are elsewhere, which is what a breakpoint inside either has to
+  find. Plain `net10.0` and no package references, for the reason `RoseMcp.XamlDiff` exists: the
+  live-app host that needs it is `net10.0-windows`, and a rule living beside that host is a rule
+  no test can see. It knows nothing about a debugger; it reads files.
 - **`RoseMcp.Broker`** -- library. `WorkspaceManager`, worker supervision, the tool layer, the
   activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts below.
 - **`RoseMcp.Server`** -- console host. `--transport stdio` (default) or `--transport http`.
@@ -51,6 +59,17 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
   rather than referenced as a library.
 - **`RoseMcp.Tray`** -- WinUI 3 tray app for http mode. Hosts the broker in-process, so its
   window reads the live `WorkspaceManager` directly rather than through an API.
+- **`RoseMcp.Ui.Core`** -- library. The half of both windows that is not WinUI: rows, formatting,
+  the poll loop, the in-place merge, and `OperatorClient`. Plain `net10.0` and referencing only
+  `Contracts`, so it runs in the fast suite -- which is the point, since a WinUI project is a
+  project no test can see inside.
+- **`RoseMcp.Ui`** -- WinUI class library. Themes, window chrome, the crash handler and the icon
+  assets, shared so a second window is the same product rather than a lookalike.
+- **`RoseMcp.Inspector`** -- WinUI 3 window for one debugged process: events, breakpoints, the
+  stack with its source and values, threads, and the live XAML tree. A **client** of the broker over
+  the http operator API, owning no session of its own -- see
+  `docs/decisions/the-inspector-is-a-client-of-the-broker.md`. A process has one debugger, so an
+  inspector that established its own could only inspect the sessions it created.
 
 The worker is a separate process because analyzer and generator assemblies cannot be unloaded
 once loaded, MSBuild resolution is per-process, and killing a worker is the only reliable way to
@@ -63,7 +82,7 @@ reclaim memory or pick up a rebuilt generator.
   protocol bug. `RoseMcp.Logging` adds the file sink -- Serilog behind the existing
   `Microsoft.Extensions.Logging` call sites, never a console sink, and there is a regression test
   asserting the pipeline writes nothing to stdout at all. Logs land in
-  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray}/[{solution}-]{yyyyMMdd-HHmmss}.log`
+  `%LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{Server,Worker,Tray,Inspector}/[{solution}-]{yyyyMMdd-HHmmss}.log`
   -- under their own `Logs` folder, separate from the install that shares the same vendor/product
   parent, so promoting a build never touches a session's log files. UTC in the name and UTC in
   every line so the two cannot disagree. A worker's file names the

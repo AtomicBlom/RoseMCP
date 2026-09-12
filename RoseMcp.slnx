@@ -3,11 +3,20 @@
     <Project Path="src/RoseMcp.Broker/RoseMcp.Broker.csproj" />
     <Project Path="src/RoseMcp.Contracts/RoseMcp.Contracts.csproj" />
     <Project Path="src/RoseMcp.LiveApp/RoseMcp.LiveApp.csproj" />
+    <Project Path="src/RoseMcp.Inspector/RoseMcp.Inspector.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="src/RoseMcp.Logging/RoseMcp.Logging.csproj" />
     <Project Path="src/RoseMcp.Server/RoseMcp.Server.csproj" />
+    <Project Path="src/RoseMcp.Settings/RoseMcp.Settings.csproj" />
     <Project Path="src/RoseMcp.Solutions/RoseMcp.Solutions.csproj" />
+    <Project Path="src/RoseMcp.Symbols/RoseMcp.Symbols.csproj" />
     <Project Path="src/RoseMcp.XamlDiff/RoseMcp.XamlDiff.csproj" />
     <Project Path="src/RoseMcp.XamlStubs/RoseMcp.XamlStubs.csproj" />
+    <Project Path="src/RoseMcp.Ui.Core/RoseMcp.Ui.Core.csproj" />
+    <Project Path="src/RoseMcp.Ui/RoseMcp.Ui.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="src/RoseMcp.Tray/RoseMcp.Tray.csproj">
       <Platform Project="x64" />
     </Project>

@@ -1,0 +1,252 @@
+<UserControl
+	x:Class="RoseMcp.Inspector.Panes.BreakpointsPane"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:contracts="using:RoseMcp.Contracts"
+	xmlns:inspector="using:RoseMcp.Ui.Core.Inspector">
+
+	<!-- Two halves, and the split is the point. What is being composed sits in a card of its own at
+	     the top; what is already set is a plain list below a rule. Loose together, a form of empty
+	     boxes reads as more rows whose values have not loaded yet.
+	     One scroll over both rather than a row each: the card grows when a method is chosen,
+	     and rows that share the height between them shrink the list to nothing exactly when
+	     somebody is about to add to it. -->
+	<ScrollViewer VerticalScrollBarVisibility="Auto">
+		<StackPanel Spacing="14">
+
+		<Border Style="{StaticResource CardStyle}" Padding="12"
+			Background="{ThemeResource LayerOnAcrylicFillColorDefaultBrush}">
+			<StackPanel Spacing="10">
+				<TextBlock Text="Add a breakpoint or tracepoint" Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource RoseAccentBrush}" />
+
+				<!-- A search rather than a text box, because nothing here is memorable: the namespace,
+				     the type and the method all have to be exact for a location to bind. -->
+				<AutoSuggestBox x:Name="MethodSearch"
+					PlaceholderText="Find a method or property"
+					QueryIcon="Find"
+					TextChanged="OnSearchTextChanged"
+					SuggestionChosen="OnSuggestionChosen"
+					ToolTipService.ToolTip="Searches the methods of every module the target has loaded.">
+					<AutoSuggestBox.ItemTemplate>
+						<DataTemplate x:DataType="contracts:LiveMethodMatch">
+							<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto" Padding="0,4">
+								<StackPanel Grid.Column="0" Spacing="1">
+									<TextBlock TextTrimming="CharacterEllipsis">
+										<Run Text="{x:Bind DisplayName}" />
+										<Run Text="{x:Bind Signature}"
+											Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+									</TextBlock>
+									<TextBlock Text="{x:Bind Module}" Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+								</StackPanel>
+								<!-- Whether a line can be picked inside it, said here rather than found
+								     out after choosing. -->
+								<Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Center"
+									Visibility="{x:Bind HasSymbols}">
+									<TextBlock Text="source" Style="{StaticResource CaptionTextBlockStyle}" />
+								</Border>
+							</Grid>
+						</DataTemplate>
+					</AutoSuggestBox.ItemTemplate>
+				</AutoSuggestBox>
+
+				<TextBlock x:Name="SearchStatus" TextWrapping="Wrap"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+				<!-- The chosen method, its source, and the places in it execution stops. -->
+				<StackPanel x:Name="MethodPanel" Spacing="6" Visibility="Collapsed">
+					<Grid ColumnSpacing="8" ColumnDefinitions="*,Auto">
+						<StackPanel Grid.Column="0" Spacing="1">
+							<TextBlock x:Name="MethodTitle" Style="{StaticResource BodyStrongTextBlockStyle}"
+								TextTrimming="CharacterEllipsis" />
+							<TextBlock x:Name="MethodFile" Style="{StaticResource CaptionTextBlockStyle}"
+								Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+								TextTrimming="CharacterEllipsis" />
+						</StackPanel>
+						<Button Grid.Column="1" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Top"
+							Click="OnClearMethod" ToolTipService.ToolTip="Choose a different method">
+							<FontIcon Glyph="&#xE711;" FontSize="12" />
+						</Button>
+					</Grid>
+
+					<TextBlock x:Name="MethodDetail" TextWrapping="Wrap" Visibility="Collapsed"
+						Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+					<Border x:Name="SourceFrame" Visibility="Collapsed" CornerRadius="4" BorderThickness="1"
+						BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+						Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+						<ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto"
+							HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto">
+							<ItemsRepeater x:Name="SourceRows">
+								<ItemsRepeater.Layout>
+									<StackLayout Spacing="0" />
+								</ItemsRepeater.Layout>
+								<ItemsRepeater.ItemTemplate>
+									<DataTemplate x:DataType="inspector:SourceLineRow">
+										<!-- Every line is a button, and a line nothing stops on is a
+										     disabled one. That is what makes which lines can be
+										     chosen visible before anything is clicked. -->
+										<Button Click="OnPickPosition" Tag="{x:Bind Location}"
+											IsEnabled="{x:Bind IsBreakable}"
+											HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+											Background="Transparent" BorderThickness="0" CornerRadius="0"
+											Padding="8,1">
+											<Grid ColumnSpacing="12" ColumnDefinitions="Auto,*,Auto">
+												<TextBlock Grid.Column="0" Text="{x:Bind LineLabel}"
+													Style="{StaticResource MonoTextBlockStyle}"
+													Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+												<TextBlock Grid.Column="1" Text="{x:Bind Text}"
+													Style="{StaticResource MonoTextBlockStyle}" />
+												<StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+													Visibility="{x:Bind IsBreakable}">
+													<TextBlock Text="{x:Bind Note}" Visibility="{x:Bind HasNote}"
+														Style="{StaticResource CaptionTextBlockStyle}"
+														Foreground="{ThemeResource RoseAccentBrush}" />
+													<TextBlock Text="{x:Bind OffsetLabel}"
+														Style="{StaticResource MonoTextBlockStyle}"
+														Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+												</StackPanel>
+											</Grid>
+										</Button>
+									</DataTemplate>
+								</ItemsRepeater.ItemTemplate>
+							</ItemsRepeater>
+						</ScrollViewer>
+					</Border>
+
+					<!-- What is about to be added, spelled out. A location carrying an instruction
+					     offset is not something a reader can check by looking at it. -->
+					<Border Style="{StaticResource PillStyle}" HorizontalAlignment="Left">
+						<TextBlock x:Name="ChosenPosition" Style="{StaticResource CaptionTextBlockStyle}" />
+					</Border>
+
+					<Grid ColumnSpacing="8" ColumnDefinitions="120,*,100">
+						<TextBox x:Name="BreakpointHold" Grid.Column="0" Header="Hold"
+							PlaceholderText="seconds"
+							ToolTipService.ToolTip="Seconds before the target releases itself. Empty holds until continued." />
+						<TextBox x:Name="BreakpointCondition" Grid.Column="1" Header="Condition"
+							PlaceholderText="optional, such as count &gt; 3"
+							ToolTipService.ToolTip="Evaluated at the hit; the target only stops when it holds." />
+						<TextBox x:Name="TracepointEvery" Grid.Column="2" Header="Every Nth"
+							PlaceholderText="all hits"
+							ToolTipService.ToolTip="Tracepoints only: log every Nth hit, for something that fires thousands of times." />
+					</Grid>
+
+					<TextBox x:Name="TracepointMessage" Header="Log message"
+						PlaceholderText="optional, tracepoints only" />
+
+					<StackPanel Orientation="Horizontal" Spacing="8">
+						<Button x:Name="AddBreakpoint" Style="{StaticResource ChipButtonStyle}"
+							Content="Add breakpoint" Click="OnAddBreakpoint" />
+						<Button x:Name="AddTracepoint" Style="{StaticResource ChipButtonStyle}"
+							Content="Add tracepoint" Click="OnAddTracepoint"
+							ToolTipService.ToolTip="Logs and lets the target run, so it cannot freeze the app." />
+					</StackPanel>
+				</StackPanel>
+			</StackPanel>
+		</Border>
+
+		<Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+			<StackPanel Spacing="14">
+
+				<StackPanel Spacing="6">
+					<TextBlock x:Name="BreakpointCount" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+					<ItemsRepeater x:Name="BreakpointRows">
+						<ItemsRepeater.Layout>
+							<StackLayout Spacing="4" />
+						</ItemsRepeater.Layout>
+						<ItemsRepeater.ItemTemplate>
+							<DataTemplate x:DataType="inspector:BreakpointRow">
+								<Border Style="{StaticResource CardStyle}" Padding="10,8">
+									<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto,Auto,Auto">
+										<StackPanel Grid.Column="0" Spacing="2">
+											<TextBlock Text="{x:Bind Location}" TextTrimming="CharacterEllipsis"
+												Style="{StaticResource MonoTextBlockStyle}" />
+											<TextBlock Text="{x:Bind Source, Mode=OneWay}" Visibility="{x:Bind HasSource, Mode=OneWay}"
+												Style="{StaticResource CaptionTextBlockStyle}"
+												Foreground="{ThemeResource RoseAccentBrush}" />
+											<TextBlock Text="{x:Bind Conditions, Mode=OneWay}" Visibility="{x:Bind HasConditions, Mode=OneWay}"
+												Style="{StaticResource CaptionTextBlockStyle}"
+												Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+											<TextBlock Text="{x:Bind Detail, Mode=OneWay}" Visibility="{x:Bind HasDetail, Mode=OneWay}"
+												TextWrapping="Wrap"
+												Style="{StaticResource CaptionTextBlockStyle}"
+												Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										</StackPanel>
+										<Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+											<TextBlock Text="{x:Bind BoundLabel, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" />
+										</Border>
+										<TextBlock Grid.Column="2" Text="{x:Bind Hits, Mode=OneWay}" VerticalAlignment="Center"
+											Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+										<Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Center"
+											Tag="{x:Bind Id}" Click="OnRemoveBreakpoint"
+											ToolTipService.ToolTip="Remove">
+											<FontIcon Glyph="&#xE711;" FontSize="12" />
+										</Button>
+									</Grid>
+								</Border>
+							</DataTemplate>
+						</ItemsRepeater.ItemTemplate>
+					</ItemsRepeater>
+
+					<TextBlock x:Name="NoBreakpoints" TextWrapping="Wrap"
+						Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+				</StackPanel>
+
+				<StackPanel Spacing="6">
+					<TextBlock x:Name="TracepointCount" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+					<ItemsRepeater x:Name="TracepointRows">
+						<ItemsRepeater.Layout>
+							<StackLayout Spacing="4" />
+						</ItemsRepeater.Layout>
+						<ItemsRepeater.ItemTemplate>
+							<DataTemplate x:DataType="inspector:TracepointRow">
+								<Border Style="{StaticResource CardStyle}" Padding="10,8">
+									<Grid ColumnSpacing="10" ColumnDefinitions="*,Auto,Auto,Auto">
+										<StackPanel Grid.Column="0" Spacing="2">
+											<TextBlock Text="{x:Bind Location}" TextTrimming="CharacterEllipsis"
+												Style="{StaticResource MonoTextBlockStyle}" />
+											<TextBlock Text="{x:Bind Source, Mode=OneWay}" Visibility="{x:Bind HasSource, Mode=OneWay}"
+												Style="{StaticResource CaptionTextBlockStyle}"
+												Foreground="{ThemeResource RoseAccentBrush}" />
+											<TextBlock Text="{x:Bind Behaviour, Mode=OneWay}"
+												Style="{StaticResource CaptionTextBlockStyle}"
+												Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+											<TextBlock Text="{x:Bind Detail, Mode=OneWay}" Visibility="{x:Bind HasDetail, Mode=OneWay}"
+												TextWrapping="Wrap"
+												Style="{StaticResource CaptionTextBlockStyle}"
+												Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										</StackPanel>
+										<Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+											<TextBlock Text="{x:Bind BoundLabel, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" />
+										</Border>
+										<TextBlock Grid.Column="2" Text="{x:Bind Hits, Mode=OneWay}" VerticalAlignment="Center"
+											Style="{StaticResource CaptionTextBlockStyle}"
+											Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+										<Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" VerticalAlignment="Center"
+											Tag="{x:Bind Id}" Click="OnRemoveTracepoint"
+											ToolTipService.ToolTip="Remove">
+											<FontIcon Glyph="&#xE711;" FontSize="12" />
+										</Button>
+									</Grid>
+								</Border>
+							</DataTemplate>
+						</ItemsRepeater.ItemTemplate>
+					</ItemsRepeater>
+
+					<TextBlock x:Name="NoTracepoints" TextWrapping="Wrap"
+						Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+				</StackPanel>
+			</StackPanel>
+		</StackPanel>
+	</ScrollViewer>
+</UserControl>

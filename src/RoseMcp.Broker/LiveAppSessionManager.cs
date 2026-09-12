@@ -34,6 +34,31 @@ public sealed class LiveAppSessionManager(
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 
+	/// <summary>
+	/// How often every session's self-report is re-read. It is the tray's own idle cadence, and it is
+	/// what makes a summary's staleness bounded rather than unknown: nothing else asks a host how it
+	/// is between tool calls, so without this a session sat at whatever it last said -- for a session
+	/// nobody is calling, that is the whole time it exists.
+	/// </summary>
+	private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(1);
+
+	/// <summary>
+	/// How long one poll may take before it is abandoned. Short, because the answer is cheap and a
+	/// host that will not give it in this long is telling us something the next tick will ask again.
+	/// A poll that expires does not mark the session dead -- only a transport failure does.
+	/// </summary>
+	private static readonly TimeSpan RefreshBudget = TimeSpan.FromSeconds(2);
+
+	/// <summary>
+	/// The poll in flight per session, so a host slower than the interval does not accumulate a queue
+	/// of them. One tick skips a session that is still answering the last.
+	/// </summary>
+	private readonly ConcurrentDictionary<string, Task> _refreshes = new(StringComparer.Ordinal);
+
+	private readonly CancellationTokenSource _stopping = new();
+
+	private Task? _refreshing;
+
 	/// <summary>What every session is doing, keyed by session id.</summary>
 	public ActivityLog Activities { get; } = new();
 
@@ -84,6 +109,36 @@ public sealed class LiveAppSessionManager(
 		return Owns(session) ? session : null;
 	}
 
+	/// <summary>
+	/// The session with that id, whoever started it, or null when there is no such session.
+	/// <para>
+	/// It exists beside <see cref="Find"/> because the two have different callers with different
+	/// standing. <see cref="Find"/> serves an MCP client, which may reach only the sessions it started;
+	/// this serves the person running the broker, reading a window on their own machine or an operator
+	/// endpoint behind a token that no client is given.
+	/// </para>
+	/// <para>
+	/// It is not <see cref="Find"/> with the check relaxed, and must not become that. Inside an http
+	/// endpoint <see cref="CallSession.Id"/> is null, because the filter that sets it runs for tool
+	/// calls only -- so <see cref="Find"/> compares null against the owner recorded when the session
+	/// started and refuses every session an agent has, which is all of them. Relaxing the check
+	/// instead would hand one client another's debugger.
+	/// </para>
+	/// </summary>
+	public LiveAppSession? ForOperator(string sessionId) =>
+		_sessions.TryGetValue(sessionId, out var session) ? session : null;
+
+	/// <summary>
+	/// Stops a session and forgets it, whoever started it. The operator counterpart to
+	/// <see cref="CloseAsync"/>, for a person detaching a debugger from their own machine.
+	/// </summary>
+	public async Task<bool> CloseForOperatorAsync(string sessionId, CancellationToken cancellationToken)
+	{
+		if (ForOperator(sessionId) is null) return false;
+
+		return await RemoveAsync(sessionId, cancellationToken);
+	}
+
 	/// <summary>Starts a host against a target, detecting the target's architecture first.</summary>
 	public async Task<LiveAppSession> StartAsync(LiveAppTarget target, CancellationToken cancellationToken)
 	{
@@ -105,6 +160,11 @@ public sealed class LiveAppSessionManager(
 			try
 			{
 				_sessions[sessionId] = session;
+
+				// Under the same gate, so the first session both registers itself and starts the poll
+				// that keeps every session's report fresh, with no window where one has happened and
+				// the other has not.
+				EnsureRefreshing();
 			}
 			finally
 			{
@@ -130,6 +190,16 @@ public sealed class LiveAppSessionManager(
 	{
 		if (Find(sessionId) is null) return false;
 
+		return await RemoveAsync(sessionId, cancellationToken);
+	}
+
+	/// <summary>
+	/// Takes a session out of the registry and ends its host, having already established that the
+	/// caller may. Shared by both closes so the teardown cannot differ between them: the gate is what
+	/// makes removing the session atomic with disposing the host it names.
+	/// </summary>
+	private async Task<bool> RemoveAsync(string sessionId, CancellationToken cancellationToken)
+	{
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
@@ -137,11 +207,74 @@ public sealed class LiveAppSessionManager(
 
 			await session.DisposeAsync();
 			Activities.Forget(sessionId);
+			_refreshes.TryRemove(sessionId, out _);
 			return true;
 		}
 		finally
 		{
 			_gate.Release();
+		}
+	}
+
+	/// <summary>
+	/// Starts the poll that keeps every session's self-report fresh, if it is not already running.
+	/// Called under the gate by the only thing that adds a session, so the check and the start cannot
+	/// interleave and produce two loops.
+	/// </summary>
+	private void EnsureRefreshing() => _refreshing ??= Task.Run(() => RefreshLoopAsync(_stopping.Token));
+
+	/// <summary>
+	/// Re-reads every session's self-report on a timer, for as long as this manager lives.
+	/// <para>
+	/// Here rather than in whatever is displaying the sessions, because there is more than one such
+	/// reader -- a window, an admin endpoint, an operator API, in two different hosts -- and a poll
+	/// belonging to one of them would leave the others reading whatever it happened to have fetched.
+	/// A broker with no sessions polls nothing; the loop iterates the registry.
+	/// </para>
+	/// </summary>
+	private async Task RefreshLoopAsync(CancellationToken cancellationToken)
+	{
+		using var timer = new PeriodicTimer(RefreshInterval);
+
+		try
+		{
+			while (await timer.WaitForNextTickAsync(cancellationToken))
+			{
+				foreach (var session in Sessions)
+				{
+					var busy = _refreshes.TryGetValue(session.SessionId, out var running) && !running.IsCompleted;
+					if (busy) continue;
+
+					_refreshes[session.SessionId] = RefreshOneAsync(session, cancellationToken);
+				}
+			}
+		}
+		catch (OperationCanceledException)
+		{
+			// The manager is going away. Nothing to report: the sessions go with it.
+		}
+	}
+
+	/// <summary>
+	/// One session's poll, bounded and swallowing its own failure.
+	/// <para>
+	/// Bounded per session rather than per sweep, so one host that has stopped answering does not stop
+	/// the others being asked. Swallowing, because this is nobody's call: a failure has already been
+	/// recorded on the session, and there is no caller here to throw at.
+	/// </para>
+	/// </summary>
+	private static async Task RefreshOneAsync(LiveAppSession session, CancellationToken cancellationToken)
+	{
+		try
+		{
+			using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+			budget.CancelAfter(RefreshBudget);
+
+			await session.RefreshInfoAsync(budget.Token);
+		}
+		catch (Exception)
+		{
+			// RefreshInfoAsync records what it learned; anything past it belongs to no caller.
 		}
 	}
 
@@ -180,13 +313,21 @@ public sealed class LiveAppSessionManager(
 
 	public async ValueTask DisposeAsync()
 	{
+		// The poll first, and awaited: it holds a reference to every session and would otherwise be
+		// calling into hosts that are being disposed underneath it.
+		await _stopping.CancelAsync();
+
+		if (_refreshing is { } refreshing) await refreshing;
+
 		foreach (var session in Sessions)
 		{
 			await session.DisposeAsync();
 		}
 
 		_sessions.Clear();
+		_refreshes.Clear();
 
+		_stopping.Dispose();
 		_gate.Dispose();
 	}
 }

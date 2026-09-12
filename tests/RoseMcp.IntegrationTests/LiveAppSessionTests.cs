@@ -4,12 +4,12 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 using RoseMcp.TestSupport;
+
+using static RoseMcp.IntegrationTests.ProbeTargetSession;
 
 using static RoseMcp.IntegrationTests.TestToolchain;
 
@@ -3394,30 +3394,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		}
 	}
 
-	private static async Task<LiveDebugEvent?> WaitForEventAsync(
-		LiveAppSession session,
-		Func<LiveDebugEvent, bool> match,
-		CancellationToken cancellationToken,
-		long startCursor = 0)
-	{
-		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
-		var cursor = startCursor;
-
-		while (DateTime.UtcNow < deadline)
-		{
-			var page = await session.ReadEventsAsync(cursor, cancellationToken);
-			var found = page.Events.FirstOrDefault(match);
-			if (found is not null) return found;
-
-			cursor = page.NextCursor;
-			await Task.Delay(200, cancellationToken);
-		}
-
-		return null;
-	}
-
-	private static Process StartProbeTarget() => StartProcess(ProbeTargetPath());
-
 	private static Process StartProcess(string path)
 	{
 		var start = new ProcessStartInfo(path)
@@ -3472,14 +3448,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		}
 
 		Unavailable(winui.HasLaunched, "The probe app did not open a window within 30 seconds.");
-	}
-
-	private static string ProbeTargetPath()
-	{
-		var exe = Path.Combine(RepositoryRoot(), "tests", "DebugProbeTarget", "bin", Configuration(), "net10.0", "DebugProbeTarget.exe");
-		if (!File.Exists(exe)) throw new FileNotFoundException("The debug probe target was not built.", exe);
-
-		return exe;
 	}
 
 	/// <summary>
@@ -3583,11 +3551,6 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		System.Runtime.InteropServices.Architecture.X86 => TargetArchitecture.X86,
 		_ => TargetArchitecture.Unknown,
 	};
-
-	private static LiveAppSessionManager CreateManager(ILoggerFactory? logs = null) => new(
-		Options.Create(new BrokerOptions()),
-		logs ?? NullLoggerFactory.Instance,
-		NullLogger<LiveAppSessionManager>.Instance);
 
 	/// <summary>
 	/// A logger factory that keeps every message, for the assertions that can only be made about which

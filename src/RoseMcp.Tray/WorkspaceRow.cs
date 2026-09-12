@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml.Controls;
 
 using RoseMcp.Contracts;
+using RoseMcp.Ui.Core;
 
 namespace RoseMcp.Tray;
 
@@ -19,8 +20,6 @@ namespace RoseMcp.Tray;
 /// </summary>
 public sealed class WorkspaceRow : Observable
 {
-	/// <summary>Between facts on one line. A middle dot reads as punctuation, where a dash reads as a range.</summary>
-	public const string Separator = "  ·  ";
 
 	private string _stateLabel = string.Empty;
 	private bool _isLoading;
@@ -209,34 +208,18 @@ public sealed class WorkspaceRow : Observable
 	}
 
 	/// <summary>
-	/// Brings a list of rows in line with what the broker now reports, matching on activity id.
-	/// <para>
-	/// Rows are updated where they already exist rather than replaced, because a progress bar that
-	/// is recreated four times a second never animates and an expander the reader opened closes
-	/// under them.
-	/// </para>
+	/// Brings a list of activity rows in line with what the broker now reports, matching on activity
+	/// id. A named wrapper rather than the generic call twice, because the six arguments are the same
+	/// both times and spelling them out would be the interesting part of neither call.
 	/// </summary>
-	private static void Merge(ObservableCollection<ActivityRow> rows, IReadOnlyList<WorkerActivity> activities)
-	{
-		for (var index = rows.Count - 1; index >= 0; index--)
-		{
-			if (!activities.Any(activity => activity.Id == rows[index].Id)) rows.RemoveAt(index);
-		}
-
-		for (var index = 0; index < activities.Count; index++)
-		{
-			var activity = activities[index];
-			var existing = rows.FirstOrDefault(row => row.Id == activity.Id);
-
-			if (existing is null)
-			{
-				rows.Insert(Math.Min(index, rows.Count), new ActivityRow(activity));
-				continue;
-			}
-
-			existing.Update(activity);
-		}
-	}
+	private static void Merge(ObservableCollection<ActivityRow> rows, IReadOnlyList<WorkerActivity> activities) =>
+		Rows.Merge(
+			rows,
+			activities,
+			row => row.Id,
+			activity => activity.Id,
+			activity => new ActivityRow(activity),
+			(row, activity) => row.Update(activity));
 
 	/// <summary>The colour a workspace is drawn in. Five, because five things can be true of one.</summary>
 	public enum Tone
@@ -288,7 +271,7 @@ public sealed class WorkspaceRow : Observable
 			facts.Add($"loaded in {Format.Duration(TimeSpan.FromSeconds(seconds))}");
 		}
 
-		return string.Join(Separator, facts);
+		return string.Join(Format.Separator, facts);
 	}
 
 	/// <summary>

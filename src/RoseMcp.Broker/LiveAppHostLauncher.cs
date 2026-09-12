@@ -13,6 +13,14 @@ public static class LiveAppHostLauncher
 {
 	private const string HostName = "RoseMcp.LiveApp";
 
+	/// <summary>
+	/// The hosts file name on this operating system. Public because a test that stages one has to
+	/// stage the name this looks for: hard-coding the Windows name there passes on Windows and fails
+	/// on Linux for a reason that has nothing to do with what it is testing.
+	/// </summary>
+	public static string ExecutableName =>
+		HostName + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
+
 	public static string ResolveHostPath(
 		TargetArchitecture architecture,
 		BrokerOptions options,
@@ -20,7 +28,7 @@ public static class LiveAppHostLauncher
 		bool searchRepository = true)
 	{
 		var rid = RuntimeIdentifierFor(architecture);
-		var executableName = HostName + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
+		var executableName = ExecutableName;
 
 		var configured = Environment.GetEnvironmentVariable("ROSEMCP_LIVEAPP_HOST");
 		if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) return Path.GetFullPath(configured);
@@ -39,7 +47,7 @@ public static class LiveAppHostLauncher
 			if (File.Exists(alongside)) return Path.GetFullPath(alongside);
 		}
 
-		var inRepository = searchRepository ? FindInRepository(executableName, rid) : null;
+		var inRepository = searchRepository ? FindInRepository(executableName, rid, installRoot) : null;
 		if (inRepository is not null) return inRepository;
 
 		throw new FileNotFoundException(
@@ -58,13 +66,18 @@ public static class LiveAppHostLauncher
 	};
 
 	/// <summary>
-	/// Development fallback: find the host in its own build output, preferring a build whose path
-	/// carries the wanted RID, and accepting a plain (RID-less) build only when it matches the
-	/// broker's architecture.
+	/// Development fallback: find the host in its own build output, narrowed to builds that could
+	/// serve the wanted architecture and then to the one most likely to be current.
 	/// </summary>
-	private static string? FindInRepository(string executableName, string rid)
+	/// <param name="executableName">The host's file name, with the platform's extension.</param>
+	/// <param name="rid">The runtime identifier the target needs a host for.</param>
+	/// <param name="baseDirectory">
+	/// Where the broker is running from. It decides two things: which repository this is, by walking
+	/// up to the solution file, and which configuration was built, by the folder it sits in.
+	/// </param>
+	private static string? FindInRepository(string executableName, string rid, string baseDirectory)
 	{
-		var directory = new DirectoryInfo(AppContext.BaseDirectory);
+		var directory = new DirectoryInfo(baseDirectory);
 		while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
 		{
 			directory = directory.Parent;
@@ -83,9 +96,8 @@ public static class LiveAppHostLauncher
 		// publishes Release per RID and leaves those artefacts in the repository's bin. Preferring a
 		// RID match on its own then let a Release host shadow a Debug build that was twenty minutes
 		// newer, so a Debug test run silently exercised a stale binary and a change under test was
-		// simply not there. An artefact existing is not the same as it being the current one -- the
-		// same trap the win-x64 test build hit, one layer down.
-		var configuration = ConfigurationOf(AppContext.BaseDirectory);
+		// simply not there. An artefact existing is not the same as it being the current one.
+		var configuration = ConfigurationOf(baseDirectory);
 		if (configuration is not null)
 		{
 			var matching = candidates
@@ -95,15 +107,26 @@ public static class LiveAppHostLauncher
 			if (matching.Count > 0) candidates = matching;
 		}
 
-		// A build whose path carries the wanted RID is unambiguous; prefer it.
+		// A build whose path carries the wanted RID is unambiguous about its architecture.
 		var ridMatch = candidates.FirstOrDefault(path => path.Contains(rid, StringComparison.OrdinalIgnoreCase));
-		if (ridMatch is not null) return ridMatch;
 
-		// Otherwise a RID-less build is the broker's own architecture, so it is only right when the
-		// wanted RID is that architecture -- and it must not be some other RID's output, or a foreign
-		// host would be handed back (an x64 build sitting in bin beside an arm64 one, say).
-		if (rid != RuntimeInformation.RuntimeIdentifier) return null;
-		return candidates.FirstOrDefault(path => !CarriesAnyRid(path));
+		// A RID-less build is the broker's own architecture, so it is a candidate only when that is
+		// the architecture wanted -- and it must not be some other RID's output, or a foreign host
+		// would be handed back (an x64 build sitting in bin beside an arm64 one, say).
+		var plain = rid == RuntimeInformation.RuntimeIdentifier
+			? candidates.FirstOrDefault(path => !CarriesAnyRid(path))
+			: null;
+
+		if (ridMatch is null) return plain;
+		if (plain is null) return ridMatch;
+
+		// Both are the right configuration and the right architecture, so neither is more correct
+		// than the other and the newer one is what somebody just built. The same trap one layer
+		// down: an ordinary build produces no per-RID output, so preferring the RID match outright
+		// left an earlier per-RID one in bin to answer for it. The process under test was then from
+		// before the change, and nothing about the run said so -- the tools it was missing came back
+		// as unknown tools, which reads like the tools being wrong rather than the binary being old.
+		return File.GetLastWriteTimeUtc(plain) > File.GetLastWriteTimeUtc(ridMatch) ? plain : ridMatch;
 	}
 
 	/// <summary>

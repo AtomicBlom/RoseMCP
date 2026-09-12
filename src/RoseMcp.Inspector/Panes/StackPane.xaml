@@ -1,0 +1,118 @@
+<UserControl
+	x:Class="RoseMcp.Inspector.Panes.StackPane"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:inspector="using:RoseMcp.Ui.Core.Inspector">
+
+	<Grid RowDefinitions="Auto,*" RowSpacing="10">
+
+		<!-- A stack is never yanked away. The target continuing is ordinary (a timer, a step, an
+		     agent) and a pane that emptied itself would lose a reader's place with no explanation. -->
+		<InfoBar x:Name="StaleBar" Grid.Row="0" IsOpen="False" IsClosable="False" Severity="Informational" />
+
+		<Grid Grid.Row="1" ColumnSpacing="12" ColumnDefinitions="320,*">
+
+			<Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="6">
+				<TextBlock Grid.Row="0" x:Name="FramesCaption" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+				<ListView Grid.Row="1" x:Name="FrameRows" SelectionMode="Single"
+					SelectionChanged="OnFrameChosen"
+					ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+					<ListView.ItemTemplate>
+						<DataTemplate x:DataType="inspector:FrameRow">
+							<Grid ColumnSpacing="8" ColumnDefinitions="Auto,*" Padding="0,4">
+								<TextBlock Grid.Column="0" Text="{x:Bind IndexLabel}" VerticalAlignment="Top"
+									Style="{StaticResource MonoTextBlockStyle}"
+									Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+								<StackPanel Grid.Column="1" Spacing="1">
+									<TextBlock Text="{x:Bind Method}" TextTrimming="CharacterEllipsis" />
+									<TextBlock Text="{x:Bind Where}" Visibility="{x:Bind HasWhere}"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+									<TextBlock Text="{x:Bind Note}" Visibility="{x:Bind HasNote}" TextWrapping="Wrap"
+										Style="{StaticResource CaptionTextBlockStyle}"
+										Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+								</StackPanel>
+							</Grid>
+						</DataTemplate>
+					</ListView.ItemTemplate>
+				</ListView>
+			</Grid>
+
+			<Grid Grid.Column="1" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="6">
+				<TextBlock Grid.Row="0" x:Name="SourceCaption" Style="{StaticResource BodyStrongTextBlockStyle}"
+					TextTrimming="CharacterEllipsis" />
+
+				<TextBlock Grid.Row="1" x:Name="SourceDetail" TextWrapping="Wrap" Visibility="Collapsed"
+					Style="{StaticResource CaptionTextBlockStyle}"
+					Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+				<Border Grid.Row="2" CornerRadius="4" BorderThickness="1"
+					BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+					Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+					<ScrollViewer x:Name="SourceScroll" VerticalScrollBarVisibility="Auto"
+						HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto">
+						<ItemsRepeater x:Name="SourceRows">
+							<ItemsRepeater.Layout>
+								<StackLayout Spacing="0" />
+							</ItemsRepeater.Layout>
+							<ItemsRepeater.ItemTemplate>
+								<DataTemplate x:DataType="inspector:SourceLineRow">
+									<Grid Padding="8,1">
+										<!-- Behind the text rather than on it, so the line execution
+										     is on stays as readable as every other line. -->
+										<Border Visibility="{x:Bind IsCurrent}" CornerRadius="2" Margin="-4,0"
+											Background="{ThemeResource RoseAccentBrush}" Opacity="0.28" />
+										<Grid ColumnSpacing="12" ColumnDefinitions="Auto,*">
+											<TextBlock Grid.Column="0" Text="{x:Bind LineLabel}"
+												Style="{StaticResource MonoTextBlockStyle}"
+												Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+											<TextBlock Grid.Column="1" Text="{x:Bind Text}"
+												Style="{StaticResource MonoTextBlockStyle}" />
+										</Grid>
+									</Grid>
+								</DataTemplate>
+							</ItemsRepeater.ItemTemplate>
+						</ItemsRepeater>
+					</ScrollViewer>
+				</Border>
+
+				<TextBlock Grid.Row="3" x:Name="VariablesCaption" Margin="0,4,0,0"
+					Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+				<Grid Grid.Row="4" RowDefinitions="Auto,Auto" RowSpacing="4">
+					<TextBlock Grid.Row="0" x:Name="VariablesDetail" TextWrapping="Wrap" Visibility="Collapsed"
+						Style="{StaticResource CaptionTextBlockStyle}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+					<!-- ItemsSource mode, so the tree virtualises and keyboard navigation comes free.
+					     HasUnrealizedChildren is what puts an expander on a value nobody has opened yet. -->
+					<TreeView Grid.Row="1" x:Name="VariableRows" MaxHeight="300"
+						SelectionMode="None" Expanding="OnValueExpanding">
+						<TreeView.ItemTemplate>
+							<DataTemplate x:DataType="inspector:VariableNode">
+								<TreeViewItem ItemsSource="{x:Bind Children}"
+									HasUnrealizedChildren="{x:Bind HasUnrealizedChildren, Mode=OneWay}">
+									<StackPanel Orientation="Horizontal" Spacing="8">
+										<TextBlock Text="{x:Bind Name}" Style="{StaticResource MonoTextBlockStyle}" />
+										<TextBlock Text="{x:Bind Value}" Style="{StaticResource MonoTextBlockStyle}"
+											Foreground="{ThemeResource RoseAccentBrush}" />
+										<TextBlock Text="{x:Bind TypeName}" Style="{StaticResource CaptionTextBlockStyle}"
+											VerticalAlignment="Center"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+										<ProgressRing IsActive="{x:Bind IsLoading, Mode=OneWay}"
+											Visibility="{x:Bind IsLoading, Mode=OneWay}" Width="12" Height="12" />
+										<TextBlock Text="{x:Bind LoadDetail, Mode=OneWay}"
+											Visibility="{x:Bind HasLoadDetail, Mode=OneWay}"
+											Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+											Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+									</StackPanel>
+								</TreeViewItem>
+							</DataTemplate>
+						</TreeView.ItemTemplate>
+					</TreeView>
+				</Grid>
+			</Grid>
+		</Grid>
+	</Grid>
+</UserControl>

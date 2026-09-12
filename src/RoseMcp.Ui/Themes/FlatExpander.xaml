@@ -1,0 +1,45 @@
+<ResourceDictionary
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+	<!-- Flattens an Expander: inside a card, its own fill and border are a box in a box.
+
+	     This dictionary is merged into an Expander's *own* Resources rather than an app's, and that
+	     placement is load-bearing rather than stylistic. These keys are only honoured from the
+	     element's own resources; the same overrides at App level are found after WinUI's, not
+	     before, and do nothing at all. So it is shared by Source= and cannot be hoisted:
+
+	         <Expander.Resources>
+	             <ResourceDictionary Source="ms-appx:///RoseMcp.Ui/Themes/FlatExpander.xaml" />
+	         </Expander.Resources> -->
+
+	<ResourceDictionary.ThemeDictionaries>
+		<ResourceDictionary x:Key="Light">
+			<SolidColorBrush x:Key="ExpanderHeaderBackground" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderBrush" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderPointerOverBrush" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderPressedBrush" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderContentBackground" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderContentBorderBrush" Color="Transparent" />
+		</ResourceDictionary>
+		<ResourceDictionary x:Key="Dark">
+			<SolidColorBrush x:Key="ExpanderHeaderBackground" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderBrush" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderPointerOverBrush" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderPressedBrush" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderContentBackground" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderContentBorderBrush" Color="Transparent" />
+		</ResourceDictionary>
+		<ResourceDictionary x:Key="HighContrast">
+			<!-- The border stays, in the user's own colours: high contrast is the one theme where a
+			     control's edge is information rather than decoration. -->
+			<SolidColorBrush x:Key="ExpanderHeaderBackground" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderBrush" Color="{ThemeResource SystemColorButtonTextColor}" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderPointerOverBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+			<SolidColorBrush x:Key="ExpanderHeaderBorderPressedBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+			<SolidColorBrush x:Key="ExpanderContentBackground" Color="Transparent" />
+			<SolidColorBrush x:Key="ExpanderContentBorderBrush" Color="Transparent" />
+		</ResourceDictionary>
+	</ResourceDictionary.ThemeDictionaries>
+
+</ResourceDictionary>

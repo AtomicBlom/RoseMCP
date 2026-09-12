@@ -50,11 +50,21 @@ internal static class Program
 	/// Called once per loop with an object graph a debugger can stop on and evaluate: <c>state.Label</c>
 	/// and <c>state.Inner.Count</c> are stable field-access chains the evaluation test reads. Not inlined,
 	/// so a breakpoint has a real method to bind to and the argument is live at the stop.
+	/// <para>
+	/// <c>innerCount</c> is declared so a stop here has a local with a name to report. Naming it requires
+	/// reading the portable PDB, and a method whose only variable is its argument cannot tell a name read
+	/// from symbols apart from one read from metadata. Optimisation is off as well as inlining, because a
+	/// local nothing observes is a local the JIT is free to lose, and a Release run of the suite would
+	/// then leave nothing to name.
+	/// </para>
 	/// </summary>
-	[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+	[System.Runtime.CompilerServices.MethodImpl(
+		System.Runtime.CompilerServices.MethodImplOptions.NoInlining
+			| System.Runtime.CompilerServices.MethodImplOptions.NoOptimization)]
 	private static void Inspect(ProbeState state)
 	{
-		_ = state.Count;
+		var innerCount = state.Inner?.Count ?? 0;
+		_ = state.Count + innerCount;
 	}
 
 	/// <summary>
@@ -73,8 +83,9 @@ internal static class Program
 internal sealed class RoseDebugProbeException() : Exception("rose debug probe");
 
 /// <summary>
-/// A small object graph the evaluation test drills into. Public fields (not properties) so a field-access
-/// evaluator can read them without running a getter.
+/// A small object graph the evaluation and expansion tests drill into. Public fields (not
+/// properties) so a field-access reader can get at them without running a getter, and one array so
+/// an indexed path has something real to index.
 /// </summary>
 internal sealed class ProbeState
 {
@@ -83,4 +94,7 @@ internal sealed class ProbeState
 	public string Label = "beat";
 
 	public ProbeState? Inner;
+
+	/// <summary>Three distinguishable values, so an off-by-one in an indexed path is visible.</summary>
+	public int[] Marks = [7, 8, 9];
 }

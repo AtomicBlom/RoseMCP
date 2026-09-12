@@ -20,8 +20,12 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $IcoPath = "$PSScriptRoot/../src/RoseMcp.Tray/Assets/rose-mcp.ico",
-    [string] $PreviewPath = "$PSScriptRoot/../artifacts/icon-final.png"
+    # Which app's mark to draw. The composition is the same either way, and the bowl is what differs:
+    # the tray gets the rose, the inspector a lens whose handle is the leg of the R.
+    [ValidateSet('Rose', 'Lens')] [string] $Mark = 'Rose',
+    # Both apps read their assets out of the shared UI library's output, so both are written there.
+    [string] $AssetDirectory = "$PSScriptRoot/../src/RoseMcp.Ui/Assets",
+    [string] $BaseName
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,15 +34,33 @@ $ErrorActionPreference = 'Stop'
 $MonogramFrom = 48
 $Sizes = @(16, 20, 24, 32, 48, 64, 128, 256)
 
+# The single-frame mark a window draws inside itself. 128 rather than the largest frame: it is what
+# the existing mark is, it is drawn at about 16 logical pixels, and a 256 costs four times the bytes
+# for pixels nothing asks for.
+$MarkSize = 128
+
+if (-not $BaseName) { $BaseName = if ($Mark -eq 'Lens') { 'rose-inspector' } else { 'rose-mcp' } }
+
+$IcoPath = Join-Path $AssetDirectory "$BaseName.ico"
+$PngPath = Join-Path $AssetDirectory "$BaseName.png"
+
 function New-AppIcon
 {
     param([int] $Size)
 
     if ($Size -ge $MonogramFrom)
     {
-        return New-RoseMonogram -Size $Size -RoseRadius 0.320 -StemGap -0.005 `
-            -LeanDegrees 38 -HaloWidth 0.050
+        # The same numbers for both, so the two marks are the same composition with a different bowl.
+        # The lens sits where the rose sits: its extents put its left edge in the same place, so the
+        # channel the halo cuts out of the stem is the same channel.
+        $bowl = @{ RoseRadius = 0.320; StemGap = -0.005; LeanDegrees = 38; HaloWidth = 0.050 }
+
+        if ($Mark -eq 'Lens') { return New-RoseMonogram -Size $Size -Bowl Lens @bowl }
+
+        return New-RoseMonogram -Size $Size @bowl
     }
+
+    if ($Mark -eq 'Lens') { return New-LensIcon -Size $Size }
 
     return New-RoseIcon -Size $Size -N 3 -D 2 -Mode Alternate -RadiusFraction 0.36
 }
@@ -117,4 +139,13 @@ $w.Flush()
 [System.IO.File]::WriteAllBytes((Resolve-Path -LiteralPath $dir).Path + '/' + (Split-Path $IcoPath -Leaf), $out.ToArray())
 $w.Dispose()
 
+# The PNG beside the icon, from the same draw. A window's own mark is an Image, and an image decoder
+# handed a multi-frame .ico picks its own frame -- so the mark is a single 256 rather than whatever
+# the decoder settled on. Written here rather than by hand, or the two drift the first time either
+# is regenerated and nothing says which is current.
+$markBitmap = New-AppIcon -Size $MarkSize
+$markBitmap.Save($PngPath, [System.Drawing.Imaging.ImageFormat]::Png)
+$markBitmap.Dispose()
+
 "wrote $IcoPath ($([Math]::Round((Get-Item $IcoPath).Length / 1KB)) KB, $($frames.Count) frames: $($Sizes -join ', '))"
+"wrote $PngPath ($([Math]::Round((Get-Item $PngPath).Length / 1KB)) KB, $MarkSize)"

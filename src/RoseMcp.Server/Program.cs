@@ -115,6 +115,25 @@ internal static class Program
 		ConfigureLogging(builder.Logging);
 
 		builder.WebHost.UseUrls($"http://{options.Host}:{options.Port}");
+
+		// One token for both surfaces. ROSEMCP_TOKEN, when it is set, is what gates the whole server
+		// -- including the MCP endpoint -- and the operator API is gated on the same value, because a
+		// second secret for the same person on the same loopback port would be two things to get
+		// wrong rather than one.
+		//
+		// Minted before the services rather than after building them, because the inspector has to be
+		// handed it: a presenter registered without the token could start a window the server would
+		// then refuse.
+		var operatorToken = OperatorToken.FromEnvironmentOrMint(out var minted);
+
+		// Before AddRoseMcpBroker, so its TryAdd of the do-nothing presenter stands down. This host
+		// has an endpoint and a token, which is the whole precondition for opening an inspector.
+		builder.Services.AddSingleton<IInspectorPresenter>(services => new OperatorInspector(
+			options.Host,
+			options.Port,
+			operatorToken,
+			services.GetRequiredService<ILogger<OperatorInspector>>()));
+
 		builder.Services.AddRoseMcpBroker(broker => Apply(options, broker)).WithHttpTransport();
 
 		var application = builder.Build();
@@ -123,8 +142,7 @@ internal static class Program
 		// no later check would notice: a browser sends the token nowhere but sends Origin always.
 		application.Use(RefuseForeignOrigin);
 
-		var token = Environment.GetEnvironmentVariable("ROSEMCP_TOKEN");
-		if (!string.IsNullOrWhiteSpace(token)) application.Use(RequireToken(token));
+		if (!minted) application.Use(RequireToken(operatorToken));
 
 		application.MapMcp();
 
@@ -137,6 +155,20 @@ internal static class Program
 		application.MapGet(
 			"/admin/sessions",
 			(LiveAppSessionManager sessions) => Results.Json(sessions.Describe(), ContractJson.Options));
+
+		application.MapRoseOperatorApi(operatorToken);
+
+		// Said once, and only when this process chose it. A token nobody set is a token nobody can
+		// use, and an operator surface that cannot be reached because its secret was never announced
+		// would look like a bug in the surface. Where ROSEMCP_TOKEN set it, whoever set it knows.
+		if (minted)
+		{
+			application.Logger.LogInformation(
+				"The operator API at {Prefix} is open for this run with token {Token}. It changes every time this "
+					+ "process starts.",
+				OperatorApi.Prefix,
+				operatorToken.Value);
+		}
 
 		await application.RunAsync();
 		return 0;
@@ -158,10 +190,19 @@ internal static class Program
 		await next(context);
 	}
 
-	private static Func<HttpContext, RequestDelegate, Task> RequireToken(string token) => async (context, next) =>
+	/// <summary>
+	/// Refuses every request that does not carry the token. Gates the whole server, the MCP endpoint
+	/// included, which is what makes a non-loopback bind allowable at all.
+	/// <para>
+	/// The comparison goes through <see cref="OperatorToken"/> rather than a string <c>!=</c>, so the
+	/// same fixed-time check guards both surfaces. A secret compared with ordinary string equality
+	/// leaks its prefix through timing, and having one of the two doors do it right was the wrong
+	/// half to leave.
+	/// </para>
+	/// </summary>
+	private static Func<HttpContext, RequestDelegate, Task> RequireToken(OperatorToken token) => async (context, next) =>
 	{
-		var supplied = context.Request.Headers.Authorization.ToString();
-		if (supplied != $"Bearer {token}")
+		if (!token.Matches(context.Request.Headers.Authorization.ToString()))
 		{
 			context.Response.StatusCode = StatusCodes.Status401Unauthorized;
 			return;

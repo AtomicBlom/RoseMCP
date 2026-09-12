@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using ModelContextProtocol.Protocol;
 
@@ -121,6 +122,10 @@ public static class ServiceCollectionExtensions
 		// Live-app sessions are per running target, separate from the per-solution workers, but shared
 		// across connections the same way and supervised the same way.
 		services.AddSingleton<LiveAppSessionManager>();
+
+		// No inspector unless a host that has an operator endpoint replaces this. A stdio broker
+		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
+		services.TryAddSingleton<IInspectorPresenter>(NoInspector.WithoutAnEndpoint);
 
 		var builder = services
 			.AddMcpServer(server =>

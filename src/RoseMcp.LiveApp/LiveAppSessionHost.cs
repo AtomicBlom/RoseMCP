@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using RoseMcp.Contracts;
 using RoseMcp.LiveApp.Debugging;
 using RoseMcp.LiveApp.Xaml;
+using RoseMcp.Logging;
 
 namespace RoseMcp.LiveApp;
 
@@ -27,6 +28,13 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	private static readonly TimeSpan UwpRuntimeReadyTimeout = TimeSpan.FromSeconds(30);
 	private static readonly TimeSpan UwpStartupTimeout = TimeSpan.FromSeconds(30);
 
+	/// <summary>
+	/// What an inspection answers with when this host has no target at all. Said as a running
+	/// report rather than thrown, so a caller polling a session it is about to lose reads the same
+	/// shape of answer it reads at every other moment.
+	/// </summary>
+	private const string NotAttachedDetail = "This session is not attached to a target, so there is nothing to read.";
+
 	private readonly Lock _gate = new();
 	private readonly DebugEventBuffer _events = new();
 	private LiveAppSessionState _state = LiveAppSessionState.Starting;
@@ -39,6 +47,12 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	// mode is lifted: it says which build this session ran, and that stays true afterwards.
 	private string? _uwpInstallLocation;
 	private XamlDiagnosticsSession? _xaml;
+
+	// Which XAML framework the target is running, once anything has established it. Kept because a
+	// process cannot change the framework it has loaded, so a known answer never needs asking again --
+	// and because the answer is what decides whether a XAML surface can be offered at all, which is a
+	// question a status view asks long before anything asks for a tree.
+	private XamlStackDetection? _xamlStack;
 
 	// Whether somebody has asked for the target to be left running. A detach is that request, and it
 	// is what separates an ordinary close -- where the app is meant to outlive the session -- from a
@@ -54,10 +68,40 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		_ => TargetArchitecture.Unknown,
 	};
 
+	/// <summary>
+	/// What this host can say about itself and its target without doing any real work. The broker asks
+	/// on connect and then polls it, so it is also what a status view reads.
+	/// <para>
+	/// The XAML stack is resolved here rather than when the session was established, because a
+	/// framework loads late: a target attached at startup has not loaded its XAML DLL yet, and one
+	/// early look answered <see cref="XamlStack.Unknown"/> forever would be a wrong answer rather than
+	/// an unknown one. Re-probing while it is unknown costs a module-list read.
+	/// </para>
+	/// </summary>
 	public LiveAppInfo CurrentInfo()
 	{
+		int? targetProcessId;
+		XamlStackDetection? known;
+		XamlDiagnosticsSession? xaml;
 		lock (_gate)
 		{
+			targetProcessId = _targetProcessId;
+			known = _xamlStack;
+			xaml = _xaml;
+		}
+
+		// Outside the gate. It costs microseconds, but it is a call into another process and nothing
+		// else in this host should queue behind one.
+		var stack = ResolveXamlStack(targetProcessId, known, xaml);
+
+		lock (_gate)
+		{
+			_xamlStack = stack;
+
+			// Read once, because two calls could straddle a resume and describe a stop that was never
+			// in the state the pair of them imply.
+			var stop = _session?.CurrentStop();
+
 			return new LiveAppInfo
 			{
 				HostProcessId = Environment.ProcessId,
@@ -66,8 +110,38 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				TargetProcessId = _targetProcessId,
 				InstallLocation = _uwpInstallLocation,
 				Detail = _detail,
+				Execution = stop?.State ?? LiveExecutionState.Running,
+				Stop = stop,
+				XamlStack = stack?.Stack ?? XamlStack.Unknown,
+				XamlStackReason = stack?.Reason
+					?? "this session has no target process yet, so its loaded modules cannot be read",
+				XamlProvider = xaml?.Provider ?? LiveXamlProvider.None,
+				LastEvent = _events.Newest(),
+				HostLogPath = RoseFileLogging.Destination,
 			};
 		}
+	}
+
+	/// <summary>
+	/// Which XAML framework the target is running: what a real XAML request found, else what a previous
+	/// probe found, else a fresh probe.
+	/// <para>
+	/// A known answer is never re-probed, because a process cannot change the framework it has loaded.
+	/// An answer a request arrived at wins over this host's own probe: they read the same module list
+	/// and normally agree, and where they do not, the request's is the one a tap was chosen by. With no
+	/// target process there is nothing to read, and the previous answer -- usually none -- stands.
+	/// </para>
+	/// </summary>
+	private static XamlStackDetection? ResolveXamlStack(
+		int? targetProcessId,
+		XamlStackDetection? known,
+		XamlDiagnosticsSession? xaml)
+	{
+		if (xaml?.Stack is { Stack: not XamlStack.Unknown } fromRequest) return fromRequest;
+		if (known is { Stack: not XamlStack.Unknown }) return known;
+		if (targetProcessId is not { } pid) return known;
+
+		return XamlStackProbe.Detect(pid);
 	}
 
 	/// <summary>
@@ -168,7 +242,9 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			session = _session;
 		}
 
-		return new LiveContinueResult { Continued = session?.Continue() == true };
+		// The session's own result, forwarded rather than reduced to a bool: it carries whether the
+		// resume released an operator's hold, which nothing else would say.
+		return session?.Continue() ?? new LiveContinueResult { Continued = false };
 	}
 
 	/// <summary>Steps a target held at a breakpoint: "in", "over", or "out".</summary>
@@ -180,7 +256,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			session = _session;
 		}
 
-		return new LiveContinueResult { Continued = session?.Step(mode) == true };
+		return session?.Step(mode) ?? new LiveContinueResult { Continued = false };
 	}
 
 	/// <summary>Evaluates a field-access expression against the stopped frame; safe, no debuggee code runs.</summary>
@@ -196,6 +272,143 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			?? new LiveEvaluation { Expression = expression, Error = "This session is not attached to a target." };
 	}
 
+	/// <summary>A page of a stopped thread's call stack, with file and line where symbols allow.</summary>
+	public LiveStackFrames ReadFrames(int? threadId, int offset, int? limit)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveStackFrames
+			{
+				Execution = LiveExecutionState.Running,
+				Detail = NotAttachedDetail,
+				ThreadId = threadId,
+				Offset = offset,
+				Total = 0,
+				Truncated = false,
+			};
+		}
+
+		return session.ReadFrames(threadId, offset, limit);
+	}
+
+	/// <summary>One frame's arguments and locals, named from the module's symbols where there are any.</summary>
+	public LiveFrameVariables ReadFrameVariables(int frameIndex, int? threadId)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveFrameVariables
+			{
+				Execution = LiveExecutionState.Running,
+				Detail = NotAttachedDetail,
+				FrameIndex = frameIndex,
+				ThreadId = threadId,
+				Symbols = LiveSymbolState.NoSymbols,
+				Truncated = false,
+			};
+		}
+
+		return session.ReadFrameVariables(frameIndex, threadId);
+	}
+
+	/// <summary>What is inside a value: an object's fields, or an array's elements.</summary>
+	public LiveValueExpansion ExpandValue(string path, int frameIndex, int? threadId)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveValueExpansion
+			{
+				Execution = LiveExecutionState.Running,
+				Detail = NotAttachedDetail,
+				Path = path,
+				Total = 0,
+				Truncated = false,
+			};
+		}
+
+		return session.Expand(path, frameIndex, threadId);
+	}
+
+	/// <summary>Every managed thread of the stopped target, the held one first.</summary>
+	public LiveThreadList ReadThreads()
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveThreadList { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail };
+		}
+
+		return session.ReadThreads();
+	}
+
+	/// <summary>Takes or releases an operator's hold, which suspends the stop's safety timer.</summary>
+	public LiveHoldResult Hold(int? seconds, bool release)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveHoldResult { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail, Applied = false };
+		}
+
+		return session.Hold(seconds is { } requested ? TimeSpan.FromSeconds(requested) : null, release);
+	}
+
+	/// <summary>Stops a running target where it stands, rather than where a breakpoint would.</summary>
+	public LivePauseResult Break(int? autoContinueSeconds)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LivePauseResult { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail, Paused = false };
+		}
+
+		return session.Break(autoContinueSeconds);
+	}
+
+	/// <summary>Methods of the target's loaded modules matching a typed query, best first.</summary>
+	public LiveMethodMatches SearchMethods(string? query, int limit)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveMethodMatches
+			{
+				Query = query ?? string.Empty,
+				Matches = [],
+				Total = 0,
+				ModulesSearched = 0,
+				Detail = NotAttachedDetail,
+			};
+		}
+
+		return session.SearchMethods(query, limit);
+	}
+
+	/// <summary>A method's source and the positions inside it a breakpoint can be set at.</summary>
+	public LiveMethodSource ReadMethodSource(string location)
+	{
+		if (Attached() is not { } session)
+		{
+			return new LiveMethodSource
+			{
+				Location = location,
+				DisplayName = location,
+				Module = string.Empty,
+				Symbols = LiveSymbolState.NoSymbols,
+				FirstLine = 0,
+				Lines = [],
+				Positions = [],
+				Detail = NotAttachedDetail,
+			};
+		}
+
+		return session.ReadMethodSource(location);
+	}
+
+	/// <summary>The debug session, or null when this host has no target.</summary>
+	private CorDebugSession? Attached()
+	{
+		lock (_gate)
+		{
+			return _session;
+		}
+	}
+
 	/// <summary>
 	/// Why a XAML request cannot be served at this instant, or null when it can be.
 	/// <para>
@@ -208,20 +421,23 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// because it is the debugger as well as the diagnostics client. So are we; the signal was simply
 	/// never asked for.
 	/// </para>
+	/// <para>
+	/// A stop an operator is holding names the hold, because the advice differs: an ordinary stop
+	/// frees itself on the safety timer and waiting works, while a held one does not and waiting is
+	/// the wrong thing to do.
+	/// </para>
 	/// </summary>
 	private string? WhyXamlIsUnservable()
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		if (Attached()?.CurrentStop() is not { } stop) return null;
 
-		if (session?.IsStoppedAtBreakpoint != true) return null;
+		var freed = stop.Resume == LiveStopResume.HeldByOperator
+			? "An operator is holding this stop, so the auto-continue timer will not free it: release the hold "
+				+ "or continue the target."
+			: "Resume the target and ask again -- a held target also releases itself on the auto-continue timer.";
 
 		return "The target is stopped, so its UI thread cannot serve a XAML request: the diagnostics "
-			+ "endpoint is created by that thread and this session is holding it. Resume the target and ask "
-			+ "again -- a held target also releases itself on the auto-continue timer.";
+			+ "endpoint is created by that thread and this session is holding it. " + freed;
 	}
 
 	/// <summary>
@@ -247,7 +463,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	{
 		if (_events.Newest() is not { } newest) return detail;
 
-		var age = DateTime.UtcNow - newest.When;
+		var age = DateTime.UtcNow - newest.TimestampUtc;
 
 		// Logged as well as returned. The detail reaches whoever made the call; the log is where anyone
 		// reading a run afterwards is, and a wedge is diagnosed from the log long after the result is

@@ -147,6 +147,12 @@ function Publish-Tree
     Invoke-Dotnet @('publish', "$repo/src/RoseMcp.Tray", '-c', 'Release', '-r', $Rid,
         '--self-contained', 'false', '-o', "$Into/tray") "RoseMcp.Tray ($Rid)"
 
+    # The inspector gets a folder of its own for the same reason, and one more: two WinUI publishes
+    # into one directory overwrite each other's WindowsAppSDK payload, and `publish -o` never
+    # removes what it does not write, so the loser keeps whichever files the winner did not have.
+    Invoke-Dotnet @('publish', "$repo/src/RoseMcp.Inspector", '-c', 'Release', '-r', $Rid,
+        '--self-contained', 'false', '-o', "$Into/inspector") "RoseMcp.Inspector ($Rid)"
+
     Publish-LiveAppHosts -Into $Into -Rid $Rid
 }
 
@@ -323,6 +329,23 @@ function Assert-WindowsPackage
     $hostRids = Get-LiveAppRuntimes -Rid $Rid
     $checked = 0
 
+    # Both windows, and each built for the machine the package is for. A package missing the
+    # inspector is not obviously broken from the outside: the tray comes up, and Inspect reports
+    # that it cannot find the exe -- which reads like a lookup bug rather than a package that never
+    # carried one.
+    foreach ($window in 'tray/RoseMcp.Tray.exe', 'inspector/RoseMcp.Inspector.exe')
+    {
+        $exe = "$Stage/$window"
+        if (-not (Test-Path $exe)) { throw "$Rid package is missing $exe" }
+
+        $machine = Get-PeMachine $exe
+        if ($machine -ne $expected[$Rid])
+        {
+            throw (("$Rid package has the wrong {0}: it reports machine 0x{1:X4}, expected 0x{2:X4}.") -f
+                $window, $machine, $expected[$Rid])
+        }
+    }
+
     foreach ($hostRid in $hostRids)
     {
         $hostExe = "$Stage/live-app/$hostRid/RoseMcp.LiveApp.exe"
@@ -355,7 +378,7 @@ function Assert-WindowsPackage
         }
     }
 
-    Write-Host ("  layout checked: {0} debug host(s) ({1}) and {2} XAML provider(s), all correctly built" -f
+    Write-Host ("  layout checked: both windows, {0} debug host(s) ({1}) and {2} XAML provider(s), all correctly built" -f
         $hostRids.Count, ($hostRids -join ', '), $checked)
 }
 
@@ -372,6 +395,19 @@ function Get-InstalledProcess
 
     return @(Get-Process -Name $Name -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) })
+}
+
+function Stop-Inspector
+{
+    # Its own function, and called before the tray: the inspector holds no workers and nothing waits
+    # on it, but its exe is in the tree about to be overwritten and a running one fails the publish.
+    # It is not restarted afterwards -- it is opened from the tray, and reopening a window somebody
+    # closed is the deploy deciding what they were doing.
+    $running = Get-InstalledProcess 'RoseMcp.Inspector'
+    if ($running.Count -eq 0) { return }
+
+    Write-Host "  stopping inspector (pid $($running.Id -join ', '))"
+    $running | Stop-Process -Force
 }
 
 function Stop-Tray
@@ -451,6 +487,7 @@ if ($Mode -eq 'promote')
     # Everything about stopping and restarting is about the tray and the stdio servers holding the
     # install's files open, and neither exists off Windows: there is nothing to stop, and nothing to
     # overwrite while it runs.
+    if ($onWindows) { Stop-Inspector }
     $wasRunning = if ($onWindows) { Stop-Tray } else { $false }
     $stoppedServers = if ($onWindows) { Stop-Servers } else { $false }
 

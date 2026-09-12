@@ -5,6 +5,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 using RoseMcp.Contracts;
+using RoseMcp.Settings;
 
 namespace RoseMcp.Broker.Tools;
 
@@ -19,7 +20,7 @@ namespace RoseMcp.Broker.Tools;
 /// </para>
 /// </summary>
 [McpServerToolType]
-public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
+public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspectorPresenter inspector)
 {
 	[McpServerTool(
 		Name = ToolNames.DebugAttach,
@@ -37,6 +38,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	public async Task<LiveAppSessionSummary> AttachAsync(
 		[Description(ToolDescriptions.ProcessIdArgument)]
 		int processId,
+		[Description(ToolDescriptions.ShowInspectorArgument)]
+		InspectorVisibility showInspector = InspectorVisibility.UserPreference,
 		CancellationToken cancellationToken = default)
 	{
 		LocalAttachPolicy.EnsureAttachable(processId);
@@ -58,7 +61,30 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			throw new McpException(summary.Detail ?? $"Could not attach to pid {processId}.");
 		}
 
-		return summary;
+		ShowInspectorIfWanted(session, showInspector);
+
+		return session.Describe();
+	}
+
+	/// <summary>
+	/// Opens the inspector on a session that has just started, when the caller and the machine's
+	/// preference agree it should be.
+	/// <para>
+	/// Reported in the session's event stream rather than thrown or returned. The session is the
+	/// caller's result and it is already running: refusing the attach because a window could not
+	/// open would throw away the work that mattered, and saying nothing would leave somebody who
+	/// asked for a window staring at a screen with no window and no reason.
+	/// </para>
+	/// </summary>
+	private void ShowInspectorIfWanted(LiveAppSession session, InspectorVisibility asked)
+	{
+		if (!InspectorRequest.Wanted(asked, RoseSettingsFile.Read())) return;
+
+		var refused = inspector.CanShow
+			? inspector.Show(session.SessionId, session.Describe().TargetProcessId)
+			: inspector.Obstacle;
+
+		if (refused is not null) session.Note($"The inspector was asked for and did not open: {refused}");
 	}
 
 	[McpServerTool(
@@ -78,6 +104,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 	public async Task<LiveAppSessionSummary> LaunchAsync(
 		[Description(ToolDescriptions.ExecutablePathArgument)] string executablePath,
 		[Description(ToolDescriptions.LaunchArgumentsArgument)] string? arguments = null,
+		[Description(ToolDescriptions.ShowInspectorArgument)]
+		InspectorVisibility showInspector = InspectorVisibility.UserPreference,
 		CancellationToken cancellationToken = default)
 	{
 		if (!File.Exists(executablePath)) throw new McpException($"No executable at {executablePath}.");
@@ -100,7 +128,9 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			throw new McpException(summary.Detail ?? $"Could not launch {fullPath}.");
 		}
 
-		return summary;
+		ShowInspectorIfWanted(session, showInspector);
+
+		return session.Describe();
 	}
 
 	[McpServerTool(
@@ -119,6 +149,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "deployed. Detaching leaves it running and lifts debug mode. Returns the session id.")]
 	public async Task<LiveAppSessionSummary> LaunchUwpAsync(
 		[Description(ToolDescriptions.AppUserModelIdArgument)] string appUserModelId,
+		[Description(ToolDescriptions.ShowInspectorArgument)]
+		InspectorVisibility showInspector = InspectorVisibility.UserPreference,
 		CancellationToken cancellationToken = default)
 	{
 		var target = new LiveAppTarget
@@ -137,7 +169,9 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			throw new McpException(summary.Detail ?? $"Could not launch {appUserModelId}.");
 		}
 
-		return summary;
+		ShowInspectorIfWanted(session, showInspector);
+
+		return session.Describe();
 	}
 
 	[McpServerTool(
@@ -416,8 +450,9 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions)
 			+ "or local name, then .field into the object graph. It reads fields from memory and runs "
 			+ "none of the debuggee's own code, so it never hangs or changes the target -- property "
 			+ "getters and method calls are deliberately not evaluated. Only valid while stopped. "
-			+ "Locals are local_0, local_1 and so on in slot order, which a breakpoint's recorded frame "
-			+ "names; arguments are named. Returns the value and its type, or why it did not resolve.")]
+			+ "Arguments and locals go by the names the breakpoint's recorded frame reports: the names "
+			+ "the source declares where the module has symbols beside it, and local_0, local_1 in slot "
+			+ "order where it has none. Returns the value and its type, or why it did not resolve.")]
 	public async Task<LiveEvaluation> EvaluateAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression,

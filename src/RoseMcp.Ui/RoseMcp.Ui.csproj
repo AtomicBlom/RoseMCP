@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The WinUI half of the shared UI: the resource dictionaries, the window chrome, and the crash
+       handler. Referenced by every RoseMCP desktop app, so they are recognisably one product rather
+       than two that happen to share an icon.
+
+       Everything testable lives next door in RoseMcp.Ui.Core, which is plain net10.0. The split is
+       not tidiness: a net10.0 test project cannot reference a net10.0-windows assembly, so anything
+       put here is code no unit test can reach. -->
+
+  <PropertyGroup>
+    <!-- Overrides the repo-wide net10.0, as the tray does, and for the same reason. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <Platforms>x64;ARM64</Platforms>
+    <UseWinUI>true</UseWinUI>
+    <!-- XAML code generation produces warnings we do not control. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RoseMcp.Ui.Core\RoseMcp.Ui.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The icon every RoseMCP app shows, kept here so the pixels exist once. Content on a
+         referenced project flows into each referencing app's output, under a folder named for this
+         project: RoseMcp.Ui\Assets\. That is the same shape as the ms-appx URI its XAML uses, and
+         it is not worth fighting. An app must not have to know it, so RoseUiAssets is the one place
+         that spells the path, and Link or TargetPath on the app side does not move it. -->
+    <None Remove="Assets\**" />
+    <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+
+
+</Project>

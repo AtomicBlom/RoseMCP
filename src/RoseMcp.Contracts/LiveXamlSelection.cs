@@ -13,10 +13,22 @@ public sealed record LiveXamlSelection
 	public bool Selected { get; init; }
 
 	/// <summary>
-	/// Whether select mode is armed right now, read from the toolbar rather than remembered: the
-	/// person can arm and cancel it themselves, so what this side last asked for proves nothing.
+	/// Whether the overlay is capturing the pointer right now, read from the toolbar rather than
+	/// remembered: the person can arm and cancel a mode themselves, so what this side last asked for
+	/// proves nothing. True for every mode that lays a layer over the app, because what a caller
+	/// needs from this is whether the app can still be clicked; <see cref="Mode"/> says which mode.
 	/// </summary>
 	public bool Armed { get; init; }
+
+	/// <summary>
+	/// What the overlay is doing with the pointer: <c>idle</c>, <c>select</c> while it waits for a
+	/// click to pick an element, or <c>rulers</c> while it measures from the picked one.
+	/// <para>
+	/// A word rather than a flag for each mode, so a caller is not obliged to know every mode the
+	/// toolbar has in order to ask about the one it cares about.
+	/// </para>
+	/// </summary>
+	public string Mode { get; init; } = "idle";
 
 	/// <summary>
 	/// Whether picks currently prefer the app's own markup over a control template's parts. Read from

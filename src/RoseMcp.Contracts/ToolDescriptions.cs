@@ -437,6 +437,15 @@ public static class ToolDescriptions
 		"False disarms select mode instead of arming it, the same as the toolbar's Idle button. "
 			+ "Disarm when you have finished: arming captures the pointer until something does.";
 
+	/// <summary>
+	/// Which mode to arm. Both lay the same pointer-capturing layer over the app, so both are the
+	/// same act of arming; what differs is what a pointer move does with the element under it.
+	/// </summary>
+	public const string XamlModeArgument =
+		"Which mode to arm: 'select', where the next click picks an element, or 'rulers', where the "
+			+ "picked element shows its margin and padding and whatever the pointer is over is measured "
+			+ "against it. Ignored when arm is false.";
+
 	public const string WorkspaceOpen = """
 		Starts loading a solution and returns within about a second, without waiting for the load.
 		Never required: every other tool loads the enclosing solution itself and waits for it, so

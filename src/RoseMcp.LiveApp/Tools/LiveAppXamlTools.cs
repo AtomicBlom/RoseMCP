@@ -61,15 +61,19 @@ public sealed class LiveAppXamlTools(LiveAppSessionHost host)
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("Arm the interactive selection overlay so the next click in the app picks that element, or disarm it.")]
+	[Description(
+		"Arm one of the overlay's pointer modes -- select, so the next click in the app picks that "
+			+ "element, or rulers, so the picked element is measured from -- or disarm whichever is on.")]
 	public LiveXamlSelection XamlSelectMode(
 		[Description(ToolDescriptions.IncludeAllElementsArgument)]
 		bool includeAllElements = false,
 		[Description(ToolDescriptions.JustMyXamlArgument)]
 		bool justMyXaml = true,
 		[Description(ToolDescriptions.ArmArgument)]
-		bool arm = true)
-		=> host.EnterXamlSelectMode(includeAllElements, justMyXaml, arm);
+		bool arm = true,
+		[Description(ToolDescriptions.XamlModeArgument)]
+		string mode = "select")
+		=> host.EnterXamlSelectMode(includeAllElements, justMyXaml, arm, mode);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppXamlSelection,

@@ -2696,6 +2696,7 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 				selectMode.Armed,
 				$"expected select mode to arm; got: {selectMode.Detail}");
 			Assert.True(selectMode.JustMyXaml);
+			Assert.Equal("select", selectMode.Mode);
 
 			// Arming reports the preference it was actually given. It used to leave the field to the
 			// record's default of true, so arming with false answered true, and a caller comparing the
@@ -2737,6 +2738,81 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			var idle = await session.EnterXamlSelectModeAsync(
 				includeAllElements: false, justMyXaml: true, arm: false, cancellationToken);
 			Assert.False(idle.Armed, $"expected select mode to disarm; got: {idle.Detail}");
+			Assert.Equal("idle", idle.Mode);
+
+		}
+	}
+
+	/// <summary>
+	/// #19: rulers mode arms, anchors on an element, and gives the app back.
+	/// <para>
+	/// What a person sees in this mode -- the anchor's margin and padding as bands, and the distances
+	/// to whatever the pointer is over -- is not reachable from here, because a hover is a human
+	/// action and nothing in this suite moves the mouse on a live desktop. What is reachable is every
+	/// path that drawing hangs off: arming, switching between the two modes over one capture layer,
+	/// anchoring by handle, and disarming. The drawing runs on the app's UI thread inside those calls,
+	/// so a throw in it arrives here as a request the provider never answered.
+	/// </para>
+	/// <para>
+	/// The mode is checked by name rather than through Armed alone, and that is the point of the field:
+	/// rulers captures the pointer exactly as select does, so a host that only knew about select would
+	/// report an app nobody can click as idle -- and a test that only knew about select would hand one
+	/// on to the next test.
+	/// </para>
+	/// </summary>
+	[Test]
+	[ClassicSession]
+	public async Task Arms_rulers_mode_and_anchors_it_on_an_element()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		// Phase B: holds the shared probe app to itself, because what this touches is app-wide
+		// and has no owner smaller than the app. The turn checks on the way out that the app was
+		// handed back unselected and unarmed.
+		await using var turn = await probe.TakeSessionAsync(cancellationToken);
+		var session = turn.Session;
+
+		{
+
+			var tree = await session.ReadXamlTreeAsync(cancellationToken);
+			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
+			Assert.NotNull(pane);
+
+			var rulers = await session.EnterXamlSelectModeAsync(
+				includeAllElements: false, justMyXaml: true, arm: true, cancellationToken, mode: "rulers");
+
+			Assert.True(rulers.Armed, $"expected rulers mode to arm; got: {rulers.Detail}");
+			Assert.Equal("rulers", rulers.Mode);
+
+			// The toolbar agrees, because the mode is read back from the overlay rather than echoed
+			// from the request.
+			var armed = await session.ReadXamlSelectionAsync(cancellationToken);
+			Assert.Equal("rulers", armed.Mode);
+			Assert.True(armed.Armed);
+
+			// Anchoring, which is what the bands are drawn around. By handle rather than by clicking,
+			// for the same reason #46 exists: a click is a human action. The mode survives it -- unlike
+			// select, where picking is the end of the mode -- because a sweep across an element's
+			// neighbours is the whole gesture.
+			var anchored = await session.SelectXamlElementAsync(pane!.Handle, cancellationToken);
+			Assert.True(anchored.Selected, $"expected an anchor; got: {anchored.Detail}");
+			Assert.Equal("Pane", anchored.Name);
+			Assert.Equal("rulers", anchored.Mode);
+
+			// Switching modes keeps the one capture layer that is already up, so arming select from
+			// here has to answer about a layer it did not insert.
+			var select = await session.EnterXamlSelectModeAsync(
+				includeAllElements: false, justMyXaml: true, arm: true, cancellationToken, mode: "select");
+			Assert.Equal("select", select.Mode);
+			Assert.True(select.Armed, $"expected select mode to arm over the layer already up; got: {select.Detail}");
+
+			var cleared = await session.ClearXamlSelectionAsync(cancellationToken);
+			Assert.False(cleared.Selected, "deselecting clears the anchor");
+
+			var idle = await session.EnterXamlSelectModeAsync(
+				includeAllElements: false, justMyXaml: true, arm: false, cancellationToken);
+			Assert.False(idle.Armed, $"expected the overlay to go idle; got: {idle.Detail}");
+			Assert.Equal("idle", idle.Mode);
 
 		}
 	}

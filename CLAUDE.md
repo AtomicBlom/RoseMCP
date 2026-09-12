@@ -468,6 +468,45 @@ reclaim memory or pick up a rebuilt generator.
   drawn at coordinates read out of the app, so an app that has been scaled leaves them behind, and they
   cannot each take the transform individually because each is positioned by `Canvas.Left` and a render
   transform scales about its own element rather than the canvas origin.
+- **A measurement is placed by the ends of its line, and the ends are the part that carries meaning.**
+  The rulers mode draws the gaps from the picked element to whatever the pointer is over, and where the
+  number goes is most of whether it can be read. It sits centred on its own dimension line, with the
+  line running behind the opaque badge, whenever the line is long enough to hold it with clearance
+  left at each end. Where it is not -- a gap of four pixels has a line four pixels long and a number
+  three times that wide -- it goes outside the line's end instead, on the side away from the anchor's
+  centre, so the left inset's number sits left of everything it measures and the right inset's sits
+  right. Centring it there anyway would cover both ends, and the ends are the kinks where the extension
+  lines turn off to the two edges being measured: covering those hides which edges the number is
+  about, which is the one thing a number cannot say for itself.
+  <br>
+  Numbers that still collide are pushed perpendicular to their own line and given a tie line back to
+  its midpoint. Perpendicular and not along it, because sliding a number along its line slides it off
+  the thing it measures, and two numbers on one axis would then appear in the order they were drawn
+  rather than the order their edges are in. The tie is what a moved number needs and a number sitting
+  on its line does not: once it is off the line there is nothing else saying which line it belongs to.
+  The two element captions are seeded into the occupied set before any number is placed, because both
+  sit at the top-left corner of a rectangle -- exactly where the top and left insets are measured. And
+  a label is *measured* rather than read off `ActualWidth`, which is a fact about the last layout pass
+  and is zero for a label being shown for the first time, so the first placement of a session would be
+  decided by a rectangle nothing can overlap.
+- **Both pointer modes share one capture layer, and the overlay's mode is a name rather than a flag.**
+  Select and rulers each want the same full-bleed layer over the app, and two of those would be two
+  things claiming every click, so there is one and the handlers branch on the mode. Switching between
+  them keeps the layer already up: arming is what a caller waits on, and what it waits for is a layer
+  XAML has arranged. The mode is reported by name because rulers captures the pointer exactly as
+  select does -- a host that knew only about select would report an app nobody can click as idle, and
+  the live-app fixture's hand-back check is built on precisely that signal. Clearing the pick stays a
+  separate act from leaving the mode, or "keep this one and stop capturing my clicks" becomes
+  unreachable.
+- **No padding is not padding of zero, and XAML declares `Padding` on no common base.** `Control`,
+  `Border`, `TextBlock`, `RichTextBlock`, `ContentPresenter`, `StackPanel`, `Grid` and `RelativePanel`
+  each declare their own, so the box model asks those projections in turn, and a type with none is
+  reported as having none. A band of zero width draws "this element has no padding" and "this element
+  has a padding of nothing" identically, which is why the numbers live in the toolbar's own readout
+  rather than on the bands: it is the only place that can say which sides are zero, and that a type
+  has no padding at all. Those numbers spell all four sides even though the value came from a
+  shorthand, since somebody reading that row is reading it because they cannot account for a few
+  pixels, and that is not the moment to make them guess whether one number means one side or four.
 - **The overlay asks its `XamlRoot`, not its window, and the pointer hook is the only seam left.**
   `Window.Current` does not exist in WinUI 3, and nine sites wanted three things of it: the extent,
   the root content, and a size-changed event. `XamlRoot` answers all three *and* exists on UWP since

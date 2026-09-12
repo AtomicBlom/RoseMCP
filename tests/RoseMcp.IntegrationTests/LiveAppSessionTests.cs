@@ -298,6 +298,49 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		Assert.Null(session.DetachFailure);
 	}
 
+	/// <summary>
+	/// #219: ICorDebug refuses to detach while any breakpoint the session bound is still active, so a
+	/// session that did the one thing a debug session is for could not let go of the user's process --
+	/// and what it left behind said nothing, since the session is gone from the list while the debugger
+	/// is still on the target. The existing detach tests all detach from a session that never bound
+	/// anything, which is why the suite never saw it; this one sets a breakpoint, waits for the hit, and
+	/// closes with it still bound and the target still held.
+	/// </summary>
+	[Test]
+	public async Task Closing_a_session_that_still_holds_a_breakpoint_detaches_cleanly()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+
+			// Waited for rather than merely set: an unbound breakpoint is not what ICorDebug objects to,
+			// so a close raced ahead of the bind would pass while proving nothing.
+			await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+
+			// Neither removed nor continued: the breakpoint is bound and the target is held, which is
+			// exactly the state the detach used to refuse.
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+
+			Assert.Null(session.DetachFailure);
+			Assert.False(child.HasExited, "detaching past a bound breakpoint leaves the target running");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
 	private static LiveAppTarget AttachTo(int processId) => new()
 	{
 		Kind = LiveAppTargetKind.AttachProcess,

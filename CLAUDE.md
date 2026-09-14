@@ -90,6 +90,17 @@ touch and read that file first.
 A new invariant goes in the file whose trigger already covers it, or in a new file with a trigger of
 its own. This file grows only when a rule binds everywhere.
 
+## Where things are written down
+
+- **Decisions** go in `docs/decisions/`, one file per decision, named for the decision rather than
+  numbered: what was chosen, and why the alternatives lost. An invariant that follows from a decision
+  links to its record rather than arguing it again.
+- **Invariants** go in `docs/invariants/`, as above: a rule a change could break, and the failure it
+  prevents.
+- **Explanations for people using RoseMCP** go on the [wiki](https://github.com/AtomicBlom/RoseMCP/wiki).
+  Decisions and invariants never do, because they constrain the code and have to change in the same
+  commit as it.
+
 ## Commands
 
 ```
@@ -151,7 +162,7 @@ Run a worker standalone against a fixture -- the fastest way to debug Roslyn beh
 the broker in the way:
 
 ```
-dotnet run --project src/RoseMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.sln
+dotnet run --project src/RoseMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.slnx
 ```
 
 A solution whose configurations are not `Debug`/`Release` needs to be told which one, and anything

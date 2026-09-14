@@ -33,12 +33,12 @@ Grab a release, or build from source (below), then register it:
 claude mcp add rose -- <path>/RoseMcp.Server.exe
 ```
 
-That is the whole setup. There is no `workspace_open` to call first — every tool resolves its own
+That is the whole setup. There is no `workspace_open` to call first -- every tool resolves its own
 solution from a supplied path or from the working directory.
 
 The machine needs the .NET **SDK**, not only the runtime. The worker runs a design-time build
 through `Microsoft.CodeAnalysis.Workspaces.MSBuild`, which locates MSBuild and the targets out of
-an SDK installation — so with the runtime alone every project loads with no references and
+an SDK installation -- so with the runtime alone every project loads with no references and
 reports thousands of errors about `System.Object` being undefined. True on Windows too; it is
 only surprising on a server, where installing the runtime is the usual thing to do.
 
@@ -223,12 +223,17 @@ dotnet test
 dotnet format --verify-no-changes
 ```
 
-Run a worker standalone against a fixture — the fastest way to see Roslyn behaviour without the
+Run a worker standalone against a fixture -- the fastest way to see Roslyn behaviour without the
 broker in the way:
 
 ```
-dotnet run --project src/RoseMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.sln
+dotnet run --project src/RoseMcp.Worker -- --solution tests/fixtures/WithGenerator/WithGenerator.slnx
 ```
+
+Changing the code rather than using it: [`CLAUDE.md`](CLAUDE.md) has the rules that bind everywhere,
+[`docs/invariants/`](docs/invariants) the rules for each subsystem with the failure each prevents,
+[`docs/decisions/`](docs/decisions) one record per design decision, and [`docs/debug/`](docs/debug)
+the live-app debugging surface and its security model.
 
 ### Dogfooding
 

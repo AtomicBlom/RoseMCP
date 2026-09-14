@@ -38,7 +38,7 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | `rose_xaml_tree` | Read a live XAML app's visual tree: a flat element list (handle, parent, child index, type, x:Name) that rebuilds into a tree; can be rooted at a named element and paged. |
 | `rose_xaml_properties` | Read one element's properties (by handle) with provenance (Local / Style / Inherited / Default …) and, when the app carries source info, the XAML file and line that set each. |
 | `rose_xaml_apply` | Live edit: apply what a XAML file now holds to the running app's visual tree with no relaunch, reporting each edit's outcome. Properties, added and removed elements, attached properties and keyed resources, on named elements and unnamed ones alike. Visual Studio calls this XAML Hot Reload. |
-| `rose_debug_evaluate` | While stopped, evaluate a field-access expression (`name`, `name.field.field`) against the frame — read directly from memory, no debuggee code run. |
+| `rose_debug_evaluate` | While stopped, evaluate a field-access expression (`name`, `name.field.field`) against the frame -- read directly from memory, no debuggee code run. |
 | `rose_xaml_select_mode` / `rose_xaml_selection` | Let the user point: arm select mode, their next click picks that element, and the selection (type, `x:Name`, handle) feeds the property and live-edit tools. They can also arm it themselves from the in-app toolbar, so read the selection before arming. |
 
 ## The in-app toolbar
@@ -106,7 +106,7 @@ For markup with no file behind it -- something composed rather than saved -- pas
   step boundaries and locals are indexed rather than named.
 - Expression evaluation reads field-access chains only (`rose_debug_evaluate`): an argument or local,
   then `.field` into the object graph, read from memory. It runs none of the debuggee's own code, so
-  property getters, method calls, and an object's `ToString` are deliberately not evaluated — that
+  property getters, method calls, and an object's `ToString` are deliberately not evaluated -- that
   needs func-eval, which can hang or corrupt the target, and is left to an external debugger.
 - Conditions are cheap value-compares (`name OP literal`) over the stopped frame, not full expressions.
 - **The first read of an element's properties is the accurate one.** Reading the property chain

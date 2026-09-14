@@ -15,11 +15,11 @@ namespace RoseMcp.Solutions;
 /// </para>
 /// <para>
 /// Scoped to one solution rather than to a repository, and deliberately not found by walking up.
-/// Configurations are a property of a solution, not of a tree: Drawboard's Revit repository holds
-/// <c>Db.Revit.slnx</c>, which declares Debug-2024 through Debug-2027 and nothing else, beside
-/// <c>Db.Revit.Installer.slnx</c>, which declares no build types at all -- so a file anywhere above
-/// them would be wrong for one of them. Naming a file after its solution is what
-/// <c>Db.Revit.slnx.DotSettings</c> in that same directory already does.
+/// Configurations are a property of a solution, not of a tree: one Revit add-in repository holds a
+/// solution declaring Debug-2024 through Debug-2027 and nothing else, beside an installer solution
+/// declaring no build types at all -- so a file anywhere above them would be wrong for one of them.
+/// Naming a file after its solution is what a <c>.DotSettings</c> file beside that solution already
+/// does.
 /// </para>
 /// </summary>
 public sealed record WorkspaceConfigFile

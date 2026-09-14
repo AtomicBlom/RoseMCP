@@ -4,7 +4,7 @@ namespace RoseMcp.XamlStubs;
 /// An element name as XAML writes it: the XML namespace it came from, and the local name.
 /// <para>
 /// The namespace is kept as the raw URI rather than resolved to a prefix, because that is what
-/// carries the meaning. <c>using:Drawboard.Controls</c> and <c>clr-namespace:Foo;assembly=Bar</c>
+/// carries the meaning. <c>using:Contoso.Controls</c> and <c>clr-namespace:Foo;assembly=Bar</c>
 /// name a CLR namespace outright, while the presentation URI means "look in whichever framework
 /// this project actually references" -- which is the dialect's job to answer.
 /// </para>

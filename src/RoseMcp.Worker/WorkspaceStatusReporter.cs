@@ -198,7 +198,7 @@ public static class WorkspaceStatusReporter
 	/// <para>
 	/// The build's own value first, which is exact and carries the platform:
 	/// <c>net10.0-windows10.0.26100.0</c>. It only reaches the analyzer config when something asked
-	/// for it though, so eleven healthy netstandard2.0 projects in Drawboard's Revit monorepo have
+	/// for it though, so eleven healthy netstandard2.0 projects in one Revit monorepo have
 	/// none. Then the preprocessor symbols, which the SDK defines unconditionally and which no
 	/// generator has to request. The project name last, and only when it looks like a framework:
 	/// Roslyn appends a TFM there solely to tell the targets of a multi-targeted project apart, so a

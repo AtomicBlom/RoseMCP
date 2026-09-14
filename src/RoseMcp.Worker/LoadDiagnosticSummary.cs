@@ -8,7 +8,7 @@ namespace RoseMcp.Worker;
 /// The load diagnostics as something a caller can read: complaints that differ only in the file or
 /// URL they name are folded into one line carrying a count.
 /// <para>
-/// Measured, on Drawboard's 60-project <c>DrawboardProjects.slnx</c>: the status report was 225KB, of
+/// Measured on a 60-project solution: the status report was 225KB, of
 /// which <c>loadDiagnostics</c> was 196KB -- 87% of the answer, over the client's token cap on every
 /// call, so the result always spilled to a file and cost a round trip. 509 of its 557 entries were
 /// one message, NuGet's vulnerability audit failing to reach a feed, repeated once per project per

@@ -5,6 +5,8 @@ using System.Runtime.Loader;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 
+using RoseMcp.Contracts;
+
 namespace RoseMcp.Worker;
 
 /// <summary>
@@ -29,7 +31,8 @@ public sealed class ShadowCopyAnalyzerAssemblyLoader : IAnalyzerAssemblyLoader, 
 	private readonly Func<AssemblyLoadContext, AssemblyName, Assembly?> _resolver;
 	private readonly ILogger _logger;
 	private readonly string _root;
-	private readonly HashSet<string> _failures = [];
+	private readonly List<AnalyzerLoadFailure> _failures = [];
+	private readonly HashSet<string> _reported = [];
 
 	public ShadowCopyAnalyzerAssemblyLoader(ILogger<ShadowCopyAnalyzerAssemblyLoader> logger)
 	{
@@ -57,7 +60,12 @@ public sealed class ShadowCopyAnalyzerAssemblyLoader : IAnalyzerAssemblyLoader, 
 	/// are collected so they can be reported as a degraded load instead.
 	/// </para>
 	/// </summary>
-	public IReadOnlyList<string> LoadFailures
+	/// <remarks>
+	/// In the order the failures arrived. A list rather than the set that dedupes them, because the
+	/// report folds these by assembly and first-appearance order is what keeps the one unusual
+	/// failure from sorting underneath a family of routine ones.
+	/// </remarks>
+	public IReadOnlyList<AnalyzerLoadFailure> LoadFailures
 	{
 		get { lock (_failures) { return [.. _failures]; } }
 	}
@@ -65,14 +73,19 @@ public sealed class ShadowCopyAnalyzerAssemblyLoader : IAnalyzerAssemblyLoader, 
 	/// <summary>Records a failure raised by AnalyzerFileReference.AnalyzerLoadFailed.</summary>
 	public void RecordLoadFailure(string path, string message)
 	{
-		var text = $"{Path.GetFileName(path)}: {message}";
+		var assembly = Path.GetFileName(path);
 
 		lock (_failures)
 		{
-			if (!_failures.Add(text)) return;
+			// Assembly and message together: several versions of one generator collide under a single
+			// file name and each fails differently, and a dedupe on the name alone would report the
+			// first and hide the rest -- which is the collision itself going unsaid.
+			if (!_reported.Add($"{assembly}: {message}")) return;
+
+			_failures.Add(new AnalyzerLoadFailure { Assembly = assembly, Message = message });
 		}
 
-		_logger.LogWarning("Analyzer assembly failed to load -- {Failure}", text);
+		_logger.LogWarning("Analyzer assembly failed to load -- {Assembly}: {Message}", assembly, message);
 	}
 
 	/// <summary>Where the copies live. Exposed so a test can prove the originals are not what got loaded.</summary>

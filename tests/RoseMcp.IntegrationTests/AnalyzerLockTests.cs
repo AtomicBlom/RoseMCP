@@ -72,7 +72,7 @@ public sealed class AnalyzerLockTests
 
 		using var workspace = load.Workspace;
 
-		Assert.Contains(analyzerLoader.LoadFailures, failure => failure.Contains("Gen.dll", StringComparison.Ordinal));
+		Assert.Contains(analyzerLoader.LoadFailures, failure => failure.Assembly.Contains("Gen.dll", StringComparison.Ordinal));
 
 		// The half that matters to a caller: the failure reaches the report rather than stopping at the
 		// loader, and takes the workspace out of Loaded with it.

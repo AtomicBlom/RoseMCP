@@ -14,28 +14,26 @@ namespace RoseMcp.UnitTests;
 public sealed class SymbolLocationTests
 {
 	/// <summary>
-	/// The bare form guesses the module from the first namespace segment, which is right whenever an
-	/// assembly is named for its root namespace, and the explicit form is how to say when it is not.
+	/// The bare form names no assembly -- which module declares the type is found when the location is
+	/// bound, never guessed from the name -- and the explicit form states one.
 	/// </summary>
 	[Test]
-	public void A_bare_name_infers_its_module_and_a_prefix_states_one()
+	public void A_bare_name_names_no_assembly_and_a_prefix_states_one()
 	{
-		var inferred = SymbolLocation.Parse("MyApp.Ui.Widget.Refresh");
-		Assert.Equal("MyApp", inferred.ModuleSimpleName);
-		Assert.Equal("MyApp.Ui.Widget", inferred.TypeName);
-		Assert.Equal("Refresh", inferred.MethodName);
-		Assert.True(inferred.ModuleWasInferred);
-		Assert.Null(inferred.IlOffset);
+		var bare = SymbolLocation.Parse("MyApp.Ui.Widget.Refresh");
+		Assert.Null(bare.Assembly);
+		Assert.Equal("MyApp.Ui.Widget", bare.TypeName);
+		Assert.Equal("Refresh", bare.MethodName);
+		Assert.Null(bare.IlOffset);
 
 		var stated = SymbolLocation.Parse("Widgets!MyApp.Ui.Widget.Refresh");
-		Assert.Equal("Widgets", stated.ModuleSimpleName);
+		Assert.Equal("Widgets", stated.Assembly);
 		Assert.Equal("MyApp.Ui.Widget", stated.TypeName);
-		Assert.False(stated.ModuleWasInferred);
 	}
 
 	/// <summary>
-	/// Whether the module was inferred decides which sentence an unbound breakpoint gets, so it has
-	/// to survive the extension spelling as well.
+	/// An assembly written as a file name is taken down to the simple name a module is matched against,
+	/// so every spelling of it chooses the same module.
 	/// </summary>
 	[Test]
 	[Arguments("Widgets.dll!MyApp.Widget.Refresh")]
@@ -43,14 +41,14 @@ public sealed class SymbolLocationTests
 	[Arguments("Widgets!MyApp.Widget.Refresh")]
 	public void An_assembly_file_name_is_taken_down_to_its_simple_name(string spec)
 	{
-		Assert.Equal("Widgets", SymbolLocation.Parse(spec).ModuleSimpleName);
+		Assert.Equal("Widgets", SymbolLocation.Parse(spec).Assembly);
 	}
 
 	/// <summary>A dotted assembly name must not have its last segment mistaken for an extension.</summary>
 	[Test]
 	public void A_dotted_assembly_name_keeps_all_of_itself()
 	{
-		Assert.Equal("MyApp.Core", SymbolLocation.Parse("MyApp.Core!MyApp.Widget.Refresh").ModuleSimpleName);
+		Assert.Equal("MyApp.Core", SymbolLocation.Parse("MyApp.Core!MyApp.Widget.Refresh").Assembly);
 	}
 
 	[Test]
@@ -61,7 +59,7 @@ public sealed class SymbolLocationTests
 		Assert.Equal(0x1f, picked.IlOffset);
 		Assert.Equal("MyApp.Widget", picked.TypeName);
 		Assert.Equal("Refresh", picked.MethodName);
-		Assert.Equal("Widgets", picked.ModuleSimpleName);
+		Assert.Equal("Widgets", picked.Assembly);
 	}
 
 	/// <summary>

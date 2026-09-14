@@ -39,6 +39,38 @@ public static class MethodTokens
 		return null;
 	}
 
+	/// <summary>
+	/// Whether the module declares a type of this full name, spelled as metadata spells it: namespace
+	/// qualified, with a <c>+</c> before each nesting level. A module that cannot be read declares nothing.
+	/// <para>
+	/// The simple name is compared before the full one is built, because this is asked of every module a
+	/// target loads while a location written without its assembly is waiting, and nearly every type in
+	/// nearly every one of them fails on that alone.
+	/// </para>
+	/// </summary>
+	public static bool DeclaresType(string modulePath, string typeName)
+	{
+		var simpleName = typeName[(typeName.LastIndexOfAny(['.', '+']) + 1)..];
+
+		try
+		{
+			if (Read(modulePath) is not { } metadata) return false;
+
+			foreach (var typeHandle in metadata.TypeDefinitions)
+			{
+				var type = metadata.GetTypeDefinition(typeHandle);
+				if (!metadata.StringComparer.Equals(type.Name, simpleName)) continue;
+				if (FullName(metadata, type) == typeName) return true;
+			}
+
+			return false;
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+	}
+
 	public static string? TypeName(string modulePath, int typeToken)
 	{
 		try

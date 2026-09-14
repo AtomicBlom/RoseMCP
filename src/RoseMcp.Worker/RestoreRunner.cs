@@ -31,7 +31,17 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 		IWorkProgress? progress = null,
 		BuildProperties? build = null)
 	{
-		if (skip) return new RestoreReport { Ran = false, Reason = "Skipped: --no-restore was passed." };
+		if (skip)
+		{
+			// Still measured. --no-restore asks this to skip the work, not to stop knowing whether the
+			// solution is in a state its answers can be trusted from.
+			return new RestoreReport
+			{
+				Ran = false,
+				Reason = "Skipped: --no-restore was passed.",
+				Unrestored = StillUnrestored(projectPaths),
+			};
+		}
 
 		var stale = projectPaths.Where(NeedsRestore).ToArray();
 		if (stale.Length == 0)
@@ -49,14 +59,44 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 
 		if (!succeeded) logger.LogWarning("dotnet restore failed with exit code {ExitCode}.", exitCode);
 
+		var unrestored = StillUnrestored(stale);
+
+		if (succeeded && unrestored.Count > 0)
+		{
+			logger.LogWarning(
+				"dotnet restore succeeded but left {Count} of {Total} project(s) with no restore output, "
+					+ "starting with '{First}'.",
+				unrestored.Count,
+				stale.Length,
+				unrestored[0]);
+		}
+
 		return new RestoreReport
 		{
 			Ran = true,
 			Reason = reason,
 			Succeeded = succeeded,
 			Output = succeeded ? null : Tail(output),
+			Unrestored = unrestored,
 		};
 	}
+
+	/// <summary>
+	/// Which of these projects has no up-to-date restore output, by file name.
+	/// <para>
+	/// The same question <see cref="NeedsRestore"/> answers before restore, asked again afterwards,
+	/// and that second asking is the entire check. A restore that exits 0 has not necessarily
+	/// restored anything: <c>dotnet restore</c> passes silently over projects it does not understand,
+	/// so a solution of non-SDK projects comes back succeeded with not one assets file written, and
+	/// every load after it resolves package references to nothing while calling itself healthy.
+	/// </para>
+	/// <para>
+	/// It costs a directory probe per project, which is what the check before restore already costs,
+	/// and it runs once per load.
+	/// </para>
+	/// </summary>
+	private static IReadOnlyList<string> StillUnrestored(IEnumerable<string> projectPaths) =>
+		[.. projectPaths.Where(NeedsRestore).Select(Path.GetFileName).OfType<string>()];
 
 	/// <summary>
 	/// Restore output is stale when the assets file is missing or older than any input that feeds

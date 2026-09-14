@@ -28,7 +28,7 @@ public static class WorkspaceStatusReporter
 		BuildProperties? build = null,
 		ShadowCopyAnalyzerAssemblyLoader? analyzerLoader = null)
 	{
-		var (projects, xamlReasons) = await DescribeProjectsAsync(
+		var (projects, xamlReports) = await DescribeProjectsAsync(
 			solution, analyzerLoader, cancellationToken, progress);
 
 		// Read after the projects are described, not before: describing one is what asks its references
@@ -36,7 +36,8 @@ public static class WorkspaceStatusReporter
 		var analyzerFailures = analyzerLoader?.LoadFailures ?? [];
 
 		var degradedReasons = (IReadOnlyList<string>)
-			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build, analyzerFailures), .. xamlReasons];
+			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build, analyzerFailures),
+			 .. XamlReasons(xamlReports)];
 
 		return new WorkspaceStatusReport
 		{
@@ -47,6 +48,7 @@ public static class WorkspaceStatusReporter
 			LoadDiagnostics = LoadDiagnosticSummary.Summarise(workspaceDiagnostics),
 			LoadDiagnosticCount = workspaceDiagnostics.Count,
 			DegradedReasons = degradedReasons,
+			AnalyzerLoadFailures = analyzerFailures,
 			BuildConfiguration = build?.Describe(),
 			AvailableConfigurations = build?.Available.Configurations ?? [],
 			Notices = [.. NoticesFor(build, solution, cancellationToken)],
@@ -55,14 +57,14 @@ public static class WorkspaceStatusReporter
 		};
 	}
 
-	private static async Task<(IReadOnlyList<ProjectStatus> Statuses, IReadOnlyList<string> XamlReasons)> DescribeProjectsAsync(
+	private static async Task<(IReadOnlyList<ProjectStatus> Statuses, IReadOnlyList<XamlProjectReport> Xaml)> DescribeProjectsAsync(
 		Solution solution,
 		ShadowCopyAnalyzerAssemblyLoader? analyzerLoader,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress)
 	{
 		var statuses = new List<ProjectStatus>(solution.ProjectIds.Count);
-		var xamlReasons = new List<string>();
+		var xamlReports = new List<XamlProjectReport>();
 		var total = solution.ProjectIds.Count;
 
 		foreach (var project in solution.Projects)
@@ -85,7 +87,7 @@ public static class WorkspaceStatusReporter
 				: (await project.GetSourceGeneratedDocumentsAsync(cancellationToken)).ToArray();
 
 			var xaml = await XamlStubReportReader.ReadAsync(generated, cancellationToken);
-			if (xaml is not null) xamlReasons.AddRange(XamlConcerns(project.Name, xaml));
+			if (xaml is not null) xamlReports.Add(new XamlProjectReport(project.Name, xaml));
 
 			// The report is our own plumbing rather than something the project generates, so it is
 			// not counted and, in GeneratedDocumentService, not listed either.
@@ -110,38 +112,137 @@ public static class WorkspaceStatusReporter
 			});
 		}
 
-		return (statuses, xamlReasons);
+		return (statuses, xamlReports);
+	}
+
+	/// <summary>One project's XAML stub outcome, carried until every project's is in, so they fold together.</summary>
+	public readonly record struct XamlProjectReport(string Project, XamlStubReport Xaml);
+
+	/// <summary>
+	/// What is wrong with the solution's XAML stubs, if anything: one reason per kind of wrongness,
+	/// naming the projects it covers.
+	/// <para>
+	/// Successful stubbing is reported in the per-project counts rather than here: it is a caveat
+	/// worth seeing, not a reason to call the whole workspace degraded, and marking every XAML
+	/// solution degraded would empty that word of meaning. Being unable to stub, or having had to
+	/// guess, is a different matter.
+	/// </para>
+	/// <para>
+	/// Folded across projects rather than yielded per project. The three kinds have one cause and one
+	/// remedy each, so a per-project list repeats the explanation once per project -- eight paragraphs
+	/// on Drawboard's Pdf solution, all of them the same sentence about elements that will not bind.
+	/// The types themselves are not repeated here at all: <see cref="ProjectStatus.UnresolvedXamlTypes"/>
+	/// already carries every one of them, per project, so naming the projects is enough to reach them.
+	/// </para>
+	/// </summary>
+	public static IEnumerable<string> XamlReasons(IReadOnlyList<XamlProjectReport> reports)
+	{
+		var undialected = reports.Where(report => report.Xaml.Dialect is null && report.Xaml.MarkupFileCount > 0).ToArray();
+
+		if (undialected.Length > 0)
+		{
+			yield return $"{Count(undialected.Length, "project has", "projects have")} XAML files that no dialect "
+				+ "could be chosen for, so nothing stood in for the markup compiler and their code-behind reports "
+				+ $"errors that are not real: {Name(undialected.Select(Describe))}.";
+		}
+
+		var ambiguous = reports.Where(report => report.Xaml.DialectAmbiguous).ToArray();
+
+		if (ambiguous.Length > 0)
+		{
+			yield return $"{Count(ambiguous.Length, "project references", "projects reference")} more than one XAML "
+				+ $"framework, so the dialect their stubs were written as is a guess: {Name(ambiguous.Select(Describe))}.";
+		}
+
+		var unresolved = reports.Where(report => report.Xaml.UnresolvedTypes.Count > 0).ToArray();
+
+		if (unresolved.Length > 0)
+		{
+			var total = unresolved.Sum(report => report.Xaml.UnresolvedTypes.Count);
+
+			yield return $"{Count(total, "named XAML element", "named XAML elements")} across "
+				+ $"{Count(unresolved.Length, "project", "projects")} have a type the project cannot see, so they "
+				+ "have no field and will not bind: "
+				+ $"{Name(unresolved.Select(report => $"{report.Project} ({report.Xaml.UnresolvedTypes.Count})"))}. "
+				+ "Each project's unresolvedXamlTypes lists them. A project that resolves none of its package types "
+				+ "is usually one that was never restored, so check restore before reading these as missing usings.";
+		}
+
+		static string Describe(XamlProjectReport report) => $"{report.Project} ({report.Xaml.DialectReason})";
 	}
 
 	/// <summary>
-	/// What is wrong with a project's XAML stubs, if anything. Successful stubbing is reported in the
-	/// per-project counts rather than here: it is a caveat worth seeing, not a reason to call the
-	/// whole workspace degraded, and marking every XAML solution degraded would empty that word of
-	/// meaning. Being unable to stub, or having had to guess, is a different matter.
+	/// The one reason covering every analyzer assembly that would not load, or null when they all did.
+	/// <para>
+	/// Grouped by assembly, because the failure this catches most often is one generator arriving at
+	/// several versions from several target packs and all but one of them losing. Listing the failures
+	/// separately buries that: one file name carrying a count is the finding, and nine paragraphs that
+	/// each look like an unrelated broken package are not.
+	/// </para>
+	/// <para>
+	/// Public, and taking the failures rather than a loader, for the reason
+	/// <see cref="LoadDiagnosticSummary.Fold"/> is: the fold is the part worth testing and it needs no
+	/// workspace to exercise.
+	/// </para>
 	/// </summary>
-	private static IEnumerable<string> XamlConcerns(string projectName, XamlStubReport xaml)
+	public static string? AnalyzerReason(IReadOnlyList<AnalyzerLoadFailure> failures)
 	{
-		if (xaml.Dialect is null && xaml.MarkupFileCount > 0)
-		{
-			yield return $"Project {projectName} has {xaml.MarkupFileCount} XAML file(s) but {xaml.DialectReason}, "
-				+ "so nothing could stand in for the markup compiler and its code-behind will report errors "
-				+ "that are not real.";
-		}
+		if (failures.Count == 0) return null;
 
-		if (xaml.DialectAmbiguous)
-		{
-			yield return $"Project {projectName} references more than one XAML framework; stubs were written "
-				+ $"as {xaml.Dialect} because {xaml.DialectReason}.";
-		}
+		var assemblies = failures
+			.GroupBy(failure => failure.Assembly, StringComparer.OrdinalIgnoreCase)
+			.Select(group => group.Count() == 1 ? group.Key : $"{group.Key} (x{group.Count()})");
 
-		if (xaml.UnresolvedTypes.Count == 0) yield break;
-
-		var examples = string.Join(", ", xaml.UnresolvedTypes.Take(3));
-		var rest = xaml.UnresolvedTypes.Count > 3 ? $", and {xaml.UnresolvedTypes.Count - 3} more" : string.Empty;
-
-		yield return $"Project {projectName} has {xaml.UnresolvedTypes.Count} named XAML element(s) whose type it "
-			+ $"cannot see, so they have no field and will not bind: {examples}{rest}.";
+		return $"{Count(failures.Count, "analyzer assembly", "analyzer assemblies")} failed to load, so the "
+			+ "analyzers and source generators inside them are producing nothing while MSBuild still passes them "
+			+ $"to the compiler: {Name(assemblies)}. One file name carrying a count is several versions of one "
+			+ "generator colliding, and only one of them loaded. Rebuild them, or check their dependencies and "
+			+ "the Roslyn version they were built against, then reload. analyzerLoadFailures has each message.";
 	}
+
+	/// <summary>
+	/// The one reason covering projects left with no restore output, or null when none were.
+	/// <para>
+	/// Separate from the restore-failed reason and reached only when that one did not fire: a restore
+	/// that failed explains itself and its output is the actionable part. This is the other case, and
+	/// the one worth having -- restore reporting success while most of the solution is unrestored,
+	/// which is what <c>dotnet restore</c> does to a solution of non-SDK projects.
+	/// </para>
+	/// </summary>
+	public static string? UnrestoredReason(RestoreReport? restore)
+	{
+		if (restore?.Unrestored is not { Count: > 0 } unrestored) return null;
+
+		var lead = restore.Ran ? "Restore reported success, but" : "Restore did not run, and";
+
+		return $"{lead} {Count(unrestored.Count, "project has", "projects have")} no restore output: "
+			+ $"{Name(unrestored)}. Their package references resolve to nothing, so the types, analyzers and "
+			+ "generators those packages carry are all absent, and the errors that follow describe everything "
+			+ "except the cause. 'dotnet restore' passes over projects it does not understand -- non-SDK csproj, "
+			+ "which is every UWP one -- and exits 0 regardless; restore those with MSBuild. restore.unrestored "
+			+ "lists them.";
+	}
+
+	/// <summary>
+	/// Names a few of something and says how many were left out, so a folded reason stays actionable
+	/// without growing back into the list it replaced. Three, because that is enough to recognise a
+	/// family by and short enough to read in a tray card.
+	/// </summary>
+	private static string Name(IEnumerable<string> items, int show = 3)
+	{
+		var all = items.ToArray();
+		var named = string.Join(", ", all.Take(show));
+
+		return all.Length > show ? $"{named}, and {all.Length - show} more" : named;
+	}
+
+	/// <summary>
+	/// A count against its noun, both spellings given. English pluralisation is not a suffix rule --
+	/// "analyzer assemblies" and "projects have" do not come from adding s -- and a reason that says
+	/// "1 projects have" reads as a bug in the thing reporting the bug.
+	/// </summary>
+	private static string Count(int count, string singular, string plural) =>
+		$"{count} {(count == 1 ? singular : plural)}";
 
 	/// <summary>
 	/// A generator built against a Roslyn this worker does not have, or one with a broken dependency,
@@ -291,7 +392,7 @@ public static class WorkspaceStatusReporter
 		IReadOnlyList<ProjectStatus> projects,
 		RestoreReport? restore,
 		BuildProperties? build,
-		IReadOnlyList<string> analyzerLoadFailures)
+		IReadOnlyList<AnalyzerLoadFailure> analyzerLoadFailures)
 	{
 		var reasons = new List<string>();
 
@@ -299,6 +400,10 @@ public static class WorkspaceStatusReporter
 		{
 			reasons.Add("Restore failed, so the design-time build could not resolve references or analyzers. "
 				+ "Run dotnet restore and inspect the output.");
+		}
+		else if (UnrestoredReason(restore) is { } unrestored)
+		{
+			reasons.Add(unrestored);
 		}
 
 		if (WrongPlatformSuspicion(build, workspaceDiagnostics) is { } platform) reasons.Add(platform);
@@ -330,12 +435,7 @@ public static class WorkspaceStatusReporter
 		// compiler is handed the reference either way, so the generators inside it produce nothing while
 		// the project reports a clean load and a generator count of zero -- a healthy-looking workspace
 		// that is not one, and the second of the three failures this server exists to prevent.
-		foreach (var failure in analyzerLoadFailures)
-		{
-			reasons.Add($"An analyzer assembly failed to load -- {failure}. MSBuild still passes it to the "
-				+ "compiler, so any analyzers or source generators it contains are producing nothing. Rebuild "
-				+ "it, or check its dependencies and the Roslyn version it was built against, then reload.");
-		}
+		if (AnalyzerReason(analyzerLoadFailures) is { } analyzers) reasons.Add(analyzers);
 
 		// Counted, but only degrading when something actually came back impaired. MSBuild's Failure
 		// kind covers complaints that have no bearing on whether a project compiled, and a status

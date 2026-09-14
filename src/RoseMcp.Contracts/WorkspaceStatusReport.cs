@@ -45,8 +45,30 @@ public sealed record WorkspaceStatusReport : WorkspaceScopedResult
 	/// <summary>
 	/// Why this workspace is <see cref="WorkspaceState.Degraded"/>, each paired with the command
 	/// that would fix it. Empty when the load is trustworthy.
+	/// <para>
+	/// One reason per kind, never one per instance. A kind's remedy is a property of the kind, so
+	/// nine analyzers that will not load are one reason naming nine assemblies rather than nine
+	/// reasons each repeating the same two sentences about what to do. The tray draws this whole list
+	/// into a single information bar, which makes its length the panel's height, and a wall of
+	/// near-identical paragraphs is read as one thing and skipped -- the same emptying of the word
+	/// that keeping stale build output out of here avoids.
+	/// </para>
+	/// <para>
+	/// Folded reasons name what they cover and leave the particulars to the fields that already hold
+	/// them: <see cref="ProjectStatus.UnresolvedXamlTypes"/>, <see cref="ProjectStatus.MissingAnalyzerOutputs"/>,
+	/// <see cref="AnalyzerLoadFailures"/> and <see cref="RestoreReport.Unrestored"/>. So a reason is
+	/// an index into this report rather than a second copy of it, and nothing is lost by shortening
+	/// it.
+	/// </para>
 	/// </summary>
 	public required IReadOnlyList<string> DegradedReasons { get; init; }
+
+	/// <summary>
+	/// Every analyzer or generator assembly that would not load, with the message the runtime gave.
+	/// <see cref="DegradedReasons"/> folds these to one line and names the assemblies; this is where
+	/// the version each load wanted, and the HRESULT it failed with, survive that fold.
+	/// </summary>
+	public IReadOnlyList<AnalyzerLoadFailure> AnalyzerLoadFailures { get; init; } = [];
 
 	/// <summary>
 	/// The MSBuild configuration, platform and any pinned properties this workspace was loaded

@@ -9,12 +9,11 @@ namespace RoseMcp.IntegrationTests;
 /// <summary>
 /// Which workspace a call is routed to, asked without starting a worker for it.
 /// <para>
-/// The ordering these cover used to be spread across three places that disagreed: the relay resolved
-/// the session's directory before reading any argument, each tool wrote its own
-/// <c>workspace ?? filePath</c> by hand, and the manager's last resort was whichever single solution
-/// happened to be loaded. A session in
-/// <c>D:\Drawboard\Windows\Windows.IntegrationFramework</c> -- three solutions at the root -- could
-/// therefore be refused for an ambiguity it had already resolved by naming a solution outright.
+/// The ordering these cover is one rule in <c>WorkspaceManager.WorkspaceFor</c>, because anything
+/// less disagrees with itself. A relay that resolves the session's directory before reading any
+/// argument refuses a session in a root holding three solutions for an ambiguity the call settled by
+/// naming one outright; tools that each write their own <c>workspace ?? filePath</c> drift apart; and
+/// a last resort of whichever single solution happens to be loaded answers from another repository.
 /// </para>
 /// </summary>
 public sealed class WorkspaceRoutingTests
@@ -50,9 +49,9 @@ public sealed class WorkspaceRoutingTests
 	}
 
 	/// <summary>
-	/// A path the call carries for its own reasons decides by containment, which is what the relay's
-	/// pre-emptive resolve used to make impossible: every rose_find_references in a multi-solution
-	/// root failed on the directory before the file path it was given could settle it.
+	/// A path the call carries for its own reasons decides by containment, which a relay that
+	/// resolves the session's directory first makes impossible: every rose_find_references in a
+	/// multi-solution root would fail on the directory before the file path it was given could settle it.
 	/// </summary>
 	[Test]
 	public void A_path_in_the_call_decides_where_the_origin_cannot()
@@ -134,9 +133,8 @@ public sealed class WorkspaceRoutingTests
 		NullLogger<WorkspaceManager>.Instance);
 
 	/// <summary>
-	/// A root holding three solutions, none of which encloses the root itself -- the shape of
-	/// Drawboard's integration framework, where DrawboardProjects.slnx sits beside Drawboard.Pdf.slnx
-	/// and Shared.slnx and the largest is not a superset of the others.
+	/// A root holding three solutions, none of which encloses the root itself -- the shape of a real
+	/// repository where the largest solution sits beside two smaller ones and is not a superset of them.
 	/// </summary>
 	private sealed class SeveralSolutions : IDisposable
 	{

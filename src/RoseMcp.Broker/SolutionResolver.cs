@@ -11,9 +11,9 @@ namespace RoseMcp.Broker;
 /// </para>
 /// <para>
 /// A directory holding more than one solution is the case worth care. Picking the first by name is
-/// silent and wrong: <c>D:\Drawboard\Revit</c> holds a 17-project solution beside a 1-project
-/// installer, and the installer sorts first, so every bare call in that repository answered from
-/// the wrong compilation while looking exactly like a true negative. Containment decides it where
+/// silent and wrong: one real repository root holds a 17-project solution beside a 1-project
+/// installer, and the installer sorts first, so every bare call there answers from the wrong
+/// compilation while looking exactly like a true negative. Containment decides it where
 /// it can, a committed pin decides what containment leaves tied, and anything still undecided is an
 /// error naming the candidates rather than a guess.
 /// </para>
@@ -142,19 +142,17 @@ public static class SolutionResolver
 	/// directory, and evidence about this question beats a default set for all of them.
 	/// </para>
 	/// <para>
-	/// The order used to be the other way round, against this method's own description and against
-	/// the name of the test covering it, which only ever resolved a bare directory and so passed
-	/// either way. It is not academic. In <c>D:\Drawboard\Windows\Windows.IntegrationFramework</c>
-	/// three solutions share the root and the largest is not a superset: 23 projects under
-	/// <c>Pdf/</c> and 5 under <c>Shared/</c> are outside it. Pinning it -- which is what the
-	/// ambiguity error tells you to do -- made every question about those 28 projects resolve to a
+	/// The order is the part to protect, and a test that only resolves a bare directory passes either
+	/// way round. In one real repository three solutions share the root and the largest is not a
+	/// superset: 28 projects are outside it. Pinning it -- which is what the ambiguity error tells you
+	/// to do -- would, with the pin checked first, resolve every question about those 28 projects to a
 	/// compilation that does not contain the file, which is the wrong-compilation-shaped-like-a-true-
 	/// negative failure this class exists to prevent.
 	/// </para>
 	/// <para>
-	/// So a pin still decides a bare directory, which is the case it was added for, and still decides
-	/// between several solutions that all compile the path. It just no longer overrules the one that
-	/// does when the alternatives do not.
+	/// So a pin decides a bare directory, which is the case it exists for, and decides between several
+	/// solutions that all compile the path. It does not overrule the one that compiles the path when
+	/// the alternatives do not.
 	/// </para>
 	/// </summary>
 	private static SolutionChoice Disambiguate(string[] candidates, string requested, string directory)

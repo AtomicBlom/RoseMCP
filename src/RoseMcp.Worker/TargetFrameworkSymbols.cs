@@ -8,7 +8,7 @@ namespace RoseMcp.Worker;
 /// This exists because the direct answer is not always there to ask for. MSBuild publishes
 /// <c>build_property.TargetFramework</c> into the analyzer config only when something has asked for
 /// it, so a project with no source generator often has none -- eleven healthy netstandard2.0
-/// projects in Drawboard's Revit monorepo among them. The SDK defines these symbols regardless,
+/// projects in one Revit monorepo among them. The SDK defines these symbols regardless,
 /// because conditional compilation would not work otherwise.
 /// </para>
 /// </summary>

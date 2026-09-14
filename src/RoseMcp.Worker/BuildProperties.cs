@@ -144,7 +144,7 @@ public sealed record BuildProperties
 	/// the workspace reads healthy while every cross-project answer is missing half its inputs.
 	/// </para>
 	/// <para>
-	/// Measured on Drawboard's 60-project DrawboardProjects.slnx from an ARM64 machine: it declares
+	/// Measured on a 60-project solution from an ARM64 machine: it declares
 	/// x64 and ARM64 and no AnyCPU, ARM64 was chosen for matching the host, and 363 of the 557 load
 	/// diagnostics named assemblies under <c>\ARM64\</c> that do not exist. Nothing said so.
 	/// </para>

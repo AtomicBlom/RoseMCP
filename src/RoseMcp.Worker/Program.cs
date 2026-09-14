@@ -19,7 +19,7 @@ internal static class Program
 		}
 		catch (ArgumentException ex)
 		{
-			await Console.Error.WriteLineAsync($"{ex.Message}{Environment.NewLine}usage: RoseMcp.Worker --solution <path> [--no-restore]");
+			await Console.Error.WriteLineAsync($"{ex.Message}{Environment.NewLine}usage: RoseMcp.Worker --solution <path> [--configuration <name>] [--platform <name>] [--property <name>=<value>] [--no-restore] [--no-xaml-stubs]");
 			return 2;
 		}
 

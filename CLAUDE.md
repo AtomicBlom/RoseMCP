@@ -40,11 +40,12 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.Inspector` | WinUI 3 window for one debugged process. A **client** of the broker over the http operator API, owning no session of its own, because a process has one debugger. See [the decision](docs/decisions/the-inspector-is-a-client-of-the-broker.md). |
 
 Logic goes in `Contracts` only when a test needs it and the host that owns it cannot be referenced.
-`XamlStackModules`, `ToolArgumentShape`, `XamlProviderPath`, `ValuePath`, `SymbolLocation` and
-`HostVersion` are the whole list, each a pure function over strings or JSON with the host's own facts
-passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a child process,
-so a rule living beside its host is a rule no test can see. It is not a licence for behaviour:
-anything holding state, touching Roslyn, or knowing what a tool does belongs in the host.
+`XamlStackModules`, `ToolArgumentShape`, `XamlProviderPath`, `ValuePath`, `SymbolLocation`,
+`HostVersion` and `BreakpointCondition` are the whole list, each a pure function over strings or JSON
+with the host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable
+only as a child process, so a rule living beside its host is a rule no test can see. It is not a
+licence for behaviour: anything holding state, touching Roslyn, or knowing what a tool does belongs
+in the host.
 
 The worker is a separate process because analyzer and generator assemblies cannot be unloaded
 once loaded, MSBuild resolution is per-process, and killing a worker is the only reliable way to

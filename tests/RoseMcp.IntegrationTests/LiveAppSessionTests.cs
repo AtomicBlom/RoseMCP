@@ -3313,8 +3313,8 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 
 	/// <summary>
 	/// A conditional breakpoint (issue #17): a cheap value-compare gates each hit, so the target is only
-	/// held once the condition holds. The probe increments its argument each loop, so a condition on a
-	/// value well beyond the count reached by attach time proves the earlier hits were skipped.
+	/// held once the condition holds. The probe increments its argument each loop, so a stop at a value
+	/// well above zero proves every earlier hit was skipped.
 	/// </summary>
 	[Test]
 	public async Task Conditional_breakpoint_stops_only_when_the_condition_holds()
@@ -3335,11 +3335,16 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 			var session = await manager.StartAsync(target, cancellationToken);
 			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
 
-			// The probe reaches iteration 30 well after attach, so hits before it are gated out.
+			// An ordering rather than an equality, because the probe counts up every 200ms and never
+			// repeats a value: "iteration == 30" is satisfiable for 200ms exactly, and a machine busy
+			// enough to spend that long between starting the probe and binding the breakpoint can never
+			// satisfy it again -- so the test waits out its timeout on a condition that cannot hold.
+			// The gating is still what is proved, and proved more strongly: an ungated breakpoint stops
+			// on the first hit, which is zero.
 			var breakpoint = await session.SetBreakpointAsync(
-				"DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: "iteration == 30", cancellationToken);
+				"DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: "iteration >= 30", cancellationToken);
 			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
-			Assert.Equal("iteration == 30", breakpoint.Condition);
+			Assert.Equal("iteration >= 30", breakpoint.Condition);
 
 			var stop = await WaitForEventAsync(
 				session,
@@ -3347,9 +3352,12 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 				cancellationToken);
 			Assert.NotNull(stop);
 
-			// It stopped at exactly the conditioned value, having skipped every earlier hit.
+			// Every hit below the conditioned value was gated out, which is the whole claim: an
+			// unconditional breakpoint on this method stops at zero.
 			var iteration = stop!.Variables!.First(variable => variable.Name == "iteration");
-			Assert.Equal("30", iteration.Value);
+			Assert.True(
+				int.TryParse(iteration.Value, out var reached) && reached >= 30,
+				$"stopped at iteration '{iteration.Value}', so hits below 30 were not gated out");
 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
 			await session.ContinueAsync(cancellationToken);

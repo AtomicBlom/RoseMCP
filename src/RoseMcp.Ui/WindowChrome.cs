@@ -37,20 +37,13 @@ public static class WindowChrome
 	}
 
 	/// <summary>
-	/// Puts this product's own icon on the window; see
-	/// <see cref="ApplyIcon(Window, string, string, Image?[])"/>.
-	/// </summary>
-	public static string? ApplyIcon(Window window, params Image?[] marks) =>
-		ApplyIcon(window, RoseUiAssets.IconFile, RoseUiAssets.MarkFile, marks);
-
-	/// <summary>
 	/// Puts an icon on the window and its art into whichever <see cref="Image"/> elements the caller
 	/// draws marks with. Returns the icon's path when there was one, so a caller that also needs it --
 	/// a tray icon wants an <c>HICON</c> at a chosen frame size -- does not resolve it a second time.
 	/// <para>
-	/// Which mark is the caller's, because the two apps run side by side and the taskbar is where
-	/// somebody picks between them. The product's own is the default, so an app with no reason to care
-	/// says nothing.
+	/// The files are named by the caller and read from its own <c>Assets</c> folder, because each app
+	/// has its own picture: the tray and the inspector sit side by side in the taskbar, and the icon
+	/// is what somebody picks between them by. This library owns how a window wears one, not which.
 	/// </para>
 	/// <para>
 	/// A missing or unreadable asset leaves the window iconless rather than failing: an icon is the
@@ -58,13 +51,13 @@ public static class WindowChrome
 	/// </para>
 	/// </summary>
 	/// <param name="window">The window to icon.</param>
-	/// <param name="iconFile">The multi-frame icon, by name; see <see cref="RoseUiAssets"/>.</param>
+	/// <param name="iconFile">The multi-frame icon, by file name, in the app's <c>Assets</c> folder.</param>
 	/// <param name="markFile">The single-frame art for the marks drawn inside the window.</param>
 	/// <param name="marks">The elements to draw the mark into.</param>
 	public static string? ApplyIcon(Window window, string iconFile, string markFile, params Image?[] marks)
 	{
-		var icon = RoseUiAssets.For(iconFile);
-		var mark = RoseUiAssets.For(markFile);
+		var icon = Asset(iconFile);
+		var mark = Asset(markFile);
 
 		try
 		{
@@ -91,6 +84,10 @@ public static class WindowChrome
 			return null;
 		}
 	}
+
+	/// <summary>One of the calling app's asset files, beside its own exe.</summary>
+	private static string Asset(string fileName) =>
+		Path.Combine(AppContext.BaseDirectory, "Assets", fileName);
 
 	[DllImport("user32.dll")]
 	private static extern uint GetDpiForWindow(nint hwnd);

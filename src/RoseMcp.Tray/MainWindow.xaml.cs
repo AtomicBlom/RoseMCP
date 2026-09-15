@@ -129,7 +129,7 @@ public sealed partial class MainWindow : Window
 	/// </summary>
 	private void ApplyIcon()
 	{
-		var icon = WindowChrome.ApplyIcon(this, TitleMark, EmptyMark);
+		var icon = WindowChrome.ApplyIcon(this, "rose-mcp.ico", "rose-mcp.png", TitleMark, EmptyMark);
 		if (icon is null) return;
 
 		try

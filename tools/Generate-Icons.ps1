@@ -23,8 +23,8 @@ param(
     # Which app's mark to draw. The composition is the same either way, and the bowl is what differs:
     # the tray gets the rose, the inspector a lens whose handle is the leg of the R.
     [ValidateSet('Rose', 'Lens')] [string] $Mark = 'Rose',
-    # Both apps read their assets out of the shared UI library's output, so both are written there.
-    [string] $AssetDirectory = "$PSScriptRoot/../src/RoseMcp.Ui/Assets",
+    # Each app owns the icon it shows, so each mark goes to that app's own Assets folder.
+    [string] $AssetDirectory,
     [string] $BaseName
 )
 
@@ -40,6 +40,12 @@ $Sizes = @(16, 20, 24, 32, 48, 64, 128, 256)
 $MarkSize = 128
 
 if (-not $BaseName) { $BaseName = if ($Mark -eq 'Lens') { 'rose-inspector' } else { 'rose-mcp' } }
+
+if (-not $AssetDirectory)
+{
+    $app = if ($Mark -eq 'Lens') { 'RoseMcp.Inspector' } else { 'RoseMcp.Tray' }
+    $AssetDirectory = "$PSScriptRoot/../src/$app/Assets"
+}
 
 $IcoPath = Join-Path $AssetDirectory "$BaseName.ico"
 $PngPath = Join-Path $AssetDirectory "$BaseName.png"

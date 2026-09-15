@@ -66,7 +66,8 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   may legitimately hit, while a build agent is the machine that is supposed to have every toolset. So
   `promote` warns, `package` refuses, and CI fails on any non-zero exit -- because nothing else in CI
   compiles a line of the C++, and the first thing to notice used to be a release failing to package,
-  after the tag was already cut. Main builds all six combinations. A pull request builds x86 and x64
-  only, and only when a provider's inputs changed: the ARM64 cross-toolset is an installer run that
-  costs more than every compile together, and an architecture-only break in a header shared by all
-  three is rare enough to be caught on main, before any tag, rather than paid for on every PR.
+  after the tag was already cut. Main builds all six combinations as Release. A pull request builds
+  x64 Debug only, and only when a provider's inputs changed: the ARM64 cross-toolset is an installer
+  run that costs more than every compile together, and a break that only one architecture or the
+  optimiser sees, in headers all of them share, is rare enough to be caught on main, before any tag,
+  rather than paid for on every PR.

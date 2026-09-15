@@ -13,7 +13,7 @@ name: CI
 # else here would notice.
 #
 # Those two are also the slow ones, so a pull request runs each only when something it could catch
-# has changed, and builds the providers for x86 and x64 only. Main, and a manual run, get everything.
+# has changed, and builds the providers as x64 Debug only. Main, and a manual run, get everything.
 on:
   # Only main. A branch with a pull request open would otherwise run this twice for one
   # change -- once for the push and once for the pull request -- which doubles the wait and
@@ -198,9 +198,12 @@ jobs:
   # cannot build the ARM64 provider must say so rather than quietly produce an install that has no
   # XAML inspection for half the targets it claims to serve.
   #
-  # A pull request skips ARM64. Installing its cross-toolset is an installer run of several minutes,
-  # longer than all six compiles, and the three architectures compile the same headers: a break that
-  # only ARM64 sees is rare, and main still builds it before any release is cut from it.
+  # A pull request builds x64 Debug only, which answers the question a pull request is asking: does
+  # the C++ still compile and link. Installing the ARM64 cross-toolset is an installer run of several
+  # minutes, longer than all six compiles, and every architecture and configuration compiles the same
+  # headers. What is left uncaught -- a break only x86 or ARM64 sees, such as x86's decorated export
+  # names, or one only the optimiser trips -- is rare, and main still builds all six as Release before
+  # any release is cut from it.
   xaml-providers:
     needs: changes
     # The same fail-open condition as the integration job, for the same reason.
@@ -235,8 +238,10 @@ jobs:
       - name: Build every provider for every architecture
         shell: pwsh
         run: |
-          $platforms = if ($env:GITHUB_EVENT_NAME -eq 'pull_request') { 'x86', 'x64' } else { 'x86', 'x64', 'arm64' }
-          Write-Host "platforms: $($platforms -join ', ')"
+          $isPullRequest = $env:GITHUB_EVENT_NAME -eq 'pull_request'
+          $platforms = if ($isPullRequest) { @('x64') } else { @('x86', 'x64', 'arm64') }
+          $configuration = if ($isPullRequest) { 'Debug' } else { 'Release' }
+          Write-Host "platforms: $($platforms -join ', '); configuration: $configuration"
 
           $failed = @()
           foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
@@ -244,7 +249,7 @@ jobs:
               foreach ($platform in $platforms)
               {
                   Write-Host "::group::$project ($platform)"
-                  & ./src/$project/build.ps1 -Platform $platform -Configuration Release
+                  & ./src/$project/build.ps1 -Platform $platform -Configuration $configuration
                   $code = $LASTEXITCODE
                   Write-Host '::endgroup::'
 

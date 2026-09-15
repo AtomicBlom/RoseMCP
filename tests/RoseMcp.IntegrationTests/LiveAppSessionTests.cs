@@ -341,6 +341,46 @@ public sealed class LiveAppSessionTests(UwpProbeApp probe, WinUiProbeApp winui, 
 		}
 	}
 
+	/// <summary>
+	/// A method named by <c>Namespace.Type.Method</c> alone binds in the module that declares its type,
+	/// whatever that module is called. <c>Elsewhere.Pulse</c> is compiled into <c>DebugProbeTarget.dll</c>,
+	/// so no segment of the name is a module -- the shape of a repository that names its assemblies and
+	/// its namespaces apart, where a module read off the name is a module that does not exist. The hit is
+	/// waited for as well, because a hit is matched back to its breakpoint by the module it bound in.
+	/// </summary>
+	[Test]
+	public async Task A_bare_name_binds_in_the_module_that_declares_its_type()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var source = await session.ReadMethodSourceAsync("Elsewhere.Pulse.Tick", cancellationToken);
+			Assert.Equal("DebugProbeTarget", source.Module);
+
+			var breakpoint = await session.SetBreakpointAsync("Elsewhere.Pulse.Tick", autoContinueSeconds: null, condition: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"a bare name should bind in the module declaring its type; detail: {breakpoint.Detail}");
+
+			var hit = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("Elsewhere.Pulse.Tick"),
+				cancellationToken);
+			Assert.NotNull(hit);
+
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			Assert.True(await session.ContinueAsync(cancellationToken));
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
 	private static LiveAppTarget AttachTo(int processId) => new()
 	{
 		Kind = LiveAppTargetKind.AttachProcess,

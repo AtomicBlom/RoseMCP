@@ -332,14 +332,15 @@ public static class ToolDescriptions
 
 	/// <summary>
 	/// The debugger's location grammar, said to be the one the rest of the surface uses. It is the
-	/// same <c>Namespace.Type.Method</c> a <c>symbol</c> argument takes, with an assembly prefix for
-	/// the case the debugger cannot infer -- and nothing said so, so a caller who had just addressed
-	/// the same method by name for an edit had no reason to think this took the same string.
+	/// same <c>Namespace.Type.Method</c> a <c>symbol</c> argument takes -- and nothing said so, so a
+	/// caller who had just addressed the same method by name for an edit had no reason to think this
+	/// took the same string. The assembly prefix is a choice rather than a requirement, because the
+	/// module is found by what it declares and not by what it is called.
 	/// </summary>
 	public const string TracepointLocationArgument =
-		"The method to trace, as the same Namespace.Type.Method the rose_* tools take, with Assembly! "
-			+ "in front where the assembly name is not the namespace's first segment. Add @IL_001f to "
-			+ "log inside it rather than at its start.";
+		"The method to trace, as the Namespace.Type.Method the rose_* tools take; it binds in whichever "
+			+ "loaded module declares the type. Put Assembly! in front to choose when several do. Add "
+			+ "@IL_001f to log inside it.";
 
 	public const string LogMessageArgument =
 		"Optional message logged on each hit (literal text; expression interpolation comes later).";
@@ -350,8 +351,8 @@ public static class ToolDescriptions
 	public const string TracepointIdArgument = "The tracepoint id returned by rose_debug_add_tracepoint.";
 
 	public const string BreakpointLocationArgument =
-		"The method to break on, as the same Namespace.Type.Method the rose_* tools take, with "
-			+ "Assembly! in front where the assembly name is not the namespace's first segment. Add "
+		"The method to break on, as the Namespace.Type.Method the rose_* tools take; it binds in whichever "
+			+ "loaded module declares the type. Put Assembly! in front to choose when several do. Add "
 			+ "@IL_001f to stop inside it rather than at its start.";
 
 	public const string AutoContinueSecondsArgument =
@@ -405,8 +406,9 @@ public static class ToolDescriptions
 		"How many matches to return, best first. The total says how many there were.";
 
 	public const string MethodSourceLocationArgument =
-		"The method to read, as Assembly!Namespace.Type.Method. Any @IL_001f on the end is ignored: "
-			+ "the whole method is read either way.";
+		"The method to read, as Namespace.Type.Method, with Assembly! in front to choose between "
+			+ "modules declaring the same type. Any @IL_001f on the end is ignored: the whole method is read "
+			+ "either way.";
 
 	/// <summary>
 	/// How a live element is named to the tools that read one. All three spellings, because a caller

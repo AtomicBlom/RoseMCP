@@ -628,16 +628,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		var parsed = SymbolLocation.Parse(location);
 		var displayName = MethodDisplayName.Of(parsed.TypeName, parsed.MethodName);
-		var module = parsed.ModuleSimpleName;
+		var loaded = ModulePaths();
+		var owners = TypeOwners.Of(loaded, parsed.TypeName, parsed.Assembly);
 
-		var modulePath = ModulePaths().FirstOrDefault(path =>
-			string.Equals(Path.GetFileNameWithoutExtension(path), module, StringComparison.OrdinalIgnoreCase));
-
-		if (modulePath is null)
+		if (WhyNoModule(parsed, location, loaded, owners) is { } unresolved)
 		{
-			return NoMethodSource(
-				location, displayName, module, LiveSymbolState.NoSymbols, $"No loaded module is named {module}.");
+			return NoMethodSource(location, displayName, parsed.Assembly ?? string.Empty, LiveSymbolState.NoSymbols, unresolved);
 		}
+
+		var modulePath = owners[0];
+		var module = Path.GetFileNameWithoutExtension(modulePath);
 
 		var symbols = SymbolCache.Shared.For(modulePath);
 		var token = MethodTokens.Find(modulePath, parsed.TypeName, parsed.MethodName);
@@ -694,6 +694,29 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				? excerpt.Problem
 				: $"{excerpt.Problem} The positions below are still exact; only the text is missing.",
 		};
+	}
+
+	/// <summary>
+	/// Why a location cannot be read from one module, or null when it can and the first owner is that
+	/// module. A stated assembly takes the first module of its name, as binding does; a location with none
+	/// is refused when several modules declare the type rather than read from whichever came first.
+	/// </summary>
+	private static string? WhyNoModule(
+		SymbolLocation parsed,
+		string location,
+		IReadOnlyList<string> loaded,
+		IReadOnlyList<string> owners)
+	{
+		var stated = parsed.Assembly;
+
+		if (owners.Count == 1) return null;
+		if (owners.Count > 1 && stated is not null) return null;
+		if (owners.Count > 1) return TypeOwners.Ambiguity(parsed.TypeName, owners, location) + ".";
+		if (stated is null) return $"No loaded module declares {parsed.TypeName}.";
+
+		return loaded.Any(path => TypeOwners.Admits(path, stated))
+			? $"{stated} declares no type {parsed.TypeName}."
+			: $"No loaded module is named {stated}.";
 	}
 
 	public bool RemoveTracepoint(string id) => RemoveBinding(id);
@@ -2289,7 +2312,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				entry.Bound
 				&& entry.Token == token
 				&& (moduleName is null
-					|| string.Equals(Path.GetFileNameWithoutExtension(moduleName), entry.Location.ModuleSimpleName, StringComparison.OrdinalIgnoreCase)));
+					|| string.Equals(moduleName, entry.ModulePath, StringComparison.OrdinalIgnoreCase)));
 
 			// With one binding bound, an unidentified hit is unambiguously it.
 			binding ??= _bindings.Count(entry => entry.Bound) == 1 ? _bindings.First(entry => entry.Bound) : null;
@@ -2546,22 +2569,24 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				_process.Stop(0);
 				stopped = true;
 
-				var loaded = new List<string>();
+				var loaded = new List<CorDebugModule>();
 				foreach (var module in EnumerateModules(_process))
 				{
-					loaded.Add(SimpleName(module));
 					RememberModule(module);
-
-					foreach (var binding in _bindings)
-					{
-						if (!binding.Bound) TryBind(binding, module);
-					}
+					loaded.Add(module);
 				}
 
 				// This walk is the one a name search would otherwise have to take for itself.
 				_modulesEnumerated = true;
 
-				ExplainUnbound(loaded);
+				// Bound after the walk rather than during it, because whether a name without its assembly is
+				// ambiguous is a question about every module, not the one in hand.
+				foreach (var binding in _bindings)
+				{
+					if (!binding.Bound) BindAmong(binding, loaded);
+				}
+
+				ExplainUnbound([.. _modulePaths]);
 			}
 			catch (Exception exception)
 			{
@@ -2585,25 +2610,62 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
+	/// Binds one binding against modules that are loaded now. A location naming its assembly is tried
+	/// against each module of that name. One naming none binds only where exactly one module declares
+	/// the type, and when several do it says which rather than choosing: a breakpoint in the wrong one
+	/// never fires, which looks exactly like code that never runs.
+	/// </summary>
+	private void BindAmong(BreakpointBinding binding, IReadOnlyList<CorDebugModule> modules)
+	{
+		if (binding.Location.Assembly is not null)
+		{
+			foreach (var module in modules)
+			{
+				TryBind(binding, module);
+				if (binding.Bound) return;
+			}
+
+			return;
+		}
+
+		var owners = modules
+			.Where(module => FileOf(module) is { } path && MethodTokens.DeclaresType(path, binding.Location.TypeName))
+			.ToList();
+
+		if (owners.Count > 1)
+		{
+			binding.Detail = TypeOwners.Ambiguity(binding.Location.TypeName, [.. owners.Select(module => module.Name)], binding.Raw);
+			return;
+		}
+
+		if (owners.Count == 1) TryBind(binding, owners[0]);
+	}
+
+	/// <summary>
+	/// A module's file, or null where there is none to read: a dynamic or in-memory module, or one that
+	/// cannot describe itself.
+	/// </summary>
+	private static string? FileOf(CorDebugModule module)
+	{
+		try
+		{
+			if (module.IsDynamic || module.IsInMemory) return null;
+
+			return string.IsNullOrWhiteSpace(module.Name) ? null : module.Name;
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>
 	/// Notes a module's file, so its metadata and symbols can be read without touching the target
 	/// again. A dynamic or in-memory module is skipped: there is no file to read it out of.
 	/// </summary>
 	private void RememberModule(CorDebugModule module)
 	{
-		string path;
-
-		try
-		{
-			if (module.IsDynamic || module.IsInMemory) return;
-
-			path = module.Name;
-		}
-		catch (Exception)
-		{
-			return;
-		}
-
-		if (string.IsNullOrWhiteSpace(path)) return;
+		if (FileOf(module) is not { } path) return;
 
 		lock (_gate)
 		{
@@ -2671,8 +2733,14 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// Takes in a module as it loads: notes its file, and binds anything waiting for it. Called from
-	/// a stopped callback.
+	/// Takes in a module as it loads: notes its file, and binds anything waiting for a module that
+	/// declares what it names. Called from a stopped callback.
+	/// <para>
+	/// A location without its assembly is where a second declaration of its type first becomes
+	/// knowable, since the other modules are the ones already loaded. An unbound one is refused and told
+	/// which modules declare it. A bound one is left where it is and the event stream says so, because
+	/// deactivating a breakpoint that a thread may be parked on fail-fasts the target.
+	/// </para>
 	/// </summary>
 	private void BindModule(CorDebugModule module)
 	{
@@ -2680,13 +2748,46 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// whether or not anything is waiting to bind.
 		RememberModule(module);
 
+		if (FileOf(module) is not { } path) return;
+
 		lock (_gate)
 		{
-			if (_bindings.TrueForAll(binding => binding.Bound)) return;
-
 			foreach (var binding in _bindings)
 			{
-				if (!binding.Bound) TryBind(binding, module);
+				if (binding.Location.Assembly is not null)
+				{
+					if (!binding.Bound) TryBind(binding, module);
+					continue;
+				}
+
+				var typeName = binding.Location.TypeName;
+				if (!MethodTokens.DeclaresType(path, typeName)) continue;
+
+				if (binding.Bound)
+				{
+					var sameModule = string.Equals(binding.ModulePath, path, StringComparison.OrdinalIgnoreCase);
+					if (sameModule) continue;
+
+					buffer.Append(
+						LiveDebugEventKind.SessionNotice,
+						$"{binding.Id} is bound in {Path.GetFileName(binding.ModulePath)}, and {Path.GetFileName(path)} also "
+							+ $"declares {typeName}; give the assembly, as {Path.GetFileNameWithoutExtension(path)}!{binding.Raw}, "
+							+ "to break in that one instead.");
+					continue;
+				}
+
+				var others = _modulePaths
+					.Where(other => !string.Equals(other, path, StringComparison.OrdinalIgnoreCase))
+					.Where(other => MethodTokens.DeclaresType(other, typeName))
+					.ToList();
+
+				if (others.Count > 0)
+				{
+					binding.Detail = TypeOwners.Ambiguity(typeName, [.. others, path], binding.Raw);
+					continue;
+				}
+
+				TryBind(binding, module);
 			}
 		}
 	}
@@ -2704,7 +2805,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return; // A module that cannot describe itself is not one we can read metadata from.
 		}
 
-		if (!string.Equals(SimpleName(module), binding.Location.ModuleSimpleName, StringComparison.OrdinalIgnoreCase)) return;
+		if (!TypeOwners.Admits(module.Name, binding.Location.Assembly)) return;
 
 		var token = MethodTokens.Find(module.Name, binding.Location.TypeName, binding.Location.MethodName);
 		if (token is null)
@@ -2748,50 +2849,45 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// Says why each still-unbound binding is unbound, against the modules that are actually loaded.
+	/// Says why each still-unbound binding is unbound, against the module files that are actually loaded.
 	/// <para>
-	/// This exists because the answer used to be a guess dressed as a fact. A binding started life
-	/// saying "module not loaded yet" and kept saying it however the bind had failed, so a bare
-	/// <c>Namespace.Type.Method</c> whose module name was inferred wrongly -- the module is guessed
-	/// from the first namespace segment, which is only right when the assembly is named for its root
-	/// namespace -- reported that the module had not loaded while the event stream carried its load at
-	/// sequence 7. Two different failures, one message, and the one it chose pointed the caller at
-	/// waiting rather than at the spelling.
+	/// A binding that says only "not bound yet", whatever went wrong, points its caller at waiting when
+	/// the spelling is what needs changing. So a location naming its assembly is told whether that module
+	/// is loaded, and one naming none is told that no loaded module declares its type -- which is also
+	/// what a module still to load looks like, so it says it binds when one that does arrives.
 	/// </para>
 	/// <para>
-	/// Only ever narrows: a detail already set by <see cref="TryBind"/> is a real finding about a
-	/// module that matched, and is left alone.
+	/// Only ever narrows: a detail already set by <see cref="TryBind"/> or <see cref="BindAmong"/> is a
+	/// real finding about a module that matched, and is left alone.
 	/// </para>
 	/// </summary>
-	private void ExplainUnbound(IReadOnlyList<string> loadedModules)
+	private void ExplainUnbound(IReadOnlyList<string> loadedModulePaths)
 	{
 		foreach (var binding in _bindings)
 		{
 			if (binding.Bound) continue;
 			if (binding.Detail is not (null or "not bound yet")) continue;
 
-			var wanted = binding.Location.ModuleSimpleName;
-			if (loadedModules.Contains(wanted, StringComparer.OrdinalIgnoreCase))
+			var typeName = binding.Location.TypeName;
+
+			if (binding.Location.Assembly is not { } assembly)
+			{
+				binding.Detail = $"no loaded module declares {typeName} ({loadedModulePaths.Count} searched); "
+					+ "it binds when a module that does loads";
+				continue;
+			}
+
+			if (loadedModulePaths.Any(path => TypeOwners.Admits(path, assembly)))
 			{
 				// The module is loaded and TryBind said nothing, so the type is what is missing --
 				// the method-level miss is reported by TryBind itself.
-				binding.Detail = $"no type {binding.Location.TypeName} in {wanted}";
+				binding.Detail = $"no type {typeName} in {assembly}";
 				continue;
 			}
 
-			if (!binding.Location.ModuleWasInferred)
-			{
-				binding.Detail = $"module {wanted} is not loaded ({loadedModules.Count} others are)";
-				continue;
-			}
-
-			// The actionable case, and the one that was being reported as a wait.
-			binding.Detail = $"no loaded module is named {wanted}, which was inferred from the type name; "
-				+ "give the assembly explicitly as Assembly!Namespace.Type.Method";
+			binding.Detail = $"module {assembly} is not loaded ({loadedModulePaths.Count} others are)";
 		}
 	}
-
-	private static string SimpleName(CorDebugModule module) => Path.GetFileNameWithoutExtension(module.Name);
 
 	private static IEnumerable<CorDebugModule> EnumerateModules(CorDebugProcess process)
 	{

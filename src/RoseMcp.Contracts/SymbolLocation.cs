@@ -6,8 +6,11 @@ namespace RoseMcp.Contracts;
 /// The debugger's location grammar: a method addressed by name, the way a breakpoint or tracepoint
 /// is requested before any module has loaded, and optionally an instruction inside it.
 /// <para>
-/// It carries the assembly's simple name so binding can wait for exactly that module, plus the
-/// declaring type's full name as metadata spells it and the method's own name.
+/// It carries the declaring type's full name as metadata spells it, the method's own name, and the
+/// assembly's simple name when one was written. Without one it names no module at all, and the type
+/// is looked for in every module the target loads: an assembly's name says nothing reliable about the
+/// namespaces inside it, so reading a module off the type name is a guess that fails on the first
+/// repository to name the two apart.
 /// </para>
 /// <para>
 /// Here rather than beside the debugger for the reason <see cref="ValuePath"/> is: the host that
@@ -17,18 +20,17 @@ namespace RoseMcp.Contracts;
 /// </para>
 /// </summary>
 public sealed record SymbolLocation(
-	string ModuleSimpleName,
+	string? Assembly,
 	string TypeName,
 	string MethodName,
-	bool ModuleWasInferred,
 	int? IlOffset)
 {
 	private const string OffsetMarker = "@IL_";
 
 	/// <summary>
-	/// Two spellings. <c>Namespace.Type.Method</c> guesses the module from the first namespace
-	/// segment, which is right when the assembly is named for its root namespace. When it is not,
-	/// give the assembly explicitly as <c>Assembly!Namespace.Type.Method</c>.
+	/// Two spellings. <c>Namespace.Type.Method</c> names no assembly and binds in whichever module
+	/// declares the type. <c>Assembly!Namespace.Type.Method</c> names one, which is how to choose
+	/// between modules declaring a type of the same name.
 	/// <para>
 	/// Either may end in <c>@IL_001f</c> to name an instruction inside the method rather than its
 	/// first. The offset rides in the location rather than arriving as an argument of its own, so
@@ -50,27 +52,21 @@ public sealed record SymbolLocation(
 		{
 			assembly = spec[..bang];
 			spec = spec[(bang + 1)..];
+
+			// Strip only a real assembly extension. A dotted assembly name must not have its last
+			// segment mistaken for one.
+			var hasExtension = assembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+				|| assembly.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+			if (hasExtension) assembly = assembly[..^4];
 		}
 
 		var lastDot = spec.LastIndexOf('.');
-		var firstDot = spec.IndexOf('.');
 		if (lastDot <= 0 || lastDot == spec.Length - 1)
 		{
 			throw new ArgumentException($"Expected [Assembly!]Namespace.Type.Method, got '{spec}'.", nameof(spec));
 		}
 
-		var typeName = spec[..lastDot];
-		var methodName = spec[(lastDot + 1)..];
-		var moduleName = assembly ?? (firstDot > 0 ? spec[..firstDot] : typeName);
-
-		// Strip only a real assembly extension. A dotted assembly name must not have its last
-		// segment mistaken for one.
-		if (moduleName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || moduleName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-		{
-			moduleName = moduleName[..^4];
-		}
-
-		return new SymbolLocation(moduleName, typeName, methodName, ModuleWasInferred: assembly is null, ilOffset);
+		return new SymbolLocation(assembly, spec[..lastDot], spec[(lastDot + 1)..], ilOffset);
 	}
 
 	/// <summary>

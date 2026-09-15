@@ -31,6 +31,7 @@ internal static class Program
 		while (DateTime.UtcNow < deadline)
 		{
 			Beat(iteration++);
+			Elsewhere.Pulse.Tick(iteration);
 			Inspect(new ProbeState { Count = iteration, Inner = new ProbeState { Count = -1, Label = "inner" } });
 
 			try

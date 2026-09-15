@@ -50,6 +50,7 @@ static const CLSID CLSID_RoseTap =
 // tap_object.h stops compiling here rather than being absorbed silently, which is the only thing
 // keeping the object at a tier where one source serves both frameworks.
 #include "../RoseMcp.Xaml.Tap/tap_surface.h"
+#include "../RoseMcp.Xaml.Tap/tap_tree.h"
 #include "../RoseMcp.Xaml.Tap/tap_object.h"
 
 // C++/WinRT projections, for the resident in-app toolbar (#18): build the overlay on the diagnostics

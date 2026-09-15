@@ -2,11 +2,15 @@
 
 // The COM object the diagnostics site talks to, its class factory, and the two DLL exports.
 //
-// All of RoseTap is xamlOM ABI -- SetSite, OnVisualTreeChange, the tree snapshot, the property read,
-// applying a batch of commands, and the addressing that decides which element an edit hits -- which
-// UWP and WinUI 3 implement identically. So it names no projection and is compiled above the
-// provider's alias block, which is the check rather than the claim: an xaml:: anything here fails to
-// compile.
+// All of RoseTap is xamlOM ABI -- being sited, the visual-tree callbacks, serving a request, reading
+// a property chain and applying a batch of commands -- which UWP and WinUI 3 implement identically.
+// So it names no projection and is compiled above the provider's alias block, which is the check
+// rather than the claim: an xaml:: anything here fails to compile.
+//
+// What it does not do is hold the tree. The node list, the name index, the batch's slots and the
+// addressing that decides which element an edit hits are TapTree's, because none of that touches the
+// framework at all -- it is arithmetic over rows the callbacks handed over, and the object that owns
+// the framework's interfaces is the wrong place to reason about it from.
 //
 // The two things that reach into the projected world are declared in tap_surface.h and defined
 // below the aliases -- the overlay, through IRoseOverlay, and the four reads that need a concrete
@@ -127,8 +131,8 @@ public:
 
 		ConnectPipe();
 
-		m_diagnostics->QueryInterface(__uuidof(IVisualTreeService), reinterpret_cast<void**>(&m_tree));
-		if (!m_tree)
+		m_diagnostics->QueryInterface(__uuidof(IVisualTreeService), reinterpret_cast<void**>(&m_service));
+		if (!m_service)
 		{
 			Log(L"SetSite: no IVisualTreeService");
 			return E_NOINTERFACE;
@@ -191,15 +195,15 @@ public:
 			// app's tree. All of them, not the first: the node the enumeration starts from is the host
 			// object rather than a UIElement, so it has no XamlRoot to give.
 			std::vector<InstanceHandle> candidates;
-			candidates.reserve(m_nodes.size());
-			for (const auto& node : m_nodes) candidates.push_back(node.Handle);
+			candidates.reserve(m_tree.Count());
+			for (const auto& node : m_tree.Nodes()) candidates.push_back(node.Handle);
 
 			Overlay().Install(m_diagnostics, candidates);
 
 			// Per-element source info only exists here, where the tree was walked, so it is handed to the
 			// overlay: it is what "just my XAML" decides on, and a click has no other way to learn it.
 			std::map<InstanceHandle, std::wstring> sources;
-			for (const auto& node : m_nodes)
+			for (const auto& node : m_tree.Nodes())
 			{
 				if (!node.File.empty()) sources[node.Handle] = node.File;
 			}
@@ -224,8 +228,8 @@ public:
 	/// </remarks>
 	void Walk()
 	{
-		const HRESULT hr = m_tree->AdviseVisualTreeChange(this);
-		Log(L"enumerated " + std::to_wstring(m_nodes.size()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
+		const HRESULT hr = m_service->AdviseVisualTreeChange(this);
+		Log(L"enumerated " + std::to_wstring(m_tree.Count()) + L" element(s) (advise hr=0x" + Hex(hr) + L")");
 	}
 
 	/// <summary>
@@ -243,7 +247,7 @@ public:
 		{
 			size_t written = 0;
 			std::string rows;
-			if (!RoseTapRunOnUiThread([&] { rows = TreeSnapshotRows(written); })) return std::string();
+			if (!RoseTapRunOnUiThread([&] { rows = m_tree.SnapshotRows(written); })) return std::string();
 
 			Log(L"pipe: served tree with " + std::to_wstring(written) + L" element(s)");
 			return rows;
@@ -475,7 +479,7 @@ public:
 			// refresh, and reports elements the framework has already let go. Closed over descendants,
 			// because removing a Border removes the TextBlock inside it and the framework is not
 			// required to say so twice -- and if it does, the second call finds nothing left to drop.
-			ForgetSubtree(element.Handle);
+			m_tree.ForgetSubtree(element.Handle);
 			return S_OK;
 		}
 
@@ -484,94 +488,15 @@ public:
 		// "just my XAML" -- and it is a different field from PropertyChainSource::SrcInfo, so the
 		// two can be populated independently. Empty is recorded as empty; absent source info must
 		// not be reported as "declared nowhere".
-		m_nodes.push_back({ element.Handle, relation.Parent, relation.ChildIndex,
+		m_tree.Add({ element.Handle, relation.Parent, relation.ChildIndex,
 			element.Type ? element.Type : L"", element.Name ? element.Name : L"",
 			element.SrcInfo.FileName ? element.SrcInfo.FileName : L"",
 			element.SrcInfo.LineNumber, element.SrcInfo.ColumnNumber });
-
-		if (element.Name && element.Name[0])
-		{
-			m_byName[element.Name].push_back(element.Handle);
-		}
 
 		return S_OK;
 	}
 
 private:
-	// One row per element: Handle, Parent, ChildIndex, Type, Name. Written to a temp file and renamed
-	// so the host never reads a half-written snapshot; a ".ready" marker is the host's signal.
-	//
-	// The resident toolbar is dropped from the answer: the tool reports the app's UI, not RoseMCP's own.
-	// The diagnostics UI layer it lives on is not enumerated by AdviseVisualTreeChange on the versions
-	// tested -- the count is identical before and after the toolbar goes up -- so this is a guard against
-	// a framework that does enumerate it, not a fix for one that does.
-	// The snapshot's rows, UTF-8, newline-separated. Separated from writing them so the same bytes
-	// can go down the pipe (#50) or into tree.tsv, rather than one of the two being built a second
-	// way and drifting -- the address column is exactly the sort of thing that would drift.
-	std::string TreeSnapshotRows(size_t& written)
-	{
-		const auto excluded = OverlaySubtree();
-
-		// Each element's address, computed once for the whole snapshot rather than per row. It is
-		// reported because it is the only way to address an element the markup never named, and an
-		// unnamed element is the ordinary case for a click that lands inside a template.
-		const auto paths = ComputePaths();
-
-		std::string rows;
-		written = 0;
-
-		for (const auto& node : m_nodes)
-		{
-			if (excluded.count(node.Handle)) continue;
-
-			const auto address = paths.find(node.Handle);
-			const std::wstring path = address != paths.end() ? address->second : std::wstring();
-
-			const std::wstring row = std::to_wstring(node.Handle) + L'\t' + std::to_wstring(node.Parent) + L'\t'
-				+ std::to_wstring(node.ChildIndex) + L'\t' + Escape(node.Type.c_str()) + L'\t' + Escape(node.Name.c_str())
-				+ L'\t' + Escape(node.File.c_str()) + L'\t' + std::to_wstring(node.Line) + L'\t' + std::to_wstring(node.Column)
-				+ L'\t' + Escape(path.c_str());
-			rows += Utf8(row);
-			rows += '\n';
-			written++;
-		}
-
-		return rows;
-	}
-
-	// The handles of our own toolbar's elements, empty whenever the layer is not enumerated at all.
-	// Enumeration is parent-before-child in practice, but this closes over the subtree rather than
-	// assuming it, since one missed pass would leak our UI into the answer.
-	std::set<InstanceHandle> OverlaySubtree() const
-	{
-		std::set<InstanceHandle> excluded;
-
-		// Flipping RoseTapShowOverlayInTree stops the toolbar hiding itself, so the tree and property
-		// tools can be pointed at RoseMCP's own UI. See its declaration for why it exists.
-		if (RoseTapShowOverlayInTree) return excluded;
-
-		for (const auto& node : m_nodes)
-		{
-			if (node.Name == OverlayRootName) excluded.insert(node.Handle);
-		}
-
-		if (excluded.empty()) return excluded;
-
-		for (bool grew = true; grew; )
-		{
-			grew = false;
-			for (const auto& node : m_nodes)
-			{
-				if (excluded.count(node.Handle)) continue;
-				if (!excluded.count(node.Parent)) continue;
-				excluded.insert(node.Handle);
-				grew = true;
-			}
-		}
-
-		return excluded;
-	}
-
 	/// Whether an empty value is a value or a gap.
 	///
 	/// An unset string property really is the empty string -- AutomationProperties.Name and
@@ -605,7 +530,7 @@ private:
 		unsigned int valueCount = 0;
 		PropertyChainSource* sources = nullptr;
 		PropertyChainValue* values = nullptr;
-		const HRESULT hr = m_tree->GetPropertyValuesChain(handle, &sourceCount, &sources, &valueCount, &values);
+		const HRESULT hr = m_service->GetPropertyValuesChain(handle, &sourceCount, &sources, &valueCount, &values);
 		if (FAILED(hr))
 		{
 			Log(L"GetPropertyValuesChain(" + std::to_wstring(handle) + L") failed hr=0x" + Hex(hr));
@@ -742,7 +667,7 @@ private:
 		// yet attached to anything, which is what lets a nested element be created, filled and then
 		// handed to its parent -- and a slot surviving into the next apply would let one batch's
 		// half-built element be reached by another's command.
-		m_slots.clear();
+		m_tree.ClearSlots();
 
 		std::string rows;
 		for (const auto& command : commands)
@@ -779,7 +704,7 @@ private:
 	std::wstring ApplySetProperty(const Command& command)
 	{
 		InstanceHandle target = 0;
-		const std::wstring unresolved = Resolve(command.target, target);
+		const std::wstring unresolved = m_tree.Resolve(command.target, target);
 		if (!unresolved.empty()) return unresolved;
 
 		unsigned int index = 0;
@@ -796,7 +721,7 @@ private:
 			InstanceHandle valueHandle = 0;
 			BSTR typeName = SysAllocString(type.c_str());
 			BSTR value = SysAllocString(command.value.c_str());
-			HRESULT hr = m_tree->CreateInstance(typeName, value, &valueHandle);
+			HRESULT hr = m_service->CreateInstance(typeName, value, &valueHandle);
 			SysFreeString(typeName);
 			SysFreeString(value);
 			if (FAILED(hr))
@@ -805,7 +730,7 @@ private:
 				continue;
 			}
 
-			hr = m_tree->SetProperty(target, valueHandle, index);
+			hr = m_service->SetProperty(target, valueHandle, index);
 			if (hr == S_OK)
 			{
 				Log(L"  set " + command.target + L"." + command.property + L" = " + command.value
@@ -831,14 +756,11 @@ private:
 	std::wstring ApplyRemoveChild(const Command& command)
 	{
 		InstanceHandle child = 0;
-		const std::wstring unresolved = Resolve(command.target, child);
+		const std::wstring unresolved = m_tree.Resolve(command.target, child);
 		if (!unresolved.empty()) return unresolved;
 
-		const TreeIndex index = BuildIndex();
-		const auto found = index.ByHandle.find(child);
-		if (found == index.ByHandle.end()) return L"target not found: it is not in the tree snapshot";
-
-		const InstanceHandle parent = m_nodes[found->second].Parent;
+		InstanceHandle parent = 0;
+		if (!m_tree.ParentOf(child, parent)) return L"target not found: it is not in the tree snapshot";
 		if (parent == 0) return L"cannot remove: it has no parent in the tree";
 
 		InstanceHandle collection = 0;
@@ -848,14 +770,15 @@ private:
 			return L"cannot remove: it is not in any collection its parent exposes";
 		}
 
-		const HRESULT hr = m_tree->RemoveChild(collection, position);
+		const HRESULT hr = m_service->RemoveChild(collection, position);
 		if (hr != S_OK) return L"RemoveChild failed 0x" + Hex(hr);
 
-		// The node list is append-only: OnVisualTreeChange appends on Add and removes nothing on a
-		// Remove. So what has just gone has to be forgotten here, or the rest of this batch is
-		// resolved and indexed against a tree that no longer exists -- and the failure that produces
-		// is the removal landing on the sibling that moved up into the vacated position.
-		ForgetSubtree(child);
+		// Forgotten here as well as on the framework's own notification, because that notification is
+		// not guaranteed to arrive before the next command in this batch, and every command resolves
+		// against the node list. The failure that produces is the next removal landing on the sibling
+		// that moved up into the vacated position. Forgetting a subtree twice is a no-op, which is
+		// what makes saying it in both places safe rather than merely redundant.
+		m_tree.ForgetSubtree(child);
 
 		Log(L"  removed " + command.target);
 		return L"applied";
@@ -869,7 +792,7 @@ private:
 		const InstanceHandle handle = Construct(command.property, resolved, failure);
 		if (handle == 0) return failure;
 
-		m_slots[command.target] = handle;
+		m_tree.Bind(command.target, handle);
 		Log(L"  built " + resolved + L" into " + command.target);
 		return L"applied";
 	}
@@ -899,12 +822,11 @@ private:
 
 		std::vector<std::wstring> candidates{ typeName };
 
-		for (const auto& node : m_nodes)
+		for (const auto& qualified : m_tree.QualifiedTypesNamed(typeName))
 		{
-			if (LocalType(node.Type) != typeName) continue;
-			if (std::find(candidates.begin(), candidates.end(), node.Type) != candidates.end()) continue;
+			if (std::find(candidates.begin(), candidates.end(), qualified) != candidates.end()) continue;
 
-			candidates.push_back(node.Type);
+			candidates.push_back(qualified);
 		}
 
 		for (const auto* space : {
@@ -925,7 +847,7 @@ private:
 			// name that names nothing, E_UNEXPECTED for a real type given an argument it cannot use.
 			InstanceHandle handle = 0;
 			BSTR name = SysAllocString(candidate.c_str());
-			const HRESULT hr = m_tree->CreateInstance(name, nullptr, &handle);
+			const HRESULT hr = m_service->CreateInstance(name, nullptr, &handle);
 			SysFreeString(name);
 
 			if (FAILED(hr) || handle == 0)
@@ -949,11 +871,11 @@ private:
 	std::wstring ApplyReplaceResource(const Command& command)
 	{
 		InstanceHandle owner = 0;
-		const std::wstring unresolvedOwner = Resolve(command.target, owner);
+		const std::wstring unresolvedOwner = m_tree.Resolve(command.target, owner);
 		if (!unresolvedOwner.empty()) return unresolvedOwner;
 
 		InstanceHandle value = 0;
-		const std::wstring unresolvedValue = Resolve(command.arg, value);
+		const std::wstring unresolvedValue = m_tree.Resolve(command.arg, value);
 		if (!unresolvedValue.empty()) return unresolvedValue;
 
 		InstanceHandle dictionary = 0;
@@ -986,11 +908,11 @@ private:
 	std::wstring ApplyAddChild(const Command& command)
 	{
 		InstanceHandle parent = 0;
-		const std::wstring unresolvedParent = Resolve(command.target, parent);
+		const std::wstring unresolvedParent = m_tree.Resolve(command.target, parent);
 		if (!unresolvedParent.empty()) return unresolvedParent;
 
 		InstanceHandle child = 0;
-		const std::wstring unresolvedChild = Resolve(command.arg, child);
+		const std::wstring unresolvedChild = m_tree.Resolve(command.arg, child);
 		if (!unresolvedChild.empty()) return unresolvedChild;
 
 		// The same lesson RemoveChild taught: what the API calls a parent is the collection, not the
@@ -1007,7 +929,7 @@ private:
 				: L"cannot add: its parent exposes no children collection (it has " + found + L")";
 		}
 
-		const HRESULT hr = m_tree->AddChild(collection, child, command.index);
+		const HRESULT hr = m_service->AddChild(collection, child, command.index);
 		if (hr != S_OK) return L"AddChild failed 0x" + Hex(hr);
 
 		Log(L"  added " + command.arg + L" under " + command.target + L" at " + std::to_wstring(command.index));
@@ -1019,13 +941,13 @@ private:
 	// failed.
 	bool ChildCollectionOf(InstanceHandle parent, InstanceHandle& collection, std::wstring& found)
 	{
-		if (!m_tree) return false;
+		if (!m_service) return false;
 
 		unsigned int sourceCount = 0;
 		unsigned int propertyCount = 0;
 		PropertyChainSource* sources = nullptr;
 		PropertyChainValue* values = nullptr;
-		if (FAILED(m_tree->GetPropertyValuesChain(parent, &sourceCount, &sources, &propertyCount, &values)))
+		if (FAILED(m_service->GetPropertyValuesChain(parent, &sourceCount, &sources, &propertyCount, &values)))
 		{
 			return false;
 		}
@@ -1078,13 +1000,13 @@ private:
 	// that has to be right, and the one a sibling shifting would have made wrong.
 	bool LocateInParent(InstanceHandle parent, InstanceHandle child, InstanceHandle& collection, unsigned int& index)
 	{
-		if (!m_tree) return false;
+		if (!m_service) return false;
 
 		unsigned int sourceCount = 0;
 		unsigned int propertyCount = 0;
 		PropertyChainSource* sources = nullptr;
 		PropertyChainValue* values = nullptr;
-		if (FAILED(m_tree->GetPropertyValuesChain(parent, &sourceCount, &sources, &propertyCount, &values)))
+		if (FAILED(m_service->GetPropertyValuesChain(parent, &sourceCount, &sources, &propertyCount, &values)))
 		{
 			return false;
 		}
@@ -1116,11 +1038,11 @@ private:
 	bool IndexIn(InstanceHandle collection, InstanceHandle child, unsigned int& index)
 	{
 		unsigned int count = 0;
-		if (FAILED(m_tree->GetCollectionCount(collection, &count)) || count == 0) return false;
+		if (FAILED(m_service->GetCollectionCount(collection, &count)) || count == 0) return false;
 
 		unsigned int returned = count;
 		CollectionElementValue* elements = nullptr;
-		if (FAILED(m_tree->GetCollectionElements(collection, 0, &returned, &elements)) || !elements) return false;
+		if (FAILED(m_service->GetCollectionElements(collection, 0, &returned, &elements)) || !elements) return false;
 
 		bool found = false;
 		for (unsigned int i = 0; i < returned && !found; i++)
@@ -1142,363 +1064,20 @@ private:
 		return found;
 	}
 
-	// Drops an element and everything beneath it from the node list and the name map.
-	//
-	// Closed over rather than assumed one level deep: removing a Border removes the TextBlock inside
-	// it, and leaving those descendants behind would leave addresses that resolve to elements the
-	// framework has already let go.
-	void ForgetSubtree(InstanceHandle root)
-	{
-		// Children by parent, built once and walked down. Rescanning the whole list once per level is
-		// affordable for an edit this tap made and is not for one the app made: this runs on the UI
-		// thread for every element the app lets go, and an app lets go of elements continuously.
-		std::map<InstanceHandle, std::vector<InstanceHandle>> children;
-		for (const auto& node : m_nodes) children[node.Parent].push_back(node.Handle);
-
-		std::set<InstanceHandle> doomed{ root };
-		std::vector<InstanceHandle> pending{ root };
-		while (!pending.empty())
-		{
-			const InstanceHandle current = pending.back();
-			pending.pop_back();
-
-			const auto found = children.find(current);
-			if (found == children.end()) continue;
-
-			for (const InstanceHandle child : found->second)
-			{
-				if (doomed.insert(child).second) pending.push_back(child);
-			}
-		}
-
-		m_nodes.erase(
-			std::remove_if(
-				m_nodes.begin(),
-				m_nodes.end(),
-				[&doomed](const TreeNode& node) { return doomed.count(node.Handle) != 0; }),
-			m_nodes.end());
-
-		for (auto entry = m_byName.begin(); entry != m_byName.end(); )
-		{
-			auto& handles = entry->second;
-			handles.erase(
-				std::remove_if(
-					handles.begin(),
-					handles.end(),
-					[&doomed](InstanceHandle handle) { return doomed.count(handle) != 0; }),
-				handles.end());
-
-			entry = handles.empty() ? m_byName.erase(entry) : std::next(entry);
-		}
-	}
-
 	std::wstring ApplyClearProperty(const Command& command)
 	{
 		InstanceHandle target = 0;
-		const std::wstring unresolved = Resolve(command.target, target);
+		const std::wstring unresolved = m_tree.Resolve(command.target, target);
 		if (!unresolved.empty()) return unresolved;
 
 		unsigned int index = 0;
 		if (!PropertyIndex(target, command.property, index)) return L"property not found";
 
-		const HRESULT hr = m_tree->ClearProperty(target, index);
+		const HRESULT hr = m_service->ClearProperty(target, index);
 		if (hr != S_OK) return L"ClearProperty failed 0x" + Hex(hr);
 
 		Log(L"  cleared " + command.target + L"." + command.property);
 		return L"applied";
-	}
-
-	// The local half of a CLR type name. The live tree carries `Windows.UI.Xaml.Controls.Border`
-	// while a path segment carries `Border`, because markup names a type by a local name and an XML
-	// prefix, and the prefix maps to a namespace nothing on this side can see. Both the counting and
-	// the matching happen on the local name, which is what keeps the two halves in agreement.
-	static std::wstring LocalType(const std::wstring& type)
-	{
-		const size_t dot = type.rfind(L'.');
-		return dot == std::wstring::npos ? type : type.substr(dot + 1);
-	}
-
-	// Handle to position in m_nodes, and parent to its children in sibling order. Built once per
-	// question: every path answer otherwise scans the whole node list, and doing that per node is
-	// quadratic -- on an app with a few thousand elements that is the difference between writing a
-	// snapshot and appearing to hang.
-	struct TreeIndex
-	{
-		std::map<InstanceHandle, size_t> ByHandle;
-		std::map<InstanceHandle, std::vector<size_t>> ByParent;
-		std::vector<size_t> Roots;
-	};
-
-	TreeIndex BuildIndex() const
-	{
-		// Our own toolbar is left out, exactly as the reported snapshot leaves it out. It has to be
-		// the same exclusion in both places or the two quietly disagree: an address is a position
-		// among siblings, so counting an element nobody can see shifts every address after it, and
-		// the address handed out would then resolve to the element next door. On the framework
-		// versions tested the diagnostics layer is not enumerated at all, so this is a guard and not
-		// a fix -- but an off-by-one that reports success is the wrong thing to leave to luck.
-		const auto excluded = OverlaySubtree();
-
-		TreeIndex index;
-		for (size_t i = 0; i < m_nodes.size(); i++)
-		{
-			if (excluded.count(m_nodes[i].Handle)) continue;
-			index.ByHandle[m_nodes[i].Handle] = i;
-		}
-
-		for (size_t i = 0; i < m_nodes.size(); i++)
-		{
-			if (excluded.count(m_nodes[i].Handle)) continue;
-
-			// A parent that is not itself in the snapshot makes this node a root. Reporting parent 0
-			// is one way that happens and not the only one: the enumeration starts somewhere, and a
-			// subtree advised on its own has a parent that was never enumerated.
-			const bool isRoot = index.ByHandle.count(m_nodes[i].Parent) == 0;
-			if (isRoot) index.Roots.push_back(i);
-			else index.ByParent[m_nodes[i].Parent].push_back(i);
-		}
-
-		const auto byChildIndex = [this](size_t a, size_t b) { return m_nodes[a].ChildIndex < m_nodes[b].ChildIndex; };
-		for (auto& entry : index.ByParent) std::stable_sort(entry.second.begin(), entry.second.end(), byChildIndex);
-		std::stable_sort(index.Roots.begin(), index.Roots.end(), byChildIndex);
-
-		return index;
-	}
-
-	// Which siblings a node is counted among -- its parent's children, or the roots when it has no
-	// parent in the snapshot.
-	const std::vector<size_t>& SiblingsOf(const TreeIndex& index, size_t i) const
-	{
-		const auto found = index.ByParent.find(m_nodes[i].Parent);
-		return found != index.ByParent.end() ? found->second : index.Roots;
-	}
-
-	// One Type[index] segment: the local type name, and the position among the siblings sharing it.
-	std::wstring SegmentOf(const TreeIndex& index, size_t i) const
-	{
-		const std::wstring local = LocalType(m_nodes[i].Type);
-
-		unsigned int position = 0;
-		for (const size_t sibling : SiblingsOf(index, i))
-		{
-			if (sibling == i) break;
-			if (LocalType(m_nodes[sibling].Type) == local) position++;
-		}
-
-		return local + L'[' + std::to_wstring(position) + L']';
-	}
-
-	// Every element's address, in one pass down from the roots. A named element is #name and anchors
-	// everything beneath it; an unnamed one is its parent's address plus its own segment.
-	//
-	// This is the grammar RoseMcp.XamlDiff emits, so a path from a diff and a path from the tree mean
-	// the same thing -- with one difference worth stating, because it decides which of them can be
-	// trusted. A path computed here is resolved against the very tree it was computed from, so it is
-	// exact. A diff's path is computed from markup, whose element order is not always the visual
-	// tree's -- a ContentControl wraps its content in a presenter the markup never mentions -- so it
-	// is a best effort, and where it misses it says so rather than landing somewhere plausible.
-	std::map<InstanceHandle, std::wstring> ComputePaths() const
-	{
-		const TreeIndex index = BuildIndex();
-		std::map<InstanceHandle, std::wstring> paths;
-
-		std::vector<std::pair<size_t, std::wstring>> pending;
-		for (auto root = index.Roots.rbegin(); root != index.Roots.rend(); ++root)
-		{
-			pending.push_back({ *root, std::wstring() });
-		}
-
-		while (!pending.empty())
-		{
-			const std::pair<size_t, std::wstring> item = pending.back();
-			pending.pop_back();
-
-			const TreeNode& node = m_nodes[item.first];
-			std::wstring path;
-			if (!node.Name.empty())
-			{
-				path = L"#" + node.Name;
-			}
-			else
-			{
-				const std::wstring segment = SegmentOf(index, item.first);
-				path = item.second.empty() ? segment : item.second + L'/' + segment;
-			}
-
-			paths[node.Handle] = path;
-
-			const auto children = index.ByParent.find(node.Handle);
-			if (children == index.ByParent.end()) continue;
-			for (auto child = children->second.rbegin(); child != children->second.rend(); ++child)
-			{
-				pending.push_back({ *child, path });
-			}
-		}
-
-		return paths;
-	}
-
-	static std::vector<std::wstring> SplitPath(const std::wstring& path)
-	{
-		std::vector<std::wstring> segments;
-		for (size_t start = 0; start <= path.size(); )
-		{
-			const size_t slash = path.find(L'/', start);
-			const size_t length = slash == std::wstring::npos ? std::wstring::npos : slash - start;
-			const std::wstring segment = path.substr(start, length);
-			if (!segment.empty()) segments.push_back(segment);
-			if (slash == std::wstring::npos) break;
-			start = slash + 1;
-		}
-
-		return segments;
-	}
-
-	static bool ParseSegment(const std::wstring& segment, std::wstring& type, unsigned int& index)
-	{
-		if (segment.empty() || segment.back() != L']') return false;
-
-		const size_t open = segment.find(L'[');
-		if (open == std::wstring::npos) return false;
-
-		type = segment.substr(0, open);
-		if (type.empty()) return false;
-
-		const std::wstring number = segment.substr(open + 1, segment.size() - open - 2);
-		if (number.empty() || number.find_first_not_of(L"0123456789") != std::wstring::npos) return false;
-
-		index = static_cast<unsigned int>(std::wcstoul(number.c_str(), nullptr, 10));
-		return true;
-	}
-
-	// Resolves a target to exactly one element, or says why it could not. The reason travels back to
-	// the agent as that edit's status: a bare "target not found" sent a caller looking for a mistake
-	// in their address when the tree simply held two elements of that name, which is a different
-	// problem with a different fix.
-	//
-	// A bare name and a path are both accepted. Anything with no brackets and no slash is a name --
-	// including the #name an address is written with, so one string works whether it came from a
-	// diff, from the tree, or from somebody typing it.
-	std::wstring Resolve(const std::wstring& target, InstanceHandle& handle)
-	{
-		if (target.empty()) return L"target not found: no target was given";
-
-		// A slot names something built earlier in this same batch and not yet attached to anything.
-		// It is checked before the tree, because it is not in the tree -- that is the whole point of
-		// it -- so no amount of walking would find it.
-		if (target[0] == L'$')
-		{
-			const auto slot = m_slots.find(target);
-			if (slot == m_slots.end()) return L"target not found: nothing has been built into " + target;
-
-			handle = slot->second;
-			return std::wstring();
-		}
-
-		const bool looksLikePath = target.find(L'/') != std::wstring::npos || target.find(L'[') != std::wstring::npos;
-		if (!looksLikePath)
-		{
-			return ResolveName(target[0] == L'#' ? target.substr(1) : target, handle);
-		}
-
-		return ResolvePath(target, handle);
-	}
-
-	// A name belonging to more than one element is refused rather than answered with one of them.
-	// The path form is how a caller says which, so the refusal names the count and leaves a route.
-	std::wstring ResolveName(const std::wstring& name, InstanceHandle& handle)
-	{
-		const auto it = m_byName.find(name);
-		if (it == m_byName.end() || it->second.empty())
-		{
-			Log(L"  target '" + name + L"' not found in the live tree");
-			return L"target not found: no element is named '" + name + L"'";
-		}
-
-		if (it->second.size() > 1)
-		{
-			Log(L"  target '" + name + L"' names " + std::to_wstring(it->second.size()) + L" elements");
-			return L"target ambiguous: " + std::to_wstring(it->second.size()) + L" elements are named '"
-				+ name + L"'; address one of them by its path instead";
-		}
-
-		handle = it->second.front();
-		return std::wstring();
-	}
-
-	std::wstring ResolvePath(const std::wstring& path, InstanceHandle& handle)
-	{
-		const std::vector<std::wstring> segments = SplitPath(path);
-		if (segments.empty()) return L"target not found: '" + path + L"' has no path segments";
-
-		const TreeIndex index = BuildIndex();
-		const std::vector<size_t> none;
-		size_t current = 0;
-
-		for (size_t s = 0; s < segments.size(); s++)
-		{
-			// A name identifies an element outright wherever it appears, so it is looked up rather
-			// than walked to. An emitted address only ever carries one as its first segment -- both
-			// sides stop at the first name they meet -- so a later one comes from a caller who
-			// composed the path, and honouring it costs nothing.
-			if (segments[s][0] == L'#')
-			{
-				InstanceHandle named = 0;
-				const std::wstring unresolved = ResolveName(segments[s].substr(1), named);
-				if (!unresolved.empty()) return unresolved;
-
-				const auto found = index.ByHandle.find(named);
-				if (found == index.ByHandle.end())
-				{
-					return L"target not found: '" + segments[s] + L"' is not in the tree snapshot";
-				}
-
-				current = found->second;
-				continue;
-			}
-
-			// The first segment is matched against the roots, and every later one against the
-			// children of wherever the walk has reached.
-			const std::vector<size_t>* candidates = &index.Roots;
-			if (s > 0)
-			{
-				const auto children = index.ByParent.find(m_nodes[current].Handle);
-				candidates = children != index.ByParent.end() ? &children->second : &none;
-			}
-
-			const std::wstring unstepped = Step(*candidates, segments[s], current);
-			if (!unstepped.empty()) return unstepped;
-		}
-
-		handle = m_nodes[current].Handle;
-		return std::wstring();
-	}
-
-	// Matches one segment among a set of siblings, counting the way the address was written.
-	std::wstring Step(const std::vector<size_t>& siblings, const std::wstring& segment, size_t& current) const
-	{
-		std::wstring type;
-		unsigned int wanted = 0;
-		if (!ParseSegment(segment, type, wanted))
-		{
-			return L"target not found: '" + segment + L"' is neither Type[index] nor #name";
-		}
-
-		unsigned int position = 0;
-		for (const size_t sibling : siblings)
-		{
-			if (LocalType(m_nodes[sibling].Type) != type) continue;
-			if (position == wanted)
-			{
-				current = sibling;
-				return std::wstring();
-			}
-
-			position++;
-		}
-
-		return L"target not found: no " + segment + L" here, among " + std::to_wstring(position)
-			+ L" element(s) of type " + type;
 	}
 
 	bool PropertyIndex(InstanceHandle handle, const std::wstring& name, unsigned int& index)
@@ -1516,7 +1095,7 @@ private:
 		unsigned int propertyCount = 0;
 		PropertyChainSource* sources = nullptr;
 		PropertyChainValue* values = nullptr;
-		const HRESULT hr = m_tree->GetPropertyValuesChain(handle, &sourceCount, &sources, &propertyCount, &values);
+		const HRESULT hr = m_service->GetPropertyValuesChain(handle, &sourceCount, &sources, &propertyCount, &values);
 		if (FAILED(hr)) return false;
 
 		bool found = false;
@@ -1582,32 +1161,29 @@ private:
 		return commands;
 	}
 
+	// Sets the flag and gives back what the tap was holding for the tree it no longer answers about,
+	// which is where all of a superseded tap's cost was.
+	void Retire()
+	{
+		m_retired = true;
+
+		m_tree.Forget();
+	}
+
 	// Gives back the framework's two interfaces, and says whether there was anything to give back.
 	//
-	// Unadvising first is not tidiness: releasing m_tree while the framework still holds this tap as
+	// Unadvising first is not tidiness: releasing m_service while the framework still holds this tap as
 	// a visual-tree callback leaves it calling into an object holding a dangling pointer.
 	//
 	// The overlay is untouched by this. It takes its own reference to IXamlDiagnostics when it is
 	// installed, precisely so a click can resolve to a handle long after the injection that drew it
 	// is over, so the toolbar outlives the release rather than being broken by it.
-	// Sets the flag and gives back what the tap was holding for the tree it no longer answers about.
-	// The vector is the expensive half by a distance, so it is shrunk rather than merely emptied.
-	void Retire()
-	{
-		m_retired = true;
-
-		m_nodes.clear();
-		m_nodes.shrink_to_fit();
-		m_byName.clear();
-		m_slots.clear();
-	}
-
 	bool Unadvise()
 	{
-		const bool held = m_tree != nullptr || m_diagnostics != nullptr;
+		const bool held = m_service != nullptr || m_diagnostics != nullptr;
 
-		if (m_tree) m_tree->UnadviseVisualTreeChange(this);
-		if (m_tree) { m_tree->Release(); m_tree = nullptr; }
+		if (m_service) m_service->UnadviseVisualTreeChange(this);
+		if (m_service) { m_service->Release(); m_service = nullptr; }
 		if (m_diagnostics) { m_diagnostics->Release(); m_diagnostics = nullptr; }
 
 		return held;
@@ -1618,17 +1194,13 @@ private:
 	// the callbacks it guards arrive.
 	bool m_retired = false;
 	IXamlDiagnostics* m_diagnostics = nullptr;
-	IVisualTreeService* m_tree = nullptr;
-	std::vector<TreeNode> m_nodes;
-	// Every element a name belongs to, rather than the last one enumerated under it. A duplicated
-	// x:Name is ordinary and not exotic -- a control template instantiated three times gives three
-	// elements called the same thing -- and a single-valued map answered such a name with whichever
-	// arrived last, so an apply landed on an arbitrary one of them and reported success either way.
-	std::map<std::wstring, std::vector<InstanceHandle>> m_byName;
+	IVisualTreeService* m_service = nullptr;
 
-	// Instances built during the current apply and not yet attached to the tree, by the slot name the
-	// host gave them. Cleared at the start of every batch.
-	std::map<std::wstring, InstanceHandle> m_slots;
+	// The tree this tap knows about, and every question asked of it. Kept behind one object because
+	// the node list, the name index and the batch's slots have to agree: a removal has to leave all
+	// three, and an address is a position among siblings, so a list that disagrees with the exclusion
+	// the snapshot applies hands out addresses resolving to the element next door.
+	TapTree m_tree;
 };
 
 // Points the reader at the instance that has just been sited, and stands the one before it down. A

@@ -5,10 +5,11 @@ changing the include order in either provider's `.cpp`.
 
 - **A file's tier is what it names, not what it does, and the include order is what checks it.** Four
   tiers, and each provider's `.cpp` includes them in order: `tap_channel.h` and `tap_measure.h` name
-  nothing external; `tap_diagnostics.h`, `tap_surface.h` and `tap_object.h` name only xamlOM, which
-  Windows.UI.Xaml and Microsoft.UI.Xaml declare verbatim identically; `tap_render.h` and
-  `tap_overlay.h` name the seven projection aliases and are therefore compiled once per framework;
-  the provider itself names the real framework and defines the aliases, the CLSID and the seams.
+  nothing external; `tap_diagnostics.h`, `tap_surface.h`, `tap_tree.h` and `tap_object.h` name only
+  xamlOM, which Windows.UI.Xaml and Microsoft.UI.Xaml declare verbatim identically; `tap_render.h`
+  and `tap_overlay.h` name the seven projection aliases and are therefore compiled once per
+  framework; the provider itself names the real framework and defines the aliases, the CLSID and the
+  seams.
   <br>
   The first two groups are included **above** the alias block, so naming a projection in one of them
   does not merely offend a convention -- it fails to compile, with the alias undefined. That is the
@@ -42,6 +43,11 @@ changing the include order in either provider's `.cpp`.
   translation unit can be compiled against a mock `IVisualTreeService` and a mock `IRoseOverlay`,
   where a tier-3 one would drag in a whole cppwinrt projection to exercise a path-parsing function.
   Do not cite tests as the reason for the boundary until something actually tests it.
+  <br>
+  `TapTree` is the one piece that needs no mock at all: it holds three containers, answers questions
+  about them, and reaches nothing -- not the framework, not the site, not the overlay. A test for
+  `Resolve` builds a node list, asks, and checks the answer. That it can be tested that easily is why
+  addressing lives there rather than on the object holding the framework's interfaces.
 - **Both providers compile every tap change, and one of them is not a sample of the other.** The
   point of the alias split is that one source serves two frameworks, so a change verified under one
   has verified half of it. The tap is not built by `dotnet build` -- CI notes that `dotnet build` is

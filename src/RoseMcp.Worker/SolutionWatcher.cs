@@ -248,8 +248,8 @@ public sealed class SolutionWatcher : IDisposable
 	}
 
 	/// <summary>
-	/// True while git holds its index lock, or a merge or rebase is part-way through. Reconciling
-	/// then would read a tree that is half old and half new, so the barrier waits it out.
+	/// True while git holds its index lock. Reconciling then would read a tree that is half old and half
+	/// new, so the barrier waits it out.
 	/// </summary>
 	private bool GitOperationInFlight() => _gitDirectory?.OperationInFlight() ?? false;
 

@@ -78,13 +78,19 @@ public sealed class GitDirectory
 		string.Equals(Path.GetFullPath(path), _headPath, StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>
-	/// True while git holds its index lock, or a merge or rebase is part-way through. Reconciling then
-	/// would read a tree that is half the old branch and half the new one.
+	/// True while git holds its index lock, which it takes to write the index and the working tree and
+	/// gives back when it stops. Reconciling then would read a tree that is half the old branch and half
+	/// the new one.
+	/// <para>
+	/// The lock and nothing else. <c>MERGE_HEAD</c> and <c>REBASE_HEAD</c> describe a state rather than
+	/// an operation: they last as long as somebody takes to resolve a conflict, while the tree is stable,
+	/// and git can leave <c>REBASE_HEAD</c> behind after the rebase that wrote it has finished. Counting
+	/// either makes every read wait out the settle timeout and then reload the whole solution, for as long
+	/// as the file exists. A checkout replacing the tree is already said by HEAD being rewritten, and the
+	/// stat sweep reconciles whatever a merge or rebase writes.
+	/// </para>
 	/// </summary>
-	public bool OperationInFlight() =>
-		File.Exists(Path.Combine(FullPath, "index.lock"))
-			|| File.Exists(Path.Combine(FullPath, "MERGE_HEAD"))
-			|| File.Exists(Path.Combine(FullPath, "REBASE_HEAD"));
+	public bool OperationInFlight() => File.Exists(Path.Combine(FullPath, "index.lock"));
 
 	/// <summary>
 	/// The directory a linked worktree's <c>.git</c> file points at, or null for anything that is not

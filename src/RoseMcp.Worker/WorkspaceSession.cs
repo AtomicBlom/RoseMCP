@@ -186,20 +186,29 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	/// solution is reopened instead. Doing that here, inside the barrier, is what stops a caller
 	/// from ever seeing a snapshot that predates a branch switch.
 	/// </para>
+	/// <para>
+	/// What decides between the two is what changed, never how it came to change. A branch switch, a
+	/// watcher that lost events and a burst of generated files are all read the same way, because the
+	/// sweep, the walk and the build-file probes find every change without trusting the event stream, and a
+	/// reload is paid only when one of them finds an evaluation input moved.
+	/// </para>
 	/// </summary>
 	private async Task<WorkspaceSnapshot> ReconcileAsync(CancellationToken cancellationToken)
 	{
 		var notices = new List<string>();
 		var report = _watcher.Drain();
-		var signal = report.Signal;
 
-		// Never reconcile mid-checkout. Half the tree is the old branch and half is the new, and
-		// ingesting that produces a snapshot that never existed in any commit.
-		if (signal.HasFlag(WatchSignal.GitOperationInFlight))
+		// Never reconcile mid-checkout. Half the tree is the old branch and half is the new, and ingesting that
+		// produces a snapshot that never existed in any commit. What git wrote while this waited is drained
+		// afterwards and kept with what was already heard, then read like any other change: that git was busy
+		// is not a reason to reload.
+		if (report.HasFlag(WatchSignal.GitOperationInFlight))
 		{
 			await WaitForGitAsync(cancellationToken);
-			signal |= WatchSignal.FullResyncRequired;
+			report = report.Then(_watcher.Drain());
 		}
+
+		var signal = report.Signal;
 
 		if (signal.HasFlag(WatchSignal.SolutionMissing))
 		{
@@ -233,21 +242,27 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		// the sweep has already stated each of them.
 		var untrackedImport = _synchronizer.UntrackedImportChanged(report.BuildFilesChanged);
 
-		// A full resync means the event stream had holes in it, so a project may have been added or
-		// removed without any tracked file changing. Only a reload can represent that.
+		// Lost events lose nothing the sweep, the walk and the probes do not find again, except the one thing
+		// the watcher's own list answers -- which, like the line above, only matters for an unevaluated project.
+		var eventsLost = signal.HasFlag(WatchSignal.EventsLost) && _synchronizer.AnyProjectUnevaluated;
+
+		// A full resync is asked for when the solution file comes back after going missing: the snapshot served
+		// stale in the meantime describes nothing about the file that returned.
 		var mustReload = sync.StructuralChange
 			|| appeared.StructuralChange
 			|| untrackedImport
+			|| eventsLost
 			|| signal.HasFlag(WatchSignal.FullResyncRequired);
 
 		if (mustReload)
 		{
-			notices.Add((sync.StructuralChange, appeared.StructuralChange, untrackedImport) switch
+			notices.Add((sync.StructuralChange, appeared.StructuralChange, untrackedImport, eventsLost) switch
 			{
-				(true, _, _) => "Project or solution files changed on disk; the solution was reloaded.",
-				(_, true, _) => "A project or build file appeared on disk; the solution was reloaded.",
-				(_, _, true) => "A .props or .targets file changed that a project which could not be evaluated may import; the solution was reloaded.",
-				_ => "Bulk changes on disk outran incremental tracking; the solution was reloaded.",
+				(true, _, _, _) => "Project or solution files changed on disk; the solution was reloaded.",
+				(_, true, _, _) => "A project or build file appeared on disk; the solution was reloaded.",
+				(_, _, true, _) => "A .props or .targets file changed that a project which could not be evaluated may import; the solution was reloaded.",
+				(_, _, _, true) => "The file watcher lost events, and a project that could not be evaluated may import a build file that changed unheard; the solution was reloaded.",
+				_ => "The solution file is back on disk after going missing; the solution was reloaded.",
 			});
 
 			// The sweep is deliberately not committed on this path: a reload rebuilds the tracking

@@ -18,17 +18,22 @@ Read before adding or changing a read path, a reload trigger, or the file watche
   files instead has nothing claimed for it and the file is reported as not being in the build. The
   watcher's list of appearances is still used for one thing: a project or build file appearing, which
   no snapshot can represent and which sends the session round a reload.
-- **A fetch is not a checkout, and a write of ours is not somebody else's.** Both are ways of paying
-  a full design-time build of every project for nothing, and an idle checkout that nobody was editing
-  was paying it twice a minute. `.git/HEAD` is the whole tree-replaced signal, matched as a path:
-  matching the file name instead fires on `refs/remotes/origin/HEAD` and `logs/refs/remotes/origin/HEAD`,
-  which a background fetch writes without touching a line of source. The index is worse than
-  imprecise, it is the wrong file -- a plain `git status` rewrites it to refresh its stat cache, and
-  every IDE git integration runs that continuously *in reaction to file writes*, so counting it lets
-  an agent editing C# drive its own reloads. Nothing wider is needed, because a project file added,
-  removed or edited by any git operation reaches the structural sweep and file contents reach the
-  stat sweep. A linked worktree's `.git` is a file naming the real directory, so testing only for a
-  directory walks past it and leaves every worktree unable to say whether git is mid-operation.
+- **A branch switch is its files changing, and a write of ours is not somebody else's.** Both are ways
+  of paying a full design-time build of every project for nothing. Nothing git does is a reason to
+  reload on its own: a switch rewrites working-tree files, and the barrier reads those like any other
+  change -- tracked documents by their stamps, new source files by walking, and build files by their
+  stamps or by looking again at every place one was absent at load -- so a switch that touches only
+  source is absorbed, and one that moves a project, an import or the solution reloads for that reason.
+  The git directory itself is ignored, HEAD included. A background fetch writes
+  `refs/remotes/origin/HEAD`, and a plain `git status` rewrites the index to refresh its stat cache --
+  which every IDE git integration runs continuously *in reaction to file writes* -- so treating anything
+  in there as a signal lets an agent editing C# drive its own reloads. The one thing waited for is
+  `index.lock`, held while git writes the tree, because reconciling then reads half of one branch and
+  half of another. `MERGE_HEAD` and `REBASE_HEAD` are not waited for: they describe a conflict being
+  resolved rather than a write in progress, and git can leave `REBASE_HEAD` behind after the rebase
+  finished. What git wrote during the wait is drained afterwards and read like any other change. A
+  linked worktree's `.git` is a file naming the real directory, so testing only for a directory walks
+  past it and leaves every worktree unable to say whether git is mid-operation.
   <br>
   The other half is our own writes coming back at us. One rewrite raises more than one watcher event,
   so suppression that forgets the path on the first leaks the rest back as somebody else's edits;
@@ -49,5 +54,7 @@ Read before adding or changing a read path, a reload trigger, or the file watche
   thousand source files changing needs nothing from the event stream, and a list holding every event
   would need a cap that turns the number of events into a reason to reload. A project whose evaluation
   fails has no import list, and for that case alone any untracked `.props` or `.targets` changing
-  reloads -- over-reloading is the only answer there that cannot be stale.
+  reloads -- over-reloading is the only answer there that cannot be stale. A watcher that loses events,
+  to an overflowed buffer or a vanished directory, loses nothing else, so lost events reload only in that
+  same case.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.

@@ -4,13 +4,14 @@ using RoseMcp.Solutions;
 namespace RoseMcp.Worker;
 
 /// <summary>
-/// Watches the solution tree for what a read barrier cannot find for itself.
+/// Watches the solution tree for the little a read barrier cannot find for itself.
 /// <para>
-/// The watcher is an optimisation, not the correctness mechanism -- the read barrier's stat sweep and
-/// directory walk are. Between them they find every tracked document that changed and every source
-/// file that appeared, however many, so the watcher neither counts events nor remembers source files.
-/// What it adds is what a read cannot see cheaply: a build file appearing, a build file changing that
-/// the sweep does not track, HEAD being rewritten, and the event stream itself failing.
+/// The watcher is an optimisation, not the correctness mechanism -- the read barrier's stat sweep,
+/// directory walk and build-file probes are. Between them they find every tracked document that changed,
+/// every source file that appeared and every build file that appeared, however many and however they came
+/// to change, so the watcher neither counts events, remembers source files, nor treats anything git does
+/// as a signal. What it adds is a build file changing that the sweep does not track, and whether its own
+/// event stream has holes in it.
 /// </para>
 /// </summary>
 public sealed class SolutionWatcher : IDisposable
@@ -131,7 +132,7 @@ public sealed class SolutionWatcher : IDisposable
 		{
 			// Without a watcher every read still reconciles; it just costs a full sweep each time.
 			_logger.LogWarning(exception, "Could not watch {Root}; falling back to stat sweeps alone.", _root);
-			Signal(WatchSignal.FullResyncRequired);
+			Signal(WatchSignal.EventsLost);
 		}
 	}
 
@@ -145,11 +146,6 @@ public sealed class SolutionWatcher : IDisposable
 
 			_pending |= WatchSignal.FileChanges;
 			Record(e);
-
-			// A checkout rewrites HEAD, which says the working tree is being replaced wholesale
-			// rather than edited, and individual events stop being meaningful.
-			var treeReplaced = _gitDirectory?.IsTreeReplaced(e.FullPath) ?? false;
-			if (treeReplaced) _pending |= WatchSignal.FullResyncRequired;
 		}
 	}
 
@@ -210,13 +206,15 @@ public sealed class SolutionWatcher : IDisposable
 	}
 
 	/// <summary>
-	/// Raised when the buffer overflows or the watched directory disappears. Either way the event
-	/// stream has holes in it, so nothing incremental can be trusted until a full reconcile.
+	/// Raised when the buffer overflows or the watched directory disappears. Either way the event stream
+	/// has holes in it. Every read stats, walks and probes regardless, so the holes cost only what the
+	/// watcher's own list answers: a build file changing that a project which could not be evaluated might
+	/// import.
 	/// </summary>
 	private void OnError(object sender, ErrorEventArgs e)
 	{
-		_logger.LogWarning(e.GetException(), "The file watcher failed; forcing a full resync.");
-		Signal(WatchSignal.FullResyncRequired);
+		_logger.LogWarning(e.GetException(), "The file watcher lost events; the next read cannot rely on what it heard.");
+		Signal(WatchSignal.EventsLost);
 
 		// A deleted root kills the watcher permanently, so rebuild it if the root is still there.
 		if (!Directory.Exists(_root)) return;
@@ -249,7 +247,9 @@ public sealed class SolutionWatcher : IDisposable
 		// Restore rewriting the assets file means the reference graph moved, so that one counts.
 		if (path.EndsWith("project.assets.json", StringComparison.OrdinalIgnoreCase)) return false;
 
-		if (_gitDirectory is { } git && git.Contains(path)) return !git.IsTreeReplaced(path);
+		// Everything git writes to its own directory, HEAD included. A branch switch is its working-tree files
+		// changing, and those are heard, statted and walked like any other change.
+		if (_gitDirectory?.Contains(path) ?? false) return true;
 
 		foreach (var segment in path.Split(SeparatorChars, StringSplitOptions.RemoveEmptyEntries))
 		{

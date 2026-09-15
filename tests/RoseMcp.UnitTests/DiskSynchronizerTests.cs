@@ -52,6 +52,42 @@ public sealed class DiskSynchronizerTests
 		Assert.False(synchronizer.UntrackedImportChanged([tree.PathTo("build", "Shared.props")]));
 	}
 
+	/// <summary>
+	/// A build file appearing where none was at load is found by looking again, not by the watcher having
+	/// heard it -- so a watcher that lost the event, or never started, still sends the session round a
+	/// reload.
+	/// </summary>
+	[Test]
+	[Arguments("App", "Directory.Build.props")]
+	[Arguments("", "Directory.Packages.props")]
+	[Arguments("", ".editorconfig")]
+	[Arguments("App", "packages.config")]
+	[Arguments("", "rosemcp.json")]
+	public async Task A_build_file_appearing_where_none_was_at_load_is_a_structural_change(string folder, string name)
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var tree = LoadedTree.Create();
+		var synchronizer = new DiskSynchronizer();
+
+		synchronizer.Reset(
+			tree.Solution,
+			tree.SolutionPath,
+			new EvaluationInputs(
+				new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase)
+				{
+					[tree.ProjectPath] = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+				},
+				[]));
+
+		var before = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
+		Assert.False(before.StructuralChange, "nothing has appeared yet");
+
+		await File.WriteAllTextAsync(tree.PathTo(folder, name), "<Project />", token);
+
+		var after = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
+		Assert.True(after.StructuralChange, $"{name} appearing changes how the project evaluates");
+	}
+
 	/// <summary>A solution file and one project on disk, loaded into an ad hoc workspace.</summary>
 	private sealed class LoadedTree : IDisposable
 	{

@@ -102,6 +102,26 @@ public sealed class SolutionWatcherTests
 		Assert.Empty(second.BuildFilesAppeared);
 	}
 
+	/// <summary>
+	/// A branch switch rewriting HEAD raises nothing at all. The git directory is ignored whole, and a switch's
+	/// working-tree files are heard, statted and walked like any other change.
+	/// </summary>
+	[Test]
+	public async Task Rewriting_head_raises_nothing_at_all()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var tree = WatchedTree.Create(withGitDirectory: true);
+
+		await File.WriteAllTextAsync(tree.PathTo(Path.Combine(".git", "HEAD")), "ref: refs/heads/other\n", token);
+		await Task.Delay(Settle, token);
+
+		var report = tree.Watcher.Drain();
+
+		Assert.False(report.HasFlag(WatchSignal.FileChanges), "the git directory's own writes are not working-tree changes");
+		Assert.False(report.HasFlag(WatchSignal.FullResyncRequired));
+		Assert.False(report.HasFlag(WatchSignal.EventsLost));
+	}
+
 	/// <summary>A watched directory holding a solution file and one source file.</summary>
 	private sealed class WatchedTree : IDisposable
 	{
@@ -121,7 +141,7 @@ public sealed class SolutionWatcherTests
 
 		public SolutionWatcher Watcher { get; }
 
-		public static WatchedTree Create()
+		public static WatchedTree Create(bool withGitDirectory = false)
 		{
 			var root = Directory.CreateTempSubdirectory("rosemcp-watch-").FullName;
 			var solutionPath = Path.Combine(root, "Watched.sln");
@@ -129,6 +149,13 @@ public sealed class SolutionWatcherTests
 
 			File.WriteAllText(solutionPath, string.Empty);
 			File.WriteAllText(sourcePath, "class C { }");
+
+			// Before the watcher starts, since it looks for the git directory once, as it is constructed.
+			if (withGitDirectory)
+			{
+				Directory.CreateDirectory(Path.Combine(root, ".git"));
+				File.WriteAllText(Path.Combine(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+			}
 
 			var watcher = new SolutionWatcher(solutionPath, NullLogger<SolutionWatcher>.Instance);
 

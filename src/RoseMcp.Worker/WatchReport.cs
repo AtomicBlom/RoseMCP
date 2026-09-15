@@ -21,5 +21,24 @@ public sealed record WatchReport
 	/// <summary>Build files that changed, were removed, or were renamed away.</summary>
 	public IReadOnlyList<string> BuildFilesChanged { get; init; } = [];
 
+	/// <summary>
+	/// This report followed by one drained later, read as one. The later report's answers about the
+	/// present -- whether git is still writing, whether the solution file is there -- replace this one's,
+	/// and what either saw happen is kept, so a drain taken after waiting for git loses nothing the first
+	/// drain held.
+	/// </summary>
+	/// <param name="later">The report drained after this one.</param>
+	public WatchReport Then(WatchReport later)
+	{
+		const WatchSignal Present = WatchSignal.GitOperationInFlight | WatchSignal.SolutionMissing;
+
+		return new WatchReport
+		{
+			Signal = (Signal & ~Present) | later.Signal,
+			BuildFilesAppeared = [.. BuildFilesAppeared.Union(later.BuildFilesAppeared, StringComparer.OrdinalIgnoreCase)],
+			BuildFilesChanged = [.. BuildFilesChanged.Union(later.BuildFilesChanged, StringComparer.OrdinalIgnoreCase)],
+		};
+	}
+
 	public bool HasFlag(WatchSignal flag) => Signal.HasFlag(flag);
 }

@@ -838,16 +838,19 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		// provider giving its interfaces back does not depend on either.
 		xaml?.EndProviderSession();
 
-		var detached = session?.Detach() ?? true;
+		string? failure = null;
+		var detached = session?.Detach(out failure) ?? true;
 
 		// For a UWP target, also lift the package's debug mode so it returns to its normal lifecycle.
 		DisableUwpDebugging();
 
 		if (!detached)
 		{
-			Fault($"Could not detach the debugger from pid {targetProcessId}. It is still attached, and the "
-				+ "debugging interface has been left open rather than terminated, because terminating it while "
-				+ "attached kills the target. rose_debug_events has the reason it failed.");
+			// The reason goes in the fault rather than only in the event stream, because whoever asked to
+			// detach is closing the session, and the stream closes with it.
+			Fault($"Could not detach the debugger from pid {targetProcessId}, {failure}. It may still be attached: "
+				+ "the debugging interface was left open rather than terminated, because terminating it while "
+				+ "attached kills the target.");
 
 			return CurrentInfo();
 		}

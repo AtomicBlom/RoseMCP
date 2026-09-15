@@ -316,29 +316,42 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// the log says "attempt 1 of 3" about something that was never going to change.
 	/// </para>
 	/// </summary>
-	public bool Detach()
+	/// <param name="failure">
+	/// Why the detach did not happen, when it did not: whether it was refused or retried, and the error
+	/// it ended on. The event buffer is told the same thing, but a caller detaching is closing the session
+	/// and the buffer goes with it, so the reason has to travel with the answer.
+	/// </param>
+	public bool Detach(out string? failure)
 	{
-		Exception? failure = null;
+		Exception? error = null;
 
 		for (var attempt = 1; attempt <= DetachAttempts; attempt++)
 		{
-			if (TryDetachOnce(attempt, out failure)) return true;
-			if (IsRefusal(failure)) break;
+			if (TryDetachOnce(attempt, out error))
+			{
+				failure = null;
+				return true;
+			}
+
+			if (IsRefusal(error)) break;
 			if (attempt < DetachAttempts) Thread.Sleep(DetachRetryDelay);
 		}
 
+		var refused = IsRefusal(error);
+		var effort = refused ? "it was refused" : $"after {DetachAttempts} attempts";
+		// Trimmed because the reason goes mid-sentence in every message that carries it, and an
+		// exception's message usually ends with its own full stop.
+		failure = $"{effort}: {error?.Message.TrimEnd('.') ?? "no reason given"}";
+
 		// The failure deserves an event more than the success does: without one, a caller is told the
 		// session closed and is never told the debugger is still on their process.
-		var refused = IsRefusal(failure);
-		var effort = refused ? "it was refused" : $"after {DetachAttempts} attempts";
 		buffer.Append(
 			LiveDebugEventKind.SessionNotice,
-			$"Could not detach from pid {TargetProcessId}, {effort}: "
-				+ $"{failure?.Message ?? "no reason given"}. The debugging interface is being left open rather "
-				+ "than terminated, because terminating it while still attached kills the target.");
+			$"Could not detach from pid {TargetProcessId}, {failure}. The debugging interface is being left open "
+				+ "rather than terminated, because terminating it while still attached kills the target.");
 
 		logger.LogError(
-			failure,
+			error,
 			"Detach from pid {Pid} failed{Effort}.",
 			TargetProcessId,
 			refused ? " and was not retried" : $" after {DetachAttempts} attempts");
@@ -1918,7 +1931,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	public void Dispose()
 	{
-		if (!Detach())
+		if (!Detach(out _))
 		{
 			logger.LogWarning(
 				"Leaving the ICorDebug interface open for pid {Pid}: the detach failed, and terminating it "

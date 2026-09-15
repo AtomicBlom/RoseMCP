@@ -85,7 +85,7 @@ touch and read that file first.
 | [tap-tiers.md](docs/invariants/tap-tiers.md) | a new file under `src/RoseMcp.Xaml.Tap/`, moving code between them, either provider's include order |
 | [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, injection, anything that advises the visual tree |
 | [overlay.md](docs/invariants/overlay.md) | `tap_overlay.h`, `tap_measure.h` |
-| [hosts-and-deploy.md](docs/invariants/hosts-and-deploy.md) | `XamlStackModules`, architecture detection, `tools/deploy.ps1`, what an install carries |
+| [hosts-and-deploy.md](docs/invariants/hosts-and-deploy.md) | `XamlStackModules`, architecture detection, `XamlProviderSession`, `tools/deploy.ps1`, what an install carries |
 | [live-app-tests.md](docs/invariants/live-app-tests.md) | any live-app test or fixture |
 
 A new invariant goes in the file whose trigger already covers it, or in a new file with a trigger of

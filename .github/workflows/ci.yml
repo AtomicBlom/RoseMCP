@@ -11,6 +11,9 @@ name: CI
 # The native XAML providers get a job of their own, because they are the one part of this repository
 # the solution build never touches: both taps can be broken with `dotnet build` green, and nothing
 # else here would notice.
+#
+# Those two are also the slow ones, so a pull request runs each only when something it could catch
+# has changed, and builds the providers as x64 Debug only. Main, and a manual run, get everything.
 on:
   # Only main. A branch with a pull request open would otherwise run this twice for one
   # change -- once for the push and once for the pull request -- which doubles the wait and
@@ -18,6 +21,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The full run on demand, for a branch whose change the path rules below judge too narrowly.
+  workflow_dispatch:
 
 # A second push to a branch makes the first run's answer worthless before it finishes. Main is the
 # exception: that history is what tells you which commit broke the build, so it is never cancelled.
@@ -31,6 +36,54 @@ permissions:
   contents: read
 
 jobs:
+  # Decides which of the slow jobs a pull request needs. Done with a job and `if:` rather than with
+  # `paths:` on the trigger, because all four jobs are required checks: a workflow filtered out by
+  # `paths:` reports nothing, and a required check that never reports holds the pull request open
+  # forever, while a job skipped by `if:` reports as skipped, which the ruleset accepts.
+  #
+  # The two rules lean opposite ways on purpose. The providers read nothing outside their own folders
+  # except the WindowsAppSDK version, so they run when one of those inputs is touched. The integration
+  # suite reaches nearly everything, so it runs unless every changed file is somewhere it cannot see:
+  # a new project or a new top-level folder then runs the suite by default instead of slipping past it.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      integration: ${{ steps.filter.outputs.integration }}
+      providers: ${{ steps.filter.outputs.providers }}
+    steps:
+      # Two commits, because a pull_request run checks out the merge commit, whose first parent is
+      # the base branch as it is now: diffing the two is exactly what merging would change.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - name: Classify the changed files
+        id: filter
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo 'integration=true' >> "$GITHUB_OUTPUT"
+            echo 'providers=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          echo "$changed"
+
+          # The shared headers, both taps, and projections.csproj's restore inputs.
+          providers='^(src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|Directory\.(Build|Packages)\.props$|global\.json$|\.github/workflows/ci\.yml$)'
+          # Nothing the integration job builds or runs reads these. The taps are here because the
+          # tests that load a provider are the LiveApp category, which that job excludes.
+          unseen='^(docs/|wiki/|tools/|\.claude/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|\.github/workflows/release\.yml$|[^/]+\.md$)'
+
+          if grep -Eq "$providers" <<< "$changed"; then p=true; else p=false; fi
+          if grep -Evq "$unseen" <<< "$changed"; then i=true; else i=false; fi
+
+          echo "integration=$i" >> "$GITHUB_OUTPUT"
+          echo "providers=$p" >> "$GITHUB_OUTPUT"
+          echo "integration: $i, providers: $p"
+
   build-and-test:
     runs-on: windows-latest
     # Without this a hung WinUI build holds the runner for six hours before GitHub gives up.
@@ -83,6 +136,10 @@ jobs:
   # twelve. The timeout is the cap, not the target, and it allows for the bounded parallelism below
   # trading wall time for finishing at all.
   integration:
+    needs: changes
+    # `!= 'false'` rather than `== 'true'`, so a changes job that failed and set nothing runs the
+    # suite. A skipped required check passes, and a broken filter must not be a way to pass it.
+    if: ${{ !cancelled() && needs.changes.outputs.integration != 'false' }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -140,7 +197,17 @@ jobs:
   # warning. Here every non-zero exit is a failure, which is the whole point of the job: an agent that
   # cannot build the ARM64 provider must say so rather than quietly produce an install that has no
   # XAML inspection for half the targets it claims to serve.
+  #
+  # A pull request builds x64 Debug only, which answers the question a pull request is asking: does
+  # the C++ still compile and link. Installing the ARM64 cross-toolset is an installer run of several
+  # minutes, longer than all six compiles, and every architecture and configuration compiles the same
+  # headers. What is left uncaught -- a break only x86 or ARM64 sees, such as x86's decorated export
+  # names, or one only the optimiser trips -- is rare, and main still builds all six as Release before
+  # any release is cut from it.
   xaml-providers:
+    needs: changes
+    # The same fail-open condition as the integration job, for the same reason.
+    if: ${{ !cancelled() && needs.changes.outputs.providers != 'false' }}
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -155,6 +222,7 @@ jobs:
       # assumed, so it cannot vanish when windows-latest moves. This mirrors release.yml, which needs
       # the same toolset to package the win-arm64 artifact.
       - name: Install the MSVC ARM64 cross-toolset
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           $installerDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
@@ -170,13 +238,18 @@ jobs:
       - name: Build every provider for every architecture
         shell: pwsh
         run: |
+          $isPullRequest = $env:GITHUB_EVENT_NAME -eq 'pull_request'
+          $platforms = if ($isPullRequest) { @('x64') } else { @('x86', 'x64', 'arm64') }
+          $configuration = if ($isPullRequest) { 'Debug' } else { 'Release' }
+          Write-Host "platforms: $($platforms -join ', '); configuration: $configuration"
+
           $failed = @()
           foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
           {
-              foreach ($platform in 'x86', 'x64', 'arm64')
+              foreach ($platform in $platforms)
               {
                   Write-Host "::group::$project ($platform)"
-                  & ./src/$project/build.ps1 -Platform $platform -Configuration Release
+                  & ./src/$project/build.ps1 -Platform $platform -Configuration $configuration
                   $code = $LASTEXITCODE
                   Write-Host '::endgroup::'
 

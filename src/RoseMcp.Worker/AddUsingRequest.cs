@@ -6,8 +6,9 @@ public sealed record AddUsingRequest
 	public required string FilePath { get; init; }
 
 	/// <summary>
-	/// Namespaces to ensure, written however they come to hand: <c>System.Text</c>,
-	/// <c>using System.Text</c> or <c>using System.Text;</c> all name the same one.
+	/// Imports to ensure, written however they come to hand: <c>System.Text</c>,
+	/// <c>using System.Text</c> or <c>using System.Text;</c> all name the same one, and
+	/// <c>static System.Math</c> and <c>Json = System.Text.Json</c> name a static import and an alias.
 	/// </summary>
 	public required IReadOnlyList<string> Namespaces { get; init; }
 

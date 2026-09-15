@@ -232,11 +232,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 
 		if (session?.DetachFailure is { Length: > 0 } failure)
 		{
+			// Nothing here can say the target survived, so the message must not lead with that: a failed
+			// detach is no evidence about the target's state, and the target can be gone already.
 			throw new McpException(
-				$"The session is closed, but the debugger could not be detached from the target: {failure} "
-					+ "The debugging interface was deliberately left open rather than terminated, because "
-					+ "terminating it while attached kills the target -- so the target should still be running, "
-					+ "but it is no longer being watched and nothing here can confirm the debugger is off it.");
+				$"The session is closed, but the debugger may still be attached to the target: {failure} "
+					+ "Nothing is watching the target any more, and whether it is still running is not known; "
+					+ "check the process before relying on it.");
 		}
 
 		return "Detached; the target keeps running.";

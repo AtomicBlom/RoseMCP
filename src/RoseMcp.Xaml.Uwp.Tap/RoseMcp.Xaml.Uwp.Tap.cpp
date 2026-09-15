@@ -29,10 +29,28 @@
 static const wchar_t* const RoseTapName = L"RoseMcp.Xaml.Uwp.Tap";
 static const wchar_t* const RoseTapLogFile = L"\\rosemcp.xaml.uwp.tap.log";
 
-// The framework-free channel, then the xamlOM ABI layer. Both before the projections, which the
-// original required and the comment below still does.
+// The framework-free channel, then the xamlOM ABI layer -- the first two of the four tiers, and the
+// start of an include order that is load-bearing rather than tidy: everything above the projections
+// is there because it names none, and would stop compiling if it did.
 #include "../RoseMcp.Xaml.Tap/tap_channel.h"
 #include "../RoseMcp.Xaml.Tap/tap_diagnostics.h"
+
+// The same root as a string, for the two places that compare a CLR type name rather than a type.
+// The live tree reports names, not types, so a namespace alias cannot help there -- and a literal
+// spelled one framework's way reads back empty on the other, which looks like a framework quirk
+// rather than a wrong comparison.
+#define RoseTapXamlRoot L"Windows.UI.Xaml."
+
+// {7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6}
+static const CLSID CLSID_RoseTap =
+{ 0x7b9e5c10, 0x2d4a, 0x4f3b, { 0x9e, 0x21, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6 } };
+
+// What the COM object needs from the projected half, and then the COM object itself -- both above the
+// projections, because neither names one. The placement is the check: an xaml:: type reaching into
+// tap_object.h stops compiling here rather than being absorbed silently, which is the only thing
+// keeping the object at a tier where one source serves both frameworks.
+#include "../RoseMcp.Xaml.Tap/tap_surface.h"
+#include "../RoseMcp.Xaml.Tap/tap_object.h"
 
 // C++/WinRT projections, for the resident in-app toolbar (#18): build the overlay on the diagnostics
 // UI layer, hit-test the element under a click, and report it. Included after the ABI headers above;
@@ -61,22 +79,12 @@ namespace xinput = winrt::Windows::UI::Xaml::Input;
 namespace xshapes = winrt::Windows::UI::Xaml::Shapes;
 namespace ximaging = winrt::Windows::UI::Xaml::Media::Imaging;
 
-// The same root as a string, for the two places that compare a CLR type name rather than a type.
-// The live tree reports names, not types, so a namespace alias cannot help there -- and a literal
-// spelled one framework's way reads back empty on the other, which looks like a framework quirk
-// rather than a wrong comparison.
-#define RoseTapXamlRoot L"Windows.UI.Xaml."
-
 // UWP has one window, so IXamlDiagnostics::GetUiLayer() names the only layer there is and the
 // per-XamlRoot API WinUI 3 needs does not exist here. Declining is the whole implementation.
 static bool RoseTapGetUiLayerForRoot(IXamlDiagnostics*, InstanceHandle, ::IInspectable**)
 {
 	return false;
 }
-
-// {7b9e5c10-2d4a-4f3b-9e21-a1b2c3d4e5f6}
-static const CLSID CLSID_RoseTap =
-{ 0x7b9e5c10, 0x2d4a, 0x4f3b, { 0x9e, 0x21, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6 } };
 
 // The overlay's one genuine seam (#75): a passive observer of pointer movement, used for the
 // proximity fade that gets the marks out of the way. Two properties are required, and CoreWindow has
@@ -225,7 +233,8 @@ static bool RoseTapRunWalk(const std::function<void()>& walk)
 	return RoseTapRunOnUiThread(walk);
 }
 
-// The two layers that need the aliases and the class id above: the overlay is written against the
-// six aliases, and the COM object needs CLSID_RoseTap to answer DllGetClassObject.
+// The two layers that genuinely need the aliases: the four reads whose try_as<> chains name concrete
+// projected types, and the overlay, which is written against the seven aliases throughout. Both
+// supply what tap_surface.h declared above, so the COM object is already compiled against them.
+#include "../RoseMcp.Xaml.Tap/tap_render.h"
 #include "../RoseMcp.Xaml.Tap/tap_overlay.h"
-#include "../RoseMcp.Xaml.Tap/tap_object.h"

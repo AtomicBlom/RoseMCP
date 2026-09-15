@@ -2,15 +2,18 @@
 
 // The COM object the diagnostics site talks to, its class factory, and the two DLL exports.
 //
-// Almost all of RoseTap is pure xamlOM ABI -- SetSite, OnVisualTreeChange, the tree snapshot, the
-// property read, and applying a batch of commands -- which UWP and WinUI 3 implement identically.
-// Its only projection uses are RenderCornerRadius and RenderBrush, try_as<> chains over control
-// types that exist under both roots, so they resolve through the aliases like everything in the
-// overlay.
+// All of RoseTap is xamlOM ABI -- SetSite, OnVisualTreeChange, the tree snapshot, the property read,
+// applying a batch of commands, and the addressing that decides which element an edit hits -- which
+// UWP and WinUI 3 implement identically. So it names no projection and is compiled above the
+// provider's alias block, which is the check rather than the claim: an xaml:: anything here fails to
+// compile.
 //
-// Included last, and needs CLSID_RoseTap defined by the provider: the class id is the one piece of
-// genuine identity here, since it is what the host's injection names and what two providers must not
-// share.
+// The two things that reach into the projected world are declared in tap_surface.h and defined
+// below the aliases -- the overlay, through IRoseOverlay, and the four reads that need a concrete
+// type, in tap_render.h. Both speak in handles and strings, so neither drags this file down a tier.
+//
+// Needs CLSID_RoseTap defined by the provider: the class id is the one piece of genuine identity
+// here, since it is what the host's injection names and what two providers must not share.
 
 // The provider instance the reader serves from, and a lock over it.
 //
@@ -569,68 +572,6 @@ private:
 		return excluded;
 	}
 
-	// One element's property chain: every effective (non-overridden) value with its type, provenance
-	// (default/style/local/...), and the source location that set it, plus an element row carrying its
-	// type and its own declaration site. Source locations are populated only when the app carries XAML
-	// source info; otherwise those fields are empty and the caller degrades to provenance alone.
-	/// Turns a handle to a SolidColorBrush into #AARRGGBB, leaving anything else alone.
-	///
-	/// Reads a CornerRadius off the element itself, because XAML diagnostics renders it as nothing.
-	///
-	/// Both are structs, both are set by the same markup, and only one comes back with a value --
-	/// spelled here as UWP reports it, where WinUI 3 says Microsoft.UI.Xaml:
-	///
-	///     {"name":"Padding",      "value":"24,24,24,24", "valueType":"Windows.UI.Xaml.Thickness"}
-	///     {"name":"CornerRadius", "value":"",            "valueType":"Windows.UI.Xaml.CornerRadius"}
-	///
-	/// That is not our formatting -- the BSTR is populated by the framework and populated with
-	/// nothing -- so it can only be fixed by reading the value a second way.
-	///
-	/// Measured before being written, because the alternative was a per-type special case with a
-	/// maintenance tail and no idea how long the tail was. A sweep of every property of every
-	/// element in the probe app, 3,485 rows, found 32 empty-but-not-null values: 18 String
-	/// properties that genuinely are empty, and 14 CornerRadius. Thickness, GridLength, Size,
-	/// Vector3 and the rest all stringify. One type, so one special case.
-	///
-	/// The tail is still real: CornerRadius is declared by several unrelated types, and there is no
-	/// generic way to read a dependency property without the property's own static. If a seventh
-	/// type appears this returns false, and the caller reports the gap rather than an empty string --
-	/// which is the part that makes the next one findable instead of silent.
-	bool RenderCornerRadius(InstanceHandle handle, std::wstring& rendered)
-	{
-		if (!m_diagnostics || handle == 0) return false;
-
-		::IInspectable* raw = nullptr;
-		if (FAILED(m_diagnostics->GetIInspectableFromHandle(handle, &raw)) || !raw) return false;
-
-		winrt::Windows::Foundation::IInspectable instance{ nullptr };
-		winrt::attach_abi(instance, raw); // adopt the ref
-
-		xaml::CornerRadius radius{};
-		if (const auto border = instance.try_as<xcontrols::Border>()) radius = border.CornerRadius();
-		else if (const auto control = instance.try_as<xcontrols::Control>()) radius = control.CornerRadius();
-		else if (const auto grid = instance.try_as<xcontrols::Grid>()) radius = grid.CornerRadius();
-		else if (const auto stack = instance.try_as<xcontrols::StackPanel>()) radius = stack.CornerRadius();
-		else if (const auto relative = instance.try_as<xcontrols::RelativePanel>()) radius = relative.CornerRadius();
-		else if (const auto presenter = instance.try_as<xcontrols::ContentPresenter>()) radius = presenter.CornerRadius();
-		else return false;
-
-		// The same four-number form Thickness arrives in, so the two read alike and a caller that
-		// parses one parses the other.
-		rendered = Number(radius.TopLeft) + L"," + Number(radius.TopRight)
-			+ L"," + Number(radius.BottomRight) + L"," + Number(radius.BottomLeft);
-
-		return true;
-	}
-
-	/// A double as XAML would write it: no trailing zeros, and no decimal point when it is whole.
-	static std::wstring Number(double value)
-	{
-		wchar_t buffer[32];
-		swprintf_s(buffer, L"%g", value);
-		return buffer;
-	}
-
 	/// Whether an empty value is a value or a gap.
 	///
 	/// An unset string property really is the empty string -- AutomationProperties.Name and
@@ -645,35 +586,11 @@ private:
 		return type == L"Windows.Foundation.String" || type == L"System.String" || type == L"String";
 	}
 
-	/// The handle round-trips through GetIInspectableFromHandle, which is the reverse of what the
-	/// overlay uses to identify a clicked element. Only SolidColorBrush is rendered: it is the one
-	/// with an unambiguous textual form, and the overwhelming majority of what a hot reload sets. A
-	/// gradient or a brush behind a ThemeResource is left as its handle rather than being flattened
-	/// into a colour that would misrepresent it -- naming the resource key would be the better answer
-	/// there, and is a separate piece of work.
-	bool RenderBrush(const wchar_t* valueText, std::wstring& rendered)
-	{
-		if (!m_diagnostics || !valueText || !valueText[0]) return false;
-
-		const InstanceHandle valueHandle = static_cast<InstanceHandle>(_wcstoui64(valueText, nullptr, 10));
-		if (valueHandle == 0) return false;
-
-		::IInspectable* raw = nullptr;
-		if (FAILED(m_diagnostics->GetIInspectableFromHandle(valueHandle, &raw)) || !raw) return false;
-
-		winrt::Windows::Foundation::IInspectable instance{ nullptr };
-		winrt::attach_abi(instance, raw); // adopt the ref
-
-		const auto brush = instance.try_as<xmedia::SolidColorBrush>();
-		if (!brush) return false;
-
-		const auto colour = brush.Color();
-		wchar_t buffer[10];
-		swprintf_s(buffer, L"#%02X%02X%02X%02X", colour.A, colour.R, colour.G, colour.B);
-		rendered = buffer;
-		return true;
-	}
-
+	// One element's property chain: every effective (non-overridden) value with its type, provenance
+	// (default/style/local/...), and the source location that set it, plus an element row carrying its
+	// type and its own declaration site. Source locations are populated only when the app carries XAML
+	// source info; otherwise those fields are empty and the caller degrades to provenance alone.
+	//
 	// The property rows, into whatever sink the caller has. An std::ostream rather than a file, so
 	// the same builder serves properties.tsv and the pipe reply (#50) -- one builder, because two
 	// would drift and the provenance column is exactly what would drift.
@@ -763,7 +680,7 @@ private:
 				// unverifiable, and confirming the edit landed is the first thing anyone does after
 				// applying one. So a SolidColorBrush is resolved and rendered as its colour.
 				std::wstring rendered;
-				if (!isNull && (value.MetadataBits & IsValueHandle) != 0 && RenderBrush(valueText, rendered))
+				if (!isNull && (value.MetadataBits & IsValueHandle) != 0 && RoseTapRenderBrush(m_diagnostics, valueText, rendered))
 				{
 					valueText = rendered.c_str();
 				}
@@ -776,7 +693,7 @@ private:
 
 				const bool emptyButNotNull = !isNull && !valueText[0];
 				if (emptyButNotNull && std::wcscmp(declaredType, RoseTapXamlRoot L"CornerRadius") == 0
-					&& RenderCornerRadius(handle, rendered))
+					&& RoseTapRenderCornerRadius(m_diagnostics, handle, rendered))
 				{
 					valueText = rendered.c_str();
 				}
@@ -1040,13 +957,13 @@ private:
 		if (!unresolvedValue.empty()) return unresolvedValue;
 
 		InstanceHandle dictionary = 0;
-		if (!ResourcesOf(owner, dictionary)) return L"cannot replace: that element has no Resources dictionary";
+		if (!RoseTapResourcesOf(m_diagnostics, owner, dictionary)) return L"cannot replace: that element has no Resources dictionary";
 
 		// The key is a handle, not a string, which is the part of this signature that surprises. A
 		// boxed hstring is the honest way to make one: the diagnostics host can hand back a handle for
 		// any IInspectable, and a resource key in markup is a string.
 		InstanceHandle key = 0;
-		if (!KeyHandle(command.property, key)) return L"cannot replace: could not make a handle for the key";
+		if (!RoseTapKeyHandle(m_diagnostics, command.property, key)) return L"cannot replace: could not make a handle for the key";
 
 		IVisualTreeService2* resources = nullptr;
 		if (!m_diagnostics
@@ -1063,45 +980,6 @@ private:
 
 		Log(L"  replaced resource " + command.property + L" on " + command.target);
 		return L"applied";
-	}
-
-	// An element's resource dictionary.
-	//
-	// Not from the property chain, which is where the first attempt looked and found nothing: that
-	// chain reports dependency properties, and Resources is not one -- it is an ordinary property on
-	// FrameworkElement. Asking the element itself is the answer, and the diagnostics host converts
-	// between handles and objects in both directions, so there is a route to it and back.
-	bool ResourcesOf(InstanceHandle owner, InstanceHandle& dictionary)
-	{
-		if (!m_diagnostics) return false;
-
-		::IInspectable* raw = nullptr;
-		if (FAILED(m_diagnostics->GetIInspectableFromHandle(owner, &raw)) || !raw) return false;
-
-		winrt::Windows::Foundation::IInspectable instance{ nullptr };
-		winrt::attach_abi(instance, raw); // adopt the ref
-
-		const auto element = instance.try_as<xaml::FrameworkElement>();
-		if (!element) return false;
-
-		const auto resources = element.Resources();
-		if (!resources) return false;
-
-		const HRESULT hr = m_diagnostics->GetHandleFromIInspectable(
-			reinterpret_cast<::IInspectable*>(winrt::get_abi(resources)), &dictionary);
-
-		return SUCCEEDED(hr) && dictionary != 0;
-	}
-
-	bool KeyHandle(const std::wstring& key, InstanceHandle& handle)
-	{
-		if (!m_diagnostics || key.empty()) return false;
-
-		const auto boxed = winrt::box_value(winrt::hstring{ key });
-		const HRESULT hr = m_diagnostics->GetHandleFromIInspectable(
-			reinterpret_cast<::IInspectable*>(winrt::get_abi(boxed)), &handle);
-
-		return SUCCEEDED(hr) && handle != 0;
 	}
 
 	// Puts a built instance into its new parent's children.

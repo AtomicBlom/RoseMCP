@@ -27,22 +27,6 @@
 // from each provider.
 #include "tap_measure.h"
 
-// The name the overlay's root carries in the live tree, so the tree snapshot can drop RoseMCP's own
-// UI instead of reporting it as part of the app's.
-static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
-
-// Set true to stop the toolbar hiding itself from the tree, so RoseMCP's own tools can be pointed at
-// RoseMCP's own UI. Off in anything anyone else runs: the toolbar is not part of the app, and
-// reporting it as though it were is exactly the noise the filter exists to remove.
-//
-// It is here rather than being a line somebody comments out, because the question it answers comes up
-// whenever the overlay misbehaves and the alternative is expensive: a log statement per theory, each
-// costing a rebuild and a relaunch, and each reporting only the fields somebody thought to print. With
-// the filter off, rose_xaml_tree and rose_xaml_properties answer about the toolbar exactly as they do
-// about the app -- every property with its provenance, which is what separates a value that was set
-// from one that is merely the framework's default.
-static constexpr bool RoseTapShowOverlayInTree = false;
-
 // Segoe MDL2 Assets codepoints. Kept named and in one place because they are unreadable inline and a
 // wrong one renders as a hollow box rather than failing, so they have to be easy to check and swap --
 // and worth checking against the font's own character map, which is how two glyphs that are simply
@@ -77,11 +61,11 @@ static const wchar_t* const IconRulers = L"\xECC6";   // Ruler -- a ruler, for t
 // its event handlers capture `this`, and a `this` that could be deleted at the end of an injection
 // would leave the app holding handlers into freed memory. It also keeps its own reference to
 // IXamlDiagnostics, which is what lets a click resolve to a handle long after that injection is done.
-class RoseOverlay
+class RoseOverlay final : public IRoseOverlay
 {
 public:
 	// Idempotent: the second and later injections find the toolbar already there and leave it alone.
-	void Install(IXamlDiagnostics* diagnostics, const std::vector<InstanceHandle>& appElements = {})
+	void Install(IXamlDiagnostics* diagnostics, const std::vector<InstanceHandle>& appElements = {}) override
 	{
 		if (m_root || !diagnostics) return;
 
@@ -210,7 +194,7 @@ public:
 	/// Takes the handle-to-source-file map from the tree enumeration, which is the only place it is
 	/// available: VisualElement::SrcInfo comes per element as the tree is walked, and the overlay only
 	/// ever sees UIElements. Refreshed on every injection, so it is current as of arming.
-	void SetSources(std::map<InstanceHandle, std::wstring> sources)
+	void SetSources(std::map<InstanceHandle, std::wstring> sources) override
 	{
 		m_sources = std::move(sources);
 	}
@@ -267,7 +251,7 @@ public:
 
 	// Arms select mode. Returns whether it is armed, so the host can confirm rather than assume --
 	// including the case where the person had already armed it from the toolbar.
-	bool BeginSelect(bool includeAllElements = false)
+	bool BeginSelect(bool includeAllElements = false) override
 	{
 		m_includeAllElements = includeAllElements;
 		return Point(Pointing::Select);
@@ -277,7 +261,7 @@ public:
 	// against it, and the anchor's own margin and padding are drawn around it. A click anchors
 	// somewhere else without leaving the mode, which is what makes it a sweep rather than a sequence
 	// of arm-click-arm.
-	bool BeginRulers(bool includeAllElements = false)
+	bool BeginRulers(bool includeAllElements = false) override
 	{
 		m_includeAllElements = includeAllElements;
 		return Point(Pointing::Rulers);
@@ -286,7 +270,7 @@ public:
 	// Leaves whichever mode is on, which is the toolbar's Idle button. The pick is not a mode and
 	// stays: clearing it is Deselect's job, and folding the two together would remove "keep this one
 	// and stop capturing my clicks".
-	void GoIdle()
+	void GoIdle() override
 	{
 		HideCapture();
 		SetPointing(Pointing::None);
@@ -297,7 +281,7 @@ public:
 
 	/// Whether a pick prefers the element declared in the app's own markup over a control template's
 	/// parts. Set from the host or from the toolbar's toggle; the two are the same switch.
-	void SetJustMyXaml(bool justMyXaml)
+	void SetJustMyXaml(bool justMyXaml) override
 	{
 		m_justMyXaml = justMyXaml;
 		Chrome();
@@ -306,15 +290,15 @@ public:
 	/// The pick as rows, the mode, and why the last selection went away: everything a later request
 	/// needs to answer "what is selected", with no file in between. Rows are in the shape the work
 	/// folder writes, so one parser on the host serves whichever channel carried them.
-	const std::string& SelectionRows() const { return m_selectionRows; }
-	const std::wstring& GoneReason() const { return m_goneReason; }
+	const std::string& SelectionRows() const override { return m_selectionRows; }
+	const std::wstring& GoneReason() const override { return m_goneReason; }
 	bool Selecting() const { return m_pointing == Pointing::Select; }
-	bool JustMyXaml() const { return m_justMyXaml; }
+	bool JustMyXaml() const override { return m_justMyXaml; }
 
 	/// What the overlay is doing with the pointer, as the one word the host reports. Said rather than
 	/// left to a flag, because a caller deciding whether the app is clickable needs the answer to
 	/// cover every mode there is, including ones added after it was written.
-	const wchar_t* ModeName() const
+	const wchar_t* ModeName() const override
 	{
 		switch (m_pointing)
 		{
@@ -338,7 +322,7 @@ public:
 	/// is indistinguishable from a working one if all that is checked is that it armed.
 	/// </para>
 	/// </remarks>
-	bool WaitForArmedExtent(int& width, int& height, unsigned int timeoutMs)
+	bool WaitForArmedExtent(int& width, int& height, unsigned int timeoutMs) override
 	{
 		std::unique_lock<std::mutex> guard(m_armedMutex);
 		m_armedSignal.wait_for(guard, std::chrono::milliseconds(timeoutMs), [this] { return m_armedKnown; });
@@ -357,7 +341,7 @@ public:
 	//
 	// Returns whether there was anything to clear, so a caller can tell "cleared" from "nothing
 	// was selected" rather than having both read as success.
-	bool Deselect()
+	bool Deselect() override
 	{
 		const bool had = Clear(nullptr);
 
@@ -380,7 +364,7 @@ public:
 	/// Idempotent by construction, which is not incidental: a tap is advised per injection and none
 	/// of them ever unadvises (#68), so this is called once per live tap for a single removal. After
 	/// the first, the handle is zero and the rest are free.
-	void ClearIfRemoved(InstanceHandle handle)
+	void ClearIfRemoved(InstanceHandle handle) override
 	{
 		if (handle == 0 || handle != m_selectedHandle) return;
 
@@ -404,7 +388,7 @@ public:
 	// tree. rose_xaml_tree already hands out a handle for every element, so this closes that loop --
 	// and it is equally the way an agent selects something structurally, by type or by name or by the
 	// file it came from, without a person having to point at it.
-	bool SelectByHandle(InstanceHandle handle)
+	bool SelectByHandle(InstanceHandle handle) override
 	{
 		if (!m_diagnostics || handle == 0) return false;
 
@@ -3654,7 +3638,7 @@ private:
 // Leaked deliberately: see the note on RoseOverlay. Only ever touched on the app's UI thread.
 static RoseOverlay* g_overlay = nullptr;
 
-static RoseOverlay& Overlay()
+static IRoseOverlay& Overlay()
 {
 	if (!g_overlay) g_overlay = new RoseOverlay();
 	return *g_overlay;

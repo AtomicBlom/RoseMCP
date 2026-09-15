@@ -32,7 +32,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.XamlStubs` | The XAML stub generator, loaded by the worker as an analyzer assembly rather than referenced as a library. |
 | `RoseMcp.XamlDiff` | Takes markup apart for the live-edit path. Plain `net10.0`, so a test can see inside it. |
 | `RoseMcp.LiveApp` | The live-app host: one ICorDebug session and one XAML diagnostics session, for one debugged process. |
-| `RoseMcp.Xaml.Tap` | The native in-app provider, shared between frameworks: the tap, the overlay, the pipe. Headers only. |
+| `RoseMcp.Xaml.Tap` | The native in-app provider, shared between frameworks: the tap, the overlay, the pipe. Headers only, in four tiers by what each names -- see [tap-tiers.md](docs/invariants/tap-tiers.md). Only `tap_render.h` and `tap_overlay.h` are compiled per framework; the COM object names no projection. |
 | `RoseMcp.Xaml.Uwp.Tap`, `RoseMcp.Xaml.WinUi.Tap` | The two bindings of that provider, one per XAML framework. Which one serves a target is decided by the framework the target runs. |
 | `RoseMcp.Ui.Core` | The half of both windows that is not WinUI: rows, formatting, the poll loop, the in-place merge, and `OperatorClient`. Plain `net10.0`, so it runs in the fast suite. |
 | `RoseMcp.Ui` | WinUI class library. Themes, window chrome, the crash handler and the icon assets, shared so a second window is the same product rather than a lookalike. |
@@ -82,6 +82,7 @@ touch and read that file first.
 | [writing-csharp.md](docs/invariants/writing-csharp.md) | anything under `src/RoseMcp.Worker/` that emits or rewrites source |
 | [analyzers-and-generators.md](docs/invariants/analyzers-and-generators.md) | analyzer loading, `RoseMcp.XamlStubs`, anything handing Roslyn an `AnalyzerReference` |
 | [xaml-live-edit.md](docs/invariants/xaml-live-edit.md) | `rose_xaml_*`, `src/RoseMcp.XamlDiff/`, the apply path in `src/RoseMcp.LiveApp/Xaml/` |
+| [tap-tiers.md](docs/invariants/tap-tiers.md) | a new file under `src/RoseMcp.Xaml.Tap/`, moving code between them, either provider's include order |
 | [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, injection, anything that advises the visual tree |
 | [overlay.md](docs/invariants/overlay.md) | `tap_overlay.h`, `tap_measure.h` |
 | [hosts-and-deploy.md](docs/invariants/hosts-and-deploy.md) | `XamlStackModules`, architecture detection, `tools/deploy.ps1`, what an install carries |

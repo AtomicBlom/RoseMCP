@@ -1,8 +1,6 @@
 using System.Globalization;
 
-using RoseMcp.Contracts;
-
-namespace RoseMcp.LiveApp.Debugging;
+namespace RoseMcp.Contracts;
 
 /// <summary>
 /// A cheap value-compare condition for a breakpoint or tracepoint: <c>name OP literal</c>, evaluated
@@ -10,8 +8,15 @@ namespace RoseMcp.LiveApp.Debugging;
 /// numbers, boolean for true/false, otherwise string equality. This is the low-cost path that needs
 /// no func-eval; full expression conditions wait for eval. A condition whose variable is not present
 /// evaluates false, so the breakpoint simply does not fire.
+/// <para>
+/// Here rather than beside the host that evaluates it, because the host is <c>net10.0-windows</c> and
+/// neither test project takes a compile reference on it -- the integration project launches it as a
+/// child process. A gate that silently answers false is exactly the kind of thing that fails by
+/// stopping nowhere, or on every hit, and an operator table where a one-character match shadows a
+/// two-character one cannot be caught by any test that has to drive a real debuggee to reach it.
+/// </para>
 /// </summary>
-internal sealed record BreakpointCondition(string Variable, string Operator, string Literal)
+public sealed record BreakpointCondition(string Variable, string Operator, string Literal)
 {
 	private static readonly string[] Operators = ["==", "!=", "<=", ">=", "<", ">"];
 

@@ -245,6 +245,33 @@ struct Command
 	unsigned int index = 0;
 };
 
+// One command per line, seven tab-separated fields. Shared by both channels, so a command means the
+// same thing whichever way it arrived.
+//
+// Short lines are padded rather than refused: a command that names fewer fields than the longest one
+// needs is ordinary, and the missing ones are legitimately empty.
+static std::vector<Command> ParseCommands(const std::vector<std::wstring>& lines)
+{
+	std::vector<Command> commands;
+	for (std::wstring line : lines)
+	{
+		if (!line.empty() && line.back() == L'\r') line.pop_back();
+		if (line.empty()) continue;
+
+		std::vector<std::wstring> fields;
+		std::wstringstream stream(line);
+		std::wstring field;
+		while (std::getline(stream, field, L'\t')) fields.push_back(field);
+		fields.resize(7);
+		commands.push_back({
+			fields[0], fields[1], fields[2], fields[3], fields[4], fields[5],
+			static_cast<unsigned int>(_wcstoui64(fields[6].c_str(), nullptr, 10)),
+		});
+	}
+
+	return commands;
+}
+
 // Splits a request line on spaces, dropping the leading verb. Tokenised because matching a suffix
 // gets the wrong answer the moment there are two flags.
 static std::vector<std::wstring> Tokens(const std::wstring& request)

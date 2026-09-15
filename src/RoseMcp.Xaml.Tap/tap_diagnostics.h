@@ -68,6 +68,38 @@ static bool IsComposition(const wchar_t* propertyName)
 	return false;
 }
 
+// Gives back everything GetPropertyValuesChain allocated: a BSTR per string field, and the two
+// arrays themselves.
+//
+// Here rather than beside either caller because both the property read and the edits ask for a
+// chain, and two copies of a free would be two chances to miss a field -- the leak that produces is
+// one BSTR per property per call, in somebody else's application.
+static void FreePropertyChain(
+	PropertyChainSource* sources, unsigned int sourceCount,
+	PropertyChainValue* values, unsigned int valueCount)
+{
+	for (unsigned int i = 0; i < sourceCount; i++)
+	{
+		SysFreeString(sources[i].TargetType);
+		SysFreeString(sources[i].Name);
+		SysFreeString(sources[i].SrcInfo.FileName);
+		SysFreeString(sources[i].SrcInfo.Hash);
+	}
+
+	for (unsigned int i = 0; i < valueCount; i++)
+	{
+		SysFreeString(values[i].Type);
+		SysFreeString(values[i].DeclaringType);
+		SysFreeString(values[i].ValueType);
+		SysFreeString(values[i].ItemType);
+		SysFreeString(values[i].Value);
+		SysFreeString(values[i].PropertyName);
+	}
+
+	CoTaskMemFree(sources);
+	CoTaskMemFree(values);
+}
+
 // One element of the visual tree, captured as it is announced.
 struct TreeNode
 {

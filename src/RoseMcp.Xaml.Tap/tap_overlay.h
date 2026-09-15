@@ -23,44 +23,6 @@
 // required of it and neither is negotiable: it must consume nothing, and it must see moves the app
 // has already marked handled. Everything else in this file is an alias swap.
 
-// The rulers geometry, which is self-contained and framework-free, so it comes from here rather than
-// from each provider.
-#include "tap_measure.h"
-
-// The name the overlay's root carries in the live tree, so the tree snapshot can drop RoseMCP's own
-// UI instead of reporting it as part of the app's.
-static const wchar_t* const OverlayRootName = L"__RoseMcpOverlay";
-
-// Set true to stop the toolbar hiding itself from the tree, so RoseMCP's own tools can be pointed at
-// RoseMCP's own UI. Off in anything anyone else runs: the toolbar is not part of the app, and
-// reporting it as though it were is exactly the noise the filter exists to remove.
-//
-// It is here rather than being a line somebody comments out, because the question it answers comes up
-// whenever the overlay misbehaves and the alternative is expensive: a log statement per theory, each
-// costing a rebuild and a relaunch, and each reporting only the fields somebody thought to print. With
-// the filter off, rose_xaml_tree and rose_xaml_properties answer about the toolbar exactly as they do
-// about the app -- every property with its provenance, which is what separates a value that was set
-// from one that is merely the framework's default.
-static constexpr bool RoseTapShowOverlayInTree = false;
-
-// Segoe MDL2 Assets codepoints. Kept named and in one place because they are unreadable inline and a
-// wrong one renders as a hollow box rather than failing, so they have to be easy to check and swap --
-// and worth checking against the font's own character map, which is how two glyphs that are simply
-// absent from Segoe UI were caught before they shipped as boxes.
-//
-// These follow what Visual Studio's live-tree toolbar does: a plain pointer for the neutral mode, a
-// pointer inside a marquee for picking, and a chevron to fold away.
-static const wchar_t* const IconIdle = L"\xE8B0";   // Cursor -- a plain arrow pointer
-static const wchar_t* const IconHide = L"\xE76B";   // ChevronLeft
-static const wchar_t* const IconMyXaml = L"\xE943"; // Code -- braces, for "just my XAML"
-static const wchar_t* const IconDeselect = L"\xE711"; // Cancel -- a plain cross, for clearing the pick
-static const wchar_t* const IconZoom = L"\xE71E";     // Zoom -- a plain magnifier, for entering the mode
-static const wchar_t* const IconZoomIn = L"\xE8A3";   // ZoomIn -- magnifier with a plus
-static const wchar_t* const IconZoomOut = L"\xE71F";  // ZoomOut -- magnifier with a minus
-static const wchar_t* const IconPixels = L"\xE7A8";   // GridView -- a lattice, for the pixel lens
-static const wchar_t* const IconScale = L"\xE740";    // FullScreen -- arrows out, for scaling the app itself
-static const wchar_t* const IconRulers = L"\xECC6";   // Ruler -- a ruler, for the measuring mode
-
 // The resident in-app toolbar (#18). Installed on the diagnostics UI layer at the first injection and
 // left there for the life of the app, because the point of it is that a person can arm select mode
 // themselves and then talk to the agent -- rather than having to ask the agent to arm it first.
@@ -77,11 +39,11 @@ static const wchar_t* const IconRulers = L"\xECC6";   // Ruler -- a ruler, for t
 // its event handlers capture `this`, and a `this` that could be deleted at the end of an injection
 // would leave the app holding handlers into freed memory. It also keeps its own reference to
 // IXamlDiagnostics, which is what lets a click resolve to a handle long after that injection is done.
-class RoseOverlay
+class RoseOverlay final : public IRoseOverlay, public IRoseOverlaySurface, protected RoseWidgets
 {
 public:
 	// Idempotent: the second and later injections find the toolbar already there and leave it alone.
-	void Install(IXamlDiagnostics* diagnostics, const std::vector<InstanceHandle>& appElements = {})
+	void Install(IXamlDiagnostics* diagnostics, const std::vector<InstanceHandle>& appElements = {}) override
 	{
 		if (m_root || !diagnostics) return;
 
@@ -210,7 +172,7 @@ public:
 	/// Takes the handle-to-source-file map from the tree enumeration, which is the only place it is
 	/// available: VisualElement::SrcInfo comes per element as the tree is walked, and the overlay only
 	/// ever sees UIElements. Refreshed on every injection, so it is current as of arming.
-	void SetSources(std::map<InstanceHandle, std::wstring> sources)
+	void SetSources(std::map<InstanceHandle, std::wstring> sources) override
 	{
 		m_sources = std::move(sources);
 	}
@@ -248,7 +210,7 @@ public:
 		// Zoom counts as an operation for this purpose even though nothing asked for it: it is a mode
 		// somebody is working in, and a toolbar carrying the factor and the colour readout is no use
 		// at half opacity while the pointer is out in the app, which is exactly where it has to be.
-		const bool busy = !m_operations.empty() || m_overPanel || m_zoom != Zoom::Off;
+		const bool busy = !m_operations.empty() || m_overPanel || m_zoomTool.Active();
 		m_panelFade.To(busy ? PanelNear : PanelFar);
 	}
 
@@ -267,7 +229,7 @@ public:
 
 	// Arms select mode. Returns whether it is armed, so the host can confirm rather than assume --
 	// including the case where the person had already armed it from the toolbar.
-	bool BeginSelect(bool includeAllElements = false)
+	bool BeginSelect(bool includeAllElements = false) override
 	{
 		m_includeAllElements = includeAllElements;
 		return Point(Pointing::Select);
@@ -277,7 +239,7 @@ public:
 	// against it, and the anchor's own margin and padding are drawn around it. A click anchors
 	// somewhere else without leaving the mode, which is what makes it a sweep rather than a sequence
 	// of arm-click-arm.
-	bool BeginRulers(bool includeAllElements = false)
+	bool BeginRulers(bool includeAllElements = false) override
 	{
 		m_includeAllElements = includeAllElements;
 		return Point(Pointing::Rulers);
@@ -286,18 +248,18 @@ public:
 	// Leaves whichever mode is on, which is the toolbar's Idle button. The pick is not a mode and
 	// stays: clearing it is Deselect's job, and folding the two together would remove "keep this one
 	// and stop capturing my clicks".
-	void GoIdle()
+	void GoIdle() override
 	{
 		HideCapture();
 		SetPointing(Pointing::None);
-		ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
-		RefreshRulers();
+		m_pick.Hover(nullptr, std::wstring());
+		m_rulersTool.Refresh(m_pointing == Pointing::Rulers);
 		Chrome();
 	}
 
 	/// Whether a pick prefers the element declared in the app's own markup over a control template's
 	/// parts. Set from the host or from the toolbar's toggle; the two are the same switch.
-	void SetJustMyXaml(bool justMyXaml)
+	void SetJustMyXaml(bool justMyXaml) override
 	{
 		m_justMyXaml = justMyXaml;
 		Chrome();
@@ -306,15 +268,15 @@ public:
 	/// The pick as rows, the mode, and why the last selection went away: everything a later request
 	/// needs to answer "what is selected", with no file in between. Rows are in the shape the work
 	/// folder writes, so one parser on the host serves whichever channel carried them.
-	const std::string& SelectionRows() const { return m_selectionRows; }
-	const std::wstring& GoneReason() const { return m_goneReason; }
+	const std::string& SelectionRows() const override { return m_pick.Rows(); }
+	const std::wstring& GoneReason() const override { return m_pick.GoneReason(); }
 	bool Selecting() const { return m_pointing == Pointing::Select; }
-	bool JustMyXaml() const { return m_justMyXaml; }
+	bool JustMyXaml() const override { return m_justMyXaml; }
 
 	/// What the overlay is doing with the pointer, as the one word the host reports. Said rather than
 	/// left to a flag, because a caller deciding whether the app is clickable needs the answer to
 	/// cover every mode there is, including ones added after it was written.
-	const wchar_t* ModeName() const
+	const wchar_t* ModeName() const override
 	{
 		switch (m_pointing)
 		{
@@ -338,7 +300,7 @@ public:
 	/// is indistinguishable from a working one if all that is checked is that it armed.
 	/// </para>
 	/// </remarks>
-	bool WaitForArmedExtent(int& width, int& height, unsigned int timeoutMs)
+	bool WaitForArmedExtent(int& width, int& height, unsigned int timeoutMs) override
 	{
 		std::unique_lock<std::mutex> guard(m_armedMutex);
 		m_armedSignal.wait_for(guard, std::chrono::milliseconds(timeoutMs), [this] { return m_armedKnown; });
@@ -357,9 +319,9 @@ public:
 	//
 	// Returns whether there was anything to clear, so a caller can tell "cleared" from "nothing
 	// was selected" rather than having both read as success.
-	bool Deselect()
+	bool Deselect() override
 	{
-		const bool had = Clear(nullptr);
+		const bool had = m_pick.Clear(nullptr);
 
 		Log(had ? L"overlay: selection cleared" : L"overlay: deselect with nothing selected");
 		return had;
@@ -380,14 +342,14 @@ public:
 	/// Idempotent by construction, which is not incidental: a tap is advised per injection and none
 	/// of them ever unadvises (#68), so this is called once per live tap for a single removal. After
 	/// the first, the handle is zero and the rest are free.
-	void ClearIfRemoved(InstanceHandle handle)
+	void ClearIfRemoved(InstanceHandle handle) override
 	{
-		if (handle == 0 || handle != m_selectedHandle) return;
+		if (handle == 0 || handle != m_pick.Handle()) return;
 
 		// Said rather than merely done. A selection that vanishes with no explanation reads as a bug
 		// in the overlay, and an agent that asks for properties after a navigation deserves the
 		// sentence rather than an HRESULT from three layers down.
-		Clear(L"The selected element was removed from the visual tree, so the selection was cleared. "
+		m_pick.Clear(L"The selected element was removed from the visual tree, so the selection was cleared. "
 			L"Something in the app took it away -- a navigation, a collapsed panel, a recycled list "
 			L"container. Read the tree again and select what you want from it.");
 
@@ -404,7 +366,7 @@ public:
 	// tree. rose_xaml_tree already hands out a handle for every element, so this closes that loop --
 	// and it is equally the way an agent selects something structurally, by type or by name or by the
 	// file it came from, without a person having to point at it.
-	bool SelectByHandle(InstanceHandle handle)
+	bool SelectByHandle(InstanceHandle handle) override
 	{
 		if (!m_diagnostics || handle == 0) return false;
 
@@ -446,22 +408,10 @@ public:
 		}
 
 		RecordFromTree(element, handle);
-		m_selectedHandle = handle;
 
-		// Watched for the same reason a click is watched: the mark is drawn at coordinates read out of
-		// the app once, and an app that moves the element afterwards leaves it behind. How the
-		// selection was made says nothing about whether the element stays still.
-		WatchSelectionLayout(element);
+		const bool drawn = m_pick.Take(element, handle, rect);
 
-		const bool drawn = ShowBox(m_selectBox, m_selectBadge, element, Describe(element));
-		m_hasSelection = true;
-		m_anchorRect = rect;
-		m_selectionRect = WithBadge(rect);
-		Reveal();
-		RefreshRulers();
-		Chrome();
-
-		Log(L"overlay: selected " + Describe(element) + L" by handle; outline "
+		Log(L"overlay: selected " + RosePick::Describe(element) + L" by handle; outline "
 			+ std::wstring(drawn ? L"drawn" : L"NOT drawn"));
 
 		return true;
@@ -479,9 +429,9 @@ private:
 		if (m_pointing != Pointing::None)
 		{
 			SetPointing(mode);
-			ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
-			HideLeaders();
-			RefreshRulers();
+			m_pick.Hover(nullptr, std::wstring());
+			m_rulersTool.ClearMeasurement();
+			m_rulersTool.Refresh(m_pointing == Pointing::Rulers);
 			Chrome();
 			WriteArmed();
 			Log(L"overlay: " + std::wstring(ModeName()) + L" mode armed over the layer already up");
@@ -526,8 +476,8 @@ private:
 			m_capture.PointerExited(
 				[this](winrt::Windows::Foundation::IInspectable const&, xinput::PointerRoutedEventArgs const&)
 				{
-					ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
-					HideLeaders();
+					m_pick.Hover(nullptr, std::wstring());
+					m_rulersTool.ClearMeasurement();
 				});
 
 			// Beneath the Canvas that holds the toolbar, so the toolbar's own buttons stay clickable
@@ -542,7 +492,7 @@ private:
 
 			m_root.Children().InsertAt(0, m_capture);
 			SetPointing(mode);
-			RefreshRulers();
+			m_rulersTool.Refresh(m_pointing == Pointing::Rulers);
 			Chrome();
 			Log(L"overlay: " + std::wstring(ModeName()) + L" mode armed");
 			return true;
@@ -587,85 +537,15 @@ private:
 		m_capture = nullptr;
 	}
 
-	// How near the pointer has to be for a mark to be legible, and what it settles to when the
-	// pointer is elsewhere. Both marks are persistent by design -- the selection outlives the pick
-	// that made it, and the toolbar outlives everything -- so both spend most of their life being
-	// something the person did not ask to look at. Fading on proximity is what lets them stay
+	// How near the pointer has to be for the toolbar to be fully legible, and what it settles to
+	// when the pointer is elsewhere. The toolbar outlives everything, so it spends most of its life
+	// being something the person did not ask to look at; fading on proximity is what lets it stay
 	// available without staying in the way.
-	static constexpr double SelectionNear = 0.50;
-	static constexpr double SelectionFar = 0.10;
 	static constexpr double PanelNear = 1.00;
 	static constexpr double PanelFar = 0.50;
 
-	// Long enough to read as a fade rather than a flicker, short enough not to lag the pointer.
-	static constexpr int FadeMilliseconds = 160;
-
-	// How much white a chip takes under the pointer, and under a press.
-	static constexpr double HoverWash = 0.14;
-	static constexpr double PressWash = 0.26;
-
-	// What a chip that cannot be clicked looks like. The Button template's disabled brushes are made
-	// transparent along with the rest of it, so this is the only thing separating a chip that is off
-	// from one that is merely idle.
-	static constexpr double DisabledFade = 0.5;
-
-	// The chip, sized once and stated here rather than repeated at each of the places that has to
-	// agree with it: the button, the Border that colours it, and the wash over that.
-	static constexpr double ChipSize = 24.0;
-
 	// How far the toolbar sits from the edge it is anchored to.
 	static constexpr double EdgeMargin = 16.0;
-
-	// The lens, in device pixels, so it is a whole number of them at every factor: 192 divides by
-	// every power of two up to 32, which is what keeps each source pixel an exact square block.
-	static constexpr int LensDevicePixels = 192;
-
-	// Roughly twelve captures a second. Fast enough to follow an animating app, and slow enough that
-	// the readback is a fraction of a frame rather than a tax on one -- and it is a rate limit, not a
-	// queue: a capture still in flight when the timer fires is simply skipped.
-	static constexpr int LensIntervalMs = 80;
-
-	// The badge sits this far above the element it captions. Shared with the proximity test, which
-	// has to treat the caption as part of the selection.
-	static constexpr double BadgeHeight = 18.0;
-	static constexpr double BadgeGap = 2.0;
-
-	// How far a measurement's number sits off its own line, and how far a label is pushed each time it
-	// lands on one already placed. The same number does both, so a label that has been moved sits a
-	// clear row away from its neighbour rather than at some second spacing nothing else uses.
-	static constexpr double LabelGap = 3.0;
-
-	// How many times a label may be pushed before it is drawn where it is. Four dimension lines can
-	// need three moves between them; a cap past that is only ever reached by a label being pushed off
-	// the window, which is worse than a crowded one.
-	static constexpr int LabelAttempts = 6;
-
-	// How much line has to stay showing either side of a number sitting on it. Below this the number
-	// goes outside the line's end instead, because what it would otherwise cover are the ends -- and
-	// the ends are where the extension lines turn off to the two edges being measured.
-	static constexpr double EndRoom = 6.0;
-
-	// The room a label is measured in. Any number larger than the window does, since a Border round a
-	// two-digit number takes what it needs and no more.
-	static constexpr float LabelRoom = 4096.0f;
-
-	static xmedia::SolidColorBrush Brush(uint8_t a, uint8_t r, uint8_t g, uint8_t b)
-	{
-		return xmedia::SolidColorBrush(winrt::Windows::UI::Color{ a, r, g, b });
-	}
-
-	// RoseMCP's own accent, the crimson the app icon's tile is drawn in (tools/Rose.ps1).
-	static xmedia::SolidColorBrush Accent() { return Brush(0xFF, 0xC2, 0x18, 0x5B); }
-
-	static xmedia::SolidColorBrush Idle() { return Brush(0xFF, 0x2C, 0x2C, 0x36); }
-
-	static double Clamp(double value, double low, double high)
-	{
-		if (high < low) return low;
-		if (value < low) return low;
-		if (value > high) return high;
-		return value;
-	}
 
 	void Build()
 	{
@@ -713,42 +593,15 @@ private:
 				});
 		}
 
-		// The box model's bands go under the outlines, because an outline is the edge of the element
-		// and a band is the space around it: a translucent fill drawn over the outline would soften the
-		// one line that says exactly where the element ends.
-		//
-		// Warm outside and cool inside, which is the convention every browser's element inspector uses
-		// -- worth following rather than restating in the brand's own colours, since three bands in one
-		// hue would be three bands nobody can tell apart.
-		m_marginBand = BuildBand(0x4C, 0xF9, 0xA8, 0x5C);  // orange, outside the element
-		m_borderBand = BuildBand(0x4C, 0xF2, 0xD0, 0x7A);  // yellow, the border itself
-		m_paddingBand = BuildBand(0x4C, 0x9B, 0xC8, 0x7A); // green, inside it
+		// The box model's bands, under the outlines. Why, and why these colours, is on
+		// RoseRulersTool::BuildBands.
+		m_rulersTool.BuildBands();
 
-		// The outlines go on next so the toolbar always draws over them. Hover is dashed and thin,
-		// the pick solid and heavier, so the two never read as the same thing.
-		m_hoverBox = Outline(1.0, true);
-		m_hoverBadge = Badge();
+		// The marks go on next so the toolbar always draws over them. Why each looks as it does is
+		// on RosePick::Build, which owns them.
+		m_pick.Build();
 
-		// The pick rests on screen until something else replaces it or it is cleared, so it is the
-		// one mark that has to be liveable with. At full strength on a large container it is a
-		// full-window box sitting over the app for as long as the selection lasts, which is what a
-		// second user reported: not hard to see, hard to put up with.
-		//
-		// So it is drawn at the strength it should have when somebody is looking at it, and its
-		// opacity carries the rest -- SelectionNear when the pointer is inside it, SelectionFar when
-		// it is not. Baking the fade into the brushes instead was the first attempt, and it cannot
-		// express the thing that actually makes this work: the mark being loud enough to read at the
-		// moment you look for it.
-		m_selectBox = Outline(2.0, false, 0xFF, 0x33);
-		m_selectBadge = Badge();
-
-		// Four dimension lines, which is as many as a measurement can want: one per axis where the two
-		// rectangles miss each other, two where they overlap. Built once and re-aimed, like everything
-		// else on this canvas, so a hover costs property sets rather than a tree of new elements.
-		for (int leader = 0; leader < 4; leader++)
-		{
-			m_leaders.push_back(BuildLeader());
-		}
+		m_rulersTool.BuildLeaders();
 
 		m_panel = xcontrols::Border();
 		m_panel.Background(Brush(0xF0, 0x1C, 0x1C, 0x22));
@@ -843,11 +696,7 @@ private:
 			[this] { Deselect(); });
 		m_bar.Children().Append(m_deselectButton);
 
-		m_zoomButton = Chip(
-			Glyph(IconZoom, 12.0),
-			L"Magnify -- scale the app, or inspect its pixels and read the colour under the pointer",
-			[this] { ToggleZoom(); });
-		m_bar.Children().Append(m_zoomButton);
+		m_bar.Children().Append(m_zoomTool.Button());
 
 		// Hide sits at the right edge rather than packed against its neighbours, so the slack that
 		// appears when the zoom row makes the panel wider falls between the two groups instead of
@@ -900,114 +749,13 @@ private:
 		m_rows = xcontrols::StackPanel();
 		m_rows.Orientation(xcontrols::Orientation::Vertical);
 		m_rows.Children().Append(row);
-		m_rows.Children().Append(BuildRulersRow());
-		m_rows.Children().Append(BuildZoomRow());
+		m_rows.Children().Append(m_rulersTool.BuildRow());
+		m_rows.Children().Append(m_zoomTool.BuildZoomRow());
 
 		auto content = xcontrols::Grid();
 		content.Children().Append(m_rows);
 		content.Children().Append(m_thumb);
 		return content;
-	}
-
-	// The anchor's size, margin and padding as text. Hidden until the mode is on, for the same reason
-	// the zoom row is: a row that is always there makes every app carry a taller toolbar for a mode
-	// almost nobody is in.
-	//
-	// The numbers live here and not on the bands, because this is where the two facts a band cannot
-	// draw can be said. A side of zero is a band of no width, indistinguishable from a side that was
-	// never drawn; a type with no Padding property at all is indistinguishable from one whose padding
-	// happens to be nothing. Both are ordinary and both matter to somebody asking where four pixels
-	// came from.
-	xaml::UIElement BuildRulersRow()
-	{
-		m_rulersRow = xcontrols::StackPanel();
-		m_rulersRow.Orientation(xcontrols::Orientation::Horizontal);
-		m_rulersRow.Spacing(6);
-		m_rulersRow.Padding(xaml::Thickness{ 6, 0, 4, 3 });
-		m_rulersRow.Visibility(xaml::Visibility::Collapsed);
-
-		m_sizeLabel = Label(L"click an element to anchor", 11.0, 0xC8, nullptr);
-		m_marginLabel = Label(L"", 11.0, 0xE8, nullptr);
-		m_paddingLabel = Label(L"", 11.0, 0xE8, nullptr);
-
-		m_sizePill = Pill(m_sizeLabel);
-		m_marginPill = Pill(m_marginLabel);
-		m_paddingPill = Pill(m_paddingLabel);
-
-		m_rulersRow.Children().Append(m_sizePill);
-		m_rulersRow.Children().Append(m_marginPill);
-		m_rulersRow.Children().Append(m_paddingPill);
-		return m_rulersRow;
-	}
-
-	// One readout, in its own rounded pill. Three values on one line run together as prose, and these
-	// are three separate facts about the anchor rather than a sentence about it -- so each is given an
-	// edge, the way the chips above them have one.
-	xcontrols::Border Pill(xcontrols::TextBlock const& text)
-	{
-		auto pill = xcontrols::Border();
-		pill.Background(Idle());
-		pill.CornerRadius(xaml::CornerRadius{ 9, 9, 9, 9 });
-		pill.Padding(xaml::Thickness{ 8, 1, 8, 2 });
-		pill.VerticalAlignment(xaml::VerticalAlignment::Center);
-		pill.Child(text);
-		return pill;
-	}
-
-	// Zoom factor, mode, and the colour under the pointer. Hidden until the mode is on.
-	xaml::UIElement BuildZoomRow()
-	{
-		m_zoomRow = xcontrols::StackPanel();
-		m_zoomRow.Orientation(xcontrols::Orientation::Horizontal);
-		m_zoomRow.Spacing(4);
-		m_zoomRow.Padding(xaml::Thickness{ 4, 0, 4, 3 });
-
-		// Takes no space until the mode is on. Reserving its height permanently was the first attempt
-		// and it is worse: it makes every app carry a double-height toolbar for a mode almost nobody
-		// is in. What must not move when it appears is the row above it, and that is a placement
-		// question rather than a sizing one -- see CentreAtTop.
-		m_zoomRow.Visibility(xaml::Visibility::Collapsed);
-
-		m_scaleButton = Chip(
-			Glyph(IconScale, 12.0),
-			L"Scale the app itself -- a render transform on the live content, so text and vectors stay sharp",
-			[this] { SetZoomMode(Zoom::Transform); });
-		m_pixelButton = Chip(
-			Glyph(IconPixels, 12.0),
-			L"Pixel lens -- a nearest-neighbour magnifier that follows the pointer, leaving the app untouched",
-			[this] { SetZoomMode(Zoom::Lens); });
-		m_zoomOutButton = Chip(Glyph(IconZoomOut, 12.0), L"Zoom out", [this] { ZoomBy(-1); });
-		m_zoomInButton = Chip(Glyph(IconZoomIn, 12.0), L"Zoom in", [this] { ZoomBy(1); });
-
-		m_zoomRow.Children().Append(m_scaleButton);
-		m_zoomRow.Children().Append(m_pixelButton);
-		m_zoomRow.Children().Append(m_zoomOutButton);
-		m_zoomRow.Children().Append(m_zoomInButton);
-
-		m_factorLabel = Label(L"4x", 11.0, 0xC8, nullptr);
-		m_factorLabel.MinWidth(26);
-		m_zoomRow.Children().Append(m_factorLabel);
-
-		// The colour swatch and its hex, side by side. The swatch matters as much as the digits: six
-		// hex characters are hard to tell apart at a glance and a filled square is not.
-		m_swatch = xshapes::Rectangle();
-		m_swatch.Width(12);
-		m_swatch.Height(12);
-		m_swatch.RadiusX(2);
-		m_swatch.RadiusY(2);
-		m_swatch.Stroke(Brush(0xFF, 0x53, 0x53, 0x63));
-		m_swatch.StrokeThickness(1);
-		m_swatch.Fill(Brush(0x00, 0x00, 0x00, 0x00));
-		m_swatch.VerticalAlignment(xaml::VerticalAlignment::Center);
-		m_zoomRow.Children().Append(m_swatch);
-
-		// Monospaced, because a proportional hex string changes width as the pointer moves and the
-		// whole row then jitters under the cursor.
-		m_hexLabel = Label(L"--", 11.0, 0xE8, L"Consolas");
-		m_hexLabel.MinWidth(64);
-		m_zoomRow.Children().Append(m_hexLabel);
-
-		return m_zoomRow;
 	}
 
 	// The mark, drawn rather than embedded. It is the same rhodonea rose as the app icon --
@@ -1072,49 +820,9 @@ private:
 		return m_mark;
 	}
 
-	xcontrols::TextBlock Label(const wchar_t* text, double size, uint8_t grey, const wchar_t* fontFamily)
-	{
-		auto block = xcontrols::TextBlock();
-		block.Text(text);
-		block.FontSize(size);
-		if (fontFamily) block.FontFamily(xmedia::FontFamily(fontFamily));
-		block.Foreground(Brush(0xFF, grey, grey, grey));
-		block.HorizontalAlignment(xaml::HorizontalAlignment::Center);
-		block.VerticalAlignment(xaml::VerticalAlignment::Center);
-		return block;
-	}
 
-	// Six dots, drawn rather than typed. The obvious characters for a grip -- braille U+283F, MDL2's
-	// GripperBar -- are not in Segoe UI, so a glyph here is a hollow box on some machines depending on
-	// what the font fallback finds. Shapes cannot miss, and the dot count is then exactly what was asked.
-	static xaml::UIElement Dots(uint8_t grey)
-	{
-		auto columns = xcontrols::StackPanel();
-		columns.Orientation(xcontrols::Orientation::Horizontal);
-		columns.Spacing(2);
-		columns.VerticalAlignment(xaml::VerticalAlignment::Center);
-
-		for (int column = 0; column < 2; column++)
-		{
-			auto rows = xcontrols::StackPanel();
-			rows.Orientation(xcontrols::Orientation::Vertical);
-			rows.Spacing(2);
-
-			for (int row = 0; row < 3; row++)
-			{
-				auto dot = xshapes::Ellipse();
-				dot.Width(2);
-				dot.Height(2);
-				dot.Fill(Brush(0xFF, grey, grey, grey));
-				rows.Children().Append(dot);
-			}
-
-			columns.Children().Append(rows);
-		}
-
-		return columns;
-	}
-
+	// Here rather than in the widget kit because it hands the handle to AttachDrag, which moves the
+	// panel: the grip is part of this overlay rather than part of its visual language.
 	xcontrols::Border DragHandle()
 	{
 		auto handle = xcontrols::Border();
@@ -1125,248 +833,6 @@ private:
 		handle.Child(Dots(0x8C));
 		AttachDrag(handle);
 		return handle;
-	}
-
-	xcontrols::TextBlock Glyph(const wchar_t* glyph, double size)
-	{
-		return Label(glyph, size, 0xDC, L"Segoe MDL2 Assets");
-	}
-
-	// A pointer inside a marquee. MDL2 has no single glyph for it -- the nearest, SelectAll, is a
-	// dense grid that turns to mush at button size -- so it is composed: a dashed rectangle with the
-	// same pointer the Idle button uses, smaller and offset, sitting in it.
-	xaml::UIElement SelectIcon()
-	{
-		auto host = xcontrols::Grid();
-		host.Width(16);
-		host.Height(16);
-
-		auto marquee = xshapes::Rectangle();
-		marquee.Stroke(Brush(0xFF, 0xDC, 0xDC, 0xDC));
-		marquee.StrokeThickness(1);
-		marquee.StrokeDashArray().Append(2);
-		marquee.StrokeDashArray().Append(2);
-		// Both centred in the host, so the composition has no built-in bias; the pointer is then
-		// nudged down and right off that centre, which is where a cursor sits inside a marquee.
-		marquee.Width(13);
-		marquee.Height(13);
-		marquee.HorizontalAlignment(xaml::HorizontalAlignment::Center);
-		marquee.VerticalAlignment(xaml::VerticalAlignment::Center);
-		host.Children().Append(marquee);
-
-		auto pointer = Glyph(IconIdle, 10.0);
-		pointer.HorizontalAlignment(xaml::HorizontalAlignment::Center);
-		pointer.VerticalAlignment(xaml::VerticalAlignment::Center);
-		pointer.Margin(xaml::Thickness{ 4, 3, 0, 0 });
-		host.Children().Append(pointer);
-
-		return host;
-	}
-
-	// Icon-only, with the words moved into a tooltip: a glyph that misses still leaves the meaning
-	// reachable, and the toolbar stays out of the way of the app it is sitting on.
-	xcontrols::Button Chip(xaml::UIElement const& content, const wchar_t* tip, std::function<void()> action)
-	{
-		// The chip paints itself, and the Button template paints nothing.
-		//
-		// Setting Background on a Button colours the *Normal* state only: PointerOver and Pressed come
-		// from ButtonBackgroundPointerOver and ButtonBackgroundPressed, which are the system's brushes
-		// for the system's palette. On a dark toolbar that reads as the button jumping to a foreign
-		// shade the moment the pointer touches it, and sweeping across a row interleaves each button's
-		// transition with its neighbour's -- which is the flicker, and no amount of choosing a better
-		// Background fixes it, because the states in question never consult it.
-		//
-		// So every state brush is made transparent and the colour lives on a Border we own. Hover and
-		// press are a white wash over it at two opacities rather than three separate colours, which is
-		// what keeps them correct when Chrome recolours the chip underneath: the wash does not need to
-		// know what it is washing over.
-		auto fill = xcontrols::Border();
-		fill.Background(Idle());
-		fill.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
-
-		auto glow = xcontrols::Border();
-		glow.Background(Brush(0xFF, 0xFF, 0xFF, 0xFF));
-		glow.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
-		glow.Opacity(0.0);
-		glow.IsHitTestVisible(false);
-
-		// Sized explicitly, because a Button does not stretch its content: HorizontalContentAlignment
-		// is Center, so a Grid handed to Content sizes itself to the glyph inside it. The colour then
-		// shrinks to the glyph and the chip loses the inset that made it look like a button at all --
-		// which is not visible in any property, only on screen. The template used to paint the button's
-		// own root and so was full size for free; painting our own Border means saying the size.
-		auto stack = xcontrols::Grid();
-		stack.Width(ChipSize);
-		stack.Height(ChipSize);
-		stack.Children().Append(fill);
-		stack.Children().Append(glow);
-		stack.Children().Append(content);
-
-		auto button = xcontrols::Button();
-		button.Content(stack);
-
-		// How Chrome finds the two Borders it has to reach, since the Button's own Background no longer
-		// means anything: the fill to recolour, and the wash to clear when the chip is disabled out
-		// from under the pointer.
-		button.Tag(fill);
-		stack.Tag(glow);
-
-		Neutralise(button);
-
-		// Square, and explicitly so: a Button sized by its padding comes out a few pixels wider than
-		// tall with an icon in it, and three of those in a row is the thing that looks unconsidered.
-		button.Padding(xaml::Thickness{ 0, 0, 0, 0 });
-		button.Width(ChipSize);
-		button.Height(ChipSize);
-		button.HorizontalContentAlignment(xaml::HorizontalAlignment::Stretch);
-		button.VerticalContentAlignment(xaml::VerticalAlignment::Stretch);
-		button.MinWidth(0);
-		button.MinHeight(0);
-		button.BorderThickness(xaml::Thickness{ 0, 0, 0, 0 });
-		button.CornerRadius(xaml::CornerRadius{ 3, 3, 3, 3 });
-		button.VerticalAlignment(xaml::VerticalAlignment::Center);
-		xcontrols::ToolTipService::SetToolTip(button, winrt::box_value(winrt::hstring{ tip }));
-
-		// Set outright rather than animated. A fade would be prettier and is what was there before, in
-		// effect, via the template's transitions -- and the whole complaint is that those do not settle
-		// when the pointer crosses several buttons faster than they run.
-		button.PointerEntered([glow](auto const&, auto const&) { glow.Opacity(HoverWash); });
-		button.PointerExited([glow](auto const&, auto const&) { glow.Opacity(0.0); });
-		button.PointerPressed([glow](auto const&, auto const&) { glow.Opacity(PressWash); });
-		button.PointerReleased([glow](auto const&, auto const&) { glow.Opacity(HoverWash); });
-
-		// Losing capture is the case a hover-out does not cover: press, drag off, release elsewhere.
-		// Without this the chip stays lit at the pressed wash with the pointer somewhere else entirely.
-		button.PointerCaptureLost([glow](auto const&, auto const&) { glow.Opacity(0.0); });
-
-		button.Click(
-			[action](winrt::Windows::Foundation::IInspectable const&, xaml::RoutedEventArgs const&) { action(); });
-		return button;
-	}
-
-	// Makes the Button template paint nothing at all, in every state, so the chip's own Border is the
-	// only thing on screen. Overridden on the button rather than in the panel's resources, so this
-	// cannot reach anything the app owns.
-	static void Neutralise(xcontrols::Button const& button)
-	{
-		static const wchar_t* const keys[] = {
-			L"ButtonBackground",
-			L"ButtonBackgroundPointerOver",
-			L"ButtonBackgroundPressed",
-			L"ButtonBackgroundDisabled",
-			L"ButtonBorderBrush",
-			L"ButtonBorderBrushPointerOver",
-			L"ButtonBorderBrushPressed",
-			L"ButtonBorderBrushDisabled",
-		};
-
-		const auto clear = Brush(0x00, 0x00, 0x00, 0x00);
-		for (const auto key : keys)
-		{
-			button.Resources().Insert(winrt::box_value(winrt::hstring{ key }), clear);
-		}
-	}
-
-	// Recolours a chip. The Button's Background is not it: the colour is on the Border behind the
-	// glyph, which is what Chip put in the Tag.
-	static void Paint(xcontrols::Button const& button, xmedia::Brush const& brush)
-	{
-		if (!button) return;
-		if (const auto fill = button.Tag().try_as<xcontrols::Border>()) fill.Background(brush);
-	}
-
-	// Enables or disables a chip, and says so on screen in the same breath.
-	//
-	// Control::IsEnabledChanged is the seam this looks like it wants and it does not fire here.
-	// IsEnabled is coerced -- an element is disabled if any ancestor is, so the effective value is
-	// computed by a walk over the subtree -- and setting it while the toolbar is still being
-	// assembled records the value without raising anything. The chip then reports IsEnabled false
-	// and draws at full strength: a button that looks live and answers nothing, which is the state
-	// it is least excusable to be in. So the visual is set beside the state rather than in reply to
-	// it, and there is one place that can be got wrong instead of one per chip.
-	//
-	// Clearing the wash is the other half. A disabled element receives no pointer input at all, so
-	// no PointerExited ever arrives, and Deselect disables itself on the very click that operates
-	// it -- leaving it wearing the hover wash with the pointer long gone.
-	static void Enable(xcontrols::Button const& button, bool enabled)
-	{
-		if (!button) return;
-
-		button.IsEnabled(enabled);
-
-		const auto stack = button.Content().try_as<xcontrols::Grid>();
-		if (!stack) return;
-
-		stack.Opacity(enabled ? 1.0 : DisabledFade);
-		if (enabled) return;
-
-		if (const auto glow = stack.Tag().try_as<xcontrols::Border>()) glow.Opacity(0.0);
-	}
-
-	// Two strokes, not one: the accent rose, with a dark companion sitting a pixel outside it.
-	//
-	// One rose stroke is invisible on a rose-coloured app, which is not a hypothetical -- it is the
-	// obvious thing to hit the moment RoseMCP is pointed at something built with RoseMCP's own palette.
-	// UWP does offer a blend mode for this (ElementCompositeMode::MinBlend, which exists precisely to
-	// make adorners readable over arbitrary content), but min() only separates the outline from a
-	// *lighter* ground -- over a dark app it darkens the outline into the background instead, trading
-	// one invisible case for another. Two contrasting strokes is what design tools do, and it holds on
-	// any ground at all.
-	//
-	// The pair lives in a Grid so a caller moves one element: the rose stretches to the bounds, and the
-	// dark one is inset by a negative margin so its stroke lands just outside the rose's.
-	xcontrols::Grid Outline(double thickness, bool dashed, uint8_t strokeAlpha = 0xFF, uint8_t fillAlpha = 0x00)
-	{
-		auto box = xcontrols::Grid();
-		box.Visibility(xaml::Visibility::Collapsed);
-		box.IsHitTestVisible(false);
-
-		// The fill goes in first, under both strokes. It is what carries a resting mark: an outline
-		// alone is either loud enough to be an obstruction or too faint to find, whereas a wash over
-		// the element reads at a few percent -- the same trick the capture layer already uses.
-		if (fillAlpha > 0)
-		{
-			auto wash = xshapes::Rectangle();
-			wash.Fill(Brush(fillAlpha, 0xC2, 0x18, 0x5B));
-			box.Children().Append(wash);
-		}
-
-		auto contrast = xshapes::Rectangle();
-		contrast.Stroke(Brush(static_cast<uint8_t>(0xB0 * strokeAlpha / 0xFF), 0x10, 0x10, 0x14));
-		contrast.StrokeThickness(1);
-		contrast.Margin(xaml::Thickness{ -thickness, -thickness, -thickness, -thickness });
-		box.Children().Append(contrast);
-
-		auto rose = xshapes::Rectangle();
-		rose.Stroke(Brush(strokeAlpha, 0xC2, 0x18, 0x5B));
-		rose.StrokeThickness(thickness);
-		if (dashed)
-		{
-			rose.StrokeDashArray().Append(3);
-			rose.StrokeDashArray().Append(2);
-			contrast.StrokeDashArray().Append(3);
-			contrast.StrokeDashArray().Append(2);
-		}
-
-		box.Children().Append(rose);
-
-		m_marks.Children().Append(box);
-		return box;
-	}
-
-	xcontrols::Border Badge()
-	{
-		auto badge = xcontrols::Border();
-		badge.Visibility(xaml::Visibility::Collapsed);
-		badge.IsHitTestVisible(false);
-		badge.Background(Accent());
-		badge.BorderBrush(Brush(0x90, 0x10, 0x10, 0x14));
-		badge.BorderThickness(xaml::Thickness{ 1, 1, 1, 1 });
-		badge.CornerRadius(xaml::CornerRadius{ 2, 2, 2, 2 });
-		badge.Padding(xaml::Thickness{ 4, 1, 4, 2 });
-		badge.Child(Label(L"", 11.0, 0xF0, nullptr));
-		m_marks.Children().Append(badge);
-		return badge;
 	}
 
 	void AttachDrag(xaml::UIElement const& handle)
@@ -1532,95 +998,11 @@ private:
 		Log(std::wstring(L"overlay: just-my-XAML ") + (m_justMyXaml ? L"on" : L"off"));
 	}
 
-	// Magnification, in two kinds, because they answer different questions and neither substitutes
-	// for the other.
-	//
-	// Transform scales the app's own content with a render transform. It stays live and stays sharp:
-	// text is re-rendered at the new size rather than resampled, so it is the one to read fine
-	// typography or a vector at. It is also a change to somebody else's tree -- reversible, and
-	// restored exactly, but real while it is on, and the app is awkward to click through at 8x.
-	//
-	// Lens leaves the app completely alone and magnifies a *capture* of it, replicating whole pixels
-	// so what you see is the pixel grid the app actually produced. That is the one to answer "what
-	// colour is that, exactly" and "is this edge one pixel or two" with, and it is why the hex
-	// readout lives with it rather than with the transform: a scaled render has no pixels to name.
-	//
-	// XAML offers no help with the second. WPF has RenderOptions.BitmapScalingMode; UWP and WinUI
-	// have no bitmap scaling mode at all -- the only InterpolationMode either exposes is
-	// ColorInterpolationMode on a gradient brush -- so a ScaleTransform on an Image always filters
-	// and would smear exactly the thing being looked at. Replicating the pixels by hand is not a
-	// workaround for that, it is the only way to get it, and it costs one buffer walk over a region
-	// a few thousand pixels big.
-	enum class Zoom
-	{
-		Off,
-		Transform,
-		Lens,
-	};
-
-	void ToggleZoom()
-	{
-		SetZoomMode(m_zoom == Zoom::Off ? Zoom::Lens : Zoom::Off);
-	}
-
-	void SetZoomMode(Zoom mode)
-	{
-		if (m_zoom == mode) return;
-
-		// Leaving transform mode has to put the app back before anything else happens; leaving lens
-		// mode has to stop the timer, or a capture keeps running over an app nobody is inspecting.
-		if (m_zoom == Zoom::Transform) ClearTransform();
-		if (m_zoom == Zoom::Lens) StopLens();
-
-		m_zoom = mode;
-
-		if (m_zoom == Zoom::Transform) ApplyTransform();
-		if (m_zoom == Zoom::Lens) StartLens();
-
-		if (m_zoomRow)
-		{
-			m_zoomRow.Visibility(m_zoom == Zoom::Off ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
-		}
-
-		if (m_lens && m_zoom != Zoom::Lens) m_lens.Visibility(xaml::Visibility::Collapsed);
-
-		Chrome();
-		Place();
-		Log(L"overlay: zoom " + ZoomName(m_zoom) + L" at " + std::to_wstring(m_zoomFactor) + L"x");
-	}
-
-	static std::wstring ZoomName(Zoom mode)
-	{
-		switch (mode)
-		{
-			case Zoom::Transform: return L"transform";
-			case Zoom::Lens: return L"lens";
-			default: return L"off";
-		}
-	}
-
-	// Powers of two, and not merely for tidiness: at a whole factor every source pixel becomes an
-	// exact square block, so the lens shows the app's pixel grid rather than a moire of it. A
-	// fractional factor puts some source pixels in a 3-wide column and its neighbour in a 4-wide one,
-	// which reads as the app having uneven strokes it does not have.
-	void ZoomBy(int step)
-	{
-		const int previous = m_zoomFactor;
-
-		if (step > 0 && m_zoomFactor < 32) m_zoomFactor *= 2;
-		if (step < 0 && m_zoomFactor > 2) m_zoomFactor /= 2;
-		if (m_zoomFactor == previous) return;
-
-		if (m_factorLabel) m_factorLabel.Text(std::to_wstring(m_zoomFactor) + L"x");
-		if (m_zoom == Zoom::Transform) ApplyTransform();
-		if (m_zoom == Zoom::Lens) UpdateLens();
-	}
-
 	// The app's own content, which is deliberately not the root. The overlay sits on the diagnostics
 	// UI layer -- a panel the framework hands out through GetUiLayer, beside the app's content rather
 	// than inside it -- so rendering the content element captures the app and not this toolbar.
 	// Rendering the root instead would put the toolbar inside its own lens.
-	xaml::UIElement AppContent() const
+	xaml::UIElement AppContent() const override
 	{
 		try
 		{
@@ -1634,446 +1016,11 @@ private:
 		}
 	}
 
-	// What the transform mode scales. One element today -- the app's content -- but a list, because
-	// the transform is saved and restored per element and a single saved slot is what made an earlier
-	// version restore only the last thing it touched.
-	std::vector<xaml::UIElement> ScaleTargets() const
-	{
-		std::vector<xaml::UIElement> targets;
-		if (const auto content = AppContent()) targets.push_back(content);
-
-		// The marks go with it, or a picked element's outline stays where the element was before the
-		// app moved under it.
-		if (m_marks) targets.push_back(m_marks);
-
-		return targets;
-	}
-
-	void ApplyTransform()
-	{
-		const auto targets = ScaleTargets();
-		if (targets.empty())
-		{
-			Log(L"overlay: zoom found no app content to scale");
-			return;
-		}
-
-		try
-		{
-			// Saved on the way in, restored on the way out, rather than cleared. An app is free to
-			// have a transform of its own, and setting that to null on exit would be a change nobody
-			// asked for -- and one that would outlive the mode that made it.
-			if (!m_transformSaved)
-			{
-				for (const auto& target : targets)
-				{
-					m_saved.push_back({ target, target.RenderTransform(), target.RenderTransformOrigin() });
-				}
-
-				m_transformSaved = true;
-			}
-
-			for (const auto& target : targets)
-			{
-				auto scale = xmedia::ScaleTransform();
-				scale.ScaleX(static_cast<double>(m_zoomFactor));
-				scale.ScaleY(static_cast<double>(m_zoomFactor));
-				target.RenderTransform(scale);
-			}
-
-			UpdateTransformOrigin();
-		}
-		catch (winrt::hresult_error const& error)
-		{
-			Log(std::wstring(L"overlay: could not scale the app: ") + error.message().c_str());
-		}
-	}
-
-	// Keeps the point under the pointer where it is, which is what makes the scaled app navigable:
-	// a render transform grows its element about its origin, so putting the origin under the cursor
-	// means moving the cursor pans rather than flings.
-	//
-	// It has to follow the pointer, and that was the whole bug. Set once when the mode was entered,
-	// the origin was wherever the pointer happened to be at the moment of the *click that turned the
-	// mode on* -- which is on the toolbar, because that is what was being clicked. Worse, when the
-	// pointer is outside the window it reads (-1, -1) and clamped to (0, 0), so the app scaled about
-	// its top-left corner and at 4x every part of it was off screen. An unknown pointer must leave
-	// the origin alone rather than resolve to a corner.
-	//
-	// Normalised against the content's own size, not the window's: RenderTransformOrigin is a
-	// fraction of the element, and an element that does not fill the window would otherwise anchor
-	// somewhere the pointer is not.
-	void UpdateTransformOrigin()
-	{
-		if (m_zoom != Zoom::Transform) return;
-
-		const auto bounds = Extent();
-		const bool known = m_pointer.X >= 0.0f && m_pointer.Y >= 0.0f
-			&& m_pointer.X < bounds.Width && m_pointer.Y < bounds.Height;
-		if (!known) return;
-
-		try
-		{
-			for (const auto& target : ScaleTargets())
-			{
-				double width = bounds.Width;
-				double height = bounds.Height;
-				if (const auto framed = target.try_as<xaml::FrameworkElement>())
-				{
-					if (framed.ActualWidth() > 0.0) width = framed.ActualWidth();
-					if (framed.ActualHeight() > 0.0) height = framed.ActualHeight();
-				}
-
-				const double x = width > 0.0 ? Clamp(m_pointer.X / width, 0.0, 1.0) : 0.5;
-				const double y = height > 0.0 ? Clamp(m_pointer.Y / height, 0.0, 1.0) : 0.5;
-				target.RenderTransformOrigin(
-					winrt::Windows::Foundation::Point{ static_cast<float>(x), static_cast<float>(y) });
-			}
-		}
-		catch (winrt::hresult_error const&)
-		{
-		}
-	}
-
-	void ClearTransform()
-	{
-		if (!m_transformSaved) return;
-
-		m_transformSaved = false;
-
-		for (const auto& saved : m_saved)
-		{
-			try
-			{
-				saved.Element.RenderTransform(saved.Transform);
-				saved.Element.RenderTransformOrigin(saved.Origin);
-			}
-			catch (winrt::hresult_error const&)
-			{
-				// An element that has since left the tree is not ours to put back.
-			}
-		}
-
-		m_saved.clear();
-	}
-
-	void StartLens()
-	{
-		if (!m_lens) BuildLens();
-
-		if (!m_lensTimer)
-		{
-			m_lensTimer = xaml::DispatcherTimer();
-			m_lensTimer.Interval(std::chrono::milliseconds(LensIntervalMs));
-			m_lensTimer.Tick(
-				[this](winrt::Windows::Foundation::IInspectable const&, winrt::Windows::Foundation::IInspectable const&)
-				{
-					try
-					{
-						CaptureFrame();
-					}
-					catch (winrt::hresult_error const&)
-					{
-						// Runs forever over somebody else's app. Never throw out of it.
-					}
-				});
-		}
-
-		m_lensTimer.Start();
-		CaptureFrame();
-	}
-
-	void StopLens()
-	{
-		if (m_lensTimer) m_lensTimer.Stop();
-
-		// Dropped rather than kept. A stale frame is worse than none: it would answer the next
-		// question about a window that has since moved on, and answer it confidently.
-		m_pixels.clear();
-		m_pixelsWidth = 0;
-		m_pixelsHeight = 0;
-
-		if (m_lens) m_lens.Visibility(xaml::Visibility::Collapsed);
-		if (m_hexLabel) m_hexLabel.Text(L"--");
-		if (m_swatch) m_swatch.Fill(Brush(0x00, 0x00, 0x00, 0x00));
-	}
-
-	void BuildLens()
-	{
-		m_lensImage = xcontrols::Image();
-
-		m_lens = xcontrols::Border();
-		m_lens.BorderBrush(Accent());
-		m_lens.BorderThickness(xaml::Thickness{ 1, 1, 1, 1 });
-		m_lens.CornerRadius(xaml::CornerRadius{ 2, 2, 2, 2 });
-		m_lens.Background(Brush(0xFF, 0x1C, 0x1C, 0x22));
-		m_lens.Visibility(xaml::Visibility::Collapsed);
-
-		// Never takes input, or the thing it is magnifying stops receiving the pointer that is
-		// driving it.
-		m_lens.IsHitTestVisible(false);
-
-		// The pixel the hex is quoting, outlined in the accent so the two cannot be read apart.
-		//
-		// A magnified lens with no marker leaves "which of these blocks is under the cursor" to be
-		// guessed, and at 4x the guess is wrong as often as not -- the readout then looks like it is
-		// lagging or sampling somewhere else. Outlining exactly one source pixel is also what makes
-		// the magnification legible as pixels rather than as a blurry crop.
-		m_pixelBox = xshapes::Rectangle();
-		m_pixelBox.Stroke(Accent());
-		m_pixelBox.StrokeThickness(1.0);
-		m_pixelBox.Fill(Brush(0x00, 0x00, 0x00, 0x00));
-		m_pixelBox.HorizontalAlignment(xaml::HorizontalAlignment::Left);
-		m_pixelBox.VerticalAlignment(xaml::VerticalAlignment::Top);
-		m_pixelBox.IsHitTestVisible(false);
-
-		auto stack = xcontrols::Grid();
-		stack.Children().Append(m_lensImage);
-		stack.Children().Append(m_pixelBox);
-
-		m_lens.Child(stack);
-		m_canvas.Children().Append(m_lens);
-	}
-
-	// One readback of the app, on a timer, and never two at once.
-	//
-	// RenderAsync is a GPU readback, so a second one queued behind the first buys nothing and costs
-	// a frame; m_capturingFrame is what makes the timer a rate limit rather than a backlog. It also
-	// means a slow app simply captures less often instead of falling further behind.
-	//
-	// Split across three methods for one reason, and it is not style. A completion handler runs on a
-	// pool thread, and RenderTargetBitmap is a DependencyObject: reading PixelWidth off that thread
-	// is a wrong-thread call, and merely *capturing* the bitmap in the handler is worse, because the
-	// lambda is destroyed there and takes the last reference with it. Releasing a XAML object off the
-	// UI thread is how this crashed the app a few seconds after the mode was switched on, with the
-	// last line in the log being the one that says the mode is on. So the handlers below capture
-	// nothing but `this` and a bool, and every line that touches XAML runs through
-	// RoseTapRunOnUiThread. The bitmap and the operation are members so neither is owned by a lambda.
-	void CaptureFrame()
-	{
-		if (m_zoom != Zoom::Lens || m_capturingFrame) return;
-
-		const auto content = AppContent();
-		if (!content) return;
-
-		try
-		{
-			m_capturingFrame = true;
-			m_lensBitmap = ximaging::RenderTargetBitmap();
-			m_lensBitmap.RenderAsync(content).Completed(
-				[this](winrt::Windows::Foundation::IAsyncAction const&, winrt::Windows::Foundation::AsyncStatus status)
-				{
-					const bool rendered = status == winrt::Windows::Foundation::AsyncStatus::Completed;
-					RoseTapRunOnUiThread([this, rendered] { OnRendered(rendered); });
-				});
-		}
-		catch (winrt::hresult_error const&)
-		{
-			m_capturingFrame = false;
-		}
-	}
-
-	// On the UI thread, which is where the bitmap may be asked anything at all.
-	void OnRendered(bool rendered)
-	{
-		if (!rendered || m_zoom != Zoom::Lens || !m_lensBitmap)
-		{
-			m_capturingFrame = false;
-			return;
-		}
-
-		try
-		{
-			m_pixelsWidth = m_lensBitmap.PixelWidth();
-			m_pixelsHeight = m_lensBitmap.PixelHeight();
-
-			m_lensPixels = m_lensBitmap.GetPixelsAsync();
-			m_lensPixels.Completed(
-				[this](auto const&, winrt::Windows::Foundation::AsyncStatus status)
-				{
-					const bool got = status == winrt::Windows::Foundation::AsyncStatus::Completed;
-					RoseTapRunOnUiThread([this, got] { OnPixels(got); });
-				});
-		}
-		catch (winrt::hresult_error const&)
-		{
-			m_capturingFrame = false;
-		}
-	}
-
-	// Also on the UI thread. The buffer itself is agile, but it is read here anyway so that the whole
-	// capture path has exactly one thread in it and nothing has to be reasoned about twice.
-	void OnPixels(bool got)
-	{
-		m_capturingFrame = false;
-		if (!got || m_zoom != Zoom::Lens || !m_lensPixels) return;
-
-		try
-		{
-			const auto buffer = m_lensPixels.GetResults();
-			m_pixels.resize(buffer.Length());
-
-			auto reader = winrt::Windows::Storage::Streams::DataReader::FromBuffer(buffer);
-			reader.ReadBytes(winrt::array_view<uint8_t>(m_pixels.data(), m_pixels.data() + m_pixels.size()));
-
-			UpdateLens();
-		}
-		catch (winrt::hresult_error const&)
-		{
-			m_pixels.clear();
-		}
-	}
-
-	// Draws the lens from the last capture, and reads the colour under the pointer out of the same
-	// buffer. The two are one operation on purpose: the hex is simply the middle pixel of what the
-	// lens is showing, so they can never disagree about what is under the cursor.
-	void UpdateLens()
-	{
-		if (m_zoom != Zoom::Lens || !m_lens || m_pixels.empty() || m_pixelsWidth <= 0) return;
-
-		const auto bounds = Extent();
-		const bool inside = m_pointer.X >= 0.0f && m_pointer.Y >= 0.0f
-			&& m_pointer.X < bounds.Width && m_pointer.Y < bounds.Height;
-		if (!inside)
-		{
-			m_lens.Visibility(xaml::Visibility::Collapsed);
-			return;
-		}
-
-		// The capture is in device pixels and the pointer in DIPs. The ratio is measured rather than
-		// assumed to be the rasterization scale: a capture is whatever size the framework chose for
-		// it, and moving the window to a monitor at another DPI changes that without changing the
-		// pointer's units.
-		const double perDipX = bounds.Width > 0 ? m_pixelsWidth / bounds.Width : 1.0;
-		const double perDipY = bounds.Height > 0 ? m_pixelsHeight / bounds.Height : 1.0;
-
-		const int centreX = static_cast<int>(m_pointer.X * perDipX);
-		const int centreY = static_cast<int>(m_pointer.Y * perDipY);
-
-		// How many source pixels the lens covers, and the block each becomes.
-		const int span = LensDevicePixels / m_zoomFactor;
-		const int originX = centreX - span / 2;
-		const int originY = centreY - span / 2;
-
-		auto target = ximaging::WriteableBitmap(LensDevicePixels, LensDevicePixels);
-		auto access = target.PixelBuffer().as<::Windows::Storage::Streams::IBufferByteAccess>();
-		uint8_t* out = nullptr;
-		if (FAILED(access->Buffer(&out)) || !out) return;
-
-		// The replication itself, which is the whole of "nearest neighbour": every destination pixel
-		// takes the source pixel it lands on, with no blending between them, so a one-pixel line
-		// stays one block wide and a colour boundary stays a boundary.
-		for (int y = 0; y < LensDevicePixels; ++y)
-		{
-			const int sourceY = originY + y / m_zoomFactor;
-			for (int x = 0; x < LensDevicePixels; ++x)
-			{
-				const int sourceX = originX + x / m_zoomFactor;
-				uint8_t* pixel = out + (static_cast<size_t>(y) * LensDevicePixels + x) * 4;
-
-				// Outside the capture is drawn as the panel's own dark, so the lens says where the
-				// window ends rather than repeating its edge pixel outwards.
-				if (sourceX < 0 || sourceY < 0 || sourceX >= m_pixelsWidth || sourceY >= m_pixelsHeight)
-				{
-					pixel[0] = 0x22; pixel[1] = 0x1C; pixel[2] = 0x1C; pixel[3] = 0xFF;
-					continue;
-				}
-
-				const size_t offset = (static_cast<size_t>(sourceY) * m_pixelsWidth + sourceX) * 4;
-				if (offset + 3 >= m_pixels.size()) continue;
-
-				pixel[0] = m_pixels[offset + 0];
-				pixel[1] = m_pixels[offset + 1];
-				pixel[2] = m_pixels[offset + 2];
-				pixel[3] = m_pixels[offset + 3];
-			}
-		}
-
-		target.Invalidate();
-		m_lensImage.Source(target);
-
-		// Sized so one bitmap pixel lands on one device pixel. Left to XAML's own layout it would be
-		// scaled by the rasterization scale and resampled -- which is exactly the filtering this whole
-		// path exists to avoid, reintroduced at the last step.
-		const double dips = LensDevicePixels / (perDipX > 0.0 ? perDipX : 1.0);
-		m_lensImage.Width(dips);
-		m_lensImage.Height(dips);
-
-		// The marker sits over the block the centre source pixel became, which is where the sample was
-		// taken: span/2 blocks in, each block a factor of device pixels wide.
-		if (m_pixelBox)
-		{
-			const double perDevice = perDipX > 0.0 ? perDipX : 1.0;
-			const double block = m_zoomFactor / perDevice;
-			const double offset = (span / 2) * m_zoomFactor / perDevice;
-
-			m_pixelBox.Width(block);
-			m_pixelBox.Height(block);
-			m_pixelBox.Margin(xaml::Thickness{ offset, offset, 0, 0 });
-		}
-
-		PlaceLens(dips);
-		ShowColourAt(centreX, centreY);
-		m_lens.Visibility(xaml::Visibility::Visible);
-	}
-
-	// Beside the pointer, and flipped to whichever side has room, so the lens never sits under the
-	// cursor it is following or hangs off the edge of the window.
-	void PlaceLens(double size)
-	{
-		const auto bounds = Extent();
-		const double gap = 18.0;
-
-		double left = m_pointer.X + gap;
-		if (left + size > bounds.Width) left = m_pointer.X - gap - size;
-
-		double top = m_pointer.Y + gap;
-		if (top + size > bounds.Height) top = m_pointer.Y - gap - size;
-
-		xcontrols::Canvas::SetLeft(m_lens, Clamp(left, 0.0, (std::max)(0.0, bounds.Width - size)));
-		xcontrols::Canvas::SetTop(m_lens, Clamp(top, 0.0, (std::max)(0.0, bounds.Height - size)));
-	}
-
-	// The colour under the pointer, as a swatch and as hex. BGRA is the order the capture comes in,
-	// which is not the order it is written in -- getting that backwards produces a plausible colour
-	// with red and blue swapped, and the only way to notice is to point it at something you already
-	// know the value of.
-	void ShowColourAt(int x, int y)
-	{
-		if (!m_hexLabel || !m_swatch) return;
-
-		if (x < 0 || y < 0 || x >= m_pixelsWidth || y >= m_pixelsHeight)
-		{
-			m_hexLabel.Text(L"--");
-			return;
-		}
-
-		const size_t offset = (static_cast<size_t>(y) * m_pixelsWidth + x) * 4;
-		if (offset + 3 >= m_pixels.size()) return;
-
-		const uint8_t blue = m_pixels[offset + 0];
-		const uint8_t green = m_pixels[offset + 1];
-		const uint8_t red = m_pixels[offset + 2];
-		const uint8_t alpha = m_pixels[offset + 3];
-
-		wchar_t hex[16] = {};
-		swprintf_s(hex, L"#%02X%02X%02X", red, green, blue);
-		m_hexLabel.Text(hex);
-		m_swatch.Fill(Brush(0xFF, red, green, blue));
-
-		// Said only when it is not the obvious answer: almost every pixel of a drawn window is
-		// opaque, so a permanent alpha column would be noise, and a transparent one is worth knowing.
-		if (alpha != 0xFF)
-		{
-			m_hexLabel.Text(std::wstring(hex) + L" a" + std::to_wstring(static_cast<int>(alpha)));
-		}
-	}
-
 
 	// Which mode is current, said in the toolbar itself: the active button wears the accent, the
 	// inactive one the panel's own grey. Just-my-XAML is a toggle rather than a mode, so it is lit
 	// whenever it is on regardless of whether a pick is in progress.
-	void Chrome()
+	void Chrome() override
 	{
 		if (!m_idleButton || !m_selectButton) return;
 
@@ -2084,16 +1031,11 @@ private:
 
 		// Deselect is an action rather than a mode, so it never wears the accent -- only whether
 		// there is anything for it to do.
-		Enable(m_deselectButton, m_hasSelection);
+		Enable(m_deselectButton, m_pick.Has());
 
-		Paint(m_zoomButton, m_zoom == Zoom::Off ? Idle() : Accent());
-		Paint(m_scaleButton, m_zoom == Zoom::Transform ? Accent() : Idle());
-		Paint(m_pixelButton, m_zoom == Zoom::Lens ? Accent() : Idle());
-
-		// The ends of the range are said by disabling, not by silently doing nothing: a button that
-		// responds to a click by leaving everything as it was reads as broken rather than as bounded.
-		Enable(m_zoomInButton, m_zoomFactor < 32);
-		Enable(m_zoomOutButton, m_zoomFactor > 2);
+		// Its own buttons are its own business: which of them wears the accent depends on state
+		// this no longer holds.
+		m_zoomTool.RefreshChrome();
 	}
 
 	/// Whether an element was declared in the app's own markup.
@@ -2159,7 +1101,7 @@ private:
 
 	// The size of the area the overlay covers. Named Extent because Bounds is taken, just below, by
 	// the question of where one element sits.
-	winrt::Windows::Foundation::Size Extent() const
+	winrt::Windows::Foundation::Size Extent() const override
 	{
 		const auto root = Root();
 		return root ? root.Size() : winrt::Windows::Foundation::Size{ 0, 0 };
@@ -2169,6 +1111,33 @@ private:
 	{
 		const auto root = Root();
 		return root ? root.Content() : nullptr;
+	}
+
+	// The rest of what a tool may ask of this overlay. Private overrides deliberately: a tool reaches
+	// them through IRoseOverlaySurface, and nothing holding a RoseOverlay can, so the surface stays a
+	// contract with the tools rather than becoming part of the overlay's own public shape.
+	winrt::Windows::Foundation::Point Pointer() const override { return m_pointer; }
+
+	xaml::UIElement Marks() const override { return m_marks; }
+
+	void Adorn(xaml::UIElement const& element) override
+	{
+		if (m_canvas && element) m_canvas.Children().Append(element);
+	}
+
+	void Reposition() override { Place(); }
+
+	void Mark(xaml::UIElement const& element) override
+	{
+		if (m_marks && element) m_marks.Children().Append(element);
+	}
+
+	// What depends on a pick: a measurement taken from an element that is no longer selected would
+	// be a confident wrong answer, so the rulers are refreshed. The pick says it changed; deciding
+	// what that costs is this overlay's business.
+	void PickChanged() override
+	{
+		m_rulersTool.Refresh(m_pointing == Pointing::Rulers);
 	}
 
 	// Whether an element belongs to the XamlRoot this overlay was installed in.
@@ -2192,7 +1161,7 @@ private:
 
 	// Where an element sits in the window, in the coordinates the overlay's Canvas uses -- the UI layer
 	// is sized to the window, so the window root's space is the Canvas's space.
-	bool Bounds(xaml::UIElement const& element, winrt::Windows::Foundation::Rect& rect)
+	bool Bounds(xaml::UIElement const& element, winrt::Windows::Foundation::Rect& rect) override
 	{
 		try
 		{
@@ -2220,21 +1189,6 @@ private:
 		}
 	}
 
-	static std::wstring Describe(xaml::UIElement const& element)
-	{
-		std::wstring typeName{ winrt::get_class_name(element) };
-		const auto lastDot = typeName.rfind(L'.');
-		if (lastDot != std::wstring::npos) typeName = typeName.substr(lastDot + 1);
-
-		std::wstring name;
-		if (const auto frameworkElement = element.try_as<xaml::FrameworkElement>())
-		{
-			name = frameworkElement.Name();
-		}
-
-		return name.empty() ? typeName : (typeName + L" \x00B7 " + name);
-	}
-
 
 	// Watches where the pointer is, so the marks can get out of the way when it is not near them.
 	//
@@ -2253,7 +1207,6 @@ private:
 	// capture layer and never came through this.
 	void WatchPointer()
 	{
-		m_selectionFade = MakeFader({ m_selectBox, m_selectBadge });
 		m_panelFade = MakeFader({ m_panel });
 
 		const auto watched = RoseTapWatchPointer(
@@ -2285,34 +1238,6 @@ private:
 		if (!watched) Log(L"overlay: no pointer source; the marks will not fade with proximity");
 	}
 
-	// Shows a freshly made selection, snapping when the pointer is already inside it and fading it up
-	// when it is not.
-	//
-	// Asking where the pointer is, rather than who asked for the selection, because that is the
-	// question the answer actually turns on -- and it happens to answer both callers. A click lands
-	// under the pointer, so the mark should simply be there: fading up would pretend the pointer were
-	// still on its way to somewhere it already is. A selection made by handle, which is the way an
-	// agent reaches this, lands wherever the element happens to be, and appearing at full
-	// strength somewhere the person is not looking is a flash in the corner of the eye rather than an
-	// answer. Both paths reach here, so which one it was is never asked: the pointer's position is
-	// the whole question, and a selection by handle that happens to land under the pointer snaps
-	// for the same reason a click does.
-	void Reveal()
-	{
-		m_overSelection = Contains(m_selectionRect, m_pointer);
-
-		if (m_overSelection)
-		{
-			m_selectionFade.Snap(SelectionNear);
-			return;
-		}
-
-		// Left at SelectionNear rather than settling straight to SelectionFar: a selection nobody
-		// watched arrive is one they have to be told about, and the next pointer move fades it back
-		// down through the ordinary proximity rule.
-		m_selectionFade.To(SelectionNear);
-	}
-
 	// Both marks fade on the same rule: near the pointer they are legible, away from it they are a
 	// hint. Only a change of state starts an animation -- this runs on every pointer move, and
 	// restarting a storyboard sixty times a second over an app somebody is using is not acceptable.
@@ -2320,23 +1245,13 @@ private:
 	{
 		m_pointer = point;
 
-		// Redrawn from the frame already in hand rather than by capturing another. A pointer move is
-		// hundreds of events a second and a readback is a GPU round trip; the timer is what decides
-		// how fresh the pixels are, and this is what decides which of them are on screen. The two are
-		// deliberately separate, so sweeping the pointer across the window costs a buffer walk and
-		// nothing else.
-		if (m_zoom == Zoom::Lens) UpdateLens();
+		// Told rather than asked: what a pointer move means to the magnifier is its own business,
+		// and m_pointer is already set above for it to read.
+		m_zoomTool.PointerMoved();
 
-		// The scaled app follows the pointer too, by moving the point it grows about rather than by
-		// redrawing anything.
-		if (m_zoom == Zoom::Transform) UpdateTransformOrigin();
-
-		const bool overSelection = m_hasSelection && Contains(m_selectionRect, point);
-		if (overSelection != m_overSelection)
-		{
-			m_overSelection = overSelection;
-			m_selectionFade.To(overSelection ? SelectionNear : SelectionFar);
-		}
+		// Told rather than asked, for the same reason: how loud the pick's mark should be is the
+		// pick's own business.
+		m_pick.PointerMoved(point);
 
 		const bool overPanel = Contains(PanelRect(), point);
 		if (overPanel != m_overPanel)
@@ -2344,97 +1259,6 @@ private:
 			m_overPanel = overPanel;
 			RefreshPanelFade();
 		}
-	}
-
-	// One storyboard per mark, built once and re-aimed, because the two obvious ways to do this are
-	// both wrong and they fail in opposite directions.
-	//
-	// Stop() before re-beginning looks like the tidy thing and is not: stopping an animation reverts
-	// the property to its *local* value, so one of the two directions snapped instead of fading --
-	// whichever direction happened to be heading back towards the value last written with .Opacity().
-	// The toolbar's mouse-out and the selection's mouse-in were both instant for exactly that reason,
-	// and they were instant in opposite directions because their local values sat at opposite ends.
-	//
-	// Building a fresh storyboard each time is the other trap: releasing one that is holding its end
-	// value lets the property fall back. Re-aiming a storyboard that stays alive has neither problem,
-	// and a DoubleAnimation with no From always starts from wherever the property has actually got to,
-	// so an interrupted fade hands over rather than jumping.
-	struct Fader
-	{
-		xanim::Storyboard Board{ nullptr };
-		std::vector<xanim::DoubleAnimation> Animations;
-
-		// What it is already heading for, so asking for the same thing twice is not a restart. The
-		// panel is asked on every pointer move across its edge and on every change of operation,
-		// and most of those answers are the one it is already giving.
-		double Target = -1.0;
-
-		void To(double value)
-		{
-			if (!Board || Target == value) return;
-
-			Target = value;
-
-			for (auto const& animation : Animations)
-			{
-				animation.To(value);
-			}
-
-			Board.Begin();
-		}
-
-		// Arrives at a value with no animation, for the moment when animating would be a lie. A pick
-		// happens under the pointer, so the mark is already being looked at: it should be there, not
-		// fade up as though the pointer were on its way.
-		//
-		// Still driven through the storyboard rather than by writing Opacity, because a held
-		// animation outranks a local value -- and SkipToFill leaves it held at the new value, so the
-		// next fade hands over from it the same way any other would.
-		void Snap(double value)
-		{
-			if (!Board) return;
-
-			Target = value;
-
-			for (auto const& animation : Animations)
-			{
-				animation.To(value);
-			}
-
-			Board.Begin();
-			Board.SkipToFill();
-		}
-	};
-
-	// Opacity is the one visual property XAML animates off the UI thread, which is what makes this
-	// affordable at all: a dependent animation would cost the app frames every time the pointer
-	// crossed an edge, and that is a strange thing to charge somebody for a diagnostics overlay.
-	static Fader MakeFader(std::vector<xaml::UIElement> const& targets)
-	{
-		Fader fader;
-		fader.Board = xanim::Storyboard();
-
-		for (auto const& target : targets)
-		{
-			if (!target) continue;
-
-			xanim::DoubleAnimation animation;
-			animation.EnableDependentAnimation(false);
-
-			// Duration is a value struct of a TimeSpan *and* a DurationType, and the type is not
-			// implied by the TimeSpan. Leaving it at its zero -- Automatic -- was the whole of why
-			// these ran for about a second instead of the sixth of one written just below.
-			animation.Duration(xaml::Duration{
-				winrt::Windows::Foundation::TimeSpan{ std::chrono::milliseconds(FadeMilliseconds) },
-				xaml::DurationType::TimeSpan });
-
-			xanim::Storyboard::SetTarget(animation, target);
-			xanim::Storyboard::SetTargetProperty(animation, L"Opacity");
-			fader.Board.Children().Append(animation);
-			fader.Animations.push_back(animation);
-		}
-
-		return fader;
 	}
 
 	// Where the toolbar is now, read live rather than remembered: it is draggable, it folds down to
@@ -2454,125 +1278,6 @@ private:
 			static_cast<float>(m_panel.ActualHeight()) };
 	}
 
-	static bool Contains(winrt::Windows::Foundation::Rect const& rect, winrt::Windows::Foundation::Point const& point)
-	{
-		return rect.Width > 0 && rect.Height > 0
-			&& point.X >= rect.X && point.X < rect.X + rect.Width
-			&& point.Y >= rect.Y && point.Y < rect.Y + rect.Height;
-	}
-
-	// The element's own rectangle, grown upwards to take in the badge that sits above it. Pointing at
-	// the caption is pointing at the selection -- without this, moving onto the one part that is still
-	// legible at rest is what makes the rest of the mark disappear.
-	static winrt::Windows::Foundation::Rect WithBadge(winrt::Windows::Foundation::Rect const& rect)
-	{
-		const float reach = static_cast<float>(BadgeHeight + BadgeGap);
-		const float top = rect.Y - reach;
-		if (top < 0.0f) return rect; // The badge was drawn inside the element, so the rect already covers it.
-
-		return winrt::Windows::Foundation::Rect{ rect.X, top, rect.Width, rect.Height + reach };
-	}
-
-	// Moves an outline and its badge onto an element, or hides both when there is nothing to show.
-	// Follows the picked element when the app re-lays out, which is not the same event as the element
-	// changing size.
-	//
-	// The mark is drawn at coordinates read out of the app once, and an app that moves the element
-	// afterwards leaves it behind -- pointing confidently at empty space. The probe does this to
-	// itself every few seconds: a sibling leaves the panel, everything below it slides up, and nothing
-	// about the picked element changed except where it is. SizeChanged cannot see that, because the
-	// element was not resized; LayoutUpdated can, because it fires for the pass that moved it.
-	//
-	// It fires for every layout pass in the tree, so it is subscribed only while something is picked,
-	// and it does one TransformToVisual when it fires. That is affordable in a way that recomputing on
-	// every pointer move would not be -- which is the reason this was left alone until now.
-	void WatchSelectionLayout(xaml::UIElement const& element)
-	{
-		if (m_selectedElement && m_layoutToken.value)
-		{
-			m_selectedElement.LayoutUpdated(m_layoutToken);
-			m_layoutToken = {};
-		}
-
-		m_selectedElement = element ? element.try_as<xaml::FrameworkElement>() : nullptr;
-		if (!m_selectedElement) return;
-
-		m_layoutToken = m_selectedElement.LayoutUpdated(
-			[this](winrt::Windows::Foundation::IInspectable const&, winrt::Windows::Foundation::IInspectable const&)
-			{
-				if (!m_hasSelection || !m_selectedElement) return;
-
-				// Re-entrant by construction, and it has to be stopped twice over.
-				//
-				// LayoutUpdated fires for every layout pass in the tree, and moving the outline is
-				// itself a layout pass -- so redrawing from this handler schedules the handler again.
-				// The comparison below is what breaks that cycle, and it must compare like with like:
-				// comparing raw bounds against m_selectionRect, which carries the badge, never matched,
-				// so every pass redrew and scheduled another until the app went down with it.
-				if (m_updatingSelection) return;
-
-				try
-				{
-					winrt::Windows::Foundation::Rect rect{};
-					if (!Bounds(m_selectedElement, rect)) return;
-
-					const auto withBadge = WithBadge(rect);
-					if (withBadge.X == m_selectionRect.X && withBadge.Y == m_selectionRect.Y
-						&& withBadge.Width == m_selectionRect.Width && withBadge.Height == m_selectionRect.Height)
-					{
-						return;
-					}
-
-					m_updatingSelection = true;
-					ShowBox(m_selectBox, m_selectBadge, m_selectedElement, Describe(m_selectedElement));
-					m_anchorRect = rect;
-					m_selectionRect = withBadge;
-
-					// Inside the guard, because drawing the bands is itself a layout pass: outside it
-					// this handler would schedule itself for as long as the app stayed up.
-					RefreshRulers();
-					m_updatingSelection = false;
-				}
-				catch (winrt::hresult_error const&)
-				{
-					// An element mid-removal is #51's problem, not this one's.
-					m_updatingSelection = false;
-				}
-			});
-	}
-
-	bool ShowBox(
-		xcontrols::Grid const& box,
-		xcontrols::Border const& badge,
-		xaml::UIElement const& element,
-		std::wstring const& caption)
-	{
-		winrt::Windows::Foundation::Rect rect{};
-		if (!box || !badge) return false;
-
-		if (!element || !Bounds(element, rect))
-		{
-			box.Visibility(xaml::Visibility::Collapsed);
-			badge.Visibility(xaml::Visibility::Collapsed);
-			return false;
-		}
-
-		box.Width(rect.Width);
-		box.Height(rect.Height);
-		xcontrols::Canvas::SetLeft(box, rect.X);
-		xcontrols::Canvas::SetTop(box, rect.Y);
-		box.Visibility(xaml::Visibility::Visible);
-
-		if (const auto text = badge.Child().try_as<xcontrols::TextBlock>()) text.Text(caption);
-
-		// Above the element, unless that would be off the top of the window, in which case inside it.
-		const double top = rect.Y - BadgeHeight - BadgeGap;
-		xcontrols::Canvas::SetLeft(badge, rect.X);
-		xcontrols::Canvas::SetTop(badge, top < 0.0 ? rect.Y + 2.0 : top);
-		badge.Visibility(xaml::Visibility::Visible);
-		return true;
-	}
-
 	// The rulers mode's own drawing, all of it on the marks canvas so it scales with a magnified app
 	// exactly as the outlines do.
 	//
@@ -2583,608 +1288,6 @@ private:
 	// from the gap to its neighbour. Somebody looking at four pixels they cannot account for has to be
 	// able to tell those apart, and neither drawn alone does it.
 
-	// One dimension line: a stroke with a tick at each end, the dark companion that keeps it readable
-	// over an app of any colour, a dashed extension for each rectangle the line does not reach, and
-	// the number.
-	struct Leader
-	{
-		xshapes::Line Contrast{ nullptr };
-		xshapes::Line Line{ nullptr };
-		xshapes::Line CapFrom{ nullptr };
-		xshapes::Line CapTo{ nullptr };
-		xshapes::Line ExtendFrom{ nullptr };
-		xshapes::Line ExtendTo{ nullptr };
-		xcontrols::Border Label{ nullptr };
-
-		// The thin line from a number to the line it belongs to, drawn only when the number had to be
-		// moved off it. A label centred on its own dimension line needs nothing to explain it.
-		xshapes::Line Tie{ nullptr };
-	};
-
-	// One band of the box model, as four strips rather than one stroked rectangle. A Thickness is four
-	// numbers and a stroke is one, so a padding of 24,4,24,4 cannot be drawn as a stroked outline at
-	// all -- and that asymmetric case is precisely the one somebody is inspecting.
-	struct Band
-	{
-		xshapes::Rectangle Top{ nullptr };
-		xshapes::Rectangle Bottom{ nullptr };
-		xshapes::Rectangle Left{ nullptr };
-		xshapes::Rectangle Right{ nullptr };
-	};
-
-	static RulerRect ToRuler(winrt::Windows::Foundation::Rect const& rect)
-	{
-		return RulerRect{ rect.X, rect.Y, rect.Width, rect.Height };
-	}
-
-	static RulerEdges ToEdges(xaml::Thickness const& thickness)
-	{
-		return RulerEdges{ thickness.Left, thickness.Top, thickness.Right, thickness.Bottom };
-	}
-
-	// A measurement as it is written down. A whole number keeps no decimal and anything else keeps
-	// one: rounding 12.5 to 12 would be a confident wrong answer about the exact discrepancy somebody
-	// is hunting, which is the only reason they are looking at this at all.
-	static std::wstring Number(double value)
-	{
-		const double rounded = std::round(value * 10.0) / 10.0;
-		wchar_t text[32] = {};
-		swprintf_s(text, rounded == std::floor(rounded) ? L"%.0f" : L"%.1f", rounded);
-		return text;
-	}
-
-	// A thickness as all four sides, always, in the order XAML writes them.
-	//
-	// XAML's own shorthands are not used here even though the value came from one. "Padding 24" is
-	// shorter and asks the reader to know that a single number means all four sides -- and a person
-	// looking at this row is looking at it because they cannot account for a few pixels, which is
-	// exactly when guessing whether a number covers one side or four is not good enough.
-	static std::wstring Thick(RulerEdges const& edges)
-	{
-		return Number(edges.Left) + L"," + Number(edges.Top) + L"," + Number(edges.Right) + L"," + Number(edges.Bottom);
-	}
-
-	/// <summary>Reads an element's padding, and says whether its type has one at all.</summary>
-	/// <remarks>
-	/// XAML declares Padding on no common base -- Control, Border, TextBlock, RichTextBlock,
-	/// ContentPresenter and the panels each declare their own -- so it is asked of those projections in
-	/// turn. A type with none is reported as having none rather than as having zero: a Rectangle does
-	/// not have a padding of nothing, it has no padding, and a band of zero width would draw the two
-	/// cases identically.
-	/// </remarks>
-	static bool PaddingOf(xaml::UIElement const& element, xaml::Thickness& padding)
-	{
-		if (const auto control = element.try_as<xcontrols::Control>()) { padding = control.Padding(); return true; }
-		if (const auto border = element.try_as<xcontrols::Border>()) { padding = border.Padding(); return true; }
-		if (const auto text = element.try_as<xcontrols::TextBlock>()) { padding = text.Padding(); return true; }
-		if (const auto rich = element.try_as<xcontrols::RichTextBlock>()) { padding = rich.Padding(); return true; }
-		if (const auto presenter = element.try_as<xcontrols::ContentPresenter>()) { padding = presenter.Padding(); return true; }
-		if (const auto stack = element.try_as<xcontrols::StackPanel>()) { padding = stack.Padding(); return true; }
-		if (const auto grid = element.try_as<xcontrols::Grid>()) { padding = grid.Padding(); return true; }
-		if (const auto relative = element.try_as<xcontrols::RelativePanel>()) { padding = relative.Padding(); return true; }
-
-		return false;
-	}
-
-	// The border thickness, on the same terms. It matters because the element's own rectangle takes it
-	// in: without it the padding band would start at the outside of the border and be wrong by exactly
-	// the border on every element that has one.
-	static RulerEdges BorderOf(xaml::UIElement const& element)
-	{
-		if (const auto control = element.try_as<xcontrols::Control>()) return ToEdges(control.BorderThickness());
-		if (const auto border = element.try_as<xcontrols::Border>()) return ToEdges(border.BorderThickness());
-		if (const auto presenter = element.try_as<xcontrols::ContentPresenter>()) return ToEdges(presenter.BorderThickness());
-		if (const auto stack = element.try_as<xcontrols::StackPanel>()) return ToEdges(stack.BorderThickness());
-		if (const auto grid = element.try_as<xcontrols::Grid>()) return ToEdges(grid.BorderThickness());
-		if (const auto relative = element.try_as<xcontrols::RelativePanel>()) return ToEdges(relative.BorderThickness());
-
-		return RulerEdges{};
-	}
-
-	xshapes::Line RulerLine(uint8_t alpha, uint8_t red, uint8_t green, uint8_t blue, double thickness, bool dashed)
-	{
-		auto line = xshapes::Line();
-		line.Stroke(Brush(alpha, red, green, blue));
-		line.StrokeThickness(thickness);
-		line.IsHitTestVisible(false);
-		line.Visibility(xaml::Visibility::Collapsed);
-
-		if (dashed)
-		{
-			line.StrokeDashArray().Append(2);
-			line.StrokeDashArray().Append(2);
-		}
-
-		m_marks.Children().Append(line);
-		return line;
-	}
-
-	Leader BuildLeader()
-	{
-		Leader leader;
-
-		// The dark companion goes down first and wider, so it shows as a fringe either side of the line
-		// it backs. Same reason the outlines have one: a rose line on a rose-coloured app is no line at
-		// all, and RoseMCP pointed at something built with RoseMCP's own palette is not a hypothetical.
-		leader.Contrast = RulerLine(0xB0, 0x10, 0x10, 0x14, 3.0, false);
-		leader.Line = RulerLine(0xFF, 0xC2, 0x18, 0x5B, 1.0, false);
-		leader.CapFrom = RulerLine(0xFF, 0xC2, 0x18, 0x5B, 1.0, false);
-		leader.CapTo = RulerLine(0xFF, 0xC2, 0x18, 0x5B, 1.0, false);
-		leader.ExtendFrom = RulerLine(0x80, 0xC2, 0x18, 0x5B, 1.0, true);
-		leader.ExtendTo = RulerLine(0x80, 0xC2, 0x18, 0x5B, 1.0, true);
-
-		// Built before the label so it passes behind it rather than across it.
-		leader.Tie = RulerLine(0xC0, 0xC2, 0x18, 0x5B, 1.0, false);
-		leader.Label = Badge();
-		return leader;
-	}
-
-	xshapes::Rectangle BandStrip(uint8_t alpha, uint8_t red, uint8_t green, uint8_t blue)
-	{
-		auto strip = xshapes::Rectangle();
-		strip.Fill(Brush(alpha, red, green, blue));
-		strip.IsHitTestVisible(false);
-		strip.Visibility(xaml::Visibility::Collapsed);
-		m_marks.Children().Append(strip);
-		return strip;
-	}
-
-	Band BuildBand(uint8_t alpha, uint8_t red, uint8_t green, uint8_t blue)
-	{
-		Band band;
-		band.Top = BandStrip(alpha, red, green, blue);
-		band.Bottom = BandStrip(alpha, red, green, blue);
-		band.Left = BandStrip(alpha, red, green, blue);
-		band.Right = BandStrip(alpha, red, green, blue);
-		return band;
-	}
-
-	static void Conceal(xaml::UIElement const& element)
-	{
-		if (element) element.Visibility(xaml::Visibility::Collapsed);
-	}
-
-	static void HideLeader(Leader const& leader)
-	{
-		Conceal(leader.Contrast);
-		Conceal(leader.Line);
-		Conceal(leader.CapFrom);
-		Conceal(leader.CapTo);
-		Conceal(leader.ExtendFrom);
-		Conceal(leader.ExtendTo);
-		Conceal(leader.Tie);
-		Conceal(leader.Label);
-	}
-
-	void HideLeaders()
-	{
-		for (auto const& leader : m_leaders) HideLeader(leader);
-	}
-
-	static void HideBand(Band const& band)
-	{
-		Conceal(band.Top);
-		Conceal(band.Bottom);
-		Conceal(band.Left);
-		Conceal(band.Right);
-	}
-
-	void HideBands()
-	{
-		HideBand(m_marginBand);
-		HideBand(m_borderBand);
-		HideBand(m_paddingBand);
-	}
-
-	// One strip of a band, or nothing where that side has no thickness. Clamped at zero rather than
-	// trusted: an element constrained below the size it asked for can have a padding wider than it is,
-	// and a negative extent draws a rectangle hanging off the opposite side.
-	static void PlaceStrip(xshapes::Rectangle const& strip, double left, double top, double width, double height)
-	{
-		if (!strip) return;
-
-		if (width <= 0.0 || height <= 0.0)
-		{
-			strip.Visibility(xaml::Visibility::Collapsed);
-			return;
-		}
-
-		strip.Width(width);
-		strip.Height(height);
-		xcontrols::Canvas::SetLeft(strip, left);
-		xcontrols::Canvas::SetTop(strip, top);
-		strip.Visibility(xaml::Visibility::Visible);
-	}
-
-	// The frame between two rectangles: the top and bottom strips run the full width and the sides
-	// fill what is left between them, so no two strips meet at a corner. Overlapping ones would double
-	// the fill's opacity there and draw a darker square at each corner of every band.
-	static void PlaceBand(Band const& band, RulerRect const& outer, RulerRect const& inner)
-	{
-		PlaceStrip(band.Top, outer.Left, outer.Top, outer.Width, inner.Top - outer.Top);
-		PlaceStrip(band.Bottom, outer.Left, inner.Bottom(), outer.Width, outer.Bottom() - inner.Bottom());
-		PlaceStrip(band.Left, outer.Left, inner.Top, inner.Left - outer.Left, inner.Height);
-		PlaceStrip(band.Right, inner.Right(), inner.Top, outer.Right() - inner.Right(), inner.Height);
-	}
-
-	/// <summary>
-	/// Draws the anchor's box model and fills the toolbar's rulers row, or takes both away.
-	/// </summary>
-	/// <remarks>
-	/// Called wherever the mode, the anchor or the anchor's geometry changes, so one place decides what
-	/// the mode is showing rather than one per event that could each get it wrong.
-	/// </remarks>
-	void RefreshRulers()
-	{
-		const bool rulers = m_pointing == Pointing::Rulers;
-		if (m_rulersRow) m_rulersRow.Visibility(rulers ? xaml::Visibility::Visible : xaml::Visibility::Collapsed);
-		if (!rulers)
-		{
-			HideBands();
-			HideLeaders();
-			return;
-		}
-
-		winrt::Windows::Foundation::Rect rect{};
-		if (!m_hasSelection || !m_selectedElement || !Bounds(m_selectedElement, rect))
-		{
-			HideBands();
-			SetRulersText(std::wstring(), std::wstring(), std::wstring());
-			return;
-		}
-
-		const auto margin = ToEdges(m_selectedElement.Margin());
-		const auto border = BorderOf(m_selectedElement);
-
-		xaml::Thickness padding{};
-		const bool hasPadding = PaddingOf(m_selectedElement, padding);
-
-		const auto bands = BoxModel(ToRuler(rect), margin, border, hasPadding ? ToEdges(padding) : RulerEdges{});
-		PlaceBand(m_marginBand, bands.Margin, bands.Border);
-		PlaceBand(m_borderBand, bands.Border, bands.Padding);
-		PlaceBand(m_paddingBand, bands.Padding, bands.Content);
-
-		// The numbers go in the row rather than on the bands. Eight labels around a control the size of
-		// a button is not a reading of its box model, it is something drawn over the app -- and the row
-		// is the only place that can say the two things a band cannot: which sides are zero, and that a
-		// type has no padding to speak of.
-		SetRulersText(
-			Number(rect.Width) + L"\x00D7" + Number(rect.Height),
-			L"Margin " + Thick(margin),
-			hasPadding ? L"Padding " + Thick(ToEdges(padding)) : L"Padding none");
-	}
-
-	void SetRulersText(std::wstring const& size, std::wstring const& margin, std::wstring const& padding)
-	{
-		// An empty pill is a small blank lozenge that says nothing, so a value with nothing to report
-		// takes its pill with it. The size pill stays, because with nothing anchored it is the one
-		// that says what to do about that.
-		Fill(m_sizeLabel, m_sizePill, size.empty() ? L"click an element to anchor" : size);
-		Fill(m_marginLabel, m_marginPill, margin);
-		Fill(m_paddingLabel, m_paddingPill, padding);
-	}
-
-	static void Fill(xcontrols::TextBlock const& text, xcontrols::Border const& pill, std::wstring const& value)
-	{
-		if (text) text.Text(value);
-		if (pill) pill.Visibility(value.empty() ? xaml::Visibility::Collapsed : xaml::Visibility::Visible);
-	}
-
-	// Measures whatever is under the pointer against the anchor, or takes the leaders away when there
-	// is nothing to measure.
-	void MeasureToHovered(xaml::UIElement const& element, winrt::Windows::Foundation::Rect const& rect)
-	{
-		if (!element || !m_hasSelection || !m_selectedElement)
-		{
-			HideLeaders();
-			return;
-		}
-
-		// The anchor against itself is four zeroes drawn over the bands that already say what those
-		// zeroes mean, so it is not drawn at all.
-		if (element == m_selectedElement.try_as<xaml::UIElement>())
-		{
-			HideLeaders();
-			return;
-		}
-
-		DrawMeasurement(Measure(ToRuler(m_anchorRect), ToRuler(rect)));
-	}
-
-	// One measurement, as up to four dimension lines.
-	//
-	// An axis whose spans overlap draws two, one in from each of the anchor's edges, so a nested
-	// element carries its inset on all four sides -- which is the padding or the margin, and the
-	// answer people come to this for. An axis whose spans miss each other draws one, the separation.
-	void DrawMeasurement(RulerMeasurement const& measurement)
-	{
-		HideLeaders();
-
-		// Collisions are decided within one measurement, so the record of what is on screen starts
-		// empty each time. Keeping it across measurements would have a label avoiding a number that
-		// was taken off the screen by the same call.
-		m_placedLabels.clear();
-
-		// The two element captions are on the canvas before any number is, and they are the labels a
-		// number is most likely to land on: both sit at the top-left corner of a rectangle, which is
-		// exactly where the top and left insets are measured. Seeded rather than special-cased, so the
-		// same push that keeps two numbers apart keeps a number off a caption.
-		Occupy(m_selectBadge);
-		Occupy(m_hoverBadge);
-
-		const auto& anchor = measurement.Anchor;
-		const auto& hovered = measurement.Hovered;
-
-		// Where each axis's lines sit on the other one, which is inside the band the two rectangles
-		// share whenever they share one.
-		const double alongY = LeaderCross(anchor.Top, anchor.Bottom(), hovered.Top, hovered.Bottom());
-		const double alongX = LeaderCross(anchor.Left, anchor.Right(), hovered.Left, hovered.Right());
-
-		size_t next = 0;
-
-		if (measurement.Horizontal.Separated)
-		{
-			const double from = measurement.Horizontal.Before ? anchor.Left : anchor.Right();
-			const double to = measurement.Horizontal.Before ? hovered.Right() : hovered.Left;
-			DrawLeader(next++, true, from, to, alongY, measurement.Horizontal.Gap, anchor, hovered);
-		}
-		else
-		{
-			DrawLeader(next++, true, anchor.Left, hovered.Left, alongY, measurement.Horizontal.Low, anchor, hovered);
-			DrawLeader(next++, true, anchor.Right(), hovered.Right(), alongY, measurement.Horizontal.High, anchor, hovered);
-		}
-
-		if (measurement.Vertical.Separated)
-		{
-			const double from = measurement.Vertical.Before ? anchor.Top : anchor.Bottom();
-			const double to = measurement.Vertical.Before ? hovered.Bottom() : hovered.Top;
-			DrawLeader(next++, false, from, to, alongX, measurement.Vertical.Gap, anchor, hovered);
-		}
-		else
-		{
-			DrawLeader(next++, false, anchor.Top, hovered.Top, alongX, measurement.Vertical.Low, anchor, hovered);
-			DrawLeader(next++, false, anchor.Bottom(), hovered.Bottom(), alongX, measurement.Vertical.High, anchor, hovered);
-		}
-	}
-
-	/// <summary>One dimension line, from an edge of the anchor to an edge of the hovered element.</summary>
-	/// <remarks>
-	/// <paramref name="from"/> always belongs to the anchor and <paramref name="to"/> to the hovered
-	/// element, which is what lets each extension know whose rectangle to reach back to.
-	/// </remarks>
-	void DrawLeader(
-		size_t index,
-		bool horizontal,
-		double from,
-		double to,
-		double cross,
-		double value,
-		RulerRect const& anchor,
-		RulerRect const& hovered)
-	{
-		if (index >= m_leaders.size()) return;
-
-		auto const& leader = m_leaders[index];
-		if (!leader.Line) return;
-
-		Stroke(leader.Contrast, horizontal, from, to, cross);
-		Stroke(leader.Line, horizontal, from, to, cross);
-
-		// The ticks are what leave a line of no length still reading as a measurement: two edges flush
-		// are a gap of zero, which is a real answer and one nothing else on screen would show.
-		Cap(leader.CapFrom, horizontal, from, cross);
-		Cap(leader.CapTo, horizontal, to, cross);
-
-		Extend(leader.ExtendFrom, horizontal, from, cross, anchor);
-		Extend(leader.ExtendTo, horizontal, to, cross, hovered);
-
-		Caption(leader, horizontal, from, to, cross, anchor, Number(value));
-	}
-
-	static void Stroke(xshapes::Line const& line, bool horizontal, double from, double to, double cross)
-	{
-		if (!line) return;
-
-		line.X1(horizontal ? from : cross);
-		line.Y1(horizontal ? cross : from);
-		line.X2(horizontal ? to : cross);
-		line.Y2(horizontal ? cross : to);
-		line.Visibility(xaml::Visibility::Visible);
-	}
-
-	static void Cap(xshapes::Line const& line, bool horizontal, double at, double cross)
-	{
-		if (!line) return;
-
-		const double reach = 4.0;
-		line.X1(horizontal ? at : cross - reach);
-		line.Y1(horizontal ? cross - reach : at);
-		line.X2(horizontal ? at : cross + reach);
-		line.Y2(horizontal ? cross + reach : at);
-		line.Visibility(xaml::Visibility::Visible);
-	}
-
-	// The dashed line back to a rectangle the dimension line does not touch, the way a drawing does
-	// it. Drawn only where it is needed: where the line already crosses the rectangle, an extension is
-	// a dashed line lying over the element for no reason.
-	static void Extend(xshapes::Line const& line, bool horizontal, double at, double cross, RulerRect const& rect)
-	{
-		if (!line) return;
-
-		const double low = horizontal ? rect.Top : rect.Left;
-		const double high = horizontal ? rect.Bottom() : rect.Right();
-		if (cross >= low && cross <= high)
-		{
-			line.Visibility(xaml::Visibility::Collapsed);
-			return;
-		}
-
-		const double edge = cross < low ? low : high;
-		Stroke(line, !horizontal, edge, cross, at);
-	}
-
-	/// <summary>The number, centred on its own line where there is room for it and moved out where
-	/// there is not.</summary>
-	/// <remarks>
-	/// Four dimension lines round a small element put four numbers in a space that does not hold them,
-	/// and they collide exactly when the measurement is most worth reading. So a label that lands on
-	/// one already placed is pushed further out, perpendicular to its own line, until it is clear.
-	/// <para>
-	/// Pushed away from the line rather than along it, which is not arbitrary: sliding a number along
-	/// its line slides it off the thing it measures, and two numbers on one axis would then appear in
-	/// the order they happened to be drawn rather than the order their edges are in. Away from the
-	/// line, a number stays on the side it belongs to.
-	/// </para>
-	/// <para>
-	/// A label that has been moved gets a tie line back to the point it is labelling, because once a
-	/// number is no longer sitting on its line there is nothing else to say which line it is for --
-	/// which is the whole problem being fixed, arrived at from the other direction.
-	/// </para>
-	/// </remarks>
-	void Caption(
-		Leader const& leader,
-		bool horizontal,
-		double from,
-		double to,
-		double cross,
-		RulerRect const& anchor,
-		std::wstring const& text)
-	{
-		auto const& label = leader.Label;
-		if (!label) return;
-
-		if (const auto block = label.Child().try_as<xcontrols::TextBlock>()) block.Text(text);
-
-		// Measured rather than read off ActualWidth, which is a fact about the last layout pass and is
-		// zero for a label being shown for the first time. Where a number goes is decided here and now,
-		// so a size from the last pass would place this frame's number by the previous frame's width --
-		// and the first of a session by a width of nothing, which fits anywhere.
-		label.Measure(winrt::Windows::Foundation::Size{ LabelRoom, LabelRoom });
-		const auto desired = label.DesiredSize();
-
-		const double width = desired.Width > 0.0f ? desired.Width : 28.0;
-		const double height = desired.Height > 0.0f ? desired.Height : BadgeHeight;
-
-		const double low = (std::min)(from, to);
-		const double high = (std::max)(from, to);
-		const double middle = (from + to) / 2.0;
-
-		// How much of the line the number takes up, and whether the line can hold it with its ends
-		// still showing.
-		const double along = horizontal ? width : height;
-		const bool fits = along + 2.0 * EndRoom <= high - low;
-
-		// Which way is out of the measurement: away from the anchor's middle. That is what puts the
-		// left inset's number left of everything it measures and the right inset's number right of it,
-		// rather than both of them in the middle where the two would also collide.
-		const double centre = horizontal ? anchor.Left + anchor.Width / 2.0 : anchor.Top + anchor.Height / 2.0;
-		const bool outwardIsLow = middle < centre;
-
-		// Along the line: centred on it where it fits, outside its far end where it does not. A gap of
-		// four pixels has a line four pixels long and a number three times that wide, so a centred one
-		// covers both ends -- and the ends are the kinks where the extension lines turn off to the two
-		// edges being measured. Covering those hides which edges the number is about, which is the one
-		// thing the number cannot say for itself.
-		double lengthways;
-		if (fits) lengthways = middle - along / 2.0;
-		else if (outwardIsLow) lengthways = low - LabelGap - along;
-		else lengthways = high + LabelGap;
-
-		// Across it: centred, so the number reads as belonging to the line whether it sits on it or
-		// just off the end of it.
-		const double centred = cross - (horizontal ? height : width) / 2.0;
-		double sideways = centred;
-
-		for (int attempt = 0; ; attempt++)
-		{
-			const auto rect = horizontal
-				? RulerRect{ lengthways, sideways, width, height }
-				: RulerRect{ sideways, lengthways, width, height };
-
-			// The last attempt is taken whatever it lands on. A number in a crowd is still readable and
-			// a measurement silently missing from the four is not.
-			if (!Overlaps(rect) || attempt >= LabelAttempts)
-			{
-				m_placedLabels.push_back(rect);
-				xcontrols::Canvas::SetLeft(label, rect.Left);
-				xcontrols::Canvas::SetTop(label, rect.Top);
-				label.Visibility(xaml::Visibility::Visible);
-
-				// Only for a number that had to be moved off its own line. One sitting on the line, or
-				// squared up with the end of it, is already attached to what it measures.
-				TieBack(
-					leader.Tie,
-					rect,
-					horizontal,
-					horizontal ? middle : cross,
-					horizontal ? cross : middle,
-					sideways != centred);
-				return;
-			}
-
-			if (horizontal) sideways -= height + LabelGap;
-			else sideways += width + LabelGap;
-		}
-	}
-
-	// Counts something already on the canvas as taken, so a number is kept off it. A badge that is not
-	// being shown claims nothing, and one that has never been laid out has no rectangle to claim.
-	void Occupy(xcontrols::Border const& badge)
-	{
-		if (!badge || badge.Visibility() != xaml::Visibility::Visible) return;
-
-		const double left = xcontrols::Canvas::GetLeft(badge);
-		const double top = xcontrols::Canvas::GetTop(badge);
-		if (std::isnan(left) || std::isnan(top)) return;
-
-		const double width = badge.ActualWidth();
-		const double height = badge.ActualHeight();
-		if (width <= 0.0 || height <= 0.0) return;
-
-		m_placedLabels.push_back(RulerRect{ left, top, width, height });
-	}
-
-	// Whether a label would land on one already placed, with a gap so that two that merely touch still
-	// read as two numbers rather than one longer one.
-	bool Overlaps(RulerRect const& candidate) const
-	{
-		for (auto const& placed : m_placedLabels)
-		{
-			const bool clear = candidate.Right() + LabelGap <= placed.Left
-				|| placed.Right() + LabelGap <= candidate.Left
-				|| candidate.Bottom() + LabelGap <= placed.Top
-				|| placed.Bottom() + LabelGap <= candidate.Top;
-
-			if (!clear) return true;
-		}
-
-		return false;
-	}
-
-	// The tie from a moved label back to the point it measures, leaving the label's own edge rather
-	// than its centre so the line is never drawn underneath the number it belongs to.
-	static void TieBack(
-		xshapes::Line const& tie,
-		RulerRect const& label,
-		bool horizontal,
-		double pointX,
-		double pointY,
-		bool moved)
-	{
-		if (!tie) return;
-
-		if (!moved)
-		{
-			tie.Visibility(xaml::Visibility::Collapsed);
-			return;
-		}
-
-		tie.X1(horizontal ? label.Left + label.Width / 2.0 : label.Left);
-		tie.Y1(horizontal ? label.Bottom() : label.Top + label.Height / 2.0);
-		tie.X2(pointX);
-		tie.Y2(pointY);
-		tie.Visibility(xaml::Visibility::Visible);
-	}
 
 	xaml::UIElement Beneath(winrt::Windows::Foundation::Point const& point, winrt::Windows::Foundation::Rect& rect)
 	{
@@ -3218,7 +1321,7 @@ private:
 			if (IsOurs(element)) continue;      // Our own layers, if they are ever in this tree at all.
 			if (!Bounds(element, rect)) continue; // Zero-sized or not laid out: not what was pointed at.
 
-			Trace(L"beneath: " + Describe(element) + L" at " + std::to_wstring(static_cast<int>(rect.X))
+			Trace(L"beneath: " + RosePick::Describe(element) + L" at " + std::to_wstring(static_cast<int>(rect.X))
 				+ L"," + std::to_wstring(static_cast<int>(rect.Y)) + L" "
 				+ std::to_wstring(static_cast<int>(rect.Width)) + L"x"
 				+ std::to_wstring(static_cast<int>(rect.Height))
@@ -3246,9 +1349,9 @@ private:
 		{
 			winrt::Windows::Foundation::Rect rect{};
 			const auto element = Beneath(e.GetCurrentPoint(nullptr).Position(), rect);
-			ShowBox(m_hoverBox, m_hoverBadge, element, element ? Describe(element) : std::wstring());
+			m_pick.Hover(element, element ? RosePick::Describe(element) : std::wstring());
 
-			if (m_pointing == Pointing::Rulers) MeasureToHovered(element, rect);
+			if (m_pointing == Pointing::Rulers) m_rulersTool.MeasureTo(element, rect);
 		}
 		catch (winrt::hresult_error const& error)
 		{
@@ -3269,18 +1372,9 @@ private:
 			winrt::Windows::Foundation::Rect rect{};
 			if (const auto element = Beneath(point, rect))
 			{
-				m_selectedHandle = Record(element, point);
-				WatchSelectionLayout(element);
-
 				// The picked element keeps its outline after select mode ends: that persistent mark is
 				// the evidence of what "the selected element" now means, for the person and the agent.
-				const bool drawn = ShowBox(m_selectBox, m_selectBadge, element, Describe(element));
-				m_hasSelection = true;
-				m_anchorRect = rect;
-				m_selectionRect = WithBadge(rect);
-				Reveal();
-				RefreshRulers();
-				Chrome();
+				const bool drawn = m_pick.Take(element, Record(element, point), rect);
 				Log(L"overlay: selection outline " + std::wstring(drawn ? L"drawn" : L"NOT drawn"));
 			}
 		}
@@ -3293,36 +1387,7 @@ private:
 		// anchor and the sweep carries on, which is what makes it one gesture rather than a round of
 		// arm, click, arm again for every element somebody wants to measure from.
 		if (m_pointing == Pointing::Select) GoIdle();
-		else HideLeaders(); // The pointer is over the new anchor, so there is nothing to measure to.
-	}
-
-	/// The clearing itself. <paramref name="goneReason"/> is written where the host can find it later
-	/// when the selection went away on its own; a deliberate deselect passes null, because the caller
-	/// asking for it does not need to be told it happened.
-	bool Clear(const wchar_t* goneReason)
-	{
-		const bool had = m_hasSelection;
-
-		WatchSelectionLayout(nullptr);
-		ShowBox(m_selectBox, m_selectBadge, nullptr, std::wstring());
-		m_hasSelection = false;
-		m_overSelection = false;
-		m_selectionRect = {};
-		m_anchorRect = {};
-		m_selectedHandle = 0;
-		m_selectionRows.clear();
-
-		// The bands and any leaders go with it. They describe an element that is no longer the
-		// selection, and a measurement from a rectangle nothing is pointing at is the confident wrong
-		// answer this repository likes least.
-		RefreshRulers();
-
-		// The note outlives this call, because nothing is waiting on it: the element went away between
-		// requests, and the host only finds out when it next asks.
-		if (goneReason && had) m_goneReason = goneReason;
-
-		Chrome();
-		return had;
+		else m_rulersTool.ClearMeasurement(); // The pointer is over the new anchor, so there is nothing to measure to.
 	}
 
 	/// Writes the selection for an element that arrived from the tree rather than from a click.
@@ -3356,9 +1421,9 @@ private:
 			node = xmedia::VisualTreeHelper::GetParent(node);
 		}
 
-		PublishSelection(rows.str());
+		m_pick.PublishRows(rows.str());
 
-		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" row(s) from the tree");
+		Log(L"overlay: recorded " + RosePick::Describe(element) + L" and " + std::to_wstring(written) + L" row(s) from the tree");
 	}
 
 	// Anything under our own root is ours -- the capture layer, the toolbar, and every part of it.
@@ -3423,8 +1488,8 @@ private:
 			selected = (m_justMyXaml && topmostApp != 0) ? topmostApp : topmost;
 		}
 
-		PublishSelection(file.str());
-		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" candidate(s)");
+		m_pick.PublishRows(file.str());
+		Log(L"overlay: recorded " + RosePick::Describe(element) + L" and " + std::to_wstring(written) + L" candidate(s)");
 
 		return selected;
 	}
@@ -3437,12 +1502,6 @@ private:
 	/// clicks whenever they click, and the host asks afterwards. Holding it is what lets that later
 	/// question be answered on the same channel as every other one.
 	/// </remarks>
-	void PublishSelection(std::string rows)
-	{
-		m_selectionRows = std::move(rows);
-		m_goneReason.clear();
-	}
-
 	InstanceHandle WriteCandidate(std::ostream& file, xaml::UIElement const& candidate)
 	{
 		InstanceHandle handle = 0;
@@ -3516,33 +1575,7 @@ private:
 	xcontrols::Button m_selectButton{ nullptr };
 	xcontrols::Button m_myXamlButton{ nullptr };
 	xcontrols::Button m_deselectButton{ nullptr };
-	xcontrols::Grid m_hoverBox{ nullptr };
-	xcontrols::Grid m_selectBox{ nullptr };
-	xcontrols::Border m_hoverBadge{ nullptr };
-	xcontrols::Border m_selectBadge{ nullptr };
-	Fader m_selectionFade;
 	Fader m_panelFade;
-
-	// Where the selection is, so the pointer can be tested against it without asking the app.
-	// Held rather than recomputed: an element that has moved or been laid out again is issue #51's
-	// problem, and reaching into the app's tree on every pointer move to find out would not be a
-	// fix for it so much as a reason to be blamed for the app feeling slow.
-	winrt::Windows::Foundation::Rect m_selectionRect{};
-
-	// The anchor's own rectangle, without the badge the proximity test adds to it. Held for the same
-	// reason: a hover is hundreds of events a second, and asking the app where the anchor is on each
-	// one would put a TransformToVisual in the pointer's path for a number that has not moved.
-	winrt::Windows::Foundation::Rect m_anchorRect{};
-
-	// Which element is selected, so a removal can be recognised. The handle and not the name:
-	// a Remove callback carries an empty Name, measured, so matching on one would never fire.
-	InstanceHandle m_selectedHandle = 0;
-
-	// The pick, as the rows that describe it, and the reason the last one went away. Both are answers to
-	// a question asked after the fact, so they are held rather than derived on demand: the elements a
-	// click landed on cannot be recovered once the pointer has moved.
-	std::string m_selectionRows;
-	std::wstring m_goneReason;
 
 	// The extent the capture layer was arranged at, and the signal that says it is known. Arming and
 	// knowing the size are two moments rather than one, so a caller off the UI thread waits for the
@@ -3552,18 +1585,9 @@ private:
 	bool m_armedKnown = false;
 	int m_armedWidth = 0;
 	int m_armedHeight = 0;
-
-	// The picked element itself, held so its mark can be re-measured when the app moves it, and the
-	// subscription that says when to.
-	xaml::FrameworkElement m_selectedElement{ nullptr };
-	winrt::event_token m_layoutToken{};
-
-	// Guards the redraw against the layout pass it causes.
-	bool m_updatingSelection = false;
 	// The last place the pointer was seen, in window coordinates. Kept because a selection can be
 	// made at a moment when there is no pointer event to read it from.
 	winrt::Windows::Foundation::Point m_pointer{ -1.0f, -1.0f };
-	bool m_overSelection = false;
 	bool m_overPanel = false;
 	double m_dragLeft = 16.0;
 	double m_dragTop = 16.0;
@@ -3579,82 +1603,38 @@ private:
 	bool m_placed = false;
 	Pointing m_pointing = Pointing::None;
 	std::set<Operation> m_operations;
-
-	// Whether a pick is currently marked. Tracked rather than inferred from the box's visibility,
-	// because the box is also hidden when an element could not be measured, and "drawn nothing"
-	// is not the same fact as "nothing is selected".
-	bool m_hasSelection = false;
 	int m_traces = 0;
 	bool m_includeAllElements = false;
 	bool m_justMyXaml = true;
 	std::map<InstanceHandle, std::wstring> m_sources;
 
-	// Rulers.
+	// The rulers mode's button. It arms a pointer mode, which is arbitration between modes, so it
+	// stays here while the row and the drawing are the tool's.
 	xcontrols::Button m_rulersButton{ nullptr };
-	xcontrols::StackPanel m_rulersRow{ nullptr };
-	xcontrols::TextBlock m_sizeLabel{ nullptr };
-	xcontrols::TextBlock m_marginLabel{ nullptr };
-	xcontrols::TextBlock m_paddingLabel{ nullptr };
-	xcontrols::Border m_sizePill{ nullptr };
-	xcontrols::Border m_marginPill{ nullptr };
-	xcontrols::Border m_paddingPill{ nullptr };
-	std::vector<Leader> m_leaders;
 
-	// Where this measurement's numbers have been put, so the next one can be kept off them. Held for
-	// one measurement only; DrawMeasurement empties it.
-	std::vector<RulerRect> m_placedLabels;
-	Band m_marginBand;
-	Band m_borderBand;
-	Band m_paddingBand;
-
-	// Magnification.
+	// The rows of the panel: the bar, the rulers readout, and the magnifier's own row.
 	xcontrols::StackPanel m_rows{ nullptr };
-	xcontrols::StackPanel m_zoomRow{ nullptr };
-	xcontrols::Button m_zoomButton{ nullptr };
-	xcontrols::Button m_scaleButton{ nullptr };
-	xcontrols::Button m_pixelButton{ nullptr };
-	xcontrols::Button m_zoomInButton{ nullptr };
-	xcontrols::Button m_zoomOutButton{ nullptr };
-	xcontrols::TextBlock m_factorLabel{ nullptr };
-	xcontrols::TextBlock m_hexLabel{ nullptr };
-	xshapes::Rectangle m_swatch{ nullptr };
-	xcontrols::Border m_lens{ nullptr };
-	xcontrols::Image m_lensImage{ nullptr };
-	xshapes::Rectangle m_pixelBox{ nullptr };
-	xaml::DispatcherTimer m_lensTimer{ nullptr };
 
-	// Members rather than lambda captures, deliberately: a completion handler runs on a pool thread
-	// and is destroyed there, so a XAML object captured into one is released off the UI thread.
-	ximaging::RenderTargetBitmap m_lensBitmap{ nullptr };
-	winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::Storage::Streams::IBuffer> m_lensPixels{ nullptr };
-	Zoom m_zoom = Zoom::Off;
-	int m_zoomFactor = 4;
+	// The pick: which element is selected, the marks that say so, and what a later request is told
+	// about it. Select mode writes it and rulers mode only reads it, which is why it is an object of
+	// its own rather than fifteen members here.
+	//
+	// Declared before the tools, since the rulers hold a reference to it and a member's initialiser
+	// runs in declaration order.
+	RosePick m_pick{ *this };
 
-	// The last capture, in device pixels, BGRA8. Only ever touched on the UI thread: the readback
-	// completes on a pool thread and hands its bytes over through RoseTapRunOnUiThread rather than
-	// storing them there, so nothing here needs a lock.
-	std::vector<uint8_t> m_pixels;
-	int m_pixelsWidth = 0;
-	int m_pixelsHeight = 0;
-	bool m_capturingFrame = false;
-
-	// What the app's root had before the transform mode replaced it, so leaving restores rather than
-	// clears. The flag and not a null check: null is a legitimate thing to have saved.
-	struct SavedTransform
-	{
-		xaml::UIElement Element{ nullptr };
-		xmedia::Transform Transform{ nullptr };
-		winrt::Windows::Foundation::Point Origin{};
-	};
-
-	std::vector<SavedTransform> m_saved;
-	bool m_transformSaved = false;
+	// The two tools, each owning its own row of the toolbar, its own marks and its own state, and
+	// each reaching back through IRoseOverlaySurface for what only the overlay can answer.
+	// Constructed with *this because the surface is this overlay; both store the reference and
+	// nothing more, so handing it over from an initialiser is safe.
+	RoseZoomTool m_zoomTool{ *this };
+	RoseRulersTool m_rulersTool{ *this, m_pick };
 };
 
 // Leaked deliberately: see the note on RoseOverlay. Only ever touched on the app's UI thread.
 static RoseOverlay* g_overlay = nullptr;
 
-static RoseOverlay& Overlay()
+static IRoseOverlay& Overlay()
 {
 	if (!g_overlay) g_overlay = new RoseOverlay();
 	return *g_overlay;

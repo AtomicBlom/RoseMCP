@@ -693,7 +693,9 @@ public static class ToolDescriptions
 		it and the repository's own indentation, and a member the type already declares is refused
 		instead of written as a duplicate the compiler would reject. It returns the errors the
 		addition introduced, so there is no build in the loop. Imports the new code needs are
-		worked out and added; pass usings to name one explicitly.
+		worked out and added; pass usings to name one explicitly. An enum takes values the same
+		way, commas and a trailing comma kept right, and a value that collides with another or
+		renumbers the ones after it is reported.
 		""";
 
 	public const string ChangeSignature = """

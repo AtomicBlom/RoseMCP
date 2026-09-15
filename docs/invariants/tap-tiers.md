@@ -5,11 +5,11 @@ changing the include order in either provider's `.cpp`.
 
 - **A file's tier is what it names, not what it does, and the include order is what checks it.** Four
   tiers, and each provider's `.cpp` includes them in order: `tap_channel.h` and `tap_measure.h` name
-  nothing external; `tap_diagnostics.h`, `tap_surface.h`, `tap_tree.h` and `tap_object.h` name only
-  xamlOM, which Windows.UI.Xaml and Microsoft.UI.Xaml declare verbatim identically; `tap_render.h`
-  and `tap_overlay.h` name the seven projection aliases and are therefore compiled once per
-  framework; the provider itself names the real framework and defines the aliases, the CLSID and the
-  seams.
+  nothing external; `tap_diagnostics.h`, `tap_surface.h`, `tap_tree.h`, `tap_properties.h`,
+  `tap_edits.h` and `tap_object.h` name only xamlOM, which Windows.UI.Xaml and Microsoft.UI.Xaml
+  declare verbatim identically; `tap_render.h` and `tap_overlay.h` name the seven projection aliases
+  and are therefore compiled once per framework; the provider itself names the real framework and
+  defines the aliases, the CLSID and the seams.
   <br>
   The first two groups are included **above** the alias block, so naming a projection in one of them
   does not merely offend a convention -- it fails to compile, with the alias undefined. That is the

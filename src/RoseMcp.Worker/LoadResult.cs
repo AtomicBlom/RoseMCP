@@ -16,4 +16,5 @@ public sealed record LoadResult(
 	MSBuildWorkspace Workspace,
 	Solution Solution,
 	WorkspaceStatusReport Report,
-	BuildProperties Build);
+	BuildProperties Build,
+	EvaluationInputs Inputs);

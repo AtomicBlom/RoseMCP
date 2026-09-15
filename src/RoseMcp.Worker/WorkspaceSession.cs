@@ -75,7 +75,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 		_watcher = new SolutionWatcher(options.SolutionPath, watcherLogger);
 
-		_synchronizer.Reset(_current, options.SolutionPath);
+		_synchronizer.Reset(_current, options.SolutionPath, load.Inputs);
 		_pump = Task.Run(PumpAsync);
 	}
 
@@ -367,7 +367,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		_current = load.Solution;
 		Build = load.Build;
 		Load = LoadOutcome.From(load);
-		_synchronizer.Reset(_current, _options.SolutionPath);
+		_synchronizer.Reset(_current, _options.SolutionPath, load.Inputs);
 		Interlocked.Increment(ref _revision);
 
 		previous.Dispose();

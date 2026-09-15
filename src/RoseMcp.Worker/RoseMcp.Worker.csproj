@@ -12,6 +12,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Compile-only. The SDK's MSBuild is loaded at run time through the locator
+         (MSBuildRegistration), and a copy beside the worker would be loaded in its place. Framework
+         is named as well because Roslyn's MSBuild workspace brings it in with its runtime asset. -->
+    <PackageReference Include="Microsoft.Build" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Build.Locator" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\RoseMcp.Contracts\RoseMcp.Contracts.csproj" />
     <ProjectReference Include="..\RoseMcp.Solutions\RoseMcp.Solutions.csproj" />
     <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />

@@ -50,8 +50,21 @@ public sealed class DiskSynchronizer
 	/// </summary>
 	private readonly HashSet<string> _declined = new(StringComparer.OrdinalIgnoreCase);
 
-	/// <summary>Rebuilds the tracking table from a freshly loaded solution.</summary>
-	public void Reset(Solution solution, string solutionPath)
+	/// <summary>
+	/// Rebuilds the tracking table from a freshly loaded solution.
+	/// <para>
+	/// The build files tracked are the ones that load actually read: every project's imports as its
+	/// evaluation resolved them, plus the files that influence evaluation without being imported --
+	/// <c>global.json</c> and <c>nuget.config</c> among them -- found walking up from each project and
+	/// from the solution. Walking from each project as well as the solution is what reaches a
+	/// <c>Directory.Build.props</c> nearer a project than its solution, and it is all that watches the
+	/// build files of a project whose evaluation failed.
+	/// </para>
+	/// </summary>
+	/// <param name="solution">The solution as loaded.</param>
+	/// <param name="solutionPath">The solution file, which is a build input in its own right.</param>
+	/// <param name="inputs">What each project's evaluation imported.</param>
+	public void Reset(Solution solution, string solutionPath, EvaluationInputs inputs)
 	{
 		_documents.Clear();
 		_structuralFiles.Clear();
@@ -64,11 +77,15 @@ public sealed class DiskSynchronizer
 			Track(project.AdditionalDocuments, TrackedDocumentKind.Additional);
 			Track(project.AnalyzerConfigDocuments, TrackedDocumentKind.AnalyzerConfig);
 
-			if (project.FilePath is { Length: > 0 } projectFile) TrackStructural(projectFile);
+			if (project.FilePath is not { Length: > 0 } projectFile) continue;
+
+			TrackStructural(projectFile);
+			foreach (var influence in AmbientFiles(projectFile)) TrackStructural(influence);
 		}
 
 		TrackStructural(solutionPath);
 		foreach (var influence in AmbientFiles(solutionPath)) TrackStructural(influence);
+		foreach (var import in inputs.Files) TrackStructural(import);
 	}
 
 	/// <summary>
@@ -527,13 +544,14 @@ public sealed class DiskSynchronizer
 	private void TrackStructural(string path) => _structuralFiles[Path.GetFullPath(path)] = FileStamp.For(path);
 
 	/// <summary>
-	/// Files that change how projects evaluate without appearing in any project, from the solution's
-	/// own directory up. Editing <c>Directory.Packages.props</c> rewrites the reference graph while
-	/// every csproj stays untouched.
+	/// Files that change how projects evaluate without appearing in any project, from the directory of
+	/// <paramref name="file"/> up. Editing <c>Directory.Packages.props</c> rewrites the reference graph
+	/// while every csproj stays untouched, and <c>global.json</c> and <c>nuget.config</c> are read without
+	/// being imported at all, so an evaluation's import list cannot stand in for this walk.
 	/// </summary>
-	private static IEnumerable<string> AmbientFiles(string solutionPath)
+	private static IEnumerable<string> AmbientFiles(string file)
 	{
-		var directory = Path.GetDirectoryName(Path.GetFullPath(solutionPath));
+		var directory = Path.GetDirectoryName(Path.GetFullPath(file));
 		while (!string.IsNullOrEmpty(directory))
 		{
 			foreach (var name in BuildInfluencingFiles.Ambient)

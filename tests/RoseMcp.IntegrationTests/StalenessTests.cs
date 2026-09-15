@@ -182,6 +182,79 @@ public sealed class StalenessTests
 	}
 
 	/// <summary>
+	/// A file a project brings in with <c>&lt;Import&gt;</c> is as much a part of how it builds as the
+	/// project file, and nothing names it: it is found by evaluating the project. Edited, the project
+	/// evaluates differently, so the barrier has to reload -- a text-level patch would go on answering
+	/// from the evaluation before the edit, with nothing to say so.
+	/// </summary>
+	[Test]
+	public async Task Reloads_the_solution_when_a_file_a_project_imports_changes()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var shared = fixture.Path("Simple", "build", "Shared.props");
+		Directory.CreateDirectory(Path.GetDirectoryName(shared)!);
+		await File.WriteAllTextAsync(shared, "<Project />", token);
+
+		var project = fixture.Path("Simple", "Core", "Core.csproj");
+		var text = await File.ReadAllTextAsync(project, token);
+		await File.WriteAllTextAsync(
+			project,
+			text.Replace("</Project>", "  <Import Project=\"..\\build\\Shared.props\" />" + Environment.NewLine + "</Project>"),
+			token);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+		var before = await session.ReadAsync(token);
+
+		await File.WriteAllTextAsync(
+			shared,
+			"<Project><PropertyGroup><DefineConstants>$(DefineConstants);IMPORTED</DefineConstants></PropertyGroup></Project>",
+			token);
+
+		var after = await session.ReadAsync(token);
+
+		Assert.True(after.Revision > before.Revision);
+		Assert.Contains(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+
+		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
+		Assert.Contains("IMPORTED", core.ParseOptions!.PreprocessorSymbolNames);
+	}
+
+	/// <summary>
+	/// A <c>Directory.Build.props</c> beside a project rather than above its solution. The SDK imports
+	/// the one nearest the project, so this is the one that decides how the project builds -- and a
+	/// search for build files that starts at the solution's directory walks straight past it.
+	/// </summary>
+	[Test]
+	public async Task Reloads_the_solution_when_a_directory_build_props_nearer_the_project_changes()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		// Chains to the copy's own stopper above it, which being nearer the project would otherwise hide.
+		static string Props(string properties) =>
+			"<Project><Import Project=\"$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))\" />"
+				+ $"<PropertyGroup>{properties}</PropertyGroup></Project>";
+
+		var nested = fixture.Path("Simple", "Core", "Directory.Build.props");
+		await File.WriteAllTextAsync(nested, Props(""), token);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+		var before = await session.ReadAsync(token);
+
+		await File.WriteAllTextAsync(nested, Props("<DefineConstants>$(DefineConstants);NESTED</DefineConstants>"), token);
+
+		var after = await session.ReadAsync(token);
+
+		Assert.True(after.Revision > before.Revision);
+		Assert.Contains(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+
+		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
+		Assert.Contains("NESTED", core.ParseOptions!.PreprocessorSymbolNames);
+	}
+
+	/// <summary>
 	/// A reload that throws leaves the tracking table describing the snapshot still in hand.
 	/// <para>
 	/// The sweep works out that a source file changed and that a project file changed, and the second

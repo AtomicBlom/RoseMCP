@@ -35,10 +35,28 @@ public sealed class SolutionLoader(
 	/// </summary>
 	public ShadowCopyAnalyzerAssemblyLoader AnalyzerLoader => analyzerLoader;
 
-	public async Task<LoadResult> LoadAsync(
+	/// <summary>
+	/// Restores, opens the solution through a design-time build, and reads what each project imports.
+	/// <para>
+	/// Not async, on purpose. MSBuild has to be registered before any code touching an MSBuild type is
+	/// compiled, and an async method's body is compiled as one state machine, MSBuild types and all.
+	/// Registering here and handing off keeps the load itself out of reach until that is safe.
+	/// </para>
+	/// </summary>
+	public Task<LoadResult> LoadAsync(
 		WorkerOptions options,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
+	{
+		MSBuildRegistration.Ensure(options.SolutionPath);
+
+		return LoadCoreAsync(options, progress, cancellationToken);
+	}
+
+	private async Task<LoadResult> LoadCoreAsync(
+		WorkerOptions options,
+		IWorkProgress? progress,
+		CancellationToken cancellationToken)
 	{
 		var stopwatch = Stopwatch.StartNew();
 
@@ -81,6 +99,15 @@ public sealed class SolutionLoader(
 			throw;
 		}
 
+		// Under the load's own properties, because a configuration can decide what a project imports, and
+		// what the session watches has to describe the evaluation it is actually serving.
+		progress?.Report("Reading what each project imports", BuildDone);
+		var inputs = EvaluationInputs.Evaluate(
+			workspace.CurrentSolution.Projects.Select(project => project.FilePath).OfType<string>(),
+			build.AsGlobalProperties(),
+			logger,
+			cancellationToken);
+
 		progress?.Report("Redirecting analyzers to shadow copies", BuildDone);
 		var solution = UseShadowCopiedAnalyzers(workspace.CurrentSolution);
 
@@ -104,14 +131,17 @@ public sealed class SolutionLoader(
 			analyzerLoader);
 
 		logger.LogInformation(
-			"Loaded {SolutionPath} in {Seconds}s: {State}, {ProjectCount} project(s), {GeneratedCount} generated document(s).",
+			"Loaded {SolutionPath} in {Seconds}s: {State}, {ProjectCount} project(s), {GeneratedCount} generated document(s), "
+				+ "{ImportCount} imported build file(s), {UnevaluatedCount} project(s) not evaluated.",
 			options.SolutionPath,
 			report.LoadSeconds,
 			report.State,
 			report.Projects.Count,
-			report.Projects.Sum(project => project.GeneratedDocumentCount));
+			report.Projects.Sum(project => project.GeneratedDocumentCount),
+			inputs.Files.Count(),
+			inputs.Unevaluated.Count);
 
-		return new LoadResult(workspace, solution, report, build);
+		return new LoadResult(workspace, solution, report, build, inputs);
 	}
 
 	/// <summary>

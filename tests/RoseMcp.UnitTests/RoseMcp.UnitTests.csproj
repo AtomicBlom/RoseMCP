@@ -13,6 +13,11 @@
     <PackageReference Include="TUnit.Core" />
     <PackageReference Include="TUnit.Engine" />
     <PackageReference Include="xunit.v3.assert" />
+
+    <!-- Worker code running in this process uses the SDK's MSBuild, found at run time, exactly as the
+         worker does. Without this, Roslyn's MSBuild workspace copies its own Microsoft.Build.Framework
+         beside the tests and that copy is loaded instead. -->
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>

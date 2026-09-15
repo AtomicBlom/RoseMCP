@@ -737,15 +737,135 @@ public sealed class MemberEditTests
 		Assert.True(settled.Applied);
 		Assert.Contains("Third", await ReadAsync(fixture, "SplitAgain.cs"));
 		Assert.DoesNotContain("Third", await ReadAsync(fixture, "Split.cs"));
+	}
 
-		var @enum = await Assert.ThrowsAsync<ArgumentException>(() => EditAsync(session, new MemberEditRequest
+	/// <summary>
+	/// An enum's values are items in a comma-separated list, so adding one is a splice that has to put
+	/// the comma on the right side of the line break and follow the enum's own layout -- here, a blank
+	/// line between values and a trailing comma after the last.
+	/// </summary>
+	[Test]
+	public async Task Adds_values_to_an_enum_with_its_commas_and_layout_kept()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var appended = await EditAsync(session, new MemberEditRequest
 		{
 			Kind = MemberEditKind.Add,
 			Symbol = "Library.Colour",
-			Code = "Blue = 2",
-		}));
+			Code = "Blue = 5",
+		});
 
-		Assert.Contains("is an enum", @enum.Message, StringComparison.Ordinal);
+		Assert.True(appended.Applied);
+		Assert.Equal(["Blue"], appended.Members);
+		Assert.Empty(appended.IntroducedDiagnostics);
+
+		// In front of a value with an initialiser of its own, so nothing after it is renumbered.
+		var between = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Colour",
+			After = "Green",
+			Code = "Yellow = 7,",
+		});
+
+		Assert.True(between.Applied);
+		Assert.Empty(between.IntroducedDiagnostics);
+
+		var text = await ReadAsync(fixture, "Kinds.cs");
+
+		Assert.Contains(
+			"{\r\n\tRed,\r\n\r\n\tGreen,\r\n\r\n\tYellow = 7,\r\n\r\n\tBlue = 5,\r\n}\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The shape where a text edit gets the comma wrong: no trailing comma, so adding at the end has to
+	/// give the old last value one, and documentation on every value with no blank lines between.
+	/// </summary>
+	[Test]
+	public async Task Adds_documented_values_to_an_enum_without_a_trailing_comma()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var appended = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Access",
+			Code = "/// <summary>May run.</summary>\nExecute = 4",
+		});
+
+		Assert.True(appended.Applied);
+		Assert.Empty(appended.IntroducedDiagnostics);
+
+		var inserted = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Access",
+			Before = "Read",
+			Code = "/// <summary>May read and write.</summary>\nReadWrite = Read | Write,",
+		});
+
+		Assert.True(inserted.Applied);
+		Assert.Empty(inserted.IntroducedDiagnostics);
+
+		var text = await ReadAsync(fixture, "Access.cs");
+
+		Assert.Contains(
+			"{\r\n"
+				+ "\t/// <summary>Nothing at all.</summary>\r\n\tNone = 0,\r\n"
+				+ "\t/// <summary>May read and write.</summary>\r\n\tReadWrite = Read | Write,\r\n"
+				+ "\t/// <summary>May read.</summary>\r\n\tRead = 1,\r\n"
+				+ "\t/// <summary>May write.</summary>\r\n\tWrite = 2,\r\n"
+				+ "\t/// <summary>May run.</summary>\r\n\tExecute = 4\r\n"
+				+ "}\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Values that compile and mean something else: a name already taken, a number already taken, and
+	/// an implicit value in front of implicit ones, which renumbers every value after it. Each is
+	/// refused with the file untouched, and an alias written by naming the value it equals is not.
+	/// </summary>
+	[Test]
+	public async Task Refuses_an_enum_value_that_collides_or_renumbers_the_ones_after_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var original = await ReadAsync(fixture, "Kinds.cs");
+
+		Task<MemberEditResult> Add(string code, string? after = null) => EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Colour",
+			After = after,
+			Code = code,
+		});
+
+		var name = await Assert.ThrowsAsync<ArgumentException>(() => Add("Green = 3"));
+		Assert.Contains("already declares Green", name.Message, StringComparison.Ordinal);
+
+		var value = await Assert.ThrowsAsync<ArgumentException>(() => Add("Blue = 1"));
+		Assert.Contains("Blue would be 1, which Green already is", value.Message, StringComparison.Ordinal);
+
+		var renumbered = await Assert.ThrowsAsync<ArgumentException>(() => Add("Blue", after: "Red"));
+		Assert.Contains("renumbers Green from 1 to 2", renumbered.Message, StringComparison.Ordinal);
+
+		var anchor = await Assert.ThrowsAsync<ArgumentException>(() => Add("Blue = 9", after: "Purple"));
+		Assert.Contains("no value called 'Purple'", anchor.Message, StringComparison.Ordinal);
+		Assert.Contains("Red, Green", anchor.Message, StringComparison.Ordinal);
+
+		Assert.Equal(original, await ReadAsync(fixture, "Kinds.cs"));
+
+		var alias = await Add("Crimson = Red");
+
+		Assert.True(alias.Applied);
+		Assert.Contains("\tCrimson = Red,\r\n}", await ReadAsync(fixture, "Kinds.cs"), StringComparison.Ordinal);
 	}
 
 	/// <summary>

@@ -241,4 +241,5 @@ static bool RoseTapRunWalk(const std::function<void()>& walk)
 // supply what tap_surface.h declared above, so the COM object is already compiled against them.
 #include "../RoseMcp.Xaml.Tap/tap_render.h"
 #include "../RoseMcp.Xaml.Tap/tap_widgets.h"
+#include "../RoseMcp.Xaml.Tap/tap_tool_zoom.h"
 #include "../RoseMcp.Xaml.Tap/tap_overlay.h"

@@ -827,12 +827,13 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
-	/// Values that compile and mean something else: a name already taken, a number already taken, and
-	/// an implicit value in front of implicit ones, which renumbers every value after it. Each is
-	/// refused with the file untouched, and an alias written by naming the value it equals is not.
+	/// A name already taken never compiles, so it is refused with the file untouched. A number already
+	/// taken and an implicit value that renumbers the ones after it both compile and are sometimes
+	/// meant -- a [Flags] enum gives one value two names routinely -- so they are written and said, and
+	/// an alias written by naming the value it equals is not even mentioned.
 	/// </summary>
 	[Test]
-	public async Task Refuses_an_enum_value_that_collides_or_renumbers_the_ones_after_it()
+	public async Task Reports_an_enum_value_that_collides_or_renumbers_the_ones_after_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -850,12 +851,6 @@ public sealed class MemberEditTests
 		var name = await Assert.ThrowsAsync<ArgumentException>(() => Add("Green = 3"));
 		Assert.Contains("already declares Green", name.Message, StringComparison.Ordinal);
 
-		var value = await Assert.ThrowsAsync<ArgumentException>(() => Add("Blue = 1"));
-		Assert.Contains("Blue would be 1, which Green already is", value.Message, StringComparison.Ordinal);
-
-		var renumbered = await Assert.ThrowsAsync<ArgumentException>(() => Add("Blue", after: "Red"));
-		Assert.Contains("renumbers Green from 1 to 2", renumbered.Message, StringComparison.Ordinal);
-
 		var anchor = await Assert.ThrowsAsync<ArgumentException>(() => Add("Blue = 9", after: "Purple"));
 		Assert.Contains("no value called 'Purple'", anchor.Message, StringComparison.Ordinal);
 		Assert.Contains("Red, Green", anchor.Message, StringComparison.Ordinal);
@@ -865,7 +860,63 @@ public sealed class MemberEditTests
 		var alias = await Add("Crimson = Red");
 
 		Assert.True(alias.Applied);
-		Assert.Contains("\tCrimson = Red,\r\n}", await ReadAsync(fixture, "Kinds.cs"), StringComparison.Ordinal);
+		Assert.DoesNotContain(alias.Notices, notice => notice.Contains("cannot be told apart", StringComparison.Ordinal));
+
+		var value = await Add("Blue = 1");
+
+		Assert.True(value.Applied);
+		Assert.Contains(value.Notices, notice => notice.Contains("Blue is 1, which Green already is", StringComparison.Ordinal));
+
+		var renumbered = await Add("Purple", after: "Red");
+
+		Assert.True(renumbered.Applied);
+		Assert.Contains(renumbered.Notices, notice => notice.Contains("renumbers Green from 1 to 2", StringComparison.Ordinal));
+
+		Assert.Contains(
+			"{\r\n\tRed,\r\n\r\n\tPurple,\r\n\r\n\tGreen,\r\n\r\n\tCrimson = Red,\r\n\r\n\tBlue = 1,\r\n}",
+			await ReadAsync(fixture, "Kinds.cs"),
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// An enum over a byte, with values written in hex, as a shift and from a constant. The values are
+	/// compared in the enum's own type, and one the type cannot hold is written and then reported by the
+	/// compile rather than refused, since it is an error the compiler already names.
+	/// </summary>
+	[Test]
+	public async Task Adds_values_to_an_enum_over_a_byte()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		Task<MemberEditResult> Add(string code, string? after = null) => EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Priority",
+			After = after,
+			Code = code,
+		});
+
+		var medium = await Add("Medium = 0x08", after: "Low");
+
+		Assert.True(medium.Applied);
+		Assert.Empty(medium.IntroducedDiagnostics);
+		Assert.DoesNotContain(medium.Notices, notice => notice.Contains("renumbers", StringComparison.Ordinal));
+
+		Assert.Contains(
+			"{\r\n\tLow = 0x01,\r\n\tMedium = 0x08,\r\n\tHigh = 1 << 4,\r\n\tHighest = byte.MaxValue,\r\n}",
+			await ReadAsync(fixture, "Priority.cs"),
+			StringComparison.Ordinal);
+
+		var urgent = await Add("Urgent = 0x10");
+
+		Assert.True(urgent.Applied);
+		Assert.Contains(urgent.Notices, notice => notice.Contains("Urgent is 16, which High already is", StringComparison.Ordinal));
+
+		var over = await Add("Over = 0x100");
+
+		Assert.True(over.Applied);
+		Assert.Contains(over.IntroducedDiagnostics, diagnostic => diagnostic.Id == "CS0031");
 	}
 
 	/// <summary>

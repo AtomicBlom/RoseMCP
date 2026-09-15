@@ -574,7 +574,7 @@ public static class MemberEditService
 		var root = await RootOf(document, cancellationToken);
 		var edited = root.ReplaceNode(@enum, @enum.WithMembers(Separated(@enum.Members, index, prepared)));
 
-		await GuardEnumValuesAsync(target, edited, marker, cancellationToken);
+		await NoteEnumValuesAsync(target, edited, marker, notices, cancellationToken);
 
 		return new Written(
 			document,
@@ -696,22 +696,29 @@ public static class MemberEditService
 	}
 
 	/// <summary>
-	/// Refuses an addition that changes what an existing value is, or gives a new one a value another
+	/// Says when an addition changes what an existing value is, or gives a new one a value another
 	/// already has.
 	/// <para>
 	/// Asked of a compilation of the result rather than of the text, because an item without an
-	/// initialiser is one more than the item above it and an initialiser can be any constant expression
-	/// over the others. Putting such an item in front of others without initialisers renumbers every
-	/// one of them, which compiles cleanly and changes what every stored or serialised value means --
-	/// the failure with no symptom until data is read back. A collision is refused for the same reason,
-	/// unless the initialiser names the value it collides with, which is how an alias is written on
-	/// purpose.
+	/// initialiser is one more than the item above it, and an initialiser can be any constant expression
+	/// over the others in whatever underlying type the enum declares. Renumbering compiles cleanly and
+	/// changes what every stored or serialised value means, which has no symptom until data is read
+	/// back -- so it is said, with the numbers.
+	/// </para>
+	/// <para>
+	/// Said rather than refused, because both are sometimes exactly what was meant: an enum nothing has
+	/// persisted can be renumbered freely, and a [Flags] enum routinely gives one value two names. A
+	/// refusal with no way to insist teaches a caller to route around the tool, back to the text edit it
+	/// replaces. A collision whose initialiser names the value it equals is an alias written on purpose
+	/// and is not mentioned. A value the underlying type cannot hold is left to the compile afterwards,
+	/// which reports it as the error it is.
 	/// </para>
 	/// </summary>
-	private static async Task GuardEnumValuesAsync(
+	private static async Task NoteEnumValuesAsync(
 		TypeTarget target,
 		SyntaxNode edited,
 		SyntaxAnnotation marker,
+		List<string> notices,
 		CancellationToken cancellationToken)
 	{
 		var before = target.Symbol.GetMembers()
@@ -740,11 +747,12 @@ public static class MemberEditService
 
 		if (renumbered.Length > 0)
 		{
-			throw new ArgumentException(
+			notices.Add(
 				$"Adding {string.Join(", ", added.Select(value => value.Symbol!.Name))} there renumbers "
 					+ $"{string.Join(", ", renumbered)}, because a value without an initialiser is one more than the "
 					+ $"value above it. That compiles, and changes what every stored or serialised {@enum.Identifier.Text} "
-					+ "means. Give the new values explicit initialisers, or add them after the last value.");
+					+ "means. If anything has kept these values, give the new ones explicit initialisers or add them "
+					+ "after the last value.");
 		}
 
 		foreach (var (member, symbol) in added)
@@ -765,10 +773,10 @@ public static class MemberEditService
 			var isAlias = clashes.Any(clash => names.Contains(clash, SymbolEqualityComparer.Default));
 			if (isAlias) continue;
 
-			throw new ArgumentException(
-				$"{symbol!.Name} would be {symbol.ConstantValue}, which {string.Join(" and ", clashes.Select(clash => clash.Name))} "
-					+ $"already {(clashes.Length == 1 ? "is" : "are")}, so the two could not be told apart. Give it a value of "
-					+ $"its own, or write the initialiser as {clashes[0].Name} if it is meant to be an alias.");
+			notices.Add(
+				$"{symbol!.Name} is {symbol.ConstantValue}, which {string.Join(" and ", clashes.Select(clash => clash.Name))} "
+					+ $"already {(clashes.Length == 1 ? "is" : "are")}, so the two cannot be told apart at run time. If it "
+					+ $"is meant to be an alias, writing the initialiser as {clashes[0].Name} says so.");
 		}
 	}
 

@@ -694,8 +694,8 @@ public static class ToolDescriptions
 		instead of written as a duplicate the compiler would reject. It returns the errors the
 		addition introduced, so there is no build in the loop. Imports the new code needs are
 		worked out and added; pass usings to name one explicitly. An enum takes values the same
-		way, commas and a trailing comma kept right, and a value that would collide with another or
-		renumber the ones after it is refused.
+		way, commas and a trailing comma kept right, and a value that collides with another or
+		renumbers the ones after it is reported.
 		""";
 
 	public const string ChangeSignature = """

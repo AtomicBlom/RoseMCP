@@ -136,6 +136,36 @@ public sealed class GitDirectoryTests
 		}
 	}
 
+	/// <summary>
+	/// The index lock is the one marker of git writing the tree right now: taken for the write and given
+	/// back when it stops, so it is worth a barrier waiting for.
+	/// </summary>
+	[Test]
+	public void The_index_lock_is_an_operation_in_flight()
+	{
+		using var checkout = Checkout.Ordinary();
+		File.WriteAllText(checkout.InGitDirectory("index.lock"), "");
+
+		Assert.True(checkout.Git.OperationInFlight());
+	}
+
+	/// <summary>
+	/// A merge or rebase stopped part-way, or finished with its marker left behind. Neither is git writing
+	/// anything: the tree is stable while somebody resolves a conflict, and git can leave
+	/// <c>REBASE_HEAD</c> after a rebase that finished. Counted as in flight, every read waits out the
+	/// settle timeout and then reloads the solution for as long as the file exists.
+	/// </summary>
+	[Test]
+	[Arguments("MERGE_HEAD")]
+	[Arguments("REBASE_HEAD")]
+	public void A_merge_or_rebase_marker_is_not_an_operation_in_flight(string marker)
+	{
+		using var checkout = Checkout.Ordinary();
+		File.WriteAllText(checkout.InGitDirectory(marker), "464bce08e0dc4806d80c0f1a918aba7fee578338\n");
+
+		Assert.False(checkout.Git.OperationInFlight(), $"{marker} is a state git can leave behind, not a write in progress");
+	}
+
 	/// <summary>A staged directory layout that goes away with the test.</summary>
 	private sealed class Checkout : IDisposable
 	{

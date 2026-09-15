@@ -64,4 +64,31 @@ public static class BuildInfluencingFiles
 	/// </summary>
 	public static bool IsAmbient(string fileName) =>
 		Ambient.Any(name => string.Equals(name, fileName, StringComparison.OrdinalIgnoreCase));
+
+	/// <summary>
+	/// Whether a path names a build file: a project or solution file, a <c>.props</c> or <c>.targets</c>,
+	/// or one of <see cref="Structural"/>.
+	/// <para>
+	/// This is what a file watcher remembers, and nothing else. Every read already stats each tracked
+	/// document and walks the project directories for new source files, so a source file changing -- or
+	/// a thousand of them -- needs nothing from the event stream, and a list holding every event has to
+	/// be capped, which turns the number of events into a reason to reload. A build file is the one kind
+	/// a read cannot find for itself when it appears.
+	/// </para>
+	/// </summary>
+	public static bool IsBuildFile(string path)
+	{
+		if (Structural.Contains(Path.GetFileName(path))) return true;
+
+		return IsImportable(path)
+			|| Path.GetExtension(path).ToLowerInvariant() is ".csproj" or ".sln" or ".slnx" or ".slnf";
+	}
+
+	/// <summary>
+	/// Whether a path could be imported into a project: a <c>.props</c> or a <c>.targets</c>. Which of
+	/// these a project really imports is learned by evaluating it, so this is the whole answer only for a
+	/// project that could not be evaluated.
+	/// </summary>
+	public static bool IsImportable(string path) =>
+		Path.GetExtension(path).ToLowerInvariant() is ".props" or ".targets";
 }

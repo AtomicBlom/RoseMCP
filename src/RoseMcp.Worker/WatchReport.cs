@@ -1,12 +1,12 @@
 namespace RoseMcp.Worker;
 
 /// <summary>
-/// What the watcher noticed since the last barrier: what kind of trouble, and which files appeared.
+/// What the watcher noticed since the last barrier: what kind of trouble, and which build files moved.
 /// <para>
-/// The paths are here rather than left to the sweep because the sweep cannot find them. It stats the
-/// documents it knows about, and a file that has just been created is not one of them -- so without
-/// the watcher's own list the only way to notice a new file would be to enumerate the whole tree on
-/// every read, which on a large repository costs more than everything else a barrier does.
+/// Build files only. The sweep finds every tracked document that changed and the directory walk every
+/// source file that appeared, whatever the count, so neither needs the event stream. A build file is
+/// different: one appearing is invisible to both, and one changing that the sweep does not track is
+/// still a reason to reload when a project could not be evaluated and might import it.
 /// </para>
 /// </summary>
 public sealed record WatchReport
@@ -15,12 +15,11 @@ public sealed record WatchReport
 
 	public WatchSignal Signal { get; init; }
 
-	/// <summary>
-	/// Files that appeared or were renamed into place. Best-effort, like every watcher signal: when
-	/// too many arrive at once the report says <see cref="WatchSignal.FullResyncRequired"/> instead,
-	/// and a reload finds them all.
-	/// </summary>
-	public IReadOnlyList<string> Created { get; init; } = [];
+	/// <summary>Build files that appeared or were renamed into place.</summary>
+	public IReadOnlyList<string> BuildFilesAppeared { get; init; } = [];
+
+	/// <summary>Build files that changed, were removed, or were renamed away.</summary>
+	public IReadOnlyList<string> BuildFilesChanged { get; init; } = [];
 
 	public bool HasFlag(WatchSignal flag) => Signal.HasFlag(flag);
 }

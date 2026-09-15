@@ -10,8 +10,8 @@ public enum WatchSignal
 	FileChanges = 1,
 
 	/// <summary>
-	/// Too much moved at once, or the watcher itself fell over. Incremental absorption is no longer
-	/// trustworthy and the next barrier must do a full reconcile.
+	/// The event stream cannot be trusted -- the watcher failed or could not start -- or HEAD was rewritten,
+	/// so the next barrier must do a full reconcile. How many files changed is never a reason on its own.
 	/// </summary>
 	FullResyncRequired = 2,
 

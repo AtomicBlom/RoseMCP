@@ -3,12 +3,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace RoseMcp.UnitTests;
 
 /// <summary>
-/// Whether the watcher can tell its own worker's writes from somebody else's.
+/// What the watcher hears, and what it keeps.
 /// <para>
-/// One rewrite raises more than one event, so suppression that forgets the path on the first one
-/// leaks the rest. Those count toward the bulk-change threshold and force a full reload of every
-/// project, which is the opposite of what noting a self-write is for. The two tests here are a
-/// pair: the second is what stops the first passing because no event ever arrived.
+/// One rewrite raises more than one event, so suppression that forgets the path on the first one leaks
+/// the rest back as somebody else's edits. The first two tests here are a pair: the second is what stops
+/// the first passing because no event ever arrived. The rest pin down what the watcher remembers, which
+/// is build files and nothing else, so no quantity of source changes can turn into a reload.
 /// </para>
 /// </summary>
 public sealed class SolutionWatcherTests
@@ -50,6 +50,58 @@ public sealed class SolutionWatcherTests
 			"an edit nobody announced is what the watcher exists to notice");
 	}
 
+	/// <summary>
+	/// A burst of source files well past the size of any batch a watcher might be tempted to call "too
+	/// much". Every read stats and walks for source files itself, so the burst is file changes and nothing
+	/// more: no full resync, and no build files remembered.
+	/// </summary>
+	[Test]
+	public async Task A_burst_of_source_files_is_file_changes_and_never_a_full_resync()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var tree = WatchedTree.Create();
+
+		for (var index = 0; index < 120; index++)
+		{
+			await File.WriteAllTextAsync(tree.PathTo($"Generated{index}.cs"), $"class G{index} {{ }}", token);
+		}
+
+		await Task.Delay(Settle, token);
+		var report = tree.Watcher.Drain();
+
+		Assert.True(report.HasFlag(WatchSignal.FileChanges), "the burst has to have been heard for the rest to mean anything");
+		Assert.False(report.HasFlag(WatchSignal.FullResyncRequired), "how many source files changed is never a reason to reload");
+		Assert.Empty(report.BuildFilesAppeared);
+		Assert.Empty(report.BuildFilesChanged);
+	}
+
+	/// <summary>
+	/// A build file is remembered by what happened to it -- appearing, then changing -- and a source file
+	/// written beside it is not remembered at all.
+	/// </summary>
+	[Test]
+	public async Task A_build_file_is_reported_as_appeared_then_changed_and_a_source_file_is_not()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var tree = WatchedTree.Create();
+		var props = tree.PathTo("Directory.Build.props");
+
+		await File.WriteAllTextAsync(props, "<Project />", token);
+		await File.WriteAllTextAsync(tree.PathTo("Other.cs"), "class O { }", token);
+		await Task.Delay(Settle, token);
+
+		var first = tree.Watcher.Drain();
+		Assert.Contains(first.BuildFilesAppeared, path => path.EndsWith("Directory.Build.props", StringComparison.OrdinalIgnoreCase));
+		Assert.DoesNotContain(first.BuildFilesAppeared, path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+
+		await File.WriteAllTextAsync(props, "<Project><PropertyGroup /></Project>", token);
+		await Task.Delay(Settle, token);
+
+		var second = tree.Watcher.Drain();
+		Assert.Contains(second.BuildFilesChanged, path => path.EndsWith("Directory.Build.props", StringComparison.OrdinalIgnoreCase));
+		Assert.Empty(second.BuildFilesAppeared);
+	}
+
 	/// <summary>A watched directory holding a solution file and one source file.</summary>
 	private sealed class WatchedTree : IDisposable
 	{
@@ -63,6 +115,9 @@ public sealed class SolutionWatcherTests
 		}
 
 		public string SourcePath { get; }
+
+		/// <summary>A path inside the watched directory.</summary>
+		public string PathTo(string name) => Path.Combine(_root, name);
 
 		public SolutionWatcher Watcher { get; }
 

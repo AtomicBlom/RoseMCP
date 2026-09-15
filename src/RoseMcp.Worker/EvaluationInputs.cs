@@ -22,7 +22,10 @@ namespace RoseMcp.Worker;
 /// </summary>
 public sealed class EvaluationInputs
 {
-	private EvaluationInputs(IReadOnlyDictionary<string, IReadOnlySet<string>> imports, IReadOnlyList<string> unevaluated)
+	/// <summary>What was learned from evaluating a solution's projects.</summary>
+	/// <param name="imports">Each evaluated project's imports, keyed by the full path of its project file.</param>
+	/// <param name="unevaluated">Projects whose evaluation failed.</param>
+	public EvaluationInputs(IReadOnlyDictionary<string, IReadOnlySet<string>> imports, IReadOnlyList<string> unevaluated)
 	{
 		Imports = imports;
 		Unevaluated = unevaluated;

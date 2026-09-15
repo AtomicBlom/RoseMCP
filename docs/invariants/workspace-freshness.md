@@ -31,10 +31,23 @@ Read before adding or changing a read path, a reload trigger, or the file watche
   directory walks past it and leaves every worktree unable to say whether git is mid-operation.
   <br>
   The other half is our own writes coming back at us. One rewrite raises more than one watcher event,
-  so suppression that forgets the path on the first leaks the rest into the bulk-change threshold;
+  so suppression that forgets the path on the first leaks the rest back as somebody else's edits;
   it is held for a window instead, which costs nothing because the stat sweep is what makes a read
   correct and the watcher only decides how soon it hears. And the tracking table is restamped after a
   mutation writes, or the next barrier re-reads every file the mutation just wrote, advances the
   revision and calls it an external change -- which throws the compilation away and runs every source
   generator again, on a XAML project every stub included, for text the snapshot already holds.
+- **A reload is decided by what changed, never by how much.** A reload is a design-time build of every
+  project, so it is paid only when a project's evaluation inputs moved: its project file, the solution,
+  or a file its evaluation imported. Roslyn's build host reports no import list, so the worker evaluates
+  each loaded project itself, under the load's own properties, and tracks every file `Project.Imports`
+  names -- which is what catches an edit to a file brought in with `<Import>`, or to a
+  `Directory.Build.props` nearer a project than its solution, both of which otherwise leave the
+  workspace answering from the evaluation before the edit. Evaluation lists only imports that exist, so
+  a build file appearing still reloads by its name. The watcher remembers build files and nothing else:
+  every read stats each tracked document and walks the project directories for new source files, so a
+  thousand source files changing needs nothing from the event stream, and a list holding every event
+  would need a cap that turns the number of events into a reason to reload. A project whose evaluation
+  fails has no import list, and for that case alone any untracked `.props` or `.targets` changing
+  reloads -- over-reloading is the only answer there that cannot be stale.
 - **Every result carries a `revision`.** It is how callers detect that the world moved.

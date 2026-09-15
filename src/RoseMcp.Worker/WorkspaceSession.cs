@@ -227,20 +227,26 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		// Files that appeared rather than changed. The sweep cannot find these -- it stats what it
 		// already knows -- and until they are absorbed the workspace answers questions about a
 		// solution that does not contain them, which is not an error but a confident wrong answer.
-		var appeared = await _synchronizer.AbsorbNewAsync(sync.Solution, report.Created, cancellationToken);
+		var appeared = await _synchronizer.AbsorbNewAsync(sync.Solution, report.BuildFilesAppeared, cancellationToken);
+
+		// Only ever true when a project could not be evaluated: every other project's imports are tracked, and
+		// the sweep has already stated each of them.
+		var untrackedImport = _synchronizer.UntrackedImportChanged(report.BuildFilesChanged);
 
 		// A full resync means the event stream had holes in it, so a project may have been added or
 		// removed without any tracked file changing. Only a reload can represent that.
 		var mustReload = sync.StructuralChange
 			|| appeared.StructuralChange
+			|| untrackedImport
 			|| signal.HasFlag(WatchSignal.FullResyncRequired);
 
 		if (mustReload)
 		{
-			notices.Add((sync.StructuralChange, appeared.StructuralChange) switch
+			notices.Add((sync.StructuralChange, appeared.StructuralChange, untrackedImport) switch
 			{
-				(true, _) => "Project or solution files changed on disk; the solution was reloaded.",
-				(_, true) => "A project or build file appeared on disk; the solution was reloaded.",
+				(true, _, _) => "Project or solution files changed on disk; the solution was reloaded.",
+				(_, true, _) => "A project or build file appeared on disk; the solution was reloaded.",
+				(_, _, true) => "A .props or .targets file changed that a project which could not be evaluated may import; the solution was reloaded.",
 				_ => "Bulk changes on disk outran incremental tracking; the solution was reloaded.",
 			});
 

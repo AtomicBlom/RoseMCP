@@ -51,6 +51,11 @@ public sealed class DiskSynchronizer
 	private readonly HashSet<string> _declined = new(StringComparer.OrdinalIgnoreCase);
 
 	/// <summary>
+	/// Whether any project in the loaded solution could not be evaluated, so what it imports is unknown.
+	/// </summary>
+	private bool _anyUnevaluated;
+
+	/// <summary>
 	/// Rebuilds the tracking table from a freshly loaded solution.
 	/// <para>
 	/// The build files tracked are the ones that load actually read: every project's imports as its
@@ -86,6 +91,8 @@ public sealed class DiskSynchronizer
 		TrackStructural(solutionPath);
 		foreach (var influence in AmbientFiles(solutionPath)) TrackStructural(influence);
 		foreach (var import in inputs.Files) TrackStructural(import);
+
+		_anyUnevaluated = inputs.Unevaluated.Count > 0;
 	}
 
 	/// <summary>
@@ -141,7 +148,7 @@ public sealed class DiskSynchronizer
 	{
 		// The watcher's list is used for one thing only: a project or build file appearing, which
 		// nothing here can patch in and which a directory walk for source files would not see.
-		var structural = created.Any(IsStructural);
+		var structural = created.Any(BuildInfluencingFiles.IsBuildFile);
 
 		var update = new DiskTrackerUpdate();
 		var added = new List<string>();
@@ -198,6 +205,25 @@ public sealed class DiskSynchronizer
 			NotInTheBuild = notInTheBuild,
 			Tracker = update,
 		};
+	}
+
+	/// <summary>
+	/// Whether a build file changed that the sweep does not track but a project could import, when some
+	/// project could not be evaluated.
+	/// <para>
+	/// A project that evaluated has its imports tracked, and the sweep stats each of them, so a change to
+	/// any other build file cannot change how it builds. A project that did not evaluate has no known
+	/// imports, so any <c>.props</c> or <c>.targets</c> changing might be one of them, and reloading is the
+	/// only answer that cannot be stale.
+	/// </para>
+	/// </summary>
+	/// <param name="changed">Build files the watcher saw change or go away.</param>
+	public bool UntrackedImportChanged(IReadOnlyCollection<string> changed)
+	{
+		if (!_anyUnevaluated) return false;
+
+		return changed.Any(path =>
+			BuildInfluencingFiles.IsImportable(path) && !_structuralFiles.ContainsKey(Path.GetFullPath(path)));
 	}
 
 	/// <summary>
@@ -461,19 +487,6 @@ public sealed class DiskSynchronizer
 		_globs[path] = globs;
 
 		return globs;
-	}
-
-	/// <summary>
-	/// Files that change how a project evaluates rather than what is in it. None of them can be
-	/// patched into a snapshot, and an .editorconfig is among them because it decides what the
-	/// analyzers and the formatter do to every file beneath it.
-	/// </summary>
-	private static bool IsStructural(string path)
-	{
-		if (StructuralNames.Contains(Path.GetFileName(path))) return true;
-
-		return Path.GetExtension(path).ToLowerInvariant() is
-			".csproj" or ".props" or ".targets" or ".sln" or ".slnx" or ".slnf";
 	}
 
 	private static bool IsSource(string path) =>

@@ -255,6 +255,40 @@ public sealed class StalenessTests
 	}
 
 	/// <summary>
+	/// A burst of new source files -- generated code, a scaffold, a branch's worth of additions -- is
+	/// absorbed where it lands rather than reloaded. Every read walks the project directories for new source
+	/// files anyway, so how many arrived says nothing about whether a reload is needed.
+	/// </summary>
+	[Test]
+	public async Task Absorbs_a_burst_of_new_source_files_without_reloading()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		await using var scope = await OpenAsync("Simple", "Simple.sln");
+
+		var before = await scope.Session.ReadAsync(token);
+
+		for (var index = 0; index < 150; index++)
+		{
+			await File.WriteAllTextAsync(
+				scope.Fixture.Path("Simple", "Core", $"Generated{index}.cs"),
+				$"namespace Core;{Environment.NewLine}public static class Generated{index} {{ }}",
+				token);
+		}
+
+		// Long enough for the watcher to have heard every one of them, which is the only condition under which
+		// the number of events could be mistaken for a reason to reload.
+		await Task.Delay(TimeSpan.FromSeconds(1), token);
+
+		var after = await scope.Session.ReadAsync(token);
+
+		Assert.DoesNotContain(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		Assert.True(after.Revision > before.Revision);
+
+		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
+		Assert.Equal(150, core.Documents.Count(document => document.Name.StartsWith("Generated", StringComparison.Ordinal)));
+	}
+
+	/// <summary>
 	/// A reload that throws leaves the tracking table describing the snapshot still in hand.
 	/// <para>
 	/// The sweep works out that a source file changed and that a project file changed, and the second

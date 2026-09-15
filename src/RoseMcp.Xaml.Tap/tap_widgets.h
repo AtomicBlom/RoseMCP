@@ -372,4 +372,110 @@ protected:
 		badge.Child(Label(L"", 11.0, 0xF0, nullptr));
 		return badge;
 	}
+
+	// Long enough to read as a fade rather than a flicker, short enough not to lag the pointer.
+	static constexpr int FadeMilliseconds = 160;
+
+	// The badge sits this far above the element it captions. Shared with the proximity test, which
+	// has to treat the caption as part of the selection.
+	static constexpr double BadgeHeight = 18.0;
+	static constexpr double BadgeGap = 2.0;
+
+	// One storyboard per mark, built once and re-aimed, because the two obvious ways to do this are
+	// both wrong and they fail in opposite directions.
+	//
+	// Stop() before re-beginning looks like the tidy thing and is not: stopping an animation reverts
+	// the property to its *local* value, so one of the two directions snapped instead of fading --
+	// whichever direction happened to be heading back towards the value last written with .Opacity().
+	// The toolbar's mouse-out and the selection's mouse-in were both instant for exactly that reason,
+	// and they were instant in opposite directions because their local values sat at opposite ends.
+	//
+	// Building a fresh storyboard each time is the other trap: releasing one that is holding its end
+	// value lets the property fall back. Re-aiming a storyboard that stays alive has neither problem,
+	// and a DoubleAnimation with no From always starts from wherever the property has actually got to,
+	// so an interrupted fade hands over rather than jumping.
+	struct Fader
+	{
+		xanim::Storyboard Board{ nullptr };
+		std::vector<xanim::DoubleAnimation> Animations;
+
+		// What it is already heading for, so asking for the same thing twice is not a restart. The
+		// panel is asked on every pointer move across its edge and on every change of operation,
+		// and most of those answers are the one it is already giving.
+		double Target = -1.0;
+
+		void To(double value)
+		{
+			if (!Board || Target == value) return;
+
+			Target = value;
+
+			for (auto const& animation : Animations)
+			{
+				animation.To(value);
+			}
+
+			Board.Begin();
+		}
+
+		// Arrives at a value with no animation, for the moment when animating would be a lie. A pick
+		// happens under the pointer, so the mark is already being looked at: it should be there, not
+		// fade up as though the pointer were on its way.
+		//
+		// Still driven through the storyboard rather than by writing Opacity, because a held
+		// animation outranks a local value -- and SkipToFill leaves it held at the new value, so the
+		// next fade hands over from it the same way any other would.
+		void Snap(double value)
+		{
+			if (!Board) return;
+
+			Target = value;
+
+			for (auto const& animation : Animations)
+			{
+				animation.To(value);
+			}
+
+			Board.Begin();
+			Board.SkipToFill();
+		}
+	};
+
+	// Opacity is the one visual property XAML animates off the UI thread, which is what makes this
+	// affordable at all: a dependent animation would cost the app frames every time the pointer
+	// crossed an edge, and that is a strange thing to charge somebody for a diagnostics overlay.
+	static Fader MakeFader(std::vector<xaml::UIElement> const& targets)
+	{
+		Fader fader;
+		fader.Board = xanim::Storyboard();
+
+		for (auto const& target : targets)
+		{
+			if (!target) continue;
+
+			xanim::DoubleAnimation animation;
+			animation.EnableDependentAnimation(false);
+
+			// Duration is a value struct of a TimeSpan *and* a DurationType, and the type is not
+			// implied by the TimeSpan. Leaving it at its zero -- Automatic -- was the whole of why
+			// these ran for about a second instead of the sixth of one written just below.
+			animation.Duration(xaml::Duration{
+				winrt::Windows::Foundation::TimeSpan{ std::chrono::milliseconds(FadeMilliseconds) },
+				xaml::DurationType::TimeSpan });
+
+			xanim::Storyboard::SetTarget(animation, target);
+			xanim::Storyboard::SetTargetProperty(animation, L"Opacity");
+			fader.Board.Children().Append(animation);
+			fader.Animations.push_back(animation);
+		}
+
+		return fader;
+	}
+
+	static bool Contains(winrt::Windows::Foundation::Rect const& rect, winrt::Windows::Foundation::Point const& point)
+	{
+		return rect.Width > 0 && rect.Height > 0
+			&& point.X >= rect.X && point.X < rect.X + rect.Width
+			&& point.Y >= rect.Y && point.Y < rect.Y + rect.Height;
+	}
 };

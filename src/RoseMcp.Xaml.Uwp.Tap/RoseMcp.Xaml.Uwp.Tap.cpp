@@ -242,4 +242,5 @@ static bool RoseTapRunWalk(const std::function<void()>& walk)
 #include "../RoseMcp.Xaml.Tap/tap_render.h"
 #include "../RoseMcp.Xaml.Tap/tap_widgets.h"
 #include "../RoseMcp.Xaml.Tap/tap_tool_zoom.h"
+#include "../RoseMcp.Xaml.Tap/tap_pick.h"
 #include "../RoseMcp.Xaml.Tap/tap_overlay.h"

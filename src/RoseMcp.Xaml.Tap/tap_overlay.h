@@ -256,7 +256,7 @@ public:
 	{
 		HideCapture();
 		SetPointing(Pointing::None);
-		ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
+		m_pick.Hover(nullptr, std::wstring());
 		RefreshRulers();
 		Chrome();
 	}
@@ -272,8 +272,8 @@ public:
 	/// The pick as rows, the mode, and why the last selection went away: everything a later request
 	/// needs to answer "what is selected", with no file in between. Rows are in the shape the work
 	/// folder writes, so one parser on the host serves whichever channel carried them.
-	const std::string& SelectionRows() const override { return m_selectionRows; }
-	const std::wstring& GoneReason() const override { return m_goneReason; }
+	const std::string& SelectionRows() const override { return m_pick.Rows(); }
+	const std::wstring& GoneReason() const override { return m_pick.GoneReason(); }
 	bool Selecting() const { return m_pointing == Pointing::Select; }
 	bool JustMyXaml() const override { return m_justMyXaml; }
 
@@ -325,7 +325,7 @@ public:
 	// was selected" rather than having both read as success.
 	bool Deselect() override
 	{
-		const bool had = Clear(nullptr);
+		const bool had = m_pick.Clear(nullptr);
 
 		Log(had ? L"overlay: selection cleared" : L"overlay: deselect with nothing selected");
 		return had;
@@ -348,12 +348,12 @@ public:
 	/// the first, the handle is zero and the rest are free.
 	void ClearIfRemoved(InstanceHandle handle) override
 	{
-		if (handle == 0 || handle != m_selectedHandle) return;
+		if (handle == 0 || handle != m_pick.Handle()) return;
 
 		// Said rather than merely done. A selection that vanishes with no explanation reads as a bug
 		// in the overlay, and an agent that asks for properties after a navigation deserves the
 		// sentence rather than an HRESULT from three layers down.
-		Clear(L"The selected element was removed from the visual tree, so the selection was cleared. "
+		m_pick.Clear(L"The selected element was removed from the visual tree, so the selection was cleared. "
 			L"Something in the app took it away -- a navigation, a collapsed panel, a recycled list "
 			L"container. Read the tree again and select what you want from it.");
 
@@ -412,22 +412,10 @@ public:
 		}
 
 		RecordFromTree(element, handle);
-		m_selectedHandle = handle;
 
-		// Watched for the same reason a click is watched: the mark is drawn at coordinates read out of
-		// the app once, and an app that moves the element afterwards leaves it behind. How the
-		// selection was made says nothing about whether the element stays still.
-		WatchSelectionLayout(element);
+		const bool drawn = m_pick.Take(element, handle, rect);
 
-		const bool drawn = ShowBox(m_selectBox, m_selectBadge, element, Describe(element));
-		m_hasSelection = true;
-		m_anchorRect = rect;
-		m_selectionRect = WithBadge(rect);
-		Reveal();
-		RefreshRulers();
-		Chrome();
-
-		Log(L"overlay: selected " + Describe(element) + L" by handle; outline "
+		Log(L"overlay: selected " + RosePick::Describe(element) + L" by handle; outline "
 			+ std::wstring(drawn ? L"drawn" : L"NOT drawn"));
 
 		return true;
@@ -445,7 +433,7 @@ private:
 		if (m_pointing != Pointing::None)
 		{
 			SetPointing(mode);
-			ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
+			m_pick.Hover(nullptr, std::wstring());
 			HideLeaders();
 			RefreshRulers();
 			Chrome();
@@ -492,7 +480,7 @@ private:
 			m_capture.PointerExited(
 				[this](winrt::Windows::Foundation::IInspectable const&, xinput::PointerRoutedEventArgs const&)
 				{
-					ShowBox(m_hoverBox, m_hoverBadge, nullptr, std::wstring());
+					m_pick.Hover(nullptr, std::wstring());
 					HideLeaders();
 				});
 
@@ -553,26 +541,15 @@ private:
 		m_capture = nullptr;
 	}
 
-	// How near the pointer has to be for a mark to be legible, and what it settles to when the
-	// pointer is elsewhere. Both marks are persistent by design -- the selection outlives the pick
-	// that made it, and the toolbar outlives everything -- so both spend most of their life being
-	// something the person did not ask to look at. Fading on proximity is what lets them stay
+	// How near the pointer has to be for the toolbar to be fully legible, and what it settles to
+	// when the pointer is elsewhere. The toolbar outlives everything, so it spends most of its life
+	// being something the person did not ask to look at; fading on proximity is what lets it stay
 	// available without staying in the way.
-	static constexpr double SelectionNear = 0.50;
-	static constexpr double SelectionFar = 0.10;
 	static constexpr double PanelNear = 1.00;
 	static constexpr double PanelFar = 0.50;
 
-	// Long enough to read as a fade rather than a flicker, short enough not to lag the pointer.
-	static constexpr int FadeMilliseconds = 160;
-
 	// How far the toolbar sits from the edge it is anchored to.
 	static constexpr double EdgeMargin = 16.0;
-
-	// The badge sits this far above the element it captions. Shared with the proximity test, which
-	// has to treat the caption as part of the selection.
-	static constexpr double BadgeHeight = 18.0;
-	static constexpr double BadgeGap = 2.0;
 
 	// How far a measurement's number sits off its own line, and how far a label is pushed each time it
 	// lands on one already placed. The same number does both, so a label that has been moved sits a
@@ -650,27 +627,9 @@ private:
 		m_borderBand = BuildBand(0x4C, 0xF2, 0xD0, 0x7A);  // yellow, the border itself
 		m_paddingBand = BuildBand(0x4C, 0x9B, 0xC8, 0x7A); // green, inside it
 
-		// The outlines go on next so the toolbar always draws over them. Hover is dashed and thin,
-		// the pick solid and heavier, so the two never read as the same thing.
-		m_hoverBox = Outline(1.0, true);
-		m_marks.Children().Append(m_hoverBox);
-		m_hoverBadge = Badge();
-		m_marks.Children().Append(m_hoverBadge);
-
-		// The pick rests on screen until something else replaces it or it is cleared, so it is the
-		// one mark that has to be liveable with. At full strength on a large container it is a
-		// full-window box sitting over the app for as long as the selection lasts, which is what a
-		// second user reported: not hard to see, hard to put up with.
-		//
-		// So it is drawn at the strength it should have when somebody is looking at it, and its
-		// opacity carries the rest -- SelectionNear when the pointer is inside it, SelectionFar when
-		// it is not. Baking the fade into the brushes instead was the first attempt, and it cannot
-		// express the thing that actually makes this work: the mark being loud enough to read at the
-		// moment you look for it.
-		m_selectBox = Outline(2.0, false, 0xFF, 0x33);
-		m_marks.Children().Append(m_selectBox);
-		m_selectBadge = Badge();
-		m_marks.Children().Append(m_selectBadge);
+		// The marks go on next so the toolbar always draws over them. Why each looks as it does is
+		// on RosePick::Build, which owns them.
+		m_pick.Build();
 
 		// Four dimension lines, which is as many as a measurement can want: one per axis where the two
 		// rectangles miss each other, two where they overlap. Built once and re-aimed, like everything
@@ -1139,7 +1098,7 @@ private:
 
 		// Deselect is an action rather than a mode, so it never wears the accent -- only whether
 		// there is anything for it to do.
-		Enable(m_deselectButton, m_hasSelection);
+		Enable(m_deselectButton, m_pick.Has());
 
 		// Its own buttons are its own business: which of them wears the accent depends on state
 		// this no longer holds.
@@ -1235,6 +1194,19 @@ private:
 
 	void Reposition() override { Place(); }
 
+	void Mark(xaml::UIElement const& element) override
+	{
+		if (m_marks && element) m_marks.Children().Append(element);
+	}
+
+	// What depends on a pick: a measurement taken from an element that is no longer selected would
+	// be a confident wrong answer, so the rulers are refreshed. The pick says it changed; deciding
+	// what that costs is this overlay's business.
+	void PickChanged() override
+	{
+		RefreshRulers();
+	}
+
 	// Whether an element belongs to the XamlRoot this overlay was installed in.
 	//
 	// A WinUI 3 app can have several windows, and the tree snapshot enumerates whatever the framework
@@ -1256,7 +1228,7 @@ private:
 
 	// Where an element sits in the window, in the coordinates the overlay's Canvas uses -- the UI layer
 	// is sized to the window, so the window root's space is the Canvas's space.
-	bool Bounds(xaml::UIElement const& element, winrt::Windows::Foundation::Rect& rect)
+	bool Bounds(xaml::UIElement const& element, winrt::Windows::Foundation::Rect& rect) override
 	{
 		try
 		{
@@ -1284,21 +1256,6 @@ private:
 		}
 	}
 
-	static std::wstring Describe(xaml::UIElement const& element)
-	{
-		std::wstring typeName{ winrt::get_class_name(element) };
-		const auto lastDot = typeName.rfind(L'.');
-		if (lastDot != std::wstring::npos) typeName = typeName.substr(lastDot + 1);
-
-		std::wstring name;
-		if (const auto frameworkElement = element.try_as<xaml::FrameworkElement>())
-		{
-			name = frameworkElement.Name();
-		}
-
-		return name.empty() ? typeName : (typeName + L" \x00B7 " + name);
-	}
-
 
 	// Watches where the pointer is, so the marks can get out of the way when it is not near them.
 	//
@@ -1317,7 +1274,6 @@ private:
 	// capture layer and never came through this.
 	void WatchPointer()
 	{
-		m_selectionFade = MakeFader({ m_selectBox, m_selectBadge });
 		m_panelFade = MakeFader({ m_panel });
 
 		const auto watched = RoseTapWatchPointer(
@@ -1349,34 +1305,6 @@ private:
 		if (!watched) Log(L"overlay: no pointer source; the marks will not fade with proximity");
 	}
 
-	// Shows a freshly made selection, snapping when the pointer is already inside it and fading it up
-	// when it is not.
-	//
-	// Asking where the pointer is, rather than who asked for the selection, because that is the
-	// question the answer actually turns on -- and it happens to answer both callers. A click lands
-	// under the pointer, so the mark should simply be there: fading up would pretend the pointer were
-	// still on its way to somewhere it already is. A selection made by handle, which is the way an
-	// agent reaches this, lands wherever the element happens to be, and appearing at full
-	// strength somewhere the person is not looking is a flash in the corner of the eye rather than an
-	// answer. Both paths reach here, so which one it was is never asked: the pointer's position is
-	// the whole question, and a selection by handle that happens to land under the pointer snaps
-	// for the same reason a click does.
-	void Reveal()
-	{
-		m_overSelection = Contains(m_selectionRect, m_pointer);
-
-		if (m_overSelection)
-		{
-			m_selectionFade.Snap(SelectionNear);
-			return;
-		}
-
-		// Left at SelectionNear rather than settling straight to SelectionFar: a selection nobody
-		// watched arrive is one they have to be told about, and the next pointer move fades it back
-		// down through the ordinary proximity rule.
-		m_selectionFade.To(SelectionNear);
-	}
-
 	// Both marks fade on the same rule: near the pointer they are legible, away from it they are a
 	// hint. Only a change of state starts an animation -- this runs on every pointer move, and
 	// restarting a storyboard sixty times a second over an app somebody is using is not acceptable.
@@ -1388,12 +1316,9 @@ private:
 		// and m_pointer is already set above for it to read.
 		m_zoomTool.PointerMoved();
 
-		const bool overSelection = m_hasSelection && Contains(m_selectionRect, point);
-		if (overSelection != m_overSelection)
-		{
-			m_overSelection = overSelection;
-			m_selectionFade.To(overSelection ? SelectionNear : SelectionFar);
-		}
+		// Told rather than asked, for the same reason: how loud the pick's mark should be is the
+		// pick's own business.
+		m_pick.PointerMoved(point);
 
 		const bool overPanel = Contains(PanelRect(), point);
 		if (overPanel != m_overPanel)
@@ -1401,97 +1326,6 @@ private:
 			m_overPanel = overPanel;
 			RefreshPanelFade();
 		}
-	}
-
-	// One storyboard per mark, built once and re-aimed, because the two obvious ways to do this are
-	// both wrong and they fail in opposite directions.
-	//
-	// Stop() before re-beginning looks like the tidy thing and is not: stopping an animation reverts
-	// the property to its *local* value, so one of the two directions snapped instead of fading --
-	// whichever direction happened to be heading back towards the value last written with .Opacity().
-	// The toolbar's mouse-out and the selection's mouse-in were both instant for exactly that reason,
-	// and they were instant in opposite directions because their local values sat at opposite ends.
-	//
-	// Building a fresh storyboard each time is the other trap: releasing one that is holding its end
-	// value lets the property fall back. Re-aiming a storyboard that stays alive has neither problem,
-	// and a DoubleAnimation with no From always starts from wherever the property has actually got to,
-	// so an interrupted fade hands over rather than jumping.
-	struct Fader
-	{
-		xanim::Storyboard Board{ nullptr };
-		std::vector<xanim::DoubleAnimation> Animations;
-
-		// What it is already heading for, so asking for the same thing twice is not a restart. The
-		// panel is asked on every pointer move across its edge and on every change of operation,
-		// and most of those answers are the one it is already giving.
-		double Target = -1.0;
-
-		void To(double value)
-		{
-			if (!Board || Target == value) return;
-
-			Target = value;
-
-			for (auto const& animation : Animations)
-			{
-				animation.To(value);
-			}
-
-			Board.Begin();
-		}
-
-		// Arrives at a value with no animation, for the moment when animating would be a lie. A pick
-		// happens under the pointer, so the mark is already being looked at: it should be there, not
-		// fade up as though the pointer were on its way.
-		//
-		// Still driven through the storyboard rather than by writing Opacity, because a held
-		// animation outranks a local value -- and SkipToFill leaves it held at the new value, so the
-		// next fade hands over from it the same way any other would.
-		void Snap(double value)
-		{
-			if (!Board) return;
-
-			Target = value;
-
-			for (auto const& animation : Animations)
-			{
-				animation.To(value);
-			}
-
-			Board.Begin();
-			Board.SkipToFill();
-		}
-	};
-
-	// Opacity is the one visual property XAML animates off the UI thread, which is what makes this
-	// affordable at all: a dependent animation would cost the app frames every time the pointer
-	// crossed an edge, and that is a strange thing to charge somebody for a diagnostics overlay.
-	static Fader MakeFader(std::vector<xaml::UIElement> const& targets)
-	{
-		Fader fader;
-		fader.Board = xanim::Storyboard();
-
-		for (auto const& target : targets)
-		{
-			if (!target) continue;
-
-			xanim::DoubleAnimation animation;
-			animation.EnableDependentAnimation(false);
-
-			// Duration is a value struct of a TimeSpan *and* a DurationType, and the type is not
-			// implied by the TimeSpan. Leaving it at its zero -- Automatic -- was the whole of why
-			// these ran for about a second instead of the sixth of one written just below.
-			animation.Duration(xaml::Duration{
-				winrt::Windows::Foundation::TimeSpan{ std::chrono::milliseconds(FadeMilliseconds) },
-				xaml::DurationType::TimeSpan });
-
-			xanim::Storyboard::SetTarget(animation, target);
-			xanim::Storyboard::SetTargetProperty(animation, L"Opacity");
-			fader.Board.Children().Append(animation);
-			fader.Animations.push_back(animation);
-		}
-
-		return fader;
 	}
 
 	// Where the toolbar is now, read live rather than remembered: it is draggable, it folds down to
@@ -1509,125 +1343,6 @@ private:
 			static_cast<float>(top),
 			static_cast<float>(m_panel.ActualWidth()),
 			static_cast<float>(m_panel.ActualHeight()) };
-	}
-
-	static bool Contains(winrt::Windows::Foundation::Rect const& rect, winrt::Windows::Foundation::Point const& point)
-	{
-		return rect.Width > 0 && rect.Height > 0
-			&& point.X >= rect.X && point.X < rect.X + rect.Width
-			&& point.Y >= rect.Y && point.Y < rect.Y + rect.Height;
-	}
-
-	// The element's own rectangle, grown upwards to take in the badge that sits above it. Pointing at
-	// the caption is pointing at the selection -- without this, moving onto the one part that is still
-	// legible at rest is what makes the rest of the mark disappear.
-	static winrt::Windows::Foundation::Rect WithBadge(winrt::Windows::Foundation::Rect const& rect)
-	{
-		const float reach = static_cast<float>(BadgeHeight + BadgeGap);
-		const float top = rect.Y - reach;
-		if (top < 0.0f) return rect; // The badge was drawn inside the element, so the rect already covers it.
-
-		return winrt::Windows::Foundation::Rect{ rect.X, top, rect.Width, rect.Height + reach };
-	}
-
-	// Moves an outline and its badge onto an element, or hides both when there is nothing to show.
-	// Follows the picked element when the app re-lays out, which is not the same event as the element
-	// changing size.
-	//
-	// The mark is drawn at coordinates read out of the app once, and an app that moves the element
-	// afterwards leaves it behind -- pointing confidently at empty space. The probe does this to
-	// itself every few seconds: a sibling leaves the panel, everything below it slides up, and nothing
-	// about the picked element changed except where it is. SizeChanged cannot see that, because the
-	// element was not resized; LayoutUpdated can, because it fires for the pass that moved it.
-	//
-	// It fires for every layout pass in the tree, so it is subscribed only while something is picked,
-	// and it does one TransformToVisual when it fires. That is affordable in a way that recomputing on
-	// every pointer move would not be -- which is the reason this was left alone until now.
-	void WatchSelectionLayout(xaml::UIElement const& element)
-	{
-		if (m_selectedElement && m_layoutToken.value)
-		{
-			m_selectedElement.LayoutUpdated(m_layoutToken);
-			m_layoutToken = {};
-		}
-
-		m_selectedElement = element ? element.try_as<xaml::FrameworkElement>() : nullptr;
-		if (!m_selectedElement) return;
-
-		m_layoutToken = m_selectedElement.LayoutUpdated(
-			[this](winrt::Windows::Foundation::IInspectable const&, winrt::Windows::Foundation::IInspectable const&)
-			{
-				if (!m_hasSelection || !m_selectedElement) return;
-
-				// Re-entrant by construction, and it has to be stopped twice over.
-				//
-				// LayoutUpdated fires for every layout pass in the tree, and moving the outline is
-				// itself a layout pass -- so redrawing from this handler schedules the handler again.
-				// The comparison below is what breaks that cycle, and it must compare like with like:
-				// comparing raw bounds against m_selectionRect, which carries the badge, never matched,
-				// so every pass redrew and scheduled another until the app went down with it.
-				if (m_updatingSelection) return;
-
-				try
-				{
-					winrt::Windows::Foundation::Rect rect{};
-					if (!Bounds(m_selectedElement, rect)) return;
-
-					const auto withBadge = WithBadge(rect);
-					if (withBadge.X == m_selectionRect.X && withBadge.Y == m_selectionRect.Y
-						&& withBadge.Width == m_selectionRect.Width && withBadge.Height == m_selectionRect.Height)
-					{
-						return;
-					}
-
-					m_updatingSelection = true;
-					ShowBox(m_selectBox, m_selectBadge, m_selectedElement, Describe(m_selectedElement));
-					m_anchorRect = rect;
-					m_selectionRect = withBadge;
-
-					// Inside the guard, because drawing the bands is itself a layout pass: outside it
-					// this handler would schedule itself for as long as the app stayed up.
-					RefreshRulers();
-					m_updatingSelection = false;
-				}
-				catch (winrt::hresult_error const&)
-				{
-					// An element mid-removal is #51's problem, not this one's.
-					m_updatingSelection = false;
-				}
-			});
-	}
-
-	bool ShowBox(
-		xcontrols::Grid const& box,
-		xcontrols::Border const& badge,
-		xaml::UIElement const& element,
-		std::wstring const& caption)
-	{
-		winrt::Windows::Foundation::Rect rect{};
-		if (!box || !badge) return false;
-
-		if (!element || !Bounds(element, rect))
-		{
-			box.Visibility(xaml::Visibility::Collapsed);
-			badge.Visibility(xaml::Visibility::Collapsed);
-			return false;
-		}
-
-		box.Width(rect.Width);
-		box.Height(rect.Height);
-		xcontrols::Canvas::SetLeft(box, rect.X);
-		xcontrols::Canvas::SetTop(box, rect.Y);
-		box.Visibility(xaml::Visibility::Visible);
-
-		if (const auto text = badge.Child().try_as<xcontrols::TextBlock>()) text.Text(caption);
-
-		// Above the element, unless that would be off the top of the window, in which case inside it.
-		const double top = rect.Y - BadgeHeight - BadgeGap;
-		xcontrols::Canvas::SetLeft(badge, rect.X);
-		xcontrols::Canvas::SetTop(badge, top < 0.0 ? rect.Y + 2.0 : top);
-		badge.Visibility(xaml::Visibility::Visible);
-		return true;
 	}
 
 	// The rulers mode's own drawing, all of it on the marks canvas so it scales with a magnified app
@@ -1884,18 +1599,18 @@ private:
 		}
 
 		winrt::Windows::Foundation::Rect rect{};
-		if (!m_hasSelection || !m_selectedElement || !Bounds(m_selectedElement, rect))
+		if (!m_pick.Has() || !m_pick.Element() || !Bounds(m_pick.Element(), rect))
 		{
 			HideBands();
 			SetRulersText(std::wstring(), std::wstring(), std::wstring());
 			return;
 		}
 
-		const auto margin = ToEdges(m_selectedElement.Margin());
-		const auto border = BorderOf(m_selectedElement);
+		const auto margin = ToEdges(m_pick.Element().Margin());
+		const auto border = BorderOf(m_pick.Element());
 
 		xaml::Thickness padding{};
-		const bool hasPadding = PaddingOf(m_selectedElement, padding);
+		const bool hasPadding = PaddingOf(m_pick.Element(), padding);
 
 		const auto bands = BoxModel(ToRuler(rect), margin, border, hasPadding ? ToEdges(padding) : RulerEdges{});
 		PlaceBand(m_marginBand, bands.Margin, bands.Border);
@@ -1926,7 +1641,7 @@ private:
 	// is nothing to measure.
 	void MeasureToHovered(xaml::UIElement const& element, winrt::Windows::Foundation::Rect const& rect)
 	{
-		if (!element || !m_hasSelection || !m_selectedElement)
+		if (!element || !m_pick.Has() || !m_pick.Element())
 		{
 			HideLeaders();
 			return;
@@ -1934,13 +1649,13 @@ private:
 
 		// The anchor against itself is four zeroes drawn over the bands that already say what those
 		// zeroes mean, so it is not drawn at all.
-		if (element == m_selectedElement.try_as<xaml::UIElement>())
+		if (element == m_pick.Element().try_as<xaml::UIElement>())
 		{
 			HideLeaders();
 			return;
 		}
 
-		DrawMeasurement(Measure(ToRuler(m_anchorRect), ToRuler(rect)));
+		DrawMeasurement(Measure(ToRuler(m_pick.AnchorRect()), ToRuler(rect)));
 	}
 
 	// One measurement, as up to four dimension lines.
@@ -1961,8 +1676,7 @@ private:
 		// number is most likely to land on: both sit at the top-left corner of a rectangle, which is
 		// exactly where the top and left insets are measured. Seeded rather than special-cased, so the
 		// same push that keeps two numbers apart keeps a number off a caption.
-		Occupy(m_selectBadge);
-		Occupy(m_hoverBadge);
+		for (const auto& caption : m_pick.Captions()) Occupy(caption);
 
 		const auto& anchor = measurement.Anchor;
 		const auto& hovered = measurement.Hovered;
@@ -2270,7 +1984,7 @@ private:
 			if (IsOurs(element)) continue;      // Our own layers, if they are ever in this tree at all.
 			if (!Bounds(element, rect)) continue; // Zero-sized or not laid out: not what was pointed at.
 
-			Trace(L"beneath: " + Describe(element) + L" at " + std::to_wstring(static_cast<int>(rect.X))
+			Trace(L"beneath: " + RosePick::Describe(element) + L" at " + std::to_wstring(static_cast<int>(rect.X))
 				+ L"," + std::to_wstring(static_cast<int>(rect.Y)) + L" "
 				+ std::to_wstring(static_cast<int>(rect.Width)) + L"x"
 				+ std::to_wstring(static_cast<int>(rect.Height))
@@ -2298,7 +2012,7 @@ private:
 		{
 			winrt::Windows::Foundation::Rect rect{};
 			const auto element = Beneath(e.GetCurrentPoint(nullptr).Position(), rect);
-			ShowBox(m_hoverBox, m_hoverBadge, element, element ? Describe(element) : std::wstring());
+			m_pick.Hover(element, element ? RosePick::Describe(element) : std::wstring());
 
 			if (m_pointing == Pointing::Rulers) MeasureToHovered(element, rect);
 		}
@@ -2321,18 +2035,9 @@ private:
 			winrt::Windows::Foundation::Rect rect{};
 			if (const auto element = Beneath(point, rect))
 			{
-				m_selectedHandle = Record(element, point);
-				WatchSelectionLayout(element);
-
 				// The picked element keeps its outline after select mode ends: that persistent mark is
 				// the evidence of what "the selected element" now means, for the person and the agent.
-				const bool drawn = ShowBox(m_selectBox, m_selectBadge, element, Describe(element));
-				m_hasSelection = true;
-				m_anchorRect = rect;
-				m_selectionRect = WithBadge(rect);
-				Reveal();
-				RefreshRulers();
-				Chrome();
+				const bool drawn = m_pick.Take(element, Record(element, point), rect);
 				Log(L"overlay: selection outline " + std::wstring(drawn ? L"drawn" : L"NOT drawn"));
 			}
 		}
@@ -2346,35 +2051,6 @@ private:
 		// arm, click, arm again for every element somebody wants to measure from.
 		if (m_pointing == Pointing::Select) GoIdle();
 		else HideLeaders(); // The pointer is over the new anchor, so there is nothing to measure to.
-	}
-
-	/// The clearing itself. <paramref name="goneReason"/> is written where the host can find it later
-	/// when the selection went away on its own; a deliberate deselect passes null, because the caller
-	/// asking for it does not need to be told it happened.
-	bool Clear(const wchar_t* goneReason)
-	{
-		const bool had = m_hasSelection;
-
-		WatchSelectionLayout(nullptr);
-		ShowBox(m_selectBox, m_selectBadge, nullptr, std::wstring());
-		m_hasSelection = false;
-		m_overSelection = false;
-		m_selectionRect = {};
-		m_anchorRect = {};
-		m_selectedHandle = 0;
-		m_selectionRows.clear();
-
-		// The bands and any leaders go with it. They describe an element that is no longer the
-		// selection, and a measurement from a rectangle nothing is pointing at is the confident wrong
-		// answer this repository likes least.
-		RefreshRulers();
-
-		// The note outlives this call, because nothing is waiting on it: the element went away between
-		// requests, and the host only finds out when it next asks.
-		if (goneReason && had) m_goneReason = goneReason;
-
-		Chrome();
-		return had;
 	}
 
 	/// Writes the selection for an element that arrived from the tree rather than from a click.
@@ -2408,9 +2084,9 @@ private:
 			node = xmedia::VisualTreeHelper::GetParent(node);
 		}
 
-		PublishSelection(rows.str());
+		m_pick.PublishRows(rows.str());
 
-		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" row(s) from the tree");
+		Log(L"overlay: recorded " + RosePick::Describe(element) + L" and " + std::to_wstring(written) + L" row(s) from the tree");
 	}
 
 	// Anything under our own root is ours -- the capture layer, the toolbar, and every part of it.
@@ -2475,8 +2151,8 @@ private:
 			selected = (m_justMyXaml && topmostApp != 0) ? topmostApp : topmost;
 		}
 
-		PublishSelection(file.str());
-		Log(L"overlay: recorded " + Describe(element) + L" and " + std::to_wstring(written) + L" candidate(s)");
+		m_pick.PublishRows(file.str());
+		Log(L"overlay: recorded " + RosePick::Describe(element) + L" and " + std::to_wstring(written) + L" candidate(s)");
 
 		return selected;
 	}
@@ -2489,12 +2165,6 @@ private:
 	/// clicks whenever they click, and the host asks afterwards. Holding it is what lets that later
 	/// question be answered on the same channel as every other one.
 	/// </remarks>
-	void PublishSelection(std::string rows)
-	{
-		m_selectionRows = std::move(rows);
-		m_goneReason.clear();
-	}
-
 	InstanceHandle WriteCandidate(std::ostream& file, xaml::UIElement const& candidate)
 	{
 		InstanceHandle handle = 0;
@@ -2568,33 +2238,7 @@ private:
 	xcontrols::Button m_selectButton{ nullptr };
 	xcontrols::Button m_myXamlButton{ nullptr };
 	xcontrols::Button m_deselectButton{ nullptr };
-	xcontrols::Grid m_hoverBox{ nullptr };
-	xcontrols::Grid m_selectBox{ nullptr };
-	xcontrols::Border m_hoverBadge{ nullptr };
-	xcontrols::Border m_selectBadge{ nullptr };
-	Fader m_selectionFade;
 	Fader m_panelFade;
-
-	// Where the selection is, so the pointer can be tested against it without asking the app.
-	// Held rather than recomputed: an element that has moved or been laid out again is issue #51's
-	// problem, and reaching into the app's tree on every pointer move to find out would not be a
-	// fix for it so much as a reason to be blamed for the app feeling slow.
-	winrt::Windows::Foundation::Rect m_selectionRect{};
-
-	// The anchor's own rectangle, without the badge the proximity test adds to it. Held for the same
-	// reason: a hover is hundreds of events a second, and asking the app where the anchor is on each
-	// one would put a TransformToVisual in the pointer's path for a number that has not moved.
-	winrt::Windows::Foundation::Rect m_anchorRect{};
-
-	// Which element is selected, so a removal can be recognised. The handle and not the name:
-	// a Remove callback carries an empty Name, measured, so matching on one would never fire.
-	InstanceHandle m_selectedHandle = 0;
-
-	// The pick, as the rows that describe it, and the reason the last one went away. Both are answers to
-	// a question asked after the fact, so they are held rather than derived on demand: the elements a
-	// click landed on cannot be recovered once the pointer has moved.
-	std::string m_selectionRows;
-	std::wstring m_goneReason;
 
 	// The extent the capture layer was arranged at, and the signal that says it is known. Arming and
 	// knowing the size are two moments rather than one, so a caller off the UI thread waits for the
@@ -2604,18 +2248,9 @@ private:
 	bool m_armedKnown = false;
 	int m_armedWidth = 0;
 	int m_armedHeight = 0;
-
-	// The picked element itself, held so its mark can be re-measured when the app moves it, and the
-	// subscription that says when to.
-	xaml::FrameworkElement m_selectedElement{ nullptr };
-	winrt::event_token m_layoutToken{};
-
-	// Guards the redraw against the layout pass it causes.
-	bool m_updatingSelection = false;
 	// The last place the pointer was seen, in window coordinates. Kept because a selection can be
 	// made at a moment when there is no pointer event to read it from.
 	winrt::Windows::Foundation::Point m_pointer{ -1.0f, -1.0f };
-	bool m_overSelection = false;
 	bool m_overPanel = false;
 	double m_dragLeft = 16.0;
 	double m_dragTop = 16.0;
@@ -2631,11 +2266,6 @@ private:
 	bool m_placed = false;
 	Pointing m_pointing = Pointing::None;
 	std::set<Operation> m_operations;
-
-	// Whether a pick is currently marked. Tracked rather than inferred from the box's visibility,
-	// because the box is also hidden when an element could not be measured, and "drawn nothing"
-	// is not the same fact as "nothing is selected".
-	bool m_hasSelection = false;
 	int m_traces = 0;
 	bool m_includeAllElements = false;
 	bool m_justMyXaml = true;
@@ -2666,6 +2296,11 @@ private:
 	// IRoseOverlaySurface for the seven things it cannot answer for itself. Constructed with *this
 	// because the surface is this overlay; it stores the reference and nothing more, so handing it
 	// over from an initialiser is safe.
+	// The pick: which element is selected, the marks that say so, and what a later request is told
+	// about it. Select mode writes it and rulers mode only reads it, which is why it is an object of
+	// its own rather than fifteen members here.
+	RosePick m_pick{ *this };
+
 	RoseZoomTool m_zoomTool{ *this };
 };
 

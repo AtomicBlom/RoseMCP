@@ -6,15 +6,16 @@
 // Included after the provider's aliases, like the overlay it lives on, because it builds XAML.
 //
 // A tool rather than more of the overlay. It owns its buttons, its row of the toolbar and its
-// twenty-two members, and asks the overlay only for the seven things below -- so what magnification
+// twenty-two members, and asks the overlay only for what it cannot answer itself -- so what a tool
 // needs of the surface it is drawn on is a list somebody can read in one go, rather than something
 // to be inferred from which of sixty members a method happens to touch.
 
-// What a tool needs of the overlay hosting it.
+// What a tool needs of the overlay hosting it, and what it tells the overlay in return.
 //
 // Narrow on purpose. Every addition here is a thing every future tool may reach for, so it holds
-// what magnification genuinely cannot answer for itself: where the app's content is, how big the
-// window is, where the pointer was last seen, and the two places a tool puts things.
+// what a tool genuinely cannot answer for itself: where the app's content is, how big the window
+// is, where the pointer was last seen, an element's rectangle, the two layers it can put things on,
+	// and the three things it says back when its own state changes.
 struct IRoseOverlaySurface
 {
 	virtual ~IRoseOverlaySurface() = default;
@@ -37,6 +38,21 @@ struct IRoseOverlaySurface
 
 	// Puts an element on the overlay's own canvas, above the marks.
 	virtual void Adorn(xaml::UIElement const& element) = 0;
+
+	// Puts an element on the marks layer instead, so it scales with the app.
+	virtual void Mark(xaml::UIElement const& element) = 0;
+
+	// An element's rectangle in the overlay's coordinates, false when it has none to give or belongs
+	// to a different XamlRoot. The overlay answers it because it is the thing that knows which root
+	// it was installed in, and an element elsewhere is said to be elsewhere rather than drawn at the
+	// right coordinates in the wrong window.
+	virtual bool Bounds(xaml::UIElement const& element, winrt::Windows::Foundation::Rect& rect) = 0;
+
+	// The pick changed. Said rather than acted on, because what depends on a pick is the overlay's
+	// business: a measurement taken from an element that is no longer selected is a confident wrong
+	// answer, so the rulers have to hear about it, and the pick is not the thing that knows they
+	// exist.
+	virtual void PickChanged() = 0;
 
 	// Re-lights the toolbar. Called when a tool's state changes, because which button wears the
 	// accent is the overlay's business and what changed is the tool's.

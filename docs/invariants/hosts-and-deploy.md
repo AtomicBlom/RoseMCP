@@ -71,3 +71,10 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   run that costs more than every compile together, and a break that only one architecture or the
   optimiser sees, in headers all of them share, is rare enough to be caught on main, before any tag,
   rather than paid for on every PR.
+- **`promote` builds the whole tree before it stops anything.** Every publish, and every native
+  provider, goes into `artifacts/promote/<rid>` while the running instance keeps serving; only then
+  are the inspector, tray and stdio servers stopped, the stage copied over the install, and the tray
+  restarted. Stopping first means Rose is gone for the length of a build, and a build that fails
+  partway leaves nothing running and a half-written install that may not start. Keep anything that
+  can fail -- a publish, a provider build, a layout check -- ahead of the first `Stop-*` call; after
+  it, the only work is a copy.

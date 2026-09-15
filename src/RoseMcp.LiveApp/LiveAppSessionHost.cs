@@ -185,22 +185,14 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	public LiveTracepointList ListTracepoints()
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		var session = Attached();
 
 		return new LiveTracepointList { Tracepoints = session?.ListTracepoints() ?? [] };
 	}
 
 	public LiveTracepointList RemoveTracepoint(string id)
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		var session = Attached();
 
 		session?.RemoveTracepoint(id);
 		return new LiveTracepointList { Tracepoints = session?.ListTracepoints() ?? [] };
@@ -212,22 +204,14 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	public LiveBreakpointList ListBreakpoints()
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		var session = Attached();
 
 		return new LiveBreakpointList { Breakpoints = session?.ListBreakpoints() ?? [] };
 	}
 
 	public LiveBreakpointList RemoveBreakpoint(string id)
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		var session = Attached();
 
 		session?.RemoveBreakpoint(id);
 		return new LiveBreakpointList { Breakpoints = session?.ListBreakpoints() ?? [] };
@@ -236,11 +220,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// <summary>Resumes a target held at a stopping breakpoint; false when nothing was stopped.</summary>
 	public LiveContinueResult Continue()
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		var session = Attached();
 
 		// The session's own result, forwarded rather than reduced to a bool: it carries whether the
 		// resume released an operator's hold, which nothing else would say.
@@ -250,11 +230,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// <summary>Steps a target held at a breakpoint: "in", "over", or "out".</summary>
 	public LiveContinueResult Step(string mode)
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		var session = Attached();
 
 		return session?.Step(mode) ?? new LiveContinueResult { Continued = false };
 	}
@@ -262,11 +238,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// <summary>Evaluates a field-access expression against the stopped frame; safe, no debuggee code runs.</summary>
 	public LiveEvaluation Evaluate(string expression)
 	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
+		var session = Attached();
 
 		return session?.Evaluate(expression)
 			?? new LiveEvaluation { Expression = expression, Error = "This session is not attached to a target." };
@@ -1257,15 +1229,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	private CorDebugSession RequireSession()
-	{
-		CorDebugSession? session;
-		lock (_gate)
-		{
-			session = _session;
-		}
-
-		return session ?? throw new InvalidOperationException("This session is not attached to a target.");
-	}
+		=> Attached() ?? throw new InvalidOperationException("This session is not attached to a target.");
 
 	private void Fault(string detail)
 	{

@@ -192,7 +192,7 @@ public static class BodyEdit
 
 		var start = matches[0];
 
-		GuardStraddled(body, start, needle.Length);
+		GuardStraddled(body, start, needle.Length, written);
 
 		if (changed > 0) rewritten?.Invoke(changed);
 
@@ -250,37 +250,116 @@ public static class BodyEdit
 	/// string. Contained in one comment or one literal, or clear of every one of them, are the two
 	/// shapes that mean what the caller thinks they mean.
 	/// </para>
+	/// <para>
+	/// A match inside a run of <c>//</c> lines that crosses a line also crosses the delimiter of every
+	/// line after its first, so the replacement has to put those back: each of its lines after the first
+	/// that is not blank must begin with <c>//</c>. One that does not turns the comment's words into
+	/// code, which fails to parse at best and compiles at worst.
+	/// </para>
 	/// </summary>
-	private static void GuardStraddled(string body, int start, int length)
+	/// <param name="body">The body being edited.</param>
+	/// <param name="start">Where the match starts.</param>
+	/// <param name="length">How long the match is.</param>
+	/// <param name="replacement">What will be spliced over the match, as it will be written.</param>
+	private static void GuardStraddled(string body, int start, int length, string replacement)
 	{
 		var end = start + length;
 
-		foreach (var (from, to, what) in Protected(body))
+		foreach (var (from, to, what, lineComments) in Protected(body))
 		{
 			var overlaps = start < to && from < end;
 			if (!overlaps) continue;
 
 			var contained = start >= from && end <= to;
-			if (contained) return;
+			if (!contained)
+			{
+				throw new ArgumentException(
+					$"The match covers part of {what} and part of the code around it, so replacing it would rewrite a "
+						+ "delimiter rather than the text inside one. Anchor entirely inside it, or entirely outside it.");
+			}
 
-			throw new ArgumentException(
-				$"The match covers part of {what} and part of the code around it, so replacing it would rewrite a "
-					+ "delimiter rather than the text inside one. Anchor entirely inside it, or entirely outside it.");
+			var crossesLines = body.AsSpan(start, length).Contains('\n');
+			if (lineComments && crossesLines) RequireCommentLines(replacement);
+
+			return;
 		}
+	}
+
+	/// <summary>
+	/// Refuses a replacement for a match across <c>//</c> lines when a line after its first is neither
+	/// blank nor a comment, naming the line so the caller can see which delimiter went missing.
+	/// </summary>
+	private static void RequireCommentLines(string replacement)
+	{
+		var uncommented = replacement
+			.Split('\n')
+			.Skip(1)
+			.FirstOrDefault(line => !string.IsNullOrWhiteSpace(line) && !line.TrimStart().StartsWith("//", StringComparison.Ordinal));
+
+		if (uncommented is null) return;
+
+		throw new ArgumentException(
+			$"The match crosses lines of a // comment, so every line of the replacement after its first has to begin "
+				+ $"with // as well. '{uncommented.Trim()}' does not, and would turn the comment's words into code.");
 	}
 
 	/// <summary>
 	/// The spans of the body whose content is text rather than code: every comment, and every string
 	/// or character literal including the pieces of an interpolated one.
+	/// <para>
+	/// A run of <c>//</c> comments on consecutive lines is one span rather than one per line, and is
+	/// marked as such. Roslyn makes each line its own trivia, but to anybody reading the file the run is
+	/// one comment, and a comment several lines long is the ordinary shape of one here -- so a span per
+	/// line put every match crossing a line across a delimiter, refused it, and advised anchoring inside
+	/// the comment, which no such match can do. A blank line ends a run, and so does a token or any other
+	/// trivia, because those separate two comments for a reader as well.
+	/// </para>
 	/// </summary>
-	private static IEnumerable<(int From, int To, string What)> Protected(string body)
+	private static List<(int From, int To, string What, bool LineComments)> Protected(string body)
 	{
+		var spans = new List<(int From, int To, string What, bool LineComments)>();
+		(int From, int To)? run = null;
+		var breaks = 0;
+
+		void Close()
+		{
+			if (run is { } ended) spans.Add((ended.From, ended.To, "a comment", true));
+			run = null;
+		}
+
+		void Take(SyntaxTriviaList trivia)
+		{
+			foreach (var piece in trivia)
+			{
+				if (piece.IsKind(SyntaxKind.SingleLineCommentTrivia))
+				{
+					var continues = run is not null && breaks == 1;
+					if (!continues) Close();
+
+					run = (run?.From ?? piece.SpanStart, piece.Span.End);
+					breaks = 0;
+					continue;
+				}
+
+				if (piece.IsKind(SyntaxKind.WhitespaceTrivia)) continue;
+
+				if (piece.IsKind(SyntaxKind.EndOfLineTrivia))
+				{
+					breaks++;
+					continue;
+				}
+
+				Close();
+				if (MemberSyntax.IsComment(piece)) spans.Add((piece.SpanStart, piece.Span.End, "a comment", false));
+			}
+		}
+
 		foreach (var token in SyntaxFactory.ParseTokens(body))
 		{
-			foreach (var trivia in token.LeadingTrivia.Concat(token.TrailingTrivia))
-			{
-				if (MemberSyntax.IsComment(trivia)) yield return (trivia.SpanStart, trivia.Span.End, "a comment");
-			}
+			Take(token.LeadingTrivia);
+
+			// A token between two comments makes them two comments, whichever lines they are on.
+			Close();
 
 			var literal = token.Kind() is SyntaxKind.StringLiteralToken
 				or SyntaxKind.Utf8StringLiteralToken
@@ -289,8 +368,14 @@ public static class BodyEdit
 				or SyntaxKind.CharacterLiteralToken
 				or SyntaxKind.InterpolatedStringTextToken;
 
-			if (literal) yield return (token.SpanStart, token.Span.End, "a string");
+			if (literal) spans.Add((token.SpanStart, token.Span.End, "a string", false));
+
+			Take(token.TrailingTrivia);
 		}
+
+		Close();
+
+		return spans;
 	}
 
 	/// <summary>

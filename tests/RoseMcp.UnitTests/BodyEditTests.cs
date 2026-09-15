@@ -183,9 +183,8 @@ public sealed class BodyEditTests
 
 	/// <summary>
 	/// The words inside a block comment, which is what this path exists for and what the token stream
-	/// cannot see at all. One trivia node, so the ending between its lines is content rather than the
-	/// gap between two comments -- an anchor spanning two <c>//</c> comments covers the second one's
-	/// delimiter and is refused, which is the straddle guard doing its job.
+	/// cannot see at all. One trivia node, so the ending between its lines is content -- the same as a run
+	/// of <c>//</c> lines, which Roslyn makes one trivia per line but a reader takes as one comment.
 	/// </summary>
 	[Test]
 	public void Reaches_the_text_inside_a_block_comment()
@@ -197,6 +196,53 @@ public sealed class BodyEditTests
 			includeTrivia: true);
 
 		Assert.Contains("/* counts what was\r\n\t   asked for */", body, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A comment written as several <c>//</c> lines, reworded across a line. Roslyn makes each line its
+	/// own trivia, but the run is one comment, so a match crossing its lines is inside it rather than
+	/// across a delimiter -- and this repository's comments are most often exactly that shape.
+	/// </summary>
+	[Test]
+	public void Rewords_a_comment_written_as_several_line_comments()
+	{
+		var body = BodyEdit.Anchored(
+			"{\r\n\t// counts what is\r\n\t// there\r\n\treturn 1;\r\n}",
+			"what is\n\t// there",
+			"what was\n\t// asked for",
+			includeTrivia: true);
+
+		Assert.Contains("// counts what was\r\n\t// asked for\r\n", body, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// What makes that safe. A match crossing the lines of a <c>//</c> comment crosses their delimiters,
+	/// so a replacement that leaves one out would turn the comment's words into code.
+	/// </summary>
+	[Test]
+	public void Refuses_a_replacement_that_leaves_a_comment_line_without_its_delimiter()
+	{
+		var thrown = Assert.Throws<ArgumentException>(() => BodyEdit.Anchored(
+			"{\r\n\t// counts what is\r\n\t// there\r\n\treturn 1;\r\n}",
+			"what is\n\t// there",
+			"what was\n\tasked for",
+			includeTrivia: true));
+
+		Assert.Contains("'asked for' does not", thrown.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A run ends where the comment does. A match from its last line into the code after it still
+	/// straddles, and so does one across a blank line, which separates two comments for a reader too.
+	/// </summary>
+	[Test]
+	[Arguments("{\r\n\t// one\r\n\t// two\r\n\treturn 1;\r\n}", "two\n\treturn")]
+	[Arguments("{\r\n\t// one\r\n\r\n\t// two\r\n\treturn 1;\r\n}", "one\n\n\t// two")]
+	public void Still_refuses_a_match_that_leaves_the_comment(string body, string find)
+	{
+		var thrown = Assert.Throws<ArgumentException>(() => BodyEdit.Anchored(body, find, "x", includeTrivia: true));
+
+		Assert.Contains("part of a comment and part of the code", thrown.Message, StringComparison.Ordinal);
 	}
 
 	/// <summary>

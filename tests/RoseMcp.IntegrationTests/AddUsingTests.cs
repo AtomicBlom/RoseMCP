@@ -230,6 +230,143 @@ public sealed class AddUsingTests
 			$"System did not come first: {text}");
 	}
 
+	/// <summary>
+	/// A static import is written as the directive it is, reported as one, and verified against the
+	/// tree the file actually holds. Read as a name, the text came out right and the verification
+	/// reported two parse errors against it, under a notice blaming an ambiguity that did not exist.
+	/// </summary>
+	[Test]
+	public async Task Adds_a_static_import_below_the_plain_ones()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AddAsync(session, fixture, "Imports.cs", ["using static System.Math;"]);
+
+		Assert.True(result.Applied);
+		Assert.True(result.Verified);
+		Assert.Equal(["static System.Math"], result.Added);
+		Assert.Empty(result.IntroducedDiagnostics.Where(entry => entry.Id.StartsWith("CS", StringComparison.Ordinal)));
+		Assert.Empty(result.Notices.Where(notice => notice.Contains("ambiguous", StringComparison.Ordinal)));
+
+		var text = await ReadAsync(fixture, "Imports.cs");
+
+		Assert.Contains("using Library.Nested;\r\n\r\nusing static System.Math;\r\n", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Like with like: the plain import of System.Globalization does not cover a static import of a
+	/// type in it, and the static import already here covers itself. The new one joins the front of a
+	/// block the file separates, so the blank line stays above the block rather than splitting it.
+	/// </summary>
+	[Test]
+	public async Task Compares_a_static_import_only_with_static_imports()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AddAsync(
+			session, fixture, "Statics.cs", ["static System.Math", "static System.Globalization.CultureInfo"]);
+
+		Assert.Equal(["static System.Globalization.CultureInfo"], result.Added);
+		Assert.Contains(
+			"static System.Math: already imported here",
+			string.Join(" | ", result.AlreadyInScope),
+			StringComparison.Ordinal);
+
+		var text = await ReadAsync(fixture, "Statics.cs");
+
+		Assert.Contains(
+			"using System.Globalization;\r\n\r\nusing static System.Globalization.CultureInfo;\r\nusing static System.Math;\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>An alias goes after the static block, which is where the IDE's own sort puts one.</summary>
+	[Test]
+	public async Task Adds_an_alias_after_the_static_block()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await AddAsync(session, fixture, "Statics.cs", ["Invariant = System.Globalization.CultureInfo"]);
+
+		Assert.Equal(["Invariant = System.Globalization.CultureInfo"], result.Added);
+
+		var text = await ReadAsync(fixture, "Statics.cs");
+
+		Assert.Contains(
+			"using static System.Math;\r\n\r\nusing Invariant = System.Globalization.CultureInfo;\r\n",
+			text,
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A second alias of a name already taken does not compile, and quietly skipping it leaves the name
+	/// meaning something the caller did not ask for -- so it is refused, and nothing is written.
+	/// </summary>
+	[Test]
+	public async Task Refuses_an_alias_whose_name_is_taken()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Statics.cs");
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(() => AddAsync(
+			session,
+			fixture,
+			"Statics.cs",
+			["Invariant = System.Globalization.CultureInfo", "Invariant = System.Text.Encoding"]));
+
+		Assert.Contains("Invariant already stands for System.Globalization.CultureInfo", thrown.Message, StringComparison.Ordinal);
+		Assert.Equal(before, await ReadAsync(fixture, "Statics.cs"));
+	}
+
+	/// <summary>
+	/// An argument that is not an import is refused by name before the file is touched, including the
+	/// imports beside it that were fine.
+	/// </summary>
+	[Test]
+	public async Task Refuses_an_argument_that_is_not_an_import_before_touching_the_file()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Imports.cs");
+
+		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+			() => AddAsync(session, fixture, "Imports.cs", ["System.Text", "static"]));
+
+		Assert.Contains("'static' is not an import", thrown.Message, StringComparison.Ordinal);
+		Assert.Equal(before, await ReadAsync(fixture, "Imports.cs"));
+	}
+
+	/// <summary>The write tools' usings argument reads imports the same way, static ones included.</summary>
+	[Test]
+	public async Task Imports_a_static_type_in_the_same_call_that_writes_the_code()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public double Rooted(double value) => Sqrt(value);",
+			Usings = ["static System.Math"],
+		});
+
+		Assert.True(result.Applied);
+		Assert.Empty(result.IntroducedDiagnostics);
+		Assert.Equal(0, result.TotalErrorCount);
+		Assert.Contains(result.Notices, notice => notice.Contains("Imported static System.Math", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		Assert.StartsWith("using static System.Math;\r\n", text, StringComparison.Ordinal);
+	}
+
 	private static Task<UsingResult> AddAsync(
 		WorkspaceSession session,
 		FixtureSolution fixture,

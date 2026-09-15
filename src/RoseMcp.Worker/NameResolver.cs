@@ -367,7 +367,7 @@ public static class NameResolver
 
 		if (root is not CompilationUnitSyntax unit || model is null) return _ => null;
 
-		return space => UsingDirectives.AlreadyInScope(unit, model, space, cancellationToken);
+		return space => UsingDirectives.AlreadyInScope(unit, model, ImportDirective.Namespace(space), cancellationToken);
 	}
 
 	/// <summary>

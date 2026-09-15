@@ -137,10 +137,18 @@ public static class AddUsingService
 			yield return $"{verification.ResolvedCount} error(s) went away.";
 		}
 
-		if (verification.Introduced.Count > 0)
-		{
-			yield return "The import made something ambiguous, which is the one way adding one can break a "
-				+ "file. Qualify the name, or use an alias instead.";
-		}
+		if (verification.Introduced.Count == 0) yield break;
+
+		// CS0104 is a type name two imported namespaces both have, CS0121 a call two static imports
+		// both offer, CS0229 a member name two of them share. Anything else was not made by an
+		// ambiguity, and saying it was sends the caller looking for a clash that is not there.
+		string[] ambiguities = ["CS0104", "CS0121", "CS0229"];
+
+		var ambiguous = verification.Introduced.Any(entry => ambiguities.Contains(entry.Id));
+
+		yield return ambiguous
+			? "The import made a name ambiguous, which is the usual way adding one breaks a file. Qualify "
+				+ "the name, or use an alias instead."
+			: "Diagnostics appeared after the import that are not an ambiguity; each is listed with where it is.";
 	}
 }

@@ -58,13 +58,7 @@ public sealed record UsingStyle
 		return null;
 	}
 
-	private static string First(UsingDirectiveSyntax directive)
-	{
-		var name = directive.Name?.ToString() ?? string.Empty;
-		var dot = name.IndexOf('.', StringComparison.Ordinal);
-
-		return dot < 0 ? name : name[..dot];
-	}
+	private static string First(UsingDirectiveSyntax directive) => ImportDirective.From(directive).Group;
 
 	private static bool? Flag(AnalyzerConfigOptions options, string key)
 	{

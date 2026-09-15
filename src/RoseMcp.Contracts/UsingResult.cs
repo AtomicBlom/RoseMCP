@@ -7,11 +7,14 @@ public sealed record UsingResult : WorkspaceMutationResult
 
 	public required string FilePath { get; init; }
 
-	/// <summary>Namespaces written into the file.</summary>
+	/// <summary>
+	/// Imports written into the file: a namespace by name, a static import as <c>static Type</c>, an
+	/// alias as <c>Alias = Target</c>.
+	/// </summary>
 	public required IReadOnlyList<string> Added { get; init; }
 
 	/// <summary>
-	/// Namespaces that needed nothing, each with the reason. Said rather than left out, because
+	/// Imports that needed nothing, each with the reason. Said rather than left out, because
 	/// "already imported here" and "in scope from a global using you cannot see in this file" look
 	/// identical from the outside, and the second is the one that makes a caller doubt the answer.
 	/// </summary>

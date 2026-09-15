@@ -324,12 +324,12 @@ public static class AddFileService
 		var order = Comparer<string>.Create((left, right) => UsingDirectives.Sorts(left, right, systemFirst: true));
 
 		var imports = usings
-			.Select(name => name.Trim().TrimEnd(';'))
-			.Select(name => name.StartsWith("using ", StringComparison.Ordinal) ? name["using ".Length..] : name)
-			.Where(name => name.Length > 0)
-			.Distinct(StringComparer.Ordinal)
-			.Order(order)
-			.Select(name => $"using {name};")
+			.Where(requested => !string.IsNullOrWhiteSpace(requested))
+			.Select(ImportDirective.Parse)
+			.DistinctBy(import => import.Text, StringComparer.Ordinal)
+			.OrderBy(import => import.Kind)
+			.ThenBy(import => import.SortKey, order)
+			.Select(import => $"using {import.Text};")
 			.ToArray();
 
 		_ = project;

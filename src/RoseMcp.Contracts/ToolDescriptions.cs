@@ -93,8 +93,8 @@ public static class ToolDescriptions
 		"Which file, when the name is declared in more than one -- a partial type or member.";
 
 	public const string UsingsArgument =
-		"Namespaces the code needs imported, ensured in the same file. One already in scope is reported, "
-			+ "not added.";
+		"Imports the code needs, ensured in the same file: System.Text, static System.Math, or Json = "
+			+ "System.Text.Json. One already in scope is reported, not added.";
 
 	public const string ProjectFilterArgument = "Limit to one project by name. Defaults to the whole solution.";
 
@@ -203,7 +203,9 @@ public static class ToolDescriptions
 	public const string ArgumentsArgument =
 		"What to pass at existing call sites for a new parameter with no default, as name=expression.";
 
-	public const string NamespacesArgument = "Namespaces to ensure, as System.Text or using System.Text;.";
+	public const string NamespacesArgument =
+		"Imports to ensure: a namespace as System.Text, a type's static members as static System.Math, or an "
+			+ "alias as Json = System.Text.Json. The using keyword and semicolon are optional.";
 
 	public const string MoveMemberArgument =
 		"The member to move, as Namespace.Type.Member. Add a parameter list to pick an overload.";
@@ -213,7 +215,8 @@ public static class ToolDescriptions
 	public const string NewFilePathArgument = "Where the file goes. Absolute, or relative to the solution.";
 
 	public const string ExtraUsingsArgument =
-		"Namespaces to import on top of whatever the code turns out to need.";
+		"Imports on top of whatever the code turns out to need: System.Text, static System.Math, or Json = "
+			+ "System.Text.Json.";
 
 	public const string NewFileProjectArgument =
 		"Which project compiles it, where the path is inside more than one project's directory.";
@@ -722,15 +725,17 @@ public static class ToolDescriptions
 		""";
 
 	public const string AddUsing = """
-		Ensures a file imports the namespaces named, placed by the file's own ordering and grouping so
-		IDE0055 stays quiet. Use it rather than editing the import block, which guesses at sort
-		position, whether System comes first, whether groups are separated and where a file header has
-		to stay. Refuses one already in scope -- a global using, an implicit using from the SDK, or the
-		file's own namespace -- since importing it again is IDE0005. Both of those are build errors
-		where the analyzers are turned up, which is where this matters. Reports what was added, what
-		was already covered and why, and how many errors the import resolved. Prefer the usings
-		argument on rose_replace_member, rose_replace_body and rose_add_member when you are writing the
-		code; this is for code that arrived some other way.
+		Ensures a file has the imports named -- namespaces, static imports of a type, and aliases --
+		placed by the file's own ordering and grouping so IDE0055 stays quiet. Use it
+		rather than editing the import block, which guesses at sort position, whether System comes
+		first, whether groups are separated and where a file header has to stay. Refuses one already in scope -- a
+		global using, an implicit using from the SDK, or the file's own namespace -- since importing it
+		again is IDE0005; a using of a namespace does not cover a static import of a type inside it.
+		Both of those are build errors where the analyzers are turned up, which is where this matters.
+		An argument that is not exactly one import is refused before the file is touched. Reports what
+		was added, what was already covered and why, and how many errors the import resolved. Prefer
+		the usings argument on rose_replace_member, rose_replace_body and rose_add_member when you are
+		writing the code; this is for code that arrived some other way.
 		""";
 
 	public const string MoveMember = """

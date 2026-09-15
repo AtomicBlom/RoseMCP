@@ -29,16 +29,4 @@
     <ProjectReference Include="..\RoseMcp.Ui.Core\RoseMcp.Ui.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- The icon every RoseMCP app shows, kept here so the pixels exist once. Content on a
-         referenced project flows into each referencing app's output, under a folder named for this
-         project: RoseMcp.Ui\Assets\. That is the same shape as the ms-appx URI its XAML uses, and
-         it is not worth fighting. An app must not have to know it, so RoseUiAssets is the one place
-         that spells the path, and Link or TargetPath on the app side does not move it. -->
-    <None Remove="Assets\**" />
-    <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
-
-
 </Project>

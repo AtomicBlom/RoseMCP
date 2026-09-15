@@ -87,7 +87,7 @@ public sealed partial class MainWindow : Window
 		WindowChrome.ApplySize(this, InitialWidth, InitialHeight, MinimumWidth, MinimumHeight);
 		// The lens rather than the rose: this window and the tray sit side by side in the taskbar, and
 		// the icon is what somebody picks between them by.
-		WindowChrome.ApplyIcon(this, RoseUiAssets.InspectorIconFile, RoseUiAssets.InspectorMarkFile, TitleMark);
+		WindowChrome.ApplyIcon(this, "rose-inspector.ico", "rose-inspector.png", TitleMark);
 
 		Events.Attach(_client, Report);
 		Breakpoints.Attach(_client, Report);

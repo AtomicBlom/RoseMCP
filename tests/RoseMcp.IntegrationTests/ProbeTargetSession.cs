@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -12,8 +13,10 @@ using static RoseMcp.IntegrationTests.TestToolchain;
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
-/// Starting the plain .NET probe target, giving it a session manager, and waiting for one of its
-/// debug events: the three things every test that debugs something other than a XAML app needs.
+/// Starting the plain .NET probe target, giving it a session manager, waiting for one of its debug
+/// events, and the few pieces every live-app suite shares whatever it debugs: a logger that records
+/// what the host said, a process start, and the one rule that decides whether a probe app which will
+/// not come up is a skip or a failure.
 /// <para>
 /// Shared rather than copied into each test class, because the copies drift and each one drifts
 /// silently. The probe's output path moves with the configuration and the target framework, so a
@@ -87,5 +90,97 @@ internal static class ProbeTargetSession
 		}
 
 		return null;
+	}
+
+	internal static Process StartProcess(string path)
+	{
+		var start = new ProcessStartInfo(path)
+		{
+			UseShellExecute = false,
+			WorkingDirectory = Path.GetDirectoryName(path),
+		};
+
+		return Process.Start(start) ?? throw new InvalidOperationException($"Could not start {path}.");
+	}
+
+
+	/// <summary>
+	/// A logger factory that keeps every message, for the assertions that can only be made about which
+	/// path the work took rather than about the answer it produced.
+	/// <para>
+	/// The XAML channel is the case in point: the pipe and the work folder return the same tree, so a
+	/// test that asserts the tree passes whichever served it. What separates them is a sentence in the
+	/// log.
+	/// </para>
+	/// </summary>
+	internal sealed class RecordingLoggerFactory : ILoggerFactory
+	{
+		private readonly List<string> _lines = [];
+
+		public IReadOnlyList<string> Lines
+		{
+			get
+			{
+				lock (_lines) return [.. _lines];
+			}
+		}
+
+		public void AddProvider(ILoggerProvider provider)
+		{
+		}
+
+		public ILogger CreateLogger(string categoryName) => new Recorder(_lines);
+
+		public void Dispose()
+		{
+		}
+
+		private sealed class Recorder(List<string> lines) : ILogger
+		{
+			public IDisposable? BeginScope<TState>(TState state)
+				where TState : notnull => null;
+
+			public bool IsEnabled(LogLevel logLevel) => true;
+
+			public void Log<TState>(
+				LogLevel logLevel,
+				EventId eventId,
+				TState state,
+				Exception? exception,
+				Func<TState, Exception?, string> formatter)
+			{
+				var line = formatter(state, exception);
+
+				lock (lines) lines.Add(line);
+			}
+		}
+	}
+
+	/// <summary>
+	/// Skips or fails, on the one question that separates the two: has this app ever come up in this
+	/// run?
+	/// <para>
+	/// A machine that cannot run these tests never produces a first success and goes on skipping,
+	/// which is what keeps a laptop without the WinUI tooling, or one where the Windows App Runtime
+	/// never bootstraps (#180), out of the red. A run that produced a first success and then could not
+	/// is reporting something real, and a skip there is an acceptance test reading as green while it
+	/// did not run.
+	/// </para>
+	/// </summary>
+	/// <param name="hasLaunched">Whether the fixture has seen its app come up in this run.</param>
+	/// <param name="reason">What happened, said the same way either side of the rule.</param>
+	[DoesNotReturn]
+	internal static void Unavailable(bool hasLaunched, string reason)
+	{
+		if (hasLaunched)
+		{
+			Assert.Fail($"{reason} It came up earlier in this run, so this is a failure rather than a limit of this machine.");
+		}
+
+		Skip.Test(reason);
+
+		// Skip.Test throws, and the compiler cannot know that from an attribute the framework does not
+		// carry. Marking this method as not returning is what lets the callers read as guards.
+		throw new InvalidOperationException(reason);
 	}
 }

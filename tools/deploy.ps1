@@ -9,9 +9,11 @@
                is deploying is often not whoever changed the code, and a suite that tests none of
                their work still costs them the wait -- so the gate is `dotnet test` before a commit
                and CI on every push, both of which run where somebody can act on a failure. The
-               tray, and any stdio server running from the install, have to be stopped before
-               publishing -- a running exe cannot be overwritten -- so this costs an /mcp reconnect
-               and a solution reload.
+               whole tree is published into a stage first, with the running instance untouched;
+               only once that succeeds are the tray and any stdio server running from the install
+               stopped -- a running exe cannot be overwritten -- the stage copied over, and the
+               tray restarted. So the outage is a copy rather than a build, a failed build leaves
+               the old instance serving, and it still costs an /mcp reconnect and a solution reload.
 
       package  Build the release artifacts, one archive per runtime. Windows gets a zip carrying the
                broker, the worker, the tray, and a live-app debug host for every architecture that
@@ -484,6 +486,16 @@ if ($Mode -eq 'promote')
 {
     if ($Runtime.Count -ne 1) { throw 'promote takes a single runtime' }
 
+    # Build everything before touching the running instance. Publishing straight into the install
+    # means stopping it first, so Rose is unavailable for the length of the build -- and a build that
+    # fails partway leaves nothing running and a half-written install that may not start. A fresh
+    # stage, because `publish -o` never removes what it does not write and a leftover from an earlier
+    # promote would otherwise be copied into the install as though this build had produced it.
+    $stage = "$repo/artifacts/promote/$($Runtime[0])"
+    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+
+    Publish-Tree -Rid $Runtime[0] -Into $stage
+
     # Everything about stopping and restarting is about the tray and the stdio servers holding the
     # install's files open, and neither exists off Windows: there is nothing to stop, and nothing to
     # overwrite while it runs.
@@ -491,7 +503,9 @@ if ($Mode -eq 'promote')
     $wasRunning = if ($onWindows) { Stop-Tray } else { $false }
     $stoppedServers = if ($onWindows) { Stop-Servers } else { $false }
 
-    Publish-Tree -Rid $Runtime[0] -Into $Destination
+    Write-Host "  copying $stage -> $Destination"
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Copy-Item -Path "$stage/*" -Destination $Destination -Recurse -Force
 
     if (-not (Test-WindowsRid $Runtime[0])) { Write-Host '  no tray to restart on this platform' }
     elseif ($NoRestart) { Write-Host '  not restarting (-NoRestart)' }

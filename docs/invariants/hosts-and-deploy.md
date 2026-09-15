@@ -67,3 +67,10 @@ Read before changing `XamlStackModules`, architecture detection, `tools/deploy.p
   `promote` warns, `package` refuses, and CI builds all six combinations and fails on any non-zero
   exit -- because nothing else in CI compiles a line of the C++, and the first thing to notice used to
   be a release failing to package, after the tag was already cut.
+- **`promote` builds the whole tree before it stops anything.** Every publish, and every native
+  provider, goes into `artifacts/promote/<rid>` while the running instance keeps serving; only then
+  are the inspector, tray and stdio servers stopped, the stage copied over the install, and the tray
+  restarted. Stopping first means Rose is gone for the length of a build, and a build that fails
+  partway leaves nothing running and a half-written install that may not start. Keep anything that
+  can fail -- a publish, a provider build, a layout check -- ahead of the first `Stop-*` call; after
+  it, the only work is a copy.

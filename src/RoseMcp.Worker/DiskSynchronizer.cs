@@ -50,11 +50,43 @@ public sealed class DiskSynchronizer
 	/// </summary>
 	private readonly HashSet<string> _declined = new(StringComparer.OrdinalIgnoreCase);
 
-	/// <summary>Rebuilds the tracking table from a freshly loaded solution.</summary>
-	public void Reset(Solution solution, string solutionPath)
+	/// <summary>
+	/// Whether any project in the loaded solution could not be evaluated, so what it imports is unknown.
+	/// </summary>
+	private bool _anyUnevaluated;
+
+	/// <summary>
+	/// Places a build file was absent at load, where one appearing would change how a project evaluates.
+	/// Looked at again on every read, so an appearance is noticed whether or not the watcher heard it.
+	/// </summary>
+	private readonly HashSet<string> _absentBuildFiles = new(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>Whether a project in the loaded solution could not be evaluated, so what it imports is unknown.</summary>
+	public bool AnyProjectUnevaluated => _anyUnevaluated;
+
+	/// <summary>
+	/// Rebuilds the tracking table from a freshly loaded solution.
+	/// <para>
+	/// The build files tracked are the ones that load actually read: every project's imports as its
+	/// evaluation resolved them, plus the files that influence evaluation without being imported --
+	/// <c>global.json</c>, <c>nuget.config</c>, <c>packages.config</c> and <c>rosemcp.json</c> among them --
+	/// found walking up from each project and from the solution. Walking from each project as well as the
+	/// solution is what reaches a <c>Directory.Build.props</c> nearer a project than its solution, and it is
+	/// all that watches the build files of a project whose evaluation failed.
+	/// </para>
+	/// <para>
+	/// The same walk remembers every place one of those files is absent, so a read can notice one appearing
+	/// by looking rather than by trusting the watcher to have heard it.
+	/// </para>
+	/// </summary>
+	/// <param name="solution">The solution as loaded.</param>
+	/// <param name="solutionPath">The solution file, which is a build input in its own right.</param>
+	/// <param name="inputs">What each project's evaluation imported.</param>
+	public void Reset(Solution solution, string solutionPath, EvaluationInputs inputs)
 	{
 		_documents.Clear();
 		_structuralFiles.Clear();
+		_absentBuildFiles.Clear();
 		_globs.Clear();
 		_declined.Clear();
 
@@ -64,11 +96,52 @@ public sealed class DiskSynchronizer
 			Track(project.AdditionalDocuments, TrackedDocumentKind.Additional);
 			Track(project.AnalyzerConfigDocuments, TrackedDocumentKind.AnalyzerConfig);
 
-			if (project.FilePath is { Length: > 0 } projectFile) TrackStructural(projectFile);
+			if (project.FilePath is not { Length: > 0 } projectFile) continue;
+
+			TrackStructural(projectFile);
+			TrackOrAwait(BuildFileLocations(projectFile));
+			TrackOrAwait([Path.Combine(Path.GetDirectoryName(Path.GetFullPath(projectFile)) ?? ".", "packages.config")]);
 		}
 
+		var solutionDirectory = Path.GetDirectoryName(Path.GetFullPath(solutionPath)) ?? ".";
+
 		TrackStructural(solutionPath);
-		foreach (var influence in AmbientFiles(solutionPath)) TrackStructural(influence);
+		TrackOrAwait(BuildFileLocations(solutionPath));
+		TrackOrAwait(
+		[
+			Path.Combine(solutionDirectory, WorkspaceConfigFile.FileName),
+			Path.Combine(solutionDirectory, WorkspaceConfigFile.NameFor(solutionPath)),
+		]);
+
+		foreach (var import in inputs.Files) TrackStructural(import);
+
+		_anyUnevaluated = inputs.Unevaluated.Count > 0;
+	}
+
+	/// <summary>
+	/// Tracks each of these build files that exists, and remembers where each absent one would go, so its
+	/// appearing is noticed by the next read without the watcher.
+	/// <para>
+	/// An existing <c>.editorconfig</c> is left to the sweep, which already tracks it as an analyzer config
+	/// document and patches an edit in. Only one appearing is a reason to reload, because which of them a
+	/// project reads is fixed when it evaluates.
+	/// </para>
+	/// </summary>
+	private void TrackOrAwait(IEnumerable<string> locations)
+	{
+		foreach (var location in locations)
+		{
+			var path = Path.GetFullPath(location);
+
+			if (!File.Exists(path))
+			{
+				_absentBuildFiles.Add(path);
+				continue;
+			}
+
+			var configuresAnalyzers = string.Equals(Path.GetFileName(path), ".editorconfig", StringComparison.OrdinalIgnoreCase);
+			if (!configuresAnalyzers) TrackStructural(path);
+		}
 	}
 
 	/// <summary>
@@ -124,7 +197,9 @@ public sealed class DiskSynchronizer
 	{
 		// The watcher's list is used for one thing only: a project or build file appearing, which
 		// nothing here can patch in and which a directory walk for source files would not see.
-		var structural = created.Any(IsStructural);
+		// Found twice over: by the watcher, and by looking again at every place a build file was absent at load --
+		// which is what makes an appearance the watcher never heard as good as one it did.
+		var structural = created.Any(BuildInfluencingFiles.IsBuildFile) || _absentBuildFiles.Any(File.Exists);
 
 		var update = new DiskTrackerUpdate();
 		var added = new List<string>();
@@ -181,6 +256,25 @@ public sealed class DiskSynchronizer
 			NotInTheBuild = notInTheBuild,
 			Tracker = update,
 		};
+	}
+
+	/// <summary>
+	/// Whether a build file changed that the sweep does not track but a project could import, when some
+	/// project could not be evaluated.
+	/// <para>
+	/// A project that evaluated has its imports tracked, and the sweep stats each of them, so a change to
+	/// any other build file cannot change how it builds. A project that did not evaluate has no known
+	/// imports, so any <c>.props</c> or <c>.targets</c> changing might be one of them, and reloading is the
+	/// only answer that cannot be stale.
+	/// </para>
+	/// </summary>
+	/// <param name="changed">Build files the watcher saw change or go away.</param>
+	public bool UntrackedImportChanged(IReadOnlyCollection<string> changed)
+	{
+		if (!_anyUnevaluated) return false;
+
+		return changed.Any(path =>
+			BuildInfluencingFiles.IsImportable(path) && !_structuralFiles.ContainsKey(Path.GetFullPath(path)));
 	}
 
 	/// <summary>
@@ -446,19 +540,6 @@ public sealed class DiskSynchronizer
 		return globs;
 	}
 
-	/// <summary>
-	/// Files that change how a project evaluates rather than what is in it. None of them can be
-	/// patched into a snapshot, and an .editorconfig is among them because it decides what the
-	/// analyzers and the formatter do to every file beneath it.
-	/// </summary>
-	private static bool IsStructural(string path)
-	{
-		if (StructuralNames.Contains(Path.GetFileName(path))) return true;
-
-		return Path.GetExtension(path).ToLowerInvariant() is
-			".csproj" or ".props" or ".targets" or ".sln" or ".slnx" or ".slnf";
-	}
-
 	private static bool IsSource(string path) =>
 		string.Equals(Path.GetExtension(path), ".cs", StringComparison.OrdinalIgnoreCase);
 
@@ -527,20 +608,20 @@ public sealed class DiskSynchronizer
 	private void TrackStructural(string path) => _structuralFiles[Path.GetFullPath(path)] = FileStamp.For(path);
 
 	/// <summary>
-	/// Files that change how projects evaluate without appearing in any project, from the solution's
-	/// own directory up. Editing <c>Directory.Packages.props</c> rewrites the reference graph while
-	/// every csproj stays untouched.
+	/// Where a build file that affects how <paramref name="file"/>'s project evaluates can be, from its
+	/// directory up, whether or not one is there: every <see cref="BuildInfluencingFiles.Ambient"/> name, and
+	/// <c>.editorconfig</c>. Editing <c>Directory.Packages.props</c> rewrites the reference graph while every
+	/// csproj stays untouched, and <c>global.json</c> and <c>nuget.config</c> are read without being imported
+	/// at all, so an evaluation's import list cannot stand in for this walk.
 	/// </summary>
-	private static IEnumerable<string> AmbientFiles(string solutionPath)
+	private static IEnumerable<string> BuildFileLocations(string file)
 	{
-		var directory = Path.GetDirectoryName(Path.GetFullPath(solutionPath));
+		var directory = Path.GetDirectoryName(Path.GetFullPath(file));
 		while (!string.IsNullOrEmpty(directory))
 		{
-			foreach (var name in BuildInfluencingFiles.Ambient)
-			{
-				var candidate = Path.Combine(directory, name);
-				if (File.Exists(candidate)) yield return candidate;
-			}
+			foreach (var name in BuildInfluencingFiles.Ambient) yield return Path.Combine(directory, name);
+
+			yield return Path.Combine(directory, ".editorconfig");
 
 			directory = Path.GetDirectoryName(directory);
 		}

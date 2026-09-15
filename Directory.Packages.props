@@ -16,6 +16,16 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.9.0" />
   </ItemGroup>
 
+  <ItemGroup Label="MSBuild evaluation (worker)">
+    <!-- Compiled against and never shipped. The worker evaluates projects with the SDK's own MSBuild,
+         found at run time by the locator, so every reference to the first two sets
+         ExcludeAssets="runtime". Framework matches the version Roslyn's MSBuild workspace already
+         depends on. -->
+    <PackageVersion Include="Microsoft.Build" Version="17.11.48" />
+    <PackageVersion Include="Microsoft.Build.Framework" Version="17.11.48" />
+    <PackageVersion Include="Microsoft.Build.Locator" Version="1.6.1" />
+  </ItemGroup>
+
   <ItemGroup Label="Hosting">
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
   </ItemGroup>

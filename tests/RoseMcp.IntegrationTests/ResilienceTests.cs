@@ -8,9 +8,15 @@ namespace RoseMcp.IntegrationTests;
 /// </summary>
 public sealed class ResilienceTests
 {
+	/// <summary>
+	/// A branch switch that touches only source is absorbed, not reloaded. The switch rewrites HEAD and the
+	/// files that differ, and the barrier reads those files like any other change -- so the read after the
+	/// switch sees the other branch's code and pays a design-time build of nothing.
+	/// </summary>
 	[Test]
 	public async Task Picks_up_a_branch_switch_that_rewrites_a_source_file()
 	{
+		var token = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		var calculator = fixture.Path("Simple", "Core", "Calculator.cs");
 
@@ -31,7 +37,7 @@ public sealed class ResilienceTests
 				+ "\tpublic static int Add(int left, int right) => left + right;" + Environment.NewLine
 				+ "\tpublic static int Subtract(int left, int right) => left - right;" + Environment.NewLine
 				+ "}",
-			TestContext.Current!.Execution.CancellationToken);
+			token);
 		Git(fixture.Root, "commit", "-qam", "other");
 		Git(fixture.Root, "checkout", "-q", "main");
 
@@ -43,6 +49,13 @@ public sealed class ResilienceTests
 
 		// Switch branches entirely behind the workspace's back.
 		Git(fixture.Root, "checkout", "-q", "other");
+
+		// Long enough for the watcher to have heard HEAD being rewritten, which is the event that could be
+		// mistaken for a reason to reload.
+		await Task.Delay(TimeSpan.FromSeconds(1), token);
+
+		var switched = await session.ReadAsync(token);
+		Assert.DoesNotContain(switched.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var onOther = await SourceOfAsync(session, "Calculator.cs");
 		Assert.Contains("Subtract", onOther, StringComparison.Ordinal);

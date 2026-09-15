@@ -1,57 +1,15 @@
 namespace RoseMcp.UnitTests;
 
 /// <summary>
-/// Which git writes mean the working tree was replaced, and where the git directory is.
+/// Where the git directory is, what counts as inside it, and when git is writing the tree.
 /// <para>
-/// Both rules decide whether a call pays a full design-time build of every project, so the failure
-/// they guard against is not a wrong answer but a solution that reloads itself for no reason. An
-/// idle, untouched checkout was doing exactly that, because a background fetch writes files named
-/// HEAD and the rule matched on the file name.
+/// The first two decide which events the watcher throws away and whether a worktree can be asked about
+/// git at all; the last decides whether a read waits. The lock is the expensive one to get wrong: a marker
+/// that outlives its operation makes every read wait out the settle timeout.
 /// </para>
 /// </summary>
 public sealed class GitDirectoryTests
 {
-	/// <summary>
-	/// The two files a background fetch writes. Neither touches a line of source, and matching by
-	/// file name treats both as a checkout -- which is what made a repository nobody was editing
-	/// reload every time it was asked a question.
-	/// </summary>
-	[Test]
-	[Arguments("refs/remotes/origin/HEAD")]
-	[Arguments("logs/refs/remotes/origin/HEAD")]
-	[Arguments("logs/HEAD")]
-	public void A_fetch_writing_a_ref_named_head_is_not_a_tree_replacement(string relative)
-	{
-		using var checkout = Checkout.Ordinary();
-
-		Assert.False(
-			checkout.Git.IsTreeReplaced(checkout.InGitDirectory(relative)),
-			$"{relative} is written by a fetch, which changes no source");
-	}
-
-	/// <summary>
-	/// The index is rewritten by a plain <c>git status</c>, to refresh its stat cache. Every IDE git
-	/// integration runs that continuously and runs it in reaction to file writes, so counting it
-	/// would let an agent editing C# drive its own reloads.
-	/// </summary>
-	[Test]
-	public void A_status_refreshing_the_index_is_not_a_tree_replacement()
-	{
-		using var checkout = Checkout.Ordinary();
-
-		Assert.False(checkout.Git.IsTreeReplaced(checkout.InGitDirectory("index")));
-	}
-
-	/// <summary>
-	/// The branch pointer itself, which is the one file a checkout rewrites and a commit does not.
-	/// </summary>
-	[Test]
-	public void The_branch_pointer_is_a_tree_replacement()
-	{
-		using var checkout = Checkout.Ordinary();
-
-		Assert.True(checkout.Git.IsTreeReplaced(checkout.InGitDirectory("HEAD")));
-	}
 
 	/// <summary>
 	/// A sibling whose name merely starts with the git directory's is out in the working tree. Held

@@ -1,34 +1,21 @@
 using Microsoft.Extensions.Logging;
+using RoseMcp.Solutions;
 
 namespace RoseMcp.Worker;
 
 /// <summary>
-/// Watches the solution tree and tells the session when incremental absorption has stopped being
-/// trustworthy.
+/// Watches the solution tree for the little a read barrier cannot find for itself.
 /// <para>
-/// The watcher is an optimisation, not the correctness mechanism -- the read barrier's stat sweep
-/// is. What the watcher adds is the ability to notice the cases the sweep cannot see cheaply: files
-/// appearing rather than changing, and bulk rewrites where FileSystemWatcher drops events out of
-/// its buffer precisely when the most has changed.
+/// The watcher is an optimisation, not the correctness mechanism -- the read barrier's stat sweep,
+/// directory walk and build-file probes are. Between them they find every tracked document that changed,
+/// every source file that appeared and every build file that appeared, however many and however they came
+/// to change, so the watcher neither counts events, remembers source files, nor treats anything git does
+/// as a signal. What it adds is a build file changing that the sweep does not track, and whether its own
+/// event stream has holes in it.
 /// </para>
 /// </summary>
 public sealed class SolutionWatcher : IDisposable
 {
-	/// <summary>
-	/// Above this many events in one window, stop trusting the individual events. A branch switch
-	/// or a bulk codegen run produces far more than this and overflows the watcher buffer anyway.
-	/// </summary>
-	private const int BulkChangeThreshold = 50;
-
-	/// <summary>
-	/// How many appearances are worth remembering individually. A trickle of new files never trips
-	/// the bulk threshold, which is a window rather than a total, so the list needs a ceiling of its
-	/// own -- and past a couple of hundred new files, reloading is cheaper than patching them in.
-	/// </summary>
-	private const int CreationsRemembered = 200;
-
-	private static readonly TimeSpan BulkChangeWindow = TimeSpan.FromMilliseconds(500);
-
 	/// <summary>
 	/// How long a write of ours goes on suppressing events for its file. Long enough to cover the
 	/// several events one rewrite raises, and short enough that a later external edit to the same
@@ -49,8 +36,6 @@ public sealed class SolutionWatcher : IDisposable
 
 	private FileSystemWatcher? _watcher;
 	private WatchSignal _pending;
-	private int _eventsInWindow;
-	private DateTime _windowStartedUtc;
 
 	public SolutionWatcher(string solutionPath, ILogger<SolutionWatcher> logger)
 	{
@@ -67,19 +52,18 @@ public sealed class SolutionWatcher : IDisposable
 	/// <para>
 	/// Held for a window rather than dropped on the first matching event, because one rewrite raises
 	/// more than one event: with this watcher's NotifyFilter, ten rewrites of existing files raise
-	/// eighteen. Dropping on the first leaks the rest, which then count toward the bulk-change
-	/// threshold and force the very reload the suppression exists to avoid. Ignoring a genuine
-	/// external write to the same file inside the window costs nothing, because the stat sweep is
-	/// what makes a read correct and the watcher only decides how soon it hears.
+	/// eighteen. Dropping on the first leaks the rest back as somebody else's edits. Ignoring a genuine
+	/// external write to the same file inside the window costs nothing, because the stat sweep is what
+	/// makes a read correct and the watcher only decides how soon it hears.
 	/// </para>
 	/// </summary>
 	private readonly Dictionary<string, DateTime> _selfWrites = new(StringComparer.OrdinalIgnoreCase);
 
-	/// <summary>
-	/// Files seen appearing since the last barrier. Bounded: past <see cref="CreationsRemembered"/>
-	/// the list stops being the cheaper answer and a reload is asked for instead.
-	/// </summary>
-	private readonly HashSet<string> _created = new(StringComparer.OrdinalIgnoreCase);
+	/// <summary>Build files seen appearing since the last barrier, one renamed into place included.</summary>
+	private readonly HashSet<string> _appeared = new(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>Build files seen changing or going away since the last barrier, one renamed away included.</summary>
+	private readonly HashSet<string> _changed = new(StringComparer.OrdinalIgnoreCase);
 
 	/// <summary>
 	/// Records that the write about to land on this path is ours, so it is absorbed silently rather
@@ -105,16 +89,18 @@ public sealed class SolutionWatcher : IDisposable
 		lock (_gate)
 		{
 			var signal = _pending;
-			var created = _created.Count == 0 ? [] : _created.ToArray();
+			IReadOnlyList<string> appeared = _appeared.Count == 0 ? [] : [.. _appeared];
+			IReadOnlyList<string> changed = _changed.Count == 0 ? [] : [.. _changed];
 
 			_pending = WatchSignal.None;
-			_created.Clear();
+			_appeared.Clear();
+			_changed.Clear();
 			PruneSelfWrites();
 
 			if (!File.Exists(_solutionPath)) signal |= WatchSignal.SolutionMissing;
 			if (GitOperationInFlight()) signal |= WatchSignal.GitOperationInFlight;
 
-			return new WatchReport { Signal = signal, Created = created };
+			return new WatchReport { Signal = signal, BuildFilesAppeared = appeared, BuildFilesChanged = changed };
 		}
 	}
 
@@ -146,7 +132,7 @@ public sealed class SolutionWatcher : IDisposable
 		{
 			// Without a watcher every read still reconciles; it just costs a full sweep each time.
 			_logger.LogWarning(exception, "Could not watch {Root}; falling back to stat sweeps alone.", _root);
-			Signal(WatchSignal.FullResyncRequired);
+			Signal(WatchSignal.EventsLost);
 		}
 	}
 
@@ -158,36 +144,33 @@ public sealed class SolutionWatcher : IDisposable
 		{
 			if (IsSelfWrite(e.FullPath)) return;
 
-			var now = DateTime.UtcNow;
-			if (now - _windowStartedUtc > BulkChangeWindow)
-			{
-				_windowStartedUtc = now;
-				_eventsInWindow = 0;
-			}
-
-			_eventsInWindow++;
 			_pending |= WatchSignal.FileChanges;
+			Record(e);
+		}
+	}
 
-			// A rename is an appearance at the new path; the old one is dropped by the stat sweep,
-			// which finds its file gone.
-			if (e.ChangeType is WatcherChangeTypes.Created or WatcherChangeTypes.Renamed)
-			{
-				if (_created.Count >= CreationsRemembered)
-				{
-					_created.Clear();
-					_pending |= WatchSignal.FullResyncRequired;
-				}
-				else
-				{
-					_created.Add(e.FullPath);
-				}
-			}
+	/// <summary>
+	/// Remembers what happened to a build file, and nothing for any other kind of file. Called under the
+	/// gate. A rename is an appearance at its new path and a removal at its old one, since either name
+	/// can be a build file on its own.
+	/// </summary>
+	private void Record(FileSystemEventArgs e)
+	{
+		if (e is RenamedEventArgs renamed && BuildInfluencingFiles.IsBuildFile(renamed.OldFullPath))
+		{
+			_changed.Add(renamed.OldFullPath);
+		}
 
-			// A checkout rewrites HEAD, which says the working tree is being replaced wholesale
-			// rather than edited, and individual events stop being meaningful.
-			var treeReplaced = _gitDirectory?.IsTreeReplaced(e.FullPath) ?? false;
+		if (!BuildInfluencingFiles.IsBuildFile(e.FullPath)) return;
 
-			if (_eventsInWindow > BulkChangeThreshold || treeReplaced) _pending |= WatchSignal.FullResyncRequired;
+		var appeared = e.ChangeType is WatcherChangeTypes.Created or WatcherChangeTypes.Renamed;
+		if (appeared)
+		{
+			_appeared.Add(e.FullPath);
+		}
+		else
+		{
+			_changed.Add(e.FullPath);
 		}
 	}
 
@@ -223,13 +206,15 @@ public sealed class SolutionWatcher : IDisposable
 	}
 
 	/// <summary>
-	/// Raised when the buffer overflows or the watched directory disappears. Either way the event
-	/// stream has holes in it, so nothing incremental can be trusted until a full reconcile.
+	/// Raised when the buffer overflows or the watched directory disappears. Either way the event stream
+	/// has holes in it. Every read stats, walks and probes regardless, so the holes cost only what the
+	/// watcher's own list answers: a build file changing that a project which could not be evaluated might
+	/// import.
 	/// </summary>
 	private void OnError(object sender, ErrorEventArgs e)
 	{
-		_logger.LogWarning(e.GetException(), "The file watcher failed; forcing a full resync.");
-		Signal(WatchSignal.FullResyncRequired);
+		_logger.LogWarning(e.GetException(), "The file watcher lost events; the next read cannot rely on what it heard.");
+		Signal(WatchSignal.EventsLost);
 
 		// A deleted root kills the watcher permanently, so rebuild it if the root is still there.
 		if (!Directory.Exists(_root)) return;
@@ -254,15 +239,17 @@ public sealed class SolutionWatcher : IDisposable
 	private bool GitOperationInFlight() => _gitDirectory?.OperationInFlight() ?? false;
 
 	/// <summary>
-	/// Paths that never feed the snapshot. Build output churns constantly and would trip the
-	/// bulk-change threshold on its own.
+	/// Paths that never feed the snapshot. Build output churns constantly and says nothing about the
+	/// solution, so its events are not worth taking the gate for.
 	/// </summary>
 	private bool Ignorable(string path)
 	{
 		// Restore rewriting the assets file means the reference graph moved, so that one counts.
 		if (path.EndsWith("project.assets.json", StringComparison.OrdinalIgnoreCase)) return false;
 
-		if (_gitDirectory is { } git && git.Contains(path)) return !git.IsTreeReplaced(path);
+		// Everything git writes to its own directory, HEAD included. A branch switch is its working-tree files
+		// changing, and those are heard, statted and walked like any other change.
+		if (_gitDirectory?.Contains(path) ?? false) return true;
 
 		foreach (var segment in path.Split(SeparatorChars, StringSplitOptions.RemoveEmptyEntries))
 		{

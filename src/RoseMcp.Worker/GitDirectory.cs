@@ -1,25 +1,27 @@
 namespace RoseMcp.Worker;
 
 /// <summary>
-/// A checkout's git directory, and the two questions the read barrier asks of it.
+/// A checkout's git directory, and what the read barrier and the watcher need of it: whether git is
+/// writing the tree right now, and whether a path is inside the git directory rather than out in the
+/// working tree.
 /// <para>
 /// Separate from <see cref="SolutionWatcher"/> because both rules are subtle enough to need tests of
-/// their own, and because getting either wrong is expensive rather than merely wrong. A false tree
-/// replacement reloads every project in the solution, and a git directory that cannot be found
-/// removes the guard that stops a barrier reconciling half of one branch and half of another.
+/// their own. A git directory that cannot be found removes the guard that stops a barrier reconciling half
+/// of one branch and half of another, and a lock thought held when it is not makes every read wait out the
+/// settle timeout.
+/// </para>
+/// <para>
+/// Nothing here says a branch was switched. A switch is its files changing, and the barrier already reads
+/// every change it needs -- tracked documents by their stamps, new source files by walking, and build
+/// files by their stamps or by their appearing -- so a switch that touches only source is absorbed, and one
+/// that moves a project or an import reloads for that reason and no other.
 /// </para>
 /// </summary>
 public sealed class GitDirectory
 {
 	private const string GitFileMarker = "gitdir:";
 
-	private readonly string _headPath;
-
-	private GitDirectory(string fullPath)
-	{
-		FullPath = Path.GetFullPath(fullPath);
-		_headPath = Path.Combine(FullPath, "HEAD");
-	}
+	private GitDirectory(string fullPath) => FullPath = Path.GetFullPath(fullPath);
 
 	/// <summary>The absolute path of the directory holding HEAD, the index and the refs.</summary>
 	public string FullPath { get; }
@@ -56,26 +58,6 @@ public sealed class GitDirectory
 	/// <summary>Whether a path is inside the git directory rather than out in the working tree.</summary>
 	public bool Contains(string path) =>
 		path.StartsWith(FullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-
-	/// <summary>
-	/// Whether writing this path says the working tree is being replaced wholesale, which no snapshot
-	/// can represent and only a reload can absorb.
-	/// <para>
-	/// HEAD alone, matched as a whole path. Per git operation: a checkout rewrites HEAD, a commit does
-	/// not, and a plain <c>git status</c> rewrites only the index -- to refresh its stat cache, which
-	/// says nothing about the working tree. Every IDE git integration runs that continuously and runs
-	/// it in reaction to file writes, so treating the index as a marker lets an agent editing C# drive
-	/// its own reloads.
-	/// </para>
-	/// <para>
-	/// Matching by file name instead fires on <c>refs/remotes/origin/HEAD</c> and
-	/// <c>logs/refs/remotes/origin/HEAD</c>, which a background fetch writes without touching a line of
-	/// source. Nothing wider is needed: a project file added, removed or edited by any git operation is
-	/// caught by the structural sweep, and file contents by the stat sweep.
-	/// </para>
-	/// </summary>
-	public bool IsTreeReplaced(string path) =>
-		string.Equals(Path.GetFullPath(path), _headPath, StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>
 	/// True while git holds its index lock, which it takes to write the index and the working tree and

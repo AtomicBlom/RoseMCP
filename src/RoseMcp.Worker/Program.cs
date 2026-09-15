@@ -23,6 +23,10 @@ internal static class Program
 			return 2;
 		}
 
+		// First, before the host exists: Roslyn's MSBuild workspace loads MSBuild types into this process,
+		// and registering the SDK's MSBuild once one has loaded is refused.
+		MSBuildRegistration.Ensure(options.SolutionPath);
+
 		var builder = Host.CreateApplicationBuilder(args);
 
 		// Nothing may reach stdout but protocol frames. A stray write corrupts the stream and the

@@ -329,4 +329,5 @@ static bool RoseTapRunOnUiThread(const std::function<void()>& work)
 // projected types, and the overlay, which is written against the seven aliases throughout. Both
 // supply what tap_surface.h declared above, so the COM object is already compiled against them.
 #include "../RoseMcp.Xaml.Tap/tap_render.h"
+#include "../RoseMcp.Xaml.Tap/tap_widgets.h"
 #include "../RoseMcp.Xaml.Tap/tap_overlay.h"

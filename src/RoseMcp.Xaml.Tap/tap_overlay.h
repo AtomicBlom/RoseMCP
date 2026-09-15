@@ -653,7 +653,9 @@ private:
 		// The outlines go on next so the toolbar always draws over them. Hover is dashed and thin,
 		// the pick solid and heavier, so the two never read as the same thing.
 		m_hoverBox = Outline(1.0, true);
+		m_marks.Children().Append(m_hoverBox);
 		m_hoverBadge = Badge();
+		m_marks.Children().Append(m_hoverBadge);
 
 		// The pick rests on screen until something else replaces it or it is cleared, so it is the
 		// one mark that has to be liveable with. At full strength on a large container it is a
@@ -666,7 +668,9 @@ private:
 		// express the thing that actually makes this work: the mark being loud enough to read at the
 		// moment you look for it.
 		m_selectBox = Outline(2.0, false, 0xFF, 0x33);
+		m_marks.Children().Append(m_selectBox);
 		m_selectBadge = Badge();
+		m_marks.Children().Append(m_selectBadge);
 
 		// Four dimension lines, which is as many as a measurement can want: one per axis where the two
 		// rectangles miss each other, two where they overlap. Built once and re-aimed, like everything
@@ -924,71 +928,6 @@ private:
 		return m_mark;
 	}
 
-	// Two strokes, not one: the accent rose, with a dark companion sitting a pixel outside it.
-	//
-	// One rose stroke is invisible on a rose-coloured app, which is not a hypothetical -- it is the
-	// obvious thing to hit the moment RoseMCP is pointed at something built with RoseMCP's own palette.
-	// UWP does offer a blend mode for this (ElementCompositeMode::MinBlend, which exists precisely to
-	// make adorners readable over arbitrary content), but min() only separates the outline from a
-	// *lighter* ground -- over a dark app it darkens the outline into the background instead, trading
-	// one invisible case for another. Two contrasting strokes is what design tools do, and it holds on
-	// any ground at all.
-	//
-	// The pair lives in a Grid so a caller moves one element: the rose stretches to the bounds, and the
-	// dark one is inset by a negative margin so its stroke lands just outside the rose's.
-	xcontrols::Grid Outline(double thickness, bool dashed, uint8_t strokeAlpha = 0xFF, uint8_t fillAlpha = 0x00)
-	{
-		auto box = xcontrols::Grid();
-		box.Visibility(xaml::Visibility::Collapsed);
-		box.IsHitTestVisible(false);
-
-		// The fill goes in first, under both strokes. It is what carries a resting mark: an outline
-		// alone is either loud enough to be an obstruction or too faint to find, whereas a wash over
-		// the element reads at a few percent -- the same trick the capture layer already uses.
-		if (fillAlpha > 0)
-		{
-			auto wash = xshapes::Rectangle();
-			wash.Fill(Brush(fillAlpha, 0xC2, 0x18, 0x5B));
-			box.Children().Append(wash);
-		}
-
-		auto contrast = xshapes::Rectangle();
-		contrast.Stroke(Brush(static_cast<uint8_t>(0xB0 * strokeAlpha / 0xFF), 0x10, 0x10, 0x14));
-		contrast.StrokeThickness(1);
-		contrast.Margin(xaml::Thickness{ -thickness, -thickness, -thickness, -thickness });
-		box.Children().Append(contrast);
-
-		auto rose = xshapes::Rectangle();
-		rose.Stroke(Brush(strokeAlpha, 0xC2, 0x18, 0x5B));
-		rose.StrokeThickness(thickness);
-		if (dashed)
-		{
-			rose.StrokeDashArray().Append(3);
-			rose.StrokeDashArray().Append(2);
-			contrast.StrokeDashArray().Append(3);
-			contrast.StrokeDashArray().Append(2);
-		}
-
-		box.Children().Append(rose);
-
-		m_marks.Children().Append(box);
-		return box;
-	}
-
-	xcontrols::Border Badge()
-	{
-		auto badge = xcontrols::Border();
-		badge.Visibility(xaml::Visibility::Collapsed);
-		badge.IsHitTestVisible(false);
-		badge.Background(Accent());
-		badge.BorderBrush(Brush(0x90, 0x10, 0x10, 0x14));
-		badge.BorderThickness(xaml::Thickness{ 1, 1, 1, 1 });
-		badge.CornerRadius(xaml::CornerRadius{ 2, 2, 2, 2 });
-		badge.Padding(xaml::Thickness{ 4, 1, 4, 2 });
-		badge.Child(Label(L"", 11.0, 0xF0, nullptr));
-		m_marks.Children().Append(badge);
-		return badge;
-	}
 
 	// Here rather than in the widget kit because it hands the handle to AttachDrag, which moves the
 	// panel: the grip is part of this overlay rather than part of its visual language.
@@ -1834,6 +1773,7 @@ private:
 		// Built before the label so it passes behind it rather than across it.
 		leader.Tie = RulerLine(0xC0, 0xC2, 0x18, 0x5B, 1.0, false);
 		leader.Label = Badge();
+		m_marks.Children().Append(leader.Label);
 		return leader;
 	}
 

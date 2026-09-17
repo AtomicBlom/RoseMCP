@@ -20,6 +20,33 @@ in its file in the same pull request, the way USE-08 was amended when the magnif
 came to light. The findings are a snapshot of what eight reviewers could see from the code, and the
 person implementing one knows more than the reviewer did.
 
+### These documents shrink as the work lands
+
+Six thousand lines of review is a cost every future session pays to read. So a pull request that
+closes a card **collapses what it closed**, in the same commit as the fix. The review is scaffolding,
+not a record: it should be smaller after every merge, and empty by the end.
+
+- **In [`00-overview.md`](00-overview.md)**, strike the card's row and leave one line: what shipped
+  and where. The card list is what a new session reads first, so it must say the state of the work
+  without anything else being opened.
+- **In the finding's own file**, replace the finding with two or three lines -- the claim, the commit
+  or pull request, and where the reasoning now lives. Delete the What, the Why it matters and the
+  Suggested change. They were arguments for doing the work, and the work is done.
+- **Move the reasoning before deleting it.** A finding usually contains the "why this and not that"
+  that belongs in a comment beside the code or in `docs/decisions/`, which is where this repository
+  keeps such things permanently. Migrating it is part of closing the card, not a follow-up. A
+  finding that is deleted without its reasoning being rehomed has thrown away the expensive half.
+- **A whole file that is fully closed** collapses to its heading, its verdict and its Strengths
+  section. The strengths are the part worth keeping longest, because they say what a later refactor
+  must not break.
+- **When every tier is closed**, `docs/fable-review-2/` should hold little more than this README, and
+  the final pull request into `main` deletes it. What survives is in the code, in the tests, in
+  `docs/decisions/` and in `docs/invariants/`, which is where it can be maintained.
+
+Findings that are deliberately not being done are the exception: keep those in full, with a line
+saying why they were declined. An un-actioned finding with no decision recorded against it is the
+thing a future review will re-derive from scratch at full cost.
+
 ## Questions the review answers
 
 1. How maintainable is the code?

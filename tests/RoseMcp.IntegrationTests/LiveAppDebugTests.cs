@@ -452,4 +452,78 @@ public sealed class LiveAppDebugTests
 			if (!child.HasExited) child.Kill(entireProcessTree: true);
 		}
 	}
+
+	/// <summary>
+	/// Two bindings in one method each fire as themselves. A tracepoint on the method and a stopping
+	/// breakpoint at a position inside it are both function breakpoints on the same metadata token, so
+	/// only the IL offset tells them apart -- and a hit given to the wrong one turns a stop into a log
+	/// line under another binding's id, reported as success.
+	/// <para>
+	/// The breakpoint goes at a position the source listing reported rather than at a hand-written
+	/// offset, because that pairing is the one the listing invites a caller into: it offers every
+	/// position in a method somebody has probably already set a breakpoint on by name.
+	/// </para>
+	/// <para>
+	/// The tracepoint is registered first, so a match that cannot tell them apart attributes both hits
+	/// to it and the target is never held at all.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_tracepoint_and_a_breakpoint_in_one_method_each_fire_as_itself()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// Past the method's first instruction, so the two bindings differ by offset and the test is
+			// about attribution rather than about one binding.
+			var source = await session.ReadMethodSourceAsync("DebugProbeTarget.Program.Beat", cancellationToken);
+			var inside = source.Positions.FirstOrDefault(position => position.IlOffset > 0);
+			Assert.NotNull(inside);
+
+			var tracepoint = await session.AddTracepointAsync(
+				"DebugProbeTarget.Program.Beat", "beat traced", logEveryNthHit: null, condition: null, cancellationToken);
+			Assert.True(tracepoint.Bound, $"tracepoint should bind; detail: {tracepoint.Detail}");
+
+			// Generous, so the assertions below are not racing the safety timer for the stop.
+			var breakpoint = await session.SetBreakpointAsync(
+				inside!.Location, autoContinueSeconds: 60, condition: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind at {inside.Location}; detail: {breakpoint.Detail}");
+
+			var held = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(held);
+
+			// The stop belongs to the breakpoint, by id rather than by the sentence it carries.
+			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
+			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);
+			Assert.Equal(breakpoint.Id, frames.Stop!.BreakpointId);
+
+			// And each counted its own hits: the tracepoint logged the entry it is on, the breakpoint
+			// took the one inside.
+			var traced = await session.ListTracepointsAsync(cancellationToken);
+			Assert.True(
+				Assert.Single(traced.Tracepoints).HitCount > 0,
+				"the tracepoint should have counted the hit at the method's entry");
+
+			var stopping = await session.ListBreakpointsAsync(cancellationToken);
+			Assert.True(
+				Assert.Single(stopping.Breakpoints).HitCount > 0,
+				"the breakpoint should have counted the hit at its own offset");
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited, "a stop holds the target rather than killing it");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
 }

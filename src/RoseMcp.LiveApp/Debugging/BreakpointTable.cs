@@ -161,18 +161,44 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 	/// </summary>
 	internal (BreakpointBinding? Binding, long Ordinal) Match(CorDebugFunctionBreakpoint? breakpoint)
 	{
-		var (token, moduleName) = TryFunctionIdentity(breakpoint);
-
-		var binding = _bindings.FirstOrDefault(entry =>
-			entry.Bound
-			&& entry.Token == token
-			&& (moduleName is null
-				|| string.Equals(moduleName, entry.ModulePath, StringComparison.OrdinalIgnoreCase)));
+		var binding = Claim(breakpoint);
 
 		// With one binding bound, an unidentified hit is unambiguously it.
 		binding ??= _bindings.Count(entry => entry.Bound) == 1 ? _bindings.First(entry => entry.Bound) : null;
 
 		return (binding, binding is null ? 0 : ++binding.HitCount);
+	}
+
+	/// <summary>
+	/// The binding that owns a hit, or null when no single one does.
+	/// <para>
+	/// The IL offset is what separates two bindings in one method, and two in one method is a pairing
+	/// the position listing invites a caller into: a named method binds at its first instruction and a
+	/// picked position binds inside the IL, and both are function breakpoints on the same metadata
+	/// token. Matching on the token alone hands every hit to whichever was registered first, so a stop
+	/// meant to hold the target logs and continues instead, under another binding's id.
+	/// </para>
+	/// <para>
+	/// The offset rather than the breakpoint object's identity, because ClrDebug's interfaces are
+	/// source-generated ComWrappers rather than classic RCWs: the same COM pointer is not promised to
+	/// come back as the same managed object, so identity here would work until it quietly did not.
+	/// An offset that cannot be read falls back to the token, which is ambiguous for two bindings in
+	/// one method and no worse than not looking.
+	/// </para>
+	/// </summary>
+	private BreakpointBinding? Claim(CorDebugFunctionBreakpoint? breakpoint)
+	{
+		if (breakpoint is null) return null;
+
+		var (token, moduleName, offset) = TryFunctionIdentity(breakpoint);
+		if (token is null) return null;
+
+		return _bindings.FirstOrDefault(entry =>
+			entry.Bound
+			&& entry.Token == token
+			&& (moduleName is null
+				|| string.Equals(moduleName, entry.ModulePath, StringComparison.OrdinalIgnoreCase))
+			&& (offset is null || (entry.Location.IlOffset ?? 0) == offset));
 	}
 
 	/// <summary>
@@ -355,19 +381,32 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 		}
 	}
 
-	private (int? Token, string? Module) TryFunctionIdentity(CorDebugFunctionBreakpoint? breakpoint)
+	/// <summary>
+	/// What a hit's breakpoint says about itself: the method it is in, the module that declares it,
+	/// and where inside the IL it sits. Any of them can be unavailable, and each is reported as
+	/// unknown rather than guessed.
+	/// </summary>
+	private (int? Token, string? Module, int? Offset) TryFunctionIdentity(CorDebugFunctionBreakpoint breakpoint)
 	{
-		if (breakpoint is null) return (null, null);
+		int? offset = null;
+		try
+		{
+			offset = breakpoint.Offset;
+		}
+		catch (Exception exception)
+		{
+			logger.LogDebug(exception, "Reading a breakpoint's IL offset failed.");
+		}
 
 		try
 		{
 			var function = breakpoint.Function;
-			return ((int)function.Token, function.Module.Name);
+			return ((int)function.Token, function.Module.Name, offset);
 		}
 		catch (Exception exception)
 		{
 			logger.LogDebug(exception, "Reading a breakpoint's function identity failed.");
-			return (null, null);
+			return (null, null, offset);
 		}
 	}
 }

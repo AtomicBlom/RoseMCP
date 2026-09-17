@@ -88,7 +88,8 @@ rest. The stdout rule, the one that corrupts the protocol, has no guard of its o
 rule is prose. The published layout is asserted against a layout the test stages itself rather than
 the one the deploy script writes. The comment conventions have no CI grep.
 
-**Thirty-nine inversions are proposed across the eight files.** The seven highest-leverage:
+**About fifty inversions are proposed across the eight files**, and Tier 0 in the card list says which
+of them to build before anything else. The seven highest-leverage:
 
 1. **One `WriteOperation` pipeline type** replacing six copied conventions, with the rewrite as the
    only stage a service supplies (WRK-01).
@@ -253,6 +254,44 @@ five times in every result), the workspace-key anchor, the worker's working dire
 the worktree lock, and a mis-route failing loudly instead of writing a plausible file. It was
 already first on value per unit of effort; it is now first by a wide margin.
 
+### How the pit-of-success inversions relate to the cards
+
+Roughly fifty inversions are proposed across the eight files. They are not a separate workstream,
+and three-quarters of them need no separate card, because they fall into three relationships:
+
+- **The card *is* the inversion.** Cards 1, 3, 9 and 10 are the four biggest inversions written as
+  work: a path type that cannot be resolved without a base, a target-execution union, one write
+  pipeline, one symbol resolver. Doing the card badly and doing the inversion are the same
+  alternative, so there is nothing extra to schedule -- only a note in the card that the mechanism,
+  not the fix, is the deliverable.
+- **The inversion is a guard that must land *before* its cards**, because the cards are exactly the
+  work it protects. These are cheap, ungated and few. They are Tier 0 below.
+- **The inversion only exists once its card does.** One framed message type for every pipe needs the
+  pipe work; notice discipline needs somewhere to live (card 9). These follow and should be written
+  into the card that creates the home, not tracked separately.
+
+The test of which bucket an inversion is in: *would building it now catch a mistake in work that is
+about to happen?* If yes it is Tier 0; if it only pays after the refactor, it rides with the
+refactor.
+
+### Tier 0 — build these first, because everything after is safer and measurable
+
+Five small mechanisms. Each is S, none is gated on anything, and each one guards work that starts
+immediately after. Perhaps two to three days in total, against a programme of weeks.
+
+| # | Card | Why it goes first | Findings | Effort |
+|---|---|---|---|---|
+| 0a | **Keep the debugger's CI coverage, and widen it deliberately.** A file split on 2026-09-16 dropped `[Category("LiveApp")]` from `LiveAppInspectionTests`, so eleven real ICorDebug tests have been running on GitHub's hosted runners ever since -- and passing. That is accidental proof that the debugger half of the live-app suite needs no special toolchain. Decide to keep it, widen it to the rest of the debugger tests, and leave only the XAML, C++ and UWP half excluded with the reason stated. | Card 3 is surgery on `CorDebugSession`, and all of tier 6 is built on it. Doing that against a suite nobody runs on a schedule is the condition that produced #208. | UIP-14, UIP-25 | S, then M to widen |
+| 0b | **A result-size budget test.** Extend the `ToolBudgetTests` pattern from description length to result size: each read and write tool called against `tests/fixtures`, with bytes-per-item ceilings recorded. | Tier 3 is four cards about size with no measurement anywhere. Without a budget the work is unverifiable and silently regresses; with one it is a number that moves. | AGT-01, AGT-21, inversion 1 of file 04 | S |
+| 0c | **A surface-enumerating test for `revision` and `workspace`.** Today the rule "every result carries a revision and names the workspace that answered" is asserted on three tools out of about forty-five. | Tier 3 reshapes all thirteen write result records and card 1 changes what a path looks like in every result. This is the guard that makes both safe. | BRK-12, UIP-17 | S |
+| 0d | **A host-version handshake.** `HostVersion` is set by four hosts and read by none, while the launcher picks the newest worker in `bin` and an environment variable can point anywhere. | This programme rebuilds workers constantly. Debugging a stale binary you did not build is the failure this work will produce most often, and it costs a session each time. | IPC-02, BRK-05 | S |
+| 0e | **The CI comment grep.** History clauses stand at 100 against #171's count of 90, and issue tags at 60 against 53. | This work touches a large fraction of the files in the repository. Without the grep it adds to the debt it was partly meant to reduce, and the drift is invisible until someone counts again. | UIP-23 | S |
+
+One thing Tier 0 deliberately does not include: **card 9, one write pipeline, is the highest-leverage
+inversion in the review and it is not cheap.** It stays in tier 2 where its effort puts it. But every
+card in tier 3 that touches a write result should be read with card 9 in mind, because eight
+hand-written notice iterators are why those results disagree with each other.
+
 ### Tier 1 — wrong answers and wrong side effects
 
 These produce confident wrong results today. Everything else is cost.
@@ -296,12 +335,12 @@ Highest leverage on adoption. Cheap relative to impact.
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 16 | **Put the live-app third into CI.** 55 tests, the newest and most bug-dense code, no continuous coverage. Three invariant documents are review-only in practice. | UIP-25 | new | L |
-| 17 | **Eleven debugger tests lost their category in a file split** and now run in CI that says it excludes them. Cheap, and a live drift. | UIP-14 | new | S |
+| 16 | **Put the XAML and tap half into CI**, the part card 0a leaves out: a C++ toolset, the Windows App SDK and developer mode. Three invariant documents are review-only until this lands. | UIP-25 | new | L |
+| 17 | *(moved to card 0a -- the accidental inclusion turned out to be proof that debugger tests run fine on a hosted runner, so it is widened deliberately rather than reverted.)* | UIP-14 | new | -- |
 | 18 | **Share fixtures on the Roslyn half.** 254 solution loads and 299 fixture copies over six fixtures, with a proven sharing model already in use next door. Issue #39 understates it by four times. | UIP-13 | #39 | L |
-| 19 | **A host-version handshake.** `HostVersion` exists, every host sets it, nothing reads it, while the worker is found by picking the newest binary in `bin`. | IPC-02, BRK-05 | new | S |
+| 19 | *(moved to card 0d -- it is worth having before the work starts, not after.)* | IPC-02, BRK-05 | new | -- |
 | 20 | **A correlation id on every internal hop**, into every log line. Today a failure cannot be traced across the four processes it crossed. | BRK-15, IPC-07 | new | M |
-| 21 | **Guard the arrangements**: a stdout test of its own; a revision/workspace test enumerating the surface; a CI grep for comment tense and issue tags; a shared layout manifest the deploy script and the test both read; tier purity checked. | UIP-18, UIP-22, UIP-23, UIP-24, BRK-12 | #171 | M |
+| 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, a shared layout manifest the deploy script and the test both read, and tap tier purity checked rather than described. | UIP-18, UIP-22, UIP-24 | new | M |
 
 ### Tier 5 — re-aim the UIs
 

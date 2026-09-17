@@ -312,6 +312,104 @@ revision 1). Sizes are the raw JSON as it arrived.
 - **Why it matters:** Several subagents in one repository is the ordinary way this repository is worked on -- this review is four agents in one worktree -- and the only concurrency story is a transport-level notion of session that the agent layer does not correspond to. The failure is quiet: the sibling's next `rose_debug_continue` fails with a session id that no longer exists, which reads as a bug in the debugger.
 - **Suggested change:** Short term, say it in the writing: make `ExpectedRevisionArgument` name the case ("pass the revision your last read returned; another agent or a human editor may have written since"), and have `rose_debug_list` mark which sessions *this call* started rather than only which it may reach. Medium term, give a call an agent identity independent of the transport -- the `_meta` channel that already carries `CallOrigin` can carry one -- and default the destructive lifecycle tools (`rose_workspace_reload`, `rose_workspace_close`, `rose_debug_detach`) to refusing a target they did not start, with an explicit `force`.
 
+### AGT-21 A write result is roughly 4,000 characters, of which about 85% is the caller's own input, a constant, or a fact already stated
+
+- **Severity:** High
+- **Effort:** M
+- **Where:** `src/RoseMcp.Contracts/MemberEditResult.cs:38` (`Diff`),
+  `src/RoseMcp.Contracts/WorkspaceMutationResult.cs:17,23` (`ChangedFiles`, `Notices`),
+  `src/RoseMcp.Worker/MemberSyntax.cs:196` (line-ending notice),
+  `src/RoseMcp.Worker/EditVerification.cs:129-130` (analyzer notice),
+  `src/RoseMcp.Worker/MemberEditService.cs:1123-1126` (dependents notice),
+  `src/RoseMcp.Contracts/DiagnosticEntry.cs:32` (`HelpLink`)
+- **What:** Measured on one real `rose_replace_member` response that added a doc comment and one
+  statement, and came back with one error. Roughly 4,000 characters, about 1,000 tokens. It breaks
+  down as:
+
+  | Part | Size | Verdict |
+  |---|---|---|
+  | `diff` | ~2,100 | Almost entirely the doc comment the caller had just sent |
+  | Five `notices` | 1,028 | Two unconditional, one restates the diagnostic, one contradicts a field |
+  | Scaffold (16 fields) | 590 | The absolute path appears five times |
+  | One `introducedDiagnostics` entry | ~350 | Includes a `helpLink` no agent fetches |
+
+  Eight distinct redundancies, in increasing order of how structural they are:
+
+  1. **The absolute path five times** -- `filePath`, both diff headers, `changedFiles[0]`, and
+     `introducedDiagnostics[0].filePath`. About 300 characters to say one thing.
+  2. **`members: ["RunProcess"]`** restates the tail of `symbol`, which is in the same object.
+  3. **`totalErrorCount: 1`** is indistinguishable here from `introducedDiagnostics.Length`, and
+     nothing says whether it counts errors that were already there.
+  4. **`helpLink`** on a CS0103. No agent has ever opened one.
+  5. **The diff echoes the caller's own input.** The agent composed that doc comment; reading it
+     back teaches nothing. The only facts the callee owns are *where it landed* and *what was
+     normalised*, and both are one line each.
+  6. **One fact stated three times.** The diagnostic message says the name does not exist; notice 2
+     says "MSBuildEnvironment resolves to nothing in scope, and no import would fix it"; notice 4
+     opens by saying it again before giving the advice. Notice 2 is pure restatement.
+  7. **Two notices are constants.** The line-ending notice fires whenever the supplied code used LF,
+     and its own text concedes that is "what composing C# for a tool argument produces without
+     anyone deciding to" -- so it fires on substantially every write, at 394 characters. The
+     analyzer notice is emitted on *both* branches of the ternary at `EditVerification.cs:129-130`,
+     so it fires always. **A notice that fires on nearly every call carries no information; it is
+     documentation, and belongs in the tool description.**
+  8. **One notice contradicts a field in the same payload.** The dependents notice is guarded on the
+     edit *kind* (`request.Kind == MemberEditKind.Replace`) and not on whether any dependent exists,
+     so it says "Only X was compiled ... which this did not check" while `dependentsNotChecked: []`
+     in the same object says there was nothing to check. The comment above it reads "Said only where
+     it can happen", which is true of the kind and not of the instance.
+- **Why it matters:** This is finding AGT-01's problem on the *write* surface, where it is worse.
+  The agent pays a thousand tokens per edit, and an edit loop is many edits. What it actually needed
+  from this response is four facts: it applied, it landed at line 174, 34 endings were normalised,
+  and one error was introduced with its message and the advice for fixing it. Everything else is
+  either something the agent sent, something that is always true, or the same sentence at a
+  different length. And the two genuinely valuable notices -- the advice about resolving a name, and
+  the warning about unchecked dependents -- are the ones buried at positions four and five behind
+  three that are not.
+- **Suggested change:** Four rules, applied in one place.
+  1. **Never echo the caller's input.** Drop `diff` from the default response; report `at: "174-200"`
+     and `normalised: "34 line endings to CRLF"`. Put the diff behind `includeDiff`, default off, and
+     make the flag genuinely remove it (cf. AGT-01, where `includeSignatures=false` does not).
+  2. **A constant is not a notice.** Emit the line-ending and analyzer notices only when the outcome
+     was not the usual one. Move their standing explanation into `ToolDescriptions`.
+  3. **Say a fact once, at its most actionable.** Where a notice restates a diagnostic, keep the
+     advice and drop the restatement. The advice is the part no other field carries.
+  4. **Name a path once.** One `file` field, relative to the workspace root; diagnostics refer to it
+     by index, and `changedFiles` lists only the *other* files an edit touched.
+
+  Condition the dependents notice on `SkippedDependents` being non-empty, which is the field that
+  already knows.
+
+  Target shape, same information an agent can act on, about 600 characters:
+
+  ```json
+  {
+    "revision": 1, "applied": true, "verified": true,
+    "file": "tests/RoseMcp.IntegrationTests/TestToolchain.cs",
+    "symbol": "TestToolchain.RunProcess(string, string)",
+    "at": "174-200",
+    "normalised": "34 line endings to CRLF",
+    "errors": [{ "id": "CS0103", "line": 183, "col": 29,
+                 "message": "The name 'MSBuildEnvironment' does not exist in the current context" }],
+    "advice": "Nothing of that name is reachable here, so it is not written yet rather than unimported. rose_resolve_name finds one that exists; the usings argument imports it in the same call.",
+    "scope": "compiled RoseMcp.IntegrationTests; it has no dependents"
+  }
+  ```
+- **Blast radius, and the root cause.** `WorkspaceMutationResult` is the base of eight result records
+  (`AddFileResult`, `CodeFixResult`, `FormatResult`, `MemberEditResult`, `MoveTypeResult`,
+  `RenameResult`, `SignatureChangeResult`, `UsingResult`), so `ChangedFiles` and `Notices` are on
+  every one of the thirteen writing tools. The same shapes recur on the read surface: a path per
+  member in `rose_outline` (AGT-01), a path per hit and a definition listed three to four times in
+  `rose_find_references` (AGT-06), unbounded raw XML in `rose_symbol_info` (AGT-11), and a
+  `helpLink` plus an absolute path on every entry of `rose_diagnostics`, which at solution scope is
+  the worst case in the product.
+
+  The root is **WRK-01**. Eight files under `src/RoseMcp.Worker/` declare their own
+  `IEnumerable<string> Notices` iterator, so there is no single place where "is this worth saying,
+  and is it already said" gets decided. That is why two notices are unconditional and one disagrees
+  with a field beside it. Fixing WRK-01 gives notice discipline somewhere to live, which is the
+  same argument `WorkspaceManager.Attribute<T>` already won for attribution.
+
 ## Why tools lose to grep, ranked
 
 From the 18-issue corpus, the three other reviewers' dogfooding notes, and my own ~30 calls. Ranked

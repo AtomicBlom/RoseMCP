@@ -292,9 +292,14 @@ public sealed class LiveAppInspectionTests
 	}
 
 	/// <summary>
-	/// A hold suspends the safety timer, which is the whole point of it: a person reading a stack
-	/// must not have it move under them two seconds in. The breakpoint here asks for a two-second
-	/// auto-continue and the target is still held well past it.
+	/// A hold suspends the safety timer, which is the whole point of it: a person reading a stack must
+	/// not have it move under them. The breakpoint here asks for a short auto-continue and the target
+	/// is still held well past it.
+	/// <para>
+	/// The interval is longer than the assertion strictly needs, because the hold has to be taken
+	/// before it expires and noticing the stop costs a poll and taking the hold costs a call to the
+	/// host. A tighter interval makes this a test about how fast the machine is.
+	/// </para>
 	/// </summary>
 	[Test]
 	public async Task An_operator_hold_suspends_auto_continue()
@@ -308,7 +313,7 @@ public sealed class LiveAppInspectionTests
 			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
 
 			var breakpoint = await session.SetBreakpointAsync(
-				"DebugProbeTarget.Program.Inspect", autoContinueSeconds: 2, condition: null, cancellationToken);
+				"DebugProbeTarget.Program.Inspect", autoContinueSeconds: 8, condition: null, cancellationToken);
 			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
 
 			var hit = await WaitForEventAsync(
@@ -322,8 +327,8 @@ public sealed class LiveAppInspectionTests
 			Assert.NotNull(held.Stop);
 			Assert.Equal(LiveStopResume.HeldByOperator, held.Stop!.Resume);
 
-			// Well past the two seconds the breakpoint asked for, and still held.
-			await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+			// Well past the interval the breakpoint asked for, and still held.
+			await Task.Delay(TimeSpan.FromSeconds(11), cancellationToken);
 
 			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
 			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);

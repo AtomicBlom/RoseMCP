@@ -410,6 +410,41 @@ revision 1). Sizes are the raw JSON as it arrived.
   with a field beside it. Fixing WRK-01 gives notice discipline somewhere to live, which is the
   same argument `WorkspaceManager.Attribute<T>` already won for attribution.
 
+- **The anchor already exists and is refused as input.** Every result carries `workspace` *and*
+  `workspaceKey` (`WorkspaceManager.cs:192`), and `WorkspaceKey`'s own summary says it is "a short,
+  stable name for one loaded solution, **fit for a caller to quote back**", derived from the path
+  rather than minted per process so it survives a worker restart, and hashed because "six worktrees
+  of one repository is the ordinary case, not a corner one". It is written on every result and
+  **read as input nowhere** -- the same shape as `HostVersion` (IPC-02) and `InfoAge` (USE-03): a
+  fact computed for a consumer that never consumes it.
+
+  This matters for the path question. A relative path is ambiguous only when it arrives with no
+  anchor, and an anchor that costs sixteen characters will actually be carried where a sixty-
+  character absolute path will not. Accept `workspaceKey` wherever `workspace` is accepted, return
+  paths relative to the workspace, and the round trip is unambiguous by construction: the agent
+  quotes back the pair it was handed, and no resolution against a process working directory happens
+  at all.
+- **Order matters: this card is gated on BRK-01.** Returning relative paths makes an agent send
+  relative paths -- results are where agents get their arguments -- so shipping the size fix before
+  the resolution fix converts a latent hazard into a routine one. Today a relative hint is resolved
+  against the *broker's* working directory, which for a tray is its install directory.
+  `WorkspaceManager.cs:345-351` already states the failure in a comment -- "Resolving that as a path
+  makes it relative to the process working directory and answers from whichever solution is sitting
+  there, which is worse than not trying" -- and guards it with `File.Exists`. That guard catches the
+  harmless case, a hint that is not a path at all, and **passes the harmful one**: a relative path
+  that does exist under the broker's directory binds to the wrong checkout, which is #214.
+- **Not everything can be workspace-relative, and the rule should say so.** Anchor absolute and
+  stated once; anything under it relative; anything outside it absolute. The live-app surface is
+  genuinely outside: module paths read from the debugged process, `InstallLocation`
+  (`LiveAppInfo.cs:32`, under `WindowsApps` for a packaged app), `HostLogPath` (`:74`, under
+  `LOCALAPPDATA`). A project referenced from outside the solution directory is relative but ascends.
+  Generated documents and metadata symbols have no disk path at all.
+- **The pit-of-success form: refuse, do not guess.** A relative path arriving with no anchor -- no
+  `workspace`, no `workspaceKey`, no origin -- should be refused naming both candidates, not
+  resolved against whatever directory the process happens to occupy. That turns #214 from a silent
+  write into the wrong worktree into a loud error, and it is the precondition that makes returning
+  relative paths safe rather than merely cheaper.
+
 ## Why tools lose to grep, ranked
 
 From the 18-issue corpus, the three other reviewers' dogfooding notes, and my own ~30 calls. Ranked

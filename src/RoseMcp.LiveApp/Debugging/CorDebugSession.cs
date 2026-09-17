@@ -29,7 +29,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
 	private const int MaxStackFrames = 20;
 	private const int MaxVariables = 64;
-	private const int DefaultAutoContinueSeconds = 30;
 
 	/// <summary>
 	/// How long a manual pause waits for the runtime to reach a point it can be stopped at. Generous,
@@ -85,16 +84,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	// and the held thread per call. Separate because holding a stop and reading one are different jobs.
 	private readonly CorDebugInspector _inspector = new(logger);
 
-	private readonly List<BreakpointBinding> _bindings = [];
-
 	/// <summary>
 	/// Steppers issued and not yet completed. ICorDebug refuses to detach while one is outstanding,
 	/// so the session has to be able to find them again; a stepper handed to <c>Step</c> and dropped
 	/// is unreachable and there is no way to ask the process for its list.
 	/// </summary>
 	private readonly List<CorDebugStepper> _steppers = [];
-
-	private int _nextBindingId = 1;
 
 	/// <summary>
 	/// Every module file the target has loaded, and what their metadata and symbols say.
@@ -105,6 +100,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </para>
 	/// </summary>
 	private readonly TargetSymbols _symbols = new(logger);
+
+	/// <summary>
+	/// Every breakpoint and tracepoint asked for, bound or waiting for the module that would carry it.
+	/// </summary>
+	private readonly BreakpointTable _breakpoints = new(buffer, logger);
 
 	private DbgShim? _shim;
 	private CorDebug? _corDebug;
@@ -463,25 +463,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private void ReleaseForDetach()
 	{
-		foreach (var binding in _bindings)
-		{
-			var breakpoint = binding.Breakpoint;
-			if (breakpoint is null) continue;
-
-			try
-			{
-				breakpoint.Activate(false);
-			}
-			catch (Exception exception)
-			{
-				logger.LogDebug(exception, "Deactivating binding {Id} before detaching failed.", binding.Id);
-			}
-
-			// The binding stays in the list and describes itself as unbound, because the session is
-			// ending and the caller may still list what it had set; the runtime object is what goes.
-			binding.Breakpoint = null;
-			binding.Detail = "released on detach";
-		}
+		_breakpoints.ReleaseForDetach();
 
 		foreach (var stepper in _steppers)
 		{
@@ -523,7 +505,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var binding = AddBinding(location, stopOnHit: false, logMessage, logEveryNthHit, autoContinueSeconds: null, condition);
 		lock (_gate)
 		{
-			return DescribeTracepoint(binding);
+			return BreakpointTable.DescribeTracepoint(binding);
 		}
 	}
 
@@ -539,7 +521,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var binding = AddBinding(location, stopOnHit: true, logMessage: null, logEveryNthHit: null, autoContinueSeconds, condition);
 		lock (_gate)
 		{
-			return DescribeBreakpoint(binding);
+			return BreakpointTable.DescribeBreakpoint(binding);
 		}
 	}
 
@@ -547,7 +529,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			return [.. _bindings.Where(binding => !binding.StopOnHit).Select(DescribeTracepoint)];
+			return _breakpoints.Tracepoints();
 		}
 	}
 
@@ -555,7 +537,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			return [.. _bindings.Where(binding => binding.StopOnHit).Select(DescribeBreakpoint)];
+			return _breakpoints.Breakpoints();
 		}
 	}
 
@@ -1078,26 +1060,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	private BreakpointBinding AddBinding(string location, bool stopOnHit, string? logMessage, int? logEveryNthHit, int? autoContinueSeconds, string? condition)
 	{
-		var parsed = SymbolLocation.Parse(location);
-		var parsedCondition = BreakpointCondition.Parse(condition);
-
 		BreakpointBinding binding;
 		lock (_gate)
 		{
-			binding = new BreakpointBinding
-			{
-				Id = $"{(stopOnHit ? "bp" : "tp")}-{_nextBindingId++}",
-				Location = parsed,
-				Raw = location,
-				StopOnHit = stopOnHit,
-				LogMessage = logMessage,
-				LogEveryNthHit = logEveryNthHit,
-				AutoContinueSeconds = autoContinueSeconds,
-				ConditionText = string.IsNullOrWhiteSpace(condition) ? null : condition.Trim(),
-				Condition = parsedCondition,
-				Detail = "not bound yet",
-			};
-			_bindings.Add(binding);
+			binding = _breakpoints.Add(location, stopOnHit, logMessage, logEveryNthHit, autoContinueSeconds, condition);
 		}
 
 		BindAgainstLoadedModules();
@@ -1108,20 +1074,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			var binding = _bindings.FirstOrDefault(entry => entry.Id == id);
-			if (binding is null) return false;
-
-			try
-			{
-				binding.Breakpoint?.Activate(false);
-			}
-			catch (Exception exception)
-			{
-				logger.LogDebug(exception, "Deactivating binding {Id} failed.", id);
-			}
-
-			_bindings.Remove(binding);
-			return true;
+			return _breakpoints.Remove(id);
 		}
 	}
 
@@ -1446,21 +1399,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private bool RecordBreakpointHit(BreakpointCorDebugManagedCallbackEventArgs hit)
 	{
 		var threadId = CorDebugInspector.TryThreadId(hit.Thread);
-		var (token, moduleName) = TryFunctionIdentity(hit.Breakpoint as CorDebugFunctionBreakpoint);
 
 		BreakpointBinding? binding;
 		long ordinal;
 		lock (_gate)
 		{
-			binding = _bindings.FirstOrDefault(entry =>
-				entry.Bound
-				&& entry.Token == token
-				&& (moduleName is null
-					|| string.Equals(moduleName, entry.ModulePath, StringComparison.OrdinalIgnoreCase)));
-
-			// With one binding bound, an unidentified hit is unambiguously it.
-			binding ??= _bindings.Count(entry => entry.Bound) == 1 ? _bindings.First(entry => entry.Bound) : null;
-			ordinal = binding is null ? 0 : ++binding.HitCount;
+			(binding, ordinal) = _breakpoints.Match(hit.Breakpoint as CorDebugFunctionBreakpoint);
 		}
 
 		// A condition is a cheap read-and-compare on the stopped frame; if it fails, act as if unhit.
@@ -1502,7 +1446,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var variables = ReadTopFrameVariables(thread);
 		var threadId = CorDebugInspector.TryThreadId(thread);
 		var top = frames.Count > 0 ? frames[0] : "?";
-		var seconds = autoContinueSeconds ?? DefaultAutoContinueSeconds;
+		var seconds = autoContinueSeconds ?? StopRecord.DefaultAutoContinueSeconds;
 
 		lock (_gate)
 		{
@@ -1606,7 +1550,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		lock (_gate)
 		{
 			if (_process is null || !Execution.IsLive) return;
-			if (_bindings.TrueForAll(binding => binding.Bound)) return;
+			if (_breakpoints.AllBound) return;
 
 			var stopped = false;
 			try
@@ -1624,14 +1568,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				// This walk is the one a name search would otherwise have to take for itself.
 				_symbols.MarkWalked();
 
-				// Bound after the walk rather than during it, because whether a name without its assembly is
-				// ambiguous is a question about every module, not the one in hand.
-				foreach (var binding in _bindings)
-				{
-					if (!binding.Bound) BindAmong(binding, loaded);
-				}
-
-				ExplainUnbound(_symbols.Paths);
+				_breakpoints.BindAmongLoaded(loaded);
+				_breakpoints.ExplainUnbound(_symbols.Paths);
 			}
 			catch (Exception exception)
 			{
@@ -1660,32 +1598,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// the type, and when several do it says which rather than choosing: a breakpoint in the wrong one
 	/// never fires, which looks exactly like code that never runs.
 	/// </summary>
-	private void BindAmong(BreakpointBinding binding, IReadOnlyList<CorDebugModule> modules)
-	{
-		if (binding.Location.Assembly is not null)
-		{
-			foreach (var module in modules)
-			{
-				TryBind(binding, module);
-				if (binding.Bound) return;
-			}
-
-			return;
-		}
-
-		var owners = modules
-			.Where(module => TargetSymbols.FileOf(module) is { } path && MethodTokens.DeclaresType(path, binding.Location.TypeName))
-			.ToList();
-
-		if (owners.Count > 1)
-		{
-			binding.Detail = TypeOwners.Ambiguity(binding.Location.TypeName, [.. owners.Select(module => module.Name)], binding.Raw);
-			return;
-		}
-
-		if (owners.Count == 1) TryBind(binding, owners[0]);
-	}
-
 	/// <summary>
 	/// The target's loaded module files, walking the ones that predate this session's attach the
 	/// first time anybody asks. The walk is the only part that needs the gate or the debuggee; what
@@ -1711,169 +1623,18 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// deactivating a breakpoint that a thread may be parked on fail-fasts the target.
 	/// </para>
 	/// </summary>
+	/// <summary>
+	/// Takes in a module as it loads: notes its file, and binds anything waiting for it. Called from a
+	/// stopped callback.
+	/// </summary>
 	private void BindModule(CorDebugModule module)
 	{
-		// Before the early return below, because the list of modules is wanted by a name search
-		// whether or not anything is waiting to bind.
 		lock (_gate)
 		{
+			// Remembered before anything returns early, because the list of modules is wanted by a
+			// name search whether or not anything is waiting to bind.
 			_symbols.Remember(module);
-		}
-
-		if (TargetSymbols.FileOf(module) is not { } path) return;
-
-		lock (_gate)
-		{
-			foreach (var binding in _bindings)
-			{
-				if (binding.Location.Assembly is not null)
-				{
-					if (!binding.Bound) TryBind(binding, module);
-					continue;
-				}
-
-				var typeName = binding.Location.TypeName;
-				if (!MethodTokens.DeclaresType(path, typeName)) continue;
-
-				if (binding.Bound)
-				{
-					var sameModule = string.Equals(binding.ModulePath, path, StringComparison.OrdinalIgnoreCase);
-					if (sameModule) continue;
-
-					buffer.Append(
-						LiveDebugEventKind.SessionNotice,
-						$"{binding.Id} is bound in {Path.GetFileName(binding.ModulePath)}, and {Path.GetFileName(path)} also "
-							+ $"declares {typeName}; give the assembly, as {Path.GetFileNameWithoutExtension(path)}!{binding.Raw}, "
-							+ "to break in that one instead.");
-					continue;
-				}
-
-				var others = _symbols.Paths
-					.Where(other => !string.Equals(other, path, StringComparison.OrdinalIgnoreCase))
-					.Where(other => MethodTokens.DeclaresType(other, typeName))
-					.ToList();
-
-				if (others.Count > 0)
-				{
-					binding.Detail = TypeOwners.Ambiguity(typeName, [.. others, path], binding.Raw);
-					continue;
-				}
-
-				TryBind(binding, module);
-			}
-		}
-	}
-
-	private void TryBind(BreakpointBinding binding, CorDebugModule module)
-	{
-		if (binding.Bound) return;
-
-		try
-		{
-			if (module.IsDynamic || module.IsInMemory) return;
-		}
-		catch (Exception)
-		{
-			return; // A module that cannot describe itself is not one we can read metadata from.
-		}
-
-		if (!TypeOwners.Admits(module.Name, binding.Location.Assembly)) return;
-
-		var token = MethodTokens.Find(module.Name, binding.Location.TypeName, binding.Location.MethodName);
-		if (token is null)
-		{
-			binding.Detail = $"no method {binding.Location.TypeName}.{binding.Location.MethodName} in {Path.GetFileName(module.Name)}";
-			return;
-		}
-
-		var offset = binding.Location.IlOffset;
-
-		try
-		{
-			var function = module.GetFunctionFromToken(token.Value);
-
-			// A named method binds at its first instruction; a picked position binds inside the IL,
-			// which is the only way to stop on a line that is not the method's first.
-			var breakpoint = offset is { } instruction
-				? function.ILCode.CreateBreakpoint(instruction)
-				: function.CreateBreakpoint();
-
-			breakpoint.Activate(true);
-
-			binding.Breakpoint = breakpoint;
-			binding.Token = token.Value;
-			binding.ModulePath = module.Name;
-			binding.Source = TargetSymbols.SourceAt(module.Name, token.Value, offset ?? 0);
-			binding.Detail = null;
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"{binding.Id} bound at {binding.Raw}.");
-			logger.LogInformation("Binding {Id} bound at {Location} (token 0x{Token:x8}).", binding.Id, binding.Raw, token.Value);
-		}
-		catch (Exception exception)
-		{
-			// An offset the method's IL does not contain is the failure worth naming apart. It comes
-			// back as an HRESULT about setting a breakpoint, which says nothing about the number
-			// being wrong, and it is the one thing a caller composing a location by hand gets wrong.
-			binding.Detail = offset is { } bad
-				? $"bind failed at IL_{bad:X4}: {exception.Message}. The offset must be one this method's symbols report."
-				: $"bind failed: {exception.Message}";
-			logger.LogDebug(exception, "Binding {Id} at {Location} failed.", binding.Id, binding.Raw);
-		}
-	}
-
-	/// <summary>
-	/// Says why each still-unbound binding is unbound, against the module files that are actually loaded.
-	/// <para>
-	/// A binding that says only "not bound yet", whatever went wrong, points its caller at waiting when
-	/// the spelling is what needs changing. So a location naming its assembly is told whether that module
-	/// is loaded, and one naming none is told that no loaded module declares its type -- which is also
-	/// what a module still to load looks like, so it says it binds when one that does arrives.
-	/// </para>
-	/// <para>
-	/// Only ever narrows: a detail already set by <see cref="TryBind"/> or <see cref="BindAmong"/> is a
-	/// real finding about a module that matched, and is left alone.
-	/// </para>
-	/// </summary>
-	private void ExplainUnbound(IReadOnlyList<string> loadedModulePaths)
-	{
-		foreach (var binding in _bindings)
-		{
-			if (binding.Bound) continue;
-			if (binding.Detail is not (null or "not bound yet")) continue;
-
-			var typeName = binding.Location.TypeName;
-
-			if (binding.Location.Assembly is not { } assembly)
-			{
-				binding.Detail = $"no loaded module declares {typeName} ({loadedModulePaths.Count} searched); "
-					+ "it binds when a module that does loads";
-				continue;
-			}
-
-			if (loadedModulePaths.Any(path => TypeOwners.Admits(path, assembly)))
-			{
-				// The module is loaded and TryBind said nothing, so the type is what is missing --
-				// the method-level miss is reported by TryBind itself.
-				binding.Detail = $"no type {typeName} in {assembly}";
-				continue;
-			}
-
-			binding.Detail = $"module {assembly} is not loaded ({loadedModulePaths.Count} others are)";
-		}
-	}
-
-	private (int? Token, string? Module) TryFunctionIdentity(CorDebugFunctionBreakpoint? breakpoint)
-	{
-		if (breakpoint is null) return (null, null);
-
-		try
-		{
-			var function = breakpoint.Function;
-			return ((int)function.Token, function.Module.Name);
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Reading a breakpoint's function identity failed.");
-			return (null, null);
+			_breakpoints.BindNewModule(module, _symbols.Paths);
 		}
 	}
 
@@ -1885,34 +1646,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		wrapped.SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle);
 		return wrapped;
 	}
-
-	private static LiveTracepoint DescribeTracepoint(BreakpointBinding binding) => new()
-	{
-		Id = binding.Id,
-		Location = binding.Raw,
-		Bound = binding.Bound,
-		IlOffset = binding.Location.IlOffset,
-		Source = binding.Source,
-		HitCount = binding.HitCount,
-		LogMessage = binding.LogMessage,
-		LogEveryNthHit = binding.LogEveryNthHit,
-		Condition = binding.ConditionText,
-		Detail = binding.Bound ? null : binding.Detail,
-	};
-
-	private static LiveBreakpoint DescribeBreakpoint(BreakpointBinding binding) => new()
-	{
-		Id = binding.Id,
-		Location = binding.Raw,
-		StopOnHit = binding.StopOnHit,
-		Bound = binding.Bound,
-		IlOffset = binding.Location.IlOffset,
-		Source = binding.Source,
-		HitCount = binding.HitCount,
-		AutoContinueSeconds = binding.AutoContinueSeconds ?? DefaultAutoContinueSeconds,
-		Condition = binding.ConditionText,
-		Detail = binding.Bound ? null : binding.Detail,
-	};
 
 	private static string DescribeExceptionType(CorDebugThread thread)
 	{
@@ -1940,50 +1673,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	private sealed record RuntimeInProcess(string Path, IntPtr Handle, EnumerateCLRsResult Enumeration);
 
-	private sealed class BreakpointBinding
-	{
-		public required string Id { get; init; }
-
-		public required SymbolLocation Location { get; init; }
-
-		/// <summary>The location as the caller wrote it, for reporting.</summary>
-		public required string Raw { get; init; }
-
-		/// <summary>True for a stopping breakpoint; false for a tracepoint (log and continue).</summary>
-		public required bool StopOnHit { get; init; }
-
-		public string? LogMessage { get; init; }
-
-		public int? LogEveryNthHit { get; init; }
-
-		public int? AutoContinueSeconds { get; init; }
-
-		/// <summary>The condition as the caller wrote it, for reporting; null when there is none.</summary>
-		public string? ConditionText { get; init; }
-
-		/// <summary>The parsed condition evaluated on each hit; null when there is none.</summary>
-		public BreakpointCondition? Condition { get; init; }
-
-		public long HitCount { get; set; }
-
-		/// <summary>The bound method's metadata token, used to match a hit back to this binding.</summary>
-		public int? Token { get; set; }
-
-		/// <summary>The module file it bound in, for reading the symbols that say where that was.</summary>
-		public string? ModulePath { get; set; }
-
-		/// <summary>
-		/// Where in source it bound, read once at bind rather than on each listing: a listing is
-		/// polled while a panel is open and the answer cannot change while the module is loaded.
-		/// </summary>
-		public LiveSourcePosition? Source { get; set; }
-
-		public CorDebugFunctionBreakpoint? Breakpoint { get; set; }
-
-		public string? Detail { get; set; }
-
-		public bool Bound => Breakpoint is not null;
-	}
 }
 
 /// <summary>The process exists but its CoreCLR has not loaded yet; the caller may retry.</summary>

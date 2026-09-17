@@ -28,6 +28,9 @@ internal sealed class StopRecord(
 	LiveExecutionState state,
 	int autoContinueSeconds) : IDisposable
 {
+	/// <summary>How long an unattended stop lasts before the safety timer resumes the target.</summary>
+	internal const int DefaultAutoContinueSeconds = 30;
+
 	private Timer? _autoContinueTimer;
 	private Timer? _holdTimer;
 

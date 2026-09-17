@@ -116,15 +116,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private DbgShim? _shim;
 	private CorDebug? _corDebug;
 	private CorDebugProcess? _process;
-	private bool _detached;
-	private volatile bool _exited;
 
 	/// <summary>
-	/// Set while a detach is stepping the target off a breakpoint patch. In that window the target is
-	/// running with its breakpoints still live, so a callback can arrive; read from mscordbi's thread,
-	/// which is why it is volatile.
+	/// What the target is doing, as one value rather than a set of flags that can disagree. Swapped
+	/// under <see cref="_gate"/> everywhere except the two places mscordbi's callback thread has to
+	/// see it while another thread holds the gate -- the detach window and an exit inside it -- which
+	/// is why it moves through <see cref="Volatile"/> and <see cref="Interlocked"/> rather than plain
+	/// assignment.
 	/// </summary>
-	private volatile bool _detaching;
+	private TargetExecution _execution = new TargetExecution.Running();
 
 	/// <summary>
 	/// How many stops a detach will take waiting for the target to come to rest with nothing on a
@@ -135,64 +135,37 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private const int DetachSettleRounds = 5;
 
 	/// <summary>
-	/// Counts the stops seen while <see cref="_detaching"/> is set. A thread only gets onto a
-	/// breakpoint patch by hitting one, so a stop-free round is the proof that removing the patches is
-	/// safe. Written from mscordbi's thread and read from the detaching one, so it moves through
-	/// <see cref="Interlocked"/> rather than the gate, which the detach is holding.
+	/// Counts the stops seen inside a detach's window. A thread only gets onto a breakpoint patch by
+	/// hitting one, so a stop-free round is the proof that removing the patches is safe. Written from
+	/// mscordbi's thread and read from the detaching one, so it moves through <see cref="Interlocked"/>
+	/// rather than the gate, which the detach is holding.
 	/// </summary>
 	private long _detachWindowStops;
 
-	private bool _stoppedAtBreakpoint;
-	private string? _stoppedBindingId;
-	private CorDebugThread? _stoppedThread;
-	private Timer? _autoContinueTimer;
-
-	// The sequence of the event that announced the current stop, and when it happened. Together they
-	// are the stop's identity: two hits of one breakpoint on one thread are otherwise identical, so a
-	// reader polling this session could not tell a new stop from the same one seen again -- and that
-	// is exactly what decides whether frames and values have to be read afresh.
-	private long _stopEventSequence;
-
-	private DateTime _stoppedAtUtc;
-
-	// What the current stop's safety timeout was set to, kept so releasing a hold can re-arm the timer
-	// with the interval the breakpoint asked for rather than the default.
-	private int _autoContinueSeconds;
-
-	private DateTime _autoContinueAtUtc;
-
-	// When an operator's hold expires, or null when nothing is holding this stop. A hold suspends the
-	// safety timer so a person can read a stack without it moving under them; it is bounded because a
-	// reader who walks away must not leave somebody's app frozen indefinitely.
-	private DateTime? _holdUntilUtc;
-
-	private Timer? _holdTimer;
-
-	// Incremented on every stop, and captured by both timers. Timer.Dispose does not wait for a
-	// callback already running, so a tick queued before a hold was taken would otherwise resume the
-	// target under the person reading it. A callback whose generation has moved returns without
-	// touching anything.
-	private long _stopGeneration;
-
-	/// <summary>
-	/// How the target came to be stopped, which is not inferable from what else is recorded: a manual
-	/// pause and a completed step both arrive with no breakpoint owning them.
-	/// </summary>
-	private LiveExecutionState _stoppedAs = LiveExecutionState.Running;
-
 	public int? TargetProcessId { get; private set; }
 
-	public bool HasExited => _exited;
+	public bool HasExited => Execution is TargetExecution.Exited;
 
-	public bool IsStoppedAtBreakpoint
+	/// <summary>
+	/// What the target is doing. One read of one reference, so a caller cannot catch two halves of a
+	/// transition -- and safe to ask for without the gate, which is what the callback thread needs.
+	/// </summary>
+	private TargetExecution Execution => Volatile.Read(ref _execution);
+
+	/// <summary>Moves the target to a state, for the callers that know which one it is now in.</summary>
+	private void MoveTo(TargetExecution next) => Volatile.Write(ref _execution, next);
+
+	/// <summary>
+	/// Ends the stop being held, standing down its timers, and hands back what it was -- or null when
+	/// nothing was stopped. The target is left running, which is what it is about to be doing in every
+	/// caller: each of them is the thing that resumes it.
+	/// </summary>
+	private StopRecord? EndStop()
 	{
-		get
-		{
-			lock (_gate)
-			{
-				return _stoppedAtBreakpoint;
-			}
-		}
+		var stop = Execution.Stop;
+		stop?.Dispose();
+		MoveTo(new TargetExecution.Running());
+		return stop;
 	}
 
 	/// <summary>
@@ -383,22 +356,18 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			// Nothing is attached, so what detaching promises -- the target keeps running, and the
 			// interface is safe to terminate -- already holds.
-			if (_process is null || _detached || _exited) return true;
+			if (_process is null || !Execution.IsLive) return true;
 
-			ClearStopTimers();
-
-			// Read before it is cleared: nothing else records that the target was held, and whether it
+			// Read before the stop ends: nothing else records that the target was held, and whether it
 			// was decides the first step below.
-			var held = _stoppedAtBreakpoint;
-			_stoppedAtBreakpoint = false;
-			_stoppedBindingId = null;
-			_stoppedThread = null;
+			var held = EndStop() is not null;
 
 			try
 			{
 				// Between the continue and the stop the target runs with its breakpoints still live, so
 				// an event can arrive; it is continued and counted without the gate, which this holds.
-				_detaching = true;
+				var detaching = new TargetExecution.Detaching();
+				MoveTo(detaching);
 				try
 				{
 					// Off the patch first, while the breakpoint it is parked on is still there to step
@@ -412,13 +381,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 					// Narrow on purpose. Past the settling the target is synchronised, and what follows
 					// is the detach itself -- where continuing a callback would be answering on behalf
 					// of a process this session is letting go of.
-					_detaching = false;
+					// Compared rather than assigned: the target can have exited inside this window, and
+					// a process that has gone outranks one that is running again.
+					Interlocked.CompareExchange(ref _execution, new TargetExecution.Running(), detaching);
 				}
 
 				ReleaseForDetach();
 
 				_process.Detach();
-				_detached = true;
+				MoveTo(new TargetExecution.Detached());
 				buffer.Append(LiveDebugEventKind.SessionNotice, "Detached; the target keeps running.");
 				logger.LogInformation("Detached from pid {Pid} on attempt {Attempt}.", TargetProcessId, attempt);
 				return true;
@@ -745,7 +716,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// whether the resume released an operator's hold. Racing the safety timer is harmless: whichever
 	/// arrives first clears the stop, and the loser finds nothing held.
 	/// </summary>
-	public LiveContinueResult Continue() => ContinueInternal(ResumeCause.Caller, generation: null);
+	public LiveContinueResult Continue() => ContinueInternal(ResumeCause.Caller, armedFor: null);
 
 	/// <summary>
 	/// Steps the held thread: <c>in</c> into calls, <c>over</c> them, or <c>out</c> of the current
@@ -769,14 +740,14 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited)
+			if (_process is null || Execution.Stop is not { } stop)
 			{
 				return new LiveContinueResult { Continued = false };
 			}
 
 			try
 			{
-				var stepper = _stoppedThread.CreateStepper();
+				var stepper = stop.Thread.CreateStepper();
 				if (direction == StepDirection.Out) stepper.StepOut();
 				else stepper.Step(bStepIn: direction == StepDirection.In);
 				_steppers.Add(stepper);
@@ -787,13 +758,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				return new LiveContinueResult { Continued = false };
 			}
 
-			var releasedHold = _holdUntilUtc is not null;
+			var releasedHold = stop.IsHeld;
 
 			// Resume so the step executes; the StepComplete callback holds the target again.
-			_stoppedAtBreakpoint = false;
-			_stoppedBindingId = null;
-			_stoppedThread = null;
-			ClearStopTimers();
+			EndStop();
 
 			try
 			{
@@ -841,18 +809,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint) return null;
-
-			return new LiveStop
-			{
-				State = _stoppedAs,
-				ThreadId = _stoppedThread is null ? null : CorDebugInspector.TryThreadId(_stoppedThread),
-				BreakpointId = _stoppedBindingId,
-				EventSequence = _stopEventSequence,
-				StoppedAtUtc = _stoppedAtUtc,
-				Resume = _holdUntilUtc is null ? LiveStopResume.AutoContinue : LiveStopResume.HeldByOperator,
-				ResumeDeadlineUtc = _holdUntilUtc ?? _autoContinueAtUtc,
-			};
+			return Execution.Stop?.Describe();
 		}
 	}
 
@@ -871,12 +828,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		lock (_gate)
 		{
-			if (_process is not { } live || _detached || _exited)
+			if (_process is not { } live || !Execution.IsLive)
 			{
 				return NotPaused("There is no live target to pause: the session has detached, or the process has gone.");
 			}
 
-			if (_stoppedAtBreakpoint) return NotPaused("The target is already stopped.");
+			if (Execution is TargetExecution.Stopped) return NotPaused("The target is already stopped.");
 
 			process = live;
 		}
@@ -898,7 +855,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// goes back, and the caller is told about the stop that is really there.
 		lock (_gate)
 		{
-			if (_stoppedAtBreakpoint)
+			if (Execution is TargetExecution.Stopped)
 			{
 				GiveBackStop(process);
 				return NotPaused("The target stopped on its own before the pause took effect.");
@@ -911,7 +868,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return NotPaused("The target has no managed thread to stop on, so there is nothing a debugger could show.");
 		}
 
-		Hold(thread, LiveDebugEventKind.Paused, "Paused", bindingId: null, autoContinueSeconds);
+		HoldAtStop(thread, LiveDebugEventKind.Paused, "Paused", bindingId: null, autoContinueSeconds);
 
 		return new LivePauseResult
 		{
@@ -990,11 +947,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	/// <param name="requested">How long to hold for, or null for the default. Ignored on a release.</param>
 	/// <param name="release">Give the stop back to the safety timer rather than holding it.</param>
-	public LiveHoldResult Hold(TimeSpan? requested, bool release)
+	public LiveHoldResult OperatorHold(TimeSpan? requested, bool release)
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint)
+			if (Execution.Stop is not { } held)
 			{
 				return new LiveHoldResult
 				{
@@ -1005,8 +962,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				};
 			}
 
-			var wasHeld = _holdUntilUtc is not null;
-			var stop = release ? ReleaseHold() : SetHold(requested);
+			var wasHeld = held.IsHeld;
+			var stop = release ? ReleaseHold(held) : SetHold(held, requested);
 
 			return new LiveHoldResult
 			{
@@ -1021,82 +978,46 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// Suspends the safety timer while somebody reads this stop, and reports the stop as it now
-	/// stands -- or null when there is nothing stopped to hold. Asking again extends it.
+	/// Suspends the safety timer while somebody reads <paramref name="stop"/>, and reports it as it
+	/// now stands. Asking again extends the hold. Called with <c>_gate</c> held.
 	/// <para>
 	/// Bounded at <see cref="MaxHoldSeconds"/> however long is asked for, and the bound is the point
 	/// rather than a formality: the safety timer exists so an unattended stop cannot wedge somebody's
 	/// app, and a hold with no limit would hand that failure back under another name.
 	/// </para>
 	/// </summary>
-	private LiveStop? SetHold(TimeSpan? requested)
+	private LiveStop SetHold(StopRecord stop, TimeSpan? requested)
 	{
-		lock (_gate)
-		{
-			if (!_stoppedAtBreakpoint) return null;
+		var seconds = Math.Clamp(
+			(int)Math.Round((requested ?? TimeSpan.FromSeconds(DefaultHoldSeconds)).TotalSeconds),
+			1,
+			MaxHoldSeconds);
 
-			var seconds = Math.Clamp(
-				(int)Math.Round((requested ?? TimeSpan.FromSeconds(DefaultHoldSeconds)).TotalSeconds),
-				1,
-				MaxHoldSeconds);
+		stop.HoldForOperator(TimeSpan.FromSeconds(seconds), () => ContinueInternal(ResumeCause.HoldExpiry, stop));
 
-			var generation = _stopGeneration;
+		buffer.Append(
+			LiveDebugEventKind.SessionNotice,
+			$"Held for an operator until {stop.HoldUntilUtc:HH:mm:ss}Z; the auto-continue timer is suspended "
+				+ "until then or until something resumes the target.");
 
-			// The safety timer goes rather than being left to fire into a guard, so there is one timer
-			// per stop and the deadline the caller is told is the one that will actually arrive.
-			_autoContinueTimer?.Dispose();
-			_autoContinueTimer = null;
-			_holdTimer?.Dispose();
-
-			_holdUntilUtc = DateTime.UtcNow.AddSeconds(seconds);
-			_holdTimer = new Timer(
-				_ => ContinueInternal(ResumeCause.HoldExpiry, generation),
-				null,
-				TimeSpan.FromSeconds(seconds),
-				Timeout.InfiniteTimeSpan);
-
-			buffer.Append(
-				LiveDebugEventKind.SessionNotice,
-				$"Held for an operator until {_holdUntilUtc:HH:mm:ss}Z; the auto-continue timer is suspended "
-					+ "until then or until something resumes the target.");
-
-			return CurrentStop();
-		}
+		return stop.Describe();
 	}
 
 	/// <summary>
 	/// Gives a held stop back to the safety timer, re-armed with the interval its breakpoint asked
-	/// for. Reports the stop as it now stands, or null when nothing is stopped.
+	/// for. Reports the stop as it now stands. Called with <c>_gate</c> held.
 	/// </summary>
-	private LiveStop? ReleaseHold()
+	private LiveStop ReleaseHold(StopRecord stop)
 	{
-		lock (_gate)
-		{
-			if (!_stoppedAtBreakpoint) return null;
-			if (_holdUntilUtc is null) return CurrentStop();
+		if (!stop.IsHeld) return stop.Describe();
 
-			var generation = _stopGeneration;
+		stop.ArmSafetyTimer(() => ContinueInternal(ResumeCause.SafetyTimer, stop));
 
-			_holdTimer?.Dispose();
-			_holdTimer = null;
-			_holdUntilUtc = null;
+		buffer.Append(
+			LiveDebugEventKind.SessionNotice,
+			$"The operator hold is released; the target auto-continues in {stop.AutoContinueSeconds}s.");
 
-			// From now rather than from the stop, because the interval is how long an unattended stop
-			// may last and the stop has just stopped being unattended.
-			_autoContinueAtUtc = DateTime.UtcNow.AddSeconds(_autoContinueSeconds);
-			_autoContinueTimer?.Dispose();
-			_autoContinueTimer = new Timer(
-				_ => ContinueInternal(ResumeCause.SafetyTimer, generation),
-				null,
-				TimeSpan.FromSeconds(_autoContinueSeconds),
-				Timeout.InfiniteTimeSpan);
-
-			buffer.Append(
-				LiveDebugEventKind.SessionNotice,
-				$"The operator hold is released; the target auto-continues in {_autoContinueSeconds}s.");
-
-			return CurrentStop();
-		}
+		return stop.Describe();
 	}
 
 	/// <summary>
@@ -1214,12 +1135,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited)
+			if (_process is null || Execution.Stop is not { } stop)
 			{
 				return new LiveEvaluation { Expression = expression, Error = "The target is not stopped; evaluation needs a stop at a breakpoint or step." };
 			}
 
-			return _inspector.Evaluate(_stoppedThread, expression);
+			return _inspector.Evaluate(stop.Thread, expression);
 		}
 	}
 
@@ -1227,15 +1148,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// The stopped state, for handing to the inspector. Only correct while <c>_gate</c> is held and
 	/// the target is stopped, which is why every caller above is inside the lock and past the guard.
 	/// </summary>
-	private StoppedTarget Stopped(LiveStop stop) => new(_process!, _stoppedThread, stop);
+	private StoppedTarget Stopped(LiveStop stop) => new(_process!, Execution.Stop?.Thread, stop);
 
 	/// <summary>
 	/// Detaches, and terminates the debugging interface only if that worked.
 	/// <para>
 	/// <c>Terminate()</c>'s documented precondition is that every process has been detached from or
 	/// terminated; running it while still attached is what takes the debuggee down with it. That
-	/// precondition used to be written here as a comment asserting the fact rather than as a check
-	/// of it, while <c>_detached</c> -- the field recording exactly that fact -- went unread.
+	/// precondition is checked rather than asserted in a comment: this detaches first and terminates
+	/// only if that reported success, because the state saying so is the only evidence there is.
 	/// </para>
 	/// <para>
 	/// Leaking the interface for the few seconds until this host process exits is strictly better
@@ -1314,38 +1235,35 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// Resumes a held target. <paramref name="generation"/> is the stop a timer was armed for, and is
+	/// Resumes a held target. <paramref name="armedFor"/> is the stop a timer was armed for, and is
 	/// null when a caller asked.
 	/// <para>
-	/// Two things separate a timer's resume from a caller's. A timer whose generation has moved belongs
-	/// to a stop that is already over, so it does nothing -- disposing a timer does not wait for a
-	/// callback already running, so this is what makes a hold safe rather than nearly safe. And the
-	/// safety timer must not fire while a person is holding the stop, which is the whole point of a
-	/// hold; the hold's own expiry is exempt from that, since it is the thing the hold ends with.
+	/// Two things separate a timer's resume from a caller's. A timer belonging to a stop that is
+	/// already over does nothing -- disposing a timer does not wait for a callback already running, so
+	/// comparing the record is what makes a hold safe rather than nearly safe. And the safety timer
+	/// must not fire while a person is holding the stop, which is the whole point of a hold; the
+	/// hold's own expiry is exempt from that, since it is the thing the hold ends with.
 	/// </para>
 	/// </summary>
-	private LiveContinueResult ContinueInternal(ResumeCause cause, long? generation)
+	private LiveContinueResult ContinueInternal(ResumeCause cause, StopRecord? armedFor)
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint || _process is null || _detached || _exited)
+			if (_process is null || Execution.Stop is not { } stop)
 			{
 				return new LiveContinueResult { Continued = false };
 			}
 
-			var supersededTimer = generation is { } armedFor && armedFor != _stopGeneration;
-			var blockedByHold = cause == ResumeCause.SafetyTimer && _holdUntilUtc is not null;
+			var supersededTimer = armedFor is not null && !ReferenceEquals(armedFor, stop);
+			var blockedByHold = cause == ResumeCause.SafetyTimer && stop.IsHeld;
 
 			// Both are no-ops rather than refusals: nothing asked for them.
 			if (supersededTimer || blockedByHold) return new LiveContinueResult { Continued = false };
 
-			var releasedHold = cause == ResumeCause.Caller && _holdUntilUtc is not null;
+			var releasedHold = cause == ResumeCause.Caller && stop.IsHeld;
+			var id = stop.BindingId;
 
-			_stoppedAtBreakpoint = false;
-			var id = _stoppedBindingId;
-			_stoppedBindingId = null;
-			_stoppedThread = null;
-			ClearStopTimers();
+			EndStop();
 
 			try
 			{
@@ -1501,11 +1419,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// continued without taking the gate: the detach is holding it, and this is the thread mscordbi
 		// needs back before its Stop can complete -- so waiting would stop the detach and the debuggee
 		// both, permanently, which is the wedge the whole detach path exists to avoid.
-		if (_detaching)
+		if (Execution is TargetExecution.Detaching)
 		{
 			if (e.Kind == CorDebugManagedCallbackKind.ExitProcess)
 			{
-				_exited = true;
+				MoveTo(new TargetExecution.Exited());
 				return;
 			}
 
@@ -1539,7 +1457,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		if (e.Kind == CorDebugManagedCallbackKind.ExitProcess)
 		{
-			_exited = true;
+			// Under the gate, unlike the detach window above, because a target that goes while it is
+			// being held has a stop to end: its timers would otherwise outlive the process, and a
+			// reader would be told a dead target is stopped at a breakpoint. Nothing outside that
+			// window holds the gate across a wait on mscordbi, so this cannot be the thread it needs.
+			lock (_gate)
+			{
+				Execution.Stop?.Dispose();
+				MoveTo(new TargetExecution.Exited());
+			}
+
 			return;
 		}
 
@@ -1548,7 +1475,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		lock (_gate)
 		{
-			if (_detached) return;
+			if (Execution is TargetExecution.Detached) return;
 
 			try
 			{
@@ -1589,7 +1516,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			case StepCompleteCorDebugManagedCallbackEventArgs step:
 				ForgetStepper(step.Stepper);
-				return Hold(step.Thread, LiveDebugEventKind.StepComplete, "Step complete", bindingId: null, autoContinueSeconds: null);
+				return HoldAtStop(step.Thread, LiveDebugEventKind.StepComplete, "Step complete", bindingId: null, autoContinueSeconds: null);
 
 			case Exception2CorDebugManagedCallbackEventArgs exception:
 				RecordException(exception);
@@ -1653,7 +1580,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		if (binding is { StopOnHit: true })
 		{
-			return Hold(hit.Thread, LiveDebugEventKind.BreakpointHit, $"Breakpoint {binding.Raw} hit #{ordinal}", binding.Id, binding.AutoContinueSeconds);
+			return HoldAtStop(hit.Thread, LiveDebugEventKind.BreakpointHit, $"Breakpoint {binding.Raw} hit #{ordinal}", binding.Id, binding.AutoContinueSeconds);
 		}
 
 		// Tracepoint: a hit-count filter still counts every hit; it only thins what is logged.
@@ -1678,42 +1605,33 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// stop's identity and the fields describing the stop are not complete without it.
 	/// </para>
 	/// </summary>
-	private bool Hold(CorDebugThread thread, LiveDebugEventKind kind, string prefix, string? bindingId, int? autoContinueSeconds)
+	private bool HoldAtStop(CorDebugThread thread, LiveDebugEventKind kind, string prefix, string? bindingId, int? autoContinueSeconds)
 	{
 		var frames = WalkStack(thread, MaxStackFrames);
 		var variables = ReadTopFrameVariables(thread);
 		var threadId = CorDebugInspector.TryThreadId(thread);
 		var top = frames.Count > 0 ? frames[0] : "?";
+		var seconds = autoContinueSeconds ?? DefaultAutoContinueSeconds;
 
 		lock (_gate)
 		{
-			_stoppedAtBreakpoint = true;
-			_stoppedBindingId = bindingId;
-			_stoppedThread = thread;
-			_stoppedAs = StateOf(kind);
+			// Whatever was held here is over, and its timers go with it: a new stop never inherits the
+			// previous one's hold.
+			Execution.Stop?.Dispose();
 
-			var seconds = autoContinueSeconds ?? DefaultAutoContinueSeconds;
+			var stop = new StopRecord(thread, bindingId, StateOf(kind), seconds);
+			MoveTo(new TargetExecution.Stopped(stop));
 
-			// Before the timer is armed, so a callback that fires immediately cannot see a half-built
-			// stop, and so the generation the timer captures is this stop's.
-			var generation = ++_stopGeneration;
-			_autoContinueSeconds = seconds;
-			_stoppedAtUtc = DateTime.UtcNow;
-			_autoContinueAtUtc = _stoppedAtUtc.AddSeconds(seconds);
-
-			_stopEventSequence = buffer.Append(
+			stop.EventSequence = buffer.Append(
 				kind,
 				$"{prefix} at {top} on thread {threadId?.ToString() ?? "?"} -- stopped; continue or step (auto-continues in {seconds}s).",
 				threadId: threadId,
 				frames: frames.Count > 0 ? frames : null,
 				variables: variables.Count > 0 ? variables : null);
 
-			ClearStopTimers();
-			_autoContinueTimer = new Timer(
-				_ => ContinueInternal(ResumeCause.SafetyTimer, generation),
-				null,
-				TimeSpan.FromSeconds(seconds),
-				Timeout.InfiniteTimeSpan);
+			// Armed last, so a timer that fires the instant it is set cannot find a half-built stop. It
+			// carries the record it belongs to, so a tick queued against a stop already over does nothing.
+			stop.ArmSafetyTimer(() => ContinueInternal(ResumeCause.SafetyTimer, stop));
 		}
 
 		return false;
@@ -1796,7 +1714,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (_process is null || _detached || _exited) return;
+			if (_process is null || !Execution.IsLive) return;
 			if (_bindings.TrueForAll(binding => binding.Bound)) return;
 
 			var stopped = false;
@@ -1933,7 +1851,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private void EnumerateLoadedModules()
 	{
-		if (_process is null || _detached || _exited) return;
+		if (_process is null || !Execution.IsLive) return;
 
 		var stopped = false;
 		try
@@ -2153,24 +2071,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			logger.LogDebug(exception, "Reading a breakpoint's function identity failed.");
 			return (null, null);
 		}
-	}
-
-	/// <summary>
-	/// Stands down everything that would resume the current stop: the safety timer, an operator's hold
-	/// and its timer. Called wherever a stop ends or begins, so a new stop never inherits the previous
-	/// one's hold.
-	/// <para>
-	/// Disposing a timer does not wait for a callback already running, which is why the stop generation
-	/// exists rather than this being enough on its own.
-	/// </para>
-	/// </summary>
-	private void ClearStopTimers()
-	{
-		_autoContinueTimer?.Dispose();
-		_autoContinueTimer = null;
-		_holdTimer?.Dispose();
-		_holdTimer = null;
-		_holdUntilUtc = null;
 	}
 
 	/// <summary>Wraps a native event handle so it can be waited on or set through the BCL.</summary>

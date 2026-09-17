@@ -319,7 +319,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveHoldResult { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail, Applied = false };
 		}
 
-		return session.Hold(seconds is { } requested ? TimeSpan.FromSeconds(requested) : null, release);
+		return session.OperatorHold(seconds is { } requested ? TimeSpan.FromSeconds(requested) : null, release);
 	}
 
 	/// <summary>Stops a running target where it stands, rather than where a breakpoint would.</summary>

@@ -66,14 +66,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// <summary>What a hold lasts when the caller does not say. Long enough to read a stack and think.</summary>
 	private const int DefaultHoldSeconds = 300;
 
-	/// <summary>
-	/// How many times to try detaching before giving up. Failure under contention is plausibly
-	/// transient and a retry is far cheaper than what failing costs the person whose app it is.
-	/// </summary>
-	private const int DetachAttempts = 3;
-
-	private static readonly TimeSpan DetachRetryDelay = TimeSpan.FromMilliseconds(50);
-
 	private readonly Lock _gate = new();
 	// Reading a stopped target, which needs none of this session's state -- it is handed the process
 	// and the held thread per call. Separate because holding a stop and reading one are different jobs.
@@ -109,6 +101,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private readonly RuntimeAttachment _runtime = new(buffer, logger);
 
 	/// <summary>
+	/// How a detach is attempted and what it says when it fails. The state transitions stay here; the
+	/// counting and the deciding are its.
+	/// </summary>
+	private readonly DetachProtocol _detach = new(buffer, logger);
+
+	/// <summary>
 	/// What the target is doing, as one value rather than a set of flags that can disagree. Swapped
 	/// under <see cref="_gate"/> everywhere except the two places mscordbi's callback thread has to
 	/// see it while another thread holds the gate -- the detach window and an exit inside it -- which
@@ -116,22 +114,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// assignment.
 	/// </summary>
 	private TargetExecution _execution = new TargetExecution.Running();
-
-	/// <summary>
-	/// How many stops a detach will take waiting for the target to come to rest with nothing on a
-	/// breakpoint patch. Each round costs one continue and one stop, and a target whose breakpoint is
-	/// hit faster than that never settles -- so the detach goes ahead rather than refusing, on the
-	/// grounds that a debugger left attached is the worse of the two.
-	/// </summary>
-	private const int DetachSettleRounds = 5;
-
-	/// <summary>
-	/// Counts the stops seen inside a detach's window. A thread only gets onto a breakpoint patch by
-	/// hitting one, so a stop-free round is the proof that removing the patches is safe. Written from
-	/// mscordbi's thread and read from the detaching one, so it moves through <see cref="Interlocked"/>
-	/// rather than the gate, which the detach is holding.
-	/// </summary>
-	private long _detachWindowStops;
 
 	public int? TargetProcessId => _runtime.ProcessId;
 
@@ -214,7 +196,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		Exception? error = null;
 
-		for (var attempt = 1; attempt <= DetachAttempts; attempt++)
+		for (var attempt = 1; attempt <= DetachProtocol.Attempts; attempt++)
 		{
 			if (TryDetachOnce(attempt, out error))
 			{
@@ -222,29 +204,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				return true;
 			}
 
-			if (IsRefusal(error)) break;
-			if (attempt < DetachAttempts) Thread.Sleep(DetachRetryDelay);
+			if (DetachProtocol.IsRefusal(error)) break;
+			if (attempt < DetachProtocol.Attempts) Thread.Sleep(DetachProtocol.RetryDelay);
 		}
 
-		var refused = IsRefusal(error);
-		var effort = refused ? "it was refused" : $"after {DetachAttempts} attempts";
-		// Trimmed because the reason goes mid-sentence in every message that carries it, and an
-		// exception's message usually ends with its own full stop.
-		failure = $"{effort}: {error?.Message.TrimEnd('.') ?? "no reason given"}";
-
-		// The failure deserves an event more than the success does: without one, a caller is told the
-		// session closed and is never told the debugger is still on their process.
-		buffer.Append(
-			LiveDebugEventKind.SessionNotice,
-			$"Could not detach from pid {TargetProcessId}, {failure}. The debugging interface is being left open "
-				+ "rather than terminated, because terminating it while still attached kills the target.");
-
-		logger.LogError(
-			error,
-			"Detach from pid {Pid} failed{Effort}.",
-			TargetProcessId,
-			refused ? " and was not retried" : $" after {DetachAttempts} attempts");
-
+		failure = _detach.ReportFailure(error, TargetProcessId);
 		return false;
 	}
 
@@ -286,7 +250,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 					// over.
 					if (held) Debuggee.Continue(fIsOutOfBand: false);
 
-					SettleForRelease();
+					_detach.Settle(Debuggee, TargetProcessId);
 				}
 				finally
 				{
@@ -314,46 +278,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 					exception, "Detach from pid {Pid} failed on attempt {Attempt}.", TargetProcessId, attempt);
 				return false;
 			}
-		}
-	}
-
-	/// <summary>
-	/// Stops the target, and keeps stopping it until a round goes by with nothing hitting a breakpoint,
-	/// so the patches can be removed with no thread part-way over one.
-	/// <para>
-	/// A stop on its own is not enough. The target runs between the continue that frees a held thread
-	/// and the stop that takes it back, and a breakpoint hit in that gap puts another thread on a patch
-	/// -- which is the crash this exists to prevent, and it shows up only under load, which is where
-	/// the window is wide. A hit is the only way onto a patch, so a round with none is the proof.
-	/// Giving up after <see cref="DetachSettleRounds"/> detaches anyway: a target hit that often is
-	/// rare, and a debugger left on somebody's application is the worse outcome of the two.
-	/// </para>
-	/// </summary>
-	private void SettleForRelease()
-	{
-		for (var round = 1; ; round++)
-		{
-			var before = Interlocked.Read(ref _detachWindowStops);
-
-			// Detach needs a stopped process; stopping and detaching leaves the target running.
-			Debuggee!.Stop(0);
-
-			if (Interlocked.Read(ref _detachWindowStops) == before) return;
-
-			if (round >= DetachSettleRounds)
-			{
-				logger.LogWarning(
-					"Detaching from pid {Pid} without the target coming to rest: it hit a breakpoint in each of "
-						+ "{Rounds} rounds, so a thread may still be stepping over one.",
-					TargetProcessId,
-					round);
-
-				return;
-			}
-
-			// Something was hit while the target was running, so a thread may be part-way over a patch.
-			// Let it run on, and take the stop again.
-			Debuggee.Continue(fIsOutOfBand: false);
 		}
 	}
 
@@ -407,13 +331,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// turns a deterministic refusal into a slightly slower deterministic refusal, and calls it
 	/// transient in the log while doing so.
 	/// </summary>
-	private static bool IsRefusal(Exception? failure) => failure is DebugException debug && debug.HResult
-		is HRESULT.CORDBG_E_DETACH_FAILED_OUTSTANDING_BREAKPOINTS
-		or HRESULT.CORDBG_E_DETACH_FAILED_OUTSTANDING_STEPPERS
-		or HRESULT.CORDBG_E_DETACH_FAILED_OUTSTANDING_EVALS
-		or HRESULT.CORDBG_E_DETACH_FAILED_OUTSTANDING_TARGET_RESOURCES
-		or HRESULT.CORDBG_E_DETACH_FAILED_ON_ENC;
-
 	/// <summary>
 	/// Adds a tracepoint: a breakpoint that logs and auto-continues, never pausing the target. It binds
 	/// immediately if its module is already loaded and otherwise when the module loads.
@@ -1073,7 +990,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			// between the two and conclude the target was quiet. Only the kinds that put a thread on a
 			// patch count; a module load is not a reason to wait.
 			var parks = e.Kind is CorDebugManagedCallbackKind.Breakpoint or CorDebugManagedCallbackKind.StepComplete;
-			if (parks) Interlocked.Increment(ref _detachWindowStops);
+			if (parks) _detach.CountStopInWindow();
 
 			try
 			{

@@ -235,6 +235,24 @@ repository, all in one place.
 Ordered by value per unit of effort. Each card names its findings; each finding has evidence in its
 file. Existing issues are named so nothing is filed twice.
 
+**Dependencies all point downwards, which is why tier order is also work order.** Every gate found
+so far runs from a later tier to an earlier one, never the reverse, so working the tiers in order
+satisfies them without anyone tracking a graph. The five that exist:
+
+| Card | Waits on | Why |
+|---|---|---|
+| 11b, path half | 1 | Returning relative paths makes agents send them, so the size win must not land before the resolution fix |
+| 11b, notice half | 9 | Eight hand-written notice iterators are why two notices fire unconditionally; one pipeline gives notice discipline a home |
+| 11c | 1 | An anchor is only worth accepting once resolution is right |
+| 1b | 1 | The working directory can only move once the hop no longer relies on it |
+| Tier 6 | 3, and ideally 8-10 | An apply needs an explicit target state, and the emit sits on the write pipeline |
+
+**Card 1 carries more weight than its row suggests.** Five things hang off it: the wrong-worktree
+write itself, the largest single size saving in the product (the absolute path repeated three to
+five times in every result), the workspace-key anchor, the worker's working directory and with it
+the worktree lock, and a mis-route failing loudly instead of writing a plausible file. It was
+already first on value per unit of effort; it is now first by a wide margin.
+
 ### Tier 1 — wrong answers and wrong side effects
 
 These produce confident wrong results today. Everything else is cost.
@@ -242,6 +260,7 @@ These produce confident wrong results today. Everything else is cost.
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | 1 | **A relative path resolves against the broker, so a write lands in another worktree.** Rebase hints against the caller's origin before ranking; make it a type so it cannot recur. Make the broker-to-worker hop absolute-only so a mis-route fails loudly instead of writing to a plausible file. | BRK-01, AGT-10, BRK-20 | #214 | M |
+| 1b | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Falls out of card 1: once the hop is absolute-only the worker's working directory stops being load-bearing and can move somewhere inert. Cut with #157, since an evicted worker releases the directory too. | BRK-20 | #157 | S |
 | 2 | **A breakpoint hit is attributed by method token alone**, so two bindings in one method misreport: a stopping breakpoint logs as a tracepoint and the wrong id is reported. Match the breakpoint object. | LIV-03 | new | S |
 | 3 | **A dead target reports as stopped.** The stop state machine is implicit in nine fields and five spellings of the same guard. Replace with one union swapped under the gate. Prerequisite for hot reload. | LIV-02, HOT-06 | new | M |
 | 4 | **A timed-out XAML request still runs in the app** — reported failure, did the thing anyway. This is #208's real cause, and it is in the product, not the test. | UIP-15, LIV-07 | #208 | M |
@@ -266,7 +285,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | 11 | **Result size discipline, reads.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 | M |
-| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Gated on card 1**: returning relative paths makes agents send them. | AGT-21 | new | M |
+| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Gated on card 1** for the path half (returning relative paths makes agents send them) and **on card 9** for the notice half (eight hand-written notice iterators are why two fire unconditionally). | AGT-21 | new | M |
 | 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction. | AGT-21, BRK-01 | new | S |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. | AGT-04, WRK-07, AGT-05 | #121 #210 | M |
@@ -295,7 +314,6 @@ Commit to the supervising user, or decide not to. Everything here follows from t
 | 24 | **The activity log is the only record of what an agent did to your solution.** It is eight entries, collapsed, tertiary grey, dropped on close. Persist it, give it client attribution, promote it. | USE-04, USE-05 | new | M |
 | 25 | **Make facts copyable.** Nothing in a window whose job is feeding facts to an agent can be copied except one XAML address. | USE-09, USE-14 | new | S |
 | 26 | **Cut what earns less than it costs**: the threads pane (the only pane that freezes the user's app as a side effect of being visible), the duplicate tray menu, the empty title bar, the load time on the permanent facts line. | USE-07, USE-15, USE-17 | new | M |
-| 26c | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Cut with #157: an evicted worker releases the directory. | BRK-20 | #157 | S |
 | 26b | **Write down why the magnifier exists.** The OS magnifier filters bilinearly and cannot be told not to, so it can neither read an exact colour nor show a one-pixel gap at a corner radius. That reason is in no comment, invariant or wiki page, and this review recommended deleting the feature before being corrected. A header sentence, a decision record, and a tooltip that states the benefit rather than the mechanism. | USE-08 | new | S |
 | 27 | **Connect the pick to the window that explains it.** Six manual steps today. | USE-10 | #226 | L |
 

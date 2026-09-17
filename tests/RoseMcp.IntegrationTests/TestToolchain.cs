@@ -152,6 +152,37 @@ internal static class TestToolchain
 		if (exitCode != 0) throw new InvalidOperationException($"dotnet {arguments} failed:{Environment.NewLine}{output}");
 	}
 
+	/// <summary>
+	/// What <c>MSBuildLocator</c> sets in whatever process registers it, and so what a spawned build
+	/// must not be handed. Named here rather than at the removal, because the set is a fact about
+	/// MSBuildLocator rather than about any one tool being run.
+	/// </summary>
+	private static readonly string[] MSBuildEnvironment =
+	[
+		"MSBUILD_EXE_PATH",
+		"MSBuildExtensionsPath",
+		"MSBuildSDKsPath",
+	];
+
+	/// <summary>
+	/// Runs a tool and returns its exit code and everything it wrote, with this process's MSBuild
+	/// environment kept out of the child.
+	/// <para>
+	/// <c>MSBuildLocator.RegisterInstance</c> points a process at one MSBuild by setting
+	/// <c>MSBUILD_EXE_PATH</c>, <c>MSBuildExtensionsPath</c> and <c>MSBuildSDKsPath</c> in its own
+	/// environment, and the tests that drive Roslyn in process rather than through a worker make that
+	/// happen inside the test runner. A child inherits them, so a spawned Visual Studio MSBuild
+	/// resolves <c>$(MSBuildExtensionsPath)</c> to the dotnet SDK: the classic UWP project's
+	/// <c>Microsoft\WindowsXaml\v18.0</c> import is looked for under the SDK, is not there, and the
+	/// build fails naming a missing targets file on a machine that has it. The error reads like a
+	/// broken project and the cause is that the build was pointed at the wrong root.
+	/// </para>
+	/// <para>
+	/// Scrubbed for every tool rather than for the build that noticed, because wanting the toolchain
+	/// it finds for itself is the whole reason any of this is spawned instead of being done in
+	/// process. Removing a variable that was never set costs nothing, so there is no condition on it.
+	/// </para>
+	/// </summary>
 	internal static (int ExitCode, string Output) RunProcess(string fileName, string arguments)
 	{
 		var start = new ProcessStartInfo(fileName, arguments)
@@ -160,6 +191,8 @@ internal static class TestToolchain
 			RedirectStandardError = true,
 			UseShellExecute = false,
 		};
+
+		foreach (var inherited in MSBuildEnvironment) start.Environment.Remove(inherited);
 
 		using var process = Process.Start(start) ?? throw new InvalidOperationException($"{fileName} did not start.");
 		var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();

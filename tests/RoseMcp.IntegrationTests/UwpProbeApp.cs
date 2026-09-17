@@ -52,6 +52,13 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	private string? _registrationFailure;
 
 	/// <summary>
+	/// Why preparing the app failed, kept so that every test after the first is told the same thing.
+	/// Null while nothing has gone wrong, which is also the state on a machine that skipped before
+	/// reaching the build at all.
+	/// </summary>
+	private Exception? _preparationFailure;
+
+	/// <summary>
 	/// The AUMID of a registered, launchable probe app, having built everything it needs. Skips the
 	/// calling test where the environment cannot provide it, which is the same three skips these tests
 	/// each spelled out for themselves.
@@ -76,13 +83,37 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			// The UWP target is x64 (emulated on ARM64), so the broker needs the x64 host present.
 			EnsureX64HostBuilt();
 
+			// Every test after the first gets the same answer, including the same failure. The latch is
+			// set before the work rather than after it, so preparing the app is attempted once whether
+			// or not it succeeds -- and without holding on to why it failed, a later caller finds no
+			// aumid, blames registration, and says so with nothing after the colon, because the reason
+			// belongs to a step that never ran.
+			if (_preparationFailure is not null)
+			{
+				throw new InvalidOperationException(
+					"The UWP probe app could not be prepared, and this is what the first test that asked for it hit.",
+					_preparationFailure);
+			}
+
 			if (!_registered)
 			{
 				_registered = true;
-				_layoutDirectory = Stage(Build(msbuild!));
-				_aumid = Register(_layoutDirectory, out _registrationFailure);
+				try
+				{
+					_layoutDirectory = Stage(Build(msbuild!));
+					_aumid = Register(_layoutDirectory, out _registrationFailure);
+				}
+				catch (Exception exception)
+				{
+					_preparationFailure = exception;
+					throw;
+				}
 			}
 
+			// Registration is a skip and the build above is not, which is the same distinction the
+			// provider build makes: MsBuild() returning null is the machine having no UWP tooling and
+			// has already skipped, so a build that runs and fails is a real failure rather than a limit
+			// of this machine. A build failure quietly skipped is a capability silently not tested.
 			if (_aumid is null)
 			{
 				Skip.Test($"The UWP probe app could not be registered: {_registrationFailure}");

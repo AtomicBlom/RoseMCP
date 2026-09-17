@@ -183,4 +183,12 @@ internal static class ProbeTargetSession
 		// carry. Marking this method as not returning is what lets the callers read as guards.
 		throw new InvalidOperationException(reason);
 	}
+
+	/// <summary>An attach-by-pid target for the probe, which is how most of these sessions start.</summary>
+	internal static LiveAppTarget AttachTo(int processId) => new()
+	{
+		Kind = LiveAppTargetKind.AttachProcess,
+		ProcessId = processId,
+		Description = "probe target",
+	};
 }

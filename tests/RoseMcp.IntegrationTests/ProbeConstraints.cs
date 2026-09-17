@@ -22,6 +22,13 @@ namespace RoseMcp.IntegrationTests;
 /// live-app half against the rest of the suite made its two halves add up (268s + 109s) rather than
 /// overlap. Too narrow costs correctness, and costs it dishonestly -- see LiveApp below.
 /// </para>
+/// <para>
+/// None of this is scoped to a test class. A key is a string and an order is an integer, both held by
+/// the test method, so which class a test is written in changes nothing about when it runs or what it
+/// overlaps -- which is what lets the live-app tests be filed by what they are about rather than by
+/// what they contend over. The fixtures are shared per assembly for the same reason, so one lease
+/// gates every class that wants the app.
+/// </para>
 /// </summary>
 internal static class ProbeKeys
 {

@@ -4,7 +4,7 @@ Synthesis of eight reviews of RoseMCP, 2026-09-16/17, at 446 commits. Read this 
 answers and the card list; read the numbered files for the evidence. Every finding cited here has
 a `path:line` reference in its own file.
 
-**Scale.** 150 findings across eight reports: 26 High, 78 Medium, 46 Low. Roughly 6,000 lines of
+**Scale.** 151 findings across eight reports: 27 High, 78 Medium, 46 Low. Roughly 6,000 lines of
 review over roughly 60,000 lines of production code and 31,000 of tests, in 18 projects.
 
 | File | Findings | H/M/L | Grade |
@@ -12,7 +12,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 01 Broker and Server | 19 | 2/9/8 | Adequate; strong core, fragile lifetime and seams |
 | 02 Worker and Roslyn | 23 | 5/11/7 | Core strong, edges adequate, **editing stack fragile** |
 | 03 LiveApp, debugger, tap | 22 | 2/12/8 | Adequate leaning strong |
-| 04 Agentic citizenship | 20 | 6/12/2 | Adequate, and unusually self-aware about it |
+| 04 Agentic citizenship | 21 | 7/12/2 | Adequate, and unusually self-aware about it |
 | 05 UI code, tests, process | 27 | 3/14/10 | **Strong**, one structural hole, one growing debt |
 | 06 IPC and protocols | 10 | 1/3/6 | Adequate tending strong; 11 of 12 boundaries right |
 | 07 Hot-reload readiness | 12 | 4/7/1 | Fragile but well-aimed; 5-6.5 weeks to v1 |
@@ -265,7 +265,8 @@ Highest leverage on adoption. Cheap relative to impact.
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 11 | **Result size discipline.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 | M |
+| 11 | **Result size discipline, reads.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 | M |
+| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. | AGT-21 | new | M |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. | AGT-04, WRK-07, AGT-05 | #121 #210 | M |
 | 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. | AGT-12, USE-01 | new | S |

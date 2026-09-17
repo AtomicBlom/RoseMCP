@@ -1,9 +1,6 @@
-using System.Runtime.InteropServices;
-
 using ClrDebug;
 
 using Microsoft.Extensions.Logging;
-using Microsoft.Win32.SafeHandles;
 
 using RoseMcp.Contracts;
 using RoseMcp.Symbols;
@@ -25,8 +22,6 @@ namespace RoseMcp.LiveApp.Debugging;
 /// </summary>
 internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
 {
-	private static readonly TimeSpan RuntimeReadyTimeout = TimeSpan.FromSeconds(5);
-	private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
 	private const int MaxStackFrames = 20;
 	private const int MaxVariables = 64;
 
@@ -106,9 +101,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private readonly BreakpointTable _breakpoints = new(buffer, logger);
 
-	private DbgShim? _shim;
-	private CorDebug? _corDebug;
-	private CorDebugProcess? _process;
+	/// <summary>
+	/// The ICorDebug interface and the process it was got onto. Attaching is discovery rather than
+	/// configuration -- which mscordbi talks to a target is decided by the coreclr that target runs --
+	/// and it is the one part of a session that can fail before there is a session at all.
+	/// </summary>
+	private readonly RuntimeAttachment _runtime = new(buffer, logger);
 
 	/// <summary>
 	/// What the target is doing, as one value rather than a set of flags that can disagree. Swapped
@@ -135,7 +133,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private long _detachWindowStops;
 
-	public int? TargetProcessId { get; private set; }
+	public int? TargetProcessId => _runtime.ProcessId;
+
+	/// <summary>The process being debugged, or null before an attach has succeeded.</summary>
+	private CorDebugProcess? Debuggee => _runtime.Process;
 
 	public bool HasExited => Execution is TargetExecution.Exited;
 
@@ -165,104 +166,22 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// Attaches to a running process, waiting briefly for its runtime if it has only just started.
 	/// Throws with a plain message when the target is not a debuggable .NET process.
 	/// </summary>
-	public void Attach(int pid, TimeSpan? runtimeReadyTimeout = null)
-	{
-		var shim = LoadDbgShim();
-		var runtime = FindRuntimeWithRetry(shim, pid, runtimeReadyTimeout ?? RuntimeReadyTimeout);
-		try
-		{
-			_corDebug = CreateCorDebug(shim, pid, runtime.Path);
-			_process = _corDebug.DebugActiveProcess(pid, win32Attach: false);
-			TargetProcessId = pid;
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"Attached to pid {pid} ({runtime.Path}).");
-			logger.LogInformation("Attached to pid {Pid} ({Runtime}).", pid, runtime.Path);
-		}
-		finally
-		{
-			// The enumeration's handles are the runtimes' continue events; attach does not need them.
-			shim.CloseCLREnumeration(runtime.Enumeration);
-		}
-	}
+	public void Attach(int pid, TimeSpan? runtimeReadyTimeout = null) =>
+		_runtime.Attach(pid, runtimeReadyTimeout ?? RuntimeAttachment.RuntimeReadyTimeout, OnEvent);
 
 	/// <summary>
 	/// Launches an executable under the debugger and attaches at runtime startup, so the target is
-	/// under debug from birth and its early events are captured. The runtime is created suspended,
-	/// resumed to the point it signals startup, attached to, then released.
+	/// under debug from birth and its early events are captured.
 	/// </summary>
-	public void Launch(string executablePath, string? arguments)
-	{
-		var shim = LoadDbgShim();
-		var commandLine = string.IsNullOrWhiteSpace(arguments) ? $"\"{executablePath}\"" : $"\"{executablePath}\" {arguments}";
-		var workingDirectory = Path.GetDirectoryName(executablePath);
-		var launched = shim.CreateProcessForLaunch(commandLine, bSuspendProcess: true, IntPtr.Zero, workingDirectory);
-		try
-		{
-			AttachAtSuspendedStartup(shim, launched.ProcessId, () => shim.ResumeProcess(launched.ResumeHandle), StartupTimeout);
-		}
-		finally
-		{
-			shim.CloseResumeHandle(launched.ResumeHandle);
-		}
-	}
+	public void Launch(string executablePath, string? arguments) =>
+		_runtime.Launch(executablePath, arguments, OnEvent);
 
 	/// <summary>
 	/// Attaches from birth to a UWP app that PLM has created suspended (issue #5): given the pid the
-	/// resume stub reported and a resume action that releases the app's main thread, it arms the
-	/// runtime-startup notification before the resume, then attaches when the runtime signals. This is
-	/// <see cref="Launch"/>'s mechanism for a process the shell created rather than dbgshim.
+	/// resume stub reported and a resume action that releases the app's main thread.
 	/// </summary>
-	public void AttachUwpAtStartup(int pid, Action resume, TimeSpan startupTimeout)
-	{
-		var shim = LoadDbgShim();
-		AttachAtSuspendedStartup(shim, pid, resume, startupTimeout);
-	}
-
-	/// <summary>
-	/// The shared startup-attach dance: arm the runtime-startup notification while the process is still
-	/// suspended before its CLR has loaded, trigger the caller's <paramref name="resume"/>, wait for the
-	/// runtime to signal, attach to it, and release it. The ordering is the whole trick -- the
-	/// notification must be armed before the process is resumed, or the runtime can start before the
-	/// debugger is listening and the startup is missed.
-	/// </summary>
-	private void AttachAtSuspendedStartup(DbgShim shim, int pid, Action resume, TimeSpan startupTimeout)
-	{
-		using var startup = WrapEvent(shim.GetStartupNotificationEvent(pid), ownsHandle: true);
-		resume();
-		buffer.Append(LiveDebugEventKind.SessionNotice, $"Resumed pid {pid}; waiting for its runtime.");
-
-		if (!startup.WaitOne(startupTimeout))
-		{
-			// The modules the process has loaded say which runtime it is hosting, and that turns this
-			// from a question into a diagnosis. "Is it a .NET (Core) app?" was accurate about the
-			// process it got and useless: the answer was already in the process, and finding it meant
-			// listing modules by hand and recognising mrt100_app.dll.
-			var flavour = RuntimeFlavour.Describe(pid);
-
-			throw new TimeoutException(flavour is null
-				? "The process never signalled runtime startup, and its loaded modules could not be read to "
-					+ "say why. Is it a .NET (Core) app?"
-				: $"The process never signalled runtime startup. {flavour}");
-		}
-
-		var runtime = FindRuntimeWithRetry(shim, pid, RuntimeReadyTimeout);
-		try
-		{
-			_corDebug = CreateCorDebug(shim, pid, runtime.Path);
-			_process = _corDebug.DebugActiveProcess(pid, win32Attach: false);
-			TargetProcessId = pid;
-
-			// The runtime is parked on this event until the debugger says go.
-			using var continueStartup = WrapEvent(runtime.Handle, ownsHandle: false);
-			continueStartup.Set();
-
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"Attached to pid {pid} at startup.");
-			logger.LogInformation("Attached at startup to pid {Pid} ({Runtime}).", pid, runtime.Path);
-		}
-		finally
-		{
-			shim.CloseCLREnumeration(runtime.Enumeration);
-		}
-	}
+	public void AttachUwpAtStartup(int pid, Action resume, TimeSpan startupTimeout) =>
+		_runtime.AttachUwpAtStartup(pid, resume, startupTimeout, OnEvent);
 
 	/// <summary>
 	/// Detaches from the target, leaving it running, and says whether it managed to.
@@ -349,7 +268,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			// Nothing is attached, so what detaching promises -- the target keeps running, and the
 			// interface is safe to terminate -- already holds.
-			if (_process is null || !Execution.IsLive) return true;
+			if (Debuggee is null || !Execution.IsLive) return true;
 
 			// Read before the stop ends: nothing else records that the target was held, and whether it
 			// was decides the first step below.
@@ -365,7 +284,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				{
 					// Off the patch first, while the breakpoint it is parked on is still there to step
 					// over.
-					if (held) _process.Continue(fIsOutOfBand: false);
+					if (held) Debuggee.Continue(fIsOutOfBand: false);
 
 					SettleForRelease();
 				}
@@ -374,6 +293,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 					// Narrow on purpose. Past the settling the target is synchronised, and what follows
 					// is the detach itself -- where continuing a callback would be answering on behalf
 					// of a process this session is letting go of.
+					//
 					// Compared rather than assigned: the target can have exited inside this window, and
 					// a process that has gone outranks one that is running again.
 					Interlocked.CompareExchange(ref _execution, new TargetExecution.Running(), detaching);
@@ -381,7 +301,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 				ReleaseForDetach();
 
-				_process.Detach();
+				Debuggee.Detach();
 				MoveTo(new TargetExecution.Detached());
 				buffer.Append(LiveDebugEventKind.SessionNotice, "Detached; the target keeps running.");
 				logger.LogInformation("Detached from pid {Pid} on attempt {Attempt}.", TargetProcessId, attempt);
@@ -416,7 +336,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			var before = Interlocked.Read(ref _detachWindowStops);
 
 			// Detach needs a stopped process; stopping and detaching leaves the target running.
-			_process!.Stop(0);
+			Debuggee!.Stop(0);
 
 			if (Interlocked.Read(ref _detachWindowStops) == before) return;
 
@@ -433,7 +353,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			// Something was hit while the target was running, so a thread may be part-way over a patch.
 			// Let it run on, and take the stop again.
-			_process.Continue(fIsOutOfBand: false);
+			Debuggee.Continue(fIsOutOfBand: false);
 		}
 	}
 
@@ -613,7 +533,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		lock (_gate)
 		{
-			if (_process is null || Execution.Stop is not { } stop)
+			if (Debuggee is null || Execution.Stop is not { } stop)
 			{
 				return new LiveContinueResult { Continued = false };
 			}
@@ -638,7 +558,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			try
 			{
-				_process.Continue(fIsOutOfBand: false);
+				Debuggee.Continue(fIsOutOfBand: false);
 			}
 			catch (Exception exception)
 			{
@@ -701,7 +621,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		lock (_gate)
 		{
-			if (_process is not { } live || !Execution.IsLive)
+			if (Debuggee is not { } live || !Execution.IsLive)
 			{
 				return NotPaused("There is no live target to pause: the session has detached, or the process has gone.");
 			}
@@ -1008,7 +928,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (_process is null || Execution.Stop is not { } stop)
+			if (Debuggee is null || Execution.Stop is not { } stop)
 			{
 				return new LiveEvaluation { Expression = expression, Error = "The target is not stopped; evaluation needs a stop at a breakpoint or step." };
 			}
@@ -1021,7 +941,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// The stopped state, for handing to the inspector. Only correct while <c>_gate</c> is held and
 	/// the target is stopped, which is why every caller above is inside the lock and past the guard.
 	/// </summary>
-	private StoppedTarget Stopped(LiveStop stop) => new(_process!, Execution.Stop?.Thread, stop);
+	private StoppedTarget Stopped(LiveStop stop) => new(Debuggee!, Execution.Stop?.Thread, stop);
 
 	/// <summary>
 	/// Detaches, and terminates the debugging interface only if that worked.
@@ -1048,14 +968,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return;
 		}
 
-		try
-		{
-			_corDebug?.Terminate();
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Terminating the ICorDebug interface failed.");
-		}
+		_runtime.Terminate();
 	}
 
 	private BreakpointBinding AddBinding(string location, bool stopOnHit, string? logMessage, int? logEveryNthHit, int? autoContinueSeconds, string? condition)
@@ -1093,7 +1006,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (_process is null || Execution.Stop is not { } stop)
+			if (Debuggee is null || Execution.Stop is not { } stop)
 			{
 				return new LiveContinueResult { Continued = false };
 			}
@@ -1111,7 +1024,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			try
 			{
-				_process.Continue(fIsOutOfBand: false);
+				Debuggee.Continue(fIsOutOfBand: false);
 			}
 			catch (Exception exception)
 			{
@@ -1139,121 +1052,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 					: null,
 			};
 		}
-	}
-
-	private DbgShim LoadDbgShim()
-	{
-		if (_shim is not null) return _shim;
-
-		_shim = new DbgShim(NativeLibrary.Load(ResolveDbgShimPath()));
-		return _shim;
-	}
-
-	/// <summary>
-	/// dbgshim.dll must match this host's own architecture, since it loads the mscordbi that talks to
-	/// the target. A RID-specific publish flattens it beside the exe; a plain build leaves it under
-	/// <c>runtimes/&lt;rid&gt;/native</c> for the running RID. Handle both, matching the host's RID.
-	/// </summary>
-	private static string ResolveDbgShimPath()
-	{
-		var baseDir = AppContext.BaseDirectory;
-
-		var flattened = Path.Combine(baseDir, "dbgshim.dll");
-		if (File.Exists(flattened)) return flattened;
-
-		var forThisRid = Path.Combine(baseDir, "runtimes", RuntimeInformation.RuntimeIdentifier, "native", "dbgshim.dll");
-		if (File.Exists(forThisRid)) return forThisRid;
-
-		var runtimesRoot = Path.Combine(baseDir, "runtimes");
-		if (Directory.Exists(runtimesRoot))
-		{
-			var any = Directory.EnumerateFiles(runtimesRoot, "dbgshim.dll", SearchOption.AllDirectories).FirstOrDefault();
-			if (any is not null) return any;
-		}
-
-		throw new FileNotFoundException(
-			"dbgshim.dll was not found beside the host or under runtimes/<rid>/native. The "
-				+ "Microsoft.Diagnostics.DbgShim package should provide it for this architecture.",
-			flattened);
-	}
-
-	/// <summary>
-	/// A freshly started process has a pid before its CoreCLR loads, so the first EnumerateCLRs can
-	/// find none. Retry briefly, then give up with a message that names the likely cause.
-	/// </summary>
-	private RuntimeInProcess FindRuntimeWithRetry(DbgShim shim, int pid, TimeSpan runtimeReadyTimeout)
-	{
-		var deadline = DateTime.UtcNow + runtimeReadyTimeout;
-		while (true)
-		{
-			try
-			{
-				return FindRuntime(shim, pid);
-			}
-			catch (RuntimeNotReadyException)
-			{
-				if (DateTime.UtcNow >= deadline)
-				{
-					throw new InvalidOperationException(
-						$"pid {pid} has no .NET (Core) runtime loaded. It may not be a .NET process, may be a "
-							+ "different bitness than this host, or may be a .NET-native/AOT build with no ICorDebug.");
-				}
-
-				Thread.Sleep(100);
-			}
-		}
-	}
-
-	private static RuntimeInProcess FindRuntime(DbgShim shim, int pid)
-	{
-		var enumeration = shim.EnumerateCLRs(pid);
-		if (enumeration.Items.Length == 0)
-		{
-			shim.CloseCLREnumeration(enumeration);
-			throw new RuntimeNotReadyException(pid);
-		}
-
-		if (enumeration.Items.Length != 1)
-		{
-			shim.CloseCLREnumeration(enumeration);
-			throw new InvalidOperationException(
-				$"Expected one CLR in pid {pid}, found {enumeration.Items.Length}.");
-		}
-
-		var item = enumeration.Items[0];
-		return new RuntimeInProcess(item.Path, item.Handle, enumeration);
-	}
-
-	private CorDebug CreateCorDebug(DbgShim shim, int pid, string runtimePath)
-	{
-		// The version string names the debuggee's coreclr; mscordbi is then loaded from beside it,
-		// which is what makes this work for whatever runtime the target happens to be on.
-		var version = shim.CreateVersionStringFromModule(pid, runtimePath);
-		var (_, _, hmod) = RuntimeDiscovery.ParseVersionString(version);
-
-		CorDebug created;
-		try
-		{
-			created = shim.CreateDebuggingInterfaceFromVersionEx(CorDebugInterfaceVersion.CorDebugVersion_4_0, version);
-		}
-		catch (DebugException)
-		{
-			// dbgshim folds every failure on that path into one code; do its two steps by hand and
-			// log what each saw, then create the object directly from the mscordbi beside the runtime.
-			foreach (var line in RuntimeDiscovery.Probe(pid, hmod))
-			{
-				logger.LogDebug("ICorDebug create probe: {Line}", line);
-			}
-
-			created = RuntimeDiscovery.CreateCorDebug(runtimePath, pid, hmod, CorDebugInterfaceVersion.CorDebugVersion_4_0);
-		}
-
-		created.Initialize();
-
-		var callback = new CorDebugManagedCallback();
-		callback.OnAnyEvent += OnEvent;
-		created.SetManagedHandler(callback);
-		return created;
 	}
 
 	private void OnEvent(object? sender, CorDebugManagedCallbackEventArgs e)
@@ -1549,17 +1347,17 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (_process is null || !Execution.IsLive) return;
+			if (Debuggee is null || !Execution.IsLive) return;
 			if (_breakpoints.AllBound) return;
 
 			var stopped = false;
 			try
 			{
-				_process.Stop(0);
+				Debuggee.Stop(0);
 				stopped = true;
 
 				var loaded = new List<CorDebugModule>();
-				foreach (var module in TargetSymbols.EnumerateModules(_process))
+				foreach (var module in TargetSymbols.EnumerateModules(Debuggee))
 				{
 					_symbols.Remember(module);
 					loaded.Add(module);
@@ -1581,7 +1379,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				{
 					try
 					{
-						_process.Continue(fIsOutOfBand: false);
+						Debuggee.Continue(fIsOutOfBand: false);
 					}
 					catch (Exception exception)
 					{
@@ -1607,7 +1405,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (!_symbols.Walked && _process is { } live && Execution.IsLive) _symbols.Walk(live);
+			if (!_symbols.Walked && Debuggee is { } live && Execution.IsLive) _symbols.Walk(live);
 
 			return _symbols.Paths;
 		}
@@ -1638,15 +1436,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	/// <summary>Wraps a native event handle so it can be waited on or set through the BCL.</summary>
-	private static EventWaitHandle WrapEvent(IntPtr handle, bool ownsHandle)
-	{
-		var wrapped = new EventWaitHandle(false, EventResetMode.AutoReset);
-		wrapped.SafeWaitHandle.Dispose();
-		wrapped.SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle);
-		return wrapped;
-	}
-
 	private static string DescribeExceptionType(CorDebugThread thread)
 	{
 		try
@@ -1670,8 +1459,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return "(unresolved exception type)";
 		}
 	}
-
-	private sealed record RuntimeInProcess(string Path, IntPtr Handle, EnumerateCLRsResult Enumeration);
 
 }
 

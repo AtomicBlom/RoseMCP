@@ -384,4 +384,72 @@ public sealed class LiveAppDebugTests
 			if (!child.HasExited) child.Kill(entireProcessTree: true);
 		}
 	}
+
+	/// <summary>
+	/// A target that dies while the debugger holds it stops being stopped. The stop went with the
+	/// process, and a session still reporting one sends a reader to resume something that is not
+	/// there.
+	/// <para>
+	/// Asserted through the XAML tree rather than the session summary. Every XAML verb refuses while
+	/// the target is stopped and names the stop as the reason, so it reads the host's own answer --
+	/// whereas the summary substitutes a running target for a stop on an ended session and would pass
+	/// whatever the host reported.
+	/// </para>
+	/// <para>
+	/// The probe is a console app with no XAML in it, which is what makes this cheap: the refusal is
+	/// checked before anything goes looking for a provider, so reaching it needs a stop and a target
+	/// and nothing else.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_target_that_dies_while_held_is_no_longer_reported_as_stopped()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// Long enough that the safety timer cannot be what ends this stop: the point is a target
+			// that dies while still held, so a stop released on its own would prove nothing.
+			var breakpoint = await session.SetBreakpointAsync(
+				"DebugProbeTarget.Program.Beat", autoContinueSeconds: 300, condition: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken);
+			Assert.NotNull(stop);
+
+			// While the target is there, the stop is the reason a XAML read cannot be served.
+			var held = await session.ReadXamlTreeAsync(cancellationToken);
+			Assert.Contains("The target is stopped", held.Detail ?? string.Empty, StringComparison.Ordinal);
+
+			child.Kill(entireProcessTree: true);
+			child.WaitForExit(10_000);
+
+			// The exit arrives on mscordbi's thread, so it is polled for rather than assumed.
+			var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+			var gone = held;
+			while (DateTime.UtcNow < deadline)
+			{
+				gone = await session.ReadXamlTreeAsync(cancellationToken);
+				if (!(gone.Detail?.Contains("The target is stopped", StringComparison.Ordinal) ?? false)) break;
+				await Task.Delay(200, cancellationToken);
+			}
+
+			Assert.DoesNotContain("The target is stopped", gone.Detail ?? string.Empty, StringComparison.Ordinal);
+			Assert.DoesNotContain("Resume the target", gone.Detail ?? string.Empty, StringComparison.Ordinal);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
 }

@@ -1,9 +1,6 @@
-using System.Runtime.InteropServices;
-
 using ClrDebug;
 
 using Microsoft.Extensions.Logging;
-using Microsoft.Win32.SafeHandles;
 
 using RoseMcp.Contracts;
 using RoseMcp.Symbols;
@@ -25,11 +22,8 @@ namespace RoseMcp.LiveApp.Debugging;
 /// </summary>
 internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
 {
-	private static readonly TimeSpan RuntimeReadyTimeout = TimeSpan.FromSeconds(5);
-	private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
 	private const int MaxStackFrames = 20;
 	private const int MaxVariables = 64;
-	private const int DefaultAutoContinueSeconds = 30;
 
 	/// <summary>
 	/// How long a manual pause waits for the runtime to reach a point it can be stopped at. Generous,
@@ -85,8 +79,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	// and the held thread per call. Separate because holding a stop and reading one are different jobs.
 	private readonly CorDebugInspector _inspector = new(logger);
 
-	private readonly List<BreakpointBinding> _bindings = [];
-
 	/// <summary>
 	/// Steppers issued and not yet completed. ICorDebug refuses to detach while one is outstanding,
 	/// so the session has to be able to find them again; a stepper handed to <c>Step</c> and dropped
@@ -94,37 +86,36 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private readonly List<CorDebugStepper> _steppers = [];
 
-	private int _nextBindingId = 1;
-
 	/// <summary>
-	/// Every module file the target has loaded, so its metadata and symbols can be read off disk.
+	/// Every module file the target has loaded, and what their metadata and symbols say.
 	/// <para>
 	/// Kept rather than asked for each time, because asking means synchronizing the target and a
 	/// search runs on every keystroke of an autocomplete. What is inside a module is on disk, so once
 	/// the path is known nothing else about the answer needs the debuggee at all.
 	/// </para>
 	/// </summary>
-	private readonly List<string> _modulePaths = [];
+	private readonly TargetSymbols _symbols = new(logger);
 
 	/// <summary>
-	/// Whether the modules already loaded when this session attached have been enumerated. The load
-	/// callback covers everything after the attach; a process that was already running needs the one
-	/// walk, and it is taken lazily so a session nobody searches never pays for it.
+	/// Every breakpoint and tracepoint asked for, bound or waiting for the module that would carry it.
 	/// </summary>
-	private bool _modulesEnumerated;
-
-	private DbgShim? _shim;
-	private CorDebug? _corDebug;
-	private CorDebugProcess? _process;
-	private bool _detached;
-	private volatile bool _exited;
+	private readonly BreakpointTable _breakpoints = new(buffer, logger);
 
 	/// <summary>
-	/// Set while a detach is stepping the target off a breakpoint patch. In that window the target is
-	/// running with its breakpoints still live, so a callback can arrive; read from mscordbi's thread,
-	/// which is why it is volatile.
+	/// The ICorDebug interface and the process it was got onto. Attaching is discovery rather than
+	/// configuration -- which mscordbi talks to a target is decided by the coreclr that target runs --
+	/// and it is the one part of a session that can fail before there is a session at all.
 	/// </summary>
-	private volatile bool _detaching;
+	private readonly RuntimeAttachment _runtime = new(buffer, logger);
+
+	/// <summary>
+	/// What the target is doing, as one value rather than a set of flags that can disagree. Swapped
+	/// under <see cref="_gate"/> everywhere except the two places mscordbi's callback thread has to
+	/// see it while another thread holds the gate -- the detach window and an exit inside it -- which
+	/// is why it moves through <see cref="Volatile"/> and <see cref="Interlocked"/> rather than plain
+	/// assignment.
+	/// </summary>
+	private TargetExecution _execution = new TargetExecution.Running();
 
 	/// <summary>
 	/// How many stops a detach will take waiting for the target to come to rest with nothing on a
@@ -135,168 +126,62 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private const int DetachSettleRounds = 5;
 
 	/// <summary>
-	/// Counts the stops seen while <see cref="_detaching"/> is set. A thread only gets onto a
-	/// breakpoint patch by hitting one, so a stop-free round is the proof that removing the patches is
-	/// safe. Written from mscordbi's thread and read from the detaching one, so it moves through
-	/// <see cref="Interlocked"/> rather than the gate, which the detach is holding.
+	/// Counts the stops seen inside a detach's window. A thread only gets onto a breakpoint patch by
+	/// hitting one, so a stop-free round is the proof that removing the patches is safe. Written from
+	/// mscordbi's thread and read from the detaching one, so it moves through <see cref="Interlocked"/>
+	/// rather than the gate, which the detach is holding.
 	/// </summary>
 	private long _detachWindowStops;
 
-	private bool _stoppedAtBreakpoint;
-	private string? _stoppedBindingId;
-	private CorDebugThread? _stoppedThread;
-	private Timer? _autoContinueTimer;
+	public int? TargetProcessId => _runtime.ProcessId;
 
-	// The sequence of the event that announced the current stop, and when it happened. Together they
-	// are the stop's identity: two hits of one breakpoint on one thread are otherwise identical, so a
-	// reader polling this session could not tell a new stop from the same one seen again -- and that
-	// is exactly what decides whether frames and values have to be read afresh.
-	private long _stopEventSequence;
+	/// <summary>The process being debugged, or null before an attach has succeeded.</summary>
+	private CorDebugProcess? Debuggee => _runtime.Process;
 
-	private DateTime _stoppedAtUtc;
-
-	// What the current stop's safety timeout was set to, kept so releasing a hold can re-arm the timer
-	// with the interval the breakpoint asked for rather than the default.
-	private int _autoContinueSeconds;
-
-	private DateTime _autoContinueAtUtc;
-
-	// When an operator's hold expires, or null when nothing is holding this stop. A hold suspends the
-	// safety timer so a person can read a stack without it moving under them; it is bounded because a
-	// reader who walks away must not leave somebody's app frozen indefinitely.
-	private DateTime? _holdUntilUtc;
-
-	private Timer? _holdTimer;
-
-	// Incremented on every stop, and captured by both timers. Timer.Dispose does not wait for a
-	// callback already running, so a tick queued before a hold was taken would otherwise resume the
-	// target under the person reading it. A callback whose generation has moved returns without
-	// touching anything.
-	private long _stopGeneration;
+	public bool HasExited => Execution is TargetExecution.Exited;
 
 	/// <summary>
-	/// How the target came to be stopped, which is not inferable from what else is recorded: a manual
-	/// pause and a completed step both arrive with no breakpoint owning them.
+	/// What the target is doing. One read of one reference, so a caller cannot catch two halves of a
+	/// transition -- and safe to ask for without the gate, which is what the callback thread needs.
 	/// </summary>
-	private LiveExecutionState _stoppedAs = LiveExecutionState.Running;
+	private TargetExecution Execution => Volatile.Read(ref _execution);
 
-	public int? TargetProcessId { get; private set; }
+	/// <summary>Moves the target to a state, for the callers that know which one it is now in.</summary>
+	private void MoveTo(TargetExecution next) => Volatile.Write(ref _execution, next);
 
-	public bool HasExited => _exited;
-
-	public bool IsStoppedAtBreakpoint
+	/// <summary>
+	/// Ends the stop being held, standing down its timers, and hands back what it was -- or null when
+	/// nothing was stopped. The target is left running, which is what it is about to be doing in every
+	/// caller: each of them is the thing that resumes it.
+	/// </summary>
+	private StopRecord? EndStop()
 	{
-		get
-		{
-			lock (_gate)
-			{
-				return _stoppedAtBreakpoint;
-			}
-		}
+		var stop = Execution.Stop;
+		stop?.Dispose();
+		MoveTo(new TargetExecution.Running());
+		return stop;
 	}
 
 	/// <summary>
 	/// Attaches to a running process, waiting briefly for its runtime if it has only just started.
 	/// Throws with a plain message when the target is not a debuggable .NET process.
 	/// </summary>
-	public void Attach(int pid, TimeSpan? runtimeReadyTimeout = null)
-	{
-		var shim = LoadDbgShim();
-		var runtime = FindRuntimeWithRetry(shim, pid, runtimeReadyTimeout ?? RuntimeReadyTimeout);
-		try
-		{
-			_corDebug = CreateCorDebug(shim, pid, runtime.Path);
-			_process = _corDebug.DebugActiveProcess(pid, win32Attach: false);
-			TargetProcessId = pid;
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"Attached to pid {pid} ({runtime.Path}).");
-			logger.LogInformation("Attached to pid {Pid} ({Runtime}).", pid, runtime.Path);
-		}
-		finally
-		{
-			// The enumeration's handles are the runtimes' continue events; attach does not need them.
-			shim.CloseCLREnumeration(runtime.Enumeration);
-		}
-	}
+	public void Attach(int pid, TimeSpan? runtimeReadyTimeout = null) =>
+		_runtime.Attach(pid, runtimeReadyTimeout ?? RuntimeAttachment.RuntimeReadyTimeout, OnEvent);
 
 	/// <summary>
 	/// Launches an executable under the debugger and attaches at runtime startup, so the target is
-	/// under debug from birth and its early events are captured. The runtime is created suspended,
-	/// resumed to the point it signals startup, attached to, then released.
+	/// under debug from birth and its early events are captured.
 	/// </summary>
-	public void Launch(string executablePath, string? arguments)
-	{
-		var shim = LoadDbgShim();
-		var commandLine = string.IsNullOrWhiteSpace(arguments) ? $"\"{executablePath}\"" : $"\"{executablePath}\" {arguments}";
-		var workingDirectory = Path.GetDirectoryName(executablePath);
-		var launched = shim.CreateProcessForLaunch(commandLine, bSuspendProcess: true, IntPtr.Zero, workingDirectory);
-		try
-		{
-			AttachAtSuspendedStartup(shim, launched.ProcessId, () => shim.ResumeProcess(launched.ResumeHandle), StartupTimeout);
-		}
-		finally
-		{
-			shim.CloseResumeHandle(launched.ResumeHandle);
-		}
-	}
+	public void Launch(string executablePath, string? arguments) =>
+		_runtime.Launch(executablePath, arguments, OnEvent);
 
 	/// <summary>
 	/// Attaches from birth to a UWP app that PLM has created suspended (issue #5): given the pid the
-	/// resume stub reported and a resume action that releases the app's main thread, it arms the
-	/// runtime-startup notification before the resume, then attaches when the runtime signals. This is
-	/// <see cref="Launch"/>'s mechanism for a process the shell created rather than dbgshim.
+	/// resume stub reported and a resume action that releases the app's main thread.
 	/// </summary>
-	public void AttachUwpAtStartup(int pid, Action resume, TimeSpan startupTimeout)
-	{
-		var shim = LoadDbgShim();
-		AttachAtSuspendedStartup(shim, pid, resume, startupTimeout);
-	}
-
-	/// <summary>
-	/// The shared startup-attach dance: arm the runtime-startup notification while the process is still
-	/// suspended before its CLR has loaded, trigger the caller's <paramref name="resume"/>, wait for the
-	/// runtime to signal, attach to it, and release it. The ordering is the whole trick -- the
-	/// notification must be armed before the process is resumed, or the runtime can start before the
-	/// debugger is listening and the startup is missed.
-	/// </summary>
-	private void AttachAtSuspendedStartup(DbgShim shim, int pid, Action resume, TimeSpan startupTimeout)
-	{
-		using var startup = WrapEvent(shim.GetStartupNotificationEvent(pid), ownsHandle: true);
-		resume();
-		buffer.Append(LiveDebugEventKind.SessionNotice, $"Resumed pid {pid}; waiting for its runtime.");
-
-		if (!startup.WaitOne(startupTimeout))
-		{
-			// The modules the process has loaded say which runtime it is hosting, and that turns this
-			// from a question into a diagnosis. "Is it a .NET (Core) app?" was accurate about the
-			// process it got and useless: the answer was already in the process, and finding it meant
-			// listing modules by hand and recognising mrt100_app.dll.
-			var flavour = RuntimeFlavour.Describe(pid);
-
-			throw new TimeoutException(flavour is null
-				? "The process never signalled runtime startup, and its loaded modules could not be read to "
-					+ "say why. Is it a .NET (Core) app?"
-				: $"The process never signalled runtime startup. {flavour}");
-		}
-
-		var runtime = FindRuntimeWithRetry(shim, pid, RuntimeReadyTimeout);
-		try
-		{
-			_corDebug = CreateCorDebug(shim, pid, runtime.Path);
-			_process = _corDebug.DebugActiveProcess(pid, win32Attach: false);
-			TargetProcessId = pid;
-
-			// The runtime is parked on this event until the debugger says go.
-			using var continueStartup = WrapEvent(runtime.Handle, ownsHandle: false);
-			continueStartup.Set();
-
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"Attached to pid {pid} at startup.");
-			logger.LogInformation("Attached at startup to pid {Pid} ({Runtime}).", pid, runtime.Path);
-		}
-		finally
-		{
-			shim.CloseCLREnumeration(runtime.Enumeration);
-		}
-	}
+	public void AttachUwpAtStartup(int pid, Action resume, TimeSpan startupTimeout) =>
+		_runtime.AttachUwpAtStartup(pid, resume, startupTimeout, OnEvent);
 
 	/// <summary>
 	/// Detaches from the target, leaving it running, and says whether it managed to.
@@ -383,27 +268,23 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			// Nothing is attached, so what detaching promises -- the target keeps running, and the
 			// interface is safe to terminate -- already holds.
-			if (_process is null || _detached || _exited) return true;
+			if (Debuggee is null || !Execution.IsLive) return true;
 
-			ClearStopTimers();
-
-			// Read before it is cleared: nothing else records that the target was held, and whether it
+			// Read before the stop ends: nothing else records that the target was held, and whether it
 			// was decides the first step below.
-			var held = _stoppedAtBreakpoint;
-			_stoppedAtBreakpoint = false;
-			_stoppedBindingId = null;
-			_stoppedThread = null;
+			var held = EndStop() is not null;
 
 			try
 			{
 				// Between the continue and the stop the target runs with its breakpoints still live, so
 				// an event can arrive; it is continued and counted without the gate, which this holds.
-				_detaching = true;
+				var detaching = new TargetExecution.Detaching();
+				MoveTo(detaching);
 				try
 				{
 					// Off the patch first, while the breakpoint it is parked on is still there to step
 					// over.
-					if (held) _process.Continue(fIsOutOfBand: false);
+					if (held) Debuggee.Continue(fIsOutOfBand: false);
 
 					SettleForRelease();
 				}
@@ -412,13 +293,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 					// Narrow on purpose. Past the settling the target is synchronised, and what follows
 					// is the detach itself -- where continuing a callback would be answering on behalf
 					// of a process this session is letting go of.
-					_detaching = false;
+					//
+					// Compared rather than assigned: the target can have exited inside this window, and
+					// a process that has gone outranks one that is running again.
+					Interlocked.CompareExchange(ref _execution, new TargetExecution.Running(), detaching);
 				}
 
 				ReleaseForDetach();
 
-				_process.Detach();
-				_detached = true;
+				Debuggee.Detach();
+				MoveTo(new TargetExecution.Detached());
 				buffer.Append(LiveDebugEventKind.SessionNotice, "Detached; the target keeps running.");
 				logger.LogInformation("Detached from pid {Pid} on attempt {Attempt}.", TargetProcessId, attempt);
 				return true;
@@ -452,7 +336,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			var before = Interlocked.Read(ref _detachWindowStops);
 
 			// Detach needs a stopped process; stopping and detaching leaves the target running.
-			_process!.Stop(0);
+			Debuggee!.Stop(0);
 
 			if (Interlocked.Read(ref _detachWindowStops) == before) return;
 
@@ -469,7 +353,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			// Something was hit while the target was running, so a thread may be part-way over a patch.
 			// Let it run on, and take the stop again.
-			_process.Continue(fIsOutOfBand: false);
+			Debuggee.Continue(fIsOutOfBand: false);
 		}
 	}
 
@@ -499,25 +383,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private void ReleaseForDetach()
 	{
-		foreach (var binding in _bindings)
-		{
-			var breakpoint = binding.Breakpoint;
-			if (breakpoint is null) continue;
-
-			try
-			{
-				breakpoint.Activate(false);
-			}
-			catch (Exception exception)
-			{
-				logger.LogDebug(exception, "Deactivating binding {Id} before detaching failed.", binding.Id);
-			}
-
-			// The binding stays in the list and describes itself as unbound, because the session is
-			// ending and the caller may still list what it had set; the runtime object is what goes.
-			binding.Breakpoint = null;
-			binding.Detail = "released on detach";
-		}
+		_breakpoints.ReleaseForDetach();
 
 		foreach (var stepper in _steppers)
 		{
@@ -559,7 +425,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var binding = AddBinding(location, stopOnHit: false, logMessage, logEveryNthHit, autoContinueSeconds: null, condition);
 		lock (_gate)
 		{
-			return DescribeTracepoint(binding);
+			return BreakpointTable.DescribeTracepoint(binding);
 		}
 	}
 
@@ -575,7 +441,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var binding = AddBinding(location, stopOnHit: true, logMessage: null, logEveryNthHit: null, autoContinueSeconds, condition);
 		lock (_gate)
 		{
-			return DescribeBreakpoint(binding);
+			return BreakpointTable.DescribeBreakpoint(binding);
 		}
 	}
 
@@ -583,7 +449,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			return [.. _bindings.Where(binding => !binding.StopOnHit).Select(DescribeTracepoint)];
+			return _breakpoints.Tracepoints();
 		}
 	}
 
@@ -591,7 +457,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			return [.. _bindings.Where(binding => binding.StopOnHit).Select(DescribeBreakpoint)];
+			return _breakpoints.Breakpoints();
 		}
 	}
 
@@ -609,20 +475,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// <exception cref="ArgumentException">The limit is below one.</exception>
 	public LiveMethodMatches SearchMethods(string? query, int limit)
 	{
+		// Before the module paths are asked for, because asking can stop the target to walk them and
+		// a limit that cannot be honoured must not cost the debuggee a synchronization.
 		if (limit < 1) throw new ArgumentException("limit must be at least 1.", nameof(limit));
 
-		var typed = query?.Trim() ?? string.Empty;
-		var paths = ModulePaths();
-		var found = MethodSearch.Search(paths, typed, limit);
-
-		return new LiveMethodMatches
-		{
-			Query = typed,
-			Matches = [.. found.Matches.Select(DescribeMatch)],
-			Total = found.Total,
-			ModulesSearched = found.ModulesSearched,
-			Detail = SearchDetail(typed, paths.Count, found),
-		};
+		return TargetSymbols.Search(ModulePaths(), query, limit);
 	}
 
 	/// <summary>
@@ -641,100 +498,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </para>
 	/// </summary>
 	/// <exception cref="ArgumentException">The location does not parse.</exception>
-	public LiveMethodSource ReadMethodSource(string location)
-	{
-		var parsed = SymbolLocation.Parse(location);
-		var displayName = MethodDisplayName.Of(parsed.TypeName, parsed.MethodName);
-		var loaded = ModulePaths();
-		var owners = TypeOwners.Of(loaded, parsed.TypeName, parsed.Assembly);
-
-		if (WhyNoModule(parsed, location, loaded, owners) is { } unresolved)
-		{
-			return NoMethodSource(location, displayName, parsed.Assembly ?? string.Empty, LiveSymbolState.NoSymbols, unresolved);
-		}
-
-		var modulePath = owners[0];
-		var module = Path.GetFileNameWithoutExtension(modulePath);
-
-		var symbols = SymbolCache.Shared.For(modulePath);
-		var token = MethodTokens.Find(modulePath, parsed.TypeName, parsed.MethodName);
-		if (symbols is null || token is null)
-		{
-			return NoMethodSource(
-				location,
-				displayName,
-				module,
-				LiveSymbolState.NoSymbols,
-				$"{Path.GetFileName(modulePath)} declares no method {parsed.TypeName}.{parsed.MethodName}.");
-		}
-
-		if (symbols.Pdb is null)
-		{
-			var state = symbols.PdbState == PdbState.Mismatched
-				? LiveSymbolState.SymbolsMismatched
-				: LiveSymbolState.NoSymbols;
-
-			return NoMethodSource(
-				location,
-				displayName,
-				module,
-				state,
-				(symbols.PdbProblem ?? $"{Path.GetFileName(modulePath)} has no symbols on this machine.")
-					+ " A breakpoint on this method still stops at its first instruction.");
-		}
-
-		var region = MethodRegion.Of(symbols.Pdb.Extents(), token.Value);
-		if (MethodRegion.Lines(region) is not { } span)
-		{
-			return NoMethodSource(
-				location,
-				displayName,
-				module,
-				LiveSymbolState.NoSequencePoint,
-				"The symbols record no source for this method, which is what an abstract, external or "
-					+ "generated one looks like. A breakpoint on it still stops at its first instruction.");
-		}
-
-		var excerpt = SourceLines.Read(span.File, span.FirstLine, span.LastLine);
-
-		return new LiveMethodSource
-		{
-			Location = location,
-			DisplayName = displayName,
-			Module = module,
-			Symbols = LiveSymbolState.Resolved,
-			File = span.File,
-			FirstLine = excerpt.FirstLine,
-			Lines = excerpt.Lines,
-			Positions = PositionsIn(region, modulePath, module, span.File),
-			Detail = excerpt.HasText
-				? excerpt.Problem
-				: $"{excerpt.Problem} The positions below are still exact; only the text is missing.",
-		};
-	}
-
-	/// <summary>
-	/// Why a location cannot be read from one module, or null when it can and the first owner is that
-	/// module. A stated assembly takes the first module of its name, as binding does; a location with none
-	/// is refused when several modules declare the type rather than read from whichever came first.
-	/// </summary>
-	private static string? WhyNoModule(
-		SymbolLocation parsed,
-		string location,
-		IReadOnlyList<string> loaded,
-		IReadOnlyList<string> owners)
-	{
-		var stated = parsed.Assembly;
-
-		if (owners.Count == 1) return null;
-		if (owners.Count > 1 && stated is not null) return null;
-		if (owners.Count > 1) return TypeOwners.Ambiguity(parsed.TypeName, owners, location) + ".";
-		if (stated is null) return $"No loaded module declares {parsed.TypeName}.";
-
-		return loaded.Any(path => TypeOwners.Admits(path, stated))
-			? $"{stated} declares no type {parsed.TypeName}."
-			: $"No loaded module is named {stated}.";
-	}
+	public LiveMethodSource ReadMethodSource(string location) => TargetSymbols.ReadSource(ModulePaths(), location);
 
 	public bool RemoveTracepoint(string id) => RemoveBinding(id);
 
@@ -745,7 +509,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// whether the resume released an operator's hold. Racing the safety timer is harmless: whichever
 	/// arrives first clears the stop, and the loser finds nothing held.
 	/// </summary>
-	public LiveContinueResult Continue() => ContinueInternal(ResumeCause.Caller, generation: null);
+	public LiveContinueResult Continue() => ContinueInternal(ResumeCause.Caller, armedFor: null);
 
 	/// <summary>
 	/// Steps the held thread: <c>in</c> into calls, <c>over</c> them, or <c>out</c> of the current
@@ -769,14 +533,14 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited)
+			if (Debuggee is null || Execution.Stop is not { } stop)
 			{
 				return new LiveContinueResult { Continued = false };
 			}
 
 			try
 			{
-				var stepper = _stoppedThread.CreateStepper();
+				var stepper = stop.Thread.CreateStepper();
 				if (direction == StepDirection.Out) stepper.StepOut();
 				else stepper.Step(bStepIn: direction == StepDirection.In);
 				_steppers.Add(stepper);
@@ -787,17 +551,14 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				return new LiveContinueResult { Continued = false };
 			}
 
-			var releasedHold = _holdUntilUtc is not null;
+			var releasedHold = stop.IsHeld;
 
 			// Resume so the step executes; the StepComplete callback holds the target again.
-			_stoppedAtBreakpoint = false;
-			_stoppedBindingId = null;
-			_stoppedThread = null;
-			ClearStopTimers();
+			EndStop();
 
 			try
 			{
-				_process.Continue(fIsOutOfBand: false);
+				Debuggee.Continue(fIsOutOfBand: false);
 			}
 			catch (Exception exception)
 			{
@@ -841,18 +602,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint) return null;
-
-			return new LiveStop
-			{
-				State = _stoppedAs,
-				ThreadId = _stoppedThread is null ? null : CorDebugInspector.TryThreadId(_stoppedThread),
-				BreakpointId = _stoppedBindingId,
-				EventSequence = _stopEventSequence,
-				StoppedAtUtc = _stoppedAtUtc,
-				Resume = _holdUntilUtc is null ? LiveStopResume.AutoContinue : LiveStopResume.HeldByOperator,
-				ResumeDeadlineUtc = _holdUntilUtc ?? _autoContinueAtUtc,
-			};
+			return Execution.Stop?.Describe();
 		}
 	}
 
@@ -871,12 +621,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		lock (_gate)
 		{
-			if (_process is not { } live || _detached || _exited)
+			if (Debuggee is not { } live || !Execution.IsLive)
 			{
 				return NotPaused("There is no live target to pause: the session has detached, or the process has gone.");
 			}
 
-			if (_stoppedAtBreakpoint) return NotPaused("The target is already stopped.");
+			if (Execution is TargetExecution.Stopped) return NotPaused("The target is already stopped.");
 
 			process = live;
 		}
@@ -898,7 +648,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// goes back, and the caller is told about the stop that is really there.
 		lock (_gate)
 		{
-			if (_stoppedAtBreakpoint)
+			if (Execution is TargetExecution.Stopped)
 			{
 				GiveBackStop(process);
 				return NotPaused("The target stopped on its own before the pause took effect.");
@@ -911,7 +661,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return NotPaused("The target has no managed thread to stop on, so there is nothing a debugger could show.");
 		}
 
-		Hold(thread, LiveDebugEventKind.Paused, "Paused", bindingId: null, autoContinueSeconds);
+		HoldAtStop(thread, LiveDebugEventKind.Paused, "Paused", bindingId: null, autoContinueSeconds);
 
 		return new LivePauseResult
 		{
@@ -990,11 +740,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	/// <param name="requested">How long to hold for, or null for the default. Ignored on a release.</param>
 	/// <param name="release">Give the stop back to the safety timer rather than holding it.</param>
-	public LiveHoldResult Hold(TimeSpan? requested, bool release)
+	public LiveHoldResult OperatorHold(TimeSpan? requested, bool release)
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint)
+			if (Execution.Stop is not { } held)
 			{
 				return new LiveHoldResult
 				{
@@ -1005,8 +755,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				};
 			}
 
-			var wasHeld = _holdUntilUtc is not null;
-			var stop = release ? ReleaseHold() : SetHold(requested);
+			var wasHeld = held.IsHeld;
+			var stop = release ? ReleaseHold(held) : SetHold(held, requested);
 
 			return new LiveHoldResult
 			{
@@ -1021,82 +771,46 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// Suspends the safety timer while somebody reads this stop, and reports the stop as it now
-	/// stands -- or null when there is nothing stopped to hold. Asking again extends it.
+	/// Suspends the safety timer while somebody reads <paramref name="stop"/>, and reports it as it
+	/// now stands. Asking again extends the hold. Called with <c>_gate</c> held.
 	/// <para>
 	/// Bounded at <see cref="MaxHoldSeconds"/> however long is asked for, and the bound is the point
 	/// rather than a formality: the safety timer exists so an unattended stop cannot wedge somebody's
 	/// app, and a hold with no limit would hand that failure back under another name.
 	/// </para>
 	/// </summary>
-	private LiveStop? SetHold(TimeSpan? requested)
+	private LiveStop SetHold(StopRecord stop, TimeSpan? requested)
 	{
-		lock (_gate)
-		{
-			if (!_stoppedAtBreakpoint) return null;
+		var seconds = Math.Clamp(
+			(int)Math.Round((requested ?? TimeSpan.FromSeconds(DefaultHoldSeconds)).TotalSeconds),
+			1,
+			MaxHoldSeconds);
 
-			var seconds = Math.Clamp(
-				(int)Math.Round((requested ?? TimeSpan.FromSeconds(DefaultHoldSeconds)).TotalSeconds),
-				1,
-				MaxHoldSeconds);
+		stop.HoldForOperator(TimeSpan.FromSeconds(seconds), () => ContinueInternal(ResumeCause.HoldExpiry, stop));
 
-			var generation = _stopGeneration;
+		buffer.Append(
+			LiveDebugEventKind.SessionNotice,
+			$"Held for an operator until {stop.HoldUntilUtc:HH:mm:ss}Z; the auto-continue timer is suspended "
+				+ "until then or until something resumes the target.");
 
-			// The safety timer goes rather than being left to fire into a guard, so there is one timer
-			// per stop and the deadline the caller is told is the one that will actually arrive.
-			_autoContinueTimer?.Dispose();
-			_autoContinueTimer = null;
-			_holdTimer?.Dispose();
-
-			_holdUntilUtc = DateTime.UtcNow.AddSeconds(seconds);
-			_holdTimer = new Timer(
-				_ => ContinueInternal(ResumeCause.HoldExpiry, generation),
-				null,
-				TimeSpan.FromSeconds(seconds),
-				Timeout.InfiniteTimeSpan);
-
-			buffer.Append(
-				LiveDebugEventKind.SessionNotice,
-				$"Held for an operator until {_holdUntilUtc:HH:mm:ss}Z; the auto-continue timer is suspended "
-					+ "until then or until something resumes the target.");
-
-			return CurrentStop();
-		}
+		return stop.Describe();
 	}
 
 	/// <summary>
 	/// Gives a held stop back to the safety timer, re-armed with the interval its breakpoint asked
-	/// for. Reports the stop as it now stands, or null when nothing is stopped.
+	/// for. Reports the stop as it now stands. Called with <c>_gate</c> held.
 	/// </summary>
-	private LiveStop? ReleaseHold()
+	private LiveStop ReleaseHold(StopRecord stop)
 	{
-		lock (_gate)
-		{
-			if (!_stoppedAtBreakpoint) return null;
-			if (_holdUntilUtc is null) return CurrentStop();
+		if (!stop.IsHeld) return stop.Describe();
 
-			var generation = _stopGeneration;
+		stop.ArmSafetyTimer(() => ContinueInternal(ResumeCause.SafetyTimer, stop));
 
-			_holdTimer?.Dispose();
-			_holdTimer = null;
-			_holdUntilUtc = null;
+		buffer.Append(
+			LiveDebugEventKind.SessionNotice,
+			$"The operator hold is released; the target auto-continues in {stop.AutoContinueSeconds}s.");
 
-			// From now rather than from the stop, because the interval is how long an unattended stop
-			// may last and the stop has just stopped being unattended.
-			_autoContinueAtUtc = DateTime.UtcNow.AddSeconds(_autoContinueSeconds);
-			_autoContinueTimer?.Dispose();
-			_autoContinueTimer = new Timer(
-				_ => ContinueInternal(ResumeCause.SafetyTimer, generation),
-				null,
-				TimeSpan.FromSeconds(_autoContinueSeconds),
-				Timeout.InfiniteTimeSpan);
-
-			buffer.Append(
-				LiveDebugEventKind.SessionNotice,
-				$"The operator hold is released; the target auto-continues in {_autoContinueSeconds}s.");
-
-			return CurrentStop();
-		}
+		return stop.Describe();
 	}
 
 	/// <summary>
@@ -1214,12 +928,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited)
+			if (Debuggee is null || Execution.Stop is not { } stop)
 			{
 				return new LiveEvaluation { Expression = expression, Error = "The target is not stopped; evaluation needs a stop at a breakpoint or step." };
 			}
 
-			return _inspector.Evaluate(_stoppedThread, expression);
+			return _inspector.Evaluate(stop.Thread, expression);
 		}
 	}
 
@@ -1227,15 +941,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// The stopped state, for handing to the inspector. Only correct while <c>_gate</c> is held and
 	/// the target is stopped, which is why every caller above is inside the lock and past the guard.
 	/// </summary>
-	private StoppedTarget Stopped(LiveStop stop) => new(_process!, _stoppedThread, stop);
+	private StoppedTarget Stopped(LiveStop stop) => new(Debuggee!, Execution.Stop?.Thread, stop);
 
 	/// <summary>
 	/// Detaches, and terminates the debugging interface only if that worked.
 	/// <para>
 	/// <c>Terminate()</c>'s documented precondition is that every process has been detached from or
 	/// terminated; running it while still attached is what takes the debuggee down with it. That
-	/// precondition used to be written here as a comment asserting the fact rather than as a check
-	/// of it, while <c>_detached</c> -- the field recording exactly that fact -- went unread.
+	/// precondition is checked rather than asserted in a comment: this detaches first and terminates
+	/// only if that reported success, because the state saying so is the only evidence there is.
 	/// </para>
 	/// <para>
 	/// Leaking the interface for the few seconds until this host process exits is strictly better
@@ -1254,38 +968,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return;
 		}
 
-		try
-		{
-			_corDebug?.Terminate();
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Terminating the ICorDebug interface failed.");
-		}
+		_runtime.Terminate();
 	}
 
 	private BreakpointBinding AddBinding(string location, bool stopOnHit, string? logMessage, int? logEveryNthHit, int? autoContinueSeconds, string? condition)
 	{
-		var parsed = SymbolLocation.Parse(location);
-		var parsedCondition = BreakpointCondition.Parse(condition);
-
 		BreakpointBinding binding;
 		lock (_gate)
 		{
-			binding = new BreakpointBinding
-			{
-				Id = $"{(stopOnHit ? "bp" : "tp")}-{_nextBindingId++}",
-				Location = parsed,
-				Raw = location,
-				StopOnHit = stopOnHit,
-				LogMessage = logMessage,
-				LogEveryNthHit = logEveryNthHit,
-				AutoContinueSeconds = autoContinueSeconds,
-				ConditionText = string.IsNullOrWhiteSpace(condition) ? null : condition.Trim(),
-				Condition = parsedCondition,
-				Detail = "not bound yet",
-			};
-			_bindings.Add(binding);
+			binding = _breakpoints.Add(location, stopOnHit, logMessage, logEveryNthHit, autoContinueSeconds, condition);
 		}
 
 		BindAgainstLoadedModules();
@@ -1296,60 +987,44 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			var binding = _bindings.FirstOrDefault(entry => entry.Id == id);
-			if (binding is null) return false;
-
-			try
-			{
-				binding.Breakpoint?.Activate(false);
-			}
-			catch (Exception exception)
-			{
-				logger.LogDebug(exception, "Deactivating binding {Id} failed.", id);
-			}
-
-			_bindings.Remove(binding);
-			return true;
+			return _breakpoints.Remove(id);
 		}
 	}
 
 	/// <summary>
-	/// Resumes a held target. <paramref name="generation"/> is the stop a timer was armed for, and is
+	/// Resumes a held target. <paramref name="armedFor"/> is the stop a timer was armed for, and is
 	/// null when a caller asked.
 	/// <para>
-	/// Two things separate a timer's resume from a caller's. A timer whose generation has moved belongs
-	/// to a stop that is already over, so it does nothing -- disposing a timer does not wait for a
-	/// callback already running, so this is what makes a hold safe rather than nearly safe. And the
-	/// safety timer must not fire while a person is holding the stop, which is the whole point of a
-	/// hold; the hold's own expiry is exempt from that, since it is the thing the hold ends with.
+	/// Two things separate a timer's resume from a caller's. A timer belonging to a stop that is
+	/// already over does nothing -- disposing a timer does not wait for a callback already running, so
+	/// comparing the record is what makes a hold safe rather than nearly safe. And the safety timer
+	/// must not fire while a person is holding the stop, which is the whole point of a hold; the
+	/// hold's own expiry is exempt from that, since it is the thing the hold ends with.
 	/// </para>
 	/// </summary>
-	private LiveContinueResult ContinueInternal(ResumeCause cause, long? generation)
+	private LiveContinueResult ContinueInternal(ResumeCause cause, StopRecord? armedFor)
 	{
 		lock (_gate)
 		{
-			if (!_stoppedAtBreakpoint || _process is null || _detached || _exited)
+			if (Debuggee is null || Execution.Stop is not { } stop)
 			{
 				return new LiveContinueResult { Continued = false };
 			}
 
-			var supersededTimer = generation is { } armedFor && armedFor != _stopGeneration;
-			var blockedByHold = cause == ResumeCause.SafetyTimer && _holdUntilUtc is not null;
+			var supersededTimer = armedFor is not null && !ReferenceEquals(armedFor, stop);
+			var blockedByHold = cause == ResumeCause.SafetyTimer && stop.IsHeld;
 
 			// Both are no-ops rather than refusals: nothing asked for them.
 			if (supersededTimer || blockedByHold) return new LiveContinueResult { Continued = false };
 
-			var releasedHold = cause == ResumeCause.Caller && _holdUntilUtc is not null;
+			var releasedHold = cause == ResumeCause.Caller && stop.IsHeld;
+			var id = stop.BindingId;
 
-			_stoppedAtBreakpoint = false;
-			var id = _stoppedBindingId;
-			_stoppedBindingId = null;
-			_stoppedThread = null;
-			ClearStopTimers();
+			EndStop();
 
 			try
 			{
-				_process.Continue(fIsOutOfBand: false);
+				Debuggee.Continue(fIsOutOfBand: false);
 			}
 			catch (Exception exception)
 			{
@@ -1379,121 +1054,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	private DbgShim LoadDbgShim()
-	{
-		if (_shim is not null) return _shim;
-
-		_shim = new DbgShim(NativeLibrary.Load(ResolveDbgShimPath()));
-		return _shim;
-	}
-
-	/// <summary>
-	/// dbgshim.dll must match this host's own architecture, since it loads the mscordbi that talks to
-	/// the target. A RID-specific publish flattens it beside the exe; a plain build leaves it under
-	/// <c>runtimes/&lt;rid&gt;/native</c> for the running RID. Handle both, matching the host's RID.
-	/// </summary>
-	private static string ResolveDbgShimPath()
-	{
-		var baseDir = AppContext.BaseDirectory;
-
-		var flattened = Path.Combine(baseDir, "dbgshim.dll");
-		if (File.Exists(flattened)) return flattened;
-
-		var forThisRid = Path.Combine(baseDir, "runtimes", RuntimeInformation.RuntimeIdentifier, "native", "dbgshim.dll");
-		if (File.Exists(forThisRid)) return forThisRid;
-
-		var runtimesRoot = Path.Combine(baseDir, "runtimes");
-		if (Directory.Exists(runtimesRoot))
-		{
-			var any = Directory.EnumerateFiles(runtimesRoot, "dbgshim.dll", SearchOption.AllDirectories).FirstOrDefault();
-			if (any is not null) return any;
-		}
-
-		throw new FileNotFoundException(
-			"dbgshim.dll was not found beside the host or under runtimes/<rid>/native. The "
-				+ "Microsoft.Diagnostics.DbgShim package should provide it for this architecture.",
-			flattened);
-	}
-
-	/// <summary>
-	/// A freshly started process has a pid before its CoreCLR loads, so the first EnumerateCLRs can
-	/// find none. Retry briefly, then give up with a message that names the likely cause.
-	/// </summary>
-	private RuntimeInProcess FindRuntimeWithRetry(DbgShim shim, int pid, TimeSpan runtimeReadyTimeout)
-	{
-		var deadline = DateTime.UtcNow + runtimeReadyTimeout;
-		while (true)
-		{
-			try
-			{
-				return FindRuntime(shim, pid);
-			}
-			catch (RuntimeNotReadyException)
-			{
-				if (DateTime.UtcNow >= deadline)
-				{
-					throw new InvalidOperationException(
-						$"pid {pid} has no .NET (Core) runtime loaded. It may not be a .NET process, may be a "
-							+ "different bitness than this host, or may be a .NET-native/AOT build with no ICorDebug.");
-				}
-
-				Thread.Sleep(100);
-			}
-		}
-	}
-
-	private static RuntimeInProcess FindRuntime(DbgShim shim, int pid)
-	{
-		var enumeration = shim.EnumerateCLRs(pid);
-		if (enumeration.Items.Length == 0)
-		{
-			shim.CloseCLREnumeration(enumeration);
-			throw new RuntimeNotReadyException(pid);
-		}
-
-		if (enumeration.Items.Length != 1)
-		{
-			shim.CloseCLREnumeration(enumeration);
-			throw new InvalidOperationException(
-				$"Expected one CLR in pid {pid}, found {enumeration.Items.Length}.");
-		}
-
-		var item = enumeration.Items[0];
-		return new RuntimeInProcess(item.Path, item.Handle, enumeration);
-	}
-
-	private CorDebug CreateCorDebug(DbgShim shim, int pid, string runtimePath)
-	{
-		// The version string names the debuggee's coreclr; mscordbi is then loaded from beside it,
-		// which is what makes this work for whatever runtime the target happens to be on.
-		var version = shim.CreateVersionStringFromModule(pid, runtimePath);
-		var (_, _, hmod) = RuntimeDiscovery.ParseVersionString(version);
-
-		CorDebug created;
-		try
-		{
-			created = shim.CreateDebuggingInterfaceFromVersionEx(CorDebugInterfaceVersion.CorDebugVersion_4_0, version);
-		}
-		catch (DebugException)
-		{
-			// dbgshim folds every failure on that path into one code; do its two steps by hand and
-			// log what each saw, then create the object directly from the mscordbi beside the runtime.
-			foreach (var line in RuntimeDiscovery.Probe(pid, hmod))
-			{
-				logger.LogDebug("ICorDebug create probe: {Line}", line);
-			}
-
-			created = RuntimeDiscovery.CreateCorDebug(runtimePath, pid, hmod, CorDebugInterfaceVersion.CorDebugVersion_4_0);
-		}
-
-		created.Initialize();
-
-		var callback = new CorDebugManagedCallback();
-		callback.OnAnyEvent += OnEvent;
-		created.SetManagedHandler(callback);
-		return created;
-	}
-
 	private void OnEvent(object? sender, CorDebugManagedCallbackEventArgs e)
 	{
 		// A detach in progress lets the target run for an instant with its breakpoints still live, to
@@ -1501,11 +1061,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// continued without taking the gate: the detach is holding it, and this is the thread mscordbi
 		// needs back before its Stop can complete -- so waiting would stop the detach and the debuggee
 		// both, permanently, which is the wedge the whole detach path exists to avoid.
-		if (_detaching)
+		if (Execution is TargetExecution.Detaching)
 		{
 			if (e.Kind == CorDebugManagedCallbackKind.ExitProcess)
 			{
-				_exited = true;
+				MoveTo(new TargetExecution.Exited());
 				return;
 			}
 
@@ -1539,7 +1099,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		if (e.Kind == CorDebugManagedCallbackKind.ExitProcess)
 		{
-			_exited = true;
+			// Under the gate, unlike the detach window above, because a target that goes while it is
+			// being held has a stop to end: its timers would otherwise outlive the process, and a
+			// reader would be told a dead target is stopped at a breakpoint. Nothing outside that
+			// window holds the gate across a wait on mscordbi, so this cannot be the thread it needs.
+			lock (_gate)
+			{
+				Execution.Stop?.Dispose();
+				MoveTo(new TargetExecution.Exited());
+			}
+
 			return;
 		}
 
@@ -1548,7 +1117,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		lock (_gate)
 		{
-			if (_detached) return;
+			if (Execution is TargetExecution.Detached) return;
 
 			try
 			{
@@ -1589,7 +1158,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 			case StepCompleteCorDebugManagedCallbackEventArgs step:
 				ForgetStepper(step.Stepper);
-				return Hold(step.Thread, LiveDebugEventKind.StepComplete, "Step complete", bindingId: null, autoContinueSeconds: null);
+				return HoldAtStop(step.Thread, LiveDebugEventKind.StepComplete, "Step complete", bindingId: null, autoContinueSeconds: null);
 
 			case Exception2CorDebugManagedCallbackEventArgs exception:
 				RecordException(exception);
@@ -1628,21 +1197,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private bool RecordBreakpointHit(BreakpointCorDebugManagedCallbackEventArgs hit)
 	{
 		var threadId = CorDebugInspector.TryThreadId(hit.Thread);
-		var (token, moduleName) = TryFunctionIdentity(hit.Breakpoint as CorDebugFunctionBreakpoint);
 
 		BreakpointBinding? binding;
 		long ordinal;
 		lock (_gate)
 		{
-			binding = _bindings.FirstOrDefault(entry =>
-				entry.Bound
-				&& entry.Token == token
-				&& (moduleName is null
-					|| string.Equals(moduleName, entry.ModulePath, StringComparison.OrdinalIgnoreCase)));
-
-			// With one binding bound, an unidentified hit is unambiguously it.
-			binding ??= _bindings.Count(entry => entry.Bound) == 1 ? _bindings.First(entry => entry.Bound) : null;
-			ordinal = binding is null ? 0 : ++binding.HitCount;
+			(binding, ordinal) = _breakpoints.Match(hit.Breakpoint as CorDebugFunctionBreakpoint);
 		}
 
 		// A condition is a cheap read-and-compare on the stopped frame; if it fails, act as if unhit.
@@ -1653,7 +1213,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		if (binding is { StopOnHit: true })
 		{
-			return Hold(hit.Thread, LiveDebugEventKind.BreakpointHit, $"Breakpoint {binding.Raw} hit #{ordinal}", binding.Id, binding.AutoContinueSeconds);
+			return HoldAtStop(hit.Thread, LiveDebugEventKind.BreakpointHit, $"Breakpoint {binding.Raw} hit #{ordinal}", binding.Id, binding.AutoContinueSeconds);
 		}
 
 		// Tracepoint: a hit-count filter still counts every hit; it only thins what is logged.
@@ -1678,42 +1238,33 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// stop's identity and the fields describing the stop are not complete without it.
 	/// </para>
 	/// </summary>
-	private bool Hold(CorDebugThread thread, LiveDebugEventKind kind, string prefix, string? bindingId, int? autoContinueSeconds)
+	private bool HoldAtStop(CorDebugThread thread, LiveDebugEventKind kind, string prefix, string? bindingId, int? autoContinueSeconds)
 	{
 		var frames = WalkStack(thread, MaxStackFrames);
 		var variables = ReadTopFrameVariables(thread);
 		var threadId = CorDebugInspector.TryThreadId(thread);
 		var top = frames.Count > 0 ? frames[0] : "?";
+		var seconds = autoContinueSeconds ?? StopRecord.DefaultAutoContinueSeconds;
 
 		lock (_gate)
 		{
-			_stoppedAtBreakpoint = true;
-			_stoppedBindingId = bindingId;
-			_stoppedThread = thread;
-			_stoppedAs = StateOf(kind);
+			// Whatever was held here is over, and its timers go with it: a new stop never inherits the
+			// previous one's hold.
+			Execution.Stop?.Dispose();
 
-			var seconds = autoContinueSeconds ?? DefaultAutoContinueSeconds;
+			var stop = new StopRecord(thread, bindingId, StateOf(kind), seconds);
+			MoveTo(new TargetExecution.Stopped(stop));
 
-			// Before the timer is armed, so a callback that fires immediately cannot see a half-built
-			// stop, and so the generation the timer captures is this stop's.
-			var generation = ++_stopGeneration;
-			_autoContinueSeconds = seconds;
-			_stoppedAtUtc = DateTime.UtcNow;
-			_autoContinueAtUtc = _stoppedAtUtc.AddSeconds(seconds);
-
-			_stopEventSequence = buffer.Append(
+			stop.EventSequence = buffer.Append(
 				kind,
 				$"{prefix} at {top} on thread {threadId?.ToString() ?? "?"} -- stopped; continue or step (auto-continues in {seconds}s).",
 				threadId: threadId,
 				frames: frames.Count > 0 ? frames : null,
 				variables: variables.Count > 0 ? variables : null);
 
-			ClearStopTimers();
-			_autoContinueTimer = new Timer(
-				_ => ContinueInternal(ResumeCause.SafetyTimer, generation),
-				null,
-				TimeSpan.FromSeconds(seconds),
-				Timeout.InfiniteTimeSpan);
+			// Armed last, so a timer that fires the instant it is set cannot find a half-built stop. It
+			// carries the record it belongs to, so a tick queued against a stop already over does nothing.
+			stop.ArmSafetyTimer(() => ContinueInternal(ResumeCause.SafetyTimer, stop));
 		}
 
 		return false;
@@ -1796,33 +1347,27 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		lock (_gate)
 		{
-			if (_process is null || _detached || _exited) return;
-			if (_bindings.TrueForAll(binding => binding.Bound)) return;
+			if (Debuggee is null || !Execution.IsLive) return;
+			if (_breakpoints.AllBound) return;
 
 			var stopped = false;
 			try
 			{
-				_process.Stop(0);
+				Debuggee.Stop(0);
 				stopped = true;
 
 				var loaded = new List<CorDebugModule>();
-				foreach (var module in EnumerateModules(_process))
+				foreach (var module in TargetSymbols.EnumerateModules(Debuggee))
 				{
-					RememberModule(module);
+					_symbols.Remember(module);
 					loaded.Add(module);
 				}
 
 				// This walk is the one a name search would otherwise have to take for itself.
-				_modulesEnumerated = true;
+				_symbols.MarkWalked();
 
-				// Bound after the walk rather than during it, because whether a name without its assembly is
-				// ambiguous is a question about every module, not the one in hand.
-				foreach (var binding in _bindings)
-				{
-					if (!binding.Bound) BindAmong(binding, loaded);
-				}
-
-				ExplainUnbound([.. _modulePaths]);
+				_breakpoints.BindAmongLoaded(loaded);
+				_breakpoints.ExplainUnbound(_symbols.Paths);
 			}
 			catch (Exception exception)
 			{
@@ -1834,7 +1379,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				{
 					try
 					{
-						_process.Continue(fIsOutOfBand: false);
+						Debuggee.Continue(fIsOutOfBand: false);
 					}
 					catch (Exception exception)
 					{
@@ -1851,120 +1396,18 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// the type, and when several do it says which rather than choosing: a breakpoint in the wrong one
 	/// never fires, which looks exactly like code that never runs.
 	/// </summary>
-	private void BindAmong(BreakpointBinding binding, IReadOnlyList<CorDebugModule> modules)
-	{
-		if (binding.Location.Assembly is not null)
-		{
-			foreach (var module in modules)
-			{
-				TryBind(binding, module);
-				if (binding.Bound) return;
-			}
-
-			return;
-		}
-
-		var owners = modules
-			.Where(module => FileOf(module) is { } path && MethodTokens.DeclaresType(path, binding.Location.TypeName))
-			.ToList();
-
-		if (owners.Count > 1)
-		{
-			binding.Detail = TypeOwners.Ambiguity(binding.Location.TypeName, [.. owners.Select(module => module.Name)], binding.Raw);
-			return;
-		}
-
-		if (owners.Count == 1) TryBind(binding, owners[0]);
-	}
-
-	/// <summary>
-	/// A module's file, or null where there is none to read: a dynamic or in-memory module, or one that
-	/// cannot describe itself.
-	/// </summary>
-	private static string? FileOf(CorDebugModule module)
-	{
-		try
-		{
-			if (module.IsDynamic || module.IsInMemory) return null;
-
-			return string.IsNullOrWhiteSpace(module.Name) ? null : module.Name;
-		}
-		catch (Exception)
-		{
-			return null;
-		}
-	}
-
-	/// <summary>
-	/// Notes a module's file, so its metadata and symbols can be read without touching the target
-	/// again. A dynamic or in-memory module is skipped: there is no file to read it out of.
-	/// </summary>
-	private void RememberModule(CorDebugModule module)
-	{
-		if (FileOf(module) is not { } path) return;
-
-		lock (_gate)
-		{
-			if (!_modulePaths.Contains(path, StringComparer.OrdinalIgnoreCase)) _modulePaths.Add(path);
-		}
-	}
-
 	/// <summary>
 	/// The target's loaded module files, walking the ones that predate this session's attach the
-	/// first time anybody asks.
+	/// first time anybody asks. The walk is the only part that needs the gate or the debuggee; what
+	/// a caller does with the paths afterwards is reading off disk.
 	/// </summary>
 	private IReadOnlyList<string> ModulePaths()
 	{
 		lock (_gate)
 		{
-			if (!_modulesEnumerated) EnumerateLoadedModules();
+			if (!_symbols.Walked && Debuggee is { } live && Execution.IsLive) _symbols.Walk(live);
 
-			return [.. _modulePaths];
-		}
-	}
-
-	/// <summary>
-	/// Walks the target's modules once, async-breaking it to a synchronized state to do so.
-	/// <para>
-	/// The stop and the continue are a pair, which is what makes this safe to call while the target
-	/// is held at a breakpoint: the stop count goes up and back down and the target stays exactly as
-	/// stopped as it was.
-	/// </para>
-	/// </summary>
-	private void EnumerateLoadedModules()
-	{
-		if (_process is null || _detached || _exited) return;
-
-		var stopped = false;
-		try
-		{
-			_process.Stop(0);
-			stopped = true;
-
-			foreach (var module in EnumerateModules(_process))
-			{
-				RememberModule(module);
-			}
-
-			_modulesEnumerated = true;
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Enumerating the target's loaded modules failed.");
-		}
-		finally
-		{
-			if (stopped)
-			{
-				try
-				{
-					_process.Continue(fIsOutOfBand: false);
-				}
-				catch (Exception exception)
-				{
-					logger.LogDebug(exception, "Continue after enumerating modules failed.");
-				}
-			}
+			return _symbols.Paths;
 		}
 	}
 
@@ -1978,345 +1421,19 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// deactivating a breakpoint that a thread may be parked on fail-fasts the target.
 	/// </para>
 	/// </summary>
+	/// <summary>
+	/// Takes in a module as it loads: notes its file, and binds anything waiting for it. Called from a
+	/// stopped callback.
+	/// </summary>
 	private void BindModule(CorDebugModule module)
 	{
-		// Before the early return below, because the list of modules is wanted by a name search
-		// whether or not anything is waiting to bind.
-		RememberModule(module);
-
-		if (FileOf(module) is not { } path) return;
-
 		lock (_gate)
 		{
-			foreach (var binding in _bindings)
-			{
-				if (binding.Location.Assembly is not null)
-				{
-					if (!binding.Bound) TryBind(binding, module);
-					continue;
-				}
-
-				var typeName = binding.Location.TypeName;
-				if (!MethodTokens.DeclaresType(path, typeName)) continue;
-
-				if (binding.Bound)
-				{
-					var sameModule = string.Equals(binding.ModulePath, path, StringComparison.OrdinalIgnoreCase);
-					if (sameModule) continue;
-
-					buffer.Append(
-						LiveDebugEventKind.SessionNotice,
-						$"{binding.Id} is bound in {Path.GetFileName(binding.ModulePath)}, and {Path.GetFileName(path)} also "
-							+ $"declares {typeName}; give the assembly, as {Path.GetFileNameWithoutExtension(path)}!{binding.Raw}, "
-							+ "to break in that one instead.");
-					continue;
-				}
-
-				var others = _modulePaths
-					.Where(other => !string.Equals(other, path, StringComparison.OrdinalIgnoreCase))
-					.Where(other => MethodTokens.DeclaresType(other, typeName))
-					.ToList();
-
-				if (others.Count > 0)
-				{
-					binding.Detail = TypeOwners.Ambiguity(typeName, [.. others, path], binding.Raw);
-					continue;
-				}
-
-				TryBind(binding, module);
-			}
+			// Remembered before anything returns early, because the list of modules is wanted by a
+			// name search whether or not anything is waiting to bind.
+			_symbols.Remember(module);
+			_breakpoints.BindNewModule(module, _symbols.Paths);
 		}
-	}
-
-	private void TryBind(BreakpointBinding binding, CorDebugModule module)
-	{
-		if (binding.Bound) return;
-
-		try
-		{
-			if (module.IsDynamic || module.IsInMemory) return;
-		}
-		catch (Exception)
-		{
-			return; // A module that cannot describe itself is not one we can read metadata from.
-		}
-
-		if (!TypeOwners.Admits(module.Name, binding.Location.Assembly)) return;
-
-		var token = MethodTokens.Find(module.Name, binding.Location.TypeName, binding.Location.MethodName);
-		if (token is null)
-		{
-			binding.Detail = $"no method {binding.Location.TypeName}.{binding.Location.MethodName} in {Path.GetFileName(module.Name)}";
-			return;
-		}
-
-		var offset = binding.Location.IlOffset;
-
-		try
-		{
-			var function = module.GetFunctionFromToken(token.Value);
-
-			// A named method binds at its first instruction; a picked position binds inside the IL,
-			// which is the only way to stop on a line that is not the method's first.
-			var breakpoint = offset is { } instruction
-				? function.ILCode.CreateBreakpoint(instruction)
-				: function.CreateBreakpoint();
-
-			breakpoint.Activate(true);
-
-			binding.Breakpoint = breakpoint;
-			binding.Token = token.Value;
-			binding.ModulePath = module.Name;
-			binding.Source = SourceAt(module.Name, token.Value, offset ?? 0);
-			binding.Detail = null;
-			buffer.Append(LiveDebugEventKind.SessionNotice, $"{binding.Id} bound at {binding.Raw}.");
-			logger.LogInformation("Binding {Id} bound at {Location} (token 0x{Token:x8}).", binding.Id, binding.Raw, token.Value);
-		}
-		catch (Exception exception)
-		{
-			// An offset the method's IL does not contain is the failure worth naming apart. It comes
-			// back as an HRESULT about setting a breakpoint, which says nothing about the number
-			// being wrong, and it is the one thing a caller composing a location by hand gets wrong.
-			binding.Detail = offset is { } bad
-				? $"bind failed at IL_{bad:X4}: {exception.Message}. The offset must be one this method's symbols report."
-				: $"bind failed: {exception.Message}";
-			logger.LogDebug(exception, "Binding {Id} at {Location} failed.", binding.Id, binding.Raw);
-		}
-	}
-
-	/// <summary>
-	/// Says why each still-unbound binding is unbound, against the module files that are actually loaded.
-	/// <para>
-	/// A binding that says only "not bound yet", whatever went wrong, points its caller at waiting when
-	/// the spelling is what needs changing. So a location naming its assembly is told whether that module
-	/// is loaded, and one naming none is told that no loaded module declares its type -- which is also
-	/// what a module still to load looks like, so it says it binds when one that does arrives.
-	/// </para>
-	/// <para>
-	/// Only ever narrows: a detail already set by <see cref="TryBind"/> or <see cref="BindAmong"/> is a
-	/// real finding about a module that matched, and is left alone.
-	/// </para>
-	/// </summary>
-	private void ExplainUnbound(IReadOnlyList<string> loadedModulePaths)
-	{
-		foreach (var binding in _bindings)
-		{
-			if (binding.Bound) continue;
-			if (binding.Detail is not (null or "not bound yet")) continue;
-
-			var typeName = binding.Location.TypeName;
-
-			if (binding.Location.Assembly is not { } assembly)
-			{
-				binding.Detail = $"no loaded module declares {typeName} ({loadedModulePaths.Count} searched); "
-					+ "it binds when a module that does loads";
-				continue;
-			}
-
-			if (loadedModulePaths.Any(path => TypeOwners.Admits(path, assembly)))
-			{
-				// The module is loaded and TryBind said nothing, so the type is what is missing --
-				// the method-level miss is reported by TryBind itself.
-				binding.Detail = $"no type {typeName} in {assembly}";
-				continue;
-			}
-
-			binding.Detail = $"module {assembly} is not loaded ({loadedModulePaths.Count} others are)";
-		}
-	}
-
-	private static IEnumerable<CorDebugModule> EnumerateModules(CorDebugProcess process)
-	{
-		foreach (var appDomain in process.AppDomains)
-		{
-			foreach (var assembly in appDomain.Assemblies)
-			{
-				foreach (var module in assembly.Modules)
-				{
-					yield return module;
-				}
-			}
-		}
-	}
-
-	private (int? Token, string? Module) TryFunctionIdentity(CorDebugFunctionBreakpoint? breakpoint)
-	{
-		if (breakpoint is null) return (null, null);
-
-		try
-		{
-			var function = breakpoint.Function;
-			return ((int)function.Token, function.Module.Name);
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Reading a breakpoint's function identity failed.");
-			return (null, null);
-		}
-	}
-
-	/// <summary>
-	/// Stands down everything that would resume the current stop: the safety timer, an operator's hold
-	/// and its timer. Called wherever a stop ends or begins, so a new stop never inherits the previous
-	/// one's hold.
-	/// <para>
-	/// Disposing a timer does not wait for a callback already running, which is why the stop generation
-	/// exists rather than this being enough on its own.
-	/// </para>
-	/// </summary>
-	private void ClearStopTimers()
-	{
-		_autoContinueTimer?.Dispose();
-		_autoContinueTimer = null;
-		_holdTimer?.Dispose();
-		_holdTimer = null;
-		_holdUntilUtc = null;
-	}
-
-	/// <summary>Wraps a native event handle so it can be waited on or set through the BCL.</summary>
-	private static EventWaitHandle WrapEvent(IntPtr handle, bool ownsHandle)
-	{
-		var wrapped = new EventWaitHandle(false, EventResetMode.AutoReset);
-		wrapped.SafeWaitHandle.Dispose();
-		wrapped.SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle);
-		return wrapped;
-	}
-
-	private static LiveTracepoint DescribeTracepoint(BreakpointBinding binding) => new()
-	{
-		Id = binding.Id,
-		Location = binding.Raw,
-		Bound = binding.Bound,
-		IlOffset = binding.Location.IlOffset,
-		Source = binding.Source,
-		HitCount = binding.HitCount,
-		LogMessage = binding.LogMessage,
-		LogEveryNthHit = binding.LogEveryNthHit,
-		Condition = binding.ConditionText,
-		Detail = binding.Bound ? null : binding.Detail,
-	};
-
-	private static LiveBreakpoint DescribeBreakpoint(BreakpointBinding binding) => new()
-	{
-		Id = binding.Id,
-		Location = binding.Raw,
-		StopOnHit = binding.StopOnHit,
-		Bound = binding.Bound,
-		IlOffset = binding.Location.IlOffset,
-		Source = binding.Source,
-		HitCount = binding.HitCount,
-		AutoContinueSeconds = binding.AutoContinueSeconds ?? DefaultAutoContinueSeconds,
-		Condition = binding.ConditionText,
-		Detail = binding.Bound ? null : binding.Detail,
-	};
-
-	private static LiveMethodMatch DescribeMatch(MethodCandidate candidate) => new()
-	{
-		Location = candidate.Location,
-		DisplayName = candidate.DisplayName,
-		Signature = candidate.Signature,
-		Module = candidate.Module,
-		HasSymbols = candidate.HasSymbols,
-	};
-
-	/// <summary>
-	/// What a reader needs to know about a search that the list of matches does not say. Null when
-	/// the answer speaks for itself, since a caption that is always there is one nobody reads.
-	/// </summary>
-	private static string? SearchDetail(string query, int modules, MethodSearchResult found)
-	{
-		if (!MethodQuery.IsWorthSearching(query))
-		{
-			return $"Type at least {MethodQuery.ShortestQuery} characters. A shorter query matches most "
-				+ "of a framework, and reading every loaded module to say so is the cost of the answer.";
-		}
-
-		if (modules == 0)
-		{
-			return "No modules are known yet. The target reports them as it loads them, so this fills in "
-				+ "once it is running.";
-		}
-
-		return found.ModulesUnreadable > 0
-			? $"{found.ModulesUnreadable} of {modules} loaded modules were not searched: a native library "
-				+ "or one built in memory has no metadata on disk to read."
-			: null;
-	}
-
-	/// <summary>
-	/// Every place in a region where execution can stop, in source order, each naming the method its
-	/// instructions belong to rather than the one somebody was reading.
-	/// </summary>
-	private static IReadOnlyList<LiveMethodPosition> PositionsIn(
-		IReadOnlyList<MethodExtent> region,
-		string modulePath,
-		string module,
-		string file)
-	{
-		var positions = new List<LiveMethodPosition>();
-
-		foreach (var extent in region)
-		{
-			var parts = MethodTokens.MethodParts(modulePath, extent.MethodToken);
-			var owner = parts is { } named ? $"{module}!{named.TypeName}.{named.MethodName}" : null;
-			var label = parts is { } shown ? MethodDisplayName.Of(shown.TypeName, shown.MethodName) : null;
-
-			// A method whose metadata will not name it cannot be addressed, so its lines are not
-			// offered. Offering a position nothing can be set at is worse than leaving the line plain.
-			if (owner is null || label is null) continue;
-
-			foreach (var point in extent.Points)
-			{
-				if (point.Position is not { } at) continue;
-				if (!string.Equals(at.File, file, StringComparison.OrdinalIgnoreCase)) continue;
-
-				positions.Add(new LiveMethodPosition
-				{
-					Location = $"{owner}@IL_{point.Offset:X4}",
-					DisplayName = label,
-					IlOffset = point.Offset,
-					Line = at.Line,
-					Column = at.Column,
-					EndLine = at.EndLine,
-					EndColumn = at.EndColumn,
-				});
-			}
-		}
-
-		return [.. positions.OrderBy(position => position.Line).ThenBy(position => position.Column)];
-	}
-
-	/// <summary>A method that cannot be shown, saying why. Its first instruction is still breakable at.</summary>
-	private static LiveMethodSource NoMethodSource(
-		string location,
-		string displayName,
-		string module,
-		LiveSymbolState symbols,
-		string detail) => new()
-		{
-			Location = location,
-			DisplayName = displayName,
-			Module = module,
-			Symbols = symbols,
-			FirstLine = 0,
-			Lines = [],
-			Positions = [],
-			Detail = detail,
-		};
-
-	/// <summary>Where an instruction came from in source, or null when the symbols cannot say.</summary>
-	private static LiveSourcePosition? SourceAt(string modulePath, int methodToken, int ilOffset)
-	{
-		if (SymbolCache.Shared.For(modulePath)?.Pdb?.Position(methodToken, ilOffset) is not { } at) return null;
-
-		return new LiveSourcePosition
-		{
-			File = at.File,
-			Line = at.Line,
-			Column = at.Column,
-			EndLine = at.EndLine,
-			EndColumn = at.EndColumn,
-		};
 	}
 
 	private static string DescribeExceptionType(CorDebugThread thread)
@@ -2343,52 +1460,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 	}
 
-	private sealed record RuntimeInProcess(string Path, IntPtr Handle, EnumerateCLRsResult Enumeration);
-
-	private sealed class BreakpointBinding
-	{
-		public required string Id { get; init; }
-
-		public required SymbolLocation Location { get; init; }
-
-		/// <summary>The location as the caller wrote it, for reporting.</summary>
-		public required string Raw { get; init; }
-
-		/// <summary>True for a stopping breakpoint; false for a tracepoint (log and continue).</summary>
-		public required bool StopOnHit { get; init; }
-
-		public string? LogMessage { get; init; }
-
-		public int? LogEveryNthHit { get; init; }
-
-		public int? AutoContinueSeconds { get; init; }
-
-		/// <summary>The condition as the caller wrote it, for reporting; null when there is none.</summary>
-		public string? ConditionText { get; init; }
-
-		/// <summary>The parsed condition evaluated on each hit; null when there is none.</summary>
-		public BreakpointCondition? Condition { get; init; }
-
-		public long HitCount { get; set; }
-
-		/// <summary>The bound method's metadata token, used to match a hit back to this binding.</summary>
-		public int? Token { get; set; }
-
-		/// <summary>The module file it bound in, for reading the symbols that say where that was.</summary>
-		public string? ModulePath { get; set; }
-
-		/// <summary>
-		/// Where in source it bound, read once at bind rather than on each listing: a listing is
-		/// polled while a panel is open and the answer cannot change while the module is loaded.
-		/// </summary>
-		public LiveSourcePosition? Source { get; set; }
-
-		public CorDebugFunctionBreakpoint? Breakpoint { get; set; }
-
-		public string? Detail { get; set; }
-
-		public bool Bound => Breakpoint is not null;
-	}
 }
 
 /// <summary>The process exists but its CoreCLR has not loaded yet; the caller may retry.</summary>

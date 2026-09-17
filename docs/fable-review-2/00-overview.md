@@ -4,12 +4,12 @@ Synthesis of eight reviews of RoseMCP, 2026-09-16/17, at 446 commits. Read this 
 answers and the card list; read the numbered files for the evidence. Every finding cited here has
 a `path:line` reference in its own file.
 
-**Scale.** 151 findings across eight reports: 27 High, 78 Medium, 46 Low. Roughly 6,000 lines of
+**Scale.** 152 findings across eight reports: 27 High, 79 Medium, 46 Low. Roughly 6,000 lines of
 review over roughly 60,000 lines of production code and 31,000 of tests, in 18 projects.
 
 | File | Findings | H/M/L | Grade |
 |---|---|---|---|
-| 01 Broker and Server | 19 | 2/9/8 | Adequate; strong core, fragile lifetime and seams |
+| 01 Broker and Server | 20 | 2/10/8 | Adequate; strong core, fragile lifetime and seams |
 | 02 Worker and Roslyn | 23 | 5/11/7 | Core strong, edges adequate, **editing stack fragile** |
 | 03 LiveApp, debugger, tap | 22 | 2/12/8 | Adequate leaning strong |
 | 04 Agentic citizenship | 21 | 7/12/2 | Adequate, and unusually self-aware about it |
@@ -241,7 +241,7 @@ These produce confident wrong results today. Everything else is cost.
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 1 | **A relative path resolves against the broker, so a write lands in another worktree.** Rebase hints against the caller's origin before ranking; make it a type so it cannot recur. | BRK-01, AGT-10 | #214 | M |
+| 1 | **A relative path resolves against the broker, so a write lands in another worktree.** Rebase hints against the caller's origin before ranking; make it a type so it cannot recur. Make the broker-to-worker hop absolute-only so a mis-route fails loudly instead of writing to a plausible file. | BRK-01, AGT-10, BRK-20 | #214 | M |
 | 2 | **A breakpoint hit is attributed by method token alone**, so two bindings in one method misreport: a stopping breakpoint logs as a tracepoint and the wrong id is reported. Match the breakpoint object. | LIV-03 | new | S |
 | 3 | **A dead target reports as stopped.** The stop state machine is implicit in nine fields and five spellings of the same guard. Replace with one union swapped under the gate. Prerequisite for hot reload. | LIV-02, HOT-06 | new | M |
 | 4 | **A timed-out XAML request still runs in the app** — reported failure, did the thing anyway. This is #208's real cause, and it is in the product, not the test. | UIP-15, LIV-07 | #208 | M |
@@ -295,6 +295,7 @@ Commit to the supervising user, or decide not to. Everything here follows from t
 | 24 | **The activity log is the only record of what an agent did to your solution.** It is eight entries, collapsed, tertiary grey, dropped on close. Persist it, give it client attribution, promote it. | USE-04, USE-05 | new | M |
 | 25 | **Make facts copyable.** Nothing in a window whose job is feeding facts to an agent can be copied except one XAML address. | USE-09, USE-14 | new | S |
 | 26 | **Cut what earns less than it costs**: the threads pane (the only pane that freezes the user's app as a side effect of being visible), the duplicate tray menu, the empty title bar, the load time on the permanent facts line. | USE-07, USE-15, USE-17 | new | M |
+| 26c | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Cut with #157: an evicted worker releases the directory. | BRK-20 | #157 | S |
 | 26b | **Write down why the magnifier exists.** The OS magnifier filters bilinearly and cannot be told not to, so it can neither read an exact colour nor show a one-pixel gap at a corner radius. That reason is in no comment, invariant or wiki page, and this review recommended deleting the feature before being corrected. A header sentence, a decision record, and a tooltip that states the benefit rather than the mechanism. | USE-08 | new | S |
 | 27 | **Connect the pick to the window that explains it.** Six manual steps today. | USE-10 | #226 | L |
 

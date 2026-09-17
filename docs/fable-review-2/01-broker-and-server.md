@@ -172,6 +172,59 @@
 - **Why it matters:** Unobserved exceptions are logged noise at best and, with `UnobservedTaskException` handlers, a crash at worst. The window is narrow but it is the exact moment (cancel racing completion) this class is about.
 - **Suggested change:** Hold the continuation in a field, await it in a `finally` before disposal, or use `CancellationTokenSource.TryReset`-style guard: `if (!abandon.IsCancellationRequested) try { abandon.Cancel(); } catch (ObjectDisposedException) { }`. A `CancellableToolCallTests` unit test with a fake `McpClient` would be the first test this class has at the unit level.
 
+### BRK-20 A warm worker holds its worktree's directory open, so `git worktree remove` fails until the tray is closed
+
+- **Severity:** Medium
+- **Effort:** S (the lock) / M (the relative-path half it is entangled with)
+- **Where:** `src/RoseMcp.Broker/WorkspaceWorker.cs:156`
+  (`WorkingDirectory = Path.GetDirectoryName(solutionPath)`),
+  `src/RoseMcp.Worker/AddFileService.cs:50` (`Path.GetFullPath(request.FilePath)`)
+- **What:** Every worker is started with its working directory set to its solution's directory. On
+  Windows a process's working directory is held open with a handle that does not share delete, so
+  that directory cannot be removed while the process lives. Verified directly: a child process
+  started with a temp directory as its working directory made `Remove-Item` fail with "because it is
+  being used by another process", and the same removal succeeded the moment the child exited.
+
+  For this repository the solution sits at the worktree root, so the directory a worker pins **is**
+  the worktree. Workers are kept warm and are never evicted (#157), so a solution opened once holds
+  its worktree open for the life of the broker. `git worktree remove` on it fails, and so does any
+  removal of a parent directory. Creating a worktree, opening it, and then removing it is an
+  ordinary sequence here -- often inside a single session.
+- **Why it matters:** Two things, and the second is the more interesting.
+
+  1. The workflow breaks in a way that does not name Rose. Git reports a directory in use, the
+     obvious suspects are an editor or a shell, and the actual holder is a background worker owned
+     by a tray in the notification area.
+  2. **The correct working directory is what makes #214 a silent success rather than a loud
+     failure.** Trace the wrong-worktree write: the broker resolves a relative hint against its own
+     working directory and picks the wrong workspace (BRK-01); it routes to that workspace's worker;
+     that worker resolves the same relative path with `Path.GetFullPath`, against a working
+     directory that is correctly its own solution's root; the file exists there, because it is a
+     worktree of the same repository; the edit applies and reports success. Had the worker's working
+     directory been inert, step four would have failed to find the file and the bug would have
+     surfaced the first time instead of writing to the wrong checkout. A defensive setting is
+     load-bearing in the failure.
+- **Suggested change:** Separate the two, because only one is urgent.
+
+  1. **Make the broker-to-worker hop absolute-only**, and have the worker *refuse* a relative path
+     rather than resolve one. Relative paths are a convenience for the outside caller, and the
+     broker is the only place that knows the origin to resolve them against (BRK-01). Once the hop
+     is absolute, the worker's working directory stops being load-bearing for correctness, and a
+     mis-routed call fails loudly instead of writing somewhere plausible.
+  2. **Then move the working directory somewhere inert**, so a warm worker pins nothing a person
+     might want to delete. The repository already has the concept:
+     `tests/RoseMcp.TestSupport/NowhereDirectory` points at a drive that does not exist, precisely
+     because "nowhere on a real disk can be promised clean". A worker wants the weaker version of
+     the same idea: a directory whose removal nobody will ever attempt.
+  3. **Measure before moving it.** MSBuild resolves project-relative paths against the project file
+     rather than the working directory, but a repository's own custom targets or tasks may read
+     relative paths against the process, and a design-time build runs the repository's code
+     (`docs/debug/security-model.md`). Change it behind the fixture suite and watch the XAML and
+     generator fixtures, which are the ones with non-trivial targets.
+
+  Until then, #157's eviction work would shorten the exposure but not remove it, and the two should
+  be cut as one card: an evicted worker releases the directory, which is a second reason to evict.
+
 ## Pit-of-success inversions
 
 1. **Rule:** "Every result carries a `revision` and names the workspace that answered" (CLAUDE.md; `result-shapes.md`). Today a runtime `is` check in `Attribute<T>` and 21 hand-written `public required long Revision` properties. **Mechanism:** `where T : WorkspaceScopedResult` on `WorkspaceManager.CallAsync` and `StatusOfAsync`; move `Revision` onto a `WorkspaceReadResult : WorkspaceScopedResult` base so a result cannot omit it; a unit test that enumerates the advertised Roslyn tools via `McpServerTool` (as `ToolSurfaceTests.Advertised` already does), reads each method's return type, and asserts it derives from `WorkspaceScopedResult` -- the compiler for the broker's own tools, the test for anything registered another way.

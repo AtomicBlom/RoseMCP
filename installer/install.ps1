@@ -199,7 +199,7 @@ function Write-ArpEntry
     $values = @{
         DisplayName = 'RoseMCP'
         DisplayVersion = $Version
-        Publisher = 'Binary Vibrance'
+        Publisher = 'BinaryVibrance'
         InstallLocation = $native
         DisplayIcon = "$native\tray\RoseMcp.Tray.exe"
         UninstallString = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$native\install.ps1`" -Uninstall"

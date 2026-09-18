@@ -1,0 +1,22 @@
+RoseMCP
+Copyright 2026 Steven Blom
+
+This product includes software developed by Steven Blom, trading as
+BinaryVibrance (https://binaryvibrance.net).
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the terms.
+
+TRADEMARKS AND BRAND ASSETS
+
+"RoseMCP" and "BinaryVibrance", the rose mark, and the icon and image files
+under src/RoseMcp.Tray/Assets/ and src/RoseMcp.Inspector/Assets/ are trademarks
+and brand assets of Steven Blom, trading as BinaryVibrance. Section 6 of the
+Apache License grants no rights in them, and the copyright licence over the
+source does not extend to their use as marks.
+
+A fork is welcome and is expected to carry its own name and its own icons. See
+TRADEMARK.md for what that means in practice, and for the uses that need no
+permission at all.
+
+The only official distribution of RoseMCP is
+https://github.com/AtomicBlom/RoseMCP/releases.

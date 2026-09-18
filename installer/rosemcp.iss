@@ -23,7 +23,7 @@
 #endif
 
 #define AppName "RoseMCP"
-#define AppPublisher "Binary Vibrance"
+#define AppPublisher "BinaryVibrance"
 #define AppUrl "https://github.com/AtomicBlom/RoseMCP"
 #define DefaultPort "5077"
 

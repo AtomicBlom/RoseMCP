@@ -275,3 +275,16 @@ were found by using it on itself and not by its tests.
 
 Early, and used daily against its own repository. The tool surface above is stable. Live-app
 debugging and XAML inspection are Windows only, and newer than the rest.
+
+## Licence and the name
+
+The code is [Apache-2.0](LICENSE). The name is not: "RoseMCP", the rose mark and the icon files are
+trademarks of Steven Blom, trading as BinaryVibrance, and section 6 of the licence excludes them on
+purpose.
+
+Fork it and ship it -- under your own name, with your own icons, so anyone with a problem with your
+build knows whose door to knock on. Saying a project is a fork of RoseMCP, is based on it, or is
+compatible with it needs no permission at all. [TRADEMARK.md](TRADEMARK.md) has the detail.
+
+The only official distribution is
+[this repository's releases](https://github.com/AtomicBlom/RoseMCP/releases).

@@ -45,13 +45,6 @@ public static class MemberEditService
 	/// </summary>
 	private static readonly string[] Unresolved = ["CS0246", "CS0103", "CS0234"];
 
-	/// <summary>
-	/// How many distinct unresolved names an import is looked up for. An edit that introduces forty
-	/// has gone wrong in a way no import list will fix, and forty searches would make reporting that
-	/// failure slower than the failure.
-	/// </summary>
-	private const int Looked = 5;
-
 	public static async Task<MutationResult<MemberEditResult>> EditAsync(
 		WorkspaceSnapshot snapshot,
 		DiagnosticsService diagnostics,
@@ -77,7 +70,7 @@ public static class MemberEditService
 
 		progress?.Report("Formatting what was written", 40);
 
-		var imported = await WithImportsAsync(written, request, notices, cancellationToken);
+		var imported = await EditImports.AskedForAsync(written, request, notices, cancellationToken);
 		var finished = await FinishAsync(imported, cancellationToken);
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 55);
@@ -101,7 +94,7 @@ public static class MemberEditService
 		{
 			progress?.Report("Working out which namespaces the code needs", 80);
 
-			var (resolved, imports) = await ResolveImportsAsync(
+			var (resolved, imports) = await EditImports.ForUnresolvedAsync(
 				snapshot, edit.Solution, written, path, edit.Verification.Introduced, cancellationToken);
 
 			await edit.RewriteAsync(resolved, path, scope, cancellationToken);
@@ -423,7 +416,7 @@ public static class MemberEditService
 
 		if (target.Declaration is EnumDeclarationSyntax @enum)
 		{
-			return await AddToEnumAsync(target, @enum, request, notices, cancellationToken);
+			return await EnumMemberEdit.AddAsync(target, @enum, request, notices, cancellationToken);
 		}
 
 		if (target.Declaration is not TypeDeclarationSyntax type)
@@ -481,358 +474,6 @@ public static class MemberEditService
 			target.Signature,
 			[.. parsed.SelectMany(NamesOf)],
 			target.Symbol);
-	}
-
-	/// <summary>
-	/// Adds values to an enum, whose members are items in a comma-separated list rather than
-	/// declarations standing on their own.
-	/// <para>
-	/// The list is rebuilt rather than spliced, because a comma belongs to neither the item before it
-	/// nor the one after. Every item keeps the separator it had, an item that had none gains one, and
-	/// the last goes with or without according to whether the enum already ended in a trailing comma.
-	/// The line break that followed an item moves onto the comma it gains, or the comma lands at the
-	/// start of the next line.
-	/// </para>
-	/// <para>
-	/// The enum's own layout decides whether values are separated by blank lines, since values written
-	/// one to a line and values each under their own documentation are both ordinary, and a blank line
-	/// dropped into the first kind is a diff line nobody asked for.
-	/// </para>
-	/// </summary>
-	private static async Task<Written> AddToEnumAsync(
-		TypeTarget target,
-		EnumDeclarationSyntax @enum,
-		MemberEditRequest request,
-		List<string> notices,
-		CancellationToken cancellationToken)
-	{
-		var document = target.Document;
-
-		var text = await document.GetTextAsync(cancellationToken);
-		var tree = await document.GetSyntaxTreeAsync(cancellationToken)
-			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} is not a C# source file.");
-
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
-		var lineEnding = rules.LineEnding;
-
-		var indent = @enum.Members.Count > 0
-			? IndentAt(text, @enum.Members[0].SpanStart)
-			: IndentAt(text, @enum.SpanStart) + rules.IndentUnit;
-
-		var parsed = MemberSyntax.Parse(
-			request.Code,
-			MemberSyntax.KeywordOf(@enum),
-			document.Project.ParseOptions,
-			indent,
-			lineEnding,
-			count => notices.Add(RewrittenEndings(count, text)),
-			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
-
-		var adding = parsed.Cast<EnumMemberDeclarationSyntax>().Select(WithSeparatorTrivia).ToArray();
-
-		GuardDuplicateValues(@enum, adding);
-
-		var index = EnumPlacementIndex(@enum, request);
-
-		var separated = @enum.Members.Skip(1).Any(StartsBlank);
-		var followerIsSeparated = index >= @enum.Members.Count || StartsBlank(@enum.Members[index]);
-
-		var marker = new SyntaxAnnotation();
-
-		var prepared = adding.Select((member, position) => (EnumMemberDeclarationSyntax)MemberSyntax.Prepared(
-			member,
-			blankBefore: separated && (position > 0 || index > 0),
-			blankAfter: separated && position == adding.Length - 1 && !followerIsSeparated,
-			lineEnding,
-			indent,
-			marker));
-
-		var root = await RootOf(document, cancellationToken);
-		var edited = root.ReplaceNode(@enum, @enum.WithMembers(Separated(@enum.Members, index, prepared)));
-
-		await NoteEnumValuesAsync(target, edited, marker, notices, cancellationToken);
-
-		return new Written(
-			document,
-			edited,
-			marker,
-			target.Signature,
-			[.. adding.Select(member => member.Identifier.Text)],
-			target.Symbol);
-	}
-
-	/// <summary>
-	/// The member carrying whatever followed its comma in the code it was parsed from, which is where a
-	/// comment written on the same line as the value lives -- and taking the member without its comma
-	/// would drop that comment without trace.
-	/// </summary>
-	private static EnumMemberDeclarationSyntax WithSeparatorTrivia(EnumMemberDeclarationSyntax member)
-	{
-		if (member.Parent is not EnumDeclarationSyntax wrapper) return member;
-
-		var index = wrapper.Members.IndexOf(member);
-		if (index < 0 || index >= wrapper.Members.SeparatorCount) return member;
-
-		var separator = wrapper.Members.GetSeparator(index);
-
-		return member.WithTrailingTrivia(
-			member.GetTrailingTrivia().AddRange(separator.LeadingTrivia).AddRange(separator.TrailingTrivia));
-	}
-
-	/// <summary>
-	/// The enum's items with <paramref name="adding"/> inserted at <paramref name="index"/>, every
-	/// separator in place and the trailing comma kept exactly as the enum had it.
-	/// </summary>
-	private static SeparatedSyntaxList<EnumMemberDeclarationSyntax> Separated(
-		SeparatedSyntaxList<EnumMemberDeclarationSyntax> members,
-		int index,
-		IEnumerable<EnumMemberDeclarationSyntax> adding)
-	{
-		var hadTrailingComma = members.Count > 0 && members.SeparatorCount == members.Count;
-
-		var items = members
-			.Select((member, position) => (Member: member, Separator: position < members.SeparatorCount
-				? members.GetSeparator(position)
-				: (SyntaxToken?)null))
-			.ToList();
-
-		items.InsertRange(index, adding.Select(member => (Member: member, Separator: (SyntaxToken?)null)));
-
-		var nodes = new List<SyntaxNodeOrToken>(items.Count * 2);
-
-		for (var position = 0; position < items.Count; position++)
-		{
-			var (member, separator) = items[position];
-			var isUnseparatedLast = position == items.Count - 1 && !hadTrailingComma;
-
-			if (isUnseparatedLast)
-			{
-				nodes.Add(member);
-			}
-			else if (separator is { } kept)
-			{
-				nodes.Add(member);
-				nodes.Add(kept);
-			}
-			else
-			{
-				// The line break after the item is its trailing trivia, so the comma takes it over or
-				// would be written at the start of the following line.
-				nodes.Add(member.WithTrailingTrivia());
-				nodes.Add(SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(member.GetTrailingTrivia()));
-			}
-		}
-
-		return SyntaxFactory.SeparatedList<EnumMemberDeclarationSyntax>(nodes);
-	}
-
-	/// <summary>Refuses a value by a name the enum already has, or one the code declares twice.</summary>
-	private static void GuardDuplicateValues(EnumDeclarationSyntax @enum, IReadOnlyList<EnumMemberDeclarationSyntax> adding)
-	{
-		var seen = new HashSet<string>(StringComparer.Ordinal);
-
-		foreach (var member in adding)
-		{
-			var name = member.Identifier.Text;
-			var clash = @enum.Members.FirstOrDefault(existing => existing.Identifier.Text == name);
-
-			if (clash is not null)
-			{
-				throw new ArgumentException(
-					$"{@enum.Identifier.Text} already declares {name}, at line {LineOf(clash)}. Adding another would be "
-						+ "a duplicate the compiler rejects; rose_replace_member writes over the one that is there.");
-			}
-
-			if (!seen.Add(name))
-			{
-				throw new ArgumentException($"The code declares {name} twice, and an enum has one value by each name.");
-			}
-		}
-	}
-
-	private static int EnumPlacementIndex(EnumDeclarationSyntax @enum, MemberEditRequest request)
-	{
-		var anchor = request.After is { Length: > 0 } after ? after : request.Before;
-		if (anchor is not { Length: > 0 }) return @enum.Members.Count;
-
-		var found = @enum.Members.IndexOf(member => member.Identifier.Text == anchor);
-
-		if (found < 0)
-		{
-			var declared = @enum.Members.Select(member => member.Identifier.Text).ToArray();
-
-			throw new ArgumentException(
-				$"{@enum.Identifier.Text} declares no value called '{anchor}' to put this next to."
-					+ (declared.Length == 0
-						? " It declares no values at all, so leave after and before out."
-						: $" It declares: {string.Join(", ", declared)}."));
-		}
-
-		return request.After is { Length: > 0 } ? found + 1 : found;
-	}
-
-	/// <summary>
-	/// Says when an addition changes what an existing value is, or gives a new one a value another
-	/// already has.
-	/// <para>
-	/// Asked of a compilation of the result rather than of the text, because an item without an
-	/// initialiser is one more than the item above it, and an initialiser can be any constant expression
-	/// over the others in whatever underlying type the enum declares. Renumbering compiles cleanly and
-	/// changes what every stored or serialised value means, which has no symptom until data is read
-	/// back -- so it is said, with the numbers.
-	/// </para>
-	/// <para>
-	/// Said rather than refused, because both are sometimes exactly what was meant: an enum nothing has
-	/// persisted can be renumbered freely, and a [Flags] enum routinely gives one value two names. A
-	/// refusal with no way to insist teaches a caller to route around the tool, back to the text edit it
-	/// replaces. A collision whose initialiser names the value it equals is an alias written on purpose
-	/// and is not mentioned. A value the underlying type cannot hold is left to the compile afterwards,
-	/// which reports it as the error it is.
-	/// </para>
-	/// </summary>
-	private static async Task NoteEnumValuesAsync(
-		TypeTarget target,
-		SyntaxNode edited,
-		SyntaxAnnotation marker,
-		List<string> notices,
-		CancellationToken cancellationToken)
-	{
-		var before = target.Symbol.GetMembers()
-			.OfType<IFieldSymbol>()
-			.Where(field => field.HasConstantValue)
-			.ToDictionary(field => field.Name, field => field.ConstantValue, StringComparer.Ordinal);
-
-		var document = target.Document.WithSyntaxRoot(edited);
-		var root = await document.GetSyntaxRootAsync(cancellationToken);
-		var model = await document.GetSemanticModelAsync(cancellationToken);
-
-		if (root is null || model is null) return;
-		if (root.GetAnnotatedNodes(marker).FirstOrDefault()?.Parent is not EnumDeclarationSyntax @enum) return;
-
-		var values = @enum.Members
-			.Select(member => (Member: member, Symbol: model.GetDeclaredSymbol(member, cancellationToken)))
-			.Where(value => value.Symbol is { HasConstantValue: true })
-			.ToArray();
-
-		var added = values.Where(value => value.Member.HasAnnotation(marker)).ToArray();
-
-		var renumbered = values
-			.Where(value => before.TryGetValue(value.Symbol!.Name, out var old) && !Equals(old, value.Symbol.ConstantValue))
-			.Select(value => $"{value.Symbol!.Name} from {before[value.Symbol.Name]} to {value.Symbol.ConstantValue}")
-			.ToArray();
-
-		if (renumbered.Length > 0)
-		{
-			notices.Add(
-				$"Adding {string.Join(", ", added.Select(value => value.Symbol!.Name))} there renumbers "
-					+ $"{string.Join(", ", renumbered)}, because a value without an initialiser is one more than the "
-					+ $"value above it. That compiles, and changes what every stored or serialised {@enum.Identifier.Text} "
-					+ "means. If anything has kept these values, give the new ones explicit initialisers or add them "
-					+ "after the last value.");
-		}
-
-		foreach (var (member, symbol) in added)
-		{
-			var clashes = values
-				.Where(other => !ReferenceEquals(other.Member, member) && Equals(other.Symbol!.ConstantValue, symbol!.ConstantValue))
-				.Select(other => other.Symbol!)
-				.ToArray();
-
-			if (clashes.Length == 0) continue;
-
-			var names = member.EqualsValue?.Value
-				.DescendantNodesAndSelf()
-				.OfType<IdentifierNameSyntax>()
-				.Select(identifier => model.GetSymbolInfo(identifier, cancellationToken).Symbol)
-				.ToArray() ?? [];
-
-			var isAlias = clashes.Any(clash => names.Contains(clash, SymbolEqualityComparer.Default));
-			if (isAlias) continue;
-
-			notices.Add(
-				$"{symbol!.Name} is {symbol.ConstantValue}, which {string.Join(" and ", clashes.Select(clash => clash.Name))} "
-					+ $"already {(clashes.Length == 1 ? "is" : "are")}, so the two cannot be told apart at run time. If it "
-					+ $"is meant to be an alias, writing the initialiser as {clashes[0].Name} says so.");
-		}
-	}
-
-	/// <summary>
-	/// Ensures the imports the caller asked for, on the same file and before it is formatted.
-	/// <para>
-	/// Asked of the compilation rather than of the using list, because a namespace can be in scope
-	/// three ways this file does not show: a global using, an implicit using from the SDK, or simply
-	/// being the namespace the file is in. Adding a directive for one of those is IDE0005, which is a
-	/// build error here -- so the check that looks unnecessary is the one that keeps the tool from
-	/// breaking the build it was called to avoid.
-	/// </para>
-	/// </summary>
-	private static async Task<Written> WithImportsAsync(
-		Written written,
-		MemberEditRequest request,
-		List<string> notices,
-		CancellationToken cancellationToken)
-	{
-		if (request.Usings.Count == 0 || written.Root is not CompilationUnitSyntax root) return written;
-
-		var document = written.Document;
-		var model = await document.GetSemanticModelAsync(cancellationToken);
-		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
-		var text = await document.GetTextAsync(cancellationToken);
-
-		if (model is null || tree is null) return written;
-
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
-		var style = UsingStyle.For(document.Project, tree, root, rules.LineEnding);
-
-		var insertion = UsingDirectives.Ensure(root, model, request.Usings, style, cancellationToken);
-
-		if (insertion.Added.Count > 0)
-		{
-			notices.Add($"Imported {string.Join(", ", insertion.Added)}.");
-		}
-
-		foreach (var covered in insertion.AlreadyInScope)
-		{
-			notices.Add($"Did not import {covered}.");
-		}
-
-		return written with { Root = insertion.Root };
-	}
-
-	/// <summary>
-	/// Works out what would import the names the edit left unresolved and adds the ones with a single
-	/// answer, handing back what it applied so the caller can say whether each one worked.
-	/// <para>
-	/// The half <see cref="MissingImports"/> stops short of. Reporting the namespace and leaving the
-	/// caller to add it is a round trip at exactly the moment they were promised there would not be
-	/// one: the code was just written by this tool, and it does not compile.
-	/// </para>
-	/// <para>
-	/// It reports nothing itself, because whether an import resolved the error it was fetched for is
-	/// only answerable once the code has been compiled again with the import in place -- which happens
-	/// after this returns.
-	/// </para>
-	/// </summary>
-	private static async Task<(Solution Solution, ResolvedImports.Imports Imports)> ResolveImportsAsync(
-		WorkspaceSnapshot snapshot,
-		Solution solution,
-		Written written,
-		string path,
-		IReadOnlyList<DiagnosticEntry> introduced,
-		CancellationToken cancellationToken)
-	{
-		var imports = await ResolvedImports.ForAsync(
-			new WorkspaceSnapshot { Solution = solution, Revision = snapshot.Revision },
-			introduced,
-			path,
-			Looked,
-			cancellationToken);
-
-		if (!imports.AnythingToAdd) return (solution, imports);
-
-		var added = await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, cancellationToken);
-
-		return (added, imports);
 	}
 
 	/// <summary>
@@ -1147,7 +788,7 @@ public static class MemberEditService
 	/// The indentation the line at <paramref name="position"/> starts with, which is what a
 	/// declaration written into that place has to line up with.
 	/// </summary>
-	private static string IndentAt(SourceText text, int position)
+	internal static string IndentAt(SourceText text, int position)
 	{
 		var line = text.Lines.GetLineFromPosition(position).ToString();
 
@@ -1199,7 +840,7 @@ public static class MemberEditService
 	/// Whether a member already has a blank line above it, which it will have when whoever wrote the
 	/// file put one there: the break belongs to the member below rather than the one above.
 	/// </summary>
-	private static bool StartsBlank(MemberDeclarationSyntax member) =>
+	internal static bool StartsBlank(MemberDeclarationSyntax member) =>
 		member.GetLeadingTrivia() is [var first, ..] && first.IsKind(SyntaxKind.EndOfLineTrivia);
 
 	/// <summary>
@@ -1249,15 +890,15 @@ public static class MemberEditService
 				(parameter.Type?.ToString() ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal)),
 		];
 
-	private static int LineOf(SyntaxNode node) =>
+	internal static int LineOf(SyntaxNode node) =>
 		node.SyntaxTree.GetLineSpan(node.Span).StartLinePosition.Line + 1;
 
-	private static async Task<SyntaxNode> RootOf(Document document, CancellationToken cancellationToken) =>
+	internal static async Task<SyntaxNode> RootOf(Document document, CancellationToken cancellationToken) =>
 		await document.GetSyntaxRootAsync(cancellationToken)
 			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} is not a C# source file.");
 
 	/// <summary>The edit, ready to be formatted: which document, the new root, and what to call it.</summary>
-	private sealed record Written(
+	internal sealed record Written(
 		Document Document,
 		SyntaxNode Root,
 		SyntaxAnnotation Marker,
@@ -1271,6 +912,6 @@ public static class MemberEditService
 	/// Says that line endings in the supplied code were changed, because a diff cannot: a terminator
 	/// is not line content, and inside a literal it is part of what the string says.
 	/// </summary>
-	private static string RewrittenEndings(int count, SourceText text) =>
+	internal static string RewrittenEndings(int count, SourceText text) =>
 		MemberSyntax.RewrittenEndings(count, LineEndings.Name(Whitespace.Dominant(text)));
 }

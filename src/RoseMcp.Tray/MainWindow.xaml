@@ -75,6 +75,10 @@
 			<tb:TaskbarIcon.ContextFlyout>
 				<MenuFlyout Opening="OnMenuOpening">
 					<MenuFlyoutItem Text="Show workspaces" Click="OnShow" />
+					<!-- Collapsed until a check finds something, so a tray that is up to date carries
+					     no item for it at all. -->
+					<MenuFlyoutItem x:Name="TrayUpdate" Text="Update available" Click="OnOpenRelease"
+						Visibility="Collapsed" />
 					<MenuFlyoutSeparator />
 					<ToggleMenuFlyoutItem x:Name="TrayStartWithWindows" Text="Start with Windows" Click="OnToggleStartWithWindows" />
 					<MenuFlyoutItem x:Name="TrayOpenInspector" Text="Open inspector" Click="OnOpenInspector" />
@@ -119,6 +123,12 @@
 					<FontIcon Glyph="&#xE712;" FontSize="16" />
 					<Button.Flyout>
 						<MenuFlyout Placement="BottomEdgeAlignedRight" Opening="OnMenuOpening">
+							<MenuFlyoutItem x:Name="WindowUpdate" Text="Update available" Click="OnOpenRelease"
+								Visibility="Collapsed">
+								<MenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE896;" />
+								</MenuFlyoutItem.Icon>
+							</MenuFlyoutItem>
 							<ToggleMenuFlyoutItem x:Name="WindowStartWithWindows" Text="Start with Windows"
 								Click="OnToggleStartWithWindows">
 								<ToggleMenuFlyoutItem.Icon>

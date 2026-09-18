@@ -78,9 +78,13 @@ jobs:
 
       # The same script used to package locally, so a release artifact and a hand-built one have the
       # same layout -- the one where the broker finds the worker beside itself.
+      # -UpdateCheck only here. It builds the tray to ask GitHub whether a newer release exists, and
+      # only a build this workflow published can act on that: anything else carries a MinVer version
+      # with the height since the last tag, which reads as behind the latest release however far
+      # ahead of it the code is, so it would offer its own user the version they built it from.
       - name: Package
         shell: pwsh
-        run: ./tools/deploy.ps1 -Mode package -Runtime ${{ matrix.runtimes }}
+        run: ./tools/deploy.ps1 -Mode package -Runtime ${{ matrix.runtimes }} -UpdateCheck
 
       # Installed rather than taken from the runner image, which carries some version of Inno but
       # says nothing about which. 6.3 is the floor: it introduced the x64os and arm64 architecture

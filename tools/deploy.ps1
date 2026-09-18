@@ -75,7 +75,16 @@ param(
     # Fail rather than warn when the native XAML provider cannot be built. Always on for
     # package, because that run cuts a release and a release that quietly ships without it is
     # indistinguishable from a product bug. Available for promote so a local deploy can insist.
-    [switch] $RequireXamlProvider
+    [switch] $RequireXamlProvider,
+
+    # Build the tray to ask GitHub whether a newer release exists. Passed by the release workflow and
+    # by nothing else, because only a build that workflow published can act on the answer: every other
+    # build carries a MinVer version with the height since the last tag, which reads as behind the
+    # latest release however far ahead of it the code is. A locally packaged zip with this on would
+    # offer its own user an upgrade to the version they built it from.
+    #
+    # To try the feature without cutting a release, set ROSEMCP_UPDATE_CHECK=1 and run any build.
+    [switch] $UpdateCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -105,7 +114,15 @@ $Destination = $Destination.Replace('\', '/')
 
 function Invoke-Dotnet
 {
+    <#
+        Every publish goes through here, so the update-check property is applied in one place rather
+        than remembered at each of the five call sites. Only the tray reads the flag; stamping it on
+        everything published in the same run keeps "did this come out of the release pipeline" a
+        property of the build rather than of one project.
+    #>
     param([string[]] $Arguments, [string] $What)
+
+    if ($UpdateCheck) { $Arguments += '-p:RoseMcpUpdateCheck=true' }
 
     & dotnet @Arguments | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "$What failed (dotnet exited $LASTEXITCODE)" }

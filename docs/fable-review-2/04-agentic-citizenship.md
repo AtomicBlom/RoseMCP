@@ -505,6 +505,66 @@ revision 1). Sizes are the raw JSON as it arrived.
   alone: `rose_replace_body`, `rose_rename_symbol`, `rose_add_file`, `rose_move_type_to_file`, and
   every execution-control verb, where ordering is the meaning.
 
+### AGT-23 Overflow should return a smaller answer to a better question, never the same answer somewhere else
+
+- **Severity:** Medium
+- **Effort:** M
+- **Where:** `src/RoseMcp.Worker/Tools/NavigationTools.cs:80-90` (the filters the tool accepts),
+  `src/RoseMcp.Contracts/SourceLocation.cs:12-31` (the facets every hit carries),
+  `src/RoseMcp.Contracts/ReferencesResult.cs:21-23` (`TotalCount`, `Truncated`)
+- **What:** A hot symbol overflows `maxResults`, and the tool answers with the first 200 hits and
+  `truncated: true`. The tempting fix is to spill the full list to a file and tell the caller to
+  grep it. **That is the wrong remedy, and the right one is already three-quarters built.**
+
+  Every reference returned carries `ContainingMember`, `Project`, `IsTestProject` and
+  `GeneratedHintName`, each with a docstring saying why a caller wants it. `ContainingMember`'s says
+  it is "what turns a flat list of forty references into 'used by these six methods', **which is the
+  question a caller actually had**". `IsTestProject`'s says "a use from a test is a different fact
+  from a use in the product". The tool accepts exactly one of those four as a filter (`project`) and
+  groups by none of them, although `ToolDescriptions` promises grouping by member (AGT-06).
+
+  So the code already knows the caller's real question, already computes the facts that answer it,
+  already writes down why each matters, and then returns a flat list and a truncation flag.
+- **Why it matters:** Three reasons the file-and-grep remedy is worse than it looks.
+
+  1. **It concedes the project's own thesis.** `CLAUDE.md` says that if Rose does not beat grep and
+     find-and-replace it has little reason to exist, and that a tool which loses to grep is a defect.
+     A result that *instructs* the caller to grep is that defect shipped as a feature, and it trains
+     the habit the product exists to break.
+  2. **Grepping a dump is strictly worse than grepping source.** The caller paid a semantic tool to
+     distinguish an override from a comment that happens to contain the name, and then text-matches
+     over the answer, discarding exactly what it paid for.
+  3. **The size is a symptom of an unasked narrowing question, not of an answer needing storage.**
+     Nobody wants 412 references. They want the ones outside tests, or the ones in one project, or
+     the six members that do the calling. Storing all 412 answers the question nobody asked, more
+     durably.
+- **Suggested change:** Three steps, in order, and a fourth only if asked for.
+
+  1. **On overflow, return the shape instead of the list.** Group by the facets already on every
+     hit: "412 references -- 380 in test projects, 22 in `RoseMcp.Broker`, 10 in `RoseMcp.Worker`;
+     340 of them inside 6 members. Narrow with `project=`, `excludeTests=true`, or
+     `containingMember=`." That is about two hundred characters, it is what a person does before
+     reading a list, and it teaches the narrowing vocabulary in the one moment the caller is looking
+     for it.
+  2. **Accept as a filter every facet you return.** `excludeTests`, `excludeGenerated` and
+     `containingMember` beside the `project` filter that already exists. The general rule, which is
+     worth stating once somewhere permanent: **every facet a result returns is a filter the tool
+     owes.** A fact worth computing per item is a fact worth selecting on.
+  3. **Make truncation honest first.** `definitionsOnly=true` currently reports `truncated: true`
+     over an empty list (AGT-05). An overflow story built on a truncation flag that lies is worse
+     than none.
+  4. **A file only on request, never as a fallback.** There is a real bulk case -- feeding a
+     scripted refactor -- and for it an explicit `outputFile` the *caller* names is right, because
+     the caller then owns the path and the cleanup. An automatic spill turns a read tool into one
+     that writes to disk without being asked, and this repository has already learned once what
+     happens to directories nobody owns: `CLAUDE.md` records the sandbox that "accumulates a copy of
+     the provider and a grant to ALL APPLICATION PACKAGES" when it outlives its host.
+
+  The same rule generalises to every list in the product: `rose_diagnostics` at solution scope,
+  `rose_search_symbols`, `rose_debug_events`. Overflow is a prompt to ask a better question, and the
+  tool is the thing that knows what the better questions are.
+
+
 ## Why tools lose to grep, ranked
 
 From the 18-issue corpus, the three other reviewers' dogfooding notes, and my own ~30 calls. Ranked

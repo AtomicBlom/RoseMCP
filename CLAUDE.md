@@ -160,6 +160,15 @@ generator and the project file in turn. The banner-suppressing equivalent is `--
 ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/RenameTests/*'
 ```
 
+**Only one integration suite runs on a machine at a time.** It registers appx packages under a
+fixed family name, deploys and activates them and attaches debuggers, all of which are machine-wide,
+so two suites fight even from different worktrees. A second one refuses to start, exits `75`, and
+says on stderr which process holds the machine and where it was started from. The lock is
+`%LOCALAPPDATA%/BinaryVibrance/RoseMCP/integration-suite.lock`, held open for the run and released
+by the OS however the holder dies, so there is never a stale one to clear. A `RoseMcp.LiveApp` build
+fails while a suite runs for the same reason -- it holds the assemblies the build copies -- so wait
+for the holder either way.
+
 Run a worker standalone against a fixture -- the fastest way to debug Roslyn behaviour without
 the broker in the way:
 

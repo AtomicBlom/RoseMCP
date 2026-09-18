@@ -8,52 +8,65 @@ namespace RoseMcp.Worker;
 /// Which of a type's members belong together, worked out from what they touch rather than from
 /// where they were written.
 /// <para>
-/// A type's members form a graph: two are joined when they read the same field, and when one calls
-/// the other. Where that graph comes apart into pieces, the pieces are doing separate jobs that
-/// happen to share a file, and each is a candidate for a type of its own. Where it does not come
-/// apart, the type holds together and the answer is one group.
+/// Two questions, because they have different answers and one algorithm answering both answers
+/// neither. <em>What shares state</em> is a partition: members reading the same fields form a group,
+/// and a type whose groups do not overlap is several types in one file. <em>What is private to one
+/// member</em> is not a partition at all. A helper reached only through one method belongs to it
+/// however much else it goes on to call, and no way of cutting a graph into pieces can see that,
+/// because there is no cut to make -- the helper really is connected to everything it reaches.
 /// </para>
 /// <para>
-/// The line ranges are half the value and the reason this is worth a tool rather than a metric. A
-/// group written in one block is an afternoon's work to lift out; the same group scattered over
-/// three ranges a thousand lines apart is a different job entirely, and nothing about a member list
-/// says which one is in front of you.
+/// Both were needed on this repository. Splitting a debugger session came from the state: the
+/// members reading the inspector shared no field with the members reading the breakpoint table.
+/// Splitting enum editing out of a static class with no state at all came from the other: every path
+/// to five helpers ran through one method, while the helpers <em>they</em> called were shared with
+/// the rest of the file and had to stay where they were.
 /// </para>
 /// <para>
-/// One field usually holds the whole type together -- the thing the type <em>is</em>, which nearly
-/// every member touches. Counting it would join every member to every other and report one group
-/// for everything, so a field that most members touch is named separately and left out of the
-/// joining. That is not a workaround: a type's identity is exactly the state that is meant to be
-/// shared, and the question here is what is shared by less than all of it.
+/// The line ranges are the half that makes this worth a tool rather than a metric. A group written
+/// in one block lifts out in an afternoon; the same group scattered over three ranges a thousand
+/// lines apart is a different job, and nothing in a member list says which one is in front of you.
 /// </para>
 /// </summary>
 internal static class Cohesion
 {
 	/// <summary>
-	/// The share of members that has to touch a field before it counts as the type's own state
-	/// rather than one group's. Half, because a field two groups of five use tells you the groups
-	/// are joined, and a field nine of ten use tells you nothing at all.
+	/// The share of the members touching state that has to touch one field before it counts as the
+	/// type's own rather than a group's. A field two groups of five use says the groups are joined; a
+	/// field nine of ten use says nothing, and counting it joins everything to everything.
 	/// </summary>
-	private const double SpineShare = 0.3;
+	private const double SpineShare = 0.5;
 
 	/// <summary>
-	/// The type's members grouped by what they touch, with the fields each group has to itself and
-	/// the spans it occupies, or a single group where the type holds together.
+	/// The smallest world worth calling a member's own. Two is a method and the helper somebody
+	/// extracted for readability; three is where what sits under one member starts to have a name.
+	/// </summary>
+	private const int OwnedFloor = 3;
+
+	/// <summary>How many owners to report. Past the first few they are nested inside each other.</summary>
+	private const int OwnedListed = 8;
+
+	/// <summary>
+	/// The share of a type past which owning something says nothing. The front door reaches
+	/// everything by being the front door, and reporting that it owns the type is a tautology
+	/// dressed as a finding.
+	/// </summary>
+	private const double OwnedCeiling = 0.7;
+
+	/// <summary>
+	/// The members grouped by the state they share, the members that privately own a world of
+	/// helpers, and the fields too widely read to tell anything apart.
 	/// </summary>
 	internal static async Task<TypeCohesion> OfAsync(
 		INamedTypeSymbol type,
 		Solution solution,
 		CancellationToken cancellationToken)
 	{
-		var state = type.GetMembers().OfType<IFieldSymbol>()
-			.Where(field => !field.IsImplicitlyDeclared && !field.IsConst)
-			.ToArray();
-
 		var owners = type.GetMembers()
 			.Where(member => member is IPropertySymbol or IMethodSymbol
 			{
-				// A constructor wires the whole type together by definition, and an accessor belongs
-				// to the property that owns it, which is already in the list.
+				// A constructor wires the whole type together by definition, and an accessor belongs to
+				// the property that owns it, which is already in the list.
 				MethodKind: not (MethodKind.Constructor or MethodKind.StaticConstructor),
 				AssociatedSymbol: null,
 			})
@@ -61,36 +74,245 @@ internal static class Cohesion
 			.Where(member => member.DeclaringSyntaxReferences.Length > 0)
 			.ToArray();
 
-		if (owners.Length == 0) return new TypeCohesion { Groups = [], Shared = [] };
+		if (owners.Length == 0) return new TypeCohesion { Groups = [], Owned = [], Shared = [] };
 
 		var touches = new Dictionary<ISymbol, HashSet<ISymbol>>(SymbolEqualityComparer.Default);
+		var spans = new Dictionary<ISymbol, List<(int Start, int End)>>(SymbolEqualityComparer.Default);
 
 		foreach (var owner in owners)
 		{
 			touches[owner] = await TouchedAsync(owner, type, solution, cancellationToken);
+			spans[owner] = await SpansAsync(owner, cancellationToken);
 		}
 
-		// Anything most of the type touches is its own plumbing rather than one group's business, and
-		// that is as true of a helper as of a field: a guard every verb calls first joins every verb
-		// to every other exactly the way a shared field does. Counting both and leaving both out is
-		// what stops the answer being "one group, all of it".
-		var floor = Math.Max(3, (int)Math.Ceiling(owners.Length * SpineShare));
-
-		int Users(ISymbol symbol) =>
-			touches.Values.Count(set => set.Contains(symbol, SymbolEqualityComparer.Default));
-
-		var spine = state.Where(field => Users(field) >= floor).ToArray<ISymbol>();
-		var plumbing = owners.Where(member => Users(member) >= floor).ToArray();
-
-		var ignored = new HashSet<ISymbol>(spine.Concat(plumbing), SymbolEqualityComparer.Default);
-
-		var groups = Partition(owners, touches, ignored);
+		var (groups, shared) = ByState(owners, touches);
 
 		return new TypeCohesion
 		{
-			Groups = await DescribeAsync(groups, touches, ignored, solution, cancellationToken),
-			Shared = [.. ignored.Select(symbol => symbol.Name).Order(StringComparer.Ordinal)],
+			Groups = [.. groups.Select(members => Describe(members, touches, shared, spans))],
+			Owned = ByReach(owners, touches, spans),
+			Shared = [.. shared.Select(field => field.Name).Order(StringComparer.Ordinal)],
 		};
+	}
+
+	/// <summary>
+	/// Members joined where they read the same field, and the fields read too widely to join anything.
+	/// <para>
+	/// Deliberately blind to calls. A call is the strongest edge in this graph and the least
+	/// informative: a guard every verb runs first, or a formatter everything ends with, welds the type
+	/// into one piece and hides exactly the groups being looked for. What two members share by sharing
+	/// a field is the thing that would have to move with them.
+	/// </para>
+	/// </summary>
+	private static (List<List<ISymbol>> Groups, HashSet<ISymbol> Shared) ByState(
+		IReadOnlyList<ISymbol> owners,
+		Dictionary<ISymbol, HashSet<ISymbol>> touches)
+	{
+		var readers = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
+
+		foreach (var owner in owners)
+		{
+			foreach (var field in touches[owner].OfType<IFieldSymbol>())
+			{
+				if (!readers.TryGetValue(field, out var list)) readers[field] = list = [];
+				list.Add(owner);
+			}
+		}
+
+		// Measured against the members that read any field at all, so a type whose members mostly
+		// stand alone does not make every field it does have look shared by comparison.
+		var stateful = owners.Count(owner => touches[owner].OfType<IFieldSymbol>().Any());
+		var floor = Math.Max(2, (int)Math.Ceiling(stateful * SpineShare));
+
+		var shared = new HashSet<ISymbol>(
+			readers.Where(pair => pair.Value.Count >= floor).Select(pair => pair.Key),
+			SymbolEqualityComparer.Default);
+
+		var parent = new Dictionary<ISymbol, ISymbol>(SymbolEqualityComparer.Default);
+		foreach (var owner in owners) parent[owner] = owner;
+
+		ISymbol Find(ISymbol symbol)
+		{
+			while (!SymbolEqualityComparer.Default.Equals(parent[symbol], symbol)) symbol = parent[symbol];
+			return symbol;
+		}
+
+		foreach (var (field, list) in readers)
+		{
+			if (shared.Contains(field)) continue;
+
+			for (var i = 1; i < list.Count; i++)
+			{
+				var (a, b) = (Find(list[0]), Find(list[i]));
+				if (!SymbolEqualityComparer.Default.Equals(a, b)) parent[a] = b;
+			}
+		}
+
+		var grouped = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
+
+		foreach (var owner in owners)
+		{
+			// A member reading no field of its own is not evidence of anything, and is left out rather
+			// than reported as a group of one.
+			if (!touches[owner].OfType<IFieldSymbol>().Any(field => !shared.Contains(field))) continue;
+
+			var root = Find(owner);
+			if (!grouped.TryGetValue(root, out var members)) grouped[root] = members = [];
+			members.Add(owner);
+		}
+
+		var groups = grouped.Values
+			.Where(members => members.Count > 1)
+			.OrderByDescending(members => members.Count)
+			.ToList();
+
+		return (groups, shared);
+	}
+
+	/// <summary>
+	/// For each member, the members every path to which runs through it -- its own private world.
+	/// <para>
+	/// This is dominance over the call graph, and it is the question a partition cannot answer. The
+	/// enum helpers in a member-editing service were connected to everything, because they called the
+	/// same indentation and line-ending helpers the rest of the file called. What made them a unit was
+	/// that nothing reached <em>them</em> except one method.
+	/// </para>
+	/// <para>
+	/// Entered from every member nothing else calls and every member visible outside the type, so a
+	/// surface with several doors is not mistaken for one with a single hall.
+	/// </para>
+	/// </summary>
+	private static IReadOnlyList<OwnedMembers> ByReach(
+		IReadOnlyList<ISymbol> owners,
+		Dictionary<ISymbol, HashSet<ISymbol>> touches,
+		Dictionary<ISymbol, List<(int Start, int End)>> spans)
+	{
+		var index = new Dictionary<ISymbol, int>(SymbolEqualityComparer.Default);
+		for (var i = 0; i < owners.Count; i++) index[owners[i]] = i;
+
+		var calls = new List<int>[owners.Count];
+		var callers = new List<int>[owners.Count];
+
+		for (var i = 0; i < owners.Count; i++)
+		{
+			calls[i] = [];
+			callers[i] = [];
+		}
+
+		for (var i = 0; i < owners.Count; i++)
+		{
+			foreach (var target in touches[owners[i]])
+			{
+				if (target is IFieldSymbol) continue;
+				if (!index.TryGetValue(target, out var j) || j == i) continue;
+
+				calls[i].Add(j);
+				callers[j].Add(i);
+			}
+		}
+
+		var entries = Enumerable.Range(0, owners.Count)
+			.Where(i => callers[i].Count == 0 || owners[i].DeclaredAccessibility != Accessibility.Private)
+			.ToHashSet();
+
+		var dominators = Dominators(owners.Count, entries, calls, callers);
+
+		var sizes = new int[owners.Count];
+		for (var i = 0; i < owners.Count; i++)
+		{
+			sizes[i] = dominators.Count(set => set?.Contains(i) == true);
+		}
+
+		var owned = new List<OwnedMembers>();
+
+		for (var i = 0; i < owners.Count; i++)
+		{
+			if (sizes[i] < OwnedFloor) continue;
+			if (sizes[i] >= owners.Count * OwnedCeiling) continue;
+
+			// A member owning exactly what its only caller owns is a link in a chain, not a world of
+			// its own: the caller is the one worth naming.
+			if (callers[i].Count == 1 && sizes[callers[i][0]] == sizes[i]) continue;
+
+			var subtree = Enumerable.Range(0, owners.Count)
+				.Where(j => dominators[j]?.Contains(i) == true)
+				.ToArray();
+
+			owned.Add(new OwnedMembers
+			{
+				Owner = owners[i].Name,
+				Members = [.. subtree.Select(j => owners[j].Name).Order(StringComparer.Ordinal)],
+				Spans = Merged([.. subtree.SelectMany(j => spans[owners[j]])]),
+			});
+		}
+
+		// A member whose world is another's minus itself is a door into that world, not a world: the
+		// two would move together and naming both says one thing twice. A world genuinely smaller than
+		// the one around it stays, because that is the tighter extraction and usually the better one.
+		var distinct = owned
+			.Where(entry => !owned.Any(other =>
+				other.Members.Count > entry.Members.Count
+					&& other.Members.Count - entry.Members.Count <= 1
+					&& entry.Members.All(other.Members.Contains)))
+			.ToList();
+
+		return [.. distinct.OrderByDescending(entry => entry.Members.Count).Take(OwnedListed)];
+	}
+
+	/// <summary>
+	/// Which members every path to each member runs through, by fixpoint: each set shrinks until it
+	/// stops moving. The graphs are one type's members, so the simple form is the right one.
+	/// </summary>
+	private static HashSet<int>?[] Dominators(int count, HashSet<int> entries, List<int>[] calls, List<int>[] callers)
+	{
+		var everything = Enumerable.Range(0, count).ToHashSet();
+		var dominators = new HashSet<int>?[count];
+
+		var reachable = new HashSet<int>();
+		var pending = new Queue<int>(entries);
+
+		while (pending.Count > 0)
+		{
+			var node = pending.Dequeue();
+			if (!reachable.Add(node)) continue;
+
+			foreach (var next in calls[node]) pending.Enqueue(next);
+		}
+
+		foreach (var node in reachable) dominators[node] = entries.Contains(node) ? [node] : [.. everything];
+
+		var settling = true;
+
+		while (settling)
+		{
+			settling = false;
+
+			foreach (var node in reachable)
+			{
+				if (entries.Contains(node)) continue;
+
+				HashSet<int>? through = null;
+
+				foreach (var caller in callers[node])
+				{
+					if (!reachable.Contains(caller)) continue;
+
+					through = through is null
+						? [.. dominators[caller]!]
+						: [.. through.Intersect(dominators[caller]!)];
+				}
+
+				through ??= [];
+				through.Add(node);
+
+				if (through.SetEquals(dominators[node]!)) continue;
+
+				dominators[node] = through;
+				settling = true;
+			}
+		}
+
+		return dominators;
 	}
 
 	/// <summary>
@@ -122,7 +344,10 @@ internal static class Cohesion
 
 				var symbol = model.GetSymbolInfo(descendant, cancellationToken).Symbol?.OriginalDefinition;
 
-				if (symbol is null) continue;
+				// An accessor stands for the property, so reading one is reading the other and the
+				// graph does not gain a node nobody wrote.
+				if (symbol is IMethodSymbol { AssociatedSymbol: { } associated }) symbol = associated;
+
 				if (symbol is not IFieldSymbol and not IMethodSymbol and not IPropertySymbol) continue;
 				if (!SymbolEqualityComparer.Default.Equals(symbol.ContainingType, type)) continue;
 				if (SymbolEqualityComparer.Default.Equals(symbol, owner)) continue;
@@ -134,122 +359,40 @@ internal static class Cohesion
 		return touched;
 	}
 
-	/// <summary>
-	/// The members joined into groups: same field, or one calling the other. Union-find over the
-	/// members, because the question is which pieces the graph falls into and not what the path
-	/// between any two of them is.
-	/// </summary>
-	private static List<List<ISymbol>> Partition(
-		IReadOnlyList<ISymbol> owners,
-		Dictionary<ISymbol, HashSet<ISymbol>> touches,
-		IReadOnlySet<ISymbol> ignored)
+	private static async Task<List<(int Start, int End)>> SpansAsync(ISymbol owner, CancellationToken cancellationToken)
 	{
-		var parent = new Dictionary<ISymbol, ISymbol>(SymbolEqualityComparer.Default);
-		foreach (var owner in owners) parent[owner] = owner;
+		var spans = new List<(int Start, int End)>();
 
-		ISymbol Find(ISymbol symbol)
+		foreach (var reference in owner.DeclaringSyntaxReferences)
 		{
-			while (!SymbolEqualityComparer.Default.Equals(parent[symbol], symbol)) symbol = parent[symbol];
-			return symbol;
+			var node = await reference.GetSyntaxAsync(cancellationToken);
+			var span = node.SyntaxTree.GetLineSpan(node.Span);
+
+			spans.Add((span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1));
 		}
 
-		void Union(ISymbol left, ISymbol right)
-		{
-			var (a, b) = (Find(left), Find(right));
-			if (!SymbolEqualityComparer.Default.Equals(a, b)) parent[a] = b;
-		}
-
-		var byField = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
-
-		foreach (var owner in owners)
-		{
-			foreach (var target in touches[owner])
-			{
-				if (target is IFieldSymbol field)
-				{
-					if (ignored.Contains(field)) continue;
-
-					if (!byField.TryGetValue(field, out var sharers)) byField[field] = sharers = [];
-					sharers.Add(owner);
-					continue;
-				}
-
-				// A call joins the two directly. This is what finds a group in a type with no state
-				// at all, where the only thing holding a set of helpers together is that one entry
-				// point reaches them and nothing else does.
-				if (parent.ContainsKey(target) && !ignored.Contains(target)) Union(owner, target);
-			}
-		}
-
-		foreach (var sharers in byField.Values)
-		{
-			for (var i = 1; i < sharers.Count; i++) Union(sharers[0], sharers[i]);
-		}
-
-		var grouped = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
-
-		foreach (var owner in owners)
-		{
-			var root = Find(owner);
-			if (!grouped.TryGetValue(root, out var members)) grouped[root] = members = [];
-			members.Add(owner);
-		}
-
-		return [.. grouped.Values.OrderByDescending(members => members.Count)];
+		return spans;
 	}
 
-	/// <summary>
-	/// Each group with the fields only it touches and the spans it occupies. The spans are merged
-	/// where they run together, so a group written as one block reports one range and a scattered
-	/// one reports what it costs to collect.
-	/// </summary>
-	private static async Task<IReadOnlyList<MemberGroup>> DescribeAsync(
-		List<List<ISymbol>> groups,
+	private static MemberGroup Describe(
+		List<ISymbol> members,
 		Dictionary<ISymbol, HashSet<ISymbol>> touches,
-		IReadOnlySet<ISymbol> ignored,
-		Solution solution,
-		CancellationToken cancellationToken)
-	{
-		var described = new List<MemberGroup>();
-
-		foreach (var members in groups)
+		HashSet<ISymbol> shared,
+		Dictionary<ISymbol, List<(int Start, int End)>> spans) => new()
 		{
-			var fields = members
+			Members = [.. members.Select(member => member.Name).Order(StringComparer.Ordinal)],
+			Fields = [.. members
 				.SelectMany(member => touches[member].OfType<IFieldSymbol>())
-				.Where(field => !ignored.Contains(field))
-				.Distinct(SymbolEqualityComparer.Default)
-				.OfType<IFieldSymbol>()
+				.Where(field => !shared.Contains(field))
 				.Select(field => field.Name)
-				.Order(StringComparer.Ordinal)
-				.ToArray();
-
-			var lines = new List<(int Start, int End)>();
-
-			foreach (var member in members)
-			{
-				foreach (var reference in member.DeclaringSyntaxReferences)
-				{
-					var node = await reference.GetSyntaxAsync(cancellationToken);
-					var span = node.SyntaxTree.GetLineSpan(node.Span);
-
-					lines.Add((span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1));
-				}
-			}
-
-			described.Add(new MemberGroup
-			{
-				Members = [.. members.Select(member => member.Name).Order(StringComparer.Ordinal)],
-				Fields = fields,
-				Spans = Merged(lines),
-			});
-		}
-
-		return described;
-	}
+				.Distinct(StringComparer.Ordinal)
+				.Order(StringComparer.Ordinal)],
+			Spans = Merged([.. members.SelectMany(member => spans[member])]),
+		};
 
 	/// <summary>
-	/// The spans a group occupies, with anything separated by less than a couple of lines run
-	/// together, so neighbouring members read as the one block they are.
+	/// The spans a set of members occupies, with anything separated by a couple of lines run
+	/// together, so neighbours read as the one block they are.
 	/// </summary>
 	private static IReadOnlyList<string> Merged(List<(int Start, int End)> lines)
 	{

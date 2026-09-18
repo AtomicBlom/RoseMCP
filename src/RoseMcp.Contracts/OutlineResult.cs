@@ -96,6 +96,13 @@ public sealed record TypeCohesion
 	public required IReadOnlyList<MemberGroup> Groups { get; init; }
 
 	/// <summary>
+	/// Members whose helpers nothing else reaches: each one with the world only it can get to. What
+	/// a group cannot show, because a helper is genuinely connected to everything it calls and the
+	/// thing that makes it private is what calls <em>it</em>.
+	/// </summary>
+	public required IReadOnlyList<OwnedMembers> Owned { get; init; }
+
+	/// <summary>
 	/// Fields most of the members touch, left out of the grouping because state shared by nearly
 	/// everything says what the type is rather than which part of it a member belongs to.
 	/// </summary>
@@ -114,5 +121,18 @@ public sealed record MemberGroup
 	/// The line ranges it occupies, merged where they run together. One range is a block that lifts
 	/// out; several say the group is interleaved with the rest and what collecting it would cost.
 	/// </summary>
+	public required IReadOnlyList<string> Spans { get; init; }
+}
+
+/// <summary>One member and everything reachable only through it.</summary>
+public sealed record OwnedMembers
+{
+	/// <summary>The member every path to the rest runs through.</summary>
+	public required string Owner { get; init; }
+
+	/// <summary>Itself and what it owns, which is what would move if it moved.</summary>
+	public required IReadOnlyList<string> Members { get; init; }
+
+	/// <summary>The line ranges they occupy, merged where they run together.</summary>
 	public required IReadOnlyList<string> Spans { get; init; }
 }

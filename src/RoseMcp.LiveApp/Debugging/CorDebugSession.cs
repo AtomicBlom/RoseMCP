@@ -3,7 +3,6 @@ using ClrDebug;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
-using RoseMcp.Symbols;
 
 namespace RoseMcp.LiveApp.Debugging;
 
@@ -22,22 +21,12 @@ namespace RoseMcp.LiveApp.Debugging;
 /// </summary>
 internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
 {
-	private const int MaxStackFrames = 20;
-	private const int MaxVariables = 64;
-
 	/// <summary>
 	/// How long a manual pause waits for the runtime to reach a point it can be stopped at. Generous,
 	/// because the whole reason somebody reaches for pause is an app that is busy or wedged -- and a
 	/// bound rather than none, because a runtime that never gets there must not take the caller with it.
 	/// </summary>
 	private const int BreakTimeoutMilliseconds = 5000;
-
-	/// <summary>
-	/// The deepest a structured stack walk goes. A stack is bounded because a runaway recursion has
-	/// tens of thousands of frames and reading each one costs metadata lookups, on a path a person
-	/// is waiting on; the answer says it was cut short rather than implying the stack ended.
-	/// </summary>
-	private const int MaxStructuredFrames = 200;
 
 	/// <summary>How many frames a caller gets when it does not say. Enough to see how it got here.</summary>
 	private const int DefaultFrameLimit = 50;
@@ -66,10 +55,15 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// <summary>What a hold lasts when the caller does not say. Long enough to read a stack and think.</summary>
 	private const int DefaultHoldSeconds = 300;
 
-	private readonly Lock _gate = new();
 	// Reading a stopped target, which needs none of this session's state -- it is handed the process
 	// and the held thread per call. Separate because holding a stop and reading one are different jobs.
 	private readonly CorDebugInspector _inspector = new(logger);
+
+	/// <summary>
+	/// What a stop event says about where the target stopped. Read from the thread on the callback
+	/// that announced it, because that is when the thread is known to be stopped.
+	/// </summary>
+	private readonly StopNarrative _narrative = new(logger);
 
 	/// <summary>
 	/// Steppers issued and not yet completed. ICorDebug refuses to detach while one is outstanding,
@@ -94,11 +88,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private readonly BreakpointTable _breakpoints = new(buffer, logger);
 
 	/// <summary>
-	/// The ICorDebug interface and the process it was got onto. Attaching is discovery rather than
-	/// configuration -- which mscordbi talks to a target is decided by the coreclr that target runs --
-	/// and it is the one part of a session that can fail before there is a session at all.
+	/// The process being debugged and what it is doing, with the lock that makes those one answer.
+	/// Every verb below starts by asking it the same two things: whether there is still a target, and
+	/// whether it is stopped. It owns every transition, so nothing here can move the target behind it.
 	/// </summary>
-	private readonly RuntimeAttachment _runtime = new(buffer, logger);
+	private readonly DebuggedTarget _target = new(buffer, logger);
 
 	/// <summary>
 	/// How a detach is attempted and what it says when it fails. The state transitions stay here; the
@@ -107,63 +101,34 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private readonly DetachProtocol _detach = new(buffer, logger);
 
 	/// <summary>
-	/// What the target is doing, as one value rather than a set of flags that can disagree. Swapped
-	/// under <see cref="_gate"/> everywhere except the two places mscordbi's callback thread has to
-	/// see it while another thread holds the gate -- the detach window and an exit inside it -- which
-	/// is why it moves through <see cref="Volatile"/> and <see cref="Interlocked"/> rather than plain
-	/// assignment.
+	/// The process being debugged and what it is doing, with the lock that makes those one answer.
+	/// Every verb below starts by asking it whether there is still a target and whether it is stopped.
 	/// </summary>
-	private TargetExecution _execution = new TargetExecution.Running();
 
-	public int? TargetProcessId => _runtime.ProcessId;
+	public int? TargetProcessId => _target.ProcessId;
 
-	/// <summary>The process being debugged, or null before an attach has succeeded.</summary>
-	private CorDebugProcess? Debuggee => _runtime.Process;
-
-	public bool HasExited => Execution is TargetExecution.Exited;
-
-	/// <summary>
-	/// What the target is doing. One read of one reference, so a caller cannot catch two halves of a
-	/// transition -- and safe to ask for without the gate, which is what the callback thread needs.
-	/// </summary>
-	private TargetExecution Execution => Volatile.Read(ref _execution);
-
-	/// <summary>Moves the target to a state, for the callers that know which one it is now in.</summary>
-	private void MoveTo(TargetExecution next) => Volatile.Write(ref _execution, next);
-
-	/// <summary>
-	/// Ends the stop being held, standing down its timers, and hands back what it was -- or null when
-	/// nothing was stopped. The target is left running, which is what it is about to be doing in every
-	/// caller: each of them is the thing that resumes it.
-	/// </summary>
-	private StopRecord? EndStop()
-	{
-		var stop = Execution.Stop;
-		stop?.Dispose();
-		MoveTo(new TargetExecution.Running());
-		return stop;
-	}
+	public bool HasExited => _target.HasExited;
 
 	/// <summary>
 	/// Attaches to a running process, waiting briefly for its runtime if it has only just started.
 	/// Throws with a plain message when the target is not a debuggable .NET process.
 	/// </summary>
 	public void Attach(int pid, TimeSpan? runtimeReadyTimeout = null) =>
-		_runtime.Attach(pid, runtimeReadyTimeout ?? RuntimeAttachment.RuntimeReadyTimeout, OnEvent);
+		_target.Attach(pid, runtimeReadyTimeout ?? RuntimeAttachment.RuntimeReadyTimeout, OnEvent);
 
 	/// <summary>
 	/// Launches an executable under the debugger and attaches at runtime startup, so the target is
 	/// under debug from birth and its early events are captured.
 	/// </summary>
 	public void Launch(string executablePath, string? arguments) =>
-		_runtime.Launch(executablePath, arguments, OnEvent);
+		_target.Launch(executablePath, arguments, OnEvent);
 
 	/// <summary>
 	/// Attaches from birth to a UWP app that PLM has created suspended (issue #5): given the pid the
 	/// resume stub reported and a resume action that releases the app's main thread.
 	/// </summary>
 	public void AttachUwpAtStartup(int pid, Action resume, TimeSpan startupTimeout) =>
-		_runtime.AttachUwpAtStartup(pid, resume, startupTimeout, OnEvent);
+		_target.AttachUwpAtStartup(pid, resume, startupTimeout, OnEvent);
 
 	/// <summary>
 	/// Detaches from the target, leaving it running, and says whether it managed to.
@@ -226,47 +191,43 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private bool TryDetachOnce(int attempt, out Exception? failure)
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			failure = null;
 
 			// Nothing is attached, so what detaching promises -- the target keeps running, and the
 			// interface is safe to terminate -- already holds.
-			if (Debuggee is null || !Execution.IsLive) return true;
+			if (!_target.TryLive(out var process)) return true;
 
 			// Read before the stop ends: nothing else records that the target was held, and whether it
 			// was decides the first step below.
-			var held = EndStop() is not null;
+			var held = _target.EndStop() is not null;
 
 			try
 			{
 				// Between the continue and the stop the target runs with its breakpoints still live, so
 				// an event can arrive; it is continued and counted without the gate, which this holds.
-				var detaching = new TargetExecution.Detaching();
-				MoveTo(detaching);
+				var window = _target.OpenDetachWindow();
 				try
 				{
 					// Off the patch first, while the breakpoint it is parked on is still there to step
 					// over.
-					if (held) Debuggee.Continue(fIsOutOfBand: false);
+					if (held) process.Continue(fIsOutOfBand: false);
 
-					_detach.Settle(Debuggee, TargetProcessId);
+					_detach.Settle(process, TargetProcessId);
 				}
 				finally
 				{
 					// Narrow on purpose. Past the settling the target is synchronised, and what follows
 					// is the detach itself -- where continuing a callback would be answering on behalf
 					// of a process this session is letting go of.
-					//
-					// Compared rather than assigned: the target can have exited inside this window, and
-					// a process that has gone outranks one that is running again.
-					Interlocked.CompareExchange(ref _execution, new TargetExecution.Running(), detaching);
+					_target.CloseDetachWindow(window);
 				}
 
 				ReleaseForDetach();
 
-				Debuggee.Detach();
-				MoveTo(new TargetExecution.Detached());
+				process.Detach();
+				_target.Detached();
 				buffer.Append(LiveDebugEventKind.SessionNotice, "Detached; the target keeps running.");
 				logger.LogInformation("Detached from pid {Pid} on attempt {Attempt}.", TargetProcessId, attempt);
 				return true;
@@ -288,7 +249,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private void ForgetStepper(CorDebugStepper stepper)
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			_steppers.Remove(stepper);
 		}
@@ -340,7 +301,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		if (logEveryNthHit is < 1) throw new ArgumentException("logEveryNthHit must be at least 1.");
 
 		var binding = AddBinding(location, stopOnHit: false, logMessage, logEveryNthHit, autoContinueSeconds: null, condition);
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			return BreakpointTable.DescribeTracepoint(binding);
 		}
@@ -356,7 +317,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		if (autoContinueSeconds is < 1) throw new ArgumentException("autoContinueSeconds must be at least 1.");
 
 		var binding = AddBinding(location, stopOnHit: true, logMessage: null, logEveryNthHit: null, autoContinueSeconds, condition);
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			return BreakpointTable.DescribeBreakpoint(binding);
 		}
@@ -364,7 +325,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	public IReadOnlyList<LiveTracepoint> ListTracepoints()
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			return _breakpoints.Tracepoints();
 		}
@@ -372,7 +333,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	public IReadOnlyList<LiveBreakpoint> ListBreakpoints()
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			return _breakpoints.Breakpoints();
 		}
@@ -448,9 +409,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// who mistyped the mode must not get.
 		var direction = ArgumentValues.Step(mode);
 
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (Debuggee is null || Execution.Stop is not { } stop)
+			if (!_target.TryHeld(out var process, out var stop))
 			{
 				return new LiveContinueResult { Continued = false };
 			}
@@ -471,11 +432,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			var releasedHold = stop.IsHeld;
 
 			// Resume so the step executes; the StepComplete callback holds the target again.
-			EndStop();
+			_target.EndStop();
 
 			try
 			{
-				Debuggee.Continue(fIsOutOfBand: false);
+				process.Continue(fIsOutOfBand: false);
 			}
 			catch (Exception exception)
 			{
@@ -517,9 +478,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	public LiveStop? CurrentStop()
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			return Execution.Stop?.Describe();
+			return _target.Stop?.Describe();
 		}
 	}
 
@@ -536,14 +497,14 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		CorDebugProcess process;
 
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (Debuggee is not { } live || !Execution.IsLive)
+			if (!_target.TryLive(out var live))
 			{
 				return NotPaused("There is no live target to pause: the session has detached, or the process has gone.");
 			}
 
-			if (Execution is TargetExecution.Stopped) return NotPaused("The target is already stopped.");
+			if (_target.IsStopped) return NotPaused("The target is already stopped.");
 
 			process = live;
 		}
@@ -563,9 +524,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// A breakpoint can have arrived while the stop was being taken, and it owns the stop it made.
 		// Ours is then a second stop on the same process, which one continue would not undo -- so it
 		// goes back, and the caller is told about the stop that is really there.
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (Execution is TargetExecution.Stopped)
+			if (_target.IsStopped)
 			{
 				GiveBackStop(process);
 				return NotPaused("The target stopped on its own before the pause took effect.");
@@ -659,9 +620,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// <param name="release">Give the stop back to the safety timer rather than holding it.</param>
 	public LiveHoldResult OperatorHold(TimeSpan? requested, bool release)
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (Execution.Stop is not { } held)
+			if (_target.Stop is not { } held)
 			{
 				return new LiveHoldResult
 				{
@@ -689,7 +650,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	/// <summary>
 	/// Suspends the safety timer while somebody reads <paramref name="stop"/>, and reports it as it
-	/// now stands. Asking again extends the hold. Called with <c>_gate</c> held.
+	/// now stands. Asking again extends the hold. Called with the target's gate held.
 	/// <para>
 	/// Bounded at <see cref="MaxHoldSeconds"/> however long is asked for, and the bound is the point
 	/// rather than a formality: the safety timer exists so an unattended stop cannot wedge somebody's
@@ -715,7 +676,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	/// <summary>
 	/// Gives a held stop back to the safety timer, re-armed with the interval its breakpoint asked
-	/// for. Reports the stop as it now stands. Called with <c>_gate</c> held.
+	/// for. Reports the stop as it now stands. Called with the target's gate held.
 	/// </summary>
 	private LiveStop ReleaseHold(StopRecord stop)
 	{
@@ -743,7 +704,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		if (offset < 0) throw new ArgumentException($"A frame offset cannot be negative; {offset} was asked for.");
 		if (limit is < 1) throw new ArgumentException($"A frame limit has to be at least 1; {limit} was asked for.");
 
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			if (CurrentStop() is not { } stop)
 			{
@@ -771,7 +732,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		if (frameIndex < 0) throw new ArgumentException($"A frame index cannot be negative; {frameIndex} was asked for.");
 
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			if (CurrentStop() is not { } stop)
 			{
@@ -802,7 +763,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		var parsed = ValuePath.Parse(path);
 		if (frameIndex < 0) throw new ArgumentException($"A frame index cannot be negative; {frameIndex} was asked for.");
 
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			if (CurrentStop() is not { } stop)
 			{
@@ -826,7 +787,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	public LiveThreadList ReadThreads()
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			if (CurrentStop() is not { } stop)
 			{
@@ -843,9 +804,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	public LiveEvaluation Evaluate(string expression)
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (Debuggee is null || Execution.Stop is not { } stop)
+			if (!_target.TryHeld(out _, out var stop))
 			{
 				return new LiveEvaluation { Expression = expression, Error = "The target is not stopped; evaluation needs a stop at a breakpoint or step." };
 			}
@@ -855,10 +816,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// The stopped state, for handing to the inspector. Only correct while <c>_gate</c> is held and
+	/// The stopped state, for handing to the inspector. Only correct while the target's gate is held and
 	/// the target is stopped, which is why every caller above is inside the lock and past the guard.
 	/// </summary>
-	private StoppedTarget Stopped(LiveStop stop) => new(Debuggee!, Execution.Stop?.Thread, stop);
+	private StoppedTarget Stopped(LiveStop stop) => new(_target.Process!, _target.Stop?.Thread, stop);
 
 	/// <summary>
 	/// Detaches, and terminates the debugging interface only if that worked.
@@ -885,13 +846,13 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			return;
 		}
 
-		_runtime.Terminate();
+		_target.Terminate();
 	}
 
 	private BreakpointBinding AddBinding(string location, bool stopOnHit, string? logMessage, int? logEveryNthHit, int? autoContinueSeconds, string? condition)
 	{
 		BreakpointBinding binding;
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			binding = _breakpoints.Add(location, stopOnHit, logMessage, logEveryNthHit, autoContinueSeconds, condition);
 		}
@@ -902,7 +863,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 	private bool RemoveBinding(string id)
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			return _breakpoints.Remove(id);
 		}
@@ -921,9 +882,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private LiveContinueResult ContinueInternal(ResumeCause cause, StopRecord? armedFor)
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (Debuggee is null || Execution.Stop is not { } stop)
+			if (!_target.TryHeld(out var process, out var stop))
 			{
 				return new LiveContinueResult { Continued = false };
 			}
@@ -937,11 +898,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			var releasedHold = cause == ResumeCause.Caller && stop.IsHeld;
 			var id = stop.BindingId;
 
-			EndStop();
+			_target.EndStop();
 
 			try
 			{
-				Debuggee.Continue(fIsOutOfBand: false);
+				process.Continue(fIsOutOfBand: false);
 			}
 			catch (Exception exception)
 			{
@@ -978,11 +939,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// continued without taking the gate: the detach is holding it, and this is the thread mscordbi
 		// needs back before its Stop can complete -- so waiting would stop the detach and the debuggee
 		// both, permanently, which is the wedge the whole detach path exists to avoid.
-		if (Execution is TargetExecution.Detaching)
+		if (_target.IsDetaching)
 		{
 			if (e.Kind == CorDebugManagedCallbackKind.ExitProcess)
 			{
-				MoveTo(new TargetExecution.Exited());
+				_target.ExitedWhileDetaching();
 				return;
 			}
 
@@ -1016,25 +977,19 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		if (e.Kind == CorDebugManagedCallbackKind.ExitProcess)
 		{
-			// Under the gate, unlike the detach window above, because a target that goes while it is
-			// being held has a stop to end: its timers would otherwise outlive the process, and a
-			// reader would be told a dead target is stopped at a breakpoint. Nothing outside that
-			// window holds the gate across a wait on mscordbi, so this cannot be the thread it needs.
-			lock (_gate)
-			{
-				Execution.Stop?.Dispose();
-				MoveTo(new TargetExecution.Exited());
-			}
-
+			// Takes the gate, unlike the detach window above, because a target that goes while it is
+			// being held has a stop to end. Nothing outside that window holds the gate across a wait
+			// on mscordbi, so this cannot be the thread it needs.
+			_target.Exited();
 			return;
 		}
 
 		// A stopping breakpoint holds the target; Continue resumes it later.
 		if (!shouldContinue) return;
 
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (Execution is TargetExecution.Detached) return;
+			if (_target.IsDetached) return;
 
 			try
 			{
@@ -1098,10 +1053,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		var unhandled = exception.EventType == CorDebugExceptionCallbackType.DEBUG_EXCEPTION_UNHANDLED;
 		var kind = unhandled ? LiveDebugEventKind.ExceptionUnhandled : LiveDebugEventKind.ExceptionFirstChance;
-		var typeName = DescribeExceptionType(exception.Thread);
+		var typeName = StopNarrative.ExceptionType(exception.Thread);
 
 		// The thread is stopped in this callback, so this is the moment its stack can be walked.
-		var frames = WalkStack(exception.Thread, MaxStackFrames);
+		var frames = _narrative.Frames(exception.Thread);
 
 		buffer.Append(
 			kind,
@@ -1117,13 +1072,13 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		BreakpointBinding? binding;
 		long ordinal;
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			(binding, ordinal) = _breakpoints.Match(hit.Breakpoint as CorDebugFunctionBreakpoint);
 		}
 
 		// A condition is a cheap read-and-compare on the stopped frame; if it fails, act as if unhit.
-		if (binding?.Condition is { } condition && !condition.Evaluate(ReadTopFrameVariables(hit.Thread)))
+		if (binding?.Condition is { } condition && !condition.Evaluate(_narrative.TopFrameVariables(hit.Thread)))
 		{
 			return true;
 		}
@@ -1157,20 +1112,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private bool HoldAtStop(CorDebugThread thread, LiveDebugEventKind kind, string prefix, string? bindingId, int? autoContinueSeconds)
 	{
-		var frames = WalkStack(thread, MaxStackFrames);
-		var variables = ReadTopFrameVariables(thread);
+		var frames = _narrative.Frames(thread);
+		var variables = _narrative.TopFrameVariables(thread);
 		var threadId = CorDebugInspector.TryThreadId(thread);
 		var top = frames.Count > 0 ? frames[0] : "?";
 		var seconds = autoContinueSeconds ?? StopRecord.DefaultAutoContinueSeconds;
 
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			// Whatever was held here is over, and its timers go with it: a new stop never inherits the
-			// previous one's hold.
-			Execution.Stop?.Dispose();
-
 			var stop = new StopRecord(thread, bindingId, StateOf(kind), seconds);
-			MoveTo(new TargetExecution.Stopped(stop));
+			_target.TakeStop(stop);
 
 			stop.EventSequence = buffer.Append(
 				kind,
@@ -1188,93 +1139,25 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	}
 
 	/// <summary>
-	/// The top managed frame's arguments and locals, captured on the callback that announced a stop
-	/// so the event stream carries them without a second call.
-	/// <para>
-	/// The same reader a frame request uses, so what a stop event says and what
-	/// <c>rose_live_app_frame_variables</c> says about frame 0 cannot drift apart -- including the
-	/// paths, which is what lets a caller expand a value it saw in an event.
-	/// </para>
-	/// </summary>
-	private IReadOnlyList<LiveVariable> ReadTopFrameVariables(CorDebugThread thread)
-	{
-		try
-		{
-			var frame = CorDebugInspector.FindTopILFrame(thread);
-			if (frame is null) return [];
-
-			return _inspector.VariablesOf(frame).Variables;
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Reading the stopped frame's variables failed.");
-			return [];
-		}
-	}
-
-	/// <summary>
-	/// The managed frames of a stopped thread, innermost first, resolved to method names. Only valid
-	/// while the thread is stopped -- which, for an exception or a stopping breakpoint, is the callback
-	/// it is reported on. Frames whose function cannot be resolved (native, internal, dynamic) are
-	/// skipped.
-	/// </summary>
-	private IReadOnlyList<string> WalkStack(CorDebugThread thread, int maxFrames)
-	{
-		var frames = new List<string>();
-		try
-		{
-			foreach (var chain in thread.EnumerateChains())
-			{
-				foreach (var frame in chain.EnumerateFrames())
-				{
-					if (frames.Count >= maxFrames) return frames;
-
-					var described = DescribeFrame(frame);
-					if (described is not null) frames.Add(described);
-				}
-			}
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Walking a thread's stack failed.");
-		}
-
-		return frames;
-	}
-
-	private static string? DescribeFrame(CorDebugFrame frame)
-	{
-		try
-		{
-			var function = frame.Function;
-			return MethodTokens.MethodFullName(function.Module.Name, (int)function.Token);
-		}
-		catch (Exception)
-		{
-			return null; // Native, internal, or otherwise unresolvable frame.
-		}
-	}
-
-	/// <summary>
 	/// Binds any unbound bindings against modules already loaded when the binding was added. It
 	/// async-breaks the target to a synchronized state to enumerate its modules, then resumes it; a
 	/// binding whose module has not loaded yet stays unbound and binds later on the load callback.
 	/// </summary>
 	private void BindAgainstLoadedModules()
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (Debuggee is null || !Execution.IsLive) return;
+			if (!_target.TryLive(out var process)) return;
 			if (_breakpoints.AllBound) return;
 
 			var stopped = false;
 			try
 			{
-				Debuggee.Stop(0);
+				process.Stop(0);
 				stopped = true;
 
 				var loaded = new List<CorDebugModule>();
-				foreach (var module in TargetSymbols.EnumerateModules(Debuggee))
+				foreach (var module in TargetSymbols.EnumerateModules(process))
 				{
 					_symbols.Remember(module);
 					loaded.Add(module);
@@ -1296,7 +1179,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				{
 					try
 					{
-						Debuggee.Continue(fIsOutOfBand: false);
+						process.Continue(fIsOutOfBand: false);
 					}
 					catch (Exception exception)
 					{
@@ -1320,9 +1203,9 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private IReadOnlyList<string> ModulePaths()
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
-			if (!_symbols.Walked && Debuggee is { } live && Execution.IsLive) _symbols.Walk(live);
+			if (!_symbols.Walked && _target.TryLive(out var live)) _symbols.Walk(live);
 
 			return _symbols.Paths;
 		}
@@ -1344,36 +1227,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private void BindModule(CorDebugModule module)
 	{
-		lock (_gate)
+		lock (_target.Gate)
 		{
 			// Remembered before anything returns early, because the list of modules is wanted by a
 			// name search whether or not anything is waiting to bind.
 			_symbols.Remember(module);
 			_breakpoints.BindNewModule(module, _symbols.Paths);
-		}
-	}
-
-	private static string DescribeExceptionType(CorDebugThread thread)
-	{
-		try
-		{
-			var value = thread.CurrentException;
-			if (value is CorDebugReferenceValue reference)
-			{
-				value = reference.Dereference();
-			}
-
-			if (value is CorDebugObjectValue obj)
-			{
-				var cls = obj.Class;
-				return MethodTokens.TypeName(cls.Module.Name, cls.Token) ?? $"type token 0x{(int)cls.Token:x8}";
-			}
-
-			return value?.GetType().Name ?? "(no exception object)";
-		}
-		catch (Exception)
-		{
-			return "(unresolved exception type)";
 		}
 	}
 

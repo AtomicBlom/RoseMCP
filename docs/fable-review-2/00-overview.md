@@ -4,7 +4,7 @@ Synthesis of eight reviews of RoseMCP, 2026-09-16/17, at 446 commits. Read this 
 answers and the card list; read the numbered files for the evidence. Every finding cited here has
 a `path:line` reference in its own file.
 
-**Scale.** 153 findings across eight reports: 27 High, 80 Medium, 46 Low. Roughly 6,000 lines of
+**Scale.** 154 findings across eight reports: 27 High, 81 Medium, 46 Low. Roughly 6,000 lines of
 review over roughly 60,000 lines of production code and 31,000 of tests, in 18 projects.
 
 | File | Findings | H/M/L | Grade |
@@ -12,7 +12,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 01 Broker and Server | 20 | 2/10/8 | Adequate; strong core, fragile lifetime and seams |
 | 02 Worker and Roslyn | 23 | 5/11/7 | Core strong, edges adequate, **editing stack fragile** |
 | 03 LiveApp, debugger, tap | 22 | 2/12/8 | Adequate leaning strong |
-| 04 Agentic citizenship | 22 | 7/13/2 | Adequate, and unusually self-aware about it |
+| 04 Agentic citizenship | 23 | 7/14/2 | Adequate, and unusually self-aware about it |
 | 05 UI code, tests, process | 27 | 3/14/10 | **Strong**, one structural hole, one growing debt |
 | 06 IPC and protocols | 10 | 1/3/6 | Adequate tending strong; 11 of 12 boundaries right |
 | 07 Hot-reload readiness | 12 | 4/7/1 | Fragile but well-aimed; 5-6.5 weeks to v1 |
@@ -274,6 +274,29 @@ The test of which bucket an inversion is in: *would building it now catch a mist
 about to happen?* If yes it is Tier 0; if it only pays after the refactor, it rides with the
 refactor.
 
+### The pattern four reviewers found separately: computed, returned, never consumed
+
+Worth naming because it turned up in four subsystems, found by four people who were not looking for
+the same thing, and because the fix is the same shape every time.
+
+| Fact | Computed and emitted | Never |
+|---|---|---|
+| `WorkspaceKey` | On every result; its summary says it is "fit for a caller to quote back" and cites the six-worktree case | Accepted as an argument anywhere (AGT-21) |
+| `HostVersion` | Set by all four hosts as their `ServerInfo.Version` | Read on any internal hop, while the launcher picks the newest binary in `bin` (IPC-02) |
+| `InfoAge`, `InstallLocation`, `Notice`, `ProjectStatus`, `AnalyzerLoadFailures` | By the broker, each with a docstring arguing why a reader needs it | Rendered by any window (USE-01, USE-03) |
+| `ContainingMember`, `IsTestProject`, `GeneratedHintName` | On every reference, with `ContainingMember`'s docstring naming "the question a caller actually had" | Offered as a filter or a grouping (AGT-06, AGT-23) |
+
+Each is the same failure: the expensive half was done, the cheap half was not, and nothing fails when
+the two drift apart because a producer with no consumer breaks nothing.
+
+**The inversion, stated once for all four:** a fact worth computing per item is a fact worth
+selecting on, quoting back, or showing. So the guard is a test that a fact and its consumer exist
+together -- the `WorkspaceSummary` property that no UI project names, the `ToolNames` constant no
+tool declares, the `SourceLocation` facet no argument filters on. The repository already runs
+exactly this test for the tool surface, four times over, which is why those four rules have never
+drifted.
+
+
 ### Tier 0 — build these first, because everything after is safer and measurable
 
 Five small mechanisms. Each is S, none is gated on anything, and each one guards work that starts
@@ -327,6 +350,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Gated on card 1** for the path half (returning relative paths makes agents send them) and **on card 9** for the notice half (eight hand-written notice iterators are why two fire unconditionally). | AGT-21 | new | M |
 | 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction. | AGT-21, BRK-01 | new | S |
 | 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
+| 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. | AGT-23, AGT-06, AGT-05 | #234 | M |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. | AGT-04, WRK-07, AGT-05 | #121 #210 | M |
 | 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. | AGT-12, USE-01 | new | S |

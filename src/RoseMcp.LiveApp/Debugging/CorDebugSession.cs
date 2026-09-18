@@ -3,7 +3,6 @@ using ClrDebug;
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
-using RoseMcp.Symbols;
 
 namespace RoseMcp.LiveApp.Debugging;
 
@@ -22,22 +21,12 @@ namespace RoseMcp.LiveApp.Debugging;
 /// </summary>
 internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
 {
-	private const int MaxStackFrames = 20;
-	private const int MaxVariables = 64;
-
 	/// <summary>
 	/// How long a manual pause waits for the runtime to reach a point it can be stopped at. Generous,
 	/// because the whole reason somebody reaches for pause is an app that is busy or wedged -- and a
 	/// bound rather than none, because a runtime that never gets there must not take the caller with it.
 	/// </summary>
 	private const int BreakTimeoutMilliseconds = 5000;
-
-	/// <summary>
-	/// The deepest a structured stack walk goes. A stack is bounded because a runaway recursion has
-	/// tens of thousands of frames and reading each one costs metadata lookups, on a path a person
-	/// is waiting on; the answer says it was cut short rather than implying the stack ended.
-	/// </summary>
-	private const int MaxStructuredFrames = 200;
 
 	/// <summary>How many frames a caller gets when it does not say. Enough to see how it got here.</summary>
 	private const int DefaultFrameLimit = 50;
@@ -70,6 +59,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	// Reading a stopped target, which needs none of this session's state -- it is handed the process
 	// and the held thread per call. Separate because holding a stop and reading one are different jobs.
 	private readonly CorDebugInspector _inspector = new(logger);
+
+	/// <summary>
+	/// What a stop event says about where the target stopped. Read from the thread on the callback
+	/// that announced it, because that is when the thread is known to be stopped.
+	/// </summary>
+	private readonly StopNarrative _narrative = new(logger);
 
 	/// <summary>
 	/// Steppers issued and not yet completed. ICorDebug refuses to detach while one is outstanding,
@@ -1098,10 +1093,10 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		var unhandled = exception.EventType == CorDebugExceptionCallbackType.DEBUG_EXCEPTION_UNHANDLED;
 		var kind = unhandled ? LiveDebugEventKind.ExceptionUnhandled : LiveDebugEventKind.ExceptionFirstChance;
-		var typeName = DescribeExceptionType(exception.Thread);
+		var typeName = StopNarrative.ExceptionType(exception.Thread);
 
 		// The thread is stopped in this callback, so this is the moment its stack can be walked.
-		var frames = WalkStack(exception.Thread, MaxStackFrames);
+		var frames = _narrative.Frames(exception.Thread);
 
 		buffer.Append(
 			kind,
@@ -1123,7 +1118,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 
 		// A condition is a cheap read-and-compare on the stopped frame; if it fails, act as if unhit.
-		if (binding?.Condition is { } condition && !condition.Evaluate(ReadTopFrameVariables(hit.Thread)))
+		if (binding?.Condition is { } condition && !condition.Evaluate(_narrative.TopFrameVariables(hit.Thread)))
 		{
 			return true;
 		}
@@ -1157,8 +1152,8 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private bool HoldAtStop(CorDebugThread thread, LiveDebugEventKind kind, string prefix, string? bindingId, int? autoContinueSeconds)
 	{
-		var frames = WalkStack(thread, MaxStackFrames);
-		var variables = ReadTopFrameVariables(thread);
+		var frames = _narrative.Frames(thread);
+		var variables = _narrative.TopFrameVariables(thread);
 		var threadId = CorDebugInspector.TryThreadId(thread);
 		var top = frames.Count > 0 ? frames[0] : "?";
 		var seconds = autoContinueSeconds ?? StopRecord.DefaultAutoContinueSeconds;
@@ -1185,74 +1180,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 
 		return false;
-	}
-
-	/// <summary>
-	/// The top managed frame's arguments and locals, captured on the callback that announced a stop
-	/// so the event stream carries them without a second call.
-	/// <para>
-	/// The same reader a frame request uses, so what a stop event says and what
-	/// <c>rose_live_app_frame_variables</c> says about frame 0 cannot drift apart -- including the
-	/// paths, which is what lets a caller expand a value it saw in an event.
-	/// </para>
-	/// </summary>
-	private IReadOnlyList<LiveVariable> ReadTopFrameVariables(CorDebugThread thread)
-	{
-		try
-		{
-			var frame = CorDebugInspector.FindTopILFrame(thread);
-			if (frame is null) return [];
-
-			return _inspector.VariablesOf(frame).Variables;
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Reading the stopped frame's variables failed.");
-			return [];
-		}
-	}
-
-	/// <summary>
-	/// The managed frames of a stopped thread, innermost first, resolved to method names. Only valid
-	/// while the thread is stopped -- which, for an exception or a stopping breakpoint, is the callback
-	/// it is reported on. Frames whose function cannot be resolved (native, internal, dynamic) are
-	/// skipped.
-	/// </summary>
-	private IReadOnlyList<string> WalkStack(CorDebugThread thread, int maxFrames)
-	{
-		var frames = new List<string>();
-		try
-		{
-			foreach (var chain in thread.EnumerateChains())
-			{
-				foreach (var frame in chain.EnumerateFrames())
-				{
-					if (frames.Count >= maxFrames) return frames;
-
-					var described = DescribeFrame(frame);
-					if (described is not null) frames.Add(described);
-				}
-			}
-		}
-		catch (Exception exception)
-		{
-			logger.LogDebug(exception, "Walking a thread's stack failed.");
-		}
-
-		return frames;
-	}
-
-	private static string? DescribeFrame(CorDebugFrame frame)
-	{
-		try
-		{
-			var function = frame.Function;
-			return MethodTokens.MethodFullName(function.Module.Name, (int)function.Token);
-		}
-		catch (Exception)
-		{
-			return null; // Native, internal, or otherwise unresolvable frame.
-		}
 	}
 
 	/// <summary>
@@ -1350,30 +1277,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			// name search whether or not anything is waiting to bind.
 			_symbols.Remember(module);
 			_breakpoints.BindNewModule(module, _symbols.Paths);
-		}
-	}
-
-	private static string DescribeExceptionType(CorDebugThread thread)
-	{
-		try
-		{
-			var value = thread.CurrentException;
-			if (value is CorDebugReferenceValue reference)
-			{
-				value = reference.Dereference();
-			}
-
-			if (value is CorDebugObjectValue obj)
-			{
-				var cls = obj.Class;
-				return MethodTokens.TypeName(cls.Module.Name, cls.Token) ?? $"type token 0x{(int)cls.Token:x8}";
-			}
-
-			return value?.GetType().Name ?? "(no exception object)";
-		}
-		catch (Exception)
-		{
-			return "(unresolved exception type)";
 		}
 	}
 

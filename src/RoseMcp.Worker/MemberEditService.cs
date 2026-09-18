@@ -36,12 +36,6 @@ namespace RoseMcp.Worker;
 public static class MemberEditService
 {
 	/// <summary>
-	/// How many introduced errors come back. Past twenty the caller has broken something structural
-	/// and needs to look at the edit rather than at the list.
-	/// </summary>
-	private const int Listed = 20;
-
-	/// <summary>
 	/// Errors that mean a name did not resolve, which is usually an import rather than a mistake.
 	/// <para>
 	/// Wider than the set <see cref="MissingImports"/> looks a namespace up for, and deliberately so:
@@ -66,9 +60,10 @@ public static class MemberEditService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		snapshot.RefuseIfMoved(request.ExpectedRevision);
+		var edit = EditPipeline.Begin(
+			snapshot, diagnostics, request.ExpectedRevision, request.Apply, request.Verify, noteSelfWrite);
 
-		var notices = new List<string>(snapshot.Notices);
+		var notices = edit.Notices;
 
 		progress?.Report($"Locating {request.Symbol}", 0);
 
@@ -87,60 +82,43 @@ public static class MemberEditService
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 55);
 
-		var outcome = await SolutionWriter.ApplyAsync(
-			snapshot.Solution, finished.Solution, request.Apply, noteSelfWrite, cancellationToken);
+		await edit.WriteAsync(finished.Solution, cancellationToken);
 
-		if (outcome.ChangedFiles.Count == 0) notices.Add("The file already said exactly that, so nothing changed.");
-
-		var verification = Verification.NotRun;
-		var solution = finished.Solution;
 		var path = written.Document.FilePath!;
+		var scope = EditVerification.ScopeFor(edit.Solution, path, written.Reaches, request.VerifyScope);
 
-		// A preview is verified too: what an edit would break is the question a preview is asking.
-		if (request.Verify && outcome.ChangedFiles.Count > 0)
+		progress?.Report("Compiling to see what the edit did", 70);
+
+		await edit.VerifyAsync(path, scope, cancellationToken);
+
+		// Only where something did not bind, so an edit whose imports were right or unneeded pays
+		// nothing for this and the one that needed it pays the compile it would have paid at the
+		// next build.
+		var wanted = request.ResolveUsings
+			&& edit.Verification.Introduced.Any(entry => MissingImports.IsUnresolved(entry.Id));
+
+		if (wanted)
 		{
-			progress?.Report("Compiling to see what the edit did", 70);
+			progress?.Report("Working out which namespaces the code needs", 80);
 
-			var scope = EditVerification.ScopeFor(solution, path, written.Reaches, request.VerifyScope);
+			var (resolved, imports) = await ResolveImportsAsync(
+				snapshot, edit.Solution, written, path, edit.Verification.Introduced, cancellationToken);
 
-			verification = await EditVerification.RunAsync(
-				diagnostics, snapshot.Solution, solution, scope, path, cancellationToken);
+			await edit.RewriteAsync(resolved, path, scope, cancellationToken);
 
-			// Only where something did not bind, so an edit whose imports were right or unneeded pays
-			// nothing for this and the one that needed it pays the compile it would have paid at the
-			// next build.
-			var wanted = request.ResolveUsings && verification.Introduced.Any(entry => MissingImports.IsUnresolved(entry.Id));
+			// After the second compile, which is the first moment it can be said whether each import
+			// resolved the error it was fetched for rather than only which namespace it named.
+			notices.AddRange(
+				await ResolvedImports.ReportAsync(
+					edit.Solution, imports, edit.Verification.Introduced, path, cancellationToken));
 
-			if (wanted)
-			{
-				progress?.Report("Working out which namespaces the code needs", 80);
-
-				ResolvedImports.Imports imports;
-
-				(solution, imports) = await ResolveImportsAsync(
-					snapshot, solution, written, path, verification.Introduced, cancellationToken);
-
-				if (!ReferenceEquals(solution, finished.Solution))
-				{
-					outcome = await SolutionWriter.ApplyAsync(
-						snapshot.Solution, solution, request.Apply, noteSelfWrite, cancellationToken);
-
-					verification = await EditVerification.RunAsync(
-						diagnostics, snapshot.Solution, solution, scope, path, cancellationToken);
-				}
-
-				// After the second compile, which is the first moment it can be said whether each import
-				// resolved the error it was fetched for rather than only which namespace it named.
-				notices.AddRange(
-					await ResolvedImports.ReportAsync(solution, imports, verification.Introduced, path, cancellationToken));
-
-				notices.AddRange(imports.Ambiguous);
-				notices.AddRange(imports.Unresolved);
-			}
+			notices.AddRange(imports.Ambiguous);
+			notices.AddRange(imports.Unresolved);
 		}
 
 		notices.AddRange(finished.Notices);
-		notices.AddRange(Notices(request, verification, outcome));
+		notices.AddRange(edit.Report());
+		notices.AddRange(Notices(request, edit.Verification, edit.Outcome));
 
 		var result = new MemberEditResult
 		{
@@ -149,24 +127,22 @@ public static class MemberEditService
 			FilePath = written.Document.FilePath!,
 			Line = finished.Line,
 			Members = written.Members,
-			Applied = request.Apply && outcome.ChangedFiles.Count > 0,
-			Diff = outcome.Diff,
-			Verified = verification.Ran,
-			IntroducedDiagnostics = [.. verification.Introduced.Take(Listed)],
-			ResolvedDiagnosticCount = verification.ResolvedCount,
-			TotalErrorCount = verification.TotalCount,
-			ProjectsChecked = verification.Projects,
-			DependentsNotChecked = request.Verify && outcome.ChangedFiles.Count > 0
+			Applied = edit.Applied,
+			Diff = edit.Outcome.Diff,
+			Verified = edit.Verification.Ran,
+			IntroducedDiagnostics = edit.Introduced,
+			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
+			TotalErrorCount = edit.Verification.TotalCount,
+			ProjectsChecked = edit.Verification.Projects,
+			DependentsNotChecked = request.Verify && edit.Changed
 				? EditVerification.SkippedDependents(
 					finished.Solution, written.Document.FilePath!, written.Reaches, request.VerifyScope)
 				: [],
-			ChangedFiles = outcome.ChangedFiles,
+			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
 		};
 
-		var changed = request.Apply && outcome.ChangedFiles.Count > 0 ? solution : null;
-
-		return new MutationResult<MemberEditResult>(result, changed);
+		return new MutationResult<MemberEditResult>(result, edit.Kept);
 	}
 
 	private static async Task<Written> ReplaceAsync(
@@ -1059,56 +1035,18 @@ public static class MemberEditService
 					: $" It declares: {string.Join(", ", declared)}."));
 	}
 
+	/// <summary>
+	/// What this tool has to say beyond what every writing tool says. Runs after
+	/// <see cref="EditPipeline.Report"/>, which carries the lines about the write and the compile.
+	/// </summary>
 	private static IEnumerable<string> Notices(
 		MemberEditRequest request,
 		Verification verification,
 		WriteOutcome outcome)
 	{
-		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
-
-		// What the diff could not show. Said before the verification lines, because a caller reading a
-		// result whose diff looks empty is asking about the write rather than about the compile.
-		foreach (var notice in outcome.Notices) yield return notice;
-
-		if (!verification.Ran)
-		{
-			if (outcome.ChangedFiles.Count > 0)
-			{
-				yield return "Nothing was compiled, so this says nothing about whether the code is sound. Pass "
-					+ "verify=true, or ask rose_diagnostics.";
-			}
-
-			yield break;
-		}
-
-		foreach (var notice in verification.Notices) yield return notice;
+		if (!verification.Ran) yield break;
 
 		var compiled = string.Join(", ", verification.Projects);
-
-		if (verification.Introduced.Count > Listed)
-		{
-			yield return $"Showing {Listed} of the {verification.Introduced.Count} errors this introduced.";
-		}
-
-		if (verification.TotalCount == 0) yield return $"{compiled} compiles clean.";
-
-		var existing = verification.TotalCount - verification.Introduced.Count;
-
-		if (existing > 0)
-		{
-			// The count is analyzer-inclusive wherever the edit wrote, and rose_diagnostics leaves
-			// analyzers out by default -- so the bare advice sent a caller to a tool that answered 0
-			// about 297 errors, which reads as the two disagreeing rather than as a default.
-			yield return verification.AnalyzedProjects.Count == 0
-				? $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics for those."
-				: $"{existing} error(s) in {compiled} were there before this edit; ask rose_diagnostics with "
-					+ "includeAnalyzers=true for those, since this count includes the analyzer diagnostics it "
-					+ "leaves out by default.";
-		}
-
-		// The namespace itself, where the compilation could work it out. This is the answer the caller
-		// needs next, and it used to be the point at which they went back to editing text.
-		foreach (var suggestion in verification.Suggestions) yield return suggestion;
 
 		if (verification.Introduced.Any(entry => Unresolved.Contains(entry.Id, StringComparer.Ordinal))
 			&& verification.Suggestions.Count == 0)

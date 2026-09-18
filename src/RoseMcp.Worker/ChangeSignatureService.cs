@@ -29,8 +29,6 @@ namespace RoseMcp.Worker;
 public static class ChangeSignatureService
 {
 	/// <summary>How many introduced errors come back before the caller should be reading the diff instead.</summary>
-	private const int Listed = 20;
-
 	public static async Task<MutationResult<SignatureChangeResult>> ChangeAsync(
 		WorkspaceSnapshot snapshot,
 		DiagnosticsService diagnostics,
@@ -39,9 +37,10 @@ public static class ChangeSignatureService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		snapshot.RefuseIfMoved(request.ExpectedRevision);
+		var edit = EditPipeline.Begin(
+			snapshot, diagnostics, request.ExpectedRevision, request.Apply, request.Verify, noteSelfWrite);
 
-		var notices = new List<string>(snapshot.Notices);
+		var notices = edit.Notices;
 
 		progress?.Report($"Resolving {request.Symbol}", 0);
 
@@ -93,51 +92,38 @@ public static class ChangeSignatureService
 
 		progress?.Report(request.Apply ? "Writing the changed files" : "Building the diff", 70);
 
-		var outcome = await SolutionWriter.ApplyAsync(
-			snapshot.Solution, applied.Solution, request.Apply, noteSelfWrite, cancellationToken);
+		await edit.WriteAsync(applied.Solution, cancellationToken);
 
-		var verification = Verification.NotRun;
+		if (request.Verify && edit.Changed) progress?.Report("Compiling the solution to see what moved", 80);
 
-		if (request.Verify && outcome.ChangedFiles.Count > 0)
-		{
-			progress?.Report("Compiling the solution to see what moved", 80);
-
-			verification = await EditVerification.RunAsync(
-				diagnostics,
-				snapshot.Solution,
-				applied.Solution,
-				EditVerification.AllProjects(applied.Solution),
-				target.FilePath,
-				cancellationToken);
-		}
+		await edit.VerifyAsync(
+			target.FilePath, EditVerification.AllProjects(applied.Solution), cancellationToken);
 
 		var unchanged = await DescribeUnchangedAsync(snapshot.Solution, work, applied, plan, cancellationToken);
 
-		notices.AddRange(Notices(request, plan, applied, verification, outcome, unchanged));
+		notices.AddRange(Notices(request, plan, applied, edit.Verification, edit.Outcome, unchanged));
 
 		var result = new SignatureChangeResult
 		{
 			Revision = snapshot.Revision,
 			Symbol = target.Signature,
 			Parameters = request.Parameters.Trim(),
-			Applied = request.Apply && outcome.ChangedFiles.Count > 0,
-			Diff = outcome.Diff,
+			Applied = edit.Applied,
+			Diff = edit.Outcome.Diff,
 			UpdatedDeclarations = await DescribeAsync(snapshot.Solution, work.SelectMany(w => w.DeclarationSites), cancellationToken),
 			UpdatedCallSites = await DescribeAsync(snapshot.Solution, applied.RewrittenCallSites, cancellationToken),
 			UnchangedCallSites = unchanged,
 			DocumentationUpdated = applied.Documentation,
-			Verified = verification.Ran,
-			IntroducedDiagnostics = [.. verification.Introduced.Take(Listed)],
-			ResolvedDiagnosticCount = verification.ResolvedCount,
-			TotalErrorCount = verification.TotalCount,
-			ProjectsChecked = verification.Projects,
-			ChangedFiles = outcome.ChangedFiles,
+			Verified = edit.Verification.Ran,
+			IntroducedDiagnostics = edit.Introduced,
+			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
+			TotalErrorCount = edit.Verification.TotalCount,
+			ProjectsChecked = edit.Verification.Projects,
+			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
 		};
 
-		var changed = request.Apply && outcome.ChangedFiles.Count > 0 ? applied.Solution : null;
-
-		return new MutationResult<SignatureChangeResult>(result, changed);
+		return new MutationResult<SignatureChangeResult>(result, edit.Kept);
 	}
 
 	/// <summary>
@@ -636,6 +622,13 @@ public static class ChangeSignatureService
 		}
 
 		foreach (var notice in verification.Notices) yield return notice;
+
+		// The same cap every writing tool reports against, said here because a result that silently
+		// stopped at twenty reads as an edit that broke twenty things.
+		if (verification.Introduced.Count > EditPipeline.Listed)
+		{
+			yield return $"Showing {EditPipeline.Listed} of the {verification.Introduced.Count} errors this introduced.";
+		}
 
 		if (verification.TotalCount == 0) yield return "The whole solution compiles clean.";
 

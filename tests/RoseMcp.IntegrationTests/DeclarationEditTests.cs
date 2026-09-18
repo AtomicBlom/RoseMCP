@@ -394,4 +394,41 @@ public sealed class DeclarationEditTests
 
 	private static Task<string> ReadAsync(FixtureSolution fixture, string file) =>
 		File.ReadAllTextAsync(fixture.Path("Members", "Library", file), TestContext.Current!.Execution.CancellationToken);
+
+	/// <summary>
+	/// An edit that introduces nothing does not say the project compiles clean when it does not. The
+	/// two questions a result answers are "what did this edit break" and "what is broken", and
+	/// answering the first in the words of the second tells a caller their project is sound at the
+	/// moment it is not.
+	/// <para>
+	/// Asserted here rather than only for member edits because this tool reached that answer by a
+	/// different rule: it read "introduced nothing" as "compiles clean", so a project with errors
+	/// already in it was reported clean by a comment change.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Does_not_call_a_project_clean_when_errors_were_already_in_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		// One error to be pre-existing by the time the comment is written, in the same project the
+		// comment lives in, since a documentation comment is verified against its own project.
+		var broken = await MemberEdits.EditAsync(
+			session,
+			MemberEdits.Request(MemberEditKind.Add, "Library.Prose", "public static string Missing() => Absent.Name;"));
+
+		Assert.NotEmpty(broken.IntroducedDiagnostics);
+
+		var result = await CommentAsync(session, "Library.Greeter.Greet(string)", "The greeting, with the project already broken elsewhere.");
+
+		Assert.True(result.Applied);
+		Assert.True(result.Verified);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var said = string.Join(" ", result.Notices);
+
+		Assert.DoesNotContain("compiles clean", said, StringComparison.Ordinal);
+		Assert.Contains("were there before this edit", said, StringComparison.Ordinal);
+	}
 }

@@ -26,8 +26,6 @@ namespace RoseMcp.Worker;
 public static class MoveMemberService
 {
 	/// <summary>How many introduced errors come back before the caller should read the diff instead.</summary>
-	private const int Listed = 20;
-
 	public static async Task<MutationResult<MemberEditResult>> MoveAsync(
 		WorkspaceSnapshot snapshot,
 		DiagnosticsService diagnostics,
@@ -36,9 +34,10 @@ public static class MoveMemberService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		snapshot.RefuseIfMoved(request.ExpectedRevision);
+		var edit = EditPipeline.Begin(
+			snapshot, diagnostics, request.ExpectedRevision, request.Apply, request.Verify, noteSelfWrite);
 
-		var notices = new List<string>(snapshot.Notices);
+		var notices = edit.Notices;
 
 		progress?.Report($"Resolving {request.Symbol}", 0);
 
@@ -66,26 +65,17 @@ public static class MoveMemberService
 
 		progress?.Report(request.Apply ? "Writing the files" : "Building the diff", 70);
 
-		var outcome = await SolutionWriter.ApplyAsync(
-			snapshot.Solution, moved, request.Apply, noteSelfWrite, cancellationToken);
+		await edit.WriteAsync(moved, cancellationToken);
 
-		var verification = Verification.NotRun;
 		var path = source.Document.FilePath!;
 
-		if (request.Verify && outcome.ChangedFiles.Count > 0)
-		{
-			progress?.Report("Compiling to see what the move did", 80);
+		if (request.Verify && edit.Changed) progress?.Report("Compiling to see what the move did", 80);
 
-			verification = await EditVerification.RunAsync(
-				diagnostics,
-				snapshot.Solution,
-				moved,
-				EditVerification.ScopeFor(moved, path, source.Symbol, request.VerifyScope),
-				path,
-				cancellationToken);
-		}
+		await edit.VerifyAsync(
+			path, EditVerification.ScopeFor(moved, path, source.Symbol, request.VerifyScope), cancellationToken);
 
-		notices.AddRange(Notices(request, verification, outcome, sites.Length, target));
+		notices.AddRange(Notices(request, sites.Length, target));
+		notices.AddRange(edit.Report());
 
 		var result = new MemberEditResult
 		{
@@ -94,21 +84,21 @@ public static class MoveMemberService
 			FilePath = TargetPath(target),
 			Line = 0,
 			Members = [source.Symbol.Name],
-			Applied = request.Apply && outcome.ChangedFiles.Count > 0,
-			Diff = outcome.Diff,
-			Verified = verification.Ran,
-			IntroducedDiagnostics = [.. verification.Introduced.Take(Listed)],
-			ResolvedDiagnosticCount = verification.ResolvedCount,
-			TotalErrorCount = verification.TotalCount,
-			ProjectsChecked = verification.Projects,
-			DependentsNotChecked = request.Verify && outcome.ChangedFiles.Count > 0
+			Applied = edit.Applied,
+			Diff = edit.Outcome.Diff,
+			Verified = edit.Verification.Ran,
+			IntroducedDiagnostics = edit.Introduced,
+			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
+			TotalErrorCount = edit.Verification.TotalCount,
+			ProjectsChecked = edit.Verification.Projects,
+			DependentsNotChecked = request.Verify && edit.Changed
 				? EditVerification.SkippedDependents(moved, path, source.Symbol, request.VerifyScope)
 				: [],
-			ChangedFiles = outcome.ChangedFiles,
+			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
 		};
 
-		return new MutationResult<MemberEditResult>(result, request.Apply && outcome.ChangedFiles.Count > 0 ? moved : null);
+		return new MutationResult<MemberEditResult>(result, edit.Kept);
 	}
 
 	/// <summary>
@@ -396,29 +386,14 @@ public static class MoveMemberService
 		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
 	}
 
-	private static IEnumerable<string> Notices(
-		MoveMemberRequest request,
-		Verification verification,
-		WriteOutcome outcome,
-		int sites,
-		TypeTarget target)
+	/// <summary>
+	/// What a move has to say that no other writing tool does. Everything about the write and the
+	/// compile comes from <see cref="EditPipeline.Report"/>, which runs after this.
+	/// </summary>
+	private static IEnumerable<string> Notices(MoveMemberRequest request, int sites, TypeTarget target)
 	{
-		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
-
-		foreach (var notice in outcome.Notices) yield return notice;
-
 		yield return request.CallSites == CallSiteStyle.Qualify
 			? $"{sites} call site(s) now name {target.Symbol.Name}."
 			: $"{sites} call site(s) left as written; the files calling it import {target.Symbol.Name} statically.";
-
-		if (!verification.Ran) yield break;
-
-		foreach (var notice in verification.Notices) yield return notice;
-
-		var compiled = string.Join(", ", verification.Projects);
-
-		yield return verification.Introduced.Count == 0
-			? $"{compiled} compiles clean."
-			: $"{verification.Introduced.Count} error(s) introduced in {compiled}.";
 	}
 }

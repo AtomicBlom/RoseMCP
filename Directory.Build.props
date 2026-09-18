@@ -21,7 +21,22 @@
          rather than a number someone remembered to bump. Tags are v-prefixed. A build from
          an archive with no .git falls back to 0.0.0-alpha.0, which is honest about not knowing. -->
     <MinVerTagPrefix>v</MinVerTagPrefix>
+
+    <!-- Whether the tray asks GitHub if a newer release exists. Off unless the release workflow
+         turns it on, because only a build that came out of that workflow can act on the answer, and
+         every other build gets a wrong one: MinVer stamps a working tree with the height since the
+         last tag, so it reports a version that is behind the latest release by semver precedence
+         however far ahead of it the code is. Left on, a developer would be told to upgrade to the
+         version they are sitting on top of, every time the tray started. -->
+    <RoseMcpUpdateCheck Condition=" '$(RoseMcpUpdateCheck)' == '' ">false</RoseMcpUpdateCheck>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Stamped rather than compiled in, so the code runs and is type-checked in every build and
+         only its answer changes. A #if would mean the update path is never compiled on a developer
+         machine, and the first thing to find a mistake in it would be the release that shipped it. -->
+    <AssemblyMetadata Include="RoseMcp.UpdateCheck" Value="$(RoseMcpUpdateCheck)" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="MinVer" PrivateAssets="all" />

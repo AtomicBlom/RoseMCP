@@ -44,6 +44,15 @@
     <PackageVersion Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
     <PackageVersion Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
     <PackageVersion Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+    <!-- Named only so the WinUI projects can exclude its assets; nothing references its API. The
+         WindowsAppSDK metapackage is an aggregator over ten sub-packages, one of them
+         Microsoft.WindowsAppSDK.ML, whose own dependency this is, and it carries the ONNX and
+         DirectML runtimes for every architecture. The version has to be kept in step with whatever
+         the metapackage resolves, or restore reports a downgrade.
+         (No double hyphen in this comment: XML forbids one inside a comment, and a stray em dash
+         here stops the whole file parsing, which presents as every package in the repository
+         suddenly having no version at all.) -->
+    <PackageVersion Include="Microsoft.Windows.AI.MachineLearning" Version="2.1.74" />
   </ItemGroup>
 
   <ItemGroup Label="Logging">

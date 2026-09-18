@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Windows.Input;
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -15,6 +16,7 @@ using RoseMcp.Logging;
 using RoseMcp.Settings;
 using RoseMcp.Ui;
 using RoseMcp.Ui.Core;
+using RoseMcp.Ui.Core.Updates;
 
 using Windows.ApplicationModel.DataTransfer;
 
@@ -73,6 +75,16 @@ public sealed partial class MainWindow : Window
 	private readonly DispatcherQueueTimer _ticking;
 
 	private readonly DispatcherQueueTimer _timer;
+
+	/// <summary>
+	/// Asks GitHub, every few hours, whether a newer release exists. Null in a build that was not
+	/// made by the release workflow, which is every build but a release: MinVer stamps a working tree
+	/// with a version that reads as behind the latest release however far ahead of it the code is, so
+	/// a developer would be told to upgrade to what they are sitting on top of, at every start.
+	/// </summary>
+	private readonly UpdateCheck? _updates;
+
+	private readonly DispatcherQueueTimer? _updateTimer;
 	private readonly App _app = (App)Application.Current;
 	private readonly string _endpoint;
 	private bool _exiting;
@@ -109,6 +121,18 @@ public sealed partial class MainWindow : Window
 		_ticking.Interval = TimeSpan.FromSeconds(1);
 		_ticking.Tick += (_, _) => Tick();
 		_ticking.Start();
+
+		var assembly = typeof(MainWindow).Assembly;
+		if (UpdateCheckPolicy.EnabledFor(assembly, Environment.GetEnvironmentVariable(UpdateCheckPolicy.EnvironmentVariable)))
+		{
+			_updates = new UpdateCheck(HostVersion.Of(assembly));
+			_updateTimer = DispatcherQueue.CreateTimer();
+			_updateTimer.Interval = UpdateCheck.Interval;
+			_updateTimer.Tick += (_, _) => CheckForUpdate();
+			_updateTimer.Start();
+
+			CheckForUpdate();
+		}
 
 		Refresh();
 	}
@@ -204,6 +228,74 @@ public sealed partial class MainWindow : Window
 			row.Tick(now);
 		}
 	}
+
+	/// <summary>
+	/// Asks once, in the background, and shows the answer only when there is one worth showing.
+	/// <para>
+	/// Nothing is downloaded and nothing is installed. The package is a hundred megabytes and
+	/// installing it stops a tray that is holding somebody's loaded solution -- which is not a thing
+	/// to do to them mid-task because a background poll noticed a tag. The menu item is the whole
+	/// feature.
+	/// </para>
+	/// <para>
+	/// <c>async void</c> because it is an event handler in all but name, and its one job is to not
+	/// throw: <see cref="UpdateCheck.CheckAsync"/> carries every failure back rather than raising it,
+	/// so there is nothing here for a caller to await or handle.
+	/// </para>
+	/// </summary>
+	private async void CheckForUpdate()
+	{
+		if (_updates is null) return;
+
+		var status = await _updates.CheckAsync().ConfigureAwait(true);
+
+		// Logged either way, and never shown. A background poll that only writes something down when
+		// it fails is a feature nobody can tell is working, and the question people actually arrive
+		// with is the opposite one: why they were never offered an upgrade. A problem is still only a
+		// log line -- somebody whose machine cannot reach GitHub does not need a window saying so
+		// every six hours.
+		var logger = _app.Services.GetRequiredService<ILogger<MainWindow>>();
+
+		if (status.Problem is { Length: > 0 } problem)
+		{
+			logger.LogInformation("Update check could not answer: {Problem}", problem);
+		}
+		else
+		{
+			logger.LogInformation(
+				"Update check: running {Running}, latest {Latest}, update available: {Available}",
+				HostVersion.Of(typeof(MainWindow).Assembly),
+				status.LatestVersion ?? "unknown",
+				status.IsUpdateAvailable);
+		}
+	}
+
+	/// <summary>
+	/// Opens the release in a browser. Deliberately not a download: what to do about a new version is
+	/// the reader's call, and the install stops a broker that may be holding work of theirs.
+	/// </summary>
+	private void OnOpenRelease(object sender, RoutedEventArgs e)
+	{
+		var url = _updates?.Last.ReleaseUrl ?? "https://github.com/AtomicBlom/RoseMCP/releases/latest";
+
+		try
+		{
+			Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+		}
+		catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+		{
+			// No default browser, or a shell association that refuses. Saying so beats a menu item
+			// that appears to do nothing.
+			ShowNotice($"Could not open {url}: {exception.Message}");
+		}
+	}
+
+	/// <summary>
+	/// The text for the update item, or null when there is nothing to say. Static and given its
+	/// inputs, so what the menu will read can be asserted without a window.
+	/// </summary>
+	public static string? DescribeUpdate(bool available, string? version) =>
+		available && version is { Length: > 0 } ? $"Update available: {version}" : null;
 
 	/// <summary>
 	/// Puts a sentence in front of the reader. For the things that happen once and need saying once:
@@ -468,6 +560,19 @@ public sealed partial class MainWindow : Window
 	/// </summary>
 	private void OnMenuOpening(object sender, object e)
 	{
+		// Read on opening rather than pushed when a check completes: the menu is the only place this
+		// shows, so there is nothing to update while it is closed, and a poll that finished hours ago
+		// is still the right answer.
+		var update = _updates is null ? null : DescribeUpdate(_updates.Last.IsUpdateAvailable, _updates.Last.LatestVersion);
+
+		foreach (var item in (MenuFlyoutItem?[])[TrayUpdate, WindowUpdate])
+		{
+			if (item is null) continue;
+
+			item.Visibility = update is null ? Visibility.Collapsed : Visibility.Visible;
+			if (update is not null) item.Text = update;
+		}
+
 		var enabled = StartupRegistration.IsEnabled;
 		var elsewhere = StartupRegistration.PointsElsewhere;
 

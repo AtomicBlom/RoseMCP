@@ -296,11 +296,20 @@ tool declares, the `SourceLocation` facet no argument filters on. The repository
 exactly this test for the tool surface, four times over, which is why those four rules have never
 drifted.
 
+**Where this sits in the tier list.** The four instances are carded separately and land in three
+different tiers, because each is its own bug: the version handshake at 0d, the workspace-key anchor
+at 11c, the reference facets at 11e, the window facts at 22. The *pattern* has one card of its own,
+**0f**, and it is in Tier 0 for a specific reason: seeded with those four as exemptions it passes on
+the day it is written, so it is a guard rather than a red test, and it catches a fifth instance
+appearing during tier 3 and tier 5 -- which is precisely when result records are reshaped and new
+fields are added. Each instance card then deletes its exemption, so the list is the worklist and an
+empty list is the definition of done.
+
 
 ### Tier 0 — build these first, because everything after is safer and measurable
 
-Five small mechanisms. Each is S, none is gated on anything, and each one guards work that starts
-immediately after. Perhaps two to three days in total, against a programme of weeks.
+Six small mechanisms. Each is S, none is gated on anything, and each one guards work that starts
+immediately after. Perhaps three days in total, against a programme of weeks.
 
 | # | Card | Why it goes first | Findings | Effort |
 |---|---|---|---|---|
@@ -309,6 +318,7 @@ immediately after. Perhaps two to three days in total, against a programme of we
 | 0c | **A surface-enumerating test for `revision` and `workspace`.** Today the rule "every result carries a revision and names the workspace that answered" is asserted on three tools out of about forty-five. | Tier 3 reshapes all thirteen write result records and card 1 changes what a path looks like in every result. This is the guard that makes both safe. | BRK-12, UIP-17 | S |
 | 0d | **A host-version handshake.** `HostVersion` is set by four hosts and read by none, while the launcher picks the newest worker in `bin` and an environment variable can point anywhere. | This programme rebuilds workers constantly. Debugging a stale binary you did not build is the failure this work will produce most often, and it costs a session each time. | IPC-02, BRK-05 | S |
 | 0e | **The CI comment grep.** History clauses stand at 100 against #171's count of 90, and issue tags at 60 against 53. | This work touches a large fraction of the files in the repository. Without the grep it adds to the debt it was partly meant to reduce, and the drift is invisible until someone counts again. | UIP-23 | S |
+| 0f | **A producer-with-no-consumer test, seeded with the four known cases.** One source-scanning test per fact family: every `SourceLocation` facet must be named by a filter argument, every `WorkspaceSummary`/`LiveAppSessionSummary` property by a UI project, every `HostVersion` by a reader, every result key by an argument that accepts it -- or appear in an explicit exemption list with a reason. | Goes green on day one because the four known cases are seeded as exemptions, so it guards against a *fifth* while tier 3 reshapes results and tier 5 renders facts, which is exactly when new fields appear. Then each instance card deletes a line from the list, and the list going empty is the definition of done. | USE inversion 1, IPC-02, AGT-21, AGT-23 | S |
 
 One thing Tier 0 deliberately does not include: **card 9, one write pipeline, is the highest-leverage
 inversion in the review and it is not cheap.** It stays in tier 2 where its effort puts it. But every

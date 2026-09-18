@@ -34,8 +34,6 @@ public static class AddFileService
 	private const int Looked = 20;
 
 	/// <summary>How many introduced errors come back before the caller should read the file instead.</summary>
-	private const int Listed = 20;
-
 	public static async Task<MutationResult<AddFileResult>> AddAsync(
 		WorkspaceSnapshot snapshot,
 		DiagnosticsService diagnostics,
@@ -44,9 +42,10 @@ public static class AddFileService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		snapshot.RefuseIfMoved(request.ExpectedRevision);
+		var edit = EditPipeline.Begin(
+			snapshot, diagnostics, request.ExpectedRevision, request.Apply, request.Verify, noteSelfWrite);
 
-		var notices = new List<string>(snapshot.Notices);
+		var notices = edit.Notices;
 		var path = Path.GetFullPath(request.FilePath);
 
 		progress?.Report($"Placing {Path.GetFileName(path)}", 0);
@@ -79,23 +78,12 @@ public static class AddFileService
 
 		progress?.Report(request.Apply ? "Writing to disk" : "Building the diff", 70);
 
-		var outcome = await SolutionWriter.ApplyAsync(
-			snapshot.Solution, solution, request.Apply, noteSelfWrite, cancellationToken);
+		await edit.WriteAsync(solution, cancellationToken);
 
-		var verification = Verification.NotRun;
+		if (request.Verify) progress?.Report("Compiling to see what the file did", 80);
 
-		if (request.Verify)
-		{
-			progress?.Report("Compiling to see what the file did", 80);
-
-			verification = await EditVerification.RunAsync(
-				diagnostics,
-				snapshot.Solution,
-				solution,
-				EditVerification.ScopeFor(solution, path, reaches: null, request.VerifyScope),
-				path,
-				cancellationToken);
-		}
+		await edit.VerifyAsync(
+			path, EditVerification.ScopeFor(solution, path, reaches: null, request.VerifyScope), cancellationToken);
 
 		var globs = ProjectItemStyle.GlobsSourceFiles(await ProjectTextAsync(project, cancellationToken));
 
@@ -106,9 +94,10 @@ public static class AddFileService
 		// After the verification, which is the first moment it can be said whether each import resolved
 		// the error it was fetched for rather than only which namespace it named.
 		var importsAdded = await ResolvedImports.ReportAsync(
-			solution, imports, verification.Introduced, path, cancellationToken);
+			solution, imports, edit.Verification.Introduced, path, cancellationToken);
 
-		notices.AddRange(Notices(request, verification, outcome, imports, globs, project, literalEndings));
+		notices.AddRange(Notices(request, imports, globs, project, literalEndings));
+		notices.AddRange(edit.Report());
 
 		var result = new AddFileResult
 		{
@@ -122,11 +111,11 @@ public static class AddFileService
 			ImportsAdded = importsAdded,
 			ImportsAmbiguous = imports.Ambiguous,
 			Unresolved = imports.Unresolved,
-			Diff = outcome.Diff,
-			Verified = verification.Ran,
-			IntroducedDiagnostics = [.. verification.Introduced.Take(Listed)],
-			ProjectsChecked = verification.Projects,
-			ChangedFiles = outcome.ChangedFiles,
+			Diff = edit.Outcome.Diff,
+			Verified = edit.Verification.Ran,
+			IntroducedDiagnostics = edit.Introduced,
+			ProjectsChecked = edit.Verification.Projects,
+			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
 		};
 
@@ -457,19 +446,17 @@ public static class AddFileService
 			.OfType<BaseTypeDeclarationSyntax>()
 			.Select(type => type.Identifier.Text);
 
+	/// <summary>
+	/// What adding a file has to say that no other writing tool does. Everything about the write and
+	/// the compile comes from <see cref="EditPipeline.Report"/>, which runs after this.
+	/// </summary>
 	private static IEnumerable<string> Notices(
 		AddFileRequest request,
-		Verification verification,
-		WriteOutcome outcome,
 		ResolvedImports.Imports imports,
 		bool globs,
 		Project project,
 		string? literalEndings)
 	{
-		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
-
-		foreach (var notice in outcome.Notices) yield return notice;
-
 		// Beside the other things the diff cannot show, and before the compile: an ending left inside a
 		// literal is not a compile error and reads as one only at the next dotnet format.
 		if (literalEndings is { } endings) yield return endings;
@@ -483,15 +470,5 @@ public static class AddFileService
 
 		foreach (var line in imports.Ambiguous) yield return line;
 		foreach (var line in imports.Unresolved) yield return line;
-
-		if (!verification.Ran) yield break;
-
-		foreach (var notice in verification.Notices) yield return notice;
-
-		var compiled = string.Join(", ", verification.Projects);
-
-		yield return verification.Introduced.Count == 0
-			? $"{compiled} compiles clean."
-			: $"{verification.Introduced.Count} error(s) introduced in {compiled}.";
 	}
 }

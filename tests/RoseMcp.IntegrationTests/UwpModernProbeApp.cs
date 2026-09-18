@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 using static RoseMcp.IntegrationTests.TestToolchain;
@@ -74,6 +73,11 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 		cancellationToken.ThrowIfCancellationRequested();
 
 		var (directory, aumid) = Prepare(needsXamlProvider);
+
+		// The turn establishes its own precondition rather than trusting the last one to have left the
+		// machine clean. A previous turn whose teardown was skipped -- a killed runner, a crash between
+		// the test and its Dispose -- otherwise fails this test for something it did not do.
+		ProbeAppProcess.StopOrThrow(ProcessName);
 		return new Turn(directory, aumid);
 	}
 
@@ -208,38 +212,11 @@ public sealed class UwpModernProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Ends any running instance and waits for it to go. A turn has to give the app back closed,
-	/// because activating a single-instance app that is already running foregrounds the existing
-	/// window instead of starting a process -- so the next test's from-birth debugger would wait for a
-	/// startup that never comes.
-	/// <para>
-	/// Waiting is the whole of it. Asking for termination and returning leaves the next activation
-	/// racing a process that is still dying, which foregrounds the window it was about to replace and
-	/// fails a test about launching with a message about an app already running. The race is lost only
-	/// under load, so it reads as a flake in a full suite and passes whenever these two tests are run
-	/// by themselves.
-	/// </para>
+	/// Ends any running instance, so a turn gives the app back closed. Best effort: this is what the
+	/// end of a turn calls, and the next turn checks the postcondition for itself rather than trusting
+	/// this one to have held.
 	/// </summary>
-	private static void StopApp()
-	{
-		foreach (var process in Process.GetProcessesByName(ProcessName))
-		{
-			try
-			{
-				if (!process.HasExited) process.Kill(entireProcessTree: true);
-				process.WaitForExit(5000);
-			}
-			catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
-			{
-				// It exited between the enumeration and the kill, or it is already going. Either way
-				// the postcondition holds.
-			}
-			finally
-			{
-				process.Dispose();
-			}
-		}
-	}
+	private static void StopApp() => ProbeAppProcess.Stop(ProcessName);
 
 	/// <summary>
 	/// The MSBuild that can build a UseUwp project, or null when this machine has none. Probed once,

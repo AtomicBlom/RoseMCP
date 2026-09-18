@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Xml.Linq;
 
 using Microsoft.Extensions.Logging.Abstractions;
@@ -150,7 +149,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 
 		// It launches its own app, so the shared one has to go first, exactly as phase A does.
 		await CloseSharedAsync();
-		await StopAppAndWaitAsync();
+		StopAppAndWait();
 
 		return new Lease(this, aumid);
 	}
@@ -232,7 +231,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 		var aumid = await EnterAsync(needsXamlProvider, cancellationToken);
 
 		await CloseSharedAsync();
-		await StopAppAndWaitAsync();
+		StopAppAndWait();
 
 		return new AppTurn(this, aumid);
 	}
@@ -400,7 +399,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	private async Task<LiveAppSession> LaunchSharedAsync(CancellationToken cancellationToken)
 	{
 		await CloseSharedAsync();
-		await StopAppAndWaitAsync();
+		StopAppAndWait();
 
 		_sharedManager = new LiveAppSessionManager(
 			Options.Create(new BrokerOptions()),
@@ -428,7 +427,7 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			if (summary.State == LiveAppSessionState.Ready) break;
 
 			await _sharedManager.CloseAsync(session.SessionId, cancellationToken);
-			await StopAppAndWaitAsync();
+			StopAppAndWait();
 			await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
 			session = null;
 		}
@@ -449,34 +448,24 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	}
 
 	/// <summary>Whether an instance of the probe app is running right now.</summary>
-	private static bool AppIsRunning()
-	{
-		var running = Process.GetProcessesByName(ProcessName);
-		foreach (var process in running) process.Dispose();
-
-		return running.Length > 0;
-	}
+	private static bool AppIsRunning() => ProbeAppProcess.IsRunning(ProcessName);
 
 	/// <summary>
-	/// Ends the app and waits for it to actually be gone.
+	/// Ends the app and refuses to continue until it is actually gone.
 	/// <para>
 	/// Killing a process and the package being launchable again are not the same moment. Activating
 	/// while the previous instance is still terminating fails, and it fails as a Faulted session with
 	/// nothing in it that says "you were too quick" -- which is exactly how it presented: a phase B
 	/// test blaming the app for coming up Faulted, immediately after a phase A test had ended it.
 	/// </para>
+	/// <para>
+	/// Throwing when the wait runs out is what makes that a guarantee rather than a hope. A bounded
+	/// wait that expires and returns anyway hands on the app it was called to remove, and the failure
+	/// lands on whichever test takes the app next rather than on the one that could not give it back.
+	/// </para>
 	/// </summary>
-	private async Task StopAppAndWaitAsync()
-	{
-		StopApp();
+	private static void StopAppAndWait() => ProbeAppProcess.StopOrThrow(ProcessName);
 
-		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-		while (DateTime.UtcNow < deadline)
-		{
-			if (!AppIsRunning()) return;
-			await Task.Delay(100);
-		}
-	}
 	private static async Task WaitForFirstTickAsync(LiveAppSession session, CancellationToken cancellationToken)
 	{
 		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
@@ -666,27 +655,14 @@ public sealed class UwpProbeApp : IAsyncDisposable
 	/// launching by AUMID with the previous instance still up activates that one instead of starting
 	/// one under the debugger -- and a from-birth attach then has nothing to attach to.
 	/// </para>
+	/// <para>
+	/// Best effort, because this is what the end of a turn calls, including from a <c>finally</c>: a
+	/// teardown that throws replaces the failure its test was about to report with one about clearing
+	/// up after it. <see cref="StopAppAndWait"/> is the one that insists, and it runs as a test takes
+	/// the app rather than as one gives it back.
+	/// </para>
 	/// </summary>
-	public void StopApp()
-	{
-		foreach (var process in Process.GetProcessesByName(ProcessName))
-		{
-			try
-			{
-				if (!process.HasExited) process.Kill(entireProcessTree: true);
-				process.WaitForExit(5000);
-			}
-			catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
-			{
-				// It exited between the enumeration and the kill, or it is already going. Either way
-				// the postcondition holds.
-			}
-			finally
-			{
-				process.Dispose();
-			}
-		}
-	}
+	public void StopApp() => ProbeAppProcess.Stop(ProcessName);
 
 	/// <summary>
 	/// Unregisters the package, once, after every test in the assembly. Nothing to do where no test

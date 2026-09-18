@@ -29,6 +29,12 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <!-- Excluded, not omitted: the WindowsAppSDK metapackage depends on it through
+         Microsoft.WindowsAppSDK.ML, so it arrives whether or not it is named here. Its assets are the
+         ONNX and DirectML runtimes, some 39 MB per architecture per app, and nothing in RoseMCP calls
+         a machine learning API. A direct reference is what makes ExcludeAssets reach a transitive
+         dependency at all. -->
+    <PackageReference Include="Microsoft.Windows.AI.MachineLearning" ExcludeAssets="all" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
   </ItemGroup>
 

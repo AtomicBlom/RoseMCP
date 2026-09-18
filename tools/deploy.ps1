@@ -15,15 +15,18 @@
                tray restarted. So the outage is a copy rather than a build, a failed build leaves
                the old instance serving, and it still costs an /mcp reconnect and a solution reload.
 
-      package  Build the release artifacts, one archive per runtime. Windows gets a zip carrying the
-               broker, the worker, the tray, and a live-app debug host for every architecture that
-               machine can execute -- which is not the same set for each, since ARM64 emulates x64
-               and x86 while x64 emulates only x86. Linux gets a tar.gz with
-               the broker and the worker only -- the tray is WinUI and the debug host is ICorDebug,
-               so neither has a Linux build to ship. tar rather than zip because a zip records no
-               Unix permission bits, and an apphost without +x is "permission denied" on unpack;
-               for the same reason a Linux artifact has to be rolled on Linux, and packaging one
-               here warns rather than shipping something broken.
+      package  Build the release artifacts. Windows gets **one** zip carrying every architecture,
+               because choosing between them is a step people get wrong -- an x64 zip on an ARM64
+               laptop installs and runs, emulated, with no native debug host, and nothing says so.
+               install.ps1 ships inside it, reads the machine, and lays down only what that machine
+               can execute, so the download is the only thing that grew: the install is the size it
+               always was. The live-app debug hosts are shared rather than duplicated, since the
+               ARM64 set (arm64, x64, x86) is a superset of the x64 set (x64, x86).
+               Linux gets a tar.gz per architecture with the broker and the worker only -- the tray
+               is WinUI and the debug host is ICorDebug, so neither has a Linux build to ship. tar
+               rather than zip because a zip records no Unix permission bits, and an apphost without
+               +x is "permission denied" on unpack; for the same reason a Linux artifact has to be
+               rolled on Linux, and packaging one here warns rather than shipping something broken.
 
     Paths use forward slashes throughout; PowerShell accepts them on Windows.
 
@@ -39,7 +42,7 @@
 
 .EXAMPLE
     ./tools/deploy.ps1 -Mode package
-    Build all four artifacts under artifacts/: rosemcp-win-{x64,arm64}.zip and
+    Build every artifact under artifacts/: one rosemcp-win.zip carrying x64 and ARM64, and
     rosemcp-linux-{x64,arm64}.tar.gz.
 
 .EXAMPLE
@@ -77,10 +80,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# $IsWindows only exists in PowerShell 6 and up. Under Windows PowerShell 5.1 it is $null, which
-# reads as false -- and every platform decision below would then take the Linux branch on a Windows
-# machine, quietly packaging a tray-less tarball. $env:OS has been there since NT.
-$onWindows = if ($null -ne $IsWindows) { $IsWindows } else { $env:OS -eq 'Windows_NT' }
+# Stopping an install, waiting for its workers and starting its tray are shared with install.ps1,
+# which does the same things to the same tree from a release archive rather than from a build.
+. "$PSScriptRoot/RoseMcp.Deploy.ps1"
+
+$onWindows = Test-OnWindows
 
 $repo = Split-Path $PSScriptRoot -Parent
 
@@ -99,23 +103,6 @@ if (-not $Destination)
 
 $Destination = $Destination.Replace('\', '/')
 
-function Get-HostRuntime
-{
-    $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
-    $os = if ($onWindows) { 'win' } else { 'linux' }
-    return "$os-$arch"
-}
-
-# Linux gets the broker and the worker and nothing else. The tray is WinUI 3 and the live-app host is
-# ICorDebug over dbgshim, both net10.0-windows, so there is no Linux build of either to ship -- a
-# Linux client runs the stdio broker, which owns its own workers when no tray is there to relay to.
-function Test-WindowsRid
-{
-    param([string] $Rid)
-
-    return $Rid.StartsWith('win-')
-}
-
 function Invoke-Dotnet
 {
     param([string[]] $Arguments, [string] $What)
@@ -126,7 +113,15 @@ function Invoke-Dotnet
 
 function Publish-Tree
 {
-    param([string] $Rid, [string] $Into)
+    <#
+        One architecture's tree.
+
+        -NoLiveApp leaves out the debug hosts, which the combined package publishes once into a shared
+        folder instead: an ARM64 machine can execute ARM64, x64 and x86 and an x64 machine the last
+        two, so the ARM64 set is a superset of the x64 set and a second copy would be the same bytes
+        under a different parent.
+    #>
+    param([string] $Rid, [string] $Into, [switch] $NoLiveApp)
 
     Write-Host "  publishing $Rid -> $Into"
 
@@ -155,34 +150,27 @@ function Publish-Tree
     Invoke-Dotnet @('publish', "$repo/src/RoseMcp.Inspector", '-c', 'Release', '-r', $Rid,
         '--self-contained', 'false', '-o', "$Into/inspector") "RoseMcp.Inspector ($Rid)"
 
-    Publish-LiveAppHosts -Into $Into -Rid $Rid
+    if (-not $NoLiveApp) { Publish-LiveAppHosts -Into $Into -HostRids (Get-LiveAppRuntimes -Rid $Rid) }
 }
 
-function Get-LiveAppRuntimes
+function Get-PackagedLiveAppRuntimes
 {
     <#
-        The live-app hosts an install for $Rid needs, which is exactly the set of architectures that
-        machine can execute.
-
-        ICorDebug offers no cross-architecture path, so the host must match the *target* process rather
-        than the broker -- but which targets can exist at all is a property of the machine, and the
-        relationship is asymmetric. ARM64 Windows runs ARM64 natively and emulates x64 and x86, so all
-        three are reachable there and all three ship. An x64 machine runs x64 and, through WOW64, x86;
-        it cannot execute an ARM64 binary under any emulation, so an ARM64 host in an x64 install is
-        weight nothing can load -- and building it drags in the MSVC ARM64 cross-toolset, which is why
-        an ordinary x64 deploy used to warn about a provider no target on that machine could ever want.
-
-        x86 is not a legacy case here. It is the default platform of the modern UWP project template,
-        so it is the architecture an ordinary new UWP app is built and registered as.
+        The union of the debug hosts every packaged architecture needs, which is what the shared
+        live-app folder in a combined package holds. Deduped, because the sets overlap by design.
     #>
-    param([string] $Rid)
+    param([string[]] $Rids)
 
-    switch ($Rid)
+    $union = [System.Collections.Generic.List[string]]::new()
+    foreach ($rid in $Rids)
     {
-        'win-arm64' { return @('win-arm64', 'win-x64', 'win-x86') }
-        'win-x64' { return @('win-x64', 'win-x86') }
-        default { return @($Rid) }
+        foreach ($hostRid in Get-LiveAppRuntimes -Rid $rid)
+        {
+            if (-not $union.Contains($hostRid)) { $union.Add($hostRid) }
+        }
     }
+
+    return $union.ToArray()
 }
 
 function Publish-LiveAppHosts
@@ -191,9 +179,9 @@ function Publish-LiveAppHosts
         The layout is the one LiveAppHostLauncher looks for: live-app/<rid> beside the broker, with
         each host's native XAML providers under xaml-provider/<rid> beside that host.
     #>
-    param([string] $Into, [string] $Rid)
+    param([string] $Into, [string[]] $HostRids)
 
-    foreach ($hostRid in Get-LiveAppRuntimes -Rid $Rid)
+    foreach ($hostRid in $HostRids)
     {
         $hostDir = "$Into/live-app/$hostRid"
         Invoke-Dotnet @('publish', "$repo/src/RoseMcp.LiveApp", '-c', 'Release', '-r', $hostRid,
@@ -201,6 +189,101 @@ function Publish-LiveAppHosts
 
         Copy-XamlProviders -Rid $hostRid -HostDir $hostDir -Required:$xamlProviderRequired
     }
+}
+
+function Split-SharedPayload
+{
+    <#
+        Moves every file that is byte-identical across all packaged architectures into payload/shared,
+        leaving each architecture's folder holding only what is actually its own.
+
+        Nearly all of a payload is architecture-neutral IL that the two publishes emit identically;
+        what genuinely differs is the apphosts, a handful of assemblies stamped with their RID, and
+        the native WindowsAppSDK pieces. Shipping the identical remainder twice is most of the
+        download.
+
+        Compression does not save this. Inno's lzma2/max works from an 8 MB dictionary and the copies
+        sit more than a hundred megabytes apart in the stream, so it never sees them as repeats; a zip
+        is worse still, compressing every file on its own and finding no cross-file repetition at all.
+        The duplication has to go before compression rather than be left for it.
+
+        Identity is decided by SHA256 over files at the same relative path, so a file that differs in
+        any way stays where it is -- two PE images built for different machines cannot collide, and
+        neither can anything else that matters. A file present in only one architecture's payload is
+        not shared either, because it is not in all of them.
+    #>
+    param([Parameter(Mandatory)][string] $Stage, [Parameter(Mandatory)][string[]] $Rids)
+
+    $hashesByRid = @{}
+    foreach ($rid in $Rids)
+    {
+        $root = [System.IO.Path]::GetFullPath("$Stage/payload/$rid")
+        $map = @{}
+
+        foreach ($file in Get-ChildItem $root -Recurse -File)
+        {
+            $relative = $file.FullName.Substring($root.Length).TrimStart('\', '/')
+            $map[$relative] = (Get-FileHash $file.FullName -Algorithm SHA256).Hash
+        }
+
+        $hashesByRid[$rid] = $map
+    }
+
+    $first = $Rids[0]
+    $others = $Rids | Select-Object -Skip 1
+    $shared = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($relative in $hashesByRid[$first].Keys)
+    {
+        $hash = $hashesByRid[$first][$relative]
+        $everywhere = $true
+
+        foreach ($rid in $others)
+        {
+            if (-not $hashesByRid[$rid].ContainsKey($relative) -or $hashesByRid[$rid][$relative] -ne $hash)
+            {
+                $everywhere = $false
+                break
+            }
+        }
+
+        if ($everywhere) { $shared.Add($relative) }
+    }
+
+    $bytes = 0
+    foreach ($relative in $shared)
+    {
+        $target = "$Stage/payload/shared/$relative"
+        New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
+
+        $bytes += (Get-Item "$Stage/payload/$first/$relative").Length
+        Move-Item "$Stage/payload/$first/$relative" $target -Force
+
+        foreach ($rid in $others) { Remove-Item "$Stage/payload/$rid/$relative" -Force }
+    }
+
+    foreach ($rid in $Rids) { Remove-EmptyDirectory -Path "$Stage/payload/$rid" }
+
+    $saved = [math]::Round(($bytes * $others.Count) / 1MB)
+    Write-Host ("  deduplicated {0} file(s) into payload/shared, {1} MB not shipped again" -f $shared.Count, $saved)
+}
+
+function Remove-EmptyDirectory
+{
+    <#
+        Depth first, because emptying a leaf is what makes its parent empty. Moving the shared files
+        out leaves whole directories behind -- the satellite assembly folders especially, which are
+        identical in every architecture -- and an empty directory in a payload becomes an empty
+        directory in the install.
+    #>
+    param([Parameter(Mandatory)][string] $Path)
+
+    foreach ($directory in Get-ChildItem $Path -Directory)
+    {
+        Remove-EmptyDirectory -Path $directory.FullName
+    }
+
+    if (-not (Get-ChildItem $Path -Force)) { Remove-Item $Path -Force }
 }
 
 function Get-ProviderPlatform
@@ -278,35 +361,19 @@ function Copy-XamlProvider
     Write-Host "  $Project ($platform) -> $into"
 }
 
-function Get-PeMachine
+function Test-PayloadFile
 {
     <#
-        The machine type out of a PE header, because Test-Path cannot tell you what is in the file.
-
-        Copy-XamlProvider derives its destination from $Rid while build.ps1 derives its source from
-        $Platform, so the two could disagree and produce a tree that looks complete and injects the
-        wrong architecture into the target -- which fails inside somebody else's app, a long way from
-        the packaging step that caused it.
-
-        The layout: at 0x3C sits the offset of the "PE\0\0" signature, and the machine word is the
-        two bytes straight after it.
+        Whether an install for $Rid would end up with a file, wherever the package keeps it: in that
+        architecture's folder, or in the shared one every architecture is laid down on top of.
     #>
-    param([string] $Path)
+    param(
+        [Parameter(Mandatory)][string] $Stage,
+        [Parameter(Mandatory)][string] $Rid,
+        [Parameter(Mandatory)][string] $Relative
+    )
 
-    $stream = [System.IO.File]::OpenRead($Path)
-    try
-    {
-        $reader = [System.IO.BinaryReader]::new($stream)
-        $stream.Position = 0x3C
-        $stream.Position = $reader.ReadInt32()
-        if ($reader.ReadUInt32() -ne 0x00004550) { return $null }  # "PE\0\0"
-
-        return $reader.ReadUInt16()
-    }
-    finally
-    {
-        $stream.Dispose()
-    }
+    return (Test-Path "$Stage/payload/$Rid/$Relative") -or (Test-Path "$Stage/payload/shared/$Relative")
 }
 
 function Assert-WindowsPackage
@@ -325,153 +392,97 @@ function Assert-WindowsPackage
 
         Asserted here rather than at the upload step, which is as close to the cause as it can be put.
     #>
-    param([string] $Stage, [string] $Rid)
+    param([string] $Stage, [string[]] $Rids)
 
-    $expected = @{ 'win-x86' = 0x014C; 'win-x64' = 0x8664; 'win-arm64' = 0xAA64 }
-    $hostRids = Get-LiveAppRuntimes -Rid $Rid
+    $hostRids = Get-PackagedLiveAppRuntimes -Rids $Rids
     $checked = 0
 
-    # Both windows, and each built for the machine the package is for. A package missing the
-    # inspector is not obviously broken from the outside: the tray comes up, and Inspect reports
-    # that it cannot find the exe -- which reads like a lookup bug rather than a package that never
-    # carried one.
-    foreach ($window in 'tray/RoseMcp.Tray.exe', 'inspector/RoseMcp.Inspector.exe')
+    # The installer and the half of it that install.ps1 and deploy.ps1 share. A package that carries
+    # the binaries and not the script that lays them down is an archive somebody has to read the wiki
+    # to use, and nothing else in the release would say it was missing.
+    foreach ($script in 'install.ps1', 'RoseMcp.Deploy.ps1')
     {
-        $exe = "$Stage/$window"
-        if (-not (Test-Path $exe)) { throw "$Rid package is missing $exe" }
+        if (-not (Test-Path "$Stage/$script")) { throw "the package is missing $script" }
+    }
 
-        $machine = Get-PeMachine $exe
-        if ($machine -ne $expected[$Rid])
+    foreach ($Rid in $Rids)
+    {
+        foreach ($required in 'RoseMcp.Server.exe', 'RoseMcp.Worker.exe')
         {
-            throw (("$Rid package has the wrong {0}: it reports machine 0x{1:X4}, expected 0x{2:X4}.") -f
-                $window, $machine, $expected[$Rid])
+            # Either place. Deduplication moves whatever is identical across architectures into
+            # shared/, and which files those are is a fact about a given build rather than something
+            # to assert -- what matters is that an install assembled from shared plus this
+            # architecture has them.
+            if (-not (Test-PayloadFile -Stage $Stage -Rid $Rid -Relative $required))
+            {
+                throw "$Rid payload is missing $required"
+            }
+        }
+
+        # Both windows, and each built for the architecture whose payload it is in. A package missing
+        # the inspector is not obviously broken from the outside: the tray comes up, and Inspect
+        # reports that it cannot find the exe -- which reads like a lookup bug rather than a package
+        # that never carried one.
+        foreach ($window in 'tray/RoseMcp.Tray.exe', 'inspector/RoseMcp.Inspector.exe')
+        {
+            # These can never be shared -- two PE images built for different machines cannot be
+            # byte-identical -- so finding one outside its architecture's folder means the
+            # deduplication matched something it should not have.
+            $exe = "$Stage/payload/$Rid/$window"
+            if (-not (Test-Path $exe))
+            {
+                if (Test-Path "$Stage/payload/shared/$window")
+                {
+                    throw "$window was deduplicated into payload/shared, which cannot be right for a " +
+                        'native image: the two architectures would have had to produce identical bytes.'
+                }
+
+                throw "$Rid payload is missing $exe"
+            }
+
+            $machine = Get-PeMachine $exe
+            if ($machine -ne (Get-ExpectedPeMachine -Rid $Rid))
+            {
+                throw (("$Rid payload has the wrong {0}: it reports machine 0x{1:X4}, expected 0x{2:X4}.") -f
+                    $window, $machine, (Get-ExpectedPeMachine -Rid $Rid))
+            }
         }
     }
 
     foreach ($hostRid in $hostRids)
     {
-        $hostExe = "$Stage/live-app/$hostRid/RoseMcp.LiveApp.exe"
-        if (-not (Test-Path $hostExe)) { throw "$Rid package is missing $hostExe" }
+        $hostExe = "$Stage/payload/live-app/$hostRid/RoseMcp.LiveApp.exe"
+        if (-not (Test-Path $hostExe)) { throw "the package is missing $hostExe" }
 
         foreach ($project in 'RoseMcp.Xaml.Uwp.Tap', 'RoseMcp.Xaml.WinUi.Tap')
         {
-            $dll = "$Stage/live-app/$hostRid/xaml-provider/$hostRid/$project.dll"
+            $dll = "$Stage/payload/live-app/$hostRid/xaml-provider/$hostRid/$project.dll"
             if (-not (Test-Path $dll))
             {
-                throw "$Rid package is missing the XAML provider at $dll. XAML inspection and live " +
+                throw "the package is missing the XAML provider at $dll. XAML inspection and live " +
                     "editing would be unavailable for $hostRid targets, and nothing else would say " +
                     "so. On a build agent this is usually a missing MSVC cross-toolset for that " +
                     "architecture."
             }
 
             $machine = Get-PeMachine $dll
-            if ($machine -ne $expected[$hostRid])
+            if ($machine -ne (Get-ExpectedPeMachine -Rid $hostRid))
             {
                 # Parenthesised before -f on purpose: -f binds tighter than +, so formatting a
                 # concatenation without these brackets formats only the last piece of it and leaves
                 # the placeholders in the rest sitting there as literal text.
-                throw (("$Rid package has the wrong XAML provider for {0}: {1} reports machine " +
+                throw (("the package has the wrong XAML provider for {0}: {1} reports machine " +
                     "0x{2:X4}, expected 0x{3:X4}. It would be injected into a target of the other " +
                     "architecture.") -f
-                    $hostRid, $dll, $machine, $expected[$hostRid])
+                    $hostRid, $dll, $machine, (Get-ExpectedPeMachine -Rid $hostRid))
             }
 
             $checked++
         }
     }
 
-    Write-Host ("  layout checked: both windows, {0} debug host(s) ({1}) and {2} XAML provider(s), all correctly built" -f
-        $hostRids.Count, ($hostRids -join ', '), $checked)
-}
-
-function Get-InstalledProcess
-{
-    # Only the processes running out of the install being replaced. A development tray on another
-    # port, or an editor session served by some other install, is not in the way of this publish --
-    # and stopping it, or waiting for it, is this script reaching outside what it was asked to
-    # replace. Matching by name alone did both: a deploy to one install died on "workers did not
-    # exit" naming a worker belonging to another one, which cannot exit because nothing asked it to.
-    param([string] $Name)
-
-    $root = [System.IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
-
-    return @(Get-Process -Name $Name -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) })
-}
-
-function Stop-Inspector
-{
-    # Its own function, and called before the tray: the inspector holds no workers and nothing waits
-    # on it, but its exe is in the tree about to be overwritten and a running one fails the publish.
-    # It is not restarted afterwards -- it is opened from the tray, and reopening a window somebody
-    # closed is the deploy deciding what they were doing.
-    $running = Get-InstalledProcess 'RoseMcp.Inspector'
-    if ($running.Count -eq 0) { return }
-
-    Write-Host "  stopping inspector (pid $($running.Id -join ', '))"
-    $running | Stop-Process -Force
-}
-
-function Stop-Tray
-{
-    $running = Get-InstalledProcess 'RoseMcp.Tray'
-    if ($running.Count -eq 0) { return $false }
-
-    Write-Host "  stopping tray (pid $($running.Id -join ', '))"
-    $running | Stop-Process -Force
-
-    # Workers exit when their broker closes their stdin. Publishing while one is still up fails,
-    # because it holds RoseMcp.Worker.exe open.
-    for ($i = 0; $i -lt 60; $i++)
-    {
-        if ((Get-InstalledProcess 'RoseMcp.Worker').Count -eq 0) { break }
-        Start-Sleep -Milliseconds 250
-    }
-
-    $stragglers = Get-InstalledProcess 'RoseMcp.Worker'
-    if ($stragglers.Count -gt 0) { throw "workers did not exit: $($stragglers.Id -join ', ')" }
-
-    return $true
-}
-
-function Stop-Servers
-{
-    # Stdio servers -- one per editor session, registered from the install -- hold its shared
-    # assemblies open, so publishing over them fails on the first DLL. Only the ones under this
-    # destination: a server running from some other install is not in the way. Their clients start
-    # a fresh one on the next call or on /mcp, and the tray they relay to is being replaced anyway.
-    $running = Get-InstalledProcess 'RoseMcp.Server'
-    if ($running.Count -eq 0) { return $false }
-
-    Write-Host "  stopping $($running.Count) stdio server(s) running from the install (pid $($running.Id -join ', '))"
-    $running | Stop-Process -Force
-    Start-Sleep -Milliseconds 500
-
-    return $true
-}
-function Start-Tray
-{
-    $exe = "$Destination/tray/RoseMcp.Tray.exe"
-    if (-not (Test-Path $exe)) { throw "no tray at $exe" }
-
-    $process = Start-Process -FilePath $exe -PassThru -WorkingDirectory $WorkspaceRoot `
-        -ArgumentList '--port', $Port, '--worker', "$Destination/RoseMcp.Worker.exe"
-
-    Write-Host "  started tray pid $($process.Id) (workspace root $WorkspaceRoot)"
-
-    for ($i = 0; $i -lt 60; $i++)
-    {
-        Start-Sleep -Milliseconds 250
-        try
-        {
-            $null = Invoke-WebRequest "http://127.0.0.1:$Port/admin/workspaces" -UseBasicParsing -TimeoutSec 2
-            Write-Host "  endpoint answering on http://127.0.0.1:$Port/"
-            return
-        }
-        catch { }
-    }
-
-    throw "tray started but never answered on port $Port"
+    Write-Host ("  layout checked: {0} architecture(s) ({1}), {2} shared debug host(s) ({3}) and {4} XAML provider(s), all correctly built" -f
+        $Rids.Count, ($Rids -join ', '), $hostRids.Count, ($hostRids -join ', '), $checked)
 }
 
 if (-not $Runtime)
@@ -498,10 +509,8 @@ if ($Mode -eq 'promote')
 
     # Everything about stopping and restarting is about the tray and the stdio servers holding the
     # install's files open, and neither exists off Windows: there is nothing to stop, and nothing to
-    # overwrite while it runs.
-    if ($onWindows) { Stop-Inspector }
-    $wasRunning = if ($onWindows) { Stop-Tray } else { $false }
-    $stoppedServers = if ($onWindows) { Stop-Servers } else { $false }
+    # overwrite while it runs. Stop-Install knows that and returns a no-op there.
+    $stopped = Stop-Install -Root $Destination
 
     Write-Host "  copying $stage -> $Destination"
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
@@ -509,10 +518,10 @@ if ($Mode -eq 'promote')
 
     if (-not (Test-WindowsRid $Runtime[0])) { Write-Host '  no tray to restart on this platform' }
     elseif ($NoRestart) { Write-Host '  not restarting (-NoRestart)' }
-    elseif ($wasRunning -or -not $NoRestart) { Start-Tray }
+    else { Start-Tray -Root $Destination -WorkspaceRoot $WorkspaceRoot -Port $Port }
 
     Write-Host "promoted $($Runtime[0]) to $Destination"
-    if ($wasRunning -or $stoppedServers) { Write-Host 'reconnect the MCP client with /mcp; the first call reloads the solution' }
+    if ($stopped.TrayWasRunning -or $stopped.ServersStopped) { Write-Host 'reconnect the MCP client with /mcp; the first call reloads the solution' }
 
     return
 }
@@ -520,40 +529,80 @@ if ($Mode -eq 'promote')
 $artifacts = "$repo/artifacts"
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
 
-foreach ($rid in $Runtime)
+$windowsRids = @($Runtime | Where-Object { Test-WindowsRid $_ })
+$linuxRids = @($Runtime | Where-Object { -not (Test-WindowsRid $_) })
+
+# One Windows archive carrying every architecture, because choosing one is a step people get wrong:
+# an x64 zip on an ARM64 laptop installs and runs, emulated, with no native debug host, and nothing
+# says so. install.ps1 reads the machine and lays down only what it can execute, so the download is
+# the only thing that is bigger -- the install is the size it always was.
+if ($windowsRids.Count -gt 0)
+{
+    $stage = "$artifacts/stage/win"
+    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+
+    foreach ($rid in $windowsRids)
+    {
+        Publish-Tree -Rid $rid -Into "$stage/payload/$rid" -NoLiveApp
+    }
+
+    # Once, shared. The debug hosts and their native taps are the expensive half of the package and
+    # the sets overlap completely: an ARM64 machine can execute all three architectures and an x64
+    # machine two of them, so a per-architecture copy would be the same bytes twice.
+    Publish-LiveAppHosts -Into "$stage/payload" -HostRids (Get-PackagedLiveAppRuntimes -Rids $windowsRids)
+
+    # Only with something to compare against. One architecture's payload is trivially identical to
+    # itself, and hoisting all of it into shared/ would leave an architecture folder that exists but
+    # holds nothing -- a layout neither installer expects and both would lay down as an empty install.
+    if ($windowsRids.Count -gt 1) { Split-SharedPayload -Stage $stage -Rids $windowsRids }
+
+    Copy-Item "$repo/installer/install.ps1" "$stage/install.ps1" -Force
+    Copy-Item "$PSScriptRoot/RoseMcp.Deploy.ps1" "$stage/RoseMcp.Deploy.ps1" -Force
+
+    $archive = "$artifacts/rosemcp-win.zip"
+    if (Test-Path $archive) { Remove-Item $archive -Force }
+
+    Assert-WindowsPackage -Stage $stage -Rids $windowsRids
+
+    # ZipFile rather than Compress-Archive: the combined package is several hundred megabytes across
+    # thousands of files, which Compress-Archive walks one pipeline object at a time.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        [System.IO.Path]::GetFullPath($stage), [System.IO.Path]::GetFullPath($archive),
+        [System.IO.Compression.CompressionLevel]::Optimal, $false)
+
+    $size = [math]::Round((Get-Item $archive).Length / 1MB)
+    Write-Host "  packaged $archive (${size} MB, $($windowsRids -join ' + '))"
+
+    # The stage is left behind on purpose: build-installer.ps1 compiles the Inno installer from this
+    # same tree, so the archive and the installer carry identical bytes rather than two publishes that
+    # agree by coincidence. Compiling it is not done here -- an installer is a release artifact, and
+    # this script is also what a developer runs to dogfood a build.
+    Write-Host "  stage kept at $stage for ./tools/build-installer.ps1"
+}
+
+foreach ($rid in $linuxRids)
 {
     $stage = "$artifacts/stage/$rid"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 
     Publish-Tree -Rid $rid -Into $stage
 
-    if (Test-WindowsRid $rid)
+    # tar rather than zip, because a zip carries no Unix permission bits: unpacked on Linux the
+    # apphost comes out without +x and RoseMcp.Server is "permission denied" before it prints
+    # anything. tar records the mode, but only the mode it is given -- Windows has no execute bit
+    # to record, so a tarball rolled here is just as broken and says so rather than shipping.
+    if ($onWindows)
     {
-        $archive = "$artifacts/rosemcp-$rid.zip"
-        if (Test-Path $archive) { Remove-Item $archive -Force }
-
-        Assert-WindowsPackage -Stage $stage -Rid $rid
-
-        Compress-Archive -Path "$stage/*" -DestinationPath $archive
+        Write-Warning "  $rid packaged on Windows: the apphost will unpack without +x. Build Linux artifacts on Linux."
     }
-    else
-    {
-        # tar rather than zip, because a zip carries no Unix permission bits: unpacked on Linux the
-        # apphost comes out without +x and RoseMcp.Server is "permission denied" before it prints
-        # anything. tar records the mode, but only the mode it is given -- Windows has no execute bit
-        # to record, so a tarball rolled here is just as broken and says so rather than shipping.
-        if ($onWindows)
-        {
-            Write-Warning "  $rid packaged on Windows: the apphost will unpack without +x. Build Linux artifacts on Linux."
-        }
 
-        $archive = "$artifacts/rosemcp-$rid.tar.gz"
-        if (Test-Path $archive) { Remove-Item $archive -Force }
+    $archive = "$artifacts/rosemcp-$rid.tar.gz"
+    if (Test-Path $archive) { Remove-Item $archive -Force }
 
-        # -C so the paths inside are relative to the stage rather than carrying artifacts/stage/<rid>.
-        & tar -czf $archive -C $stage '.'
-        if ($LASTEXITCODE -ne 0) { throw "tar failed for $rid (exited $LASTEXITCODE)" }
-    }
+    # -C so the paths inside are relative to the stage rather than carrying artifacts/stage/<rid>.
+    & tar -czf $archive -C $stage '.'
+    if ($LASTEXITCODE -ne 0) { throw "tar failed for $rid (exited $LASTEXITCODE)" }
 
     $size = [math]::Round((Get-Item $archive).Length / 1MB)
     Write-Host "  packaged $archive (${size} MB)"

@@ -128,8 +128,26 @@ Deploy over the running instance, or build release zips:
 
 ```
 ./tools/deploy.ps1                          # stop tray, publish, restart
-./tools/deploy.ps1 -Mode package            # artifacts/rosemcp-win-{x64,arm64}.zip
+./tools/deploy.ps1 -Mode package            # artifacts/rosemcp-win.zip, both architectures
 ```
+
+```
+./tools/build-installer.ps1                 # artifacts/rosemcp-setup.exe, from the staged package
+```
+
+Its own script, not a mode of `deploy.ps1`: an installer is a release artifact CI builds on a tag,
+while `deploy.ps1` is also what you run several times a day to dogfood a build, and that should not
+depend on having Inno Setup. It compiles `installer/rosemcp.iss` from the stage `-Mode package`
+leaves behind, so the zip and the installer carry the same bytes. Needs Inno Setup 6.3 or later, for
+the `x64os`/`arm64` architecture identifiers. Nothing in the build signs anything.
+
+**`installer/` is packaged content, not tools.** `installer/install.ps1` is copied into the archive
+and run by whoever unzips it; `installer/rosemcp.iss` is compiled into the setup exe. Neither does
+anything useful from a clone -- `install.ps1` wants a `payload/` beside it, which exists only in an
+extracted archive -- so they sit apart from `tools/`, where everything is meant to be run in place.
+`tools/RoseMcp.Deploy.ps1` is the exception that stays: `deploy.ps1` dot-sources it here and
+packaging also copies it into the archive, because stopping a running install is the one thing both
+installers and the promote path have to agree about.
 
 `promote` installs to `-Destination`, else `ROSEMCP_DEPLOY_ROOT`, else
 `%LOCALAPPDATA%/BinaryVibrance/RoseMCP` -- the same vendor/product folder the logs live under.

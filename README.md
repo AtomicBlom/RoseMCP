@@ -27,7 +27,26 @@ The mechanism behind each is on the
 
 ## Install
 
-Grab a release, or build from source (below), then register it:
+On Windows, take `rosemcp-win.zip` from a release, unzip it anywhere, and run the `install.ps1`
+inside it:
+
+```powershell
+./install.ps1                    # into %LOCALAPPDATA%\BinaryVibrance\RoseMCP, and start the tray
+./install.ps1 -StartWithWindows  # and have the tray start at sign-in
+./install.ps1 -Uninstall         # remove it; add -Purge to drop settings and logs too
+```
+
+One archive covers x64 and ARM64: it reads the machine and lays down only what that machine can
+execute, so there is nothing to choose when downloading. It installs over a running instance, keeps
+`settings.json` and `Logs/`, and adds an Add/Remove Programs entry.
+
+Then register the endpoint with your agent -- the tray shows this command too:
+
+```
+claude mcp add --transport http rose http://127.0.0.1:5077
+```
+
+Or run the broker over stdio and skip the tray entirely, which is what a Linux install does:
 
 ```
 claude mcp add rose -- <path>/RoseMcp.Server.exe

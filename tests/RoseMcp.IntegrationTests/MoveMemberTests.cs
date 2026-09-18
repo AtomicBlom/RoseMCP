@@ -213,4 +213,35 @@ public sealed class MoveMemberTests
 		File.ReadAllTextAsync(
 			fixture.Path("Members", "Library", string.Join(Path.DirectorySeparatorChar, parts)),
 			TestContext.Current!.Execution.CancellationToken);
+
+	/// <summary>
+	/// A move that lands somewhere missing an import says which namespace would fix it. This is the
+	/// tool that needs that line most: it writes to a file the caller never named, so the caller has
+	/// no reason to have thought about that file's imports at all.
+	/// <para>
+	/// <c>Imports.Formatted</c> names <c>CultureInfo</c> and its own file imports
+	/// <c>System.Globalization</c>; <c>Greeter</c>'s file imports nothing. So the move carries the
+	/// code and leaves the using behind, which is the whole shape of the problem.
+	/// </para>
+	/// <para>
+	/// The compilation has already been built to work out what the move broke, so naming the
+	/// namespace costs nothing beyond asking it something it can already answer.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Names_the_namespace_a_move_left_behind()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Imports.Formatted", "Library.Greeter");
+
+		Assert.True(result.Applied);
+		Assert.NotEmpty(result.IntroducedDiagnostics);
+
+		var said = string.Join(" ", result.Notices);
+
+		Assert.Contains("System.Globalization", said, StringComparison.Ordinal);
+		Assert.Contains("This introduced", said, StringComparison.Ordinal);
+	}
 }

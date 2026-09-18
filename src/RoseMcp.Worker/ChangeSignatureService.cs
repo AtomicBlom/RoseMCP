@@ -623,11 +623,14 @@ public static class ChangeSignatureService
 
 		foreach (var notice in verification.Notices) yield return notice;
 
-		// The same cap every writing tool reports against, said here because a result that silently
-		// stopped at twenty reads as an edit that broke twenty things.
-		if (verification.Introduced.Count > EditPipeline.Listed)
+		// What this change did, in prose, as every writing tool reports it. A result that silently
+		// stopped at twenty entries reads as a change that broke twenty things.
+		if (verification.Introduced.Count > 0)
 		{
-			yield return $"Showing {EditPipeline.Listed} of the {verification.Introduced.Count} errors this introduced.";
+			yield return verification.Introduced.Count > EditPipeline.Listed
+				? $"This introduced {verification.Introduced.Count} error(s) in the solution; the first "
+					+ $"{EditPipeline.Listed} are listed."
+				: $"This introduced {verification.Introduced.Count} error(s) in the solution.";
 		}
 
 		if (verification.TotalCount == 0) yield return "The whole solution compiles clean.";

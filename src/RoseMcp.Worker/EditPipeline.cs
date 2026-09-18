@@ -172,9 +172,14 @@ internal sealed class EditPipeline
 
 		var compiled = string.Join(", ", Verification.Projects);
 
-		if (Verification.Introduced.Count > Listed)
+		// What this edit did, in prose, because the entries alone leave it to the reader to notice
+		// that a list is not empty. Said whether or not the list was cut, since a count of three and
+		// a count of three hundred want the same sentence and only one of them fits in the list.
+		if (Verification.Introduced.Count > 0)
 		{
-			yield return $"Showing {Listed} of the {Verification.Introduced.Count} errors this introduced.";
+			yield return Verification.Introduced.Count > Listed
+				? $"This introduced {Verification.Introduced.Count} error(s) in {compiled}; the first {Listed} are listed."
+				: $"This introduced {Verification.Introduced.Count} error(s) in {compiled}.";
 		}
 
 		if (Verification.TotalCount == 0) yield return $"{compiled} compiles clean.";

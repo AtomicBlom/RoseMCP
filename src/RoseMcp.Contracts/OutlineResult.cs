@@ -43,6 +43,12 @@ public sealed record OutlinedType
 	public IReadOnlyList<SourceLocation> Declarations { get; init; } = [];
 
 	public required IReadOnlyList<OutlinedMember> Members { get; init; }
+
+	/// <summary>
+	/// How its members group by what they touch, where the caller asked. Absent otherwise, because
+	/// working it out means reading every member body and most outlines do not need it.
+	/// </summary>
+	public TypeCohesion? Cohesion { get; init; }
 }
 
 /// <summary>One member of a type: enough to decide about it without reading the file.</summary>
@@ -76,4 +82,37 @@ public sealed record OutlinedMember
 
 	/// <summary>Where it is, so the next call can name the file without a search.</summary>
 	public SourceLocation? Location { get; init; }
+}
+
+/// <summary>
+/// How a type's members group by what they touch, for deciding whether it is one thing or several.
+/// </summary>
+public sealed record TypeCohesion
+{
+	/// <summary>
+	/// The groups, largest first. One group means the type holds together; more than one means the
+	/// members fall into sets that share no state and never call each other.
+	/// </summary>
+	public required IReadOnlyList<MemberGroup> Groups { get; init; }
+
+	/// <summary>
+	/// Fields most of the members touch, left out of the grouping because state shared by nearly
+	/// everything says what the type is rather than which part of it a member belongs to.
+	/// </summary>
+	public required IReadOnlyList<string> Shared { get; init; }
+}
+
+/// <summary>Members that reference the same state, or each other, and nothing outside the group.</summary>
+public sealed record MemberGroup
+{
+	public required IReadOnlyList<string> Members { get; init; }
+
+	/// <summary>The fields only this group touches, which is the state it would take with it.</summary>
+	public IReadOnlyList<string> Fields { get; init; } = [];
+
+	/// <summary>
+	/// The line ranges it occupies, merged where they run together. One range is a block that lifts
+	/// out; several say the group is interleaved with the rest and what collecting it would cost.
+	/// </summary>
+	public required IReadOnlyList<string> Spans { get; init; }
 }

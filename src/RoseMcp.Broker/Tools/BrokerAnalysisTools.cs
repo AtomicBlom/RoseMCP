@@ -137,6 +137,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
 		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
 		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
+		[Description(ToolDescriptions.IncludeCohesionArgument)] bool includeCohesion = false,
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<OutlineResult>(WorkspaceHints.From(workspace, filePath), ToolNames.Outline, new()
@@ -146,6 +147,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 			["includeInherited"] = includeInherited,
 			["includeDocumentation"] = includeDocumentation,
 			["includeSignatures"] = includeSignatures,
+			["includeCohesion"] = includeCohesion,
 		}, cancellationToken, progress);
 
 	[McpServerTool(

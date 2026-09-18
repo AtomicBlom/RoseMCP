@@ -31,6 +31,7 @@ public static partial class OutlineService
 		bool includeInherited,
 		bool includeDocumentation,
 		bool includeSignatures,
+		bool includeCohesion,
 		CancellationToken cancellationToken)
 	{
 		var named = !string.IsNullOrWhiteSpace(type);
@@ -46,7 +47,7 @@ public static partial class OutlineService
 
 		var notices = new List<string>(snapshot.Notices);
 
-		var detail = new OutlineDetail(includeDocumentation, includeSignatures);
+		var detail = new OutlineDetail(includeDocumentation, includeSignatures, includeCohesion);
 
 		var types = named
 			? [await OfTypeAsync(snapshot, type!, filePath, includeInherited, detail, cancellationToken)]
@@ -72,7 +73,7 @@ public static partial class OutlineService
 	/// another parameter on every one of them.
 	/// </para>
 	/// </summary>
-	private readonly record struct OutlineDetail(bool Documentation, bool Signatures);
+	private readonly record struct OutlineDetail(bool Documentation, bool Signatures, bool Cohesion);
 
 	private static async Task<OutlinedType> OfTypeAsync(
 		WorkspaceSnapshot snapshot,
@@ -162,6 +163,9 @@ public static partial class OutlineService
 				: null,
 			BaseTypes = bases,
 			Summary = detail.Documentation ? Summary(symbol, cancellationToken) : null,
+			Cohesion = detail.Cohesion
+				? await Worker.Cohesion.OfAsync(symbol, snapshot.Solution, cancellationToken)
+				: null,
 			Declarations = declarations,
 			Members = members,
 		};

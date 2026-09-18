@@ -21,6 +21,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: true,
 			includeSignatures: true,
+			includeCohesion: false,
 			TestContext.Current!.Execution.CancellationToken);
 
 		var type = Assert.Single(result.Types);
@@ -61,6 +62,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: false,
 			includeSignatures: false,
+			includeCohesion: false,
 			TestContext.Current!.Execution.CancellationToken);
 
 		var type = Assert.Single(result.Types);
@@ -94,6 +96,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: documentation,
 			includeSignatures: signatures,
+			includeCohesion: false,
 			TestContext.Current!.Execution.CancellationToken);
 
 		// PrefixLength rather than Greet: it is declared once, so the name identifies it whether or not
@@ -124,6 +127,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: true,
 			includeSignatures: true,
+			includeCohesion: false,
 			TestContext.Current!.Execution.CancellationToken);
 
 		var type = Assert.Single(result.Types);
@@ -154,6 +158,7 @@ public sealed class OutlineTests
 			includeInherited: false,
 			includeDocumentation: true,
 			includeSignatures: true,
+			includeCohesion: false,
 			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(["Library.IShape", "Library.Colour", "Library.Empty"], result.Types.Select(type => type.Name));
@@ -180,6 +185,7 @@ public sealed class OutlineTests
 				includeInherited: false,
 				includeDocumentation: true,
 				includeSignatures: true,
+				includeCohesion: false,
 				TestContext.Current!.Execution.CancellationToken));
 	}
 

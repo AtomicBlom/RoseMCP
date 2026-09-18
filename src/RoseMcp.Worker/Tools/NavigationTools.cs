@@ -182,6 +182,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
 		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
 		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
+		[Description(ToolDescriptions.IncludeCohesionArgument)] bool includeCohesion = false,
 		CancellationToken cancellationToken = default)
 	{
 		using var following = sharedWork.Follow(WorkProgress.For(progress));
@@ -195,6 +196,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 			includeInherited,
 			includeDocumentation,
 			includeSignatures,
+			includeCohesion,
 			cancellationToken);
 	}
 

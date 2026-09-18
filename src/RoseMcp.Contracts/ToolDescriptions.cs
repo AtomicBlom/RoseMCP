@@ -144,6 +144,17 @@ public static class ToolDescriptions
 		"Give each member its full signature. On by default; off leaves the name, kind and location, "
 			+ "which is what a search through a large type needs.";
 
+	/// <summary>
+	/// Kept short because the result explains itself: the groups arrive with their fields and their
+	/// line ranges, and what those mean is legible from the shape. What the sentence has to carry is
+	/// the one thing a caller cannot see from the outside -- that this reads every member body, so it
+	/// is not the default and not free.
+	/// </summary>
+	public const string IncludeCohesionArgument =
+		"Also group the members by what they touch, with the line ranges each group occupies. More than "
+			+ "one group means the type is doing separate jobs in one file. Off by default; it reads "
+			+ "every body.";
+
 	public const string IncludeTriviaArgument =
 		"Match find against the body's text rather than its tokens, so it can lie inside a // comment or "
 			+ "a string. Spacing then matters and the replacement is written exactly as given. A match "

@@ -182,6 +182,13 @@ internal sealed class EditPipeline
 				: $"This introduced {Verification.Introduced.Count} error(s) in {compiled}.";
 		}
 
+		// What it put right, which is the other half of what an edit did and was said by one tool out
+		// of the six. Every result carries the count; only the import tool told anybody.
+		if (Verification.ResolvedCount > 0)
+		{
+			yield return $"{Verification.ResolvedCount} error(s) went away.";
+		}
+
 		if (Verification.TotalCount == 0) yield return $"{compiled} compiles clean.";
 
 		var existing = Verification.TotalCount - Verification.Introduced.Count;

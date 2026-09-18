@@ -365,4 +365,37 @@ public sealed class AddFileTests
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
 			TestContext.Current!.Execution.CancellationToken);
 	}
+
+	/// <summary>
+	/// A file added to a project that already has errors in it does not report the project clean. The
+	/// rule is the total, not this tool's own contribution: a caller told their project compiles at
+	/// the moment it does not will go looking for the error somewhere else entirely.
+	/// </summary>
+	[Test]
+	public async Task Does_not_call_a_project_clean_when_errors_were_already_in_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		// One error to be pre-existing by the time the file is added, in the project the file lands in.
+		var broken = await MemberEdits.EditAsync(
+			session,
+			MemberEdits.Request(MemberEditKind.Add, "Library.Prose", "public static string Missing() => Absent.Name;"));
+
+		Assert.NotEmpty(broken.IntroducedDiagnostics);
+
+		var result = await AddAsync(
+			session,
+			fixture.Path("Members", "Library", "Added.cs"),
+			"namespace Library;\n\npublic static class Added\n{\n\tpublic static string Name() => \"added\";\n}\n");
+
+		Assert.True(result.Applied);
+		Assert.True(result.Verified);
+		Assert.Empty(result.IntroducedDiagnostics);
+
+		var said = string.Join(" ", result.Notices);
+
+		Assert.DoesNotContain("compiles clean", said, StringComparison.Ordinal);
+		Assert.Contains("were there before this edit", said, StringComparison.Ordinal);
+	}
 }

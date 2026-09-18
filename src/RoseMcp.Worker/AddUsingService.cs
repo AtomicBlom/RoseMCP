@@ -14,8 +14,6 @@ namespace RoseMcp.Worker;
 /// </summary>
 public static class AddUsingService
 {
-	private const int Listed = 20;
-
 	public static async Task<MutationResult<UsingResult>> AddAsync(
 		WorkspaceSnapshot snapshot,
 		DiagnosticsService diagnostics,
@@ -24,7 +22,8 @@ public static class AddUsingService
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
-		snapshot.RefuseIfMoved(request.ExpectedRevision);
+		var edit = EditPipeline.Begin(
+			snapshot, diagnostics, request.ExpectedRevision, request.Apply, request.Verify, noteSelfWrite);
 
 		if (request.Namespaces.Count == 0) throw new ArgumentException("Name at least one namespace to import.");
 
@@ -55,26 +54,18 @@ public static class AddUsingService
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 55);
 
-		var outcome = await SolutionWriter.ApplyAsync(
-			snapshot.Solution, solution, request.Apply, noteSelfWrite, cancellationToken);
+		await edit.WriteAsync(solution, cancellationToken);
 
-		var verification = Verification.NotRun;
+		if (request.Verify && edit.Changed) progress?.Report("Compiling to see what the import did", 75);
 
-		if (request.Verify && outcome.ChangedFiles.Count > 0)
-		{
-			progress?.Report("Compiling to see what the import did", 75);
+		await edit.VerifyAsync(
+			document.FilePath!,
+			EditVerification.ProjectsHolding(solution, document.FilePath!),
+			cancellationToken);
 
-			verification = await EditVerification.RunAsync(
-				diagnostics,
-				snapshot.Solution,
-				solution,
-				EditVerification.ProjectsHolding(solution, document.FilePath!),
-				document.FilePath,
-				cancellationToken);
-		}
-
-		var notices = new List<string>(snapshot.Notices);
-		notices.AddRange(Notices(request, insertion, verification, outcome));
+		var notices = edit.Notices;
+		notices.AddRange(Notices(insertion, edit.Verification));
+		notices.AddRange(edit.Report());
 
 		var result = new UsingResult
 		{
@@ -82,34 +73,26 @@ public static class AddUsingService
 			FilePath = document.FilePath!,
 			Added = insertion.Added,
 			AlreadyInScope = insertion.AlreadyInScope,
-			Applied = request.Apply && outcome.ChangedFiles.Count > 0,
-			Diff = outcome.Diff,
-			Verified = verification.Ran,
-			IntroducedDiagnostics = [.. verification.Introduced.Take(Listed)],
-			ResolvedDiagnosticCount = verification.ResolvedCount,
-			TotalErrorCount = verification.TotalCount,
-			ProjectsChecked = verification.Projects,
-			ChangedFiles = outcome.ChangedFiles,
+			Applied = edit.Applied,
+			Diff = edit.Outcome.Diff,
+			Verified = edit.Verification.Ran,
+			IntroducedDiagnostics = edit.Introduced,
+			ResolvedDiagnosticCount = edit.Verification.ResolvedCount,
+			TotalErrorCount = edit.Verification.TotalCount,
+			ProjectsChecked = edit.Verification.Projects,
+			ChangedFiles = edit.Outcome.ChangedFiles,
 			Notices = notices,
 		};
 
-		var changed = request.Apply && outcome.ChangedFiles.Count > 0 ? solution : null;
-
-		return new MutationResult<UsingResult>(result, changed);
+		return new MutationResult<UsingResult>(result, edit.Kept);
 	}
 
-	private static IEnumerable<string> Notices(
-		AddUsingRequest request,
-		UsingInsertion insertion,
-		Verification verification,
-		WriteOutcome outcome)
+	/// <summary>
+	/// What importing a namespace has to say that no other writing tool does. Everything about the
+	/// write and the compile comes from <see cref="EditPipeline.Report"/>, which runs after this.
+	/// </summary>
+	private static IEnumerable<string> Notices(UsingInsertion insertion, Verification verification)
 	{
-		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
-
-		// What the diff could not show. An import goes in as one line, so a diff that carries more
-		// than that has had the file's endings rewritten around it.
-		foreach (var notice in outcome.Notices) yield return notice;
-
 		if (insertion.Added.Count == 0)
 		{
 			yield return "Every namespace asked for was in scope already, so the file was not touched.";
@@ -118,23 +101,6 @@ public static class AddUsingService
 		foreach (var covered in insertion.AlreadyInScope)
 		{
 			yield return $"Did not import {covered}.";
-		}
-
-		if (!verification.Ran)
-		{
-			if (outcome.ChangedFiles.Count > 0)
-			{
-				yield return "Nothing was compiled, so this says nothing about what the import resolved.";
-			}
-
-			yield break;
-		}
-
-		foreach (var notice in verification.Notices) yield return notice;
-
-		if (verification.ResolvedCount > 0)
-		{
-			yield return $"{verification.ResolvedCount} error(s) went away.";
 		}
 
 		if (verification.Introduced.Count == 0) yield break;

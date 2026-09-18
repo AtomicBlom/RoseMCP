@@ -445,6 +445,66 @@ revision 1). Sizes are the raw JSON as it arrived.
   write into the wrong worktree into a loud error, and it is the precondition that makes returning
   relative paths safe rather than merely cheaper.
 
+### AGT-22 Tools that are plural by intent are singular by signature, and the cost is model turns rather than round trips
+
+- **Severity:** Medium
+- **Effort:** M
+- **Where:** `src/RoseMcp.LiveApp/Tools/LiveAppTracepointTools.cs`,
+  `src/RoseMcp.LiveApp/Tools/LiveAppBreakpointTools.cs`,
+  `src/RoseMcp.Broker/Tools/LiveAppDebugTools.cs`; contrast
+  `src/RoseMcp.Worker/Tools/RefactoringTools.cs:116` (`string[] filePaths`), `:353`
+  (`string[] namespaces`), and `src/RoseMcp.Contracts/LiveXamlApplyResult.cs` with
+  `LiveXamlEditResult`
+- **What:** `rose_debug_add_tracepoint` takes exactly one location, and so do
+  `rose_debug_set_breakpoint`, `rose_debug_remove_tracepoint` and `rose_debug_remove_breakpoint`.
+  Instrumenting a code path is never one tracepoint: it is entry, exit, the branch you suspect, and
+  the loop you do not trust. Six tracepoints is six calls.
+
+  The tool's own description positions it against the alternative: "Prefer this over adding logging
+  statements and rebuilding". **That alternative is plural in a single edit.** A person adding log
+  statements adds five in one pass and runs once. The tool it is meant to beat collapses the set into
+  one action, and this one does not.
+
+  The same shape appears on the read side, and it has already cost a reviewer. The UI usability
+  review wanted "which members of this type are referenced by nobody" across about twenty
+  properties, found `rose_find_references` to be one symbol per call, and went to grep. That is a
+  documented loss caused by a signature rather than by an answer.
+- **Why it matters:** **In an agentic loop a round trip is not a network hop, it is a model turn.**
+  Six tracepoints is six turns: six chances for the agent to lose the thread, six result envelopes
+  each carrying `revision`, `workspace`, `workspaceKey` and `sessionId` (AGT-21), and six
+  opportunities for a partial failure the agent must now reconcile by hand -- three tracepoints set,
+  one refused, and no statement anywhere of what the session currently holds.
+
+  This is worth saying because it cannot be fixed at the protocol. Even where JSON-RPC offers
+  batching, the model still has to *decide* each call separately, so wire-level batching would save
+  nothing that matters here. Only a plural argument shape collapses N decisions into one, which is
+  why this is an agentic-citizenship finding and not an API-ergonomics one.
+- **Suggested change:** Apply the pattern the repository already has, rather than inventing one.
+
+  1. **Take an array.** Four writing tools already take `string[]` arguments (`filePaths`,
+     `namespaces`, `usings`, `arguments`), so there is neither a technical nor a stylistic objection.
+     Make `location` a list rather than adding a second plural spelling beside a singular one: two
+     spellings of one idea is the inconsistency AGT-09 already raises.
+  2. **Return per-item outcomes, copying `LiveXamlApplyResult` exactly.** It already has the right
+     shape -- an `Applied` count, a `Total`, one `Results` entry per item with a `Status` that is
+     either applied or the reason it was not, `Notes` for what could not be done at all, and
+     `Detail` for the case where the whole operation could not run. A tracepoint batch wants
+     precisely that: bound, not bound because the module is not loaded yet, refused because the
+     condition does not parse.
+  3. **Never fail the batch for one item.** The XAML apply already establishes that and the
+     reasoning is the same: a partial result the caller can read beats an all-or-nothing refusal
+     when the items are independent.
+  4. **Sequence it behind the read-size work.** Batching a read whose per-item payload is already
+     large multiplies the payload as well as saving the turns: ten outlines at fourteen kilobytes is
+     a worse answer, not a better one. So batch the debug family now, where results are small, and
+     the read family (`rose_symbol_info`, `rose_outline`, `rose_find_references`) after card 11.
+
+  The tools worth the change, by whether one intent commonly produces many calls: the four debug
+  bookkeeping tools now; `rose_find_references`, `rose_symbol_info` and `rose_outline` after the size
+  work; `rose_delete_member` and `rose_add_member` as candidates. Genuinely singular and to be left
+  alone: `rose_replace_body`, `rose_rename_symbol`, `rose_add_file`, `rose_move_type_to_file`, and
+  every execution-control verb, where ordering is the meaning.
+
 ## Why tools lose to grep, ranked
 
 From the 18-issue corpus, the three other reviewers' dogfooding notes, and my own ~30 calls. Ranked

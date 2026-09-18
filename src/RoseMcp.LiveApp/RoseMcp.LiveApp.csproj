@@ -1,7 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- Windows subsystem, though it speaks MCP over stdio and never shows a window. The subsystem
+         decides only whether the OS *allocates* a console, not whether stdio works: redirected
+         handles are inherited either way, which is how every session the broker starts talks to it.
+         A console subsystem costs a visible window wherever something other than the broker starts
+         this binary, and the UWP from-birth attach is exactly that: PLM launches it as the
+         package's debugger (see UwpResumeStub), so the OS allocates the console and nothing in this
+         repository is in the path to suppress it. -->
+    <OutputType>WinExe</OutputType>
     <!-- Windows-only by nature: it loads the target's mscordbi and uses the UWP shell COM interfaces,
          so it targets net10.0-windows (which satisfies the platform-compatibility analyzer without any
          extra runtime dependency, since it uses neither WinForms nor WPF). -->

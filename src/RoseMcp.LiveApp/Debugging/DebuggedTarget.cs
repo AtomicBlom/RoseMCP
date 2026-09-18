@@ -4,6 +4,8 @@ using ClrDebug;
 
 using Microsoft.Extensions.Logging;
 
+using RoseMcp.Contracts;
+
 namespace RoseMcp.LiveApp.Debugging;
 
 /// <summary>
@@ -173,4 +175,16 @@ internal sealed class DebuggedTarget(DebugEventBuffer buffer, ILogger logger)
 	internal void Terminate() => _runtime.Terminate();
 
 	private void Move(TargetExecution next) => Volatile.Write(ref _execution, next);
+
+	/// <summary>
+	/// The stop being held, described, or null when the target is running. The one call a reader
+	/// needs before asking for frames, locals or threads at all.
+	/// </summary>
+	internal LiveStop? CurrentStop()
+	{
+		lock (Gate)
+		{
+			return Stop?.Describe();
+		}
+	}
 }

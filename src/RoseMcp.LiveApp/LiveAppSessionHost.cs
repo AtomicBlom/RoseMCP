@@ -181,40 +181,40 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	/// <summary>Adds a tracepoint to the attached target.</summary>
 	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit, string? condition)
-		=> RequireSession().AddTracepoint(location, logMessage, logEveryNthHit, condition);
+		=> RequireSession().Bindings.AddTracepoint(location, logMessage, logEveryNthHit, condition);
 
 	public LiveTracepointList ListTracepoints()
 	{
 		var session = Attached();
 
-		return new LiveTracepointList { Tracepoints = session?.ListTracepoints() ?? [] };
+		return new LiveTracepointList { Tracepoints = session?.Bindings.ListTracepoints() ?? [] };
 	}
 
 	public LiveTracepointList RemoveTracepoint(string id)
 	{
 		var session = Attached();
 
-		session?.RemoveTracepoint(id);
-		return new LiveTracepointList { Tracepoints = session?.ListTracepoints() ?? [] };
+		session?.Bindings.Remove(id);
+		return new LiveTracepointList { Tracepoints = session?.Bindings.ListTracepoints() ?? [] };
 	}
 
 	/// <summary>Sets a stopping breakpoint on the attached target.</summary>
 	public LiveBreakpoint SetBreakpoint(string location, int? autoContinueSeconds, string? condition)
-		=> RequireSession().AddBreakpoint(location, autoContinueSeconds, condition);
+		=> RequireSession().Bindings.AddBreakpoint(location, autoContinueSeconds, condition);
 
 	public LiveBreakpointList ListBreakpoints()
 	{
 		var session = Attached();
 
-		return new LiveBreakpointList { Breakpoints = session?.ListBreakpoints() ?? [] };
+		return new LiveBreakpointList { Breakpoints = session?.Bindings.ListBreakpoints() ?? [] };
 	}
 
 	public LiveBreakpointList RemoveBreakpoint(string id)
 	{
 		var session = Attached();
 
-		session?.RemoveBreakpoint(id);
-		return new LiveBreakpointList { Breakpoints = session?.ListBreakpoints() ?? [] };
+		session?.Bindings.Remove(id);
+		return new LiveBreakpointList { Breakpoints = session?.Bindings.ListBreakpoints() ?? [] };
 	}
 
 	/// <summary>Resumes a target held at a stopping breakpoint; false when nothing was stopped.</summary>
@@ -240,7 +240,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	{
 		var session = Attached();
 
-		return session?.Evaluate(expression)
+		return session?.Inspection.Evaluate(expression)
 			?? new LiveEvaluation { Expression = expression, Error = "This session is not attached to a target." };
 	}
 
@@ -260,7 +260,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			};
 		}
 
-		return session.ReadFrames(threadId, offset, limit);
+		return session.Inspection.ReadFrames(threadId, offset, limit);
 	}
 
 	/// <summary>One frame's arguments and locals, named from the module's symbols where there are any.</summary>
@@ -279,7 +279,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			};
 		}
 
-		return session.ReadFrameVariables(frameIndex, threadId);
+		return session.Inspection.ReadFrameVariables(frameIndex, threadId);
 	}
 
 	/// <summary>What is inside a value: an object's fields, or an array's elements.</summary>
@@ -297,7 +297,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			};
 		}
 
-		return session.Expand(path, frameIndex, threadId);
+		return session.Inspection.Expand(path, frameIndex, threadId);
 	}
 
 	/// <summary>Every managed thread of the stopped target, the held one first.</summary>
@@ -308,7 +308,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			return new LiveThreadList { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail };
 		}
 
-		return session.ReadThreads();
+		return session.Inspection.ReadThreads();
 	}
 
 	/// <summary>Takes or releases an operator's hold, which suspends the stop's safety timer.</summary>
@@ -348,7 +348,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			};
 		}
 
-		return session.SearchMethods(query, limit);
+		return session.Bindings.SearchMethods(query, limit);
 	}
 
 	/// <summary>A method's source and the positions inside it a breakpoint can be set at.</summary>
@@ -369,7 +369,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			};
 		}
 
-		return session.ReadMethodSource(location);
+		return session.Bindings.ReadMethodSource(location);
 	}
 
 	/// <summary>The debug session, or null when this host has no target.</summary>

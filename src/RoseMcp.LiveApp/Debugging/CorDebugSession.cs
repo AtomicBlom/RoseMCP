@@ -19,7 +19,7 @@ namespace RoseMcp.LiveApp.Debugging;
 /// is a turn-based agent that looks between its turns.
 /// </para>
 /// </summary>
-internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) : IDisposable
+internal sealed class CorDebugSession : IDisposable
 {
 	/// <summary>
 	/// How long a manual pause waits for the runtime to reach a point it can be stopped at. Generous,
@@ -27,23 +27,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// bound rather than none, because a runtime that never gets there must not take the caller with it.
 	/// </summary>
 	private const int BreakTimeoutMilliseconds = 5000;
-
-	/// <summary>How many frames a caller gets when it does not say. Enough to see how it got here.</summary>
-	private const int DefaultFrameLimit = 50;
-
-	/// <summary>
-	/// How many of a value's children are reported. An array of a million elements is a real thing
-	/// to stop on, and reading every element to answer one expander is not.
-	/// </summary>
-	private const int MaxChildren = 100;
-
-	/// <summary>
-	/// What every inspection answers with when the target is not held. Said rather than refused: a
-	/// stop ends for reasons the caller did not cause, and an error would read as a broken call.
-	/// </summary>
-	private const string NotStoppedDetail =
-		"The target is running. Frames, variables and threads can only be read while it is held at a "
-			+ "breakpoint or a step.";
 
 	/// <summary>
 	/// The longest an operator's hold can suspend the safety timer for. A hold exists so a stack does
@@ -55,15 +38,11 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// <summary>What a hold lasts when the caller does not say. Long enough to read a stack and think.</summary>
 	private const int DefaultHoldSeconds = 300;
 
-	// Reading a stopped target, which needs none of this session's state -- it is handed the process
-	// and the held thread per call. Separate because holding a stop and reading one are different jobs.
-	private readonly CorDebugInspector _inspector = new(logger);
-
 	/// <summary>
 	/// What a stop event says about where the target stopped. Read from the thread on the callback
 	/// that announced it, because that is when the thread is known to be stopped.
 	/// </summary>
-	private readonly StopNarrative _narrative = new(logger);
+	private readonly StopNarrative _narrative;
 
 	/// <summary>
 	/// Steppers issued and not yet completed. ICorDebug refuses to detach while one is outstanding,
@@ -73,37 +52,45 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	private readonly List<CorDebugStepper> _steppers = [];
 
 	/// <summary>
-	/// Every module file the target has loaded, and what their metadata and symbols say.
-	/// <para>
-	/// Kept rather than asked for each time, because asking means synchronizing the target and a
-	/// search runs on every keystroke of an autocomplete. What is inside a module is on disk, so once
-	/// the path is known nothing else about the answer needs the debuggee at all.
-	/// </para>
-	/// </summary>
-	private readonly TargetSymbols _symbols = new(logger);
-
-	/// <summary>
-	/// Every breakpoint and tracepoint asked for, bound or waiting for the module that would carry it.
-	/// </summary>
-	private readonly BreakpointTable _breakpoints = new(buffer, logger);
-
-	/// <summary>
 	/// The process being debugged and what it is doing, with the lock that makes those one answer.
 	/// Every verb below starts by asking it the same two things: whether there is still a target, and
 	/// whether it is stopped. It owns every transition, so nothing here can move the target behind it.
 	/// </summary>
-	private readonly DebuggedTarget _target = new(buffer, logger);
+	private readonly DebuggedTarget _target;
 
 	/// <summary>
 	/// How a detach is attempted and what it says when it fails. The state transitions stay here; the
 	/// counting and the deciding are its.
 	/// </summary>
-	private readonly DetachProtocol _detach = new(buffer, logger);
+	private readonly DetachProtocol _detach;
 
 	/// <summary>
-	/// The process being debugged and what it is doing, with the lock that makes those one answer.
-	/// Every verb below starts by asking it whether there is still a target and whether it is stopped.
+	/// The breakpoints and tracepoints set on this target, and the module metadata that says where
+	/// each one goes. Reached through rather than wrapped, because it needs nothing from this session
+	/// beyond the target it is set on.
 	/// </summary>
+	internal TargetBreakpoints Bindings { get; }
+
+	/// <summary>
+	/// Reading the target while it is held: frames, variables, threads and expressions. Reached
+	/// through for the same reason as <see cref="Bindings"/> -- holding a stop and reading one are
+	/// different jobs, and reading needs nothing from this session but the target.
+	/// </summary>
+	internal TargetInspection Inspection { get; }
+
+	private readonly DebugEventBuffer _buffer;
+	private readonly ILogger _logger;
+
+	internal CorDebugSession(DebugEventBuffer buffer, ILogger logger)
+	{
+		_buffer = buffer;
+		_logger = logger;
+		_narrative = new StopNarrative(logger);
+		_target = new DebuggedTarget(buffer, logger);
+		_detach = new DetachProtocol(buffer, logger);
+		Bindings = new TargetBreakpoints(_target, buffer, logger);
+		Inspection = new TargetInspection(_target, logger);
+	}
 
 	public int? TargetProcessId => _target.ProcessId;
 
@@ -228,14 +215,14 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 				process.Detach();
 				_target.Detached();
-				buffer.Append(LiveDebugEventKind.SessionNotice, "Detached; the target keeps running.");
-				logger.LogInformation("Detached from pid {Pid} on attempt {Attempt}.", TargetProcessId, attempt);
+				_buffer.Append(LiveDebugEventKind.SessionNotice, "Detached; the target keeps running.");
+				_logger.LogInformation("Detached from pid {Pid} on attempt {Attempt}.", TargetProcessId, attempt);
 				return true;
 			}
 			catch (Exception exception)
 			{
 				failure = exception;
-				logger.LogWarning(
+				_logger.LogWarning(
 					exception, "Detach from pid {Pid} failed on attempt {Attempt}.", TargetProcessId, attempt);
 				return false;
 			}
@@ -268,7 +255,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// </summary>
 	private void ReleaseForDetach()
 	{
-		_breakpoints.ReleaseForDetach();
+		Bindings.ReleaseForDetach();
 
 		foreach (var stepper in _steppers)
 		{
@@ -278,109 +265,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			}
 			catch (Exception exception)
 			{
-				logger.LogDebug(exception, "Deactivating a stepper before detaching failed.");
+				_logger.LogDebug(exception, "Deactivating a stepper before detaching failed.");
 			}
 		}
 
 		_steppers.Clear();
 	}
-
-	/// <summary>
-	/// Whether a detach failure is a refusal rather than contention. ICorDebug says no to detaching
-	/// over outstanding breakpoints, steppers, evaluations, an edit-and-continue session or held target
-	/// resources, and says it the same way however many times it is asked -- so retrying one of these
-	/// turns a deterministic refusal into a slightly slower deterministic refusal, and calls it
-	/// transient in the log while doing so.
-	/// </summary>
-	/// <summary>
-	/// Adds a tracepoint: a breakpoint that logs and auto-continues, never pausing the target. It binds
-	/// immediately if its module is already loaded and otherwise when the module loads.
-	/// </summary>
-	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit, string? condition)
-	{
-		if (logEveryNthHit is < 1) throw new ArgumentException("logEveryNthHit must be at least 1.");
-
-		var binding = AddBinding(location, stopOnHit: false, logMessage, logEveryNthHit, autoContinueSeconds: null, condition);
-		lock (_target.Gate)
-		{
-			return BreakpointTable.DescribeTracepoint(binding);
-		}
-	}
-
-	/// <summary>
-	/// Adds a stopping breakpoint: on hit it holds the target and records the stop with its stack, then
-	/// auto-continues after <paramref name="autoContinueSeconds"/> (default 30) so an unattended stop
-	/// cannot wedge the app. Call <see cref="Continue"/> to resume sooner.
-	/// </summary>
-	public LiveBreakpoint AddBreakpoint(string location, int? autoContinueSeconds, string? condition)
-	{
-		if (autoContinueSeconds is < 1) throw new ArgumentException("autoContinueSeconds must be at least 1.");
-
-		var binding = AddBinding(location, stopOnHit: true, logMessage: null, logEveryNthHit: null, autoContinueSeconds, condition);
-		lock (_target.Gate)
-		{
-			return BreakpointTable.DescribeBreakpoint(binding);
-		}
-	}
-
-	public IReadOnlyList<LiveTracepoint> ListTracepoints()
-	{
-		lock (_target.Gate)
-		{
-			return _breakpoints.Tracepoints();
-		}
-	}
-
-	public IReadOnlyList<LiveBreakpoint> ListBreakpoints()
-	{
-		lock (_target.Gate)
-		{
-			return _breakpoints.Breakpoints();
-		}
-	}
-
-	/// <summary>
-	/// Finds methods by name across the target's loaded modules, best first, for choosing somewhere
-	/// to put a breakpoint without an IDE to browse.
-	/// <para>
-	/// The reading happens outside the session's lock and outside the debuggee. Which modules are
-	/// loaded is the only thing the target is asked, and that is asked once; everything after it is
-	/// metadata on disk. So this answers while the target is running, which is what an autocomplete
-	/// needs -- and it answers while the target is wedged, which is when somebody most wants to set a
-	/// breakpoint.
-	/// </para>
-	/// </summary>
-	/// <exception cref="ArgumentException">The limit is below one.</exception>
-	public LiveMethodMatches SearchMethods(string? query, int limit)
-	{
-		// Before the module paths are asked for, because asking can stop the target to walk them and
-		// a limit that cannot be honoured must not cost the debuggee a synchronization.
-		if (limit < 1) throw new ArgumentException("limit must be at least 1.", nameof(limit));
-
-		return TargetSymbols.Search(ModulePaths(), query, limit);
-	}
-
-	/// <summary>
-	/// A method's source and every position inside it a breakpoint can be set at.
-	/// <para>
-	/// The positions cover the lambdas, local functions and state machines written inside the method
-	/// as well as the method itself, because that is where the instructions for those lines actually
-	/// live. Each carries the location that breaks there, so picking a line inside a lambda produces
-	/// a breakpoint in the lambda without anybody having to know its name.
-	/// </para>
-	/// <para>
-	/// Every way this can come up short -- no such module, no such method, no symbols, symbols from
-	/// another build, a source file this machine never had -- is a sentence and an empty listing
-	/// rather than a refusal, because a breakpoint at the method's first instruction is still
-	/// available in all of them.
-	/// </para>
-	/// </summary>
-	/// <exception cref="ArgumentException">The location does not parse.</exception>
-	public LiveMethodSource ReadMethodSource(string location) => TargetSymbols.ReadSource(ModulePaths(), location);
-
-	public bool RemoveTracepoint(string id) => RemoveBinding(id);
-
-	public bool RemoveBreakpoint(string id) => RemoveBinding(id);
 
 	/// <summary>
 	/// Resumes a target held at a breakpoint or a step, reporting whether anything was held and
@@ -425,7 +315,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			}
 			catch (Exception exception)
 			{
-				logger.LogWarning(exception, "Issuing a {Mode} step failed.", mode);
+				_logger.LogWarning(exception, "Issuing a {Mode} step failed.", mode);
 				return new LiveContinueResult { Continued = false };
 			}
 
@@ -440,7 +330,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			}
 			catch (Exception exception)
 			{
-				logger.LogWarning(exception, "Continuing for a step failed.");
+				_logger.LogWarning(exception, "Continuing for a step failed.");
 				return new LiveContinueResult { Continued = false };
 			}
 
@@ -476,13 +366,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	/// The stop this session is holding, or null when the target is running. The one call a reader
 	/// needs to know whether frames, locals and threads can be asked for at all.
 	/// </summary>
-	public LiveStop? CurrentStop()
-	{
-		lock (_target.Gate)
-		{
-			return _target.Stop?.Describe();
-		}
-	}
+	public LiveStop? CurrentStop() => _target.CurrentStop();
 
 	/// <summary>
 	/// Stops the target where it stands, rather than where a breakpoint would have put it.
@@ -517,7 +401,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 		catch (Exception exception)
 		{
-			logger.LogWarning(exception, "Pausing pid {Pid} failed.", TargetProcessId);
+			_logger.LogWarning(exception, "Pausing pid {Pid} failed.", TargetProcessId);
 			return NotPaused($"The target could not be paused: {exception.Message}");
 		}
 
@@ -563,12 +447,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			{
 				any ??= thread;
 
-				if (_inspector.WalkFrames(thread).Frames.Count > 0) return thread;
+				if (Inspection.HasManagedFrames(thread)) return thread;
 			}
 		}
 		catch (Exception exception)
 		{
-			logger.LogDebug(exception, "Choosing a thread to pause pid {Pid} on failed.", TargetProcessId);
+			_logger.LogDebug(exception, "Choosing a thread to pause pid {Pid} on failed.", TargetProcessId);
 		}
 
 		return any;
@@ -583,7 +467,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 		catch (Exception exception)
 		{
-			logger.LogWarning(exception, "Giving back an unused stop on pid {Pid} failed.", TargetProcessId);
+			_logger.LogWarning(exception, "Giving back an unused stop on pid {Pid} failed.", TargetProcessId);
 		}
 	}
 
@@ -666,7 +550,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		stop.HoldForOperator(TimeSpan.FromSeconds(seconds), () => ContinueInternal(ResumeCause.HoldExpiry, stop));
 
-		buffer.Append(
+		_buffer.Append(
 			LiveDebugEventKind.SessionNotice,
 			$"Held for an operator until {stop.HoldUntilUtc:HH:mm:ss}Z; the auto-continue timer is suspended "
 				+ "until then or until something resumes the target.");
@@ -684,142 +568,12 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		stop.ArmSafetyTimer(() => ContinueInternal(ResumeCause.SafetyTimer, stop));
 
-		buffer.Append(
+		_buffer.Append(
 			LiveDebugEventKind.SessionNotice,
 			$"The operator hold is released; the target auto-continues in {stop.AutoContinueSeconds}s.");
 
 		return stop.Describe();
 	}
-
-	/// <summary>
-	/// A page of a stopped thread's call stack. Reports the target as running rather than refusing
-	/// when nothing is held, because a stop ends on its own and a caller polling one is not at fault.
-	/// </summary>
-	/// <param name="threadId">The thread to walk, or null for the one the debugger is holding.</param>
-	/// <param name="offset">Where to start, zero being the innermost frame.</param>
-	/// <param name="limit">How many frames to report, or null for a sensible page.</param>
-	/// <exception cref="ArgumentException">The offset or limit is negative, or the thread is not there.</exception>
-	public LiveStackFrames ReadFrames(int? threadId, int offset, int? limit)
-	{
-		if (offset < 0) throw new ArgumentException($"A frame offset cannot be negative; {offset} was asked for.");
-		if (limit is < 1) throw new ArgumentException($"A frame limit has to be at least 1; {limit} was asked for.");
-
-		lock (_target.Gate)
-		{
-			if (CurrentStop() is not { } stop)
-			{
-				return new LiveStackFrames
-				{
-					Execution = LiveExecutionState.Running,
-					Detail = NotStoppedDetail,
-					ThreadId = threadId,
-					Offset = offset,
-					Total = 0,
-					Truncated = false,
-				};
-			}
-
-			return _inspector.Frames(Stopped(stop), threadId, offset, limit ?? DefaultFrameLimit);
-		}
-	}
-
-	/// <summary>
-	/// One frame's arguments and locals. The frame is named by its index in the stack this session
-	/// would report now, so a caller reads a stack and then asks about a row of it.
-	/// </summary>
-	/// <exception cref="ArgumentException">The index is negative, the thread is not there, or there is no such frame.</exception>
-	public LiveFrameVariables ReadFrameVariables(int frameIndex, int? threadId)
-	{
-		if (frameIndex < 0) throw new ArgumentException($"A frame index cannot be negative; {frameIndex} was asked for.");
-
-		lock (_target.Gate)
-		{
-			if (CurrentStop() is not { } stop)
-			{
-				return new LiveFrameVariables
-				{
-					Execution = LiveExecutionState.Running,
-					Detail = NotStoppedDetail,
-					FrameIndex = frameIndex,
-					ThreadId = threadId,
-					Symbols = LiveSymbolState.NoSymbols,
-					Truncated = false,
-				};
-			}
-
-			return _inspector.Variables(Stopped(stop), frameIndex, threadId);
-		}
-	}
-
-	/// <summary>
-	/// What is inside a value: an object's fields, or an array's elements, addressed by the same
-	/// <see cref="LiveVariable.Path"/> the value was reported under.
-	/// </summary>
-	/// <exception cref="ArgumentException">The path does not parse, the frame is not there, or the path resolves to nothing.</exception>
-	public LiveValueExpansion Expand(string path, int frameIndex, int? threadId)
-	{
-		// Parsed before the lock, because a path that does not parse is the caller's mistake and
-		// there is no reason to hold the session to say so.
-		var parsed = ValuePath.Parse(path);
-		if (frameIndex < 0) throw new ArgumentException($"A frame index cannot be negative; {frameIndex} was asked for.");
-
-		lock (_target.Gate)
-		{
-			if (CurrentStop() is not { } stop)
-			{
-				return new LiveValueExpansion
-				{
-					Execution = LiveExecutionState.Running,
-					Detail = NotStoppedDetail,
-					Path = path,
-					Total = 0,
-					Truncated = false,
-				};
-			}
-
-			return _inspector.Expand(Stopped(stop), parsed, path, frameIndex, threadId);
-		}
-	}
-
-	/// <summary>
-	/// Every managed thread of the stopped target, the held one first. Only while stopped: reading
-	/// threads needs the runtime synchronized, and synchronizing it to answer would stop the app.
-	/// </summary>
-	public LiveThreadList ReadThreads()
-	{
-		lock (_target.Gate)
-		{
-			if (CurrentStop() is not { } stop)
-			{
-				return new LiveThreadList { Execution = LiveExecutionState.Running, Detail = NotStoppedDetail };
-			}
-
-			return _inspector.Threads(Stopped(stop));
-		}
-	}
-
-	/// <summary>
-	/// Evaluates a field-access expression against the held frame. No debuggee code runs, so a
-	/// property with a getter cannot be read and nothing the expression names can have a side effect.
-	/// </summary>
-	public LiveEvaluation Evaluate(string expression)
-	{
-		lock (_target.Gate)
-		{
-			if (!_target.TryHeld(out _, out var stop))
-			{
-				return new LiveEvaluation { Expression = expression, Error = "The target is not stopped; evaluation needs a stop at a breakpoint or step." };
-			}
-
-			return _inspector.Evaluate(stop.Thread, expression);
-		}
-	}
-
-	/// <summary>
-	/// The stopped state, for handing to the inspector. Only correct while the target's gate is held and
-	/// the target is stopped, which is why every caller above is inside the lock and past the guard.
-	/// </summary>
-	private StoppedTarget Stopped(LiveStop stop) => new(_target.Process!, _target.Stop?.Thread, stop);
 
 	/// <summary>
 	/// Detaches, and terminates the debugging interface only if that worked.
@@ -838,7 +592,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 	{
 		if (!Detach(out _))
 		{
-			logger.LogWarning(
+			_logger.LogWarning(
 				"Leaving the ICorDebug interface open for pid {Pid}: the detach failed, and terminating it "
 					+ "while still attached would take the target down.",
 				TargetProcessId);
@@ -847,26 +601,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 
 		_target.Terminate();
-	}
-
-	private BreakpointBinding AddBinding(string location, bool stopOnHit, string? logMessage, int? logEveryNthHit, int? autoContinueSeconds, string? condition)
-	{
-		BreakpointBinding binding;
-		lock (_target.Gate)
-		{
-			binding = _breakpoints.Add(location, stopOnHit, logMessage, logEveryNthHit, autoContinueSeconds, condition);
-		}
-
-		BindAgainstLoadedModules();
-		return binding;
-	}
-
-	private bool RemoveBinding(string id)
-	{
-		lock (_target.Gate)
-		{
-			return _breakpoints.Remove(id);
-		}
 	}
 
 	/// <summary>
@@ -906,7 +640,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			}
 			catch (Exception exception)
 			{
-				logger.LogWarning(exception, "Continuing from a stop failed.");
+				_logger.LogWarning(exception, "Continuing from a stop failed.");
 				return new LiveContinueResult { Continued = false };
 			}
 
@@ -919,7 +653,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 					+ (releasedHold ? " The operator hold on it is released." : string.Empty),
 			};
 
-			buffer.Append(LiveDebugEventKind.SessionNotice, said);
+			_buffer.Append(LiveDebugEventKind.SessionNotice, said);
 
 			return new LiveContinueResult
 			{
@@ -959,7 +693,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			}
 			catch (Exception exception)
 			{
-				logger.LogDebug(exception, "Continue failed for a {Kind} arriving during a detach.", e.Kind);
+				_logger.LogDebug(exception, "Continue failed for a {Kind} arriving during a detach.", e.Kind);
 			}
 
 			return;
@@ -972,7 +706,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 		catch (Exception exception)
 		{
-			logger.LogDebug(exception, "A debug event handler failed for {Kind}.", e.Kind);
+			_logger.LogDebug(exception, "A debug event handler failed for {Kind}.", e.Kind);
 		}
 
 		if (e.Kind == CorDebugManagedCallbackKind.ExitProcess)
@@ -997,7 +731,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			}
 			catch (Exception exception)
 			{
-				logger.LogDebug(exception, "Continue failed after {Kind}.", e.Kind);
+				_logger.LogDebug(exception, "Continue failed after {Kind}.", e.Kind);
 			}
 		}
 	}
@@ -1010,16 +744,16 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			case CreateProcessCorDebugManagedCallbackEventArgs created:
 				// Debugger.Log in the debuggee only produces LogMessage events once this is on.
 				created.Process.EnableLogMessages(true);
-				buffer.Append(LiveDebugEventKind.ProcessCreated, $"Process {created.Process.Id} reported to the debugger.");
+				_buffer.Append(LiveDebugEventKind.ProcessCreated, $"Process {created.Process.Id} reported to the debugger.");
 				return true;
 
 			case LoadModuleCorDebugManagedCallbackEventArgs loaded:
-				buffer.Append(LiveDebugEventKind.ModuleLoaded, $"Loaded {loaded.Module.Name}", moduleName: loaded.Module.Name);
-				BindModule(loaded.Module);
+				_buffer.Append(LiveDebugEventKind.ModuleLoaded, $"Loaded {loaded.Module.Name}", moduleName: loaded.Module.Name);
+				Bindings.BindModule(loaded.Module);
 				return true;
 
 			case LogMessageCorDebugManagedCallbackEventArgs log:
-				buffer.Append(
+				_buffer.Append(
 					LiveDebugEventKind.LogMessage,
 					$"[{log.LogSwitchName}] {log.Message.TrimEnd()}",
 					threadId: CorDebugInspector.TryThreadId(log.Thread));
@@ -1037,7 +771,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 				return true;
 
 			case ExitProcessCorDebugManagedCallbackEventArgs:
-				buffer.Append(LiveDebugEventKind.ProcessExited, "The target process exited.");
+				_buffer.Append(LiveDebugEventKind.ProcessExited, "The target process exited.");
 				return true;
 
 			// Thread churn and the rest are continued but not buffered: high volume, low signal.
@@ -1058,7 +792,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		// The thread is stopped in this callback, so this is the moment its stack can be walked.
 		var frames = _narrative.Frames(exception.Thread);
 
-		buffer.Append(
+		_buffer.Append(
 			kind,
 			$"{(unhandled ? "Unhandled" : "First-chance")} {typeName} on thread {CorDebugInspector.TryThreadId(exception.Thread)?.ToString() ?? "?"}",
 			threadId: CorDebugInspector.TryThreadId(exception.Thread),
@@ -1074,7 +808,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		long ordinal;
 		lock (_target.Gate)
 		{
-			(binding, ordinal) = _breakpoints.Match(hit.Breakpoint as CorDebugFunctionBreakpoint);
+			(binding, ordinal) = Bindings.Match(hit.Breakpoint as CorDebugFunctionBreakpoint);
 		}
 
 		// A condition is a cheap read-and-compare on the stopped frame; if it fails, act as if unhit.
@@ -1093,7 +827,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 
 		var location = binding?.Raw ?? "unknown location";
 		var suffix = binding?.LogMessage is { Length: > 0 } message ? $": {message}" : string.Empty;
-		buffer.Append(
+		_buffer.Append(
 			LiveDebugEventKind.BreakpointHit,
 			$"Tracepoint {location} hit #{ordinal} on thread {threadId?.ToString() ?? "?"}{suffix}",
 			threadId: threadId);
@@ -1123,7 +857,7 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 			var stop = new StopRecord(thread, bindingId, StateOf(kind), seconds);
 			_target.TakeStop(stop);
 
-			stop.EventSequence = buffer.Append(
+			stop.EventSequence = _buffer.Append(
 				kind,
 				$"{prefix} at {top} on thread {threadId?.ToString() ?? "?"} -- stopped; continue or step (auto-continues in {seconds}s).",
 				threadId: threadId,
@@ -1136,104 +870,6 @@ internal sealed class CorDebugSession(DebugEventBuffer buffer, ILogger logger) :
 		}
 
 		return false;
-	}
-
-	/// <summary>
-	/// Binds any unbound bindings against modules already loaded when the binding was added. It
-	/// async-breaks the target to a synchronized state to enumerate its modules, then resumes it; a
-	/// binding whose module has not loaded yet stays unbound and binds later on the load callback.
-	/// </summary>
-	private void BindAgainstLoadedModules()
-	{
-		lock (_target.Gate)
-		{
-			if (!_target.TryLive(out var process)) return;
-			if (_breakpoints.AllBound) return;
-
-			var stopped = false;
-			try
-			{
-				process.Stop(0);
-				stopped = true;
-
-				var loaded = new List<CorDebugModule>();
-				foreach (var module in TargetSymbols.EnumerateModules(process))
-				{
-					_symbols.Remember(module);
-					loaded.Add(module);
-				}
-
-				// This walk is the one a name search would otherwise have to take for itself.
-				_symbols.MarkWalked();
-
-				_breakpoints.BindAmongLoaded(loaded);
-				_breakpoints.ExplainUnbound(_symbols.Paths);
-			}
-			catch (Exception exception)
-			{
-				logger.LogDebug(exception, "Binding against loaded modules failed.");
-			}
-			finally
-			{
-				if (stopped)
-				{
-					try
-					{
-						process.Continue(fIsOutOfBand: false);
-					}
-					catch (Exception exception)
-					{
-						logger.LogDebug(exception, "Continue after bind failed.");
-					}
-				}
-			}
-		}
-	}
-
-	/// <summary>
-	/// Binds one binding against modules that are loaded now. A location naming its assembly is tried
-	/// against each module of that name. One naming none binds only where exactly one module declares
-	/// the type, and when several do it says which rather than choosing: a breakpoint in the wrong one
-	/// never fires, which looks exactly like code that never runs.
-	/// </summary>
-	/// <summary>
-	/// The target's loaded module files, walking the ones that predate this session's attach the
-	/// first time anybody asks. The walk is the only part that needs the gate or the debuggee; what
-	/// a caller does with the paths afterwards is reading off disk.
-	/// </summary>
-	private IReadOnlyList<string> ModulePaths()
-	{
-		lock (_target.Gate)
-		{
-			if (!_symbols.Walked && _target.TryLive(out var live)) _symbols.Walk(live);
-
-			return _symbols.Paths;
-		}
-	}
-
-	/// <summary>
-	/// Takes in a module as it loads: notes its file, and binds anything waiting for a module that
-	/// declares what it names. Called from a stopped callback.
-	/// <para>
-	/// A location without its assembly is where a second declaration of its type first becomes
-	/// knowable, since the other modules are the ones already loaded. An unbound one is refused and told
-	/// which modules declare it. A bound one is left where it is and the event stream says so, because
-	/// deactivating a breakpoint that a thread may be parked on fail-fasts the target.
-	/// </para>
-	/// </summary>
-	/// <summary>
-	/// Takes in a module as it loads: notes its file, and binds anything waiting for it. Called from a
-	/// stopped callback.
-	/// </summary>
-	private void BindModule(CorDebugModule module)
-	{
-		lock (_target.Gate)
-		{
-			// Remembered before anything returns early, because the list of modules is wanted by a
-			// name search whether or not anything is waiting to bind.
-			_symbols.Remember(module);
-			_breakpoints.BindNewModule(module, _symbols.Paths);
-		}
 	}
 
 }

@@ -136,13 +136,11 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
-		OpenWorld = false)]
+		OpenWorld = false,
+		UseStructuredContent = true)]
 	[Description(ToolDescriptions.WorkspaceClose)]
-	public async Task<string> CloseAsync(
+	public Task<WorkspaceClosed> CloseAsync(
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
-		CancellationToken cancellationToken = default)
-	{
-		var closed = await workspaces.CloseAsync(WorkspaceHints.From(workspace), cancellationToken);
-		return closed ? "Workspace closed." : "That workspace was not open.";
-	}
+		CancellationToken cancellationToken = default) =>
+		workspaces.CloseAsync(WorkspaceHints.From(workspace), cancellationToken);
 }

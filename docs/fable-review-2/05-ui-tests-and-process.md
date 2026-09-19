@@ -430,6 +430,12 @@ inferring it. This is the cleanest boundary in the repository.
   then read. Then a dirty hand-back means residue and nothing else.
 
 ### UIP-17 Two-thirds of the integration suite tests the service layer, so the tool boundary's own invariants are spot-checked rather than enforced
+- **Half done, PR #TIER0.** The attribution half is now structural rather than tested: the
+  forwarding path will not compile with a result the broker cannot attribute, and
+  `ToolResultShapeTests` enumerates the declared surface for the revision. That is stronger than the
+  reflective call-every-tool test this finding asked for, and it costs no solution load. What is not
+  done is the *runtime* half -- that a tool actually populates those fields against a real workspace
+  -- which still wants the shared fixture from UIP-13, and is asserted for three tools today.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** 20 of 40 integration classes call a `*Service.*Async` directly (`OutlineTests.cs:17`,

@@ -148,6 +148,12 @@ public sealed class WorkspaceManager(
 	/// callers get a clear failure and decide for themselves.
 	/// </para>
 	/// </summary>
+	/// <remarks>
+	/// The constraint is the invariant. Attribution is applied by matching the result against
+	/// <see cref="WorkspaceScopedResult"/> at run time, so an unconstrained call would compile,
+	/// answer, and silently say nothing about where the answer came from -- and a tool returning
+	/// something else is exactly the change nobody would think to test. Here it does not compile.
+	/// </remarks>
 	public async Task<T> CallAsync<T>(
 		WorkspaceHints hints,
 		string tool,
@@ -155,6 +161,7 @@ public sealed class WorkspaceManager(
 		bool retryIfWorkerDied,
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue>? progress = null)
+		where T : Contracts.WorkspaceScopedResult
 	{
 		var worker = await GetOrStartAsync(hints, cancellationToken);
 
@@ -186,8 +193,9 @@ public sealed class WorkspaceManager(
 	/// </para>
 	/// </summary>
 	private T Attribute<T>(T result, WorkspaceWorker worker)
+		where T : WorkspaceScopedResult
 	{
-		if (result is not WorkspaceScopedResult scoped) return result;
+		WorkspaceScopedResult scoped = result;
 
 		var attributed = scoped with { Workspace = worker.SolutionPath, WorkspaceKey = worker.Key };
 
@@ -252,9 +260,25 @@ public sealed class WorkspaceManager(
 				Contracts.ToolNames.WorkspaceStatus, NoArguments, cancellationToken, progress),
 			worker);
 
-	/// <summary>Stops a worker and forgets it. Reopening starts a fresh process.</summary>
-	public Task<bool> CloseAsync(WorkspaceHints hints, CancellationToken cancellationToken) =>
-		CloseResolvedAsync(WorkspaceFor(hints), cancellationToken);
+	/// <summary>
+	/// Stops a worker and forgets it. Reopening starts a fresh process.
+	/// <para>
+	/// Attributed here rather than by the caller, for the reason every other result is: the
+	/// resolution that turned a hint into a solution happened here, and it is the answer a caller
+	/// with several workspaces open needs back.
+	/// </para>
+	/// </summary>
+	public async Task<Contracts.WorkspaceClosed> CloseAsync(WorkspaceHints hints, CancellationToken cancellationToken)
+	{
+		var solutionPath = WorkspaceFor(hints);
+
+		return new Contracts.WorkspaceClosed
+		{
+			Workspace = solutionPath,
+			WorkspaceKey = Solutions.WorkspaceKey.For(solutionPath),
+			Closed = await CloseResolvedAsync(solutionPath, cancellationToken),
+		};
+	}
 
 	private async Task<bool> CloseResolvedAsync(string solutionPath, CancellationToken cancellationToken)
 	{

@@ -108,13 +108,14 @@
 - **Why it matters:** CLAUDE.md: "anything ... knowing what a tool does belongs in the host". This is the one place the broker has a model of a live app's structure. It also puts the same resolution in two surfaces -- `LiveAppDebugTools` and `OperatorApi` both call `ResolveElementAsync` -- and takes the broker out of the position of being a pure proxy for the debugger, which is the position the inspector decision relies on ("a process has one debugger").
 - **Suggested change:** The host accepts a handle, `#name` or address wherever it takes an element, and roots and pages the tree for all three; the broker forwards. The parity exemption then disappears, which is the test telling you the leak is closed.
 
-### BRK-12 Attribution is by runtime type check with no compile-time constraint, and one tool returns nothing to attribute
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/WorkspaceManager.cs:151-158`, `:189-191`; `src/RoseMcp.Broker/Tools/BrokerTools.cs:141-147`
-- **What:** `CallAsync<T>` is unconstrained and `Attribute<T>` does `if (result is not WorkspaceScopedResult scoped) return result;`, so a result type that forgets to derive is passed through unattributed, silently. `rose_find_implementations` confirms all 23 current result records derive; the guarantee is a habit. `rose_workspace_close` returns the string `"Workspace closed."`, naming no workspace, which is a small breach of "every result names the workspace that answered".
-- **Why it matters:** The invariant says attribution is added once "so a tool added later cannot forget it". The type system could make that literally true, and today it does not.
-- **Suggested change:** `where T : WorkspaceScopedResult` on `CallAsync` and `StatusOfAsync`. A `WorkspaceClosed : WorkspaceScopedResult` record for close. See inversion 1 for the test that enumerates the surface.
+### ~~BRK-12 Attribution is by runtime type check with no compile-time constraint, and one tool returns nothing to attribute~~
+**Done, PR #TIER0.** `WorkspaceManager.CallAsync` and `Attribute` now constrain their result to
+`WorkspaceScopedResult`, so a tool answering with anything else fails to build rather than answering
+unattributed; the run-time `is not` check is gone because the compiler has already made it true.
+`rose_workspace_close` answers with a new `WorkspaceClosed` record carrying the workspace, the key
+and whether one was open. The enumerating guard is `ToolResultShapeTests`, which also asserts the
+constraint itself, since a constraint is one word and deleting it breaks nothing that runs. The
+reasoning for the close result's missing revision is in `WorkspaceClosed`'s own summary.
 
 ### BRK-13 `MarkStopped` and `WorkerExitReason.SolutionUnloaded` are dead in the broker
 - **Severity:** Low

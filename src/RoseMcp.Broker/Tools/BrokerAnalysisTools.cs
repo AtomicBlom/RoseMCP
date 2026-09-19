@@ -765,6 +765,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue> progress,
 		bool retryIfWorkerDied = true)
+		where T : WorkspaceScopedResult
 	{
 		// A null means "not supplied". Forwarding it would override the worker's own default.
 		var supplied = arguments

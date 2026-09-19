@@ -255,12 +255,16 @@ public sealed class BrokerTests
 
 		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(await manager.CloseAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken));
+		var closed = await manager.CloseAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+
+		Assert.True(closed.Closed);
+		Assert.Equal(fixture.SolutionPath, closed.Workspace);
+		Assert.NotEmpty(closed.WorkspaceKey);
 		Assert.Empty(manager.Workers);
 		Assert.False(worker.IsAlive, "closing the workspace stops its worker");
 
 		// Closing something that is not open is a no-op, not an error.
-		Assert.False(await manager.CloseAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken));
+		Assert.False((await manager.CloseAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken)).Closed);
 	}
 
 	[Test]

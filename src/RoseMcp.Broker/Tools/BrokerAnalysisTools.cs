@@ -149,6 +149,26 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress);
 
 	[McpServerTool(
+		Name = ToolNames.Islands,
+		Title = "Where a type could be split",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.Islands)]
+	public Task<IslandsResult> IslandsAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
+		[Description(ToolDescriptions.IslandsFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<IslandsResult>(WorkspaceHints.From(workspace, filePath), ToolNames.Islands, new()
+		{
+			["symbol"] = symbol,
+			["filePath"] = filePath,
+		}, cancellationToken, progress);
+
+	[McpServerTool(
 		Name = ToolNames.ProjectGraph,
 		Title = "How the projects depend on each other",
 		ReadOnly = true,

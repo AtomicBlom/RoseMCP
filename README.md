@@ -83,10 +83,11 @@ A longer version, covering the whole writing surface, is
 
 ## What it does
 
-Fifty-one tools in six families. Every one addresses code by name rather than by line and column, so
+Fifty-two tools in six families. Every one addresses code by name rather than by line and column, so
 nothing needs a grep first and nothing goes stale when an earlier edit moves a line.
 
-**Reading and navigation**, 8 tools. `rose_outline` for what a type or a file contains,
+**Reading and navigation**, 9 tools. `rose_outline` for what a type or a file contains,
+`rose_islands` for where it could be split and what each piece would take with it,
 `rose_symbol_info` for one member and its source, `rose_find_references` for usages grouped by the
 member each sits inside, `rose_find_implementations` for the other direction, `rose_search_symbols`,
 `rose_project_graph`, and the two generated-document tools, which are the only way to read

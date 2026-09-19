@@ -50,7 +50,8 @@ public static class ServiceCollectionExtensions
 		Roslyn semantics over the user's C# solution, kept in sync with disk. For C#, reach for these
 		before grep, find-and-replace or a text edit:
 
-		- find a declaration: rose_search_symbols; what a type or a file contains: rose_outline
+		- find a declaration: rose_search_symbols; what a type or a file contains: rose_outline;
+		  where a type could be split: rose_islands
 		- what a symbol is, and its code: rose_symbol_info with includeSource
 		- usages: rose_find_references; implementors and overrides: rose_find_implementations
 		- does it compile: rose_diagnostics -- a warm compilation, not a substitute for a build

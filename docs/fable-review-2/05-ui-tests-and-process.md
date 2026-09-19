@@ -368,7 +368,7 @@ inferring it. This is the cleanest boundary in the repository.
   largest single block.
 
 ### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
-**Done, PR #TIER0.** Kept and widened, which the finding said was the good half of the two
+**Done, PR #295.** Kept and widened, which the finding said was the good half of the two
 possibilities. The category is renamed to `ProbeApp` so it names what it excludes -- a C++ toolset,
 the Windows App SDK, developer mode and a machine-wide registration -- and it comes off the two
 debugger classes and the one `OperatorApiTests` method, which drive an ordinary .NET child process.
@@ -420,7 +420,7 @@ first run of this pull request is what confirms it for the other 22.
   then read. Then a dirty hand-back means residue and nothing else.
 
 ### UIP-17 Two-thirds of the integration suite tests the service layer, so the tool boundary's own invariants are spot-checked rather than enforced
-- **Half done, PR #TIER0.** The attribution half is now structural rather than tested: the
+- **Half done, PR #295.** The attribution half is now structural rather than tested: the
   forwarding path will not compile with a result the broker cannot attribute, and
   `ToolResultShapeTests` enumerates the declared surface for the revision. That is stronger than the
   reflective call-every-tool test this finding asked for, and it costs no solution load. What is not
@@ -601,7 +601,7 @@ tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
   fact two files remember separately.
 
 ### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
-**Done, PR #TIER0.** `tools/Check-Comments.ps1`, run by CI, against a per-file baseline in
+**Done, PR #295.** `tools/Check-Comments.ps1`, run by CI, against a per-file baseline in
 `tools/comment-baseline.tsv` that may only go down. The reasoning -- which phrases earn a rule and
 which do not -- is in the script's own header, where the next person to widen it will read it.
 
@@ -637,7 +637,7 @@ rewritten here; the rest is #171's work, which now has a number that cannot grow
   either -- the tiers are a graph, and a graph is checkable.
 
 ### UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all
-- **The debugger third is done, PR #TIER0.** Suggested change (2) -- "split the live-app suite by
+- **The debugger third is done, PR #295.** Suggested change (2) -- "split the live-app suite by
   what it actually needs, as `LiveAppInspectionTests` accidentally demonstrates" -- is what card 0a
   did, and it moved 33 tests into CI rather than the third this finding estimated. What is left is
   the XAML, C++ and UWP half, which is genuinely card 16's self-hosted runner, and the flake-rate

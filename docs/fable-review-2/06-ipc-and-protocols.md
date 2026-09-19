@@ -519,7 +519,7 @@ to add a side channel, and the pipe framing in `tap_channel.h` is already the de
   assert the value came back. Folds naturally into the one-message-type inversion below.
 
 ### ~~IPC-02 Nothing checks that a child process is the same build as its parent~~
-**Done, PR #TIER0.** `ChildHostVersion.Mismatch` compares the child's `ServerInfo.Version` against
+**Done, PR #295.** `ChildHostVersion.Mismatch` compares the child's `ServerInfo.Version` against
 the broker's own, at both hops that launch one, and the sentence names both versions and the path
 the child was resolved from -- the actionable half, because the cause is a stale `bin` or an
 environment variable pointing at one. It is **said, not refused**: a half-updated install is a state

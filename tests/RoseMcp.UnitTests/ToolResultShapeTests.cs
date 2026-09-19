@@ -1,7 +1,5 @@
 using System.Reflection;
 
-using ModelContextProtocol.Server;
-
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
@@ -134,7 +132,7 @@ public sealed class ToolResultShapeTests
 	[Test]
 	public void The_live_app_surface_is_exactly_what_those_prefixes_name()
 	{
-		foreach (var (name, declaring) in DeclaredTools().Select(tool => (tool.Name, tool.Method.DeclaringType!)))
+		foreach (var (name, declaring) in DeclaredSurface.Tools().Select(tool => (tool.Name, tool.Method.DeclaringType!)))
 		{
 			var byPrefix = ProcessScoped.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal));
 			var byType = declaring.Name == "LiveAppDebugTools";
@@ -145,38 +143,7 @@ public sealed class ToolResultShapeTests
 
 	/// <summary>The tools that answer about a solution, with the type each answers with.</summary>
 	private static IEnumerable<(string Name, Type Result)> WorkspaceScopedTools() =>
-		DeclaredTools()
+		DeclaredSurface.Tools()
 			.Where(tool => !ProcessScoped.Any(prefix => tool.Name.StartsWith(prefix, StringComparison.Ordinal)))
-			.Select(tool => (tool.Name, Result: Returned(tool.Method)));
-
-	/// <summary>
-	/// Every tool the broker declares, from the assembly. <c>[McpServerToolType]</c> is what the SDK
-	/// scans, so scanning the same thing means a tool class added later is covered without this file
-	/// naming it.
-	/// </summary>
-	private static IEnumerable<(string Name, MethodInfo Method)> DeclaredTools()
-	{
-		var types = typeof(WorkspaceManager).Assembly
-			.GetTypes()
-			.Where(type => type.GetCustomAttribute<McpServerToolTypeAttribute>() is not null);
-
-		foreach (var type in types)
-		{
-			foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-			{
-				var tool = method.GetCustomAttribute<McpServerToolAttribute>();
-				if (tool?.Name is not null) yield return (tool.Name, method);
-			}
-		}
-	}
-
-	/// <summary>What a tool answers with, with the Task unwrapped.</summary>
-	private static Type Returned(MethodInfo method)
-	{
-		var returned = method.ReturnType;
-
-		return returned.IsGenericType && returned.GetGenericTypeDefinition() == typeof(Task<>)
-			? returned.GetGenericArguments()[0]
-			: returned;
-	}
+			.Select(tool => (tool.Name, Result: DeclaredSurface.Returned(tool.Method)));
 }

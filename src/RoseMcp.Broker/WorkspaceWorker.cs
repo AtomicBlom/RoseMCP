@@ -66,6 +66,13 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	public DateTime StartedUtc { get; }
 
 	/// <summary>
+	/// What is wrong with this worker being a different build from the broker, or null where it is
+	/// the same one. Held rather than only logged, because the party who needs it is the agent whose
+	/// next confusing answer it explains, and a log line reaches nobody mid-session.
+	/// </summary>
+	public string? VersionMismatch { get; init; }
+
+	/// <summary>
 	/// The worker's process id, learned on connect. Held so memory can be sampled from outside
 	/// the process, which keeps working when the worker itself has stopped answering.
 	/// </summary>
@@ -167,7 +174,14 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			loggerFactory,
 			cancellationToken);
 
-		var worker = new WorkspaceWorker(solutionPath, client, activities, logger);
+		var worker = new WorkspaceWorker(solutionPath, client, activities, logger)
+		{
+			VersionMismatch = ChildHostVersion.Mismatch(
+				client.ServerInfo?.Version, workerPath, typeof(WorkspaceWorker).Assembly),
+		};
+
+		if (worker.VersionMismatch is not null) logger.LogWarning("{Mismatch}", worker.VersionMismatch);
+
 		await worker.RefreshProcessInfoAsync(cancellationToken);
 		worker.BeginLoading();
 
@@ -369,7 +383,9 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				? []
 				: [.. status.Projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name)],
 			DegradedReasons = status?.DegradedReasons ?? (_loadFailure is null ? [] : [_loadFailure]),
-			Notices = status?.Notices ?? [],
+			Notices = VersionMismatch is null
+				? status?.Notices ?? []
+				: [.. status?.Notices ?? [], VersionMismatch],
 			LoadSeconds = LoadDuration?.TotalSeconds,
 			Running = _activities.Running(SolutionPath),
 			Recent = _activities.Recent(SolutionPath),

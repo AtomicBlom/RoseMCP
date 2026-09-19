@@ -64,7 +64,7 @@ public static class InspectorLauncher
 			if (File.Exists(published)) return Path.GetFullPath(published);
 		}
 
-		return searchRepository ? FindInRepository(executableName, from) : null;
+		return searchRepository ? RepositoryBuildOutput.Find(InspectorName, executableName, from) : null;
 	}
 
 	/// <summary>
@@ -148,65 +148,5 @@ public static class InspectorLauncher
 
 		return Process.Start(start)
 			?? throw new FileNotFoundException($"Windows did not start {path}.");
-	}
-
-	/// <summary>
-	/// Development fallback: the inspector's own build output, narrowed to the running app's
-	/// configuration first.
-	/// <para>
-	/// Configuration before recency, for the reason the live-app host resolver records: a Release
-	/// artefact left by a deploy would otherwise shadow a Debug build twenty minutes newer, and a
-	/// Debug run would silently launch a binary without the change under test.
-	/// </para>
-	/// </summary>
-	private static string? FindInRepository(string executableName, string from)
-	{
-		var directory = new DirectoryInfo(from);
-		while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
-		{
-			directory = directory.Parent;
-		}
-
-		if (directory is null) return null;
-
-		var root = Path.Combine(directory.FullName, "src", InspectorName, "bin");
-		if (!Directory.Exists(root)) return null;
-
-		var candidates = Directory.EnumerateFiles(root, executableName, SearchOption.AllDirectories)
-			.OrderByDescending(File.GetLastWriteTimeUtc)
-			.ToList();
-
-		var configuration = ConfigurationOf(from);
-		if (configuration is not null)
-		{
-			var matching = candidates
-				.Where(path => path.Contains(
-					$"{Path.DirectorySeparatorChar}{configuration}{Path.DirectorySeparatorChar}",
-					StringComparison.OrdinalIgnoreCase))
-				.ToList();
-
-			if (matching.Count > 0) candidates = matching;
-		}
-
-		return candidates.FirstOrDefault();
-	}
-
-	/// <summary>
-	/// Which build configuration a directory belongs to, or null when it is not a build output at all
-	/// (a published layout, where the question does not arise).
-	/// </summary>
-	private static string? ConfigurationOf(string directory)
-	{
-		var separator = Path.DirectorySeparatorChar;
-
-		foreach (var configuration in new[] { "Debug", "Release" })
-		{
-			if (directory.Contains($"{separator}{configuration}{separator}", StringComparison.OrdinalIgnoreCase))
-			{
-				return configuration;
-			}
-		}
-
-		return null;
 	}
 }

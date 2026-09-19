@@ -86,6 +86,23 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		Assert.Equal(debug, Resolve());
 	}
 
+	/// <summary>
+	/// And the worker gets the same policy, which it did not have. Every Roslyn test drives a worker,
+	/// so a Release publish left in bin answering for a Debug run means a suite that proves nothing
+	/// about the change under test -- the same failure the live-app resolver already prevented, one
+	/// launcher over.
+	/// </summary>
+	[Test]
+	public void A_worker_of_another_configuration_is_not_used_either()
+	{
+		StageWorker(DateTime.UtcNow, configuration: "Release");
+		var debug = StageWorker(DateTime.UtcNow.AddHours(-3));
+
+		Assert.Equal(
+			debug,
+			WorkerLauncher.ResolveWorkerPath(new BrokerOptions(), BrokerDirectory, searchRepository: true));
+	}
+
 	public void Dispose()
 	{
 		try
@@ -113,6 +130,24 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		Directory.CreateDirectory(directory);
 
 		var path = Path.Combine(directory, LiveAppHostLauncher.ExecutableName);
+		File.WriteAllBytes(path, []);
+		File.SetLastWriteTimeUtc(path, writtenUtc);
+
+		return path;
+	}
+
+	/// <summary>
+	/// A worker build, which has no per-RID shape to stage: it runs in the broker's own
+	/// architecture, so configuration and recency are the whole of the question.
+	/// </summary>
+	private string StageWorker(DateTime writtenUtc, string configuration = "Debug")
+	{
+		var directory = Directory.CreateDirectory(
+			Path.Combine(_root, "src", "RoseMcp.Worker", "bin", configuration, "net10.0"));
+
+		var name = OperatingSystem.IsWindows() ? "RoseMcp.Worker.exe" : "RoseMcp.Worker";
+		var path = Path.Combine(directory.FullName, name);
+
 		File.WriteAllBytes(path, []);
 		File.SetLastWriteTimeUtc(path, writtenUtc);
 

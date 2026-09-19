@@ -52,13 +52,13 @@
 - **Why it matters:** A tray that has been up for a day carries every session any agent ever started, each costing a failed round trip per second and a row in `GET /admin/sessions` and the inspector. The `Ended` state is honest, but "ended and still here" is a state nothing acts on.
 - **Suggested change:** Make eviction the manager's job. On the `_alive` transition, the manager removes the session after one more `Describe` cycle (so a window sees `Ended` once), disposes the client, and records the eviction in `Activities`. For workers, the same shape answers #157: an idle timer per worker, eviction said in the activity log, and `rose_workspace_list` so a session can see what is warm. Test: attach to a child process, kill the child's host, assert the session leaves `Describe()` within a few ticks and the poll stops.
 
-### BRK-05 `WorkerLauncher` still has the stale-binary trap the other two launchers fixed
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/WorkerLauncher.cs:52-69`; compare `src/RoseMcp.Broker/LiveAppHostLauncher.cs:95-108` and `src/RoseMcp.Broker/InspectorLauncher.cs:179-188`
-- **What:** `WorkerLauncher.FindInRepository` returns the newest `RoseMcp.Worker.exe` under `src/RoseMcp.Worker/bin` by last-write time, full stop. `LiveAppHostLauncher.FindInRepository` narrows to the broker's own configuration first, with a comment explaining the failure it prevents: `deploy.ps1` publishes Release into the repository's bin, and a Release artefact then shadows a Debug build that is newer -- so a Debug test run silently exercised a stale binary. `InspectorLauncher` copies the same fix. The worker launcher, which every test in `BrokerTests` uses, did not get it. All three launchers carry their own `FindInRepository` walking up to `RoseMcp.slnx`, and `ConfigurationOf` is duplicated verbatim in two of them.
-- **Why it matters:** The worker is the process every Roslyn test drives. A test that passes against yesterday's worker is a test that proves nothing, and the failure mode ("an unknown tool", "a missing field") reads like the change being wrong rather than the binary being old -- the LiveApp comment says as much.
-- **Suggested change:** One `RepositoryBuildOutput.Find(executableName, baseDirectory, rid: null)` in the broker, used by all three launchers, carrying the configuration-then-RID-then-recency policy once. The three launchers shrink to their environment-variable and published-layout probes.
+### ~~BRK-05 `WorkerLauncher` still has the stale-binary trap the other two launchers fixed~~
+**Done, PR #TIER0.** One `RepositoryBuildOutput.Find`, used by all three launchers, carrying
+configuration-then-architecture-then-recency once; the two duplicate `ConfigurationOf` copies and
+the worker's recency-only search are gone. `RepositoryHostBuildTests` now stages a Release worker
+against a Debug broker, which is the case the worker had no protection from and which every Roslyn
+test drives. The reasoning is in `RepositoryBuildOutput`'s own summary, where the comments the two
+launchers carried separately are now stated once.
 
 ### BRK-06 Three definitions of "the far side is gone", one by matching an assembly name string
 - **Severity:** Medium

@@ -37,34 +37,11 @@ public static class WorkerLauncher
 			if (File.Exists(alongside)) return Path.GetFullPath(alongside);
 		}
 
-		var inRepository = searchRepository ? FindInRepository(executableName) : null;
+		var inRepository = searchRepository ? RepositoryBuildOutput.Find(WorkerName, executableName, root) : null;
 		if (inRepository is not null) return inRepository;
 
 		throw new FileNotFoundException(
 			$"Could not find {executableName}. Publish it alongside the broker, set ROSEMCP_WORKER, "
 				+ "or pass --worker with its path.");
-	}
-
-	/// <summary>
-	/// Development fallback: find the worker in its own build output. Without this the broker only
-	/// works from a published layout, which makes running from source needlessly awkward.
-	/// </summary>
-	private static string? FindInRepository(string executableName)
-	{
-		var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-		while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
-		{
-			directory = directory.Parent;
-		}
-
-		if (directory is null) return null;
-
-		var workerRoot = Path.Combine(directory.FullName, "src", WorkerName, "bin");
-		if (!Directory.Exists(workerRoot)) return null;
-
-		return Directory.EnumerateFiles(workerRoot, executableName, SearchOption.AllDirectories)
-			.OrderByDescending(File.GetLastWriteTimeUtc)
-			.FirstOrDefault();
 	}
 }

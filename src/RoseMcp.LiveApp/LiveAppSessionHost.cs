@@ -28,13 +28,6 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	private static readonly TimeSpan UwpRuntimeReadyTimeout = TimeSpan.FromSeconds(30);
 	private static readonly TimeSpan UwpStartupTimeout = TimeSpan.FromSeconds(30);
 
-	/// <summary>
-	/// What an inspection answers with when this host has no target at all. Said as a running
-	/// report rather than thrown, so a caller polling a session it is about to lose reads the same
-	/// shape of answer it reads at every other moment.
-	/// </summary>
-	private const string NotAttachedDetail = "This session is not attached to a target, so there is nothing to read.";
-
 	private readonly Lock _gate = new();
 	private readonly DebugEventBuffer _events = new();
 	private LiveAppSessionState _state = LiveAppSessionState.Starting;
@@ -245,133 +238,12 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 			?? new LiveEvaluation { Expression = expression, Error = "This session is not attached to a target." };
 	}
 
-	/// <summary>A page of a stopped thread's call stack, with file and line where symbols allow.</summary>
-	public LiveStackFrames ReadFrames(int? threadId, int offset, int? limit)
-	{
-		if (Attached() is not { } session)
-		{
-			return new LiveStackFrames
-			{
-				Execution = LiveExecutionState.Running,
-				Detail = NotAttachedDetail,
-				ThreadId = threadId,
-				Offset = offset,
-				Total = 0,
-				Truncated = false,
-			};
-		}
-
-		return session.Inspection.ReadFrames(threadId, offset, limit);
-	}
-
-	/// <summary>One frame's arguments and locals, named from the module's symbols where there are any.</summary>
-	public LiveFrameVariables ReadFrameVariables(int frameIndex, int? threadId)
-	{
-		if (Attached() is not { } session)
-		{
-			return new LiveFrameVariables
-			{
-				Execution = LiveExecutionState.Running,
-				Detail = NotAttachedDetail,
-				FrameIndex = frameIndex,
-				ThreadId = threadId,
-				Symbols = LiveSymbolState.NoSymbols,
-				Truncated = false,
-			};
-		}
-
-		return session.Inspection.ReadFrameVariables(frameIndex, threadId);
-	}
-
-	/// <summary>What is inside a value: an object's fields, or an array's elements.</summary>
-	public LiveValueExpansion ExpandValue(string path, int frameIndex, int? threadId)
-	{
-		if (Attached() is not { } session)
-		{
-			return new LiveValueExpansion
-			{
-				Execution = LiveExecutionState.Running,
-				Detail = NotAttachedDetail,
-				Path = path,
-				Total = 0,
-				Truncated = false,
-			};
-		}
-
-		return session.Inspection.Expand(path, frameIndex, threadId);
-	}
-
-	/// <summary>Every managed thread of the stopped target, the held one first.</summary>
-	public LiveThreadList ReadThreads()
-	{
-		if (Attached() is not { } session)
-		{
-			return new LiveThreadList { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail };
-		}
-
-		return session.Inspection.ReadThreads();
-	}
-
-	/// <summary>Takes or releases an operator's hold, which suspends the stop's safety timer.</summary>
-	public LiveHoldResult Hold(int? seconds, bool release)
-	{
-		if (Attached() is not { } session)
-		{
-			return new LiveHoldResult { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail, Applied = false };
-		}
-
-		return session.OperatorHold(seconds is { } requested ? TimeSpan.FromSeconds(requested) : null, release);
-	}
-
-	/// <summary>Stops a running target where it stands, rather than where a breakpoint would.</summary>
-	public LivePauseResult Break(int? autoContinueSeconds)
-	{
-		if (Attached() is not { } session)
-		{
-			return new LivePauseResult { Execution = LiveExecutionState.Running, Detail = NotAttachedDetail, Paused = false };
-		}
-
-		return session.Break(autoContinueSeconds);
-	}
-
-	/// <summary>Methods of the target's loaded modules matching a typed query, best first.</summary>
-	public LiveMethodMatches SearchMethods(string? query, int limit)
-	{
-		if (Attached() is not { } session)
-		{
-			return new LiveMethodMatches
-			{
-				Query = query ?? string.Empty,
-				Matches = [],
-				Total = 0,
-				ModulesSearched = 0,
-				Detail = NotAttachedDetail,
-			};
-		}
-
-		return session.Bindings.SearchMethods(query, limit);
-	}
-
-	/// <summary>A method's source and the positions inside it a breakpoint can be set at.</summary>
-	public LiveMethodSource ReadMethodSource(string location)
-	{
-		if (Attached() is not { } session)
-		{
-			return new LiveMethodSource
-			{
-				Location = location,
-				DisplayName = location,
-				Module = string.Empty,
-				Symbols = LiveSymbolState.NoSymbols,
-				FirstLine = 0,
-				Lines = [],
-				Positions = [],
-				Detail = NotAttachedDetail,
-			};
-		}
-
-		return session.Bindings.ReadMethodSource(location);
-	}
+	/// <summary>
+	/// The inspector's questions -- frames, variables, threads and method sources, and the hold and
+	/// break that get a target stopped and keep it there. Resolved against whatever target this host
+	/// has at the moment of asking, so the answer cannot describe one that has since gone.
+	/// </summary>
+	internal InspectorSurface Inspector => new(Attached());
 
 	/// <summary>The debug session, or null when this host has no target.</summary>
 	private CorDebugSession? Attached()

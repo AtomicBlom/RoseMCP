@@ -33,7 +33,7 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 		[Description(ToolDescriptions.FrameThreadIdArgument)] int? threadId = null,
 		[Description(ToolDescriptions.FrameOffsetArgument)] int offset = 0,
 		[Description(ToolDescriptions.FrameLimitArgument)] int? limit = null)
-		=> host.ReadFrames(threadId, offset, limit);
+		=> host.Inspector.ReadFrames(threadId, offset, limit);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppFrameVariables,
@@ -46,7 +46,7 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 	public LiveFrameVariables FrameVariables(
 		[Description(ToolDescriptions.FrameIndexArgument)] int frameIndex,
 		[Description(ToolDescriptions.FrameThreadIdArgument)] int? threadId = null)
-		=> host.ReadFrameVariables(frameIndex, threadId);
+		=> host.Inspector.ReadFrameVariables(frameIndex, threadId);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppExpand,
@@ -60,7 +60,7 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 		[Description(ToolDescriptions.ValuePathArgument)] string path,
 		[Description(ToolDescriptions.FrameIndexArgument)] int frameIndex = 0,
 		[Description(ToolDescriptions.FrameThreadIdArgument)] int? threadId = null)
-		=> host.ExpandValue(path, frameIndex, threadId);
+		=> host.Inspector.ExpandValue(path, frameIndex, threadId);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppThreads,
@@ -70,7 +70,7 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description("Every managed thread of a stopped target, the held one first, with its top frame.")]
-	public LiveThreadList Threads() => host.ReadThreads();
+	public LiveThreadList Threads() => host.Inspector.ReadThreads();
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppHold,
@@ -84,7 +84,7 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 	public LiveHoldResult Hold(
 		[Description(ToolDescriptions.HoldSecondsArgument)] int? seconds = null,
 		[Description(ToolDescriptions.HoldReleaseArgument)] bool release = false)
-		=> host.Hold(seconds, release);
+		=> host.Inspector.Hold(seconds, release);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppBreak,
@@ -97,7 +97,7 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 	[Description("Stop a running target where it stands, and report the stop that makes.")]
 	public LivePauseResult Break(
 		[Description(ToolDescriptions.PauseSecondsArgument)] int? autoContinueSeconds = null)
-		=> host.Break(autoContinueSeconds);
+		=> host.Inspector.Break(autoContinueSeconds);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppSearchMethods,
@@ -110,7 +110,7 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 	public LiveMethodMatches SearchMethods(
 		[Description(ToolDescriptions.MethodQueryArgument)] string query,
 		[Description(ToolDescriptions.MethodSearchLimitArgument)] int limit = 30)
-		=> host.SearchMethods(query, limit);
+		=> host.Inspector.SearchMethods(query, limit);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppMethodSource,
@@ -122,5 +122,5 @@ public sealed class LiveAppInspectionTools(LiveAppSessionHost host)
 	[Description("A method's source text with every position inside it a breakpoint can be set at.")]
 	public LiveMethodSource MethodSource(
 		[Description(ToolDescriptions.MethodSourceLocationArgument)] string location)
-		=> host.ReadMethodSource(location);
+		=> host.Inspector.ReadMethodSource(location);
 }

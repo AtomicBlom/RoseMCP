@@ -604,33 +604,23 @@ tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
   `deploy.ps1 -Mode package -SkipBuild` into a temp root. Either way the arrangement stops being a
   fact two files remember separately.
 
-### UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `CLAUDE.md` Conventions; #171; no grep step anywhere in `.github/workflows/`
-- **What:** Counted now over `src/**/*.cs` and `src/**/*.h`, excluding `bin`/`obj`:
-  **100 lines carrying a history clause** (`used to` 40, `no longer` 55, `previously` 3, `until now` 2;
-  `for now` 0) and **60 issue tags** across **23 distinct issue numbers**
-  (#5 #7 #8 #12 #15 #18 #19 #21 #43 #44 #45 #50 #51 #52 #59 #68 #74 #75 #76 #93 #101 #111 #189).
-  #171 records "53 issue tags and ~90 history clauses"; both have grown. Worst files:
-  `src/RoseMcp.Xaml.Tap/tap_overlay.h` (8 history clauses, 10 tags),
-  `src/RoseMcp.Xaml.Tap/tap_object.h` (3, 6), `src/RoseMcp.LiveApp/LiveAppSessionHost.cs` (0, 5),
-  `src/RoseMcp.LiveApp/Xaml/XamlProviderSession.cs` (6, 3),
-  `src/RoseMcp.LiveApp/Xaml/XamlDiagnosticsSession.cs` (4, 4),
-  `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs` (4, 0). Most of the low-numbered tags (#5, #7,
-  #8, #12, #15, #18, #19, #21) name issues long closed, which the convention says to drop.
-  `.github/workflows/ci.yml:301` itself carries one ("The paths in these **used to** be literal
-  `C:\...`"), and `RoseMcp.UnitTests.csproj:45` carries another -- neither of which a `*.cs`/`*.h`
-  grep would ever see.
-- **Why it matters:** This is the one convention the repository states at length, applies to every
-  file, and checks nowhere. The concentration tells the story: the tap and live-app half, written
-  fastest and most recently, carries most of it, which is exactly where a reader most needs comments
-  that describe the code rather than its history.
-- **Suggested change:** Add the CI step #171 already anticipates, over `src` *and* `.github` and
-  `*.csproj`/`*.props`: fail on `used to|previously|no longer|for now|until now|a later slice|lands in`
-  and on `#[0-9]+` outside an allowlist file of open issues the reader has to tolerate. Land it
-  behind a warning for one pass, fix the 160 sites, then make it a failure. Without the step the
-  count only goes up, because every rewrite is voluntary.
+### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
+**Done, PR #TIER0.** `tools/Check-Comments.ps1`, run by CI, against a per-file baseline in
+`tools/comment-baseline.tsv` that may only go down. The reasoning -- which phrases earn a rule and
+which do not -- is in the script's own header, where the next person to widen it will read it.
+
+**The finding's measurement was wrong, and that is the more useful half.** Three of the phrases it
+counted are not history clauses: `no longer` is 55 sites of which exactly one is history and the
+rest describe runtime state a reader needs (a target no longer running, a frame no longer selected);
+`lands in` is 12 sites of which none are, three of them matching inside "islands in"; `today` is 4
+sites, three of them the present-tense fact a comment is supposed to state. A rule that fires mostly
+on correct comments teaches people to write around the rule, so those three are documented as
+rejected rather than implemented. The real debt is **43 history clauses and 153 issue tags** across
+`src`, `tests`, the workflows and the build files. Of the 49 issues those tags name, 47 are closed,
+which is what makes them tags rather than the pointers to open work the convention allows; the one
+open issue a comment legitimately names is exempted in the script by number and reason, so closing
+it is what asks for the sentence to be rewritten. The two milestone numbers (`D14`, `D36`) are
+rewritten here; the rest is #171's work, which now has a number that cannot grow.
 
 ### UIP-24 Nothing formats or lints the C++ or the PowerShell
 - **Severity:** Low

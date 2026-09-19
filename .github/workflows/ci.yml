@@ -120,6 +120,13 @@ jobs:
       - name: Check formatting
         run: dotnet format RoseMcp.slnx --verify-no-changes --no-restore
 
+      # The comment conventions, which are the one rule in CLAUDE.md that binds every file and had
+      # nothing checking it. A baseline per file, so the existing debt does not have to be paid to
+      # get the guard, and cannot grow while it goes unpaid.
+      - name: Check comment conventions
+        shell: pwsh
+        run: ./tools/Check-Comments.ps1
+
       - name: Unit tests
         run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj --configuration Debug --no-build
 

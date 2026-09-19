@@ -192,7 +192,7 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 		// concurrency problem and exclusivity never fixed it, only hid it: the fixture's own slot
 		// cleanup emitted its two removals in document order, the first renumbered the second, and the
 		// slot was handed on still holding an element this test then counted as one of its own. The
-		// ordering is fixed in XamlDiff and the cleanup checks itself now (D36), so a slot is enough.
+		// ordering is fixed in XamlDiff and the cleanup checks itself, so a slot is enough.
 		const string FirstBackground = "#FF3A2A2A";
 		const string Pair =
 			"<Border Background=\"" + FirstBackground + "\" Padding=\"6\" CornerRadius=\"3\" />"

@@ -371,9 +371,10 @@ inferring it. This is the cleanest boundary in the repository.
 - **Severity:** Medium
 - **Effort:** S
 - **Where:** `tests/RoseMcp.IntegrationTests/LiveAppInspectionTests.cs:18` (no `[Category]`), `.github/workflows/ci.yml:129-132,168-171,181`
-- **What:** Four live-app classes carry `[Category("LiveApp")]` (`LiveAppSessionTests.cs:28`,
-  `LiveAppUwpTests.cs:26`, `LiveAppWinUiTests.cs:20`, `LiveAppUwpModernTests.cs:17`) and one method
-  in `OperatorApiTests.cs:107` does. `LiveAppInspectionTests`, split out in af63dde, does not. Its
+- **What:** Eight live-app classes carry `[Category("LiveApp")]` -- `LiveAppSessionTests`,
+  `LiveAppDebugTests`, `LiveAppUwpTests`, `LiveAppUwpEditTests`, `LiveAppUwpReadTests`,
+  `LiveAppUwpOverlayTests`, `LiveAppUwpModernTests`, `LiveAppWinUiTests` -- and one method in
+  `OperatorApiTests.cs:107` does. `LiveAppInspectionTests`, split out in af63dde, still does not. Its
   eleven tests start `DebugProbeTarget` and attach a real ICorDebug session, so
   `--treenode-filter '[Category!=LiveApp]'` admits them to the hosted Windows runner. CI's own
   comment says "LiveAppSessionTests is excluded whole. Its debugger tests would run here" -- they now
@@ -574,9 +575,17 @@ MinVer off the tag so there is one place to get the version right, two runners b
 tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
 
 ### UIP-22 `PublishedLayoutTests` guards a layout it stages itself, not the one `deploy.ps1` writes
-- **Severity:** Medium
+- **Severity:** Medium → **High**
 - **Effort:** M
-- **Where:** `tests/RoseMcp.UnitTests/PublishedLayoutTests.cs:32-42` (`Stage(...)` by hand, docstring "The shape `Publish-Tree` writes"), `tools/deploy.ps1:127-159` (`Publish-Tree`), `:312-386` (`Assert-WindowsPackage`)
+- **Where:** `tests/RoseMcp.UnitTests/PublishedLayoutTests.cs:32-42` (`Stage(...)` by hand, docstring "The shape `Publish-Tree` writes"), `tools/deploy.ps1:131` (`Publish-Tree`), `:396` (`Assert-WindowsPackage`)
+- **Scope grew with PR #277.** The layout had two parties when this was filed. It now has five:
+  `tools/deploy.ps1`, `tools/RoseMcp.Deploy.ps1`, `tools/build-installer.ps1`, `installer/install.ps1`
+  and `installer/rosemcp.iss` — the last two being **packaged content a user runs**, not a script this
+  repository runs. The installer work was careful about the part it could see (one staged tree feeds
+  both the zip and the setup exe, so they carry identical bytes, and `RoseMcp.Deploy.ps1` holds what
+  all three agree about for stopping a running install). What it could not do is join any of that to
+  the C# resolvers, which is this finding. A layout change now passes every C# test and fails on a
+  stranger's machine at install time.
 - **What:** The test builds a directory tree from nine hard-coded paths and asserts the C# resolvers
   find things in it, with `searchRepository: false` so the development fallback cannot mask a break.
   That part is excellent. What it does not do is read anything `deploy.ps1` produces: if `Publish-Tree`

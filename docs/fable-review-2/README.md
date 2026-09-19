@@ -119,10 +119,13 @@ to grep/Read why. A tool that was not reached for when it should have been is al
 ## Ground truth gathered before the agents ran
 
 - Production code is roughly 60k lines across 18 projects; tests roughly 31k lines.
-- `rose_workspace_status` on this repository reports **Degraded**: `Microsoft.Extensions.Logging.Generators.dll`
-  and `Microsoft.Extensions.Options.SourceGeneration.dll` fail to load (manifest version mismatch,
-  10.0.14 located vs the pinned 10.0.11), and the WinUI projects log "Cannot resolve Assembly or
-  Windows Metadata file ... RoseMcp.Contracts.dll" during the design-time build.
+- ~~`rose_workspace_status` on this repository reports **Degraded**~~ -- **no longer true as of PR #269**
+  (WRK-08). `Microsoft.Extensions.Logging.Generators.dll` and
+  `Microsoft.Extensions.Options.SourceGeneration.dll` failed to load on a manifest version mismatch,
+  and one load context per analyzer directory fixed it. Re-confirmed 2026-09-20 against the **installed**
+  build rather than one compiled for the check: `"state":"Loaded"`, `"degradedReasons":[]`,
+  `"analyzerLoadFailures":[]`. The WinUI "Cannot resolve Assembly or Windows Metadata file" load
+  diagnostic remains, and is a fact about an unbuilt checkout rather than a defect.
 - No `TODO`/`HACK`/`FIXME` markers in `src`. 51 issue-number tags in comments (#171 tracks the migration).
   2 warning suppressions. 23 files use a lock, semaphore, `Interlocked`, `Channel` or a concurrent collection.
 - No `Console.Write` in `src` (the stdout rule holds).

@@ -495,7 +495,7 @@ to add a side channel, and the pipe framing in `tap_channel.h` is already the de
 ### IPC-01 The tap's request side does not escape what its reply side unescapes
 - **Severity:** High
 - **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlDiagnosticsSession.cs:898-899` (`Line`), `:700`;
+- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderWire.cs:45` (`Line`);
   `src/RoseMcp.Xaml.Tap/tap_channel.h:209-228` (`Escape`), `:253-273` (`ParseCommands`)
 - **What:** The provider escapes `\t`, `\r`, `\n` and `\\` in every field it writes, and the host
   `Unescape`s every field it reads (twelve call sites in `XamlDiagnosticsSession`). The reverse

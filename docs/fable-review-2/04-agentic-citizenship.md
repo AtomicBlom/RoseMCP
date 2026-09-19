@@ -64,7 +64,7 @@ turned a typo into a confident answer to a different question -- `scope: "proj"`
 solution, `minimumSeverity: "warn"` reported warnings when errors were wanted, a misspelt event kind
 widened the filter instead of narrowing it, and any step mode but `in`/`out` stepped over. The
 refusal names the argument, what arrived, and every value that would have worked
-(`ArgumentValues.cs:171-172`). This is the correct shape and it is centralised so it cannot be
+(`ArgumentValues.Unknown`, `ArgumentValues.cs:30`). This is the correct shape and it is centralised so it cannot be
 forgotten on the next enum.
 
 **5. `ToolArgumentShape` turns a binder error into an actionable one.** The SDK's own message is
@@ -320,8 +320,12 @@ revision 1). Sizes are the raw JSON as it arrived.
   `src/RoseMcp.Contracts/WorkspaceMutationResult.cs:17,23` (`ChangedFiles`, `Notices`),
   `src/RoseMcp.Worker/MemberSyntax.cs:196` (line-ending notice),
   `src/RoseMcp.Worker/EditVerification.cs:129-130` (analyzer notice),
-  `src/RoseMcp.Worker/MemberEditService.cs:1123-1126` (dependents notice),
-  `src/RoseMcp.Contracts/DiagnosticEntry.cs:32` (`HelpLink`)
+  `src/RoseMcp.Worker/DeclarationEditService.cs:201-202` (dependents notice, via
+  `EditVerification.SkippedDependents`), `src/RoseMcp.Contracts/DiagnosticEntry.cs:32` (`HelpLink`)
+- **Cheaper than when filed.** Card 9 shipped, so the notices this finding wants trimmed are decided in
+  `EditPipeline.Report()` rather than in six hand-written iterators. Card 9's own rule applies to the
+  trim: a line saying *which* compile ran is a fact and stays; a line framing the compile is shared and
+  can be conditioned in one place.
 - **What:** Measured on one real `rose_replace_member` response that added a doc comment and one
   statement, and came back with one error. Roughly 4,000 characters, about 1,000 tokens. It breaks
   down as:

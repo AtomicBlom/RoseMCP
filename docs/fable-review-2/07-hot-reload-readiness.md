@@ -35,12 +35,12 @@ Read "present" as: the code does this now, for its own reasons, and hot reload c
 
 | Capability hot reload needs | State | Where |
 |---|---|---|
-| Launch an exe under the debugger from birth | **present** | `CorDebugSession.cs:226-240` (`CreateProcessForLaunch(..., bSuspendProcess: true, ...)`), `:261-299` (`AttachAtSuspendedStartup`) |
-| Launch with a *controlled environment* (exe) | **absent** | `CorDebugSession.cs:238` passes `lpEnvironment = IntPtr.Zero`; the target inherits the broker's environment |
+| Launch an exe under the debugger from birth | **present** | `RuntimeAttachment.cs:76-96` (`CreateProcessForLaunch(..., bSuspendProcess: true, ...)`), `RuntimeAttachment.cs:131-175` (`AttachAtSuspendedStartup`) |
+| Launch with a *controlled environment* (exe) | **absent** | `RuntimeAttachment.cs:81` passes `lpEnvironment = IntPtr.Zero`; the target inherits the broker's environment |
 | Launch with a controlled environment (UWP) | **present** | `Uwp.cs:106` `ActivationEnvironment = "ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO=1\0\0"`, passed at `Uwp.cs:118-133` via `IPackageDebugSettings::EnableDebugging` |
-| Attach to an already-running process | **present**, and **fatal to architecture A** | `CorDebugSession.cs:202-219`; JIT flags can only be set inside `LoadModule`, which has already gone by |
-| Module-load hook to hang baseline capture off | **present** | `Record` -> `LoadModuleCorDebugManagedCallbackEventArgs` at `CorDebugSession.cs:1575-1578` -> `BindModule` `:1981-2029` |
-| Module **handle** registry (`ICorDebugModule` per path) | **absent** | `RememberModule` `:1902-1910` keeps `_modulePaths` (strings) and drops the `CorDebugModule`; LIV-05 wants the same map for binding |
+| Attach to an already-running process | **present**, and **fatal to architecture A** | `RuntimeAttachment.cs:52-70`; JIT flags can only be set inside `LoadModule`, which has already gone by |
+| Module-load hook to hang baseline capture off | **present** | `Record` -> `LoadModuleCorDebugManagedCallbackEventArgs` at `CorDebugSession.cs:750` -> `BindModule` `:1345` -> `BreakpointTable.BindNewModule` |
+| Module **handle** registry (`ICorDebugModule` per path) | **absent** | `TargetSymbols.Remember` (`TargetSymbols.cs:44-54`) keeps paths (strings) and drops the `CorDebugModule`; LIV-05 wants the same map for binding |
 | JIT flags for EnC (`CORDEBUG_JIT_ENABLE_ENC`, `CORDEBUG_JIT_DISABLE_OPTIMIZATION`) | **absent** | nothing calls `SetJITCompilerFlags` or `SetDesiredNGENCompilerFlags` anywhere in `src` |
 | Baseline capture: module metadata | **partial** | `RoseMcp.Symbols` reads module metadata off disk (`SymbolCache.cs:33-56`); Roslyn's `ModuleMetadata.CreateFromFile` would read `Project.OutputFilePath` (`BuildFreshness.cs:40`) |
 | Baseline capture: portable PDB / `EditAndContinueMethodDebugInformation` | **partial** | `PortablePdb.Extents`/`SequencePointsOf` (`PortablePdb.cs:121-186`) read the same file, for different tables |
@@ -91,13 +91,14 @@ by hand.
    *Verified on the web* (learn.microsoft.com, `ICorDebugModule2::SetJITCompilerFlags`): it "can be
    called only from within the `ICorDebugManagedCallback::LoadModule` callback for the module", and
    calls after that callback has been delivered fail. RoseMCP handles exactly that callback
-   (`CorDebugSession.cs:1575-1578`), so the hook is in the right place -- but it means
+   (`CorDebugSession.cs:750`), so the hook is in the right place -- but it means
    **`rose_debug_attach` to a running process can never hot-reload the modules already loaded**, and
    launch or startup-attach is the only route. That is a product statement, not an implementation
    detail, and it needs saying in the tool description rather than discovered.
 2. **The target must be synchronised for the apply.** `Break` / `ContinueInternal` already give that,
-   and LIV-05's proposed `WithSynchronizedTarget` is the natural wrapper. But "the app freezes for a
-   moment on every edit" is a visible difference from what people mean by hot reload.
+   and `TargetSymbols.Walk` (`TargetSymbols.cs:65`) is the worked example of that stop/continue pair.
+   But "the app freezes for a moment on every edit" is a visible difference from what people mean by
+   hot reload.
 3. **Framework `MetadataUpdateHandler`s do not fire.** The runtime invokes them from
    `MetadataUpdater.ApplyUpdate`, not from the debugger path. So a WinUI page whose generated code
    changed would have new IL and no re-render. For a method-body edit that is fine; for anything a
@@ -158,7 +159,7 @@ the app never stops, and the framework refreshes itself.
   visibly reload. Ship it second, over the same delta half.
 
 **The XAML tap is unaffected either way.** It is injected by the framework's own
-`InitializeXamlDiagnosticsEx` (`XamlProviderSession.cs:292-311`), not by the debugger and not by a
+`InitializeXamlDiagnosticsEx` (`XamlProviderSession.Inject`), not by the debugger and not by a
 startup hook, so `rose_xaml_*` keeps working under B with no debugger attached. That is an argument
 *for* B beyond C# hot reload: today the whole XAML live-edit feature is gated behind attaching a
 debugger it does not need.
@@ -312,8 +313,8 @@ design is mostly about the seam.
   counterpart to `WorkspaceManager`... a session is per running target, whereas a worker is per
   solution, so the two are tracked separately" (`LiveAppSessionManager.cs:10-18`). Nothing joins them.
   What joins them is the **output path**: `BuildFreshness` knows `Project.OutputFilePath` for every
-  project, and `RememberModule` sees the file of every module the target loads
-  (`CorDebugSession.cs:1902-1910`). Intersect the two sets and you have the project-to-module map a
+  project, and `TargetSymbols.Remember` sees the file of every module the target loads
+  (`TargetSymbols.cs:44-54`). Intersect the two sets and you have the project-to-module map a
   hot-reload session *is*. That is a real computation, not a guess, and it also answers "which of my
   open workspaces is this app?" -- a question the broker cannot answer today.
 - **Tool surface: `rose_hot_reload_start` / `rose_hot_reload_apply` / `rose_hot_reload_end`, and not
@@ -338,16 +339,16 @@ design is mostly about the seam.
 
 ### Host: environment, module registry, apply
 
-- **Environment at launch** (`CorDebugSession.cs:238`): `lpEnvironment` stops being `IntPtr.Zero` and
+- **Environment at launch** (`RuntimeAttachment.cs:81`): `lpEnvironment` stops being `IntPtr.Zero` and
   becomes a merged block -- the host's own environment plus what the session asks for. UWP already has
   the plumbing (`Uwp.cs:106-133`); the exe path needs the same multi-string built by hand.
-- **Module registry**: `Dictionary<string, CorDebugModule>` filled in `RememberModule`, which LIV-05
+- **Module registry**: `Dictionary<string, CorDebugModule>` filled in `TargetSymbols.Remember`, which LIV-05
   wants anyway to stop `AddBinding` async-breaking the whole target per breakpoint. One change, two
   features.
 - **JIT flags inside the `LoadModule` callback**, because there is nowhere else they can go, gated on
   whether this session was started with hot reload armed -- `CORDEBUG_JIT_DISABLE_OPTIMIZATION` on
   every module is a real performance cost nobody asked for.
-- **Apply with the target synchronised**, through LIV-05's `WithSynchronizedTarget`, on the same
+- **Apply with the target synchronised**, following the stop/continue pair `TargetSymbols.Walk` sets out (`TargetSymbols.cs:65`), on the same
   `_gate` and callback discipline `BindAgainstLoadedModules` already runs under.
 - **PDB deltas into `RoseMcp.Symbols`**: this is the one host-side piece with no shortcut. The cache
   models disk (`SymbolCache.cs:33-56`, stamp-based); a debugged process needs *the module as loaded,
@@ -383,11 +384,11 @@ The things a hot-reload epic must not refactor away.
   (`src/RoseMcp.XamlDiff/XamlApplyBaseline.cs`) is baseline-of-what-was-sent with an explicit
   first-apply-records-nothing rule and a baseline that advances on partial failure *because edits are
   not idempotent* -- the same three properties an `EmitBaseline` chain has, argued from the same
-  premise. `XamlDiagnosticsSession.ApplyEditsCore` (`:603-756`) is compute-outside, send-a-batch,
+  premise. `XamlApply.ApplyEditsCore` is compute-outside, send-a-batch,
   per-edit-outcomes. `LiveXamlApplyResult` / `LiveXamlEditResult` are the result shape. None of this
   is reusable code and all of it is reusable design.
 - **The module-load callback is handled, at the one moment EnC can be armed.** `Record` ->
-  `LoadModuleCorDebugManagedCallbackEventArgs` (`CorDebugSession.cs:1575-1578`) runs with the target
+  `LoadModuleCorDebugManagedCallbackEventArgs` (`CorDebugSession.cs:750`) runs with the target
   stopped, which is where `SetJITCompilerFlags` must be called and where a baseline can be read
   safely.
 - **The worker holds one immutable `Solution` and obtains compilations on demand.** Retaining a
@@ -404,30 +405,31 @@ The things a hot-reload epic must not refactor away.
 
 ## Findings
 
-### HOT-01 `RememberModule` drops the `ICorDebugModule`, and it is the only place EnC can be armed
+### HOT-01 `TargetSymbols.Remember` drops the `ICorDebugModule`, and it is the only place EnC can be armed
 - **Severity:** High
 - **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:1898-1910`, called from `BindModule`
-  `:1981-1993`, reached from `Record` `:1575-1578`
-- **What:** `RememberModule` takes a `CorDebugModule`, extracts its path into `_modulePaths` and lets
-  the object go. Both EnC entry points need that object and nothing else will do:
+- **Where:** `src/RoseMcp.LiveApp/Debugging/TargetSymbols.cs:44-54`, called from
+  `TargetBreakpoints.BindModule` `:1345`, reached from `Record` `:1061-1064`
+- **What:** `Remember` takes a `CorDebugModule`, extracts its path into the registry and lets the
+  object go. Both EnC entry points need that object and nothing else will do:
   `ICorDebugModule2::ApplyChanges` is a method on it, and `SetJITCompilerFlags` is documented as
   callable *only from inside the `LoadModule` callback for that module* -- which is the call stack
-  `RememberModule` is standing in.
+  `Remember` is standing in.
 - **Why it matters:** It is not that the handle is inconvenient to get later; it is that for the JIT
   flag there is no later. Every module whose `LoadModule` callback has been delivered without the flag
   set is permanently ineligible for debugger-driven EnC for the life of the process. A session that
   forgets to arm a module cannot be repaired, only restarted.
-- **Suggested change:** `Dictionary<string, CorDebugModule> _modules` filled in `RememberModule`, and
-  an armed-at-load decision taken from session state. LIV-05 already asks for the same map so
-  `AddBinding` stops async-breaking the whole target per breakpoint, so this is one change buying two
-  features. Make the arming a property of the *session*, decided once at start, so no code path can
-  reach `LoadModule` undecided.
+- **Suggested change:** `Dictionary<string, CorDebugModule>` alongside the paths in `TargetSymbols`,
+  filled in `Remember`, and an armed-at-load decision taken from session state. LIV-05 already asks for
+  the same map so `AddBinding` stops async-breaking the whole target per breakpoint, so this is one
+  change buying two features. Make the arming a property of the *session*, decided once at start, so no
+  code path can reach `LoadModule` undecided. PR #265 made this cheaper: the registry is now a class of
+  its own rather than a field on the session, so the map has an obvious home.
 
 ### HOT-02 The exe launch hands the target `IntPtr.Zero` for its environment
 - **Severity:** High
 - **Effort:** S (exe), S (UWP)
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:238`; contrast `Uwp.cs:106`, `:118-133`
+- **Where:** `src/RoseMcp.LiveApp/Debugging/RuntimeAttachment.cs:81`; contrast `Uwp.cs:106`, `:118-133`
 - **What:** `CreateProcessForLaunch(commandLine, bSuspendProcess: true, IntPtr.Zero, workingDirectory)`
   -- the third argument is `lpEnvironment`, so the target inherits the broker's environment verbatim.
   The UWP path already passes a real block (`ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO=1\0\0`) through
@@ -496,29 +498,29 @@ The things a hot-reload epic must not refactor away.
   only thing the commit does is swap the advanced `EmitBaseline` in under the revision check, which is
   the compare-and-swap WRK-10 describes.
 
-### HOT-06 The stop state machine has no room for "applying", and it is already wrong about "exited"
+### HOT-06 The stop state machine has no room for "applying" — **scope reduced; the prerequisite shipped**
 - **Severity:** High
-- **Effort:** M
-- **Where:** `CorDebugSession.cs:145-181` (the nine fields), the five spellings of the guard at `:386`,
-  `:772`, `:874-879`, `:997`, `:1217`, `:1331`, `:1799`, `:1936`; `CurrentStop` at `:840-857`. See
-  LIV-02.
-- **What:** LIV-02 documents that the target's state is spread over a dozen fields with five
-  differently-spelled guards, one of which already reports a dead process as stopped. An apply adds a
-  state that is *neither* running nor stopped-at-a-breakpoint: synchronised deliberately, by us, for a
-  bounded operation that must not be interrupted by the safety timer, a detach, or a second apply.
-- **Why it matters:** Added as a tenth field, "applying" gains a sixth spelling of the guard, and the
-  window it opens is the worst kind: a detach or auto-continue that fires between `ApplyChanges` and
-  the baseline advancing leaves the process's metadata ahead of the worker's `EmitBaseline`, which no
-  later apply can reconcile -- the deltas are ordered and there is no undo.
-- **Suggested change:** LIV-02's discriminated union first
-  (`Running | Stopped(StopRecord) | Detaching | Detached | Exited`), then `Applying(ApplyRecord)` as a
-  new arm. The value of doing it in that order is that the compiler then enumerates every site that
-  has to decide what "applying" means, instead of a reviewer doing it.
+- **Effort:** S (was M)
+- **Where:** `src/RoseMcp.LiveApp/Debugging/TargetExecution.cs`, `StopRecord.cs`
+- **Already done (PR #265, LIV-02).** The half of this finding that said the state machine was implicit
+  in a dozen fields with five differently-spelled guards, one of which reported a dead process as
+  stopped, is fixed. `TargetExecution` is `Running | Stopped(StopRecord) | Detaching | Detached |
+  Exited` as one value swapped under the gate, and every guard is a pattern match.
+- **What is left:** the `Applying(ApplyRecord)` arm. An apply is a state that is *neither* running nor
+  stopped-at-a-breakpoint: synchronised deliberately, by us, for a bounded operation that must not be
+  interrupted by the safety timer, a detach, or a second apply.
+- **Why it matters:** The window an apply opens is the worst kind -- a detach or auto-continue firing
+  between `ApplyChanges` and the baseline advancing leaves the process's metadata ahead of the worker's
+  `EmitBaseline`, which no later apply can reconcile, because the deltas are ordered and there is no
+  undo. Adding the arm is what makes the compiler enumerate every site that has to decide what
+  "applying" means, instead of a reviewer doing it.
+- **Suggested change:** Add the arm, and give `ApplyRecord` the same shape as `StopRecord`: it owns the
+  bound on how long an apply may hold the target, and disposing it is what ends the state.
 
 ### HOT-07 Attach-to-running can never hot reload, and nothing says so
 - **Severity:** Medium
 - **Effort:** S
-- **Where:** `CorDebugSession.cs:202-219` (`Attach`), `:1795-1846` (`BindAgainstLoadedModules`),
+- **Where:** `RuntimeAttachment.cs:52-70` (`Attach`), `TargetBreakpoints.cs:153` (`BindAgainstLoadedModules`),
   `Tools/LiveAppDebugTools.cs` (`rose_debug_attach`)
 - **What:** `SetJITCompilerFlags` is callable only inside `LoadModule` for that module (verified on
   learn.microsoft.com). For a process attached after it started, every already-loaded module's
@@ -538,7 +540,7 @@ The things a hot-reload epic must not refactor away.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** `src/RoseMcp.Broker/WorkspaceWorker.cs` and `src/RoseMcp.Broker/LiveAppSession.cs` (both
-  MCP over stdio); `XamlDiagnosticsSession.ApplyEditsCore:603-756` for what text transport looks like
+  MCP over stdio); `XamlApply.ApplyEditsCore` for what text transport looks like
 - **What:** Everything crossing a RoseMCP process boundary today is text: JSON over stdio to the
   worker, JSON over stdio to the host, newline-framed commands to the tap. A metadata+IL+PDB delta is
   three byte arrays per changed project, and the only shape available without new machinery is base64
@@ -562,7 +564,7 @@ The things a hot-reload epic must not refactor away.
   a worker is per solution, so the two are tracked separately". A hot-reload session is precisely a
   pairing of the two, and the join key exists on both sides already: `Project.OutputFilePath` from the
   design-time build (`BuildFreshness.cs:40`, `ProjectGraphService.cs:59`) and the module file
-  `RememberModule` sees (`CorDebugSession.cs:1902-1910`).
+  `TargetSymbols.Remember` sees (`TargetSymbols.cs:44-54`).
 - **Why it matters:** Without the join the caller has to supply both ids on every call and can pair
   them wrongly with no diagnostic -- applying a delta built from solution A to a process running
   solution B is an apply that *succeeds* and produces a process that is neither.
@@ -592,7 +594,7 @@ The things a hot-reload epic must not refactor away.
 ### HOT-11 Ending a session after an applied edit is already classified and not implemented
 - **Severity:** Low
 - **Effort:** S
-- **Where:** `CorDebugSession.cs:549` (`CORDBG_E_DETACH_FAILED_ON_ENC` in `IsRefusal`), `:500-535`
+- **Where:** `DetachProtocol.cs:106` (`CORDBG_E_DETACH_FAILED_ON_ENC` in `IsRefusal`), `CorDebugSession.ReleaseForDetach`
   (`ReleaseForDetach`)
 - **What:** The one EnC symbol anywhere in `src` is the HRESULT for "cannot detach, this process has
   had an edit applied", and it is already treated as a refusal rather than retried -- which is
@@ -650,7 +652,7 @@ this epic can produce in week one.
 
 ### M2 -- A controlled environment and an armed module registry (M)
 HOT-02 and HOT-01. `TargetEnvironment` for both launch paths; `Dictionary<string, CorDebugModule>` in
-`RememberModule`; `SetJITCompilerFlags(CORDEBUG_JIT_ENABLE_ENC | CORDEBUG_JIT_DISABLE_OPTIMIZATION)`
+`TargetSymbols`; `SetJITCompilerFlags(CORDEBUG_JIT_ENABLE_ENC | CORDEBUG_JIT_DISABLE_OPTIMIZATION)`
 inside `LoadModule` when the session was started armed; `SetDesiredNGENCompilerFlags` on the process.
 `CanHotReload` on the session with its reason (HOT-07). Ships value on its own: LIV-05's per-breakpoint
 full-target stop goes away with the same map.

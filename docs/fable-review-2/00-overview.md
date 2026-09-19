@@ -18,6 +18,30 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 07 Hot-reload readiness | 12 | 4/7/1 | Fragile but well-aimed; 5-6.5 weeks to v1 |
 | 08 UI usability | 17 | 3/10/4 | Adequate, and **aimed at the wrong job** |
 
+**Closed so far (2026-09-20).**
+
+| Card | Findings | Shipped in |
+|---|---|---|
+| 2 | LIV-03 | #270 |
+| 3 | LIV-02 | #265 |
+| 7 | WRK-08 | #269 |
+| 9 | WRK-01 | #275, #276, #278 |
+| — | LIV-01 | #265, #268, #274, #281 |
+
+Three of the seven wrong-answer cards in tier 1, one of the three structural refactors in tier 2, and
+five of the 27 High findings. **The debugger core and the write pipeline are both done**, which were
+the two concentrations of duplication the review named. What is left at the top: **card 4** (the XAML
+pipe, and #208 with it) is the highest-value thing in tier 1, and **card 8** (the text/syntax line) is
+now the whole of tier 2's editing work, unchanged in size by card 9.
+
+Two cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it would
+not) and the layout half of **21** (PR #277 took the parties to the published layout from two to five).
+Card 9 also found a wrong answer the review missed — four write tools reporting a project clean while
+the caller's errors sat in it.
+
+Each closed finding is struck in its own file with what shipped, where the reasoning now lives, and
+where the card turned out wrong.
+
 ---
 
 ## The headline
@@ -45,14 +69,15 @@ explains most of the 150 findings, and the card list below is organised around i
 reasoning in the "X, because Y" shape the conventions ask for. Three reviewers said explicitly that a
 refactor which loses the comments loses the design.
 
-Against that: five copies of the write-pipeline finish step that have **already diverged** (WRK-01),
-five independent answers to "what is this file's indent and line ending" (WRK-03), three copies of
-`ToolErrorReporting` (BRK-06, AGT-19), two classes that are the same class twice (UIP-09), and a
-comment debt that is **growing**: 100 history clauses against issue #171's count of 90, and 60 issue
-tags against 53 (UIP-23).
+Against that: five independent answers to "what is this file's indent and line ending" (WRK-03), three
+copies of `ToolErrorReporting` (BRK-06, AGT-19), two classes that are the same class twice (UIP-09),
+tool-layer boilerplate beside two helpers that already wrap it (WRK-23), and a comment debt that is
+**growing**: 100 history clauses against issue #171's count of 90, and 60 issue tags against 53 (UIP-23).
 
-The concentration is diagnostic. The C# editing stack and the debugger core carry most of the
-duplication, and both are the newest code.
+The concentration was diagnostic: the C# editing stack and the debugger core carried most of the
+duplication, and both were the newest code. Both have since been consolidated — `EditPipeline` for the
+one, and `CorDebugSession` cut from 2,396 lines to 879 for the other — which is the review's main
+prediction holding up.
 
 ### 2. How well is it architected?
 
@@ -65,8 +90,8 @@ in-process so its window reads live state. The reasons are recorded and the reas
 
 Inside those layers, responsibility leaks in predictable places. Session lifecycle logic sits in the
 tool layer (BRK-09), visual-tree paging sits in the broker against its own decision record (BRK-11),
-`XamlDiff` hard-codes UWP type names in a framework-neutral library (LIV-09), and `CorDebugSession`
-owns six unrelated concerns (LIV-01).
+and `XamlDiff` hard-codes UWP type names in a framework-neutral library (LIV-09). `CorDebugSession`
+owning six unrelated concerns (LIV-01) was the fourth, and is now five types.
 
 ### 3. Which patterns can be inverted into a pit of success?
 
@@ -91,14 +116,17 @@ the one the deploy script writes. The comment conventions have no CI grep.
 **About fifty inversions are proposed across the eight files**, and Tier 0 in the card list says which
 of them to build before anything else. The seven highest-leverage:
 
-1. **One `WriteOperation` pipeline type** replacing six copied conventions, with the rewrite as the
-   only stage a service supplies (WRK-01).
+1. ~~One `WriteOperation` pipeline type replacing six copied conventions, with the rewrite as the
+   only stage a service supplies (WRK-01).~~ **Built as `EditPipeline`, PRs #275 #276 #278** — with one
+   correction worth carrying to the rest: a line that states a **fact** (which compile ran) stays with
+   its tool; only a line that **frames** the compile is shared. One voice would have lost the fact.
 2. **One compilation-backed symbol resolver** replacing two-and-a-half resolvers, so an address that
    resolves for one tool resolves for all (WRK-04, AGT-03).
 3. **A `RepositoryPath.From(raw, origin)` type**, so a relative path cannot be resolved without a
    base and the wrong-worktree write becomes unrepresentable (BRK-01, AGT-10).
-4. **A `TargetExecution` discriminated union** replacing nine fields and five differently-spelled
-   guards, so a dead target cannot report as stopped (LIV-02).
+4. ~~A `TargetExecution` discriminated union replacing nine fields and five differently-spelled
+   guards, so a dead target cannot report as stopped (LIV-02).~~ **Built, PR #265** — the first of the
+   seven to land, and the worked example for the rest.
 5. **One framed-message type for every pipe**, which deletes the tap's escaping asymmetry and half of
    its correlation problem at once (IPC-01, LIV-07, LIV-08).
 6. **A generic constraint plus a surface-enumerating test for attribution**, replacing a runtime type
@@ -313,11 +341,11 @@ immediately after. Perhaps three days in total, against a programme of weeks.
 
 | # | Card | Why it goes first | Findings | Effort |
 |---|---|---|---|---|
-| 0a | **Keep the debugger's CI coverage, and widen it deliberately.** A file split on 2026-09-16 dropped `[Category("LiveApp")]` from `LiveAppInspectionTests`, so eleven real ICorDebug tests have been running on GitHub's hosted runners ever since -- and passing. That is accidental proof that the debugger half of the live-app suite needs no special toolchain. Decide to keep it, widen it to the rest of the debugger tests, and leave only the XAML, C++ and UWP half excluded with the reason stated. | Card 3 is surgery on `CorDebugSession`, and all of tier 6 is built on it. Doing that against a suite nobody runs on a schedule is the condition that produced #208. | UIP-14, UIP-25 | S, then M to widen |
+| 0a | **Keep the debugger's CI coverage, and widen it deliberately.** A file split on 2026-09-16 dropped `[Category("LiveApp")]` from `LiveAppInspectionTests`, so eleven real ICorDebug tests have been running on GitHub's hosted runners ever since -- and passing. That is accidental proof that the debugger half of the live-app suite needs no special toolchain. Decide to keep it, widen it to the rest of the debugger tests, and leave only the XAML, C++ and UWP half excluded with the reason stated. | **Sharper now that cards 2 and 3 have shipped.** Both were surgery on `CorDebugSession`, done against a suite CI does not run, and the two regression tests proving they stay fixed both landed in `LiveAppDebugTests` — which *does* carry `[Category("LiveApp")]` and so is excluded. All of tier 6 is built on that same code. | UIP-14, UIP-25 | S, then M to widen |
 | 0b | **A result-size budget test.** Extend the `ToolBudgetTests` pattern from description length to result size: each read and write tool called against `tests/fixtures`, with bytes-per-item ceilings recorded. | Tier 3 is four cards about size with no measurement anywhere. Without a budget the work is unverifiable and silently regresses; with one it is a number that moves. | AGT-01, AGT-21, inversion 1 of file 04 | S |
 | 0c | **A surface-enumerating test for `revision` and `workspace`.** Today the rule "every result carries a revision and names the workspace that answered" is asserted on three tools out of about forty-five. | Tier 3 reshapes all thirteen write result records and card 1 changes what a path looks like in every result. This is the guard that makes both safe. | BRK-12, UIP-17 | S |
-| 0d | **A host-version handshake.** `HostVersion` is set by four hosts and read by none, while the launcher picks the newest worker in `bin` and an environment variable can point anywhere. | This programme rebuilds workers constantly. Debugging a stale binary you did not build is the failure this work will produce most often, and it costs a session each time. | IPC-02, BRK-05 | S |
-| 0e | **The CI comment grep.** History clauses stand at 100 against #171's count of 90, and issue tags at 60 against 53. | This work touches a large fraction of the files in the repository. Without the grep it adds to the debt it was partly meant to reduce, and the drift is invisible until someone counts again. | UIP-23 | S |
+| 0d | **A host-version handshake.** `HostVersion` is set by four hosts and read by none, while the launcher picks the newest worker in `bin` and an environment variable can point anywhere. | This programme rebuilds workers constantly. Debugging a stale binary you did not build is the failure this work will produce most often, and it costs a session each time. **Observed 2026-09-18:** checking whether WRK-08 was really closed, `rose_workspace_status` reported the exact pre-fix Degraded state, because the installed Rose predated the fix by a day. The card's own premise, unprompted. | IPC-02, BRK-05 | S |
+| 0e | **The CI comment grep.** Re-measured 2026-09-20 over `src/**/*.{cs,h,cpp}`: **96 history clauses and 63 issue tags**, against #171's counts of 90 and 53. | This work touches a large fraction of the files in the repository. Fifteen PRs have landed since the review and the tags went **up** while the clauses barely moved, which is the drift argument made for you. Without the grep it is invisible until someone counts again. | UIP-23 | S |
 | 0f | **A producer-with-no-consumer test, seeded with the four known cases.** One source-scanning test per fact family: every `SourceLocation` facet must be named by a filter argument, every `WorkspaceSummary`/`LiveAppSessionSummary` property by a UI project, every `HostVersion` by a reader, every result key by an argument that accepts it -- or appear in an explicit exemption list with a reason. | Goes green on day one because the four known cases are seeded as exemptions, so it guards against a *fifth* while tier 3 reshapes results and tier 5 renders facts, which is exactly when new fields appear. Then each instance card deletes a line from the list, and the list going empty is the definition of done. | USE inversion 1, IPC-02, AGT-21, AGT-23 | S |
 
 One thing Tier 0 deliberately does not include: **card 9, one write pipeline, is the highest-leverage
@@ -333,12 +361,12 @@ These produce confident wrong results today. Everything else is cost.
 |---|---|---|---|---|
 | 1 | **A relative path resolves against the broker, so a write lands in another worktree.** Rebase hints against the caller's origin before ranking; make it a type so it cannot recur. Make the broker-to-worker hop absolute-only so a mis-route fails loudly instead of writing to a plausible file. | BRK-01, AGT-10, BRK-20 | #214 | M |
 | 1b | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Falls out of card 1: once the hop is absolute-only the worker's working directory stops being load-bearing and can move somewhere inert. Cut with #157, since an evicted worker releases the directory too. | BRK-20 | #157 | S |
-| 2 | **A breakpoint hit is attributed by method token alone**, so two bindings in one method misreport: a stopping breakpoint logs as a tracepoint and the wrong id is reported. Match the breakpoint object. | LIV-03 | new | S |
-| 3 | **A dead target reports as stopped.** The stop state machine is implicit in nine fields and five spellings of the same guard. Replace with one union swapped under the gate. Prerequisite for hot reload. | LIV-02, HOT-06 | new | M |
+| ~~2~~ | ~~A breakpoint hit is attributed by method token alone.~~ **Done, PR #270.** `BreakpointTable.Claim` matches on the IL offset — not the breakpoint object, which the card asked for and which ClrDebug's `ComWrappers` do not promise. | LIV-03 | — | — |
+| ~~3~~ | ~~A dead target reports as stopped.~~ **Done, PR #265.** `TargetExecution` + `StopRecord`. HOT-06's remaining half — the `Applying(ApplyRecord)` arm — is *not* done and belongs with tier 6 card 32, which is the first card that has an apply to have a state for. | LIV-02 | — | — |
 | 4 | **A timed-out XAML request still runs in the app** — reported failure, did the thing anyway. This is #208's real cause, and it is in the product, not the test. | UIP-15, LIV-07 | #208 | M |
 | 5 | **The tap's request side does not escape what its reply side unescapes.** A tab or newline in a property value mis-frames the edit and mis-keys its status, so an edit that landed reports as not applied. | IPC-01 | new | S |
 | 6 | **One compilation is asked about another's symbol**, leaking a Roslyn error naming an argument the caller never sent, from three tools. | WRK-06 | #121, #212 | S |
-| 7 | **The analyzer loader flattens every analyzer into one load context**, which is why Rose reports *this repository* as degraded, and will do the same to any solution mixing a framework and a NuGet reference to one package. | WRK-08 | new | M |
+| ~~7~~ | ~~The analyzer loader flattens every analyzer into one load context.~~ **Done, PR #269.** One `AssemblyLoadContext` per analyzer directory, `AnalyzerVersionIsolationTests`, and the rule written into `docs/invariants/analyzers-and-generators.md`. | WRK-08 | — | — |
 
 ### Tier 2 — the three structural refactors
 
@@ -347,7 +375,8 @@ Each closes a class of bug rather than a bug, and each is a prerequisite for som
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Six open fidelity issues close as a consequence.** | WRK-02, WRK-03, WRK-19, AGT-17 | #195 #197 #199 #200 #217 #218 | M-L |
-| 9 | **Make the write pipeline a type.** Six services copy the same nine-stage sequence and have already diverged in four places. A seventh writing tool inherits whichever copy it started from. | WRK-01, WRK-23 | new | M |
+| ~~9~~ | ~~Make the write pipeline a type.~~ **Done, PRs #275 #276 #278.** `EditPipeline`, all six services, `Listed` declared once. It was bigger than the card: **four tools were reporting a project clean while the caller's errors sat in it**, which the review did not find. **WRK-23 survives** — it is the *tool* layer and the pipeline is the *service* layer, so it needs a card of its own rather than falling out of this one. | WRK-01 | — | — |
+| 9b | **Route every mutation tool through `RunAsync`.** Seven tools inline the same `WorkProgress.Split` / `sharedWork.Follow` / `SessionAsync` / `MutateAsync` preamble that `RunAsync` already wraps; add `ReadAsync` so the `Follow` handle cannot be forgotten on reads either. Was assumed to disappear with card 9 and did not. | WRK-23 | new | S |
 | 10 | **One compilation-backed symbol resolver.** Today two-and-a-half resolvers disagree, so positional record properties are unaddressable when the name is common, and a metadata symbol is unreachable if any source symbol shares its leaf name. Every DTO in `Contracts` is a positional record. | WRK-04, WRK-05, WRK-14, AGT-03 | #233 #210 #239 | M |
 
 ### Tier 3 — make Rose win against grep
@@ -357,7 +386,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | 11 | **Result size discipline, reads.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 | M |
-| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Gated on card 1** for the path half (returning relative paths makes agents send them) and **on card 9** for the notice half (eight hand-written notice iterators are why two fire unconditionally). | AGT-21 | new | M |
+| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Gated on card 1** for the path half (returning relative paths makes agents send them); the notice half is **now unblocked** — card 9 shipped, and `EditPipeline.Report()` is the one place a notice is decided. Apply card 9's own rule when trimming: a line stating *which* compile ran is a fact and stays. | AGT-21 | new | M |
 | 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction. | AGT-21, BRK-01 | new | S |
 | 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
 | 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. | AGT-23, AGT-06, AGT-05 | #234 | M |
@@ -375,7 +404,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | 18 | **Share fixtures on the Roslyn half.** 254 solution loads and 299 fixture copies over six fixtures, with a proven sharing model already in use next door. Issue #39 understates it by four times. | UIP-13 | #39 | L |
 | 19 | *(moved to card 0d -- it is worth having before the work starts, not after.)* | IPC-02, BRK-05 | new | -- |
 | 20 | **A correlation id on every internal hop**, into every log line. Today a failure cannot be traced across the four processes it crossed. | BRK-15, IPC-07 | new | M |
-| 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, a shared layout manifest the deploy script and the test both read, and tap tier purity checked rather than described. | UIP-18, UIP-22, UIP-24 | new | M |
+| 21 | **Guard the remaining arrangements**, after cards 0c and 0e take the two urgent ones: a stdout test of its own, a shared layout manifest, and tap tier purity checked rather than described. **The layout half has got sharply more urgent** — PR #277 took the parties to the layout from two to five, two of them packaged content a user runs, so a layout change now fails at install time on somebody else's machine rather than in CI. Worth splitting out and pulling forward. | UIP-18, UIP-22, UIP-24 | new | M |
 
 ### Tier 5 — re-aim the UIs
 
@@ -402,7 +431,7 @@ proofs is in `07-hot-reload-readiness.md`.
 | 29 | Controlled environment at launch, plus an armed module registry (the module handle is dropped today at the only place EnC can be armed). | M |
 | 30 | Worker: pin a baseline, emit a delta. | L |
 | 31 | Contracts and transport for delta bytes; pair a workspace with a live-app session. | M |
-| 32 | **Apply through the debugger — the probe milestone.** Edit a method while it loops, observe the new value, no relaunch. | M |
+| 32 | **Apply through the debugger — the probe milestone.** Edit a method while it loops, observe the new value, no relaunch. Carries HOT-06's remaining half: an `Applying(ApplyRecord)` arm on `TargetExecution`, so the safety timer, a detach and a second apply each have to say what they mean during one. | M |
 | 33 | Symbols that model the process rather than disk. | M |
 | 34 | The managed agent path, which is what makes it a product. | L |
 
@@ -420,8 +449,10 @@ sections, the shortlist:
 - **The four surface tests** — tool list, security model, budget, parity. The model for every
   inversion above.
 - **The request-filter pattern** for origin, session and error conversion. Already the pit of success.
-- **The detach protocol** and its generation-guarded timers. Two facts in it each cost a target.
-- **`CorDebugInspector`'s cut** from the session: it proves the rest can be cut the same way.
+- **The detach protocol**, and timers that know which `StopRecord` they were armed for. Two facts in it
+  each cost a target.
+- **The cut of `CorDebugSession` into six types**, `CorDebugInspector` first and the other five after it.
+  The seam reasoning is in each class summary, including what each deliberately does not own.
 - **The tap's tier split enforced by include order**, so a projection type reaching into the shared
   layer fails to compile.
 - **`RoseMcp.Symbols`**, which is exactly what the architecture table claims.
@@ -452,7 +483,13 @@ Filed here so they reach the issue tracker. Several are not in any existing issu
 13. No way to ask Rose what its own tool listing looks like to a client, so surface changes are
     reviewable only as pass/fail.
 14. No negative-space or bulk query ("which members of this type does nobody reference"), which sent
-    two reviewers to grep.
+    two reviewers to grep. **Partly answered by `rose_find_split_options` (PR #290)**, which reports
+    which members would move together, from field co-occurrence and call-graph dominance. It is the
+    first tool here that answers a question about a type rather than about a symbol, and it has already
+    chosen two refactors (#287, #291) — in #291 it rediscovered, from state alone, a boundary that two
+    other files described in prose and it had never read. It does not answer the negative-space
+    question above: "nothing references this" was still established by hand with `rose_find_references`
+    while writing #274.
 
 ## Suggested reading order for splitting cards
 

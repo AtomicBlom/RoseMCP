@@ -29,19 +29,21 @@ MSBuild's own import list rather than by event counts, and every one of those pr
 integration test. The **navigation and analysis side is adequate to strong**: `EditVerification`'s
 before/after delta over a version-keyed `DiagnosticsService` cache, `CallSiteBinding` asking `IOperation`
 rather than counting arguments, and the boundary filter that forwards real messages are all the right
-shapes. The **editing stack is fragile**, and for a structural reason rather than a local one: there is
-a de facto pipeline (locate, rewrite, imports, format, whitespace, write, verify, resolve imports,
-report) but it exists as a convention copied into six services, with five copies of the finish step,
-four identical `IndentAt` helpers, and two different answers to "what is this file's line ending" inside
-one service. Underneath that pipeline sits a *text* tier -- `BodyEdit` splicing strings by token span,
-`ChangeSignatureService` discarding the declaration's own separators, `AddFileService` prepending imports
-as text, `DocComment` sniffing the first character -- and all six open fidelity bugs (#195, #197, #199,
-#200, #217, #218) live in that tier. Symbol addressing has one lossy primary resolver and a more
-complete fallback that is reached only on one exception type, which is why a positional record property
-is unreachable by name from every tool (reproduced live; broader than #233 describes). The Degraded
-status on this repository is a Rose defect in the analyzer loader, not a fact about the repository.
-Grade: **core strong, edges adequate, editing stack fragile** -- and the fragile part is the part the
-project's own charter says it exists for.
+shapes. The **editing stack was fragile for a structural reason** rather than a local one: a de facto
+pipeline (locate, rewrite, imports, format, whitespace, write, verify, resolve imports, report) existing
+as a convention copied into six services. **That half is fixed** — `EditPipeline` owns the sequence
+(WRK-01, PRs #275 #276 #278), and closing it turned up four tools reporting a project clean while the
+caller's own errors sat in it. **The text tier is untouched and is now the whole of the problem**:
+`BodyEdit` splicing strings by token span, `ChangeSignatureService` discarding the declaration's own
+separators, `AddFileService` prepending imports as text, `DocComment` sniffing the first character, four
+identical `IndentAt` helpers and two answers to "what is this file's line ending". All six open fidelity
+bugs (#195, #197, #199, #200, #217, #218) live there, and card 8 is exactly as large as it was. Symbol
+addressing has one lossy primary resolver and a more complete fallback that is reached only on one
+exception type, which is why a positional record property is unreachable by name from every tool
+(reproduced live; broader than #233 describes). ~~The Degraded status on this repository is a Rose defect
+in the analyzer loader~~ — fixed in PR #269 (WRK-08); the workspace loads clean.
+Grade: **core strong, edges adequate, editing stack fragile below the pipeline** -- and the fragile part
+is the part the project's own charter says it exists for.
 
 ## Strengths
 
@@ -70,7 +72,7 @@ Things a refactor must carry across intact.
   container and checks the shape, not only the syntax (`MemberSyntax.cs:357-388`);
   `DeclarationLocator` lists candidates on every refusal (`DeclarationLocator.cs:336-362`);
   `AttributeEdit.Several` refuses two attributes of one name rather than picking the first
-  (`AttributeEdit.cs:289-297`); `GuardSharedDeclaration` refuses `int a, b;` (`MemberEditService.cs:1000-1011`).
+  (`AttributeEdit.cs:289-297`); `GuardSharedDeclaration` refuses `int a, b;` (`MemberEditService.cs:617-628`).
 - **Verification reports the delta, not the haystack.** `EditVerification.Delta` keys on
   id+file+message and counts duplicates (`EditVerification.cs:330-359`); `DiagnosticsService` caches
   per project against `GetDependentSemanticVersionAsync` and keeps the compiler and analyzer halves
@@ -102,41 +104,40 @@ Things a refactor must carry across intact.
 
 ## Findings
 
-### WRK-01 The write pipeline is a convention copied into six services, not a type
-- **Severity:** High
-- **Effort:** M
-- **Where:** `MemberEditService.cs:61-170`, `DeclarationEditService.cs:131-224`, `AddUsingService.cs:19-99`,
-  `MoveMemberService.cs:31-112`, `AddFileService.cs:39-134`, `ChangeSignatureService.cs:34-141`
-- **What:** Each service re-implements the same sequence: `RefuseIfMoved` (10 call sites),
-  `new List<string>(snapshot.Notices)`, locate, rewrite, a private finish step that formats the annotated
-  span and runs `Whitespace.Apply` and propagates to linked documents (five copies:
-  `MemberEditService.FinishAsync:866`, `DeclarationEditService.FinishAsync:230`,
-  `MoveMemberService.FormatAsync:361`, `ChangeSignatureService.NormalisedAsync:452`,
-  `AddFileService.FormatAsync:366`), `SolutionWriter.ApplyAsync`, `EditVerification.RunAsync`, and a
-  private `Notices()` iterator (six copies) that assembles the same result record with
-  `IntroducedDiagnostics.Take(Listed)` where `Listed = 20` is declared in five files. The copies have
-  already diverged: `ChangeSignatureService.NormalisedAsync` never calls `Formatter.FormatAsync`;
-  `MoveMemberService.Notices` and `AddFileService.Notices` never yield `verification.Suggestions`;
-  `DeclarationEditService.Notices` omits the "N error(s) were there before" line the others carry.
-- **Why it matters:** Every fidelity rule (WRK-02, WRK-03) has to be fixed in five or six places, and
-  the divergence above is the evidence that it is not. A seventh writing tool starts by copying one of
-  the six and inherits whichever one it copied.
-- **Suggested change:** Make the pipeline a type. `WriteOperation` (or `EditPipeline`) owns
-  refuse-if-moved, locate, finish, write, verify, resolve-imports and report; a service supplies one
-  stage, `Rewrite(DeclarationTarget, Placement, notices) -> AnnotatedRoot`, and the shape of its result.
-  `MemberEditService`'s private `Written`/`Finished` records are already the right intermediate types;
-  promote them. Pattern: template method over a value pipeline, with the report built by one
-  `EditReport` type that every result record is projected from.
+### WRK-01 The write pipeline is a convention copied into six services, not a type — **closed**
+`EditPipeline` owns the sequence and all six services go through it; `Listed = 20` is declared once,
+down from nine declarations under one name with three different values. Shipped in PRs #275, #276 and
+#278.
+
+**The card understated it, and the conversion is what proved so.** The review named three divergences.
+Reading the notices found that only one line of five was in all ten call sites, and that *three of the
+six services reported a project clean while the caller's own errors sat in it* — `rose_replace_doc_comment`,
+`rose_set_attribute`, `rose_move_member` and `rose_add_file` each read "this edit introduced nothing"
+as "the project compiles". That is a confidently wrong answer the review did not find, and each fix
+landed with a test that fails against the old rule on exactly that sentence. A fifth hole — no tool
+saying what an edit *resolved*, though every result DTO carries `ResolvedDiagnosticCount` — was found
+the same way.
+
+**The suggested change was wrong in one respect.** The card asked for "one `EditReport` type that every
+result record is projected from". One voice would have destroyed a fact: `ChangeSignatureService`
+compiles `AllProjects` and phrases its lines accordingly, and which compile ran is information, not
+drift. So `EditPipeline.Report()` is the default for a tool with no reason to differ, and a tool with
+one keeps its wording. The distinction that came out of it — lines carrying a **fact** stay with their
+tool, lines carrying a **framing** of the compile are shared — is the reusable part and is worth
+applying to card 11b.
+
+**WRK-23 does not disappear with this**, which its own text predicted it would. See below.
 
 ### WRK-02 Two tiers write source, and every open fidelity bug is in the text tier
 - **Severity:** High
 - **Effort:** M
 - **Where:** `BodyEdit.cs:123` (string splice by token span), `BodyEdit.cs:203` (text splice),
   `BodyEdit.cs:406-426` (`Inserted` rebuilds a body from `statement.ToFullString().Trim()` joined with
-  `\n`), `ChangeSignatureService.cs:342-346` (primary declaration takes the caller's separators and an
-  `Unbroken` parenthesis), `AddFileService.cs:337` (imports prepended as text), `DocComment.cs:95-97`
-  (`StartsWith('<')` decides XML vs prose), `Whitespace.cs:32` (falls back to the payload's own
-  dominant ending)
+  `\n`), `ChangeSignatureService.cs:332` and `:347` (primary declaration takes the caller's separators
+  and an `Unbroken` parenthesis), `AddFileService.cs:326` (imports prepended as text),
+  `DocComment.cs:95-97` (`StartsWith('<')` decides XML vs prose), `Whitespace.cs:32` (falls back to the
+  payload's own dominant ending). Unaffected by WRK-01: `EditPipeline` owns the sequence around these,
+  not the text handling inside them, so card 8 is exactly as large as it was.
 - **What:** `rose_add_member` and `rose_replace_member` go syntax-in, syntax-out: parse in a container,
   `MemberSyntax.Prepared` sets trivia, `Formatter.FormatAsync` over the annotation, `Whitespace.Apply`
   over the span. Those two tools are the ones the invariants document and the ones that work. The paths
@@ -175,12 +176,16 @@ Things a refactor must carry across intact.
 ### WRK-03 Five independent answers to "what is this file's indent and line ending"
 - **Severity:** Medium
 - **Effort:** S
-- **Where:** `IndentAt` at `MemberEditService.cs:1212`, `DeclarationEditService.cs:294`,
-  `ChangeSignatureService.cs:842`, `MoveMemberService.cs:392`; `BodyEdit.IndentOf:489`;
-  `MoveTypeService.LineEnding:371-384`; `Whitespace.Dominant(text)` used as the ending at
-  `MemberEditService.cs:189,344`, `DeclarationEditService.cs:154`, `MoveMemberService.cs:286,288,302`
-  while `rules.LineEnding` (editorconfig first) is used at `MemberEditService.cs:465,902`;
-  `MoveMemberService.cs:275` hardcodes `"\t"` as the indent unit
+- **Where:** `IndentAt` at `MemberEditService.cs:791`, `DeclarationEditService.cs:248`,
+  `ChangeSignatureService.cs:838`, `MoveMemberService.cs:382`; `BodyEdit.IndentOf:489`;
+  `MoveTypeService.LineEnding`; `Whitespace.Dominant(text)` used as the ending at
+  `MemberEditService.cs:158,313,916`, `DeclarationEditService.cs:153`, `MoveMemberService.cs:276,278,292`,
+  `BodyEdit.cs:161`, while `rules.LineEnding` (editorconfig first) is used at `MemberEditService.cs:434`,
+  `EnumMemberEdit.cs:49`, `AddUsingService.cs:45`, `EditImports.cs:53`, `ResolvedImports.cs:143`;
+  `MoveMemberService.cs:265` hardcodes `"\t"` as the indent unit
+- **Untouched by card 9**, and the split-outs made it slightly wider: `EnumMemberEdit` and `EditImports`
+  each took a copy of the `rules.LineEnding` policy with them. Four byte-identical `IndentAt` methods,
+  still four.
 - **What:** Four byte-identical `IndentAt` methods; two line-ending policies inside one service
   (`ReplaceAsync` obeys the file's dominant ending, `AddAsync` obeys `.editorconfig`); a third policy
   in `MoveTypeService` that reads line 0 only; and a spaces repository receives a tab from
@@ -278,42 +283,23 @@ Things a refactor must carry across intact.
   forbidding `throw new ArgumentException`/`InvalidOperationException` outside the `Refusal`
   hierarchy. See inversion 4.
 
-### WRK-08 The shadow-copy loader flattens every analyzer into one `AssemblyLoadContext`, which is why this repository is Degraded
-- **Severity:** High
-- **Effort:** M
-- **Where:** `ShadowCopyAnalyzerAssemblyLoader.cs:45-50` (dependency resolver keyed by simple name),
-  `:101-116` (`LoadFromPath` catches `FileLoadException` and retries by *name*), `:153`
-  (`_shadowBySimpleName` last writer wins), `SolutionLoader.cs:282-315`
-- **What:** Diagnosed from disk, not from the code alone. Two copies of
-  `Microsoft.Extensions.Logging.Generators.dll` reach this solution: the ASP.NET Core targeting pack
-  `Microsoft.AspNetCore.App.Ref/10.0.10/analyzers/dotnet/cs/` ships assembly version **10.0.14.32716**
-  (taken by `RoseMcp.Broker`, `RoseMcp.Server`, `RoseMcp.Tray` through the framework reference), and
-  NuGet `Microsoft.Extensions.Logging.Abstractions/10.0.11/analyzers/dotnet/roslyn4.4/cs/` ships
-  **10.0.14.37416** (taken by `RoseMcp.Worker`, `RoseMcp.Logging`). Both are loaded into
-  `AssemblyLoadContext.Default`. The second `LoadFromAssemblyPath` throws `FileLoadException` because
-  an assembly of that simple name is already loaded; the fallback `LoadFromAssemblyName(name)` asks
-  for `.37416` while `.32716` is resident, and the runtime answers "The located assembly's manifest
-  definition does not match the assembly reference" -- the exact text in `analyzerLoadFailures`. The
-  same thing happens to `Microsoft.Extensions.Options.SourceGeneration.dll`. The brief's reading
-  ("10.0.14 located vs 10.0.11 referenced") is not what is happening: the package version is 10.0.11,
-  but both assembly versions are 10.0.14.x, differing in build number. `csc` handles this because each
-  compilation loads its own analyzers; Roslyn's own `AnalyzerAssemblyLoader` handles it with one
-  `AssemblyLoadContext` per analyzer directory. **This is a Rose defect, not a fact about the repo.**
-  The other half of the Degraded report -- "Cannot resolve Assembly or Windows Metadata file ...
-  RoseMcp.Contracts.dll" on the WinUI projects -- *is* a fact about the checkout: `src/RoseMcp.Contracts/bin`
-  does not exist in this worktree, and `UseWinUI` runs the XAML compiler during the design-time build,
-  which needs referenced assemblies on disk. Rose classifies that correctly (a load diagnostic, not a
-  degraded reason, since `LoadedSuccessfully` is true), though the remedy ("build the referenced
-  project first") is not said.
-- **Why it matters:** Any solution mixing a framework reference and a NuGet reference to the same
-  Microsoft.Extensions package -- most ASP.NET solutions with a class library -- loses one copy's
-  generators, `LoggerMessage` stubs go missing, and the status blames the repository ("Rebuild them,
-  or check their dependencies and the Roslyn version they were built against").
-- **Suggested change:** One `AssemblyLoadContext` per shadow directory (mirror Roslyn's
-  `DirectoryLoadContext`), resolving dependencies from that directory first and falling back to
-  Default only for Roslyn's own assemblies. Keep the shadow copy. Add a test to `AnalyzerLockTests`
-  that loads two versions of one analyzer assembly and asserts both produce generators. Say
-  "build the referenced project" in the WinUI load-diagnostic summary.
+### WRK-08 The shadow-copy loader flattens every analyzer into one `AssemblyLoadContext` — **closed**
+Two assembly versions sharing a simple name resolved to whichever arrived last, so a generator loaded
+and produced nothing while MSBuild went on passing it to the compiler — which is why Rose reported
+*this repository* as Degraded, and would have done the same to any solution mixing a framework
+reference and a NuGet reference to one Microsoft.Extensions package. Shipped in PR #269 (`88f70c1`):
+one `AnalyzerLoadContext` per analyzer directory, `AnalyzerVersionIsolationTests` in the fast suite,
+and the rule written into `docs/invariants/analyzers-and-generators.md`.
+
+**Verified end to end on 2026-09-18**, which took some doing and is itself the finding below: a worker
+built from this commit reports `"state":"Loaded"`, `"degradedReasons":[]`, `"analyzerLoadFailures":[]`
+against `RoseMcp.slnx`. The ground-truth note in the review brief — "`rose_workspace_status` on this
+repository reports Degraded" — no longer holds.
+
+**Left over, and not worth its own card:** the WinUI load diagnostic ("Cannot resolve Assembly or
+Windows Metadata file … `RoseMcp.Ui.dll`") still does not say the remedy, which is to build the
+referenced project first. Rose already classifies it correctly — a load diagnostic, not a degraded
+reason — so this is a sentence, not a defect. Fold it into card 13.
 
 ### WRK-09 `DiagnosticsService` never evicts, and a reload orphans every entry
 - **Severity:** Medium
@@ -441,11 +427,13 @@ Things a refactor must carry across intact.
 ### WRK-17 History and issue-number comments the repository's own convention forbids
 - **Severity:** Low
 - **Effort:** S
-- **Where:** `DiagnosticTarget.cs:8,36` ("It used to be one argument", "used to analyse"),
-  `ChangeSignatureService.cs:499-504` ("used to report ... #59 hit both halves"),
-  `NavigationService.cs:246` ("were previously answered"), `DiskSynchronizer.cs:186` ("what this used
-  to need"), `WorkspaceHost.cs:65-71` ("These were being appended"), `MemberEditService.cs:1110`
-  ("it used to be the point")
+- **Where:** `grep -rniE '\b(used to|previously|no longer|for now|until now)\b' src/` is the list, and
+  is the right way to read it — the specific examples this finding named have moved or gone as the
+  services were reshaped, while the repository-wide count has not moved (96 across `src`, card 0e).
+  Representative survivors: `DiagnosticTarget.cs:8,36` ("It used to be one argument", "used to
+  analyse"), `NavigationService.cs:246` ("were previously answered"), `DiskSynchronizer.cs:186` ("what
+  this used to need"), `WorkspaceHost.cs:65-71` ("These were being appended"). Two the finding named —
+  in `ChangeSignatureService` and `MemberEditService` — are gone, incidentally, as part of card 9.
 - **What:** `CLAUDE.md` says a comment never says what the code was before, and a closed issue's
   number is a tag to drop. These are the vibe-coded residue the brief asks about: each is a commit
   message written into a summary.
@@ -459,7 +447,7 @@ Things a refactor must carry across intact.
 - **Severity:** Low
 - **Effort:** S
 - **Where:** `IgnoredDirectories` at `DiskSynchronizer.cs:35` and `SolutionWatcher.cs:28` ("The same
-  list the watcher ignores" -- by copy); `SeparatorChars` in both; `SamePath` at `EditVerification.cs:380`,
+  list the watcher ignores" -- by copy); `SeparatorChars` in both; `SamePath` at `EditVerification.cs:376`,
   `ResolvedImports.cs:177`, `DeclarationLocator.cs:375`, `DiagnosticsService.PathMatches:289`,
   `BuildFreshness.cs:147` (this one with the try/catch the others lack); `SafeGetGenerators` at
   `WorkspaceStatusReporter.cs:253` (records the failure) and `GeneratedDocumentService.cs:139`
@@ -557,7 +545,12 @@ Things a refactor must carry across intact.
   a service through `MutateAsync` or `ReadAsync`. But seven mutation tools inline the same five lines
   that `RunAsync` wraps, and `EditAsync` is `RunAsync` specialised for one lambda shape. A new tool
   copies whichever it sees first.
-- **Why it matters:** Low on its own; it is the tool-layer half of WRK-01 and disappears with it.
+- **Why it matters:** ~~Low on its own; it is the tool-layer half of WRK-01 and disappears with it.~~
+  **That prediction was wrong.** WRK-01 shipped and this survived it untouched: `EditPipeline` is a
+  *service*-layer type, and the inline `WorkProgress.Split` / `sharedWork.Follow` / `host.SessionAsync`
+  / `session.MutateAsync` preamble is in the tool layer, which the pipeline never reaches. The two
+  duplications looked like one because they sit either side of the same call. So this is a card of its
+  own now, not a consequence of another, and nothing else is going to absorb it.
 - **Suggested change:** Every mutation tool goes through `RunAsync`; add `ReadAsync` for the reads in
   `NavigationTools`/`AnalysisTools` so the `Follow` handle cannot be forgotten either.
 

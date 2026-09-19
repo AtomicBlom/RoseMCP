@@ -27,15 +27,21 @@ timers, the event buffer, the named-pipe channel, the never-unadvise tap lifetim
 of the C++ headers are each backed by a measured invariant and, mostly, by a test. `RoseMcp.Symbols`
 is exactly what CLAUDE.md claims (a debugger-free metadata and PDB reader with correct cache
 invalidation and a stale-PDB refusal) and `RoseMcp.XamlDiff` is a well-isolated pure library with 33
-unit tests. Where it is fragile is in two places that a refactor has to fix rather than tidy:
-`CorDebugSession` carries six unrelated concerns and an implicit stop state machine spread over nine
-fields, so every new verb re-derives the guards; and the XAML pipe's "a reply is this request's answer
-by construction" claim holds only while no request ever times out, which is the mechanism behind
-#208. Two findings are graded High because they produce confident wrong answers: breakpoint-hit
-attribution ignores the IL offset, and a target that dies while held is reported as still stopped. On
-hot reload: nothing exists beyond the launch, attach and module-load hooks a debugger has anyway, and
-the launch path sets no environment on the target; the facts the other reviewer needs are in the
-"Hot-reload relevant facts" section with exact line references.
+unit tests. Where it was fragile was in two places a refactor had to fix rather than tidy. **The
+debugger half is now done** (PRs #265, #268, #270, #274 and #281, closing LIV-01, LIV-02 and LIV-03):
+`CorDebugSession` is 879 lines from 2,396 across nine types, the stop state machine is one value, and
+both High findings -- a dead target reporting as stopped, and a breakpoint hit attributed by method
+token alone -- are fixed with a regression test each. **The XAML half stands**: the pipe's "a reply is
+this request's answer by construction" claim holds only while no request ever times out, which is the
+mechanism behind #208, and that is still the highest-value card left in this file. On hot reload:
+nothing exists beyond the launch, attach and module-load hooks a debugger has anyway, and the launch
+path sets no environment on the target.
+
+**A note on references in this file.** The live-app code has been restructured three times since the
+review was written, and precise line numbers have gone stale each time. Open findings here now cite
+**file plus symbol**; a line range survives only where the finding is genuinely about a span. The
+symbol names are what a `rose_search_symbols` or a grep will find, and they have proved far more
+durable than the numbers.
 
 ## Strengths
 
@@ -44,26 +50,34 @@ What must survive a refactor, with where it lives:
 - **The "confident wrong answer" discipline is real and is written into code paths, not only docs.**
   `PdbState.Mismatched` refuses a stale PDB rather than reading it (`src/RoseMcp.Symbols/ModuleSymbols.cs:94-109`,
   `PdbState.cs:18-27`); `TapTree::ResolveName` refuses a duplicated `x:Name` rather than picking one
-  (`src/RoseMcp.Xaml.Tap/tap_tree.h:1015-1020`); `TypeOwners` refuses a type two modules declare
+  (`src/RoseMcp.Xaml.Tap/tap_tree.h:420-434`); `TypeOwners` refuses a type two modules declare
   (`src/RoseMcp.Symbols/TypeOwners.cs:52-58`); `XamlApplyBaseline.Prepare` records and applies nothing on a
   first apply rather than diffing a file against itself (`src/RoseMcp.XamlDiff/XamlApplyBaseline.cs:54-75`);
-  `XamlDiagnosticsSession.Outcome` reports an edit as applied only if every step of it was
-  (`src/RoseMcp.LiveApp/Xaml/XamlDiagnosticsSession.cs:941-954`).
-- **`CorDebugInspector` is the right cut.** A read of a stopped target is handed a `StoppedTarget`
-  record (`src/RoseMcp.LiveApp/Debugging/CorDebugInspector.cs:20`) built only under the session's gate
-  (`CorDebugSession.cs:1230`), knows nothing about how the stop happened, and runs no debuggee code. Its
-  `WalkFrames` counts unrepresentable frames rather than dropping them (`CorDebugInspector.cs:222-252`).
-  The extraction demonstrates that the rest of `CorDebugSession` can be cut the same way.
-- **The detach protocol is hard-won and tested.** `TryDetachOnce`/`SettleForRelease`/`ReleaseForDetach`
-  (`CorDebugSession.cs:378-535`) encode two facts that each cost a target: ICorDebug refuses to detach
+  `XamlProviderWire.Outcome` reports an edit as applied only if every step of it was.
+- **`CorDebugInspector` is the right cut, and it is the cut the rest followed.** A read of a stopped
+  target is handed a `StoppedTarget` record (`src/RoseMcp.LiveApp/Debugging/CorDebugInspector.cs:20`)
+  built only under the target's gate (`TargetInspection.Stopped`), knows nothing about how the stop
+  happened, and runs no debuggee code. Its `WalkFrames` counts unrepresentable frames rather than
+  dropping them (`CorDebugInspector.cs:222-252`). Eight more types were cut to this shape afterwards,
+  so it is the house style for anything else the session accretes rather than one good example.
+- **The detach protocol is hard-won and tested.** `CorDebugSession.TryDetachOnce`/`ReleaseForDetach`
+  and `DetachProtocol.Settle` encode two facts that each cost a target: ICorDebug refuses to detach
   over active breakpoints, and removing a patch under a parked thread fail-fasts the debuggee.
-  `IsRefusal` (`:544-549`) stops a deterministic refusal being retried as if transient. `Dispose`
-  (`:1245-1265`) terminates the interface only when the detach succeeded. Three integration tests cover
-  it, including the #219 case of detaching past a bound breakpoint (`LiveAppSessionTests.cs:242-338`).
-- **Generation-guarded timers.** `_stopGeneration` (`CorDebugSession.cs:175`) captured by both the
-  safety timer and the hold timer, checked in `ContinueInternal` (`:1336`), is the correct answer to
-  "Timer.Dispose does not wait for a running callback". `ResumeCause` (`:824-834`) makes the three ways a
-  stop ends distinct in the event stream.
+  `DetachProtocol.IsRefusal` stops a deterministic refusal being retried as if transient.
+  `CorDebugSession.Dispose` terminates the interface only when the detach succeeded. Three integration
+  tests cover it, including the #219 case of detaching past a bound breakpoint
+  (`LiveAppSessionTests.cs:247-338`).
+- **Timers that know which stop they were armed for.** Both the safety timer and the hold timer carry
+  the `StopRecord` they were armed for, and `CorDebugSession.ContinueInternal` resumes only while that
+  is still the record the session holds. This is the correct answer to "Timer.Dispose does not wait for
+  a running callback", and reference identity is what decides it, so there is no counter to keep in
+  step across the methods that end a stop. `ResumeCause` makes the three ways a stop ends distinct in
+  the event stream.
+- **`DebuggedTarget` is one answer to two questions.** Five systems needed "is there still a target"
+  and "is it stopped" together, and paired them up in six spellings. `TryHeld`/`TryLive` are the only
+  two ways to ask, every transition is a named method, and the gate lives with the state it guards, so
+  the "caller holds the gate" contracts on `BreakpointTable`, `TargetSymbols` and `StopRecord` can now
+  name whose gate and what it covers.
 - **`DebugEventBuffer` is small and right.** `WaitForAsync` checks for a match under the same gate
   `Append` takes so nothing lands between check and registration (`DebugEventBuffer.cs:154-163`), wakes
   waiters with `RunContinuationsAsynchronously` so no reader code runs on mscordbi's thread (`:122-126`),
@@ -78,7 +92,7 @@ What must survive a refactor, with where it lives:
 - **Two XAML classes split by which invariant governs them.** `XamlProviderSession` (staging, grants,
   architecture, injection) knows no wire format; `XamlDiagnosticsSession` (verbs, parsing, apply) knows
   no staging (`XamlProviderSession.cs:25-36`). Every public entry takes `_requests` once and calls a
-  `Core` (`XamlDiagnosticsSession.cs:64-69`). `XamlChannelBounds` puts every wait's bound and its
+  `Core` (`XamlDiagnosticsSession.cs:61-66`). `XamlChannelBounds` puts every wait's bound and its
   sentence in one place, capped by one environment variable that can only shorten (`XamlChannelBounds.cs`).
 - **The tap's tier split is enforced by the compiler.** Include order in both bindings
   (`RoseMcp.Xaml.Uwp.Tap.cpp:35-56`, `RoseMcp.Xaml.WinUi.Tap.cpp:43-67`) puts `tap_object.h` above the alias
@@ -103,12 +117,12 @@ What must survive a refactor, with where it lives:
   property-element syntax is never a child (`:94-112`); resources are keyed and templates are refused by
   name (`:199-278`); `XamlMaterialiser` attaches last so nothing observes a half-built element
   (`XamlMaterialiser.cs:17-21`).
-- **The host makes the one coupling between debugger and XAML explicit.** `WhyXamlIsUnservable`
-  (`LiveAppSessionHost.cs:402-413`) refuses a XAML verb while the target is held, naming the hold, and
-  `WithTargetHeartbeat` (`:434-456`) attaches the age of the last debug event so a wedged UI thread can
-  be told from a slow one. Tested at `LiveAppUwpTests.cs:1691-1766` with a latency assertion.
+- **The one coupling between debugger and XAML is explicit.** `TargetXaml.WhyUnservable`
+  refuses a XAML verb while the target is held, naming the hold, and
+  `TargetXaml.WithHeartbeat` attaches the age of the last debug event so a wedged UI thread can
+  be told from a slow one. Tested by `A_xaml_failure_reports_how_long_ago_the_target_last_ran` (`LiveAppSessionTests.cs:697`) with a latency assertion.
 - **`EndLaunchedTarget` and the orphan test.** A launched target dies with a host whose client went
-  away unless a detach was asked for (`LiveAppSessionHost.cs:888-917`), and the test drives the host
+  away unless a detach was asked for (`LiveAppSessionHost.cs:496`), and the test drives the host
   binary over a hand-written JSON-RPC handshake precisely because `McpClient.DisposeAsync` would have
   masked the bug (`LiveAppSessionTests.cs:541-600`).
 - **Pure rules live where a test can reach them.** `ValuePath`, `SymbolLocation`, `BreakpointCondition`,
@@ -117,102 +131,51 @@ What must survive a refactor, with where it lives:
 
 ## Findings
 
-### LIV-01 `CorDebugSession` owns six unrelated concerns
-- **Severity:** Medium
-- **Effort:** L
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs` (2,396 lines)
-- **What:** The class is long for a reason other than growth: it is six things. (1) Runtime discovery,
-  attach and launch: `Attach`, `Launch`, `AttachUwpAtStartup`, `AttachAtSuspendedStartup`, `LoadDbgShim`,
-  `ResolveDbgShimPath`, `FindRuntimeWithRetry`, `FindRuntime`, `CreateCorDebug`, `WrapEvent` (`:198-299`,
-  `:1382-1495`, `:2176-2183`). (2) The detach protocol: `Detach`, `TryDetachOnce`, `SettleForRelease`,
-  `ForgetStepper`, `ReleaseForDetach`, `IsRefusal` (`:301-549`). (3) Breakpoint and tracepoint bookkeeping
-  and binding: `AddTracepoint`, `AddBreakpoint`, `List*`, `Remove*`, `AddBinding`, `RemoveBinding`,
-  `BindAgainstLoadedModules`, `BindAmong`, `BindModule`, `TryBind`, `ExplainUnbound`, `BreakpointBinding`
-  (`:551-596`, `:739-741`, `:1267-1314`, `:1790-2126`, `:2348-2391`). (4) The stop/resume/hold state machine
-  and its timers: `Continue`, `Step`, `Break`, both `Hold`s, `SetHold`, `ReleaseHold`, `ContinueInternal`,
-  `CurrentStop`, `ClearStopTimers`, `GiveBackStop`, `ThreadToPauseOn` (`:743-1100`, `:1316-1380`,
-  `:1681-1720`, `:2158-2174`). (5) Callback dispatch and event recording: `OnEvent`, `Record`,
-  `RecordException`, `RecordBreakpointHit`, `WalkStack`, `DescribeFrame`, `DescribeExceptionType`
-  (`:1497-1788`, `:2322-2344`). (6) Symbol and source services that never touch the debuggee after one
-  module walk: `SearchMethods`, `ReadMethodSource`, `WhyNoModule`, `PositionsIn`, `NoMethodSource`,
-  `SourceAt`, `SearchDetail`, `DescribeMatch`, `ModulePaths`, `EnumerateLoadedModules`, `RememberModule`
-  (`:598-737`, `:1912-1969`, `:2213-2320`). A seventh, the inspection facade (`ReadFrames`,
-  `ReadFrameVariables`, `Expand`, `ReadThreads`, `Evaluate`, `:1102-1230`), is already thin delegation to
-  `CorDebugInspector` and shows the shape the others want.
-- **Why it matters:** Every one of these shares `_gate`, so a change to binding has to reason about
-  the detach window, and a change to the stop timers has to reason about module enumeration. The
-  comment-carried contracts ("called with the gate held and the process stopped", "the walk happens
-  before the lock", "outside the gate") exist because the type boundary that would make them structural
-  does not. It also blocks the hot-reload work: an EnC apply needs (1), (4) and (5) and none of (3) or (6).
-- **Suggested change:** Extract along the seams already named in the comments, the way `CorDebugInspector`
-  was: a `RuntimeAttachment` that yields a `CorDebugProcess` and owns dbgshim; a `DetachProtocol` that
-  takes the process and the binding list; a `BreakpointTable` that owns `BreakpointBinding` and binding
-  against modules and exposes `Match(hit)`; a `StopController` that owns the stop record and both timers
-  (see LIV-02); and a `TargetSymbols` that owns `_modulePaths` and the search/source verbs and needs the
-  debuggee for exactly one enumeration. `CorDebugSession` becomes the callback dispatcher that composes
-  them under the one gate. Do LIV-02 first; it shrinks the surface every extraction has to carry.
+### LIV-01 `CorDebugSession` owns six unrelated concerns — **closed**
+`CorDebugSession` is **879 lines from 2,396**, and is the callback dispatcher that composes nine types:
+`TargetSymbols`, `BreakpointTable`/`BreakpointBinding`, `RuntimeAttachment`, `DetachProtocol`,
+`StopRecord`/`TargetExecution`, then `DebuggedTarget`, `StopNarrative`, `TargetBreakpoints` and
+`TargetInspection`. Shipped across PRs #265, #268, #274 and #281. The reasoning for each seam —
+including what each class deliberately does *not* own — is in its own class summary.
 
-### LIV-02 The stop state machine is implicit in nine fields and five differently-spelled guards
-- **Severity:** High
-- **Effort:** M
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:145-181` (fields); guards at `:386`, `:772`,
-  `:874-879`, `:997`, `:1217`, `:1331`, `:1799`, `:1936`; `CurrentStop` at `:840-857`
-- **What:** Whether the target is running, held, detaching, detached or gone is spread over
-  `_stoppedAtBreakpoint`, `_stoppedBindingId`, `_stoppedThread`, `_stoppedAs`, `_stopEventSequence`,
-  `_stoppedAtUtc`, `_holdUntilUtc`, `_autoContinueSeconds`, `_autoContinueAtUtc`, `_detached`,
-  `_detaching`, `_exited` and `_process is null`. The guards that read them are spelled five ways:
-  `_process is null || _detached || _exited` (`:386`, `:1799`, `:1936`),
-  `!_stoppedAtBreakpoint || _stoppedThread is null || _process is null || _detached || _exited` (`:772`,
-  `:1217`), `!_stoppedAtBreakpoint || _process is null || _detached || _exited` (`:1331`),
-  `!_stoppedAtBreakpoint` alone (`:844`, `:997`, `:1036`, `:1075`). The one at `:844` is wrong: `CurrentStop`
-  does not consult `_exited`, so a target killed while held keeps reporting `StoppedAtBreakpoint` after
-  its `ExitProcess` callback set `_exited` (`:1540-1544`). `LiveAppSessionHost.CurrentInfo` then reports
-  `State = Ended` beside `Execution = StoppedAtBreakpoint` (`LiveAppSessionHost.cs:103-114`), and
-  `WhyXamlIsUnservable` tells the caller to "resume the target and ask again" about a dead process
-  (`:404-412`). The two methods called `Hold` mean different things: the private one holds the target
-  at a stop (`:1681`), the public one is an operator's hold on the safety timer (`:993`).
-- **Why it matters:** Wrong answers of the confident kind (a dead target described as stopped), and
-  every new verb has to rediscover which of the five spellings applies to it. The "stop identity"
-  fields (`_stopEventSequence`, `_stoppedAtUtc`, the two deadlines) are only meaningful together with
-  `_stoppedThread` and the timers, and nothing but discipline keeps them in step across `Hold`, `Step`,
-  `ContinueInternal`, `SetHold`, `ReleaseHold` and `TryDetachOnce`, each of which writes a different subset.
-- **Suggested change:** One discriminated union swapped atomically under `_gate`:
-  `TargetExecution = Running | Stopped(StopRecord) | Detaching | Detached | Exited`, where
-  `StopRecord` is a small class owning the thread, the binding id, the sequence, the timestamps, the
-  generation, the operator hold and *both timers*, with a `Dispose` that is today's `ClearStopTimers`.
-  Every guard becomes a pattern match, so `CurrentStop` cannot forget `Exited` because the `Exited` arm
-  has nothing to return. Rename the private `Hold` to `HoldAtStop` and the public one to
-  `OperatorHold`. Add one integration test: kill the probe while it is held and assert
-  `Execution == Running` and `State == Ended`.
+Three amendments, all argued in the code rather than here. The stop machine became a *value*
+(`TargetExecution` + `StopRecord`, LIV-02) rather than the `StopController` the card asked for. Only
+the detach *policy* moved; the transitions stayed, because they are writes to the one value that says
+what the target is doing and a second writer is how that value starts disagreeing with itself
+(`DetachProtocol.cs:1-24`). And the card's six concerns were not the final cut: `DebuggedTarget` — the
+process and its execution state behind `TryHeld`/`TryLive`, replacing six spellings of the same pair of
+questions — is a seam the review did not name, and is the one that owns `_gate`.
 
-### LIV-03 A breakpoint hit is attributed by method token alone, so two bindings in one method misreport
-- **Severity:** High
-- **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:1628-1646` (`RecordBreakpointHit`),
-  `:2142-2156` (`TryFunctionIdentity`), `:2374-2375` (`BreakpointBinding.Token`)
-- **What:** A hit is matched to a binding on `entry.Token == token` and module path. `TryFunctionIdentity`
-  reads the function token and module name from the `CorDebugFunctionBreakpoint` and nothing else. An
-  `ILCode.CreateBreakpoint(offset)` (`:2062`) is also an `ICorDebugFunctionBreakpoint`, so a tracepoint at
-  `Program.Beat` and a breakpoint at `Program.Beat@IL_0010` -- which is exactly the pairing
-  `ReadMethodSource`'s positions invite (`:2250-2287`) -- both match the first binding in the list on
-  every hit. The second binding's hit count never moves, its condition is never evaluated, and a hit
-  meant to stop logs as a tracepoint (or a hit meant to log holds the target), reported with the wrong
-  id.
-- **Why it matters:** This is a wrong answer reported as success, in the one feature that exists to
-  let an agent stop on a line rather than a method. No test sets two bindings in one method.
-- **Suggested change:** Match on the breakpoint object, not its function: keep the
-  `CorDebugFunctionBreakpoint` in the binding (it already is, `:2386`) and compare `hit.Breakpoint.Raw`
-  against `binding.Breakpoint.Raw` (ClrDebug wraps the same COM pointer, so identity holds), falling back
-  to `ICorDebugFunctionBreakpoint::GetOffset` plus token if identity ever fails. Add an integration test
-  with a tracepoint at `Beat` and a stopping breakpoint at a `Beat@IL_xxxx` position, asserting each fires
-  as itself.
+### LIV-02 The stop state machine is implicit in nine fields and five differently-spelled guards — **closed**
+A target killed while held went on reporting itself stopped at a breakpoint, so a XAML verb answered a
+dead process with "resume the target and ask again". Shipped as `TargetExecution` (the five states as
+one value, swapped whole) and `StopRecord` (the stop itself, owning both timers) in PR #265 (`9d95b94`),
+with `A_target_that_dies_while_held_is_no_longer_reported_as_stopped` in `LiveAppDebugTests.cs`. The
+reasoning is in `TargetExecution.cs` and `StopRecord.cs`: why every guard is a pattern match, why the
+value is swapped rather than mutated, and why the stop generation counter is gone. The two `Hold`s that
+meant different things are `HoldAtStop` and `OperatorHold`.
+
+HOT-06 builds on this and is **not** closed: the `Applying(ApplyRecord)` arm is still tier-6 work.
+
+### LIV-03 A breakpoint hit is attributed by method token alone, so two bindings in one method misreport — **closed**
+A tracepoint on `Program.Beat` and a stopping breakpoint at `Program.Beat@IL_0002` both claimed every
+hit of either, and the first registered won — so the target was never held at all while the breakpoint
+reported itself bound with a hit count of zero. Shipped in PR #270 (`5356bfb`): `BreakpointTable.Claim`
+matches on the IL offset read from the callback's breakpoint, and
+`A_tracepoint_and_a_breakpoint_in_one_method_each_fire_as_itself` covers it.
+
+**The card's suggested fix was wrong and the code says why.** Matching on the breakpoint object's
+identity is the obvious answer, but ClrDebug's interfaces are source-generated `ComWrappers` rather than
+classic RCWs, so the same COM pointer is not promised to come back as the same managed object —
+identity would have held until it quietly did not, which is the failure class this finding is about.
+The reasoning is on `BreakpointTable.Claim`.
 
 ### LIV-04 A failing callback handler continues the target silently
 - **Severity:** Medium
 - **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:1530-1547`
+- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs`, `OnEvent`
 - **What:** `OnEvent` defaults `shouldContinue = true`, calls `Record(e)`, and on any exception logs at
-  Debug and continues. A throw inside `RecordBreakpointHit` or `Hold` -- a metadata read failing, a
+  Debug and continues. A throw inside `RecordBreakpointHit` or `HoldAtStop` -- a metadata read failing, a
   `DebugException` from `EnumerateChains` -- means the stop never happens, the event is never buffered,
   and the agent waiting on `rose_debug_events` for a `BreakpointHit` waits out its whole window.
 - **Why it matters:** The event stream is the agent's only view; a hit that leaves no trace in it is
@@ -223,47 +186,52 @@ What must survive a refactor, with where it lives:
   reads. Make `Record` return a `CallbackOutcome { Continue, Hold }` enum rather than a bool, so the
   exception arm has to choose one explicitly (see inversions).
 
-### LIV-05 Two paths hold `_gate` across `ICorDebugProcess::Stop`; a third releases it deliberately
+### LIV-05 Every breakpoint set async-breaks the whole target to enumerate modules it could already know
 - **Severity:** Medium
 - **Effort:** M
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:1795-1846` (`BindAgainstLoadedModules`),
-  `:1916-1969` (`ModulePaths` -> `EnumerateLoadedModules`), against `:884-888` (`Break`)
-- **What:** `Break` says, correctly, "Outside the gate: this waits on the runtime to reach a point it can
-  be stopped at, and holding the gate through it would block the very callbacks that get it there."
-  `BindAgainstLoadedModules` and `EnumerateLoadedModules` do the opposite: they take `_gate` and call
-  `_process.Stop(0)` inside it. They do not deadlock today because mscordbi treats `Stop` on an
-  already-synchronised process as a stop-count increment (a callback in flight has the process
-  synchronised before it is dispatched), but nothing in the code or the invariants says that this is
-  what is being relied on, and `Break` says the opposite. `AddBinding` also async-breaks the whole
-  target on every `rose_debug_set_breakpoint` (`:1291`, `:1805`) to enumerate modules it could already
-  know.
-- **Why it matters:** Lock discipline that contradicts itself is one refactor away from the wedge the
-  detach path exists to avoid, and a full stop of somebody's app per breakpoint set is a cost the design
-  does not need to pay.
-- **Suggested change:** Keep the `CorDebugModule` objects, not only their paths: `RememberModule` (`:1902`)
-  already sees every module on load, so a `Dictionary<string, CorDebugModule>` filled there (and once at
-  attach, from the single enumeration the attach already does) lets `AddBinding` bind without stopping
-  the target. For the remaining stops, one `WithSynchronizedTarget(Action)` helper that documents the
-  stop-count contract and is the only place `Stop`/`Continue` pairs live.
+- **Where:** `src/RoseMcp.LiveApp/Debugging/TargetBreakpoints.cs`, `AddBinding` and
+  `BindAgainstLoadedModules`; `src/RoseMcp.LiveApp/Debugging/TargetSymbols.cs:65-80` (`Walk`)
+- **Scope reduced** after PR #265. The card originally led with a contradiction in the lock discipline:
+  `Break` documents stopping *outside* the gate while these two stop *inside* it, with nothing saying
+  the stop-count behaviour was being relied on deliberately. `TargetSymbols.Walk` now states it where it
+  is relied on -- "the stop and the continue are a pair, which is what makes this safe to call while the
+  target is held at a breakpoint: the stop count goes up and back down and the target stays exactly as
+  stopped as it was" -- so that half is answered. The cost half is not.
+- **What:** `AddBinding` calls `BindAgainstLoadedModules` on every `rose_debug_set_breakpoint` and
+  `rose_debug_add_tracepoint`, which takes the target's gate, calls `process.Stop(0)` and walks
+  `AppDomains -> Assemblies -> Modules` to hand `BreakpointTable` the modules. `TargetSymbols.Remember`
+  already sees every module as it loads, but keeps only the path -- the `CorDebugModule` is dropped, so
+  the walk has to be retaken.
+- **Why it matters:** A full stop of somebody's application per breakpoint set, for a list the session
+  could have kept. It is also the cost that makes card 11d (a plural `rose_debug_*` call) worth more
+  than it looks: six locations today is six stops.
+- **Suggested change:** Keep the `CorDebugModule` objects alongside the paths in `TargetSymbols`, filled
+  from `Remember` on load and from the one walk the attach already takes, so `AddBinding` binds against
+  what is known without stopping the target. Hot reload wants the same map for a different reason: EnC
+  needs the `ICorDebugModule` to call `ApplyChanges`.
 
 ### LIV-06 Two stack walkers disagree about honesty
 - **Severity:** Medium
 - **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:1753-1788` (`WalkStack`, `DescribeFrame`)
-  against `src/RoseMcp.LiveApp/Debugging/CorDebugInspector.cs:214-252` (`WalkFrames`);
+- **Where:** `src/RoseMcp.LiveApp/Debugging/StopNarrative.cs` (`Frames`, `DescribeFrame`) against
+  `src/RoseMcp.LiveApp/Debugging/CorDebugInspector.cs:222-252` (`WalkFrames`);
   `src/RoseMcp.Contracts/LiveDebugEvent.cs` (`Frames` is `IReadOnlyList<string>`)
+- **Sharpened by PR #274.** The dishonest walker now has a type of its own, `StopNarrative`, whose
+  stated job is "what an event says about where the target stopped". That makes the disagreement easier
+  to state and no less real: two types answer one question two ways.
 - **What:** The event-stream walker renders frames to strings and silently drops any frame whose
-  function cannot be resolved (`DescribeFrame` returns null on any exception, `:1784-1786`). The
+  function cannot be resolved (`StopNarrative.DescribeFrame` returns null on any exception). The
   inspector's walker counts them (`SkippedBefore`) with the comment "a stack silently missing three
   frames reads as a complete stack with a surprising caller". The stop event, which the decision
   `a-stop-captures-its-frame-when-it-happens.md` says is the agent's primary view, uses the dishonest one.
 - **Why it matters:** The agent's captured stack can show `Main` calling `Beat` directly with the native
   transition and the runtime stub missing, and nothing says so. Two implementations of one walk will
   drift further.
-- **Suggested change:** Build the event's frames from `_inspector.WalkFrames` + `DescribeStackFrame`
-  and carry `LiveStackFrame` (which already has `SkippedBefore`, `Location`, `Source`) on
-  `LiveDebugEvent` in place of strings, or at least render `SkippedBefore` into the string
-  (`"[2 native frames]"`). Delete `WalkStack`/`DescribeFrame`.
+- **Suggested change:** Build the event's frames from `WalkFrames` + `DescribeStackFrame` and carry
+  `LiveStackFrame` (which already has `SkippedBefore`, `Location`, `Source`) on `LiveDebugEvent` in
+  place of strings, or at least render `SkippedBefore` into the string (`"[2 native frames]"`).
+  `StopNarrative` already holds its own `CorDebugInspector`, so it can reach the honest walk without
+  being handed anything new; `Frames` and `DescribeFrame` then go.
 
 ### LIV-07 A request the host has timed out on still runs in the app, and the pipe cannot tell whose reply is whose
 - **Severity:** Medium
@@ -278,7 +246,7 @@ What must survive a refactor, with where it lives:
   *next* `Request` and discarded as "stale" by position (`:186`). Correctness therefore depends on
   strictly alternating request/reply with no expiries, which is the assumption the pipe decision made
   and #208 is the case where it fails: `SelectTransientAsync` retries `selecthandle` up to 20 times
-  (`LiveAppUwpTests.cs:1653-1668`), a timed-out attempt executes after the removal cleared the pick,
+  (`LiveAppUwpOverlayTests.cs:332`), a timed-out attempt executes after the removal cleared the pick,
   and the hand-back check reads a pick the test was told did not happen. The invariant "a batch may not
   be retried" (`xaml-live-edit.md`) protects against double-sending; nothing protects against
   single-sending-late.
@@ -295,13 +263,13 @@ What must survive a refactor, with where it lives:
 ### LIV-08 The wire format is versioned by column count and the greeting carries no identity
 - **Severity:** Medium
 - **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlDiagnosticsSession.cs:1014-1018`, `:1056-1062`, `:980-983`;
+- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderWire.cs`, the `fields.Length >` guards in `Node`, `Property` and `Selection`;
   `src/RoseMcp.Xaml.Tap/tap_channel.h:158` (`"hello from the provider"`); `tap_tree.h:110-141`
   (`SnapshotRows`), `tap_properties.h:181-185`, `tap_edits.h:63-64`
 - **What:** The host reads column 9 of a tree row and column 11 of a property row only if present,
   with comments explaining that an older provider in a recycled sandbox writes fewer columns. The
   provider greets with a fixed string. Row layout is duplicated as positional literals at both ends
-  (`Line`/`Key` in the session, string concatenation in three headers) with nothing checking they agree.
+  (positional field indices in `XamlProviderWire`, string concatenation in three headers) with nothing checking they agree.
 - **Why it matters:** `hosts-and-deploy.md` already worries about an install whose host and provider
   disagree; today that disagreement is absorbed silently as "no address" or "no unrenderable flag"
   rather than refused by name. The next added column has to remember the length check at every parse
@@ -334,8 +302,8 @@ What must survive a refactor, with where it lives:
 ### LIV-10 The XAML tree is unreadable while the target is held, and it need not be (#225)
 - **Severity:** Medium
 - **Effort:** M
-- **Where:** `src/RoseMcp.LiveApp/LiveAppSessionHost.cs:402-413` (`WhyXamlIsUnservable`), `:464-509`
-  (`ReadXamlTree`); `src/RoseMcp.Xaml.Tap/tap_object.h:249-257` (`tree` verb dispatches to the UI thread)
+- **Where:** `src/RoseMcp.LiveApp/Xaml/TargetXaml.cs`, `WhyUnservable` and `ReadTree`;
+  `src/RoseMcp.Xaml.Tap/tap_object.h:249-257` (`tree` verb dispatches to the UI thread)
 - **What:** Is #225 structural? Half. In the *provider* it is: `Serve("tree")` runs `SnapshotRows` on the
   UI thread because `m_tree` is written there, and a held UI thread cannot run it. In the *host* it is
   not: the host throws the previous snapshot away after paging it, so the moment the debugger holds the
@@ -388,21 +356,23 @@ What must survive a refactor, with where it lives:
 ### LIV-13 Comment-carried ICorDebug workarounds without a test that would notice their loss
 - **Severity:** Medium
 - **Effort:** M
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:436-474` (`SettleForRelease` and the
-  0xC0000409 fail-fast), `:896-906` (a breakpoint arriving during `Break` -> `GiveBackStop`), `:171-175`
-  and `:1316-1326` (the timer generation race), `:1497-1528` (callbacks during the detach window)
+- **Where:** `src/RoseMcp.LiveApp/Debugging/DetachProtocol.cs:60-99` (`Settle` and the 0xC0000409
+  fail-fast); `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs`, `GiveBackStop` (a breakpoint arriving
+  during `Break`), `ContinueInternal` with `StopRecord.cs` (a timer firing for a stop that has ended),
+  and the detach-window arm at the top of `OnEvent`
 - **What:** Each of these encodes a race that was found by a target dying and is now held only by a
   comment. The detach tests detach from an idle target or one held at a breakpoint
-  (`LiveAppSessionTests.cs:242-338`); none detaches while the probe is hitting a breakpoint in a loop,
-  which is the case `SettleForRelease` exists for. `Break` racing a breakpoint has no test. The
-  generation guard has no test that fires a stale timer.
+  (`LiveAppSessionTests.cs:247-338`); none detaches while the probe is hitting a breakpoint in a loop,
+  which is the case `Settle` exists for. `Break` racing a breakpoint has no test. The stale-timer guard
+  has no test that fires one.
 - **Why it matters:** These are the parts of the debugger most likely to be "simplified" by someone
   reading the code without the history, and the failure mode is a dead application rather than a red
-  test.
+  test. PR #265 and PR #268 moved all four behind type boundaries, which makes the comments easier to
+  find and does nothing about the absent tests.
 - **Suggested change:** `DebugProbeTarget` already loops at 5 Hz; add a `--fast` flag that loops without
   the sleep, set a tracepoint on `Beat` and detach under load, asserting the target survives. Add a
-  `Break` test that sets a breakpoint first so the two stops race. For the timer, expose
-  `ContinueInternal(ResumeCause, generation)` to an internal test through
+  `Break` test that sets a breakpoint first so the two stops race. For the timer, drive
+  `ContinueInternal(ResumeCause, StopRecord)` with a record the session no longer holds, from
   `RoseMcp.IntegrationTests.Windows`, which already references the host as a library.
 
 ### LIV-14 The shared-app suite is sound in shape; its retries hide product defects
@@ -410,7 +380,7 @@ What must survive a refactor, with where it lives:
 - **Effort:** S
 - **Where:** `tests/RoseMcp.IntegrationTests/UwpProbeApp.cs:369-406` (`LaunchSharedAsync`, three attempts
   with backoff), `:315-366` (`UsableAsync`/`IsTickingAsync`), `:487-533` (`SessionTurn.DisposeAsync`);
-  `tests/RoseMcp.IntegrationTests/ProbeConstraints.cs:26-78`; `LiveAppUwpTests.cs:1653-1668`
+  `tests/RoseMcp.IntegrationTests/ProbeConstraints.cs:26-78`; `LiveAppUwpOverlayTests.cs:332`
 - **What:** The phased structure is a good design: constraint keys give the runner the queue rather than a
   lock, slots are named so addresses cannot renumber, and the hand-back check fails the offender rather
   than its successor. It found #208 and attributed it correctly. Three things weaken it. The fixture
@@ -429,13 +399,14 @@ What must survive a refactor, with where it lives:
   `SelectTransientAsync` select through the tree once the element is present and assert on a single
   attempt, so a timed-out select is a failure rather than a retry.
 
-### LIV-15 Ninety-eight `catch` sites, forty-two of them `catch (Exception)` to null
+### LIV-15 Ninety-nine `catch` sites, most of them `catch (Exception)` to null
 - **Severity:** Low
 - **Effort:** M
-- **Where:** `src/RoseMcp.LiveApp/Debugging/CorDebugInspector.cs:52`, `:301`, `:313`, `:335`, `:383`,
-  `:677`, `:707`, `:719`, `:806`, `:836`, `:871`, `:883`; `CorDebugSession.cs:1784`, `:1892`, `:2039`, `:2340`;
-  `ValueReader.cs:75`, `:87`, `:123`, `:148`; `src/RoseMcp.Symbols/MethodTokens.cs:68`, `:84`, `:114`, `:152`,
-  `:182`, `:213`; and the rest as listed by `grep -rn "catch (Exception)"` over the three projects
+- **Where:** `grep -rn "catch (Exception" src/RoseMcp.LiveApp src/RoseMcp.Symbols src/RoseMcp.XamlDiff`
+  is the list and is the right way to read it -- 99 today, concentrated in `CorDebugInspector.cs` (18),
+  `CorDebugSession.cs` (17), `XamlProviderPipe.cs` (8), `XamlDiagnosticsSession.cs` (7),
+  `BreakpointTable.cs` (6) and `MethodTokens.cs` (6). PR #265 redistributed these across the extracted
+  classes without changing any of them, so line references here would go stale again for no gain.
 - **What:** Most are justified per-value defensiveness (one unreadable local must not lose the frame)
   and each says so. But they catch everything, including `ArgumentException`s that are the caller's own
   mistake and `InvalidOperationException`s that mean the session's state is wrong, and they log nothing,
@@ -448,25 +419,32 @@ What must survive a refactor, with where it lives:
   swallowing sites through one `Try<T>(Func<T>, [CallerMemberName])` that logs at Debug with the member
   name, so a pattern of failures is visible in the log once rather than never.
 
-### LIV-16 Six XAML verbs and eight inspection verbs repeat the same preamble in the host
+### LIV-16 Six XAML verbs and eight inspection verbs repeat the same preamble
 - **Severity:** Low
 - **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/LiveAppSessionHost.cs:464-690` (six copies of "take the gate, read pid
-  and `_xaml ??=`, refuse with no target, refuse if held, call, attach heartbeat"), `:248-373` (eight
-  copies of "if not attached return an empty result with `NotAttachedDetail`")
-- **What:** The refusal shape, the heartbeat attachment and the `_xaml ??= new` are typed out per verb.
-  A new verb that forgets `WhyXamlIsUnservable` reintroduces the twenty-second wait the guard was added
-  to remove.
+- **Where:** `src/RoseMcp.LiveApp/Xaml/TargetXaml.cs` (six copies of "read pid, `Ensure()`, refuse with
+  no target, refuse if unservable, call, attach heartbeat");
+  `src/RoseMcp.LiveApp/InspectorSurface.cs` (eight copies of "if not attached return an empty result
+  with `NotAttachedDetail`")
+- **Scope reduced** by PRs #281 and #291, which moved both groups out of `LiveAppSessionHost` into
+  types of their own. That is worth having on its own terms — `InspectorSurface` turned out to be a
+  real boundary, the one `ToolNames` and `LiveAppInspectionTools` had each described in prose — and it
+  makes the repetition easy to see rather than scattered through a 1,244-line host. It does not remove
+  it: the preamble is still typed out per verb, in one file instead of two.
+- **What:** The refusal shape, the heartbeat attachment and `Ensure()` are typed out per verb. A new
+  verb that forgets `WhyUnservable` reintroduces the twenty-second wait the guard was added to remove.
 - **Why it matters:** This is the pattern that decides whether a future `rose_xaml_*` verb inherits the
   debugger coupling or not, and today it is inherited by copy.
-- **Suggested change:** `TResult WithXaml<TResult>(Func<XamlDiagnosticsSession, int, TResult> verb,
-  Func<string, TResult> refused)` that does the preamble once and stamps the heartbeat; the same for
-  `WithStoppedTarget`. Each verb becomes one line, and the guard cannot be forgotten.
+- **Suggested change:** `TResult WithXaml<TResult>(XamlAsk ask, Func<XamlDiagnosticsSession, int, TResult> verb,
+  Func<string, TResult> refused)` on `TargetXaml`, doing the preamble once and stamping the heartbeat;
+  the same shape for `InspectorSurface`'s not-attached result. Each verb becomes one line, and the
+  guard cannot be forgotten. Cheaper now than when it was filed: `XamlAsk` already gathers what the
+  preamble reads, so the helper has one argument rather than four.
 
 ### LIV-17 `XamlStackProbe.Detect` runs on every poll for the life of a non-XAML session
 - **Severity:** Low
 - **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/LiveAppSessionHost.cs:81-145` (`CurrentInfo`, `ResolveXamlStack`);
+- **Where:** `src/RoseMcp.LiveApp/LiveAppSessionHost.cs`, `CurrentInfo` and `ResolveXamlStack`;
   `src/RoseMcp.LiveApp/Xaml/XamlStackProbe.cs:95-107`
 - **What:** While the stack is `Unknown` every `CurrentInfo` re-probes by enumerating
   `Process.Modules`, which is a cross-process snapshot of every loaded module with file-name resolution,
@@ -506,14 +484,15 @@ What must survive a refactor, with where it lives:
 ### LIV-20 Comments carry history and decision numbers the conventions forbid
 - **Severity:** Low
 - **Effort:** S
-- **Where:** 42 hits for `used to|previously|no longer` across the three C# projects and the tap headers;
-  representative: `CorDebugSession.cs:304`, `:1237`; `XamlProviderSession.cs:141`, `:240`, `:365`, `:567`;
-  `XamlStackProbe.cs:13`; `XamlApplyBaseline.cs:7`; `tap_object.h:489`, `:732`; `tap_overlay.h:615`, `:1089`;
-  `XamlProviderPipe.cs:14` ("D14 chose files in an ACL'd folder", a decision number);
-  `RoseMcp.Xaml.Uwp.Tap.cpp:7-20` (describes the file channel the pipe replaced)
+- **Where:** 45 hits for `used to|previously|no longer` across the three C# projects and the tap headers;
+  representative: `XamlProviderSession.cs:141`, `:240`, `:365`, `:567`; `XamlStackProbe.cs:13`;
+  `XamlApplyBaseline.cs:7`; `tap_object.h:489`, `:732`; `tap_overlay.h:615`, `:1089`;
+  `XamlProviderPipe.cs:14` ("D14 chose files in an ACL'd folder", a decision number, and the only one
+  left in `src`); `RoseMcp.Xaml.Uwp.Tap.cpp:7-20` (describes the file channel the pipe replaced)
 - **What:** CLAUDE.md forbids "used to", "previously", "no longer" and decision numbers in comments. The
-  rule is broken forty-two times in this scope, and the UWP binding's header comment still describes
-  `commands.tsv`/`tree.tsv`, a channel that no longer exists.
+  rule is broken forty-five times in this scope -- three more than when this was written, which is the
+  argument for the CI grep rather than a sweep -- and the UWP binding's header comment still describes
+  `commands.tsv`/`tree.tsv`, a channel that does not exist.
 - **Why it matters:** The comments are otherwise the best in the repository, which makes the stale ones
   more misleading, not less: a reader trusts them.
 - **Suggested change:** Rewrite each as the failure the code prevents (the conventions give the recipe);
@@ -534,12 +513,12 @@ What must survive a refactor, with where it lives:
 - **Severity:** Low
 - **Effort:** S
 - **Where:** `src/RoseMcp.Symbols/SymbolCache.cs:33-56`, `MethodTokens.cs:51-72` (`DeclaresType`),
-  `MethodTokens.cs:219` (`Read`); called per module per binding from `CorDebugSession.BindModule`
-  (`:2015-2018`) on mscordbi's callback thread
+  `MethodTokens.cs:219` (`Read`); called per module per binding from
+  `src/RoseMcp.LiveApp/Debugging/BreakpointTable.cs:128`, `:145` and `:316` on mscordbi's callback thread
 - **What:** `For` does a `FileInfo` stat per call and `DeclaresType` scans `TypeDefinitions` per call.
-  `BindModule` runs `DeclaresType` over every remembered module for every unbound binding on every module
-  load, so a location written without its assembly costs O(modules squared) stats and type-table scans
-  during the target's startup, with the target stopped.
+  `BreakpointTable.BindNewModule` runs `DeclaresType` over every remembered module for every unbound
+  binding on every module load, so a location written without its assembly costs O(modules squared)
+  stats and type-table scans during the target's startup, with the target stopped.
 - **Why it matters:** It is on the callback thread, so it is a startup slowdown in somebody's
   application proportional to the square of its module count. The cache invalidation is right; the
   granularity is per question rather than per module.
@@ -548,16 +527,15 @@ What must survive a refactor, with where it lives:
 
 ## Pit-of-success inversions
 
-1. **Rule today:** "every guard checks `_stoppedAtBreakpoint`, `_process`, `_detached`, `_exited` in the
-   right combination" (five spellings). **Mechanism:** a `TargetExecution` union with a `StopRecord`
-   arm owning the thread, sequence, hold and both timers; every read is a pattern match the compiler
-   completes, and `Exited` cannot be forgotten because its arm has no stop to return. (LIV-02)
+1. ~~Rule today: "every guard checks `_stoppedAtBreakpoint`, `_process`, `_detached`, `_exited` in the
+   right combination".~~ **Built** (LIV-02, PR #265): `TargetExecution` with a `StopRecord` arm; every
+   read is a pattern match, and `Exited` cannot be forgotten because its arm has no stop to return.
 2. **Rule today:** "a callback handler returns false to hold and true to continue; on exception,
    continue". **Mechanism:** `Record` returns `CallbackOutcome { Continue, Hold }` and the catch arm has
    to construct one, so the silent-continue path is a visible choice with a `SessionNotice` beside it.
    (LIV-04)
 3. **Rule today:** "every public XAML entry takes `_requests` once and calls a `Core` that assumes it is
-   held; a `Core` must never take the lock" (comment at `XamlDiagnosticsSession.cs:64-68`).
+   held; a `Core` must never take the lock" (comment at `XamlDiagnosticsSession.cs:61-66`).
    **Mechanism:** the `Core` methods and every `XamlProviderSession` method take a `HeldRequests` token, a
    `readonly ref struct` only the lock wrapper can construct. The session already does this for the
    debugger side with `StoppedTarget`; make it the same shape on the XAML side.
@@ -576,7 +554,7 @@ What must survive a refactor, with where it lives:
    `XamlWireFormat` that both ends are generated from or tested against. (LIV-08)
 7. **Rule today:** "comments are self-contained and present tense; no `used to`, no decision numbers".
    **Mechanism:** a CI step that greps `src` for `\b(used to|previously|no longer|for now|until now)\b|\bD[0-9]{1,2}\b|§`
-   with an allowlist, failing on new hits. Forty-two today. (LIV-20)
+   with an allowlist, failing on new hits. Forty-five today, up three since this was written. (LIV-20)
 8. **Rule today:** "a launch that faults once is retried three times in the fixture" (`UwpProbeApp.cs:385`).
    **Mechanism:** the fixture counts attempts and the assembly-level teardown fails the run if any launch
    needed more than one, with the faulted detail, so a product race cannot be green. (LIV-14)
@@ -584,12 +562,14 @@ What must survive a refactor, with where it lives:
 ## Open questions for Steve
 
 1. `Refuses_a_xaml_request_while_the_target_is_stopped` removes the breakpoint the target is held at and
-   then continues (`LiveAppUwpTests.cs:1740-1741`), while `TryDetachOnce`'s comment says removing a patch
-   under a parked thread fail-fasts the debuggee (`CorDebugSession.cs:372-375`). Is `RemoveBreakpoint` on
-   the held breakpoint known safe because `Continue` fixes the thread up and only `Detach` does not? A
-   sentence reconciling the two would stop the next reader "fixing" one of them.
-2. Has `BindAgainstLoadedModules`' `Stop(0)` under `_gate` ever been seen to block? Is the reliance on
-   mscordbi treating `Stop` on a synchronised process as a stop-count increment deliberate? (LIV-05)
+   then continues (`LiveAppUwpTests.cs:384`), while `ReleaseForDetach`'s comment says removing a
+   patch under a parked thread fail-fasts the debuggee (`CorDebugSession.cs`, `ReleaseForDetach`). Is
+   `RemoveBreakpoint` on the held breakpoint known safe because `Continue` fixes the thread up and only
+   `Detach` does not? A sentence reconciling the two would stop the next reader "fixing" one of them.
+2. ~~Is the reliance on mscordbi treating `Stop` on a synchronised process as a stop-count increment
+   deliberate?~~ **Answered in PR #265**: `TargetSymbols.Walk` now states the contract where it is
+   relied on. The open half is whether `BindAgainstLoadedModules`' `Stop(0)` under `_gate` has ever been
+   seen to block. (LIV-05)
 3. Has a WinUI 3 brush or margin live edit ever been observed to land? (LIV-09)
 4. For #208, was the host log of a failing run checked for a `selecthandle` that timed out, as the issue
    proposes? If so the LIV-07 mechanism is confirmed rather than inferred.
@@ -597,8 +577,9 @@ What must survive a refactor, with where it lives:
 6. Were `SetDesiredNGENCompilerFlags` / `SetJITCompilerFlags(CORDEBUG_JIT_DISABLE_OPTIMIZATION)` left out
    deliberately? `DebugProbeTarget` compensates with `MethodImplOptions.NoOptimization` (`Program.cs:62-64`),
    which suggests optimised frames lose locals in real targets too.
-7. `LiveAppSessionState` and `LiveExecutionState` are orthogonal by design (`LiveExecutionState.cs:4-6`).
-   Is the `Ended` + `StoppedAtBreakpoint` pairing (LIV-02) something the inspector has ever shown?
+7. ~~Is the `Ended` + `StoppedAtBreakpoint` pairing something the inspector has ever shown?~~ **Moot**:
+   the pairing is no longer expressible (LIV-02, PR #265). `LiveAppSessionState` and `LiveExecutionState`
+   remain orthogonal by design (`LiveExecutionState.cs:4-6`).
 
 ## Hot-reload relevant facts
 
@@ -607,21 +588,25 @@ What exists today, and what does not, with the lines the hot-reload reviewer can
 returns nothing in `RoseMcp.LiveApp`; the only hits are Roslyn's unrelated `ApplyChangesOperation` in
 the worker.
 
-**How the target is launched or attached.**
-- Plain executable: `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs:226-240`, `Launch` calls dbgshim's
-  `CreateProcessForLaunch(commandLine, bSuspendProcess: true, IntPtr.Zero, workingDirectory)`. The third
-  argument is `lpEnvironment` and is **`IntPtr.Zero`**: the target inherits the host's environment
-  unchanged. Nothing sets `DOTNET_MODIFIABLE_ASSEMBLIES`, `DOTNET_STARTUP_HOOKS` or anything else on the
-  target. The host's own environment is the broker's (it is started by `StdioClientTransport`,
-  `src/RoseMcp.Broker/LiveAppSession.cs:93-102`), so setting a variable on the broker would leak to every
-  target, which is the wrong grain.
-- Startup attach: `:261-299`, `AttachAtSuspendedStartup` arms `GetStartupNotificationEvent(pid)`, resumes,
-  waits, then `FindRuntimeWithRetry` -> `CreateCorDebug` -> `DebugActiveProcess(pid, win32Attach: false)`
-  -> sets the runtime's continue event. The target is under debug before its first managed instruction,
-  which is early enough to observe every module load.
-- Running-process attach: `:202-219`, `Attach` -> `DebugActiveProcess`. Modules already loaded are
-  enumerated lazily by `EnumerateLoadedModules` (`:1934-1969`) or eagerly by `BindAgainstLoadedModules`
-  (`:1795-1846`), both via `process.AppDomains -> Assemblies -> Modules` (`:2128-2140`).
+**How the target is launched or attached.** All of this moved to `RuntimeAttachment` in PR #265; the
+facts are unchanged and the lines below are the new ones.
+- Plain executable: `src/RoseMcp.LiveApp/Debugging/RuntimeAttachment.cs:76-96`, `Launch` calls dbgshim's
+  `CreateProcessForLaunch(commandLine, bSuspendProcess: true, IntPtr.Zero, workingDirectory)` (`:81`).
+  The third argument is `lpEnvironment` and is **`IntPtr.Zero`**: the target inherits the host's
+  environment unchanged. Nothing sets `DOTNET_MODIFIABLE_ASSEMBLIES`, `DOTNET_STARTUP_HOOKS` or anything
+  else on the target. The host's own environment is the broker's (it is started by
+  `StdioClientTransport`, `src/RoseMcp.Broker/LiveAppSession.cs:93-102`), so setting a variable on the
+  broker would leak to every target, which is the wrong grain.
+- Startup attach: `RuntimeAttachment.cs:131-175`, `AttachAtSuspendedStartup` arms
+  `GetStartupNotificationEvent(pid)`, resumes, waits, then `FindRuntimeWithRetry` (`:216`) ->
+  `CreateCorDebug` -> `DebugActiveProcess(pid, win32Attach: false)` -> sets the runtime's continue event.
+  The target is under debug before its first managed instruction, which is early enough to observe every
+  module load.
+- Running-process attach: `RuntimeAttachment.cs:52-70`, `Attach` -> `DebugActiveProcess`. Modules already
+  loaded are enumerated lazily by `TargetSymbols.Walk` (`TargetSymbols.cs:65`) or eagerly by
+  `CorDebugSession.BindAgainstLoadedModules` (`TargetBreakpoints.cs:153`), both via
+  `TargetSymbols.EnumerateModules` (`TargetSymbols.cs:240`), which walks
+  `process.AppDomains -> Assemblies -> Modules`.
 - UWP: activation goes through `IPackageDebugSettings::EnableDebugging(packageFullName,
   debuggerCommandLine, environment)` at `src/RoseMcp.LiveApp/Debugging/Uwp.cs:118-133`. The environment
   block **is** settable there and is already used: `ActivationEnvironment =
@@ -635,34 +620,41 @@ the worker.
   measured, not assumed.
 
 **How ICorDebug is created and what flags are set.**
-- `CreateCorDebug` (`CorDebugSession.cs:1465-1495`): `CreateDebuggingInterfaceFromVersionEx(CorDebugVersion_4_0,
+- `CreateCorDebug` (`RuntimeAttachment.cs:265-290`): `CreateDebuggingInterfaceFromVersionEx(CorDebugVersion_4_0,
   version)` (or the by-hand `CoreCLRCreateCordbObject3` in `RuntimeDiscovery.cs:73-102` when dbgshim
   folds the failure), then `Initialize()`, then `SetManagedHandler(callback)`. There is **no**
   `ICorDebugProcess2::SetDesiredNGENCompilerFlags`, **no** `ICorDebugModule2::SetJITCompilerFlags`, and
   therefore no `CORDEBUG_JIT_ENABLE_ENC` or `CORDEBUG_JIT_DISABLE_OPTIMIZATION`. Targets JIT optimised
   code unless their own build says otherwise, which is why the probe uses `MethodImplOptions.NoOptimization`
   (`tests/DebugProbeTarget/Program.cs:62-64`) to keep a local alive for the tests.
-- The only EnC reference anywhere is `HRESULT.CORDBG_E_DETACH_FAILED_ON_ENC` in `IsRefusal`
-  (`CorDebugSession.cs:549`), so a detach after an applied edit is already classified as a refusal rather
-  than retried; `ReleaseForDetach` (`:500-535`) would need to learn how to end an EnC session.
+- The only EnC reference anywhere is `HRESULT.CORDBG_E_DETACH_FAILED_ON_ENC` in
+  `DetachProtocol.IsRefusal` (`DetachProtocol.cs:106`), so a detach after an applied edit is already
+  classified as a refusal rather than retried; `ReleaseForDetach` (`CorDebugSession.cs`, `ReleaseForDetach`,
+  `BreakpointTable.cs:212`) would need to learn how to end an EnC session.
 
 **Module-load hook that could record baselines.**
-- `Record` handles `LoadModuleCorDebugManagedCallbackEventArgs` at `CorDebugSession.cs:1575-1578`,
-  appending a `ModuleLoaded` event and calling `BindModule(loaded.Module)` (`:1981-2029`), which calls
-  `RememberModule` (`:1902-1910`). `RememberModule` keeps only the **path** in `_modulePaths`; the
-  `CorDebugModule` object is dropped. Hot reload needs the `ICorDebugModule` to call
+- `Record` handles `LoadModuleCorDebugManagedCallbackEventArgs` at `CorDebugSession.cs:750`,
+  appending a `ModuleLoaded` event and calling `BindModule(loaded.Module)` (`:1345`), which calls
+  `TargetSymbols.Remember` (`TargetSymbols.cs:44`) and `BreakpointTable.BindNewModule`
+  (`BreakpointTable.cs:115`). `Remember` keeps only the **path**; the `CorDebugModule` object is
+  dropped. Hot reload needs the `ICorDebugModule` to call
   `ICorDebugModule2::ApplyChanges(metadataDelta, ilDelta)`, so this is where a
   `Dictionary<string, CorDebugModule>` would be filled (LIV-05 wants the same map for a different
   reason). The callback runs with the target stopped, so reading the module's metadata for a baseline
   is safe here.
-- `FileOf` (`:1884-1896`) already filters dynamic and in-memory modules, which EnC cannot target.
+- `TargetSymbols.FileOf` (`TargetSymbols.cs:225`) already filters dynamic and in-memory modules, which
+  EnC cannot target.
 
 **Stop and resume infrastructure an apply would reuse.**
-- `Break(int?)` (`:868-922`) produces a stop of the same shape as a breakpoint's, on the safety timer;
-  `ContinueInternal` (`:1327-1380`) resumes. An EnC apply needs the process synchronised; `Break` gives
-  that, and `WithSynchronizedTarget` (suggested in LIV-05) would be the natural wrapper.
-- The `_gate` and callback discipline (`OnEvent`, `:1497-1562`) means the apply would run on a tool
+- `Break(int?)` (`CorDebugSession.cs:380`) produces a stop of the same shape as a breakpoint's, on
+  the safety timer; `ContinueInternal` (`:922-972`) resumes. An EnC apply needs the process synchronised
+  and `Break` gives that. `TargetSymbols.Walk` (`TargetSymbols.cs:65`) is the worked example of the
+  stop/continue pair an apply would follow.
+- The `_gate` and callback discipline (`OnEvent`, `:974-1050`) means the apply would run on a tool
   thread under `_gate` with the target stopped, which is also where `BindAgainstLoadedModules` runs today.
+- `TargetExecution` (`TargetExecution.cs`) is where an `Applying(ApplyRecord)` arm goes, and adding it
+  makes the compiler enumerate every site that has to decide what "applying" means. This is what HOT-06
+  was waiting on and it is now available.
 
 **Symbols.**
 - `RoseMcp.Symbols` reads metadata and portable PDBs off disk with stamp-based invalidation
@@ -686,12 +678,12 @@ the worker.
   (`XamlDiff.cs:44-50`) parses `XElement`s and addresses by `#name`/`Type[index]`; nothing in it is
   reusable for C# except the baseline discipline and the result shape (`LiveXamlApplyResult` with
   per-edit `Status` and `Notes`), which a `LiveCodeApplyResult` should copy.
-- The apply pipeline (`XamlDiagnosticsSession.ApplyEditsCore`, `:603-756`) is the model for "compute
+- The apply pipeline (`XamlApply.ApplyEditsCore`) is the model for "compute
   edits outside the target, send a batch, get per-edit outcomes, never retry a mutating batch".
 
 **What has no precedent here.**
 - There is no managed in-process agent path. The tap is a native DLL loaded by the framework's own
-  `InitializeXamlDiagnosticsEx` (`XamlProviderSession.cs:292-311`), not by generic injection; there is no
+  `InitializeXamlDiagnosticsEx` (`XamlProviderSession.Inject`, `:171`), not by generic injection; there is no
   `CreateRemoteThread`, no startup hook, no `MetadataUpdater.ApplyUpdate` caller. A dotnet-watch-style
   agent would be new machinery; the ICorDebug `ApplyChanges` path needs none and fits the host as it is.
 - Nothing disables JIT optimisation or enables EnC at launch, and nothing tracks which methods have

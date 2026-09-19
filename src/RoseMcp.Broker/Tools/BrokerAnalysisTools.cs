@@ -149,20 +149,20 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces)
 		}, cancellationToken, progress);
 
 	[McpServerTool(
-		Name = ToolNames.Islands,
+		Name = ToolNames.FindSplitOptions,
 		Title = "Where a type could be split",
 		ReadOnly = true,
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description(ToolDescriptions.Islands)]
-	public Task<IslandsResult> IslandsAsync(
+	[Description(ToolDescriptions.FindSplitOptions)]
+	public Task<IslandsResult> FindSplitOptionsAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
-		[Description(ToolDescriptions.IslandsFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.SplitOptionsFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<IslandsResult>(WorkspaceHints.From(workspace, filePath), ToolNames.Islands, new()
+		ForwardAsync<IslandsResult>(WorkspaceHints.From(workspace, filePath), ToolNames.FindSplitOptions, new()
 		{
 			["symbol"] = symbol,
 			["filePath"] = filePath,

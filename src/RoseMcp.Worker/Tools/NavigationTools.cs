@@ -199,17 +199,17 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 	}
 
 	[McpServerTool(
-		Name = ToolNames.Islands,
+		Name = ToolNames.FindSplitOptions,
 		Title = "Where a type could be split",
 		ReadOnly = true,
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description(ToolDescriptions.Islands)]
-	public async Task<IslandsResult> IslandsAsync(
+	[Description(ToolDescriptions.FindSplitOptions)]
+	public async Task<IslandsResult> FindSplitOptionsAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
-		[Description(ToolDescriptions.IslandsFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.SplitOptionsFilePathArgument)] string? filePath = null,
 		CancellationToken cancellationToken = default)
 	{
 		using var following = sharedWork.Follow(WorkProgress.For(progress));

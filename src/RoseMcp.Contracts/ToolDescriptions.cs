@@ -251,7 +251,7 @@ public static class ToolDescriptions
 	/// Its own rather than the outline's, which names outlining. The type argument is shared, because
 	/// "the type, as Namespace.Type" is the same sentence whatever is then done with it.
 	/// </summary>
-	public const string IslandsFilePathArgument =
+	public const string SplitOptionsFilePathArgument =
 		"The file to read. One of this and type; every type it declares is answered for.";
 
 	public const string ResolveNameArgument =
@@ -768,7 +768,7 @@ public static class ToolDescriptions
 		classes contribute.
 		""";
 
-	public const string Islands = """
+	public const string FindSplitOptions = """
 		Where a type could be split, and what each piece would take with it. An island is a set of
 		members that would move together. A state island reads fields nothing else reads and would
 		become a type of its own; a reach island is everything one member is the only way into, and

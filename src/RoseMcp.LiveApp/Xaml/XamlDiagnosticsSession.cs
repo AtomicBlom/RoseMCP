@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 using Microsoft.Extensions.Logging;
 
 using RoseMcp.Contracts;
@@ -8,10 +6,11 @@ using RoseMcp.XamlDiff;
 namespace RoseMcp.LiveApp.Xaml;
 
 /// <summary>
-/// Reads what a XAML diagnostics provider reports about the target, and applies edits to its live
-/// tree. Every request is one message on the pipe <see cref="XamlProviderSession"/> establishes; what
-/// is here is the questions and the apply path, with <see cref="XamlProviderWire"/> holding the
-/// wire format in both directions.
+/// Asks a XAML diagnostics provider what the target's live tree contains, and takes the request
+/// lock that every answer is served under. Every request is one message on the pipe <see
+/// cref="XamlProviderSession"/> establishes, with <see cref="XamlProviderWire"/> holding the wire
+/// format in both directions and <see cref="XamlApply"/> doing the one thing here that remembers
+/// anything between calls.
 /// <para>
 /// One request at a time, and the lock is re-entrant. The host serves MCP calls concurrently while
 /// every XAML request shares one pipe, which carries one request and one reply at a time, and two at
@@ -20,7 +19,7 @@ namespace RoseMcp.LiveApp.Xaml;
 /// selection, which takes the lock again on the same thread.
 /// </para>
 /// </summary>
-internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
+internal sealed class XamlDiagnosticsSession : IDisposable
 {
 	// What a tree read reports about which channel answered. Named constants rather than literals at
 	// the two return sites, because the whole value of the field is that a test can tell the two
@@ -31,17 +30,16 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// The provider's residency in the target, and the only route to it. Held rather than made per
 	// request because one injection per session is the invariant: a second tap in the app receives
 	// every mutation in it and holds a copy of its tree, for nothing.
-	private readonly XamlProviderSession _provider = new(logger);
+	private readonly XamlProviderSession _provider;
+
+	// The apply path and the baselines it keeps. Its own object because it is the only part of this
+	// session that carries state between calls: what the app was last told, per file.
+	private readonly XamlApply _apply;
 
 	// How long the provider may take to answer one request. Every other bound is a wait on getting a
 	// provider resident at all, which is the provider session's business; this is the only one a
 	// request on a standing pipe can hit.
 	private TimeSpan Reply => _provider.Bounds.Snapshot;
-
-	// What this side has already sent to the app, per source file (#12). It is held here rather than by
-	// the caller for two reasons: this is the only place that can tell whether an apply reached the
-	// provider, and a caller that has just written a file no longer holds what was there before.
-	private readonly XamlApplyBaseline _baselines = new();
 
 	// One request at a time, and this is measured rather than defensive (#93). The host serves MCP
 	// calls concurrently -- two tree reads issued together finish in the time of one, where serialised
@@ -66,6 +64,19 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	// itself would deadlock under a SemaphoreSlim and pass under this one, so the pairing is what
 	// makes the choice of lock free rather than load-bearing.
 	private readonly Lock _requests = new();
+
+	private readonly ILogger _logger;
+
+	/// <summary>
+	/// Written out rather than a primary constructor, because the apply is built from the provider
+	/// beside it and a field initialiser cannot reach a sibling field.
+	/// </summary>
+	internal XamlDiagnosticsSession(ILogger logger)
+	{
+		_logger = logger;
+		_provider = new XamlProviderSession(logger);
+		_apply = new XamlApply(_provider, logger);
+	}
 
 	/// <summary>
 	/// Reads a snapshot of the target's live visual tree, injecting the provider first. Returns a tree
@@ -108,7 +119,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		if (served is null) return new LiveXamlTree { Detail = Unanswered("a tree") };
 
 		var nodes = XamlProviderWire.ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
-		logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", nodes.Count, pid);
+		_logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", nodes.Count, pid);
 		return new LiveXamlTree { Nodes = nodes, Channel = PipeChannel };
 	}
 
@@ -150,7 +161,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 			if (lines.Length > 0 && lines[0] == "ok")
 			{
 				var fromPipe = XamlProviderWire.ParseProperties(lines.Skip(1), handle);
-				logger.LogInformation(
+				_logger.LogInformation(
 					"Read {Count} propert(y/ies) for handle {Handle} from pid {Pid} over the pipe.", fromPipe.Count, handle, pid);
 				return fromPipe;
 			}
@@ -493,7 +504,7 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 		}
 		catch (Exception exception)
 		{
-			logger.LogWarning(exception, "Reading the XAML selection failed.");
+			_logger.LogWarning(exception, "Reading the XAML selection failed.");
 			return new LiveXamlSelection
 			{
 				Armed = armed,
@@ -596,292 +607,10 @@ internal sealed class XamlDiagnosticsSession(ILogger logger) : IDisposable
 	/// </summary>
 	public LiveXamlApplyResult ApplyEdits(int pid, string? oldXaml, string? newXaml, string? filePath)
 	{
-		lock (_requests) return ApplyEditsCore(pid, oldXaml, newXaml, filePath);
+		lock (_requests) return _apply.ApplyEditsCore(pid, oldXaml, newXaml, filePath);
 	}
 
-	private LiveXamlApplyResult ApplyEditsCore(int pid, string? oldXaml, string? newXaml, string? filePath)
-	{
-		var (inputs, failure) = Resolve(pid, oldXaml, newXaml, filePath);
-		if (failure is not null) return new LiveXamlApplyResult { Detail = failure };
-
-		// Nothing to diff against, which is not a failure: the file's contents are the baseline from
-		// here on, so the caller's next edit applies on its own. The note says which reason it was.
-		if (inputs!.OldXaml is null)
-		{
-			return new LiveXamlApplyResult { Notes = inputs.Note is null ? [] : [inputs.Note] };
-		}
-
-		XamlDiffResult diff;
-		try
-		{
-			diff = RoseMcp.XamlDiff.XamlDiff.Compute(inputs.OldXaml, inputs.NewXaml);
-		}
-		catch (Exception exception)
-		{
-			return new LiveXamlApplyResult { Detail = $"Could not diff the XAML: {exception.Message}" };
-		}
-
-		// The target goes to the provider exactly as the diff wrote it, `#name` or path alike: whether an
-		// address resolves is a question about the live tree, so it is asked where the live tree is.
-		//
-		// An addition is the one edit that is not a single command. There is no way to apply markup --
-		// CreateInstance builds one object from a type name -- so the subtree is taken apart into build
-		// steps and sent as several commands, and this edit's outcome is the outcome of all of them. The
-		// taking apart lives in the diff library, which is pure and unit tested; doing it here would put
-		// the fiddliest part of this somewhere no unit test can reach.
-		var commands = new List<string>();
-		var plans = new List<(XamlEdit Edit, List<string> Keys)>();
-		var notes = new List<string>();
-		if (inputs.Note is not null) notes.Add(inputs.Note);
-		notes.AddRange(diff.Notes);
-
-		foreach (var edit in diff.Edits)
-		{
-			var keys = new List<string>();
-
-			if (edit.Kind is XamlEditKind.SetProperty or XamlEditKind.ClearProperty or XamlEditKind.RemoveChild)
-			{
-				var property = edit.Property ?? string.Empty;
-				commands.Add(XamlProviderWire.Line(XamlProviderWire.Op(edit.Kind), edit.Target, property, edit.ValueType ?? string.Empty, edit.Value ?? string.Empty, string.Empty, 0));
-				keys.Add(XamlProviderWire.Key(XamlProviderWire.Op(edit.Kind), edit.Target, property, string.Empty));
-			}
-			else if (edit.Kind is XamlEditKind.AddChild && edit.Payload is { } payload)
-			{
-				try
-				{
-					foreach (var step in XamlMaterialiser.Steps(payload, edit.Target, edit.Index ?? 0))
-					{
-						var (line, key) = XamlProviderWire.Command(step);
-						commands.Add(line);
-						keys.Add(key);
-					}
-				}
-				catch (Exception exception)
-				{
-					keys.Clear();
-					notes.Add($"The element added under {edit.Target} could not be taken apart into build steps: {exception.Message}");
-				}
-			}
-			else if (edit.Kind is XamlEditKind.SetResource && edit.Payload is { } resource)
-			{
-				// A resource is built the same way an added element is and then put somewhere else:
-				// behind a key rather than into a parent's children. So the same steps run, minus the
-				// attach, and one ReplaceResource finishes it.
-				try
-				{
-					foreach (var step in XamlMaterialiser.Unattached(resource))
-					{
-						var (line, key) = XamlProviderWire.Command(step);
-						commands.Add(line);
-						keys.Add(key);
-					}
-
-					var name = edit.Property ?? string.Empty;
-					commands.Add(XamlProviderWire.Line("ReplaceResource", edit.Target, name, string.Empty, string.Empty, XamlMaterialiser.RootSlot, 0));
-					keys.Add(XamlProviderWire.Key("ReplaceResource", edit.Target, name, XamlMaterialiser.RootSlot));
-				}
-				catch (Exception exception)
-				{
-					keys.Clear();
-					notes.Add($"The resource '{edit.Property}' on {edit.Target} could not be taken apart into build steps: {exception.Message}");
-				}
-			}
-
-			plans.Add((edit, keys));
-		}
-
-		var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
-		if (commands.Count > 0)
-		{
-			var (pipe, unready) = _provider.Connect(pid);
-			if (pipe is null) return new LiveXamlApplyResult { Detail = unready };
-
-			var served = pipe.Request("apply\n" + string.Join("\n", commands), Reply);
-			if (served is null)
-			{
-				// Not retried anywhere, and the baseline is deliberately left where it was. A structural
-				// edit is not idempotent, and a missing reply cannot tell "never ran" from "ran, and the
-				// answer was lost" -- so resending would put a second copy of everything this batch adds
-				// into the app. The message says what that costs the caller.
-				return new LiveXamlApplyResult
-				{
-					Detail = Unanswered("a batch of edits to be applied")
-						+ " The edits may or may not have reached the app, so applying the same change again could "
-						+ "add a second copy of anything this one was adding.",
-				};
-			}
-
-			statuses = XamlProviderWire.ParseApplyResults(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
-			logger.LogInformation("Applied {Count} XAML command(s) to pid {Pid} over the pipe.", commands.Count, pid);
-		}
-
-		// Advanced whether or not every edit took, and that is the deliberate half. The app has been
-		// sent this version; re-sending a structural edit because something else in the batch failed
-		// would duplicate the elements that did go in. The failures are in the results to act on.
-		if (inputs.SourcePath is not null) _baselines.Advance(inputs.SourcePath, inputs.NewXaml);
-
-		var results = new List<LiveXamlEditResult>();
-		foreach (var (edit, keys) in plans)
-		{
-			results.Add(new LiveXamlEditResult
-			{
-				Kind = edit.Kind.ToString(),
-				Target = edit.Target,
-				Property = edit.Property,
-				Value = edit.Value,
-				Status = XamlProviderWire.Outcome(keys, statuses),
-			});
-		}
-
-		// An edit that did not take is said in the notes as well as in its own row. The tool's contract is
-		// that the notes list edits worked out and not applied, so an empty notes list reads as a clean
-		// apply -- leaving the difference between applied and total as the only signal there was, which
-		// is the one a caller following the documentation never looks at.
-		foreach (var failed in results.Where(result => result.Status != "applied"))
-		{
-			var what = failed.Property is { Length: > 0 } property
-				? $"{failed.Kind} '{property}' on {failed.Target}"
-				: $"{failed.Kind} on {failed.Target}";
-
-			notes.Add($"{what} was not applied: {failed.Status}.");
-		}
-
-		return new LiveXamlApplyResult
-		{
-			Applied = results.Count(result => result.Status == "applied"),
-			Results = results,
-			Notes = notes,
-		};
-	}
-
-	/// <summary>
-	/// Works out what to diff, from what the caller gave, or names what is missing or contradictory.
-	/// <para>
-	/// There are three ways to ask, and the one this was built for is to name the file and nothing
-	/// else. Two versions of the markup is the original shape, still honoured because a caller
-	/// composing markup may have no file at all. A file plus an explicit old version is the escape
-	/// hatch for the first apply after an edit this side never saw.
-	/// </para>
-	/// <para>
-	/// A file plus a new version is refused rather than reconciled. Two answers to "what does it say
-	/// now" is a question, and picking one silently is how a tool applies something convincingly and
-	/// not what was asked.
-	/// </para>
-	/// </summary>
-	private (ApplyInputs? Inputs, string? Error) Resolve(int pid, string? oldXaml, string? newXaml, string? filePath)
-	{
-		var hasFile = !string.IsNullOrWhiteSpace(filePath);
-		var hasNew = !string.IsNullOrEmpty(newXaml);
-		var hasOld = !string.IsNullOrEmpty(oldXaml);
-
-		if (!hasFile)
-		{
-			if (!hasNew)
-			{
-				return (null, "Nothing to apply: pass filePath to apply what a XAML file now holds, or newXaml with "
-					+ "oldXaml to apply markup that is not on disk.");
-			}
-
-			if (!hasOld)
-			{
-				return (null, "Nothing to diff against: pass filePath rather than newXaml and this side keeps track "
-					+ "of what it has already applied to the file, or pass oldXaml alongside newXaml.");
-			}
-
-			return (new ApplyInputs { OldXaml = oldXaml, NewXaml = newXaml! }, null);
-		}
-
-		if (hasNew)
-		{
-			return (null, "filePath and newXaml both say what the markup is now, so pass one: filePath to apply what "
-				+ "the file holds, newXaml to apply markup that is not on disk.");
-		}
-
-		string full;
-		try
-		{
-			full = Path.GetFullPath(filePath!);
-		}
-		catch (Exception exception)
-		{
-			return (null, $"'{filePath}' is not a usable path: {exception.Message}");
-		}
-
-		if (!File.Exists(full)) return (null, $"There is no file at {full}.");
-
-		string current;
-		try
-		{
-			current = File.ReadAllText(full);
-		}
-		catch (Exception exception)
-		{
-			return (null, $"Could not read {full}: {exception.Message}");
-		}
-
-		// Refused rather than recorded, and this is the reason the check is worth its lines. A first
-		// apply records what it read as the baseline for the next one, so recording markup that does
-		// not parse would leave every apply after it diffing against something unparseable -- a call
-		// reporting a parse error about a file the caller has since fixed, with nothing it can do to
-		// say so.
-		if (!RoseMcp.XamlDiff.XamlDiff.Parses(current, out var reason))
-		{
-			return (null, $"{full} is not markup this can diff, so nothing was recorded or applied: {reason}");
-		}
-
-		// An explicit old version wins over the baseline and still refreshes it. The caller is telling
-		// this side something it had no way to know, and the applies after it should carry on from
-		// there rather than needing to be told again.
-		if (hasOld) return (new ApplyInputs { OldXaml = oldXaml, NewXaml = current, SourcePath = full }, null);
-
-		var plan = _baselines.Prepare(full, current, AgeOf(pid, full));
-
-		return (new ApplyInputs { OldXaml = plan.OldXaml, NewXaml = current, SourcePath = full, Note = plan.Note }, null);
-	}
-
-	/// <summary>
-	/// What can be said about a file's last write against the moment the target started running. It
-	/// decides only the note on a first apply, and says "cannot tell" rather than assuming: "changed
-	/// since the app started" is a claim about the file, and a process that will not give its start
-	/// time is no evidence either way.
-	/// </summary>
-	private static XamlBaselineAge AgeOf(int pid, string path)
-	{
-		try
-		{
-			using var process = Process.GetProcessById(pid);
-
-			return File.GetLastWriteTimeUtc(path) > process.StartTime.ToUniversalTime()
-				? XamlBaselineAge.ChangedSinceTargetStarted
-				: XamlBaselineAge.UnchangedSinceTargetStarted;
-		}
-		catch (Exception)
-		{
-			return XamlBaselineAge.Unknown;
-		}
-	}
-
-	/// <summary>What an apply will diff, once the ways of asking for it have been reconciled.</summary>
-	private sealed record ApplyInputs
-	{
-		/// <summary>Null when there is nothing to diff against; <see cref="Note"/> then says why.</summary>
-		public string? OldXaml { get; init; }
-
-		public required string NewXaml { get; init; }
-
-		/// <summary>The file the markup came from, when it came from one. Keys the baseline.</summary>
-		public string? SourcePath { get; init; }
-
-		public string? Note { get; init; }
-	}
-
-	/// <summary>
-	/// What to tell a caller whose provider is connected and did not answer. Distinct from every other
-	/// failure here: the provider is loaded and its pipe is up, so what has stopped is the app's UI
-	/// thread, which is the one thing none of the other messages would send anyone to look at.
-	/// </summary>
-	private string Unanswered(string what) =>
-		XamlChannelBounds.TimedOut($"the XAML provider, asked for {what}", Reply);
+	private string Unanswered(string what) => XamlChannelBounds.Unanswered(what, Reply);
 
 	/// <summary>
 	/// Asks the resident provider to give back the two framework interfaces it holds.

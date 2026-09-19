@@ -101,6 +101,7 @@ These read the loaded compilation and files the solution holds, and write nothin
 | `rose_symbol_info` | Describes a symbol, optionally with its source | Reads only |
 | `rose_search_symbols` | Searches declarations by name | Reads only |
 | `rose_outline` | Lists what a type or file contains | Reads only |
+| `rose_find_split_options` | Reports where a type could be split | Reads only |
 | `rose_project_graph` | Reports project references | Reads only |
 | `rose_resolve_name` | Finds the namespace a type name lives in | Reads only |
 | `rose_list_generated_documents` | Lists source-generated documents | Reads what generators produced in the worker |

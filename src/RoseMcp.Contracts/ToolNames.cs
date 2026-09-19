@@ -42,6 +42,8 @@ public static class ToolNames
 
 	public const string Outline = "rose_outline";
 
+	public const string FindSplitOptions = "rose_find_split_options";
+
 	public const string ProjectGraph = "rose_project_graph";
 
 	public const string DeleteMember = "rose_delete_member";

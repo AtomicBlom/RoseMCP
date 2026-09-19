@@ -247,6 +247,13 @@ public static class ToolDescriptions
 	public const string OutlineFilePathArgument =
 		"The file to outline. One of this and type; also narrows a partial type to one of its files.";
 
+	/// <summary>
+	/// Its own rather than the outline's, which names outlining. The type argument is shared, because
+	/// "the type, as Namespace.Type" is the same sentence whatever is then done with it.
+	/// </summary>
+	public const string SplitOptionsFilePathArgument =
+		"The file to read. One of this and type; every type it declares is answered for.";
+
 	public const string ResolveNameArgument =
 		"The name as the code spells it: Encoding, List<int>, or Encoding.UTF8.";
 
@@ -759,6 +766,18 @@ public static class ToolDescriptions
 		so an interface implementation can be written from this alone. Members a generator wrote are
 		marked, since there is no file to edit for those. Pass includeInherited for what the base
 		classes contribute.
+		""";
+
+	public const string FindSplitOptions = """
+		Where a type could be split, and what each piece would take with it. An island is a set of
+		members that would move together. A state island reads fields nothing else reads and would
+		become a type of its own; a reach island is everything one member is the only way into, and
+		would become that member's private world. Each arrives with the fields it owns and the line
+		ranges it occupies, which is what says whether the split is an afternoon or a fortnight: the
+		same members in one block or scattered over four ranges are different jobs. Finding no islands
+		is the usual answer and a real one -- it means the type holds together, and is worth more than
+		a split invented to have something to report. Name a type or give a file path. It reads every
+		member body, so it costs more than an outline.
 		""";
 
 	public const string ProjectGraph = """

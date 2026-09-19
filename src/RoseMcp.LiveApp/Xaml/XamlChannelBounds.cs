@@ -90,5 +90,13 @@ internal sealed record XamlChannelBounds
 	public static string TimedOut(string channel, TimeSpan bound) =>
 		$"Waiting on {channel} timed out after {bound.TotalSeconds:0.##}s.";
 
+	/// <summary>
+	/// What to tell a caller whose provider is connected and did not answer. Distinct from every other
+	/// failure here: the provider is loaded and its pipe is up, so what has stopped is the app's UI
+	/// thread, which is the one thing none of the other messages would send anyone to look at.
+	/// </summary>
+	public static string Unanswered(string what, TimeSpan reply) =>
+		TimedOut($"the XAML provider, asked for {what}", reply);
+
 	private static TimeSpan Shorter(TimeSpan bound, TimeSpan ceiling) => bound < ceiling ? bound : ceiling;
 }

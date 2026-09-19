@@ -144,9 +144,7 @@ public sealed class BrokerWorkerTests
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 
-		// A port with no tray on it, so this server owns its workers rather than relaying to whatever
-		// happens to be running on this machine.
-		using var server = RoseServerProcess.Start("--port", RoseServerProcess.FreePort().ToString());
+		using var server = RoseServerProcess.Start();
 
 		await server.InitializeAsync(cancellationToken);
 

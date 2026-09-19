@@ -76,7 +76,10 @@ public sealed class RoseServerProcess : IDisposable
 		return executable;
 	}
 
-	/// <summary>Starts a server, with its streams held so a test can close stdin on its own terms.</summary>
+	/// <summary>
+	/// Starts a server, with its streams held so a test can close stdin on its own terms. It is given
+	/// a port of its own unless the caller names one.
+	/// </summary>
 	public static RoseServerProcess Start(params string[] arguments) => StartIn(workingDirectory: null, arguments);
 
 	/// <summary>
@@ -95,7 +98,7 @@ public sealed class RoseServerProcess : IDisposable
 
 		if (workingDirectory is not null) start.WorkingDirectory = workingDirectory;
 
-		foreach (var argument in arguments) start.ArgumentList.Add(argument);
+		foreach (var argument in WithAPortOfItsOwn(arguments)) start.ArgumentList.Add(argument);
 
 		var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start RoseMcp.Server.");
 
@@ -122,13 +125,28 @@ public sealed class RoseServerProcess : IDisposable
 			UseShellExecute = false,
 		};
 
-		foreach (var argument in arguments) start.ArgumentList.Add(argument);
+		foreach (var argument in WithAPortOfItsOwn(arguments)) start.ArgumentList.Add(argument);
 		foreach (var (name, value) in environment) start.Environment[name] = value;
 
 		var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start RoseMcp.Server.");
 
 		return new RoseServerProcess(process);
 	}
+
+	/// <summary>
+	/// The arguments, with a port of this process's choosing added when the caller has not named one.
+	/// <para>
+	/// Not a convenience. A stdio server given no <c>--port</c> probes 5077 before it builds anything,
+	/// and relays to whatever answers there instead of starting workers of its own. On a machine that
+	/// is running the tray -- which is most of the time, since that is how this repository is
+	/// dogfooded -- a test that omitted the argument would quietly run against the tray's workers and
+	/// the solutions it already has open, proving nothing about the build under test. A port nothing
+	/// answers on makes that probe fail, which is what every test here wants, so the suite takes one
+	/// rather than leaving it to each call site to remember.
+	/// </para>
+	/// </summary>
+	private static IEnumerable<string> WithAPortOfItsOwn(string[] arguments) =>
+		arguments.Contains("--port") ? arguments : [.. arguments, "--port", FreePort().ToString()];
 
 	/// <summary>
 	/// A loopback port nothing is listening on, taken by binding and releasing. The gap between

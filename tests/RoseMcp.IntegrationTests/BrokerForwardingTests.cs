@@ -329,7 +329,7 @@ public sealed class BrokerForwardingTests
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 
-		using var server = RoseServerProcess.Start("--port", RoseServerProcess.FreePort().ToString());
+		using var server = RoseServerProcess.Start();
 		await server.InitializeAsync(cancellationToken);
 
 		// arguments takes a list of strings; this sends the one element bare, which is the mistake.

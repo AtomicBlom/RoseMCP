@@ -15,7 +15,7 @@ namespace RoseMcp.IntegrationTests;
 /// needs the app to itself and has to hand it back idle. There is no smaller thing to own.
 /// </para>
 /// </summary>
-[Category("LiveApp")]
+[Category("ProbeApp")]
 [ClassDataSource<UwpProbeApp>(Shared = SharedType.PerAssembly)]
 public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 {

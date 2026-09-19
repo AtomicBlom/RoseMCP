@@ -17,7 +17,7 @@ namespace RoseMcp.IntegrationTests;
 /// drives a different process sharing no package, provider or window with the UWP probe.
 /// </para>
 /// </summary>
-[Category("LiveApp")]
+[Category("ProbeApp")]
 [ClassDataSource<WinUiProbeApp>(Shared = SharedType.PerAssembly)]
 public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 {

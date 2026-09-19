@@ -30,7 +30,6 @@ namespace RoseMcp.IntegrationTests;
 /// a fact about starting a session rather than about what can be done once it is running.
 /// </para>
 /// </summary>
-[Category("LiveApp")]
 public sealed class LiveAppSessionTests
 {
 	/// <summary>

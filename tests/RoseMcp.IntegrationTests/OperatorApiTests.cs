@@ -104,7 +104,6 @@ public sealed class OperatorApiTests
 	/// </para>
 	/// </summary>
 	[Test]
-	[Category("LiveApp")]
 	public async Task Shows_a_session_an_mcp_client_started_and_owns()
 	{
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;

@@ -14,7 +14,7 @@ namespace RoseMcp.IntegrationTests;
 /// for what differs underneath and why it is a fixture of its own.
 /// </para>
 /// </summary>
-[Category("LiveApp")]
+[Category("ProbeApp")]
 [ClassDataSource<UwpModernProbeApp>(Shared = SharedType.PerAssembly)]
 public sealed class LiveAppUwpModernTests(UwpModernProbeApp uwpModern)
 {

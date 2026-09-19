@@ -13,7 +13,7 @@ namespace RoseMcp.IntegrationTests;
 /// overlap each other. See <see cref="ProbeKeys"/> for what a slot key buys.
 /// </para>
 /// </summary>
-[Category("LiveApp")]
+[Category("ProbeApp")]
 [ClassDataSource<UwpProbeApp>(Shared = SharedType.PerAssembly)]
 public sealed class LiveAppUwpReadTests(UwpProbeApp probe)
 {

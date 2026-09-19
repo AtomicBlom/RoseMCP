@@ -20,7 +20,7 @@ namespace RoseMcp.IntegrationTests;
 /// a file through successive applies takes the app outright.
 /// </para>
 /// </summary>
-[Category("LiveApp")]
+[Category("ProbeApp")]
 [ClassDataSource<UwpProbeApp>(Shared = SharedType.PerAssembly)]
 public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 {

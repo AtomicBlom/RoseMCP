@@ -367,29 +367,19 @@ inferring it. This is the cleanest boundary in the repository.
   Do (1) first and measure -- it is a day's work, cannot change any assertion, and removes the
   largest single block.
 
-### UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `tests/RoseMcp.IntegrationTests/LiveAppInspectionTests.cs:18` (no `[Category]`), `.github/workflows/ci.yml:129-132,168-171,181`
-- **What:** Eight live-app classes carry `[Category("LiveApp")]` -- `LiveAppSessionTests`,
-  `LiveAppDebugTests`, `LiveAppUwpTests`, `LiveAppUwpEditTests`, `LiveAppUwpReadTests`,
-  `LiveAppUwpOverlayTests`, `LiveAppUwpModernTests`, `LiveAppWinUiTests` -- and one method in
-  `OperatorApiTests.cs:107` does. `LiveAppInspectionTests`, split out in af63dde, still does not. Its
-  eleven tests start `DebugProbeTarget` and attach a real ICorDebug session, so
-  `--treenode-filter '[Category!=LiveApp]'` admits them to the hosted Windows runner. CI's own
-  comment says "LiveAppSessionTests is excluded whole. Its debugger tests would run here" -- they now
-  do, and nothing decided that.
-- **Why it matters:** Either it is a deliberate and *good* change that nobody wrote down -- in which
-  case the live-app debugger half gained CI coverage and the comment is a lie -- or it is an
-  accident, in which case CI is attaching a debugger on a hosted runner and the next split will lose
-  a category the same way. Both are the same defect: the category is applied by hand and nothing
-  checks it. The measurement in the same comment has drifted too: "386 tests discovered, 50 of them
-  in that class, 336 left" against 420 `[Test]` methods today and 19 in `LiveAppSessionTests`.
-- **Suggested change:** Decide, then make it structural. Add a test asserting that every type whose
-  name starts with `LiveApp` or that touches `ProbeTargetSession`/a probe app carries
-  `[Category("LiveApp")]` -- the same reflective shape `ToolSurfaceTests` and `SecurityModelTests`
-  already use for the tool surface. Replace the counted sentence in the CI comment with the rule
-  ("the category is what excludes, and a test asserts every live-app class has it").
+### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
+**Done, PR #TIER0.** Kept and widened, which the finding said was the good half of the two
+possibilities. The category is renamed to `ProbeApp` so it names what it excludes -- a C++ toolset,
+the Windows App SDK, developer mode and a machine-wide registration -- and it comes off the two
+debugger classes and the one `OperatorApiTests` method, which drive an ordinary .NET child process.
+CI's debugger coverage goes from **11 tests to 33**. `ProbeAppCategoryTests` decides which half a
+class is in from the fixture its constructor takes and fails both ways, so the category stops being
+something to remember. The rule is written into `docs/invariants/live-app-tests.md`, and the counted
+sentence in the CI comment is replaced by the assertion, since a count in a comment is stale the
+next time a class is split.
+
+The accidental inclusion is the evidence the widening rests on rather than a prediction, and the
+first run of this pull request is what confirms it for the other 22.
 
 ### UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test
 - **Severity:** High
@@ -647,6 +637,11 @@ rewritten here; the rest is #171's work, which now has a number that cannot grow
   either -- the tiers are a graph, and a graph is checkable.
 
 ### UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all
+- **The debugger third is done, PR #TIER0.** Suggested change (2) -- "split the live-app suite by
+  what it actually needs, as `LiveAppInspectionTests` accidentally demonstrates" -- is what card 0a
+  did, and it moved 33 tests into CI rather than the third this finding estimated. What is left is
+  the XAML, C++ and UWP half, which is genuinely card 16's self-hosted runner, and the flake-rate
+  measurement `live-app-tests.md` asks for and nothing produces.
 - **Severity:** High
 - **Effort:** L
 - **Where:** `.github/workflows/ci.yml:129-132,181` (category exclusion), `:238-264` (providers compile only)

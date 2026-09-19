@@ -16,7 +16,7 @@ namespace RoseMcp.IntegrationTests;
 /// used the app they take away. <see cref="ProbeKeys"/> is where that ordering is argued.
 /// </para>
 /// </summary>
-[Category("LiveApp")]
+[Category("ProbeApp")]
 [ClassDataSource<UwpProbeApp>(Shared = SharedType.PerAssembly)]
 public sealed class LiveAppUwpTests(UwpProbeApp probe)
 {

@@ -22,22 +22,36 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 
 | Card | Findings | Shipped in |
 |---|---|---|
+| 0a | UIP-14, UIP-25 (part) | #TIER0 |
+| 0b | AGT-01 (measured), AGT-21 (measured) | #TIER0 |
+| 0c | BRK-12, UIP-17 (part) | #TIER0 |
+| 0d | IPC-02, BRK-05 | #TIER0 |
+| 0e | UIP-23 | #TIER0 |
+| 0f | USE inversion 1 | #TIER0 |
 | 2 | LIV-03 | #270 |
 | 3 | LIV-02 | #265 |
 | 7 | WRK-08 | #269 |
 | 9 | WRK-01 | #275, #276, #278 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
-Three of the seven wrong-answer cards in tier 1, one of the three structural refactors in tier 2, and
-five of the 27 High findings. **The debugger core and the write pipeline are both done**, which were
-the two concentrations of duplication the review named. What is left at the top: **card 4** (the XAML
-pipe, and #208 with it) is the highest-value thing in tier 1, and **card 8** (the text/syntax line) is
-now the whole of tier 2's editing work, unchanged in size by card 9.
+**Tier 0 is done in full**, which is what the tier existed for: everything after it is guarded and
+measurable. Three of the seven wrong-answer cards in tier 1, one of the three structural refactors in
+tier 2, and five of the 27 High findings. **The debugger core and the write pipeline are both done**,
+which were the two concentrations of duplication the review named. What is left at the top:
+**card 1** (the relative path that resolves against the broker) is now first by a wide margin,
+**card 4** (the XAML pipe, and #208 with it) is next in tier 1, and **card 8** (the text/syntax line)
+is the whole of tier 2's editing work.
 
-Two cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it would
-not) and the layout half of **21** (PR #277 took the parties to the published layout from two to five).
-Card 9 also found a wrong answer the review missed — four write tools reporting a project clean while
-the caller's errors sat in it.
+What tier 0 left behind for the cards that follow it: a result-size number for each of the three
+shapes tier 3 shrinks, a 26-entry exemption list that is cards 11c, 11e and 22's worklist, a
+comment-debt baseline that can only go down, and 33 debugger tests in CI rather than 11 — which is
+the suite tier 6 is built on.
+
+Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
+would not), the layout half of **21** (PR #277 took the parties to the published layout from two to
+five), and card 0e's finding that three of the phrases the comment convention lists are not history
+clauses at all. Card 9 also found a wrong answer the review missed — four write tools reporting a
+project clean while the caller's errors sat in it.
 
 Each closed finding is struck in its own file with what shipped, where the reasoning now lives, and
 where the card turned out wrong.
@@ -334,10 +348,17 @@ fields are added. Each instance card then deletes its exemption, so the list is 
 empty list is the definition of done.
 
 
-### Tier 0 — build these first, because everything after is safer and measurable
+### ~~Tier 0~~ — done, PR #TIER0
 
-Six small mechanisms. Each is S, none is gated on anything, and each one guards work that starts
-immediately after. Perhaps three days in total, against a programme of weeks.
+Six small mechanisms, all six shipped in one pull request. Two came out different from the card:
+**0c** turned into a compile-time constraint rather than a test, which is strictly stronger, and
+**0d** fixed its producer-without-consumer instance instead of exempting it, so 0f ships with three
+of the four known cases rather than four.
+
+Three of the six also amended the finding that asked for them. The comment grep found that three of
+the phrases the convention lists fire mostly on correct comments. The result budget found the write
+figure is 1,895 rather than 4,000 for an edit that introduces no diagnostic. The CI split found the
+debugger half is 33 tests rather than the third of 55 the finding estimated.
 
 | # | Card | Why it goes first | Findings | Effort |
 |---|---|---|---|---|

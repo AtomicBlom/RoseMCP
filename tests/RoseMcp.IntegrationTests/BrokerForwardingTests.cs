@@ -38,7 +38,7 @@ public sealed class BrokerForwardingTests
 		var elsewhere = Path.Combine(Path.GetTempPath(), $"absent-{Guid.NewGuid():N}", "Nowhere.cs");
 
 		var error = await Assert.ThrowsAnyAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
 			new Dictionary<string, object?> { ["filePath"] = elsewhere, ["line"] = 1, ["column"] = 1 },
 			retryIfWorkerDied: true,
@@ -64,7 +64,7 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var manager = CreateManager();
 
-		var hints = WorkspaceHints.From(fixture.SolutionPath);
+		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
 
 		var replaced = await manager.CallAsync<MemberEditResult>(
 			hints,
@@ -131,7 +131,7 @@ public sealed class BrokerForwardingTests
 		await using var manager = CreateManager();
 
 		var info = await manager.CallAsync<SymbolInfoResult>(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
 			new Dictionary<string, object?> { ["symbol"] = "Library.Greeter.PrefixLength" },
 			retryIfWorkerDied: true,
@@ -156,7 +156,7 @@ public sealed class BrokerForwardingTests
 		await using var manager = CreateManager();
 
 		var result = await manager.CallAsync<SignatureChangeResult>(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.ChangeSignature,
 			new Dictionary<string, object?>
 			{
@@ -190,7 +190,7 @@ public sealed class BrokerForwardingTests
 		await using var manager = CreateManager();
 
 		var report = await manager.CallAsync<BuildFreshnessReport>(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.BuildFreshness,
 			new Dictionary<string, object?> { ["project"] = "Core" },
 			retryIfWorkerDied: true,
@@ -212,7 +212,7 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var manager = CreateManager();
 
-		var hints = WorkspaceHints.From(fixture.SolutionPath);
+		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
 
 		// The argument, on the call that writes the code needing it.
 		var written = await manager.CallAsync<MemberEditResult>(
@@ -259,7 +259,7 @@ public sealed class BrokerForwardingTests
 		await using var manager = CreateManager();
 
 		var result = await manager.CallAsync<SymbolSearchResult>(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SearchSymbols,
 			new Dictionary<string, object?> { ["query"] = "Calculator" },
 			retryIfWorkerDied: true,
@@ -280,7 +280,7 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 		var status = await manager.StatusOfAsync(worker, TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(fixture.SolutionPath, status.Workspace, ignoreCase: true);
@@ -297,10 +297,10 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var before = await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		var before = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 		var key = before.Key;
 
-		var after = await manager.RestartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		var after = await manager.RestartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.NotEqual(before.ProcessId, after.ProcessId);
 		Assert.Equal(key, after.Key);
@@ -368,7 +368,7 @@ public sealed class BrokerForwardingTests
 	{
 		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
 		await using var manager = CreateManager();
-		var tools = new RoseMcp.Broker.Tools.BrokerAnalysisTools(manager);
+		var tools = new RoseMcp.Broker.Tools.BrokerAnalysisTools(manager, CreatePaths());
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
 		var renamed = await tools.RenameSymbolAsync(
@@ -386,5 +386,98 @@ public sealed class BrokerForwardingTests
 			renamed.Notices,
 			notice => notice.Contains("Repo.Installer.slnx", StringComparison.Ordinal)
 				&& notice.Contains("also compiles", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// The wrong-checkout write, end to end, with the argument shape that produced it: a relative
+	/// filePath that names a real file in every checkout of the repository. It has to land in the one
+	/// the session is calling from, and the other one has to be untouched -- which is the half no
+	/// caller could check, since their own git status is clean either way.
+	/// <para>
+	/// The session is standing in a subdirectory rather than at the solution root, which is what makes
+	/// this fail on a hop that forwards the path as the caller wrote it: the worker measures a relative
+	/// path from its solution's root, and the two bases are only ever the same by coincidence.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_relative_path_is_written_in_the_checkout_the_call_came_from()
+	{
+		using var elsewhere = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var here = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		// The broker is running in one checkout; the session is calling from the other.
+		var brokerSitsIn = Path.GetDirectoryName(elsewhere.SolutionPath)!;
+
+		await using var manager = CreateManager(brokerSitsIn);
+		var tools = new RoseMcp.Broker.Tools.BrokerAnalysisTools(manager, CreatePaths(brokerSitsIn));
+
+		using var origin = CallOrigin.Use(here.Path("Simple", "Core"));
+
+		var added = await tools.AddUsingAsync(
+			new Progress<ProgressNotificationValue>(),
+			filePath: "Calculator.cs",
+			namespaces: ["System.Text"],
+			cancellationToken: TestContext.Current!.Execution.CancellationToken);
+
+		Assert.True(added.Applied);
+		Assert.Equal(here.SolutionPath, added.Workspace, ignoreCase: true);
+
+		Assert.Contains(
+			"System.Text",
+			await File.ReadAllTextAsync(here.Path("Simple", "Core", "Calculator.cs")),
+			StringComparison.Ordinal);
+
+		Assert.DoesNotContain(
+			"System.Text",
+			await File.ReadAllTextAsync(elsewhere.Path("Simple", "Core", "Calculator.cs")),
+			StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The other half of the same rule: nothing but the broker knows what a relative path is measured
+	/// from, so a worker that resolves one against its own working directory writes to a plausible
+	/// file and reports success. Refusing is what turns a mis-routed call into a sentence.
+	/// </summary>
+	[Test]
+	public async Task A_worker_refuses_a_relative_path_rather_than_resolving_one()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var error = await Assert.ThrowsAnyAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
+			ToolNames.SymbolInfo,
+			new Dictionary<string, object?> { ["filePath"] = Path.Combine("Core", "Calculator.cs") },
+			retryIfWorkerDied: true,
+			TestContext.Current!.Execution.CancellationToken));
+
+		Assert.Contains("filePath", error.Message, StringComparison.Ordinal);
+		Assert.Contains("absolute", error.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// The list-shaped path argument, which is the one tool where a caller sends several. Nothing
+	/// else drives it through the broker, and a list resolved one way and a single path another is
+	/// exactly the drift `filePaths` is spelled once to avoid.
+	/// </summary>
+	[Test]
+	public async Task A_list_of_relative_paths_is_made_absolute_like_a_single_one()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		var solutionDirectory = Path.GetDirectoryName(fixture.SolutionPath)!;
+
+		await using var manager = CreateManager();
+		var tools = new RoseMcp.Broker.Tools.BrokerAnalysisTools(manager, CreatePaths());
+
+		using var origin = CallOrigin.Use(solutionDirectory);
+
+		var formatted = await tools.FormatAsync(
+			new Progress<ProgressNotificationValue>(),
+			filePaths: [Path.Combine("Core", "Calculator.cs")],
+			apply: false,
+			cancellationToken: TestContext.Current!.Execution.CancellationToken);
+
+		Assert.Equal(1, formatted.FilesInspected);
+		Assert.Equal(fixture.SolutionPath, formatted.Workspace, ignoreCase: true);
 	}
 }

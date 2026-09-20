@@ -28,19 +28,20 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 0d | IPC-02, BRK-05 | #295 |
 | 0e | UIP-23 | #295 |
 | 0f | USE inversion 1 | #295 |
+| 1 | BRK-01, AGT-10, BRK-20 (the hop) | #305 |
 | 2 | LIV-03 | #270 |
 | 3 | LIV-02 | #265 |
 | 7 | WRK-08 | #269 |
 | 9 | WRK-01 | #275, #276, #278 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
-**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, three
-of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and five of the 27 High
+**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, four
+of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and seven of the 27 High
 findings -- including **the debugger core and the write pipeline**, which were the two
-concentrations of duplication the review named.
+concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
-Next at the top: **card 1** (the relative path resolved against the broker) by a wide margin, then
-**card 4** (the XAML pipe, and #208 with it), then **card 8** for tier 2's editing work.
+Next at the top: **card 4** (the XAML pipe, and #208 with it), then **card 8** for tier 2's editing
+work. Card 1 closing opens the gate on **11b**, **11c** and **1b**.
 
 Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
 would not), the layout half of **21**, and card 0e's finding that three of the phrases the comment
@@ -133,8 +134,7 @@ Tier 0, and are built (PR #295). The seven highest-leverage:
 1. ~~Six copied write conventions replaced by one pipeline (WRK-01).~~ **#275, #276, #278.**
 2. **One compilation-backed symbol resolver** replacing two-and-a-half resolvers, so an address that
    resolves for one tool resolves for all (WRK-04, AGT-03).
-3. **A `RepositoryPath.From(raw, origin)` type**, so a relative path cannot be resolved without a
-   base and the wrong-worktree write becomes unrepresentable (BRK-01, AGT-10).
+3. ~~A path type that cannot be resolved without a base (BRK-01, AGT-10).~~ **#305.**
 4. ~~Nine fields and five spellings of "is the target stopped" replaced by one state (LIV-02).~~ **#265.**
 5. **One framed-message type for every pipe**, which deletes the tap's escaping asymmetry and half of
    its correlation problem at once (IPC-01, LIV-07, LIV-08).
@@ -273,21 +273,11 @@ file. Existing issues are named so nothing is filed twice.
 
 **Dependencies all point downwards, which is why tier order is also work order.** Every gate found
 so far runs from a later tier to an earlier one, never the reverse, so working the tiers in order
-satisfies them without anyone tracking a graph. The five that exist:
+satisfies them without anyone tracking a graph. One is left:
 
 | Card | Waits on | Why |
 |---|---|---|
-| 11b, path half | 1 | Returning relative paths makes agents send them, so the size win must not land before the resolution fix |
-| 11b, notice half | 9 | Eight hand-written notice iterators are why two notices fire unconditionally; one pipeline gives notice discipline a home |
-| 11c | 1 | An anchor is only worth accepting once resolution is right |
-| 1b | 1 | The working directory can only move once the hop no longer relies on it |
 | Tier 6 | 3, and ideally 8-10 | An apply needs an explicit target state, and the emit sits on the write pipeline |
-
-**Card 1 carries more weight than its row suggests.** Five things hang off it: the wrong-worktree
-write itself, the largest single size saving in the product (the absolute path repeated three to
-five times in every result), the workspace-key anchor, the worker's working directory and with it
-the worktree lock, and a mis-route failing loudly instead of writing a plausible file. It was
-already first on value per unit of effort; it is now first by a wide margin.
 
 ### How the pit-of-success inversions relate to the cards
 
@@ -296,9 +286,9 @@ and three-quarters of them need no separate card, because they fall into three r
 
 - **The card *is* the inversion.** Cards 1, 3, 9 and 10 are the four biggest inversions written as
   work: a path type that cannot be resolved without a base, a target-execution union, one write
-  pipeline, one symbol resolver. Doing the card badly and doing the inversion are the same
-  alternative, so there is nothing extra to schedule -- only a note in the card that the mechanism,
-  not the fix, is the deliverable.
+  pipeline, one symbol resolver; only 10 is left. Doing the card badly and doing the inversion are
+  the same alternative, so there is nothing extra to schedule -- only a note in the card that the
+  mechanism, not the fix, is the deliverable.
 - **The inversion is a guard that must land *before* its cards**, because the cards are exactly the
   work it protects. These are cheap, ungated and few. They were Tier 0, and are done (PR #295).
 - **The inversion only exists once its card does.** One framed message type for every pipe needs the
@@ -320,8 +310,8 @@ These produce confident wrong results today. Everything else is cost.
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 1 | **A relative path resolves against the broker, so a write lands in another worktree.** Rebase hints against the caller's origin before ranking; make it a type so it cannot recur. Make the broker-to-worker hop absolute-only so a mis-route fails loudly instead of writing to a plausible file. | BRK-01, AGT-10, BRK-20 | #214 | M |
-| 1b | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Falls out of card 1: once the hop is absolute-only the worker's working directory stops being load-bearing and can move somewhere inert. Cut with #157, since an evicted worker releases the directory too. | BRK-20 | #157 | S |
+| ~~1~~ | **#305.** A relative path was measured from the directory the broker process started in, so a call from one worktree could edit the same-named file in another and report success. It is measured from the calling session's directory, and the hop on from there is absolute-only. | BRK-01, AGT-10, BRK-20 | — | — |
+| 1b | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Unblocked by card 1: the hop is absolute-only, so the worker's working directory is no longer load-bearing and can move somewhere inert. Cut with #157, since an evicted worker releases the directory too. | BRK-20 | #157 | S |
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
 | 4 | **Re-cut before working it.** #300 found #208 was the test's wait, not the product, so this card lost the evidence both its findings rested on. What survives: a timed-out XAML request still runs in the app, and the pipe matches replies by position rather than identity -- visible in the source, never yet observed. Decide whether an unobserved hazard is worth M, or decline it deliberately. | UIP-15, LIV-07 | #208 | M |
@@ -347,8 +337,8 @@ Highest leverage on adoption. Cheap relative to impact.
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | 11 | **Result size discipline, reads.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 | M |
-| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Gated on card 1** for the path half (returning relative paths makes agents send them); the notice half is **now unblocked** — card 9 shipped, and `EditPipeline.Report()` is the one place a notice is decided. Apply card 9's own rule when trimming: a line stating *which* compile ran is a fact and stays. | AGT-21 | new | M |
-| 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction. | AGT-21, BRK-01 | new | S |
+| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Both halves are unblocked**: card 1 shipped, so returning relative paths no longer makes agents send ones that resolve anywhere, and card 9 shipped, so `EditPipeline.Report()` is the one place a notice is decided. Apply card 9's own rule when trimming: a line stating *which* compile ran is a fact and stays. | AGT-21 | new | M |
+| 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction, and covers the one case card 1 leaves: an http session with no relay never says where it is. | AGT-21 | new | S |
 | 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
 | 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. | AGT-23, AGT-06, AGT-05 | #234 | M |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |

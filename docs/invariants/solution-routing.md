@@ -30,7 +30,29 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   ranking out themselves -- seventeen hand-written `workspace ?? filePath` chains had already drifted
   to one `workspace ?? filePaths.FirstOrDefault()`, and one of those hints is not even a path
   (`rose_diagnostics`' `target` is a project name under project scope), so a hint naming nothing on
-  disk is passed over rather than resolved relative to the process directory.
+  disk where the caller is standing is passed over rather than followed somewhere arbitrary.
+- **A relative path is measured from the calling session's directory, and from nowhere else.** The
+  broker's own directory is no answer: in http mode it is the tray's install directory, and in stdio
+  mode it is whichever checkout the process was started in. Six worktrees of one repository is the
+  ordinary case here and every one of them holds the same relative paths, so `tests/Foo.cs` measured
+  from the wrong checkout names a real file, resolves there by containment, and wins the ranking
+  outright -- and the edit that follows applies, verifies and reports success into a repository whose
+  own sessions are free to commit it, with the caller's `git status` clean throughout. It is the one
+  failure on this surface that the working copy the caller can see does not show. `RootedPath` is
+  what stops it recurring: there is no way to make one without naming the directory a relative path
+  is measured from, and `WorkspaceHints` carries nothing else, so the resolution cannot ask the file
+  system about a relative path. An absolute path is honoured wherever it points, including into
+  another checkout -- inferring a path was the failure and accepting one never was.
+- **The hop to a worker or a live-app host is absolute-only, and they refuse a relative path.** A
+  worker resolves one against its own working directory, which is its solution's root: the right
+  answer for the call it was given and the wrong one for a call it should never have received, since
+  the file exists under that root too. Refusing turns a mis-route into a sentence naming the
+  argument, instead of a write to a plausible file -- and it stops a defensive setting being
+  load-bearing, since the correct working directory is otherwise the only reason the wrong route
+  finds anything at all. `PathArguments` is the single list of which arguments this covers, read by
+  the end that makes them absolute and by the ends that require them, so the two cannot drift. An
+  argument with a base of its own stays off it: `rose_move_type_to_file`'s `targetPath` is measured
+  from the file being split, which the worker knows and the broker does not.
 - **Every result names the workspace that answered.** Attribution is added once, in
   `WorkspaceManager`, so a tool added later cannot forget. The key is derived from the path rather
   than minted per process -- workers are replaced routinely, and a key that died with one would tell

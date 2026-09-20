@@ -74,12 +74,12 @@ public static class ServiceCollectionExtensions
 		edit broke and there is no build in the loop. Grep matches comments, strings and same-named
 		identifiers, and misses overrides and interface implementations.
 
-		No setup call: every tool finds the enclosing solution from a path or the working directory.
-		The first call loads it -- seconds usually, minutes for a very large one, which
-		rose_workspace_open starts early and returns without waiting for. Every result names the
-		workspace that answered and carries a revision, and a directory holding several solutions
-		refuses and lists them rather than guessing. Edits by other tools are absorbed on the next
-		call; only a rebuilt analyzer or generator needs rose_workspace_reload. If answers look
+		No setup call: every tool finds the enclosing solution from a path or your session's directory,
+		which a relative path is measured from too. The first call loads it -- seconds usually, minutes
+		for a large one, which rose_workspace_open starts early and returns without waiting for. Every
+		result names the workspace that answered and carries a revision, and a directory holding several
+		solutions refuses and lists them rather than guessing. Edits by other tools are absorbed on the
+		next call; only a rebuilt analyzer or generator needs rose_workspace_reload. If answers look
 		wrong, ask rose_workspace_status -- thousands of errors about System.Object means the
 		solution loaded under an MSBuild configuration it does not declare.
 		""";
@@ -115,6 +115,10 @@ public static class ServiceCollectionExtensions
 		Action<BrokerOptions>? configure = null)
 	{
 		if (configure is not null) services.Configure(configure);
+
+		// Stateless, and a singleton only so the options are read once. Every tool that takes a path
+		// argument takes this too, because a path is not resolvable without it.
+		services.AddSingleton<CallerPaths>();
 
 		// Singleton, so every session shares one set of workers. In http mode that is what lets a
 		// reconnecting client reattach to an already-loaded solution rather than reload it.
@@ -179,7 +183,12 @@ public static class ServiceCollectionExtensions
 	{
 		if (parameters?.Meta?[CallOrigin.MetaKey] is not JsonValue value) return null;
 
-		return value.TryGetValue(out string? directory) && Directory.Exists(directory) ? directory : null;
+		if (!value.TryGetValue(out string? directory) || string.IsNullOrWhiteSpace(directory)) return null;
+
+		// Fully qualified as well as real, because this is the base every relative path argument is
+		// measured from: a relative origin would be measured from the broker again, which is the thing
+		// sending it is for.
+		return Path.IsPathFullyQualified(directory) && Directory.Exists(directory) ? directory : null;
 	}
 
 	/// <summary>

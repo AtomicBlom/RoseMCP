@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
@@ -80,14 +79,11 @@ public sealed class ProgressReportingTests
 	public async Task The_broker_records_the_load_a_worker_does_before_anyone_calls_it()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
-		await using var manager = new WorkspaceManager(
-			Options.Create(new BrokerOptions { DefaultWorkspaceRoot = Path.GetTempPath() }),
-			NullLoggerFactory.Instance,
-			NullLogger<WorkspaceManager>.Instance);
+		await using var manager = BrokerHarness.CreateManager(Path.GetTempPath());
 
 		// No tool call of any kind: starting the worker is enough, which is what makes a reload from
 		// the tray visible.
-		await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		var load = await WaitForAsync(
 			() => manager.Describe().SingleOrDefault()?.Recent

@@ -518,31 +518,19 @@ to add a side channel, and the pipe framing in `tap_channel.h` is already the de
   value contains a tab, a newline and a backslash, render it, parse it with the same rules and
   assert the value came back. Folds naturally into the one-message-type inversion below.
 
-### IPC-02 Nothing checks that a child process is the same build as its parent
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Contracts/HostVersion.cs`; `src/RoseMcp.Broker/WorkspaceWorker.cs:155-166`,
-  `src/RoseMcp.Broker/LiveAppSession.cs:90-107`; `src/RoseMcp.Broker/WorkerLauncher.cs:52-69`
-- **What:** All four hosts report `HostVersion.Of(own assembly)` as their `ServerInfo.Version`, and
-  `rose_find_references` on `HostVersion.Of` returns seven hits: the four hosts and three unit
-  tests. Nobody reads `McpClient.ServerInfo` after `CreateAsync`. Meanwhile
-  `WorkerLauncher.FindInRepository` resolves a worker by enumerating `src/RoseMcp.Worker/bin`
-  recursively and taking the most recently written match -- any configuration, any framework -- and
-  `ROSEMCP_WORKER` / `ROSEMCP_LIVEAPP_HOST` point wherever they point.
-- **Why it matters:** A mismatched child is a real state (BRK-05, and `hosts-and-deploy.md` already
-  worries about an install whose host and provider disagree), and today it surfaces as whichever
-  symptom the mismatch happens to produce: a new `required` member on a result becomes "Could not
-  read the worker's rose_outline result", a removed argument is silently ignored and the worker does
-  the old thing, a renamed tool becomes "unknown tool". Each of those sends the reader to the tool
-  rather than to the binary. The number that would answer it is already on the wire and already
-  read at both ends.
-- **Suggested change:** After `McpClient.CreateAsync`, compare `client.ServerInfo?.Version` with
-  `HostVersion.Of(typeof(WorkspaceWorker).Assembly)`. Refuse a mismatch with a sentence naming both
-  versions and the path the child was resolved from -- the path is the actionable half, because the
-  usual cause is `ROSEMCP_WORKER` or a stale `bin`. Log it rather than refusing if a mixed install
-  must keep working, but say it once per worker. A unit test can cover the comparison; an
-  integration test can stage a fake worker that reports a different version.
+### ~~IPC-02 Nothing checks that a child process is the same build as its parent~~
+**Done, PR #295.** `ChildHostVersion.Mismatch` compares the child's `ServerInfo.Version` against
+the broker's own, at both hops that launch one, and the sentence names both versions and the path
+the child was resolved from -- the actionable half, because the cause is a stale `bin` or an
+environment variable pointing at one. It is **said, not refused**: a half-updated install is a state
+a person reaches without meaning to and the protocol usually survives it, so turning a working
+session into a hard failure over a version string would cost more than the confusion it prevents.
+That reasoning is in `ChildHostVersion`'s own summary.
 
+The mismatch reaches the agent as well as the log -- a `Notice` on the workspace summary and on the
+live-app session -- because the party who needs it is whoever is about to be confused by the next
+
+answer, and a log line reaches nobody mid-session.
 ### IPC-03 The tap pipe is reachable by every packaged app, and the greeting proves nothing
 - **Severity:** Medium
 - **Effort:** S

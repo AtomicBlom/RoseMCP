@@ -152,6 +152,7 @@ revision 1). Sizes are the raw JSON as it arrived.
 
 ### AGT-01 `rose_outline`'s compact mode is not compact, so the tool loses to `Read` on exactly the files it exists for
 - **Severity:** High
+- **Measured, PR #295.** `ResultBudgetTests` holds this shape at 512 bytes per member with both size controls off, so the card has a number to lower rather than an impression to argue about.
 - **Effort:** S
 - **Where:** transcript T1a/T1b/T1c; `src/RoseMcp.Worker/OutlineService.cs:192`; `src/RoseMcp.Contracts/ToolDescriptions.cs:143-145`
 - **What:** With `includeSignatures=false` and `includeDocumentation=false` -- the tool's two documented size controls, both off -- a 441-line class with 24 members costs ~10.1 KB. Full mode costs ~22.3 KB. `grep -n "public\|internal"` on the same file costs 748 bytes and answered the question I actually had. The reason is `OutlinedMember.Location`, emitted unconditionally, carrying the 95-character absolute file path, the whole source line as `preview`, `containingMember` (which for a declaration is always the member's own name), `project` and `isTestProject` -- roughly 350 bytes per member of which about 12 are the answer. Worse, `preview` *is* the signature for most members, so `includeSignatures=false` removes a duplicate rather than the content. Two other reviewers hit this independently; on `CorDebugSession` it produced 70,649 characters, blew the client's token cap, and the reviewer read the file instead (issue #234).
@@ -315,6 +316,7 @@ revision 1). Sizes are the raw JSON as it arrived.
 ### AGT-21 A write result is roughly 4,000 characters, of which about 85% is the caller's own input, a constant, or a fact already stated
 
 - **Severity:** High
+- **Measured, PR #295.** `ResultBudgetTests` holds a write result at 1,950 bytes. That is the floor rather than the 4,000 this finding measured: the edit behind it introduces no diagnostic, so the scaffold and the echoed diff are the whole of it.
 - **Effort:** M
 - **Where:** `src/RoseMcp.Contracts/MemberEditResult.cs:38` (`Diff`),
   `src/RoseMcp.Contracts/WorkspaceMutationResult.cs:17,23` (`ChangedFiles`, `Notices`),
@@ -603,14 +605,14 @@ answer. Every loss is about cost, reach or explanation.
 
 ## Pit-of-success inversions
 
-**1. Compact has to be measured, not intended.**
-*Rule today:* a reviewer notices that a new field on a result is emitted per item.
-*Mechanism:* a result budget beside the tool budget. An integration test calls each read tool against
-`tests/fixtures` and asserts bytes-per-item ceilings (an outlined member under 120 bytes with
-signatures off, a reference under 100 with previews off). Then split `SourceLocation` into the two
-shapes it is actually used as -- a `DeclarationSite` (path, line, column) and a `ListedSite` (line,
-optional preview) -- so the fat one is not reachable from inside a list at all. Today one record
-serves both and the list pays for the declaration's fields.
+**1. ~~Compact has to be measured, not intended.~~** **Half done, PR #295.** `ResultBudgetTests`
+records what three shapes cost now: **512 bytes per outlined member** with both size controls off,
+**275 per reference** with previews off, and **1,895 for a whole write result** that introduces no
+diagnostic -- against this inversion's targets of 120 and 100. Measured marginally, the result with
+its items less the same result with none, so the number is a property of the shape rather than of
+whichever fixture was loaded. Tier 3 lowers the constants and the diff is the record of what the
+work bought. Splitting `SourceLocation` into a `DeclarationSite` and a `ListedSite` is the other
+half and is card 11's, which now has a number to move.
 
 **2. No CLR vocabulary reaches a caller.**
 *Rule today:* "convert at the MCP boundary, never at the throw site" (`CLAUDE.md`), which converts

@@ -11,8 +11,9 @@ namespace RoseMcp.LiveApp.Xaml;
 /// <summary>
 /// The host end of the provider channel: a named pipe the injected provider connects back on.
 /// <para>
-/// D14 chose files in an ACL'd folder over a pipe because "a named pipe from an AppContainer needs a
-/// capability-aware ACL and is finicky". The first clause is true and the conclusion does not follow,
+/// The alternative is files in an ACL'd folder, on the reasoning that "a named pipe from an
+/// AppContainer needs a capability-aware ACL and is finicky". The first clause is true and the
+/// conclusion does not follow,
 /// because this codebase already writes that ACL -- it just points it at a folder. The two SIDs that
 /// go on the directory go on the pipe instead, and the direction is the easy one: creating a pipe
 /// from inside an AppContainer is the finicky case, connecting to one that already grants your SID

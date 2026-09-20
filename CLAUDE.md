@@ -271,6 +271,13 @@ Enforced by `.editorconfig` where the analyzer can express them, by review where
     together: `taps are never unadvised (#68), so this must be idempotent`. A closed issue's number
     is a tag: drop it and keep the explanation. If the explanation cannot stand without the number,
     rewrite it until it can.
+  - **`tools/Check-Comments.ps1` enforces the three of these that a grep can settle**, and CI runs
+    it. Its header records which phrases earn a rule and which were measured and rejected: `no
+    longer`, `lands in` and `today` are overwhelmingly timeless description in this repository --
+    a target that is no longer running, a step that lands in a new stop -- so they remain a matter
+    for review rather than a rule that would fire mostly on correct comments. The debt that exists
+    is a per-file baseline that may only go down, so a cleanup is recorded and a new violation
+    fails the build.
   - **Measurements stay only when the code depends on the number** -- a timing behind a constant, a
     count that made something a lock rather than a documented limitation. "It was measured" with no
     number is a claim, and a number with no decision hanging on it is a story. Customer paths and

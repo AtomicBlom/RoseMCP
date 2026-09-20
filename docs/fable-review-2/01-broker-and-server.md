@@ -52,13 +52,13 @@
 - **Why it matters:** A tray that has been up for a day carries every session any agent ever started, each costing a failed round trip per second and a row in `GET /admin/sessions` and the inspector. The `Ended` state is honest, but "ended and still here" is a state nothing acts on.
 - **Suggested change:** Make eviction the manager's job. On the `_alive` transition, the manager removes the session after one more `Describe` cycle (so a window sees `Ended` once), disposes the client, and records the eviction in `Activities`. For workers, the same shape answers #157: an idle timer per worker, eviction said in the activity log, and `rose_workspace_list` so a session can see what is warm. Test: attach to a child process, kill the child's host, assert the session leaves `Describe()` within a few ticks and the poll stops.
 
-### BRK-05 `WorkerLauncher` still has the stale-binary trap the other two launchers fixed
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/WorkerLauncher.cs:52-69`; compare `src/RoseMcp.Broker/LiveAppHostLauncher.cs:95-108` and `src/RoseMcp.Broker/InspectorLauncher.cs:179-188`
-- **What:** `WorkerLauncher.FindInRepository` returns the newest `RoseMcp.Worker.exe` under `src/RoseMcp.Worker/bin` by last-write time, full stop. `LiveAppHostLauncher.FindInRepository` narrows to the broker's own configuration first, with a comment explaining the failure it prevents: `deploy.ps1` publishes Release into the repository's bin, and a Release artefact then shadows a Debug build that is newer -- so a Debug test run silently exercised a stale binary. `InspectorLauncher` copies the same fix. The worker launcher, which every test in `BrokerTests` uses, did not get it. All three launchers carry their own `FindInRepository` walking up to `RoseMcp.slnx`, and `ConfigurationOf` is duplicated verbatim in two of them.
-- **Why it matters:** The worker is the process every Roslyn test drives. A test that passes against yesterday's worker is a test that proves nothing, and the failure mode ("an unknown tool", "a missing field") reads like the change being wrong rather than the binary being old -- the LiveApp comment says as much.
-- **Suggested change:** One `RepositoryBuildOutput.Find(executableName, baseDirectory, rid: null)` in the broker, used by all three launchers, carrying the configuration-then-RID-then-recency policy once. The three launchers shrink to their environment-variable and published-layout probes.
+### ~~BRK-05 `WorkerLauncher` still has the stale-binary trap the other two launchers fixed~~
+**Done, PR #295.** One `RepositoryBuildOutput.Find`, used by all three launchers, carrying
+configuration-then-architecture-then-recency once; the two duplicate `ConfigurationOf` copies and
+the worker's recency-only search are gone. `RepositoryHostBuildTests` now stages a Release worker
+against a Debug broker, which is the case the worker had no protection from and which every Roslyn
+test drives. The reasoning is in `RepositoryBuildOutput`'s own summary, where the comments the two
+launchers carried separately are now stated once.
 
 ### BRK-06 Three definitions of "the far side is gone", one by matching an assembly name string
 - **Severity:** Medium
@@ -108,13 +108,14 @@
 - **Why it matters:** CLAUDE.md: "anything ... knowing what a tool does belongs in the host". This is the one place the broker has a model of a live app's structure. It also puts the same resolution in two surfaces -- `LiveAppDebugTools` and `OperatorApi` both call `ResolveElementAsync` -- and takes the broker out of the position of being a pure proxy for the debugger, which is the position the inspector decision relies on ("a process has one debugger").
 - **Suggested change:** The host accepts a handle, `#name` or address wherever it takes an element, and roots and pages the tree for all three; the broker forwards. The parity exemption then disappears, which is the test telling you the leak is closed.
 
-### BRK-12 Attribution is by runtime type check with no compile-time constraint, and one tool returns nothing to attribute
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/WorkspaceManager.cs:151-158`, `:189-191`; `src/RoseMcp.Broker/Tools/BrokerTools.cs:141-147`
-- **What:** `CallAsync<T>` is unconstrained and `Attribute<T>` does `if (result is not WorkspaceScopedResult scoped) return result;`, so a result type that forgets to derive is passed through unattributed, silently. `rose_find_implementations` confirms all 23 current result records derive; the guarantee is a habit. `rose_workspace_close` returns the string `"Workspace closed."`, naming no workspace, which is a small breach of "every result names the workspace that answered".
-- **Why it matters:** The invariant says attribution is added once "so a tool added later cannot forget it". The type system could make that literally true, and today it does not.
-- **Suggested change:** `where T : WorkspaceScopedResult` on `CallAsync` and `StatusOfAsync`. A `WorkspaceClosed : WorkspaceScopedResult` record for close. See inversion 1 for the test that enumerates the surface.
+### ~~BRK-12 Attribution is by runtime type check with no compile-time constraint, and one tool returns nothing to attribute~~
+**Done, PR #295.** `WorkspaceManager.CallAsync` and `Attribute` now constrain their result to
+`WorkspaceScopedResult`, so a tool answering with anything else fails to build rather than answering
+unattributed; the run-time `is not` check is gone because the compiler has already made it true.
+`rose_workspace_close` answers with a new `WorkspaceClosed` record carrying the workspace, the key
+and whether one was open. The enumerating guard is `ToolResultShapeTests`, which also asserts the
+constraint itself, since a constraint is one word and deleting it breaks nothing that runs. The
+reasoning for the close result's missing revision is in `WorkspaceClosed`'s own summary.
 
 ### BRK-13 `MarkStopped` and `WorkerExitReason.SolutionUnloaded` are dead in the broker
 - **Severity:** Low

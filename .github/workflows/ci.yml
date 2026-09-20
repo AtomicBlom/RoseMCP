@@ -3,10 +3,12 @@ name: CI
 # Build, check formatting, and run the tests on every pull request and on main. The solution has
 # net10.0-windows projects (the live-app host, the tray), so this must run on Windows.
 #
-# The integration suite is split from the unit one by what it needs rather than by what it is: the
-# tests in LiveAppSessionTests drive real debugger sessions and, for the XAML ones, C++ and UWP
-# toolchains a hosted runner does not have, so they run locally. Everything else needs only the .NET
-# SDK, and that is most of the suite -- and the only guard on most of the invariants in CLAUDE.md.
+# The integration suite is split from the unit one by what it needs rather than by what it is, and
+# the live-app half is split again on the same principle: a test that drives a real debugger session
+# against a plain .NET child process runs here, and one that needs a XAML probe app -- a C++ toolset,
+# the Windows App SDK, developer mode, a machine-wide registration -- does not. Everything else needs
+# only the .NET SDK, and that is most of the suite, and the only guard on most of the invariants in
+# CLAUDE.md.
 #
 # The native XAML providers get a job of their own, because they are the one part of this repository
 # the solution build never touches: both taps can be broken with `dotnet build` green, and nothing
@@ -74,7 +76,7 @@ jobs:
           # The shared headers, both taps, and projections.csproj's restore inputs.
           providers='^(src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|Directory\.(Build|Packages)\.props$|global\.json$|\.github/workflows/ci\.yml$)'
           # Nothing the integration job builds or runs reads these. The taps are here because the
-          # tests that load a provider are the LiveApp category, which that job excludes.
+          # tests that load a provider are the ProbeApp category, which that job excludes.
           unseen='^(docs/|wiki/|tools/|\.claude/|src/RoseMcp\.Xaml(\.Uwp|\.WinUi)?\.Tap/|\.github/workflows/release\.yml$|[^/]+\.md$)'
 
           if grep -Eq "$providers" <<< "$changed"; then p=true; else p=false; fi
@@ -120,16 +122,29 @@ jobs:
       - name: Check formatting
         run: dotnet format RoseMcp.slnx --verify-no-changes --no-restore
 
+      # The comment conventions, which are the one rule in CLAUDE.md that binds every file and had
+      # nothing checking it. A baseline per file, so the existing debt does not have to be paid to
+      # get the guard, and cannot grow while it goes unpaid.
+      - name: Check comment conventions
+        shell: pwsh
+        run: ./tools/Check-Comments.ps1
+
       - name: Unit tests
         run: dotnet test tests/RoseMcp.UnitTests/RoseMcp.UnitTests.csproj --configuration Debug --no-build
 
   # The integration tests that need only the .NET SDK. Its own job rather than a step in the one
   # above, so it runs alongside the unit tests instead of after them; the second build is the price.
   #
-  # LiveAppSessionTests is excluded whole. Its debugger tests would run here, but its XAML ones want
-  # a C++ toolset, the Windows App SDK and developer mode, and they answer a missing toolchain by
-  # skipping -- which reads as a pass. Excluding the class says what is not covered; skips say it
+  # The probe-app tests are excluded, and nothing else is. They want a C++ toolset, the Windows App
+  # SDK, developer mode and a machine-wide package registration, and they answer a missing toolchain
+  # by skipping -- which reads as a pass. Excluding them says what is not covered; skips say it
   # quietly and only to whoever opens the log.
+  #
+  # The debugger half runs here: it drives DebugProbeTarget, an ordinary .NET child process, and a
+  # hosted runner serves a real ICorDebug session against one without complaint, which the eleven
+  # tests in LiveAppInspectionTests demonstrate on every run. ProbeAppCategoryTests decides which
+  # half a class is in from the fixture its constructor takes, so the category is not something to
+  # remember, and a count of what it excludes is not something to keep up to date here.
   #
   # Expect this to be slow rather than merely long: #39 records that these tests share no workspace
   # fixtures, so the solution loads contend for a runner with four cores where the developer box has
@@ -167,8 +182,8 @@ jobs:
 
       # Excluded by category, not by class name, because that is the exclusion TUnit supports: a tree
       # filter negates a property with [Category!=...], while negating a path segment matches nothing
-      # at all. The category is on LiveAppSessionTests itself, so this covers exactly the class the
-      # old xunit -class- flag did -- 386 tests discovered, 50 of them in that class, 336 left.
+      # at all. Which classes carry the category is asserted rather than counted here: a count in a
+      # comment is stale the next time a class is split, and ProbeAppCategoryTests fails instead.
       # Parallelism is bounded rather than left to TUnit's auto-detected optimum, which counts tests
       # and not the processes they start. Sampling BrokerTests alone on a developer box found 28
       # concurrent RoseMcp.Worker processes for 27 tests, each running a real design-time build; the
@@ -177,8 +192,8 @@ jobs:
       # a run dies with TimeoutException: Initialization timed out on whichever tests happened to
       # start a worker during the spike -- a different set each run, which is what makes it read as
       # flakiness rather than as load. Three and not four, because one test can hold several workers.
-      - name: Integration tests, excluding the live-app suite
-        run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --maximum-parallel-tests 3 --treenode-filter '/*/*/*/*[Category!=LiveApp]'
+      - name: Integration tests, excluding the ones that need a probe app
+        run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --maximum-parallel-tests 3 --treenode-filter '/*/*/*/*[Category!=ProbeApp]'
 
       # The Windows-only half, which is its own project because it takes a compile reference on
       # RoseMcp.LiveApp (net10.0-windows). Keeping that out of the project above is what leaves the

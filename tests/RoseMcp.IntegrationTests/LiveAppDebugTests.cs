@@ -16,7 +16,6 @@ namespace RoseMcp.IntegrationTests;
 /// process has not worked.
 /// </para>
 /// </summary>
-[Category("LiveApp")]
 public sealed class LiveAppDebugTests
 {
 	/// <summary>

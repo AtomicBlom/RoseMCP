@@ -105,7 +105,23 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 		var client = await McpClient.CreateAsync(transport, loggerFactory: loggerFactory, cancellationToken: cancellationToken);
 
+		// A host published per architecture under its own runtime folder is the one most likely to be
+		// a different build from the broker, since an install can half update and a repository holds
+		// one output per RID.
+		var mismatch = ChildHostVersion.Mismatch(
+			client.ServerInfo?.Version, hostPath, typeof(LiveAppSession).Assembly);
+
 		var session = new LiveAppSession(sessionId, target, architecture, client, activities, logger);
+
+		if (mismatch is not null)
+		{
+			logger.LogWarning("{Mismatch}", mismatch);
+
+			// A notice rather than a detail: the session works, and the thing beside it does not
+			// match. Which is exactly the distinction Notice exists for.
+			session.Note(mismatch);
+		}
+
 		await session.RefreshInfoAsync(cancellationToken);
 		return session;
 	}

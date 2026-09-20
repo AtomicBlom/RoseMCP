@@ -367,29 +367,19 @@ inferring it. This is the cleanest boundary in the repository.
   Do (1) first and measure -- it is a day's work, cannot change any assertion, and removes the
   largest single block.
 
-### UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `tests/RoseMcp.IntegrationTests/LiveAppInspectionTests.cs:18` (no `[Category]`), `.github/workflows/ci.yml:129-132,168-171,181`
-- **What:** Eight live-app classes carry `[Category("LiveApp")]` -- `LiveAppSessionTests`,
-  `LiveAppDebugTests`, `LiveAppUwpTests`, `LiveAppUwpEditTests`, `LiveAppUwpReadTests`,
-  `LiveAppUwpOverlayTests`, `LiveAppUwpModernTests`, `LiveAppWinUiTests` -- and one method in
-  `OperatorApiTests.cs:107` does. `LiveAppInspectionTests`, split out in af63dde, still does not. Its
-  eleven tests start `DebugProbeTarget` and attach a real ICorDebug session, so
-  `--treenode-filter '[Category!=LiveApp]'` admits them to the hosted Windows runner. CI's own
-  comment says "LiveAppSessionTests is excluded whole. Its debugger tests would run here" -- they now
-  do, and nothing decided that.
-- **Why it matters:** Either it is a deliberate and *good* change that nobody wrote down -- in which
-  case the live-app debugger half gained CI coverage and the comment is a lie -- or it is an
-  accident, in which case CI is attaching a debugger on a hosted runner and the next split will lose
-  a category the same way. Both are the same defect: the category is applied by hand and nothing
-  checks it. The measurement in the same comment has drifted too: "386 tests discovered, 50 of them
-  in that class, 336 left" against 420 `[Test]` methods today and 19 in `LiveAppSessionTests`.
-- **Suggested change:** Decide, then make it structural. Add a test asserting that every type whose
-  name starts with `LiveApp` or that touches `ProbeTargetSession`/a probe app carries
-  `[Category("LiveApp")]` -- the same reflective shape `ToolSurfaceTests` and `SecurityModelTests`
-  already use for the tool surface. Replace the counted sentence in the CI comment with the rule
-  ("the category is what excludes, and a test asserts every live-app class has it").
+### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
+**Done, PR #295.** Kept and widened, which the finding said was the good half of the two
+possibilities. The category is renamed to `ProbeApp` so it names what it excludes -- a C++ toolset,
+the Windows App SDK, developer mode and a machine-wide registration -- and it comes off the two
+debugger classes and the one `OperatorApiTests` method, which drive an ordinary .NET child process.
+CI's debugger coverage goes from **11 tests to 33**. `ProbeAppCategoryTests` decides which half a
+class is in from the fixture its constructor takes and fails both ways, so the category stops being
+something to remember. The rule is written into `docs/invariants/live-app-tests.md`, and the counted
+sentence in the CI comment is replaced by the assertion, since a count in a comment is stale the
+next time a class is split.
+
+The accidental inclusion is the evidence the widening rests on rather than a prediction, and the
+first run of this pull request is what confirms it for the other 22.
 
 ### UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test
 - **Severity:** High
@@ -430,6 +420,12 @@ inferring it. This is the cleanest boundary in the repository.
   then read. Then a dirty hand-back means residue and nothing else.
 
 ### UIP-17 Two-thirds of the integration suite tests the service layer, so the tool boundary's own invariants are spot-checked rather than enforced
+- **Half done, PR #295.** The attribution half is now structural rather than tested: the
+  forwarding path will not compile with a result the broker cannot attribute, and
+  `ToolResultShapeTests` enumerates the declared surface for the revision. That is stronger than the
+  reflective call-every-tool test this finding asked for, and it costs no solution load. What is not
+  done is the *runtime* half -- that a tool actually populates those fields against a real workspace
+  -- which still wants the shared fixture from UIP-13, and is asserted for three tools today.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** 20 of 40 integration classes call a `*Service.*Async` directly (`OutlineTests.cs:17`,
@@ -604,33 +600,23 @@ tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
   `deploy.ps1 -Mode package -SkipBuild` into a temp root. Either way the arrangement stops being a
   fact two files remember separately.
 
-### UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `CLAUDE.md` Conventions; #171; no grep step anywhere in `.github/workflows/`
-- **What:** Counted now over `src/**/*.cs` and `src/**/*.h`, excluding `bin`/`obj`:
-  **100 lines carrying a history clause** (`used to` 40, `no longer` 55, `previously` 3, `until now` 2;
-  `for now` 0) and **60 issue tags** across **23 distinct issue numbers**
-  (#5 #7 #8 #12 #15 #18 #19 #21 #43 #44 #45 #50 #51 #52 #59 #68 #74 #75 #76 #93 #101 #111 #189).
-  #171 records "53 issue tags and ~90 history clauses"; both have grown. Worst files:
-  `src/RoseMcp.Xaml.Tap/tap_overlay.h` (8 history clauses, 10 tags),
-  `src/RoseMcp.Xaml.Tap/tap_object.h` (3, 6), `src/RoseMcp.LiveApp/LiveAppSessionHost.cs` (0, 5),
-  `src/RoseMcp.LiveApp/Xaml/XamlProviderSession.cs` (6, 3),
-  `src/RoseMcp.LiveApp/Xaml/XamlDiagnosticsSession.cs` (4, 4),
-  `src/RoseMcp.LiveApp/Debugging/CorDebugSession.cs` (4, 0). Most of the low-numbered tags (#5, #7,
-  #8, #12, #15, #18, #19, #21) name issues long closed, which the convention says to drop.
-  `.github/workflows/ci.yml:301` itself carries one ("The paths in these **used to** be literal
-  `C:\...`"), and `RoseMcp.UnitTests.csproj:45` carries another -- neither of which a `*.cs`/`*.h`
-  grep would ever see.
-- **Why it matters:** This is the one convention the repository states at length, applies to every
-  file, and checks nowhere. The concentration tells the story: the tap and live-app half, written
-  fastest and most recently, carries most of it, which is exactly where a reader most needs comments
-  that describe the code rather than its history.
-- **Suggested change:** Add the CI step #171 already anticipates, over `src` *and* `.github` and
-  `*.csproj`/`*.props`: fail on `used to|previously|no longer|for now|until now|a later slice|lands in`
-  and on `#[0-9]+` outside an allowlist file of open issues the reader has to tolerate. Land it
-  behind a warning for one pass, fix the 160 sites, then make it a failure. Without the step the
-  count only goes up, because every rewrite is voluntary.
+### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
+**Done, PR #295.** `tools/Check-Comments.ps1`, run by CI, against a per-file baseline in
+`tools/comment-baseline.tsv` that may only go down. The reasoning -- which phrases earn a rule and
+which do not -- is in the script's own header, where the next person to widen it will read it.
+
+**The finding's measurement was wrong, and that is the more useful half.** Three of the phrases it
+counted are not history clauses: `no longer` is 55 sites of which exactly one is history and the
+rest describe runtime state a reader needs (a target no longer running, a frame no longer selected);
+`lands in` is 12 sites of which none are, three of them matching inside "islands in"; `today` is 4
+sites, three of them the present-tense fact a comment is supposed to state. A rule that fires mostly
+on correct comments teaches people to write around the rule, so those three are documented as
+rejected rather than implemented. The real debt is **43 history clauses and 153 issue tags** across
+`src`, `tests`, the workflows and the build files. Of the 49 issues those tags name, 47 are closed,
+which is what makes them tags rather than the pointers to open work the convention allows; the one
+open issue a comment legitimately names is exempted in the script by number and reason, so closing
+it is what asks for the sentence to be rewritten. The two milestone numbers (`D14`, `D36`) are
+rewritten here; the rest is #171's work, which now has a number that cannot grow.
 
 ### UIP-24 Nothing formats or lints the C++ or the PowerShell
 - **Severity:** Low
@@ -651,6 +637,11 @@ tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
   either -- the tiers are a graph, and a graph is checkable.
 
 ### UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all
+- **The debugger third is done, PR #295.** Suggested change (2) -- "split the live-app suite by
+  what it actually needs, as `LiveAppInspectionTests` accidentally demonstrates" -- is what card 0a
+  did, and it moved 33 tests into CI rather than the third this finding estimated. What is left is
+  the XAML, C++ and UWP half, which is genuinely card 16's self-hosted runner, and the flake-rate
+  measurement `live-app-tests.md` asks for and nothing produces.
 - **Severity:** High
 - **Effort:** L
 - **Where:** `.github/workflows/ci.yml:129-132,181` (category exclusion), `:238-264` (providers compile only)

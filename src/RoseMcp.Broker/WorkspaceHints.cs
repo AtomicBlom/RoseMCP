@@ -15,6 +15,12 @@ namespace RoseMcp.Broker;
 /// inferred from arguments the caller supplied for another purpose entirely, so one that leads
 /// nowhere is skipped rather than reported -- see <see cref="Paths"/> for why that matters.
 /// </para>
+/// <para>
+/// Both are <see cref="RootedPath"/> rather than strings, which is what stops the resolution asking
+/// the file system about a relative path: <c>File.Exists</c> and <c>Path.GetFullPath</c> answer
+/// against the broker's own working directory, and a hint resolved there routes the call into
+/// whichever checkout that process happens to be sitting in.
+/// </para>
 /// </summary>
 public sealed record WorkspaceHints
 {
@@ -22,25 +28,25 @@ public sealed record WorkspaceHints
 	public static readonly WorkspaceHints None = new();
 
 	/// <summary>The workspace argument, named by the caller. Strict: it resolves or it fails.</summary>
-	public string? Workspace { get; init; }
+	public RootedPath? Workspace { get; init; }
 
 	/// <summary>
 	/// Paths the call named for its own reasons, best first, tried only if the workspace argument was
 	/// omitted.
 	/// <para>
 	/// Best-effort, and the reason is <c>rose_diagnostics</c>: its <c>target</c> is a file path under
-	/// document scope and a <em>project name</em> under project scope. Resolving "Db.App" as a path
-	/// makes it relative to the process working directory, which for the tray is its own install
-	/// directory and for anyone else is a directory that has nothing to do with the question -- so a
-	/// hint that names nothing on disk is passed over rather than followed somewhere arbitrary.
+	/// document scope and a <em>project name</em> under project scope. "Db.App" measured from the
+	/// calling session's directory names nothing on disk, so it is passed over rather than followed
+	/// -- and one that does name something there is a fact about the caller rather than an accident
+	/// of where a process was started.
 	/// </para>
 	/// </summary>
-	public IReadOnlyList<string?> Paths { get; init; } = [];
+	public IReadOnlyList<RootedPath?> Paths { get; init; } = [];
 
 	/// <summary>
 	/// The workspace argument, then any paths the call carries. Reads at the call site the way the
 	/// hand-written <c>workspace ?? filePath</c> it replaces did.
 	/// </summary>
-	public static WorkspaceHints From(string? workspace, params string?[] paths) =>
+	public static WorkspaceHints From(RootedPath? workspace, params RootedPath?[] paths) =>
 		new() { Workspace = workspace, Paths = paths };
 }

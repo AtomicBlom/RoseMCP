@@ -12,7 +12,7 @@ namespace RoseMcp.Broker.Tools;
 /// workspace's worker, whose tools carry the same names minus the workspace argument.
 /// </summary>
 [McpServerToolType]
-public sealed class BrokerTools(WorkspaceManager workspaces)
+public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 {
 	/// <summary>
 	/// Starts a load and returns without waiting for it (#44).
@@ -55,7 +55,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		// two minutes the load takes. The load is already in flight by then: a worker starts loading
 		// when its process does, and the broker asks it for status the moment it connects precisely so
 		// a load with no client waiting on it is still visible.
-		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(workspace), cancellationToken);
+		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
 		var summary = worker.Describe();
 
 		// Only while it is still loading, so a solution that was already open says nothing and the
@@ -102,7 +102,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
-		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(workspace), cancellationToken);
+		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
 		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
 	}
 
@@ -124,7 +124,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.RestartAsync(
-			WorkspaceHints.From(workspace),
+			WorkspaceHints.From(paths.Of(workspace)),
 			cancellationToken,
 			WorkspaceBuildOverrides.From(configuration, platform, properties));
 		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
@@ -142,5 +142,5 @@ public sealed class BrokerTools(WorkspaceManager workspaces)
 	public Task<WorkspaceClosed> CloseAsync(
 		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		workspaces.CloseAsync(WorkspaceHints.From(workspace), cancellationToken);
+		workspaces.CloseAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
 }

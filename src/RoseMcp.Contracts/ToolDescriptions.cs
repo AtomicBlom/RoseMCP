@@ -28,8 +28,8 @@ public static class ToolDescriptions
 			+ "first and does not go stale when an earlier edit moves the line.";
 
 	public const string FilePathArgument =
-		"Absolute or solution-relative path to the file. Give it with line and column to point at a "
-			+ "symbol, or on its own to say which file a name is declared in.";
+		"Path to the file: absolute, or relative to where your session is running. Give it with line and "
+			+ "column to point at a symbol, or on its own to say which file a name is declared in.";
 
 	public const string LineArgument =
 		"One-based line number. Only needed when pointing at a position rather than naming a symbol -- "
@@ -90,7 +90,8 @@ public static class ToolDescriptions
 		"The member or type, as Namespace.Type.Member. Add a parameter list to pick an overload.";
 
 	public const string PartialFilePathArgument =
-		"Which file, when the name is declared in more than one -- a partial type or member.";
+		"Which file, when the name is declared in more than one -- a partial type or member. The whole "
+			+ "path: absolute, or relative to where your session is running.";
 
 	public const string UsingsArgument =
 		"Imports the code needs, ensured in the same file: System.Text, static System.Math, or Json = "
@@ -101,7 +102,8 @@ public static class ToolDescriptions
 	public const string ProjectOrPathFilterArgument =
 		"Limit to one project by name or path. Defaults to every project.";
 
-	public const string SingleFilePathArgument = "Absolute or solution-relative path to the file.";
+	public const string SingleFilePathArgument =
+		"Path to the file: absolute, or relative to where your session is running.";
 
 	public const string DiagnosticFilePathArgument =
 		"One file to analyse. Giving it is what says the scope is that document.";
@@ -212,7 +214,8 @@ public static class ToolDescriptions
 
 	public const string TargetTypeArgument = "The type it moves into, as Namespace.Type.";
 
-	public const string NewFilePathArgument = "Where the file goes. Absolute, or relative to the solution.";
+	public const string NewFilePathArgument =
+		"Where the file goes: absolute, or relative to where your session is running.";
 
 	public const string ExtraUsingsArgument =
 		"Imports on top of whatever the code turns out to need: System.Text, static System.Math, or Json = "
@@ -261,12 +264,15 @@ public static class ToolDescriptions
 		"The file it is used in. Scopes the search to what that project can reach, and is the only way to "
 			+ "know what is in scope there already.";
 
-	public const string FormatFilePathsArgument = "Absolute or solution-relative paths of the files to format.";
+	public const string FormatFilePathsArgument =
+		"Paths of the files to format: absolute, or relative to where your session is running.";
 
-	public const string SplitFilePathArgument = "Absolute or solution-relative path to the file to split.";
+	public const string SplitFilePathArgument =
+		"Path to the file to split: absolute, or relative to where your session is running.";
 
 	public const string TargetPathArgument =
-		"Where to put it. Defaults to <typeName>.cs beside the source file.";
+		"Where to put it. Relative to the file being split rather than to your session, unlike every other "
+			+ "path here; defaults to <typeName>.cs beside it.";
 
 	public const string DeclarationCodeArgument =
 		"The whole declaration, attributes and documentation comment included.";

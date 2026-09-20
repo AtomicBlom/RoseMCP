@@ -56,6 +56,7 @@ internal static class Program
 			})
 			.WithStdioServerTransport()
 			.WithToolsFromAssembly()
+			.WithAbsolutePathArguments()
 			.WithToolErrorMessages(options.SolutionPath);
 
 		await builder.Build().RunAsync();

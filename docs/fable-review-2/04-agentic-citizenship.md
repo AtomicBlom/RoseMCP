@@ -229,13 +229,11 @@ revision 1). Sizes are the raw JSON as it arrived.
 - **Why it matters:** `ArgumentValues` exists because four of these silently defaulted a typo into a confident answer to a different question, and it fixed that at runtime -- one wasted round trip per typo. The enum form costs zero round trips, because the constraint is in the schema the model reads while composing the call. The surface already knows how, and uses it on the three least important arguments.
 - **Suggested change:** Make every fixed-set argument a C# enum, keeping `ArgumentValues` as the worker's own parse (it is driven standalone and must still refuse). Where a synonym is accepted -- `file` for `document` -- make it an enum member. Add a `ToolSurfaceTests` assertion: no advertised argument whose description names alternatives may lack an `enum` in its schema.
 
-### AGT-10 A relative path resolves against the server process's working directory, which on a six-worktree machine is a write to the wrong checkout
-- **Severity:** High
-- **Effort:** M
-- **Where:** `src/RoseMcp.Broker/WorkspaceHints.cs:28-36`; `src/RoseMcp.Broker/ServiceCollectionExtensions.cs:181-187` (`OriginDirectory`); `src/RoseMcp.Contracts/ToolDescriptions.cs:104`; issue #214
-- **What:** Every path argument is documented "Absolute or **solution-relative**", but which solution is what the path is being used to *decide*, so the base is in fact the broker process's working directory unless the client sent `_meta` with a `CallOrigin` directory -- and only a relay does (`OriginDirectory` returns null otherwise). `WorkspaceHints`' own doc says the hazard out loud: "Resolving 'Db.App' as a path makes it relative to the process working directory, which for the tray is its own install directory and for anyone else is a directory that has nothing to do with the question". #214 is this landing as a **write into a different checkout, reported as success**: `rose_add_using` with `tests/RoseMcp.IntegrationTests/LiveAppSessionTests.cs` edited the file in `C:\Dev\Personal\RoseMCP` while every other call in the session answered from the worktree. This machine currently holds six checkouts of this repository side by side, so it is the ordinary case here rather than a corner.
-- **Why it matters:** It is the only failure in the whole corpus undetectable from the working copy the session can see: the result reads as success, `git status` in the worktree is clean, and the change sits in a repository whose own sessions are free to commit it. Every other defect here is a wrong answer; this one is a wrong write.
-- **Suggested change:** Stop resolving a relative path against a process-wide default. Resolve against the *session's* origin directory when one is known, and when none is, **refuse a relative path on a write argument** with "give an absolute path, or pass `workspace`" rather than guessing. Make the argument help say what the base actually is. A `ToolParityTests` case asserting that two same-named solutions resolve differently from the same relative path would pin it.
+### ~~AGT-10 A relative path resolves against the server process's working directory, which on a six-worktree machine is a write to the wrong checkout~~
+**#305.** Every path argument was documented as solution-relative and was in fact measured from the
+server process's own directory, so on a machine holding several checkouts of one repository a write
+landed in the wrong one and reported success. It is measured from the calling session's directory,
+the argument help says so, and the hop on from there carries absolute paths only.
 
 ### AGT-11 `rose_symbol_info` returns raw, unbounded XML documentation
 - **Severity:** Medium
@@ -434,26 +432,21 @@ revision 1). Sizes are the raw JSON as it arrived.
   paths relative to the workspace, and the round trip is unambiguous by construction: the agent
   quotes back the pair it was handed, and no resolution against a process working directory happens
   at all.
-- **Order matters: this card is gated on BRK-01.** Returning relative paths makes an agent send
-  relative paths -- results are where agents get their arguments -- so shipping the size fix before
-  the resolution fix converts a latent hazard into a routine one. Today a relative hint is resolved
-  against the *broker's* working directory, which for a tray is its install directory.
-  `WorkspaceManager.cs:345-351` already states the failure in a comment -- "Resolving that as a path
-  makes it relative to the process working directory and answers from whichever solution is sitting
-  there, which is worse than not trying" -- and guards it with `File.Exists`. That guard catches the
-  harmless case, a hint that is not a path at all, and **passes the harmful one**: a relative path
-  that does exist under the broker's directory binds to the wrong checkout, which is #214.
+- **The gate this card had is open (#305).** Returning relative paths makes an agent send relative
+  paths -- results are where agents get their arguments -- so the size fix could not land before the
+  resolution fix, on pain of turning a latent hazard into a routine one. A relative path is measured
+  from the calling session's directory now, so it can.
 - **Not everything can be workspace-relative, and the rule should say so.** Anchor absolute and
   stated once; anything under it relative; anything outside it absolute. The live-app surface is
   genuinely outside: module paths read from the debugged process, `InstallLocation`
   (`LiveAppInfo.cs:32`, under `WindowsApps` for a packaged app), `HostLogPath` (`:74`, under
   `LOCALAPPDATA`). A project referenced from outside the solution directory is relative but ascends.
   Generated documents and metadata symbols have no disk path at all.
-- **The pit-of-success form: refuse, do not guess.** A relative path arriving with no anchor -- no
-  `workspace`, no `workspaceKey`, no origin -- should be refused naming both candidates, not
-  resolved against whatever directory the process happens to occupy. That turns #214 from a silent
-  write into the wrong worktree into a loud error, and it is the precondition that makes returning
-  relative paths safe rather than merely cheaper.
+- **The anchor question is smaller than it was, not gone (#305).** A relative path is measured from
+  the calling session's directory, and the silent write into another checkout with it. What is left
+  is the session that never says where it is -- an http client with no relay in front of it -- whose
+  relative path is measured from the broker's own directory and now fails loudly there rather than
+  finding a plausible file. An anchor a caller will actually carry is what closes that case too.
 
 ### AGT-22 Tools that are plural by intent are singular by signature, and the cost is model turns rather than round trips
 
@@ -677,9 +670,8 @@ more fact needs to travel through them.
    Windows-only. Has an agentic session actually driven the debug surface end to end, or is the
    Inspector the real consumer? If it is the Inspector, some of those 21 could move to the operator
    API and off the model's context entirely -- `rose_live_app_frames` already made that choice.
-2. **What is the intended base for a relative path?** The argument help says "solution-relative";
-   `WorkspaceHints` says the process working directory. These cannot both be right, and #214 is
-   what the disagreement costs. Which was meant?
+2. ~~**What is the intended base for a relative path?**~~ **Answered, #305:** the calling
+   session's directory, and the argument help says so.
 3. **Does `rose_format` intend to be the check?** Its description says "pass apply=false to check
    formatting without writing", and #218 shows it passing a file `dotnet format` fails. Is the
    contract "what IDE0055 thinks" or "what CI will think"? They are different tools.

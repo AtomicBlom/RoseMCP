@@ -2,7 +2,7 @@
 
 **Scope.** Every source file in `src/RoseMcp.Broker` (including `Tools/`) and `src/RoseMcp.Server`, read in full; all of `src/RoseMcp.Solutions`, `src/RoseMcp.Settings`, `src/RoseMcp.Logging`; from `src/RoseMcp.Contracts`: `ToolNames`, `WorkspaceScopedResult`, `WorkspaceSummary`, `WorkerActivity`, `OperatorRequests`, `LiveAppSessionSummary`, `HostVersion`, `WorkerInfo`. The Tray's `App.xaml.cs` and the Worker's and LiveApp's `ToolErrorReporting.cs`, read only to answer questions about the broker's contract with its hosts. Tests: `BrokerTests`, `RelayTests`, `WorkspaceRoutingTests`, `ResilienceTests`, `OperatorApiTests`, `ToolParityTests` (integration); `ToolSurfaceTests`, `SecurityModelTests`, `LoggingTests`, `RelayRetryPolicyTests` (unit). Docs: `CLAUDE.md`, the three invariant files named in the brief, `docs/debug/security-model.md`, `docs/decisions/the-inspector-is-a-client-of-the-broker.md`, `docs/decisions/a-session-detaches-before-its-host-is-closed.md`. GitHub issues #157, #213, #214.
 
-**Verdict.** Adequate overall, with a strong core and fragile edges. The part of the broker that was designed rather than accreted -- `WorkspaceFor`'s single ordering, attribution in one place, the request filters that carry origin, session and error messages so no tool can forget them, and the tests that assert the tool surface against the registration and the security document -- is genuinely strong and is the thing to preserve through any refactor. The Roslyn broker is a clean layer: no Roslyn reference, routing and supervision only, and the tool classes are thin forwarders. The fragility is in lifetime and in the seams. One global semaphore serialises every call on every workspace behind any worker's start; a dead live-app session is never evicted and is polled forever; orderly teardown depends on each host disposing the DI container and the tray does not; and the two open bugs the brief names (#213, #214) are both in the relay-to-broker seam and both confirmed from the code. The live-app half of the broker is less clean than the Roslyn half: `LiveAppSession` carries XAML element-resolution logic that the decision record says belongs in the host, and `LiveAppDebugTools` carries the attach policy and session-lifecycle handling that belongs in the manager. Comments are excellent at recording *why* but a noticeable fraction record *what it used to be*, against the repository's own convention. The tests cover the routing core well and the resilience paths honestly (several say in their own remarks what they cannot assert); they do not cover Roslyn-half argument parity, eviction, or the tray's shutdown path.
+**Verdict.** Adequate overall, with a strong core and fragile edges. The part of the broker that was designed rather than accreted -- `WorkspaceFor`'s single ordering, attribution in one place, the request filters that carry origin, session and error messages so no tool can forget them, and the tests that assert the tool surface against the registration and the security document -- is genuinely strong and is the thing to preserve through any refactor. The Roslyn broker is a clean layer: no Roslyn reference, routing and supervision only, and the tool classes are thin forwarders. The fragility is in lifetime and in the seams. One global semaphore serialises every call on every workspace behind any worker's start; a dead live-app session is never evicted and is polled forever; orderly teardown depends on each host disposing the DI container and the tray does not; and the two bugs the brief names (#213, #214) are both in the relay-to-broker seam and were both confirmed from the code. The live-app half of the broker is less clean than the Roslyn half: `LiveAppSession` carries XAML element-resolution logic that the decision record says belongs in the host, and `LiveAppDebugTools` carries the attach policy and session-lifecycle handling that belongs in the manager. Comments are excellent at recording *why* but a noticeable fraction record *what it used to be*, against the repository's own convention. The tests cover the routing core well and the resilience paths honestly (several say in their own remarks what they cannot assert); they do not cover Roslyn-half argument parity, eviction, or the tray's shutdown path.
 
 ## Strengths
 
@@ -20,13 +20,11 @@
 
 ## Findings
 
-### BRK-01 A relative path hint is resolved against the process directory, so a write lands in another checkout
-- **Severity:** High
-- **Effort:** M
-- **Where:** `src/RoseMcp.Broker/WorkspaceManager.cs:345-365`, `src/RoseMcp.Broker/SolutionResolver.cs:36-38`
-- **What:** `WorkspaceFor` tests each hint with `File.Exists(path)` (line 351) and hands it to `SolutionResolver.Choose`, which calls `Path.GetFullPath(path)` (line 38). Both resolve a relative path against `Environment.CurrentDirectory` of the *broker process*. The calling session's directory, `CallOrigin.Directory`, is read only at line 367, after the hints have already been tried. For a relayed session in a worktree, a relative `filePath` that also exists in the main checkout (which is where the tray happens to be running from, or any directory the broker started in) resolves by containment to the wrong solution and wins the ranking outright. This is issue #214 exactly: `rose_add_using` with `tests/.../LiveAppSessionTests.cs` edited the main checkout while `rose_add_file` with a not-yet-existing path fell through to the origin and landed correctly.
-- **Why it matters:** A write to a repository the caller is not in, reported as success, with the path in the result as the only evidence. Every other failure in the issue list is a wrong answer; this one is a wrong side effect. Six worktrees of one repository is the ordinary case here.
-- **Suggested change:** Rebase before ranking. A relative hint is a fact about where the caller stands, so make it absolute against `CallOrigin.Directory ?? _options.DefaultWorkspaceRoot` before the existence check and before `Choose`. Better, do it in the type: `WorkspaceHints.From` should produce absolute paths given an origin, so `WorkspaceFor` never sees a relative string (see inversion 6). Add the second guard the issue proposes: when a hint was inferred (not the `workspace` argument) and resolves to a solution that does not enclose the origin directory, refuse and name both, on the same reasoning as "loaded workspaces are named in the failure and never used as an answer". Test: two fixture copies, `CallOrigin.Use(worktree)`, a relative path present in both, assert the worktree wins.
+### ~~BRK-01 A relative path hint is resolved against the process directory, so a write lands in another checkout~~
+**#305.** A relative path was measured from whichever directory the broker process happened to be
+started in, so a call from one worktree could edit the same-named file in another and report it as a
+success, with the caller's own working copy clean throughout. It is measured from the calling
+session's directory now, and the hop on from there carries absolute paths only.
 
 ### BRK-02 `ROSEMCP_TOKEN` silently defeats the relay, and the log says the tray is absent
 - **Severity:** High
@@ -169,7 +167,7 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 ### BRK-20 A warm worker holds its worktree's directory open, so `git worktree remove` fails until the tray is closed
 
 - **Severity:** Medium
-- **Effort:** S (the lock) / M (the relative-path half it is entangled with)
+- **Effort:** S. The relative-path half it was entangled with is done (#305).
 - **Where:** `src/RoseMcp.Broker/WorkspaceWorker.cs:156`
   (`WorkingDirectory = Path.GetDirectoryName(solutionPath)`),
   `src/RoseMcp.Worker/AddFileService.cs:50` (`Path.GetFullPath(request.FilePath)`)
@@ -184,33 +182,21 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
   its worktree open for the life of the broker. `git worktree remove` on it fails, and so does any
   removal of a parent directory. Creating a worktree, opening it, and then removing it is an
   ordinary sequence here -- often inside a single session.
-- **Why it matters:** Two things, and the second is the more interesting.
+- **Why it matters:** The workflow breaks in a way that does not name Rose. Git reports a directory
+  in use, the obvious suspects are an editor or a shell, and the actual holder is a background worker
+  owned by a tray in the notification area.
 
-  1. The workflow breaks in a way that does not name Rose. Git reports a directory in use, the
-     obvious suspects are an editor or a shell, and the actual holder is a background worker owned
-     by a tray in the notification area.
-  2. **The correct working directory is what makes #214 a silent success rather than a loud
-     failure.** Trace the wrong-worktree write: the broker resolves a relative hint against its own
-     working directory and picks the wrong workspace (BRK-01); it routes to that workspace's worker;
-     that worker resolves the same relative path with `Path.GetFullPath`, against a working
-     directory that is correctly its own solution's root; the file exists there, because it is a
-     worktree of the same repository; the edit applies and reports success. Had the worker's working
-     directory been inert, step four would have failed to find the file and the bug would have
-     surfaced the first time instead of writing to the wrong checkout. A defensive setting is
-     load-bearing in the failure.
-- **Suggested change:** Separate the two, because only one is urgent.
+  What made this urgent rather than annoying is gone: the correct working directory was also the
+  reason a mis-routed relative path found a real file to write to, and the hop is absolute-only now
+  (#305), so nothing turns on that setting being right any more.
+- **Suggested change:** The first step is done (#305). What is left:
 
-  1. **Make the broker-to-worker hop absolute-only**, and have the worker *refuse* a relative path
-     rather than resolve one. Relative paths are a convenience for the outside caller, and the
-     broker is the only place that knows the origin to resolve them against (BRK-01). Once the hop
-     is absolute, the worker's working directory stops being load-bearing for correctness, and a
-     mis-routed call fails loudly instead of writing somewhere plausible.
-  2. **Then move the working directory somewhere inert**, so a warm worker pins nothing a person
-     might want to delete. The repository already has the concept:
+  1. **Move the working directory somewhere inert**, so a warm worker pins nothing a person might
+     want to delete. The repository already has the concept:
      `tests/RoseMcp.TestSupport/NowhereDirectory` points at a drive that does not exist, precisely
      because "nowhere on a real disk can be promised clean". A worker wants the weaker version of
      the same idea: a directory whose removal nobody will ever attempt.
-  3. **Measure before moving it.** MSBuild resolves project-relative paths against the project file
+  2. **Measure before moving it.** MSBuild resolves project-relative paths against the project file
      rather than the working directory, but a repository's own custom targets or tasks may read
      relative paths against the process, and a design-time build runs the repository's code
      (`docs/debug/security-model.md`). Change it behind the fixture suite and watch the XAML and
@@ -250,7 +236,7 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 
 5. **Rule:** "A debug session detaches before its host is closed" (decision) and "every stdio process ... takes what it owns" (`transport-and-lifetime.md`). Today enforced only when the host disposes the container (BRK-07). **Mechanism:** the managers implement `IHostedService` (or `AddRoseMcpBroker` registers one that owns them); `StopAsync` is the teardown. Then the decision holds in any host that stops, which every host does.
 
-6. **Rule:** "A relative path is a fact about where the caller is standing" (issue #214; implicit in `solution-routing.md`). Today `WorkspaceFor` receives raw strings and resolves them against the process (BRK-01). **Mechanism:** `WorkspaceHints` carries absolute paths only -- `From(workspace, origin, params string?[] paths)` rebases relatives against the origin at construction -- so `WorkspaceFor` cannot see a relative path and `SolutionResolver.Choose` need never call `GetFullPath` on a caller's string. `WorkspaceRoutingTests` gains the two-checkout case.
+6. ~~**Rule:** "A relative path is a fact about where the caller is standing."~~ **#305.**
 
 7. **Rule:** "The `rose_worker_info` and `rose_live_app_*` names are host-internal: the broker calls them and declares none of them" (`ToolNames` summary). Today `ToolSurfaceTests.HostInternal` is a hand-kept list. **Mechanism:** reflect over `ToolNames`' public constants and require each to appear in exactly one of `Roslyn`, `LiveApp`, `HostInternal` or a named `Withheld` set (`XamlSelectMode`). A constant added to `ToolNames` and to nothing else then fails a test, which is the moment to decide what it is.
 

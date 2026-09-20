@@ -38,7 +38,7 @@ public sealed class BrokerWorkerTests
 		await using var manager = CreateManager(workerHandshakeTimeout: TimeSpan.FromMilliseconds(1));
 
 		var failure = await Assert.ThrowsAnyAsync<Exception>(() => manager.GetOrStartAsync(
-			WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken));
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken));
 
 		Assert.Contains("timed out", failure.Message, StringComparison.OrdinalIgnoreCase);
 	}
@@ -49,8 +49,8 @@ public sealed class BrokerWorkerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var before = await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
-		var after = await manager.RestartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		var before = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
+		var after = await manager.RestartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.NotSame(before, after);
 		Assert.Equal(WorkerExitReason.StoppedByBroker, before.ExitReason);
@@ -84,7 +84,7 @@ public sealed class BrokerWorkerTests
 
 		// Loaded first, so what gets cancelled below is the analysis rather than the load behind it.
 		await manager.CallAsync<WorkspaceStatusReport>(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.WorkspaceStatus,
 			new Dictionary<string, object?>(),
 			retryIfWorkerDied: true,
@@ -93,7 +93,7 @@ public sealed class BrokerWorkerTests
 		using var cancelling = new CancellationTokenSource();
 
 		var slow = manager.CallAsync<DiagnosticsResult>(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.Diagnostics,
 			new Dictionary<string, object?> { ["scope"] = "solution", ["includeAnalyzers"] = true },
 			retryIfWorkerDied: false,
@@ -109,7 +109,7 @@ public sealed class BrokerWorkerTests
 
 		// And the worker answers the next question, rather than the cancellation having taken it with it.
 		var afterwards = await manager.CallAsync<WorkspaceStatusReport>(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.WorkspaceStatus,
 			new Dictionary<string, object?>(),
 			retryIfWorkerDied: false,
@@ -219,7 +219,7 @@ public sealed class BrokerWorkerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), cancellationToken);
+		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), cancellationToken);
 
 		Assert.True(worker.IsAlive, $"the worker should be alive; exit reason was '{worker.ExitReason}'");
 		Assert.NotNull(worker.ProcessId);
@@ -296,7 +296,7 @@ public sealed class BrokerWorkerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var hints = WorkspaceHints.From(fixture.SolutionPath);
+		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
 		var original = await manager.GetOrStartAsync(hints, cancellationToken);
 
 		using (var process = Process.GetProcessById(original.ProcessId!.Value))

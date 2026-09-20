@@ -20,7 +20,10 @@ namespace RoseMcp.Broker.Tools;
 /// </para>
 /// </summary>
 [McpServerToolType]
-public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspectorPresenter inspector)
+public sealed class LiveAppDebugTools(
+	LiveAppSessionManager sessions,
+	IInspectorPresenter inspector,
+	CallerPaths paths)
 {
 	[McpServerTool(
 		Name = ToolNames.DebugAttach,
@@ -108,9 +111,13 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 		InspectorVisibility showInspector = InspectorVisibility.UserPreference,
 		CancellationToken cancellationToken = default)
 	{
-		if (!File.Exists(executablePath)) throw new McpException($"No executable at {executablePath}.");
+		// Measured from the calling session, like every other path argument: two checkouts of one
+		// repository hold the same bin/Debug path, and launching the other one's build is a session
+		// spent debugging code that is not the code being edited.
+		var fullPath = paths.Of(executablePath)?.Value ?? executablePath;
 
-		var fullPath = Path.GetFullPath(executablePath);
+		if (!File.Exists(fullPath)) throw new McpException($"No executable at {fullPath}.");
+
 		var target = new LiveAppTarget
 		{
 			Kind = LiveAppTargetKind.LaunchExecutable,
@@ -549,7 +556,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ApplyXamlAsync(oldXaml, newXaml, filePath, cancellationToken);
+		return await session.ApplyXamlAsync(oldXaml, newXaml, paths.Of(filePath)?.Value, cancellationToken);
 	}
 
 	[McpServerTool(

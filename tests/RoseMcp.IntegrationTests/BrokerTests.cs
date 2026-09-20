@@ -47,7 +47,7 @@ public sealed class BrokerTests
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
-		var tools = new RoseMcp.Broker.Tools.BrokerTools(manager);
+		var tools = new RoseMcp.Broker.Tools.BrokerTools(manager, CreatePaths());
 
 		var started = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current!.Execution.CancellationToken);
 
@@ -103,7 +103,7 @@ public sealed class BrokerTests
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
-		var tools = new RoseMcp.Broker.Tools.BrokerTools(manager);
+		var tools = new RoseMcp.Broker.Tools.BrokerTools(manager, CreatePaths());
 
 		var opened = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current!.Execution.CancellationToken);
 
@@ -138,10 +138,10 @@ public sealed class BrokerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		var restarted = await manager.RestartAsync(
-			WorkspaceHints.From(fixture.SolutionPath),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			TestContext.Current!.Execution.CancellationToken,
 			WorkspaceBuildOverrides.From("Release", null, null));
 
@@ -161,7 +161,7 @@ public sealed class BrokerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var first = await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		var first = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 		var status = await first.CallAsync<WorkspaceStatusReport>(
 			ToolNames.WorkspaceStatus, new Dictionary<string, object?>(), TestContext.Current!.Execution.CancellationToken);
 
@@ -169,7 +169,7 @@ public sealed class BrokerTests
 
 		// Resolve from a source file this time; it must land on the same worker.
 		var second = await manager.GetOrStartAsync(
-			WorkspaceHints.From(fixture.Path("Simple", "Core", "Calculator.cs")),
+			WorkspaceHints.From(RootedPath.Absolute(fixture.Path("Simple", "Core", "Calculator.cs"))),
 			TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Same(first, second);
@@ -183,8 +183,8 @@ public sealed class BrokerTests
 		using var generator = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
 		await using var manager = CreateManager();
 
-		await manager.GetOrStartAsync(WorkspaceHints.From(simple.SolutionPath), TestContext.Current!.Execution.CancellationToken);
-		await manager.GetOrStartAsync(WorkspaceHints.From(generator.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(simple.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
+		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(generator.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.Equal(2, manager.Workers.Count);
 
@@ -220,7 +220,7 @@ public sealed class BrokerTests
 		await using var manager = CreateManager(Path.GetDirectoryName(mine.SolutionPath)!);
 
 		var theirs = await manager.GetOrStartAsync(
-			WorkspaceHints.From(open.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+			WorkspaceHints.From(RootedPath.Absolute(open.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		var bare = await manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken);
 
@@ -239,7 +239,7 @@ public sealed class BrokerTests
 		await using var manager = CreateManager();
 
 		await manager.GetOrStartAsync(
-			WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		var error = await Assert.ThrowsAsync<McpException>(
 			() => manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken));
@@ -253,9 +253,9 @@ public sealed class BrokerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
-		var closed = await manager.CloseAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		var closed = await manager.CloseAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		Assert.True(closed.Closed);
 		Assert.Equal(fixture.SolutionPath, closed.Workspace);
@@ -264,7 +264,7 @@ public sealed class BrokerTests
 		Assert.False(worker.IsAlive, "closing the workspace stops its worker");
 
 		// Closing something that is not open is a no-op, not an error.
-		Assert.False((await manager.CloseAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken)).Closed);
+		Assert.False((await manager.CloseAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken)).Closed);
 	}
 
 	[Test]
@@ -275,7 +275,7 @@ public sealed class BrokerTests
 		var missing = Path.Combine(Path.GetTempPath(), $"nope-{Guid.NewGuid():N}", "Nope.sln");
 
 		var error = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => manager.GetOrStartAsync(WorkspaceHints.From(missing), TestContext.Current!.Execution.CancellationToken));
+			() => manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(missing)), TestContext.Current!.Execution.CancellationToken));
 
 		// Naming the path matters: this is also what a caller sees after a branch switch removes
 		// the solution out from under them.
@@ -293,7 +293,7 @@ public sealed class BrokerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		var summary = Assert.Single(manager.Describe());
 
@@ -353,7 +353,7 @@ public sealed class BrokerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		await manager.GetOrStartAsync(WorkspaceHints.From(fixture.SolutionPath), TestContext.Current!.Execution.CancellationToken);
+		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
 		// The load time is the last thing recorded, so once it is there the rest is too.
 		var loaded = await WaitForAsync(

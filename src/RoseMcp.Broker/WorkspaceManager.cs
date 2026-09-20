@@ -19,6 +19,7 @@ namespace RoseMcp.Broker;
 /// </summary>
 public sealed class WorkspaceManager(
 	IOptions<BrokerOptions> options,
+	CallerPaths paths,
 	ILoggerFactory loggerFactory,
 	ILogger<WorkspaceManager> logger) : IAsyncDisposable
 {
@@ -358,7 +359,7 @@ public sealed class WorkspaceManager(
 	{
 		// The caller named it. A name that resolves to nothing is theirs to hear about, so nothing
 		// here is caught -- falling through to a guess would answer a different question than asked.
-		if (!string.IsNullOrWhiteSpace(hints.Workspace)) return Resolved(hints.Workspace);
+		if (hints.Workspace is { } named) return Resolved(named.Value);
 
 		// Paths the call carries for its own reasons. The first that decides wins; an ambiguous one is
 		// remembered rather than thrown, because a later hint may still settle it and, failing that,
@@ -367,16 +368,16 @@ public sealed class WorkspaceManager(
 
 		foreach (var path in hints.Paths)
 		{
-			if (string.IsNullOrWhiteSpace(path)) continue;
+			if (path is null) continue;
 
 			// A hint need not be a path at all: diagnostics' target is a project name under project
-			// scope. Resolving that as a path makes it relative to the process working directory and
-			// answers from whichever solution is sitting there, which is worse than not trying.
-			if (!File.Exists(path) && !Directory.Exists(path)) continue;
+			// scope, and a name that describes nothing where the caller is standing says nothing about
+			// which workspace they meant.
+			if (!File.Exists(path.Value) && !Directory.Exists(path.Value)) continue;
 
 			try
 			{
-				return Resolved(path);
+				return Resolved(path.Value);
 			}
 			catch (AmbiguousSolutionException exception)
 			{
@@ -388,7 +389,7 @@ public sealed class WorkspaceManager(
 			}
 		}
 
-		var origin = CallOrigin.Directory ?? _options.DefaultWorkspaceRoot;
+		var origin = paths.Origin;
 
 		try
 		{

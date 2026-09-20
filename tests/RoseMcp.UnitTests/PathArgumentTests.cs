@@ -15,6 +15,12 @@ namespace RoseMcp.UnitTests;
 /// for one checkout, resolved against another, names a real file there and is written to, and the
 /// result reads as a success while the caller's own working copy stays clean.
 /// </para>
+/// <para>
+/// Every path here is composed from the running platform's root rather than written out, because
+/// this suite runs on Linux as well and <c>C:\checkouts\main</c> there is a relative path with an
+/// odd name in it -- which is what these assert about, so a literal would pass for the wrong reason
+/// or fail for one.
+/// </para>
 /// </summary>
 public sealed class PathArgumentTests
 {
@@ -25,11 +31,13 @@ public sealed class PathArgumentTests
 	[Test]
 	public void A_relative_path_is_measured_from_the_calling_session()
 	{
-		var paths = Rooted(@"C:\checkouts\main");
+		var paths = Rooted(Absolute("checkouts", "main"));
 
-		using var origin = CallOrigin.Use(@"C:\checkouts\worktree");
+		using var origin = CallOrigin.Use(Absolute("checkouts", "worktree"));
 
-		Assert.Equal(@"C:\checkouts\worktree\tests\Widget.cs", paths.Of(@"tests\Widget.cs")?.Value);
+		Assert.Equal(
+			Absolute("checkouts", "worktree", "tests", "Widget.cs"),
+			paths.Of(Path.Combine("tests", "Widget.cs"))?.Value);
 	}
 
 	/// <summary>
@@ -40,7 +48,9 @@ public sealed class PathArgumentTests
 	[Test]
 	public void A_session_that_says_nothing_is_measured_from_the_brokers_own_directory()
 	{
-		Assert.Equal(@"C:\checkouts\main\tests\Widget.cs", Rooted(@"C:\checkouts\main").Of(@"tests\Widget.cs")?.Value);
+		Assert.Equal(
+			Absolute("checkouts", "main", "tests", "Widget.cs"),
+			Rooted(Absolute("checkouts", "main")).Of(Path.Combine("tests", "Widget.cs"))?.Value);
 	}
 
 	/// <summary>
@@ -50,18 +60,18 @@ public sealed class PathArgumentTests
 	[Test]
 	public void An_absolute_path_is_left_where_the_caller_put_it()
 	{
-		var paths = Rooted(@"C:\checkouts\main");
+		var paths = Rooted(Absolute("checkouts", "main"));
 
-		using var origin = CallOrigin.Use(@"C:\checkouts\worktree");
+		using var origin = CallOrigin.Use(Absolute("checkouts", "worktree"));
 
-		Assert.Equal(@"C:\elsewhere\Widget.cs", paths.Of(@"C:\elsewhere\Widget.cs")?.Value);
+		Assert.Equal(Absolute("elsewhere", "Widget.cs"), paths.Of(Absolute("elsewhere", "Widget.cs"))?.Value);
 	}
 
 	/// <summary>An argument nobody supplied is not a path that failed to resolve.</summary>
 	[Test]
 	public void An_argument_nobody_sent_stays_absent()
 	{
-		var paths = Rooted(@"C:\checkouts\main");
+		var paths = Rooted(Absolute("checkouts", "main"));
 
 		Assert.Null(paths.Of(null));
 		Assert.Null(paths.Of("   "));
@@ -75,8 +85,10 @@ public sealed class PathArgumentTests
 	[Test]
 	public void A_path_cannot_be_rooted_without_a_base()
 	{
-		Assert.Throws<ArgumentException>(() => RootedPath.Absolute(@"tests\Widget.cs"));
-		Assert.Throws<ArgumentException>(() => RootedPath.From(@"tests\Widget.cs", "somewhere-relative"));
+		Assert.Throws<ArgumentException>(() => RootedPath.Absolute(Path.Combine("tests", "Widget.cs")));
+
+		Assert.Throws<ArgumentException>(
+			() => RootedPath.From(Path.Combine("tests", "Widget.cs"), Path.Combine("somewhere", "relative")));
 	}
 
 	/// <summary>
@@ -87,11 +99,13 @@ public sealed class PathArgumentTests
 	[Test]
 	public void A_host_refuses_a_relative_path_and_names_the_argument()
 	{
-		var refusal = PathArguments.Relative(Arguments("""{"filePath":"tests/Widget.cs","symbol":"A.B"}"""));
+		var relative = Path.Combine("tests", "Widget.cs");
+
+		var refusal = PathArguments.Relative(Arguments(("filePath", relative), ("symbol", "A.B")));
 
 		Assert.NotNull(refusal);
 		Assert.StartsWith("filePath has to be an absolute path", refusal, StringComparison.Ordinal);
-		Assert.Contains("tests/Widget.cs", refusal!, StringComparison.Ordinal);
+		Assert.Contains(relative, refusal!, StringComparison.Ordinal);
 	}
 
 	/// <summary>One list argument is one rule: rose_format sends several where every other tool sends one.</summary>
@@ -99,10 +113,10 @@ public sealed class PathArgumentTests
 	public void A_host_refuses_a_relative_path_inside_a_list()
 	{
 		Assert.NotNull(PathArguments.Relative(
-			Arguments("""{"filePaths":["C:/repo/A.cs","B.cs"]}""")));
+			Arguments(("filePaths", new[] { Absolute("repo", "A.cs"), "B.cs" }))));
 
 		Assert.Null(PathArguments.Relative(
-			Arguments("""{"filePaths":["C:/repo/A.cs","C:/repo/B.cs"]}""")));
+			Arguments(("filePaths", new[] { Absolute("repo", "A.cs"), Absolute("repo", "B.cs") }))));
 	}
 
 	/// <summary>
@@ -113,15 +127,23 @@ public sealed class PathArgumentTests
 	[Test]
 	public void An_argument_with_a_base_of_its_own_is_left_alone()
 	{
-		Assert.Null(PathArguments.Relative(Arguments("""{"symbol":"A.B","targetPath":"Widget.cs"}""")));
+		Assert.Null(PathArguments.Relative(Arguments(("symbol", "A.B"), ("targetPath", "Widget.cs"))));
 	}
+
+	/// <summary>An absolute path on whichever platform is running: a drive root here, / elsewhere.</summary>
+	private static string Absolute(params string[] parts) =>
+		Path.GetFullPath(Path.Combine([Path.GetPathRoot(AppContext.BaseDirectory)!, .. parts]));
 
 	private static CallerPaths Rooted(string directory) =>
 		new(Options.Create(new BrokerOptions { DefaultWorkspaceRoot = directory }));
 
-	private static IReadOnlyDictionary<string, JsonElement> Arguments(string json) =>
-		JsonDocument.Parse(json).RootElement.EnumerateObject().ToDictionary(
-			property => property.Name,
-			property => property.Value,
+	/// <summary>
+	/// Arguments as they reach a host, built from values rather than parsed from JSON text, so a
+	/// path with separators in it needs no escaping to say what it is.
+	/// </summary>
+	private static IReadOnlyDictionary<string, JsonElement> Arguments(params (string Name, object Value)[] supplied) =>
+		supplied.ToDictionary(
+			argument => argument.Name,
+			argument => JsonSerializer.SerializeToElement(argument.Value),
 			StringComparer.Ordinal);
 }

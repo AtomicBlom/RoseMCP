@@ -20,9 +20,8 @@ namespace RoseMcp.Worker;
 public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 {
 	/// <summary>
-	/// Keyed on the project's dependent semantic version, which is Roslyn's own answer to "has
-	/// anything that could change this project's meaning moved". Anything coarser re-analyses far
-	/// too often; anything homegrown gets the transitive cases wrong.
+	/// One entry per project, good for exactly as long as its <c>CacheKey</c> still describes that
+	/// project.
 	/// </summary>
 	private readonly ConcurrentDictionary<ProjectId, CacheEntry> _cache = new();
 
@@ -101,9 +100,11 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 		List<string> notices,
 		CancellationToken cancellationToken)
 	{
-		var version = await project.GetDependentSemanticVersionAsync(cancellationToken);
+		var key = new CacheKey(
+			await project.GetDependentSemanticVersionAsync(cancellationToken),
+			await project.GetLatestDocumentVersionAsync(cancellationToken));
 
-		var current = _cache.TryGetValue(project.Id, out var cached) && cached.Version == version
+		var current = _cache.TryGetValue(project.Id, out var cached) && cached.Key == key
 			? cached
 			: null;
 
@@ -124,13 +125,13 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 
 		var compiler = current?.Compiler ?? compilation.GetDiagnostics(cancellationToken);
 
-		// Analyzers already run for this version are kept rather than dropped, so a compiler-only
+		// Analyzers already run for this key are kept rather than dropped, so a compiler-only
 		// request passing through does not make the next request that wants them pay for the run again.
 		var analyzer = includeAnalyzers
 			? await RunAnalyzersAsync(project, compilation, notices, cancellationToken)
 			: current?.Analyzer;
 
-		_cache[project.Id] = new CacheEntry(version, compiler, analyzer);
+		_cache[project.Id] = new CacheEntry(key, compiler, analyzer);
 
 		return includeAnalyzers && analyzer is { } ran ? compiler.AddRange(ran) : compiler;
 	}
@@ -294,7 +295,34 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 	}
 
 	/// <summary>
-	/// One project's diagnostics at one semantic version, with the two halves kept apart.
+	/// What has to still hold for a project's cached diagnostics to be worth serving.
+	/// <para>
+	/// Two stamps, because neither one answers the question alone. <c>Declarations</c> is Roslyn's
+	/// dependent semantic version, which moves when the consumable declarations of this project or of
+	/// any project it references move, and is the only half that hears about a referenced project at
+	/// all. It ignores method bodies by design, so a key resting on it alone goes on answering from
+	/// the text as it stood before a body changed -- and answers with the project's whole previous
+	/// result set rather than one stray entry, so the warning a fix just removed and the error an edit
+	/// just introduced are equally invisible. <c>Text</c> is the version of this project's most
+	/// recently modified document, which moves for any edit at all, and is what closes that hole.
+	/// </para>
+	/// <para>
+	/// A change reaching the workspace as text is where this bites: a document updated from its
+	/// syntax root carries a new declarations stamp whether or not the declarations moved, while one
+	/// updated from text keeps the old stamp for a body-only change. Absorbing an edit from disk is
+	/// the second kind, so every edit made outside this process lands exactly where the coarser stamp
+	/// cannot see it.
+	/// </para>
+	/// <para>
+	/// A body edit in a referenced project moves neither stamp. That is the right answer rather than
+	/// the same hole one level out: a body is not consumable, so nothing this project compiles can
+	/// depend on it.
+	/// </para>
+	/// </summary>
+	private readonly record struct CacheKey(VersionStamp Declarations, VersionStamp Text);
+
+	/// <summary>
+	/// One project's diagnostics at one <c>CacheKey</c>, with the two halves kept apart.
 	/// <para>
 	/// Apart because a compiler-only request must be answered without the analyzer half and without
 	/// recomputing it. Answering it with a richer cached list makes the reply depend on what something
@@ -305,7 +333,7 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 	/// </para>
 	/// </summary>
 	private sealed record CacheEntry(
-		VersionStamp Version,
+		CacheKey Key,
 		ImmutableArray<Diagnostic> Compiler,
 		ImmutableArray<Diagnostic>? Analyzer);
 }

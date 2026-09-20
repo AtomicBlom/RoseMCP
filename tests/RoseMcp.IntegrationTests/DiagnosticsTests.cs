@@ -105,4 +105,41 @@ public sealed class DiagnosticsTests
 
 		Assert.True(service.CompilationsAnalysed > afterFirst, "an edit must invalidate the cache");
 	}
+
+	/// <summary>
+	/// A change confined to a method body, absorbed from disk the way every edit made outside this
+	/// process is. Roslyn's dependent semantic version deliberately does not move for one, so a cache
+	/// resting on it alone goes on answering from the text before the edit -- and answers confidently,
+	/// with the whole pre-edit result set rather than one stray entry. The signature here is untouched
+	/// on purpose: that is what makes it a body change, and what the coarser stamp cannot see.
+	/// </summary>
+	[Test]
+	public async Task Recomputes_after_a_change_confined_to_a_body()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var service = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
+
+		var calculator = fixture.Path("Simple", "Core", "Calculator.cs");
+		var original = await File.ReadAllTextAsync(calculator, TestContext.Current!.Execution.CancellationToken);
+
+		var clean = await service.AnalyseAsync(
+			await session.ReadAsync(TestContext.Current!.Execution.CancellationToken),
+			new DiagnosticsRequest { MinimumSeverity = Microsoft.CodeAnalysis.DiagnosticSeverity.Error },
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.Empty(clean.Diagnostics);
+
+		await File.WriteAllTextAsync(
+			calculator,
+			original.Replace("=> value * 2;", "=> value * nope;", StringComparison.Ordinal),
+			TestContext.Current!.Execution.CancellationToken);
+
+		var result = await service.AnalyseAsync(
+			await session.ReadAsync(TestContext.Current!.Execution.CancellationToken),
+			new DiagnosticsRequest { MinimumSeverity = Microsoft.CodeAnalysis.DiagnosticSeverity.Error },
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Id == "CS0103");
+	}
 }

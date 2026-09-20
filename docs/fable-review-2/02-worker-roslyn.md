@@ -74,9 +74,12 @@ Things a refactor must carry across intact.
   `AttributeEdit.Several` refuses two attributes of one name rather than picking the first
   (`AttributeEdit.cs:289-297`); `GuardSharedDeclaration` refuses `int a, b;` (`MemberEditService.cs:617-628`).
 - **Verification reports the delta, not the haystack.** `EditVerification.Delta` keys on
-  id+file+message and counts duplicates (`EditVerification.cs:330-359`); `DiagnosticsService` caches
-  per project against `GetDependentSemanticVersionAsync` and keeps the compiler and analyzer halves
-  apart so a compiler-only request cannot poison the analyzer delta (`DiagnosticsService.cs:296-310`).
+  id+file+message and counts duplicates (`EditVerification.cs:330-359`); `DiagnosticsService` keeps
+  the compiler and analyzer halves apart so a compiler-only request cannot poison the analyzer delta
+  (`DiagnosticsService.cs:296-310`). **Amended by #299:** the cache key was praised here too, and it
+  was a wrong-answer bug -- `GetDependentSemanticVersionAsync` does not move for a change confined to
+  a method body, so after one absorbed from disk every read was served the previous result set. The
+  separation of the halves is the part that was sound.
 - **Arguments mapped by the compiler.** `CallSiteBinding.For` reads `IInvocationOperation.Arguments`
   and refuses any site it cannot bind (`CallSiteBinding.cs:73-110`); `CallSiteRewriter` moves the
   caller's own `ArgumentSyntax` nodes rather than regenerating them (`CallSiteRewriter.cs:81-96`);
@@ -605,9 +608,11 @@ on this branch.
   the barrier (`ReconcileAsync`, `:282-285`) -- advance one counter, `_revision`. A hot-reload service
   would pin a baseline `(Solution, Revision, EmitBaseline)` and compare against the snapshot the barrier
   hands it; the revision is the identity. Note the counter is per solution, not per project.
-- **The per-project change key already in use is Roslyn's own.** `Project.GetDependentSemanticVersionAsync`
-  keys the diagnostics cache (`DiagnosticsService.cs:104`). It is also the right test for "does this
-  project have edits since the baseline".
+- **The per-project change key is Roslyn's own, and one stamp is not enough.** **Corrected by #299:**
+  `Project.GetDependentSemanticVersionAsync` tracks consumable declarations and does not move for a
+  change confined to a method body -- which is the canonical hot-reload edit, so on its own it is the
+  wrong test for "does this project have edits since the baseline". Pair it with the project's latest
+  document version, which moves for any edit; that is what the diagnostics cache had to do.
 - **Output paths and freshness are known.** The design-time build supplies `Project.OutputFilePath`
   (`BuildFreshness.cs:40`, `ProjectGraphService.cs:59`), which is where `ModuleMetadata.CreateFromFile`
   would read the baseline module for `EmitBaseline.CreateInitialBaseline`. `BuildFreshness.Of` already

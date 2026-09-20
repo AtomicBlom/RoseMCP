@@ -219,6 +219,25 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
   Until then, #157's eviction work would shorten the exposure but not remove it, and the two should
   be cut as one card: an evicted worker releases the directory, which is a second reason to evict.
 
+### BRK-21 Three live-app tools answer with a bare sentence, and the guard for that is blind to them
+- **Found while closing card 0c, PR #295.** Not in the original review.
+- **Severity:** Low
+- **Effort:** S
+- **Where:** `src/RoseMcp.Broker/Tools/LiveAppDebugTools.cs:222` (`DetachAsync`), `:410`
+  (`ContinueAsync`), `:432` (`StepAsync`); the exemption is `ToolResultShapeTests.ProcessScoped`
+- **What:** All three return `Task<string>` and answer with a sentence -- "That session was not
+  open.", "Continued; the target is running again.", "Nothing was stopped to step." That is the same
+  shape BRK-12 found on `rose_workspace_close` and card 0c fixed there. A caller holding two sessions
+  cannot tell which one answered, and a sentence carries no field an agent can branch on.
+- **Why it matters:** The guard card 0c shipped cannot see these. It exempts the live-app surface by
+  prefix, because a debugged process is not workspace-scoped and has no revision -- which is right
+  for attribution and silently also excuses answering with prose. So the one defect the guard was
+  built to catch survives, on the surface the guard does not cover, and nothing will now notice.
+- **Suggested change:** A result record for each, carrying the session and the outcome as fields.
+  Then narrow the exemption: it should excuse a live-app result from *workspace* attribution, not
+  from being a result at all -- assert that every tool answers with a record, and let the prefix
+  decide only which attribution applies.
+
 ## Pit-of-success inversions
 
 1. **Rule:** "Every result carries a `revision` and names the workspace that answered" (CLAUDE.md; `result-shapes.md`). Today a runtime `is` check in `Attribute<T>` and 21 hand-written `public required long Revision` properties. **Mechanism:** `where T : WorkspaceScopedResult` on `WorkspaceManager.CallAsync` and `StatusOfAsync`; move `Revision` onto a `WorkspaceReadResult : WorkspaceScopedResult` base so a result cannot omit it; a unit test that enumerates the advertised Roslyn tools via `McpServerTool` (as `ToolSurfaceTests.Advertised` already does), reads each method's return type, and asserts it derives from `WorkspaceScopedResult` -- the compiler for the broker's own tools, the test for anything registered another way.

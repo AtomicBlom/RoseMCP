@@ -123,6 +123,10 @@ kinds to wait for one thing instead of polling. Capped at 60" (`ToolDescriptions
 the doc comment says why the cap and why an empty wait loses nothing: "events are buffered and the
 same cursor picks up whatever arrives next" (`:456-457`). A cursor plus a bounded blocking read is
 the correct shape for an agent watching a process, and most debug-over-MCP designs get this wrong.
+**Amended by #300:** the shape was right and the default was not. `after=0` meant "anything, ever",
+so an agent that set a breakpoint and then waited from the default could be handed a hit from before
+it set one, in a page indistinguishable from the one it was waiting for. Every answer now hands back
+the position the stream stood at, so the cursor a caller needs is the one already in its hand.
 
 ## Transcripts
 

@@ -234,6 +234,11 @@ The reasoning is on `BreakpointTable.Claim`.
   being handed anything new; `Frames` and `DescribeFrame` then go.
 
 ### LIV-07 A request the host has timed out on still runs in the app, and the pipe cannot tell whose reply is whose
+- **Amended by #300.** The mechanism stands on its own file-and-line evidence; the attribution to
+  #208 does not. That flake was the test's wait starting from cursor 0, not a late `selecthandle`, so
+  strike "it is also the structural cause of the #208 flake" and the claim that the suite's flakiness
+  is a protocol property showing through the fixture. What is left is a hazard the source plainly
+  admits and nothing has yet been observed to hit.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderPipe.cs:176-221` (`Request`), `:186-193` (stale drain);

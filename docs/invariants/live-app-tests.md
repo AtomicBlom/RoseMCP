@@ -11,6 +11,14 @@ the class is what says the coverage is not there. Everything else in this half d
 ICorDebug session to one without complaint. Thirty-three debugger tests run there on that basis,
 eleven of which proved it by running for weeks after a file split dropped their category.
 
+**Nothing in that half is allowed to skip, and CI carries what it takes not to.** A runner has no
+x86 .NET runtime of its own, so `Attaches_to_an_x86_target` builds a host and a target that cannot
+start and reports the exit code -- which reads as a pass. The workflow installs one and points
+`DOTNET_ROOT_X86` at it instead, for half a minute a run. The rule that makes that worth doing is
+the one above: a skip is how a capability stops being tested while the build stays green, so the
+answer to one is a runtime, a toolchain or an exclusion that says out loud what is not covered --
+never a skip left in place. A new skip appearing in this job is a real gap, not weather.
+
 Do not apply the category by hand in either direction. `ProbeAppCategoryTests` decides from the
 constructor and fails both ways, because a probe-app test without it is a red build on a runner that
 could never have served it, and a debugger test wearing it is coverage nobody knows they have lost.

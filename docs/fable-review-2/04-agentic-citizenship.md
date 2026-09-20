@@ -606,13 +606,9 @@ answer. Every loss is about cost, reach or explanation.
 ## Pit-of-success inversions
 
 **1. ~~Compact has to be measured, not intended.~~** **Half done, PR #295.** `ResultBudgetTests`
-records what three shapes cost now: **512 bytes per outlined member** with both size controls off,
-**275 per reference** with previews off, and **1,895 for a whole write result** that introduces no
-diagnostic -- against this inversion's targets of 120 and 100. Measured marginally, the result with
-its items less the same result with none, so the number is a property of the shape rather than of
-whichever fixture was loaded. Tier 3 lowers the constants and the diff is the record of what the
-work bought. Splitting `SourceLocation` into a `DeclarationSite` and a `ListedSite` is the other
-half and is card 11's, which now has a number to move.
+holds the three shapes tier 3 shrinks, each ceiling carrying what it is about. Splitting
+`SourceLocation` into a `DeclarationSite` and a `ListedSite` is the other half, and is card 11's --
+which now has a number to move.
 
 **2. No CLR vocabulary reaches a caller.**
 *Rule today:* "convert at the MCP boundary, never at the throw site" (`CLAUDE.md`), which converts

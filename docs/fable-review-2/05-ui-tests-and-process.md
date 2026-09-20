@@ -369,17 +369,9 @@ inferring it. This is the cleanest boundary in the repository.
 
 ### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
 **Done, PR #295.** Kept and widened, which the finding said was the good half of the two
-possibilities. The category is renamed to `ProbeApp` so it names what it excludes -- a C++ toolset,
-the Windows App SDK, developer mode and a machine-wide registration -- and it comes off the two
-debugger classes and the one `OperatorApiTests` method, which drive an ordinary .NET child process.
-CI's debugger coverage goes from **11 tests to 33**. `ProbeAppCategoryTests` decides which half a
-class is in from the fixture its constructor takes and fails both ways, so the category stops being
-something to remember. The rule is written into `docs/invariants/live-app-tests.md`, and the counted
-sentence in the CI comment is replaced by the assertion, since a count in a comment is stale the
-next time a class is split.
-
-The accidental inclusion is the evidence the widening rests on rather than a prediction, and the
-first run of this pull request is what confirms it for the other 22.
+possibilities: the category is now `ProbeApp` and names the toolchain it excludes, and CI runs 33
+debugger tests rather than 11. `ProbeAppCategoryTests` decides which half a class is in from the
+fixture its constructor takes; the rule is in `docs/invariants/live-app-tests.md`.
 
 ### UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test
 - **Severity:** High
@@ -420,12 +412,9 @@ first run of this pull request is what confirms it for the other 22.
   then read. Then a dirty hand-back means residue and nothing else.
 
 ### UIP-17 Two-thirds of the integration suite tests the service layer, so the tool boundary's own invariants are spot-checked rather than enforced
-- **Half done, PR #295.** The attribution half is now structural rather than tested: the
-  forwarding path will not compile with a result the broker cannot attribute, and
-  `ToolResultShapeTests` enumerates the declared surface for the revision. That is stronger than the
-  reflective call-every-tool test this finding asked for, and it costs no solution load. What is not
-  done is the *runtime* half -- that a tool actually populates those fields against a real workspace
-  -- which still wants the shared fixture from UIP-13, and is asserted for three tools today.
+- **Half done, PR #295.** The attribution half is structural rather than tested: the forwarding path
+  will not compile with a result the broker cannot attribute. The runtime half -- that a tool
+  populates those fields against a real workspace -- still wants UIP-13's shared fixture.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** 20 of 40 integration classes call a `*Service.*Async` directly (`OutlineTests.cs:17`,
@@ -601,22 +590,11 @@ tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
   fact two files remember separately.
 
 ### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
-**Done, PR #295.** `tools/Check-Comments.ps1`, run by CI, against a per-file baseline in
-`tools/comment-baseline.tsv` that may only go down. The reasoning -- which phrases earn a rule and
-which do not -- is in the script's own header, where the next person to widen it will read it.
-
-**The finding's measurement was wrong, and that is the more useful half.** Three of the phrases it
-counted are not history clauses: `no longer` is 55 sites of which exactly one is history and the
-rest describe runtime state a reader needs (a target no longer running, a frame no longer selected);
-`lands in` is 12 sites of which none are, three of them matching inside "islands in"; `today` is 4
-sites, three of them the present-tense fact a comment is supposed to state. A rule that fires mostly
-on correct comments teaches people to write around the rule, so those three are documented as
-rejected rather than implemented. The real debt is **43 history clauses and 153 issue tags** across
-`src`, `tests`, the workflows and the build files. Of the 49 issues those tags name, 47 are closed,
-which is what makes them tags rather than the pointers to open work the convention allows; the one
-open issue a comment legitimately names is exempted in the script by number and reason, so closing
-it is what asks for the sentence to be rewritten. The two milestone numbers (`D14`, `D36`) are
-rewritten here; the rest is #171's work, which now has a number that cannot grow.
+**Done, PR #295.** `tools/Check-Comments.ps1` and a per-file baseline that may only go down, run by
+CI. **The measurement was wrong, and that is the more useful half:** three of the phrases this
+finding counted are not history clauses at all, and the script's header records each with the count
+behind it. The honest debt is 43 history clauses and 153 issue tags, naming 49 issues of which 47
+are closed — #171's work, which now has a number that cannot grow.
 
 ### UIP-24 Nothing formats or lints the C++ or the PowerShell
 - **Severity:** Low
@@ -637,11 +615,9 @@ rewritten here; the rest is #171's work, which now has a number that cannot grow
   either -- the tiers are a graph, and a graph is checkable.
 
 ### UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all
-- **The debugger third is done, PR #295.** Suggested change (2) -- "split the live-app suite by
-  what it actually needs, as `LiveAppInspectionTests` accidentally demonstrates" -- is what card 0a
-  did, and it moved 33 tests into CI rather than the third this finding estimated. What is left is
-  the XAML, C++ and UWP half, which is genuinely card 16's self-hosted runner, and the flake-rate
-  measurement `live-app-tests.md` asks for and nothing produces.
+- **The debugger third is done, PR #295.** Suggested change (2), splitting the suite by what it
+  needs, moved 33 tests into CI. What is left is the XAML, C++ and UWP half, which is card 16's
+  self-hosted runner, and the flake-rate measurement nothing produces.
 - **Severity:** High
 - **Effort:** L
 - **Where:** `.github/workflows/ci.yml:129-132,181` (category exclusion), `:238-264` (providers compile only)

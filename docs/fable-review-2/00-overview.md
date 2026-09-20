@@ -34,25 +34,20 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 9 | WRK-01 | #275, #276, #278 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
-**Tier 0 is done in full** (PR #295), so everything after it is guarded and measurable:
-`ResultBudgetTests` holds a ceiling for the three shapes tier 3 shrinks, `ProducedFactTests` holds
-the 26-entry exemption list that is cards 11c, 11e and 22's worklist, `tools/Check-Comments.ps1`
-holds a comment-debt baseline that can only go down, and the debugger suite tier 6 is built on runs
-in CI. Also three of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and
-five of the 27 High findings — **the debugger core and the write pipeline**, which were the two
+**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, three
+of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and five of the 27 High
+findings -- including **the debugger core and the write pipeline**, which were the two
 concentrations of duplication the review named.
 
 Next at the top: **card 1** (the relative path resolved against the broker) by a wide margin, then
 **card 4** (the XAML pipe, and #208 with it), then **card 8** for tier 2's editing work.
 
 Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
-would not), the layout half of **21** (PR #277 took the parties to the published layout from two to
-five), and card 0e's finding that three of the phrases the comment convention lists are not history
-clauses at all. Card 9 also found a wrong answer the review missed — four write tools reporting a
-project clean while the caller's errors sat in it.
+would not), the layout half of **21**, and card 0e's finding that three of the phrases the comment
+convention lists are not history clauses at all. Card 9 also found a wrong answer the review missed
+-- four write tools reporting a project clean while the caller's errors sat in it.
 
-Each closed finding is struck in its own file with what shipped, where the reasoning now lives, and
-where the card turned out wrong.
+Each closed finding is struck in its own file: the pull request, the problem, the state.
 
 ---
 
@@ -132,27 +127,16 @@ layout the test stages itself rather than the one the deploy script writes. Thos
 **About fifty inversions are proposed across the eight files**; the ones that had to come first were
 Tier 0, and are built (PR #295). The seven highest-leverage:
 
-1. ~~One `WriteOperation` pipeline type replacing six copied conventions, with the rewrite as the
-   only stage a service supplies (WRK-01).~~ **Built as `EditPipeline`, PRs #275 #276 #278** — with one
-   correction worth carrying to the rest: a line that states a **fact** (which compile ran) stays with
-   its tool; only a line that **frames** the compile is shared. One voice would have lost the fact.
+1. ~~Six copied write conventions replaced by one pipeline (WRK-01).~~ **#275, #276, #278.**
 2. **One compilation-backed symbol resolver** replacing two-and-a-half resolvers, so an address that
    resolves for one tool resolves for all (WRK-04, AGT-03).
 3. **A `RepositoryPath.From(raw, origin)` type**, so a relative path cannot be resolved without a
    base and the wrong-worktree write becomes unrepresentable (BRK-01, AGT-10).
-4. ~~A `TargetExecution` discriminated union replacing nine fields and five differently-spelled
-   guards, so a dead target cannot report as stopped (LIV-02).~~ **Built, PR #265** — the first of the
-   seven to land, and the worked example for the rest.
+4. ~~Nine fields and five spellings of "is the target stopped" replaced by one state (LIV-02).~~ **#265.**
 5. **One framed-message type for every pipe**, which deletes the tap's escaping asymmetry and half of
    its correlation problem at once (IPC-01, LIV-07, LIV-08).
-6. ~~A generic constraint plus a surface-enumerating test for attribution, replacing a runtime type
-   check (BRK-12).~~ **Built, PR #295** — and the constraint did more of the work than the test: an
-   unattributable result no longer compiles, which is what "a tool added later cannot forget it" has
-   to mean.
-7. ~~A test that fails when a UI-facing DTO gains a property no UI project reads, which is the
-   structural form of "the broker computes a dozen facts no window shows" (USE-01, USE-03).~~
-   **Built as `ProducedFactTests`, PR #295**, generalised to every fact worth computing per item:
-   19 properties no window names, and 4 facets no argument selects on.
+6. ~~Attribution by runtime type check, replaced by one the compiler enforces (BRK-12).~~ **#295.**
+7. ~~A fact computed for a window that no window names, caught by a test (USE-01, USE-03).~~ **#295.**
 
 ### 4. Are we a good citizen in agentic flows?
 
@@ -335,12 +319,12 @@ These produce confident wrong results today. Everything else is cost.
 |---|---|---|---|---|
 | 1 | **A relative path resolves against the broker, so a write lands in another worktree.** Rebase hints against the caller's origin before ranking; make it a type so it cannot recur. Make the broker-to-worker hop absolute-only so a mis-route fails loudly instead of writing to a plausible file. | BRK-01, AGT-10, BRK-20 | #214 | M |
 | 1b | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Falls out of card 1: once the hop is absolute-only the worker's working directory stops being load-bearing and can move somewhere inert. Cut with #157, since an evicted worker releases the directory too. | BRK-20 | #157 | S |
-| ~~2~~ | ~~A breakpoint hit is attributed by method token alone.~~ **Done, PR #270.** `BreakpointTable.Claim` matches on the IL offset — not the breakpoint object, which the card asked for and which ClrDebug's `ComWrappers` do not promise. | LIV-03 | — | — |
-| ~~3~~ | ~~A dead target reports as stopped.~~ **Done, PR #265.** `TargetExecution` + `StopRecord`. HOT-06's remaining half — the `Applying(ApplyRecord)` arm — is *not* done and belongs with tier 6 card 32, which is the first card that has an apply to have a state for. | LIV-02 | — | — |
+| ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
+| ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
 | 4 | **A timed-out XAML request still runs in the app** — reported failure, did the thing anyway. This is #208's real cause, and it is in the product, not the test. | UIP-15, LIV-07 | #208 | M |
 | 5 | **The tap's request side does not escape what its reply side unescapes.** A tab or newline in a property value mis-frames the edit and mis-keys its status, so an edit that landed reports as not applied. | IPC-01 | new | S |
 | 6 | **One compilation is asked about another's symbol**, leaking a Roslyn error naming an argument the caller never sent, from three tools. | WRK-06 | #121, #212 | S |
-| ~~7~~ | ~~The analyzer loader flattens every analyzer into one load context.~~ **Done, PR #269.** One `AssemblyLoadContext` per analyzer directory, `AnalyzerVersionIsolationTests`, and the rule written into `docs/invariants/analyzers-and-generators.md`. | WRK-08 | — | — |
+| ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory, and the rule is an invariant. | WRK-08 | — | — |
 
 ### Tier 2 — the three structural refactors
 
@@ -349,7 +333,7 @@ Each closes a class of bug rather than a bug, and each is a prerequisite for som
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Six open fidelity issues close as a consequence.** | WRK-02, WRK-03, WRK-19, AGT-17 | #195 #197 #199 #200 #217 #218 | M-L |
-| ~~9~~ | ~~Make the write pipeline a type.~~ **Done, PRs #275 #276 #278.** `EditPipeline`, all six services, `Listed` declared once. It was bigger than the card: **four tools were reporting a project clean while the caller's errors sat in it**, which the review did not find. **WRK-23 survives** — it is the *tool* layer and the pipeline is the *service* layer, so it needs a card of its own rather than falling out of this one. | WRK-01 | — | — |
+| ~~9~~ | **#275, #276, #278.** Six services each carried their own copy of the write conventions. One pipeline owns them. It was bigger than the card: four tools reported a project clean while the caller's errors sat in it, which the review did not find. | WRK-01 | — | — |
 | 9b | **Route every mutation tool through `RunAsync`.** Seven tools inline the same `WorkProgress.Split` / `sharedWork.Follow` / `SessionAsync` / `MutateAsync` preamble that `RunAsync` already wraps; add `ReadAsync` so the `Follow` handle cannot be forgotten on reads either. Was assumed to disappear with card 9 and did not. | WRK-23 | new | S |
 | 10 | **One compilation-backed symbol resolver.** Today two-and-a-half resolvers disagree, so positional record properties are unaddressable when the name is common, and a metadata symbol is unreachable if any source symbol shares its leaf name. Every DTO in `Contracts` is a positional record. | WRK-04, WRK-05, WRK-14, AGT-03 | #233 #210 #239 | M |
 

@@ -53,9 +53,9 @@
 - **Suggested change:** Make eviction the manager's job. On the `_alive` transition, the manager removes the session after one more `Describe` cycle (so a window sees `Ended` once), disposes the client, and records the eviction in `Activities`. For workers, the same shape answers #157: an idle timer per worker, eviction said in the activity log, and `rose_workspace_list` so a session can see what is warm. Test: attach to a child process, kill the child's host, assert the session leaves `Describe()` within a few ticks and the poll stops.
 
 ### ~~BRK-05 `WorkerLauncher` still has the stale-binary trap the other two launchers fixed~~
-**Done, PR #295.** One `RepositoryBuildOutput.Find` for all three launchers; the reasoning is in its
-own summary, and `RepositoryHostBuildTests` stages the Release-over-Debug case the worker had no
-protection from.
+**#295.** The worker was resolved by recency alone, so a Release publish left in bin answered for a
+Debug run -- the trap the other two launchers already avoided. One resolver carries the policy for
+all three.
 
 ### BRK-06 Three definitions of "the far side is gone", one by matching an assembly name string
 - **Severity:** Medium
@@ -106,10 +106,9 @@ protection from.
 - **Suggested change:** The host accepts a handle, `#name` or address wherever it takes an element, and roots and pages the tree for all three; the broker forwards. The parity exemption then disappears, which is the test telling you the leak is closed.
 
 ### ~~BRK-12 Attribution is by runtime type check with no compile-time constraint, and one tool returns nothing to attribute~~
-**Done, PR #295.** `CallAsync` and `Attribute` constrain their result to `WorkspaceScopedResult`, so
-an unattributable answer does not compile, and `ToolResultShapeTests` enumerates the surface for the
-revision. `rose_workspace_close` answers with a `WorkspaceClosed` record, which says in its own
-summary why it carries no revision.
+**#295.** Attribution was a runtime type check, so a tool answering with something unattributable
+said nothing about where the answer came from -- and one tool answered with a sentence naming no
+workspace. The compiler enforces it now, and the revision is enumerated over the surface.
 
 ### BRK-13 `MarkStopped` and `WorkerExitReason.SolutionUnloaded` are dead in the broker
 - **Severity:** Low

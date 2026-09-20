@@ -519,9 +519,9 @@ to add a side channel, and the pipe framing in `tap_channel.h` is already the de
   assert the value came back. Folds naturally into the one-message-type inversion below.
 
 ### ~~IPC-02 Nothing checks that a child process is the same build as its parent~~
-**Done, PR #295.** `ChildHostVersion.Mismatch` at both hops that launch a child, naming both
-versions and the path it was resolved from. Said, not refused; its own summary argues why, and the
-mismatch reaches the agent as a `Notice` rather than only the log.
+**#295.** Four hosts reported a version and nothing read one, so a child from a stale build answered
+as whatever it was and the mismatch surfaced as a missing field or an unknown tool. Both hops that
+launch a child compare it now, and say so rather than refusing.
 
 ### IPC-03 The tap pipe is reachable by every packaged app, and the greeting proves nothing
 - **Severity:** Medium

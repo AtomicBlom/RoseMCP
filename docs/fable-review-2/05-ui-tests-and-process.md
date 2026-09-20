@@ -368,10 +368,9 @@ inferring it. This is the cleanest boundary in the repository.
   largest single block.
 
 ### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
-**Done, PR #295.** Kept and widened, which the finding said was the good half of the two
-possibilities: the category is now `ProbeApp` and names the toolchain it excludes, and CI runs 33
-debugger tests rather than 11. `ProbeAppCategoryTests` decides which half a class is in from the
-fixture its constructor takes; the rule is in `docs/invariants/live-app-tests.md`.
+**#295.** Eleven debugger tests were running in CI that CI said it did not run, because the category
+that excludes them is applied by hand. Kept and widened -- the exclusion now names the toolchain it
+is about, a test decides which half a class is in, and CI runs 33 debugger tests rather than 11.
 
 ### UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test
 - **Severity:** High
@@ -412,9 +411,9 @@ fixture its constructor takes; the rule is in `docs/invariants/live-app-tests.md
   then read. Then a dirty hand-back means residue and nothing else.
 
 ### UIP-17 Two-thirds of the integration suite tests the service layer, so the tool boundary's own invariants are spot-checked rather than enforced
-- **Half done, PR #295.** The attribution half is structural rather than tested: the forwarding path
-  will not compile with a result the broker cannot attribute. The runtime half -- that a tool
-  populates those fields against a real workspace -- still wants UIP-13's shared fixture.
+- **Half done, #295.** Attribution is structural rather than tested: the forwarding path will not
+  compile with a result the broker cannot attribute. The runtime half -- that a tool populates those
+  fields against a real workspace -- still wants UIP-13's shared fixture.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** 20 of 40 integration classes call a `*Service.*Async` directly (`OutlineTests.cs:17`,
@@ -590,11 +589,10 @@ tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
   fact two files remember separately.
 
 ### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
-**Done, PR #295.** `tools/Check-Comments.ps1` and a per-file baseline that may only go down, run by
-CI. **The measurement was wrong, and that is the more useful half:** three of the phrases this
-finding counted are not history clauses at all, and the script's header records each with the count
-behind it. The honest debt is 43 history clauses and 153 issue tags, naming 49 issues of which 47
-are closed — #171's work, which now has a number that cannot grow.
+**#295.** The comment conventions bound every file and nothing checked them, so the debt only grew.
+CI checks them against a per-file baseline that may only go down. **The measurement was wrong, and
+that is the more useful half:** three of the phrases this finding counted are not history clauses at
+all, and paying the rest is #171's work.
 
 ### UIP-24 Nothing formats or lints the C++ or the PowerShell
 - **Severity:** Low
@@ -615,9 +613,8 @@ are closed — #171's work, which now has a number that cannot grow.
   either -- the tiers are a graph, and a graph is checkable.
 
 ### UIP-25 The newest third of the product -- debugger, tap, live edit -- has no CI coverage at all
-- **The debugger third is done, PR #295.** Suggested change (2), splitting the suite by what it
-  needs, moved 33 tests into CI. What is left is the XAML, C++ and UWP half, which is card 16's
-  self-hosted runner, and the flake-rate measurement nothing produces.
+- **The debugger third is done, #295**, by splitting the suite on what each test needs. What is left
+  is the XAML, C++ and UWP half -- card 16's self-hosted runner -- and the flake rate nothing measures.
 - **Severity:** High
 - **Effort:** L
 - **Where:** `.github/workflows/ci.yml:129-132,181` (category exclusion), `:238-264` (providers compile only)

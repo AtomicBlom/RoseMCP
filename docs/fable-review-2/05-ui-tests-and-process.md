@@ -372,8 +372,21 @@ inferring it. This is the cleanest boundary in the repository.
 that excludes them is applied by hand. Kept and widened -- the exclusion now names the toolchain it
 is about, a test decides which half a class is in, and CI runs 33 debugger tests rather than 11.
 
-### UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test
-- **Severity:** High
+### UIP-15 ~~Issue #208's flake is structural, and the structure is in the product, not the test~~ — wrong, and the product half is unproven
+- **Wrong, corrected by #300.** The flake was the test. `WaitForEventAsync` started from cursor 0, so
+  on a session shared by the class it matched a removal from *before* the pick and returned in 0.01s,
+  leaving every assertion beneath it to run against a selection the app had never touched. Measured:
+  waited 0.01s, matched event #30, already 1.32s old, at a pick taken when the newest event was #33;
+  and of 22 archived tap logs, 21 show the pick still present at both reads with the tree still
+  reporting the element. This finding read the issue's own hypothesis and agreed with it rather than
+  measuring, which is the lesson worth keeping.
+- **The product mechanism below is untouched and unproven.** A host-side latency bound with nothing
+  cancellable on the app's UI thread is still what the code does, so "a timed-out request still runs
+  in the app" remains a hazard visible in the source -- but its only evidence was #208, and that
+  evidence is gone. It is no longer a demonstrated wrong answer, and the High rating was for the
+  demonstration. Severity below is what it was, not what it is; re-rate it with new evidence or
+  decline it deliberately. LIV-07 carries the same mechanism with its own file-and-line evidence.
+- **Severity:** ~~High~~ — unproven, see above
 - **Effort:** M
 - **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderPipe.cs:176-253` (the host's bound), `src/RoseMcp.Xaml.Tap/tap_object.h:282` (`selecthandle` dispatched with `RoseTapRunOnUiThread`)
 - **What:** `XamlProviderPipe.Request` imposes a timeout on each step and returns `TimedOut(...)`. It

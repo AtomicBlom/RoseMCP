@@ -62,6 +62,9 @@ buffer, the phase-and-slot test scheduler. Four separate reviewers independently
 "strong" and its surrounding layer as the problem. No reviewer found a wrong *semantic* answer from
 the Roslyn half in a live exercise.
 
+**Amended:** #299 found one days later -- a body-only edit left every later diagnostics read served
+from cache -- so read that as "the review did not find one" rather than "there are none".
+
 What is missing is not care. It is **binding**: the rules that care produced live in prose, in
 conventions, and in data, rather than in types, registrations and tests. That single sentence
 explains most of the 150 findings, and the card list below is organised around it.
@@ -321,7 +324,7 @@ These produce confident wrong results today. Everything else is cost.
 | 1b | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Falls out of card 1: once the hop is absolute-only the worker's working directory stops being load-bearing and can move somewhere inert. Cut with #157, since an evicted worker releases the directory too. | BRK-20 | #157 | S |
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
-| 4 | **A timed-out XAML request still runs in the app** — reported failure, did the thing anyway. This is #208's real cause, and it is in the product, not the test. | UIP-15, LIV-07 | #208 | M |
+| 4 | **Re-cut before working it.** #300 found #208 was the test's wait, not the product, so this card lost the evidence both its findings rested on. What survives: a timed-out XAML request still runs in the app, and the pipe matches replies by position rather than identity -- visible in the source, never yet observed. Decide whether an unobserved hazard is worth M, or decline it deliberately. | UIP-15, LIV-07 | #208 | M |
 | 5 | **The tap's request side does not escape what its reply side unescapes.** A tab or newline in a property value mis-frames the edit and mis-keys its status, so an edit that landed reports as not applied. | IPC-01 | new | S |
 | 6 | **One compilation is asked about another's symbol**, leaking a Roslyn error naming an argument the caller never sent, from three tools. | WRK-06 | #121, #212 | S |
 | ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory, and the rule is an invariant. | WRK-08 | — | — |
@@ -349,6 +352,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
 | 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. | AGT-23, AGT-06, AGT-05 | #234 | M |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
+| 12b | **Three live-app tools answer with a bare sentence**, which is the defect card 0c fixed on `rose_workspace_close` surviving on the surface 0c's guard exempts. Give each a result record, and narrow the exemption so it excuses a live-app result from *workspace* attribution rather than from being a result. | BRK-21 | new | S |
 | 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. | AGT-04, WRK-07, AGT-05 | #121 #210 | M |
 | 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. | AGT-12, USE-01 | new | S |
 | 15 | **`rose_find_implementations` cannot be restricted to your own solution**, so a common framework interface returns 116 metadata matches truncated at 40. Also: a property's definition is listed three to four times. | IPC dogfooding, USE dogfooding, AGT-07 | new | S |

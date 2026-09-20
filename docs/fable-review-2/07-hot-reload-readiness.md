@@ -293,10 +293,11 @@ design is mostly about the seam.
   the reason -- which is a better error than anything a new code path would invent, because the text
   already explains the failure ("Build before running anything from it").
 - **Revision is the baseline identity, and it has to become per-project.** The session records the
-  `_revision` it pinned at; the barrier's snapshot carries the current one. Per-project, the right key
-  is `Project.GetDependentSemanticVersionAsync`, already used for the diagnostics cache
-  (`DiagnosticsService.cs:104`) -- unchanged means "no delta for this project", which is what keeps a
-  50-project solution from emitting 50 times per edit.
+  `_revision` it pinned at; the barrier's snapshot carries the current one. Per-project, keep a pair:
+  `Project.GetDependentSemanticVersionAsync` and the project's latest document version. **Corrected by
+  #299** -- the first alone does not move for a body-only change, which is the edit hot reload exists
+  to apply, so keying on it would skip emitting for exactly those. Unchanged in both means "no delta
+  for this project", which is what keeps a 50-project solution from emitting 50 times per edit.
 - **Emit is a read, and must stay off the pump.** `EmitDifference` over the barrier snapshot takes no
   writer; committing the advanced `EmitBaseline` does. That is WRK-10's `Prepare`/`Commit` shape
   arriving for a second reason, and it is the shape that makes "emit does not block every
@@ -453,13 +454,15 @@ The things a hot-reload epic must not refactor away.
   from the one my `EmitBaseline` came from" -- and the answer it can get today is "something in the
   solution changed".
 - **Why it matters:** Without it, an apply either emits for every project in the solution on every
-  call (a 50-project solution pays 50 `EmitDifference`s for a one-line edit) or guesses. The
-  diagnostics cache already solved this with `Project.GetDependentSemanticVersionAsync`, which is
-  Roslyn's own answer and is transitive over project references -- exactly the semantics EnC needs,
-  since a changed dependency changes what a dependent's delta must contain.
-- **Suggested change:** Record the per-project `VersionStamp` alongside the solution revision in the
-  session's baseline, and make the emit loop skip a project whose stamp is unchanged. Keep the
-  solution revision as the *result* attribution ("what I emitted against"), which is what the
+  call (a 50-project solution pays 50 `EmitDifference`s for a one-line edit) or guesses.
+  `Project.GetDependentSemanticVersionAsync` is Roslyn's own answer and is transitive over project
+  references, which is the half EnC needs for a changed dependency. **Corrected by #299:** it is not
+  sufficient on its own -- it does not move for a change confined to a method body, so a key built on
+  it alone would decide "no delta" for the edit hot reload most exists to apply. The diagnostics
+  cache had to pair it with the project's latest document version, and so does this.
+- **Suggested change:** Record the per-project stamps -- both of them, per #299 -- alongside the
+  solution revision in the session's baseline, and make the emit loop skip a project where neither
+  has moved. Keep the solution revision as the *result* attribution ("what I emitted against"), which is what the
   everywhere-rule about revisions already wants.
 
 ### HOT-04 `SymbolCache` models disk, so after the first apply every symbol answer describes the wrong build

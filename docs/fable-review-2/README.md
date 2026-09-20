@@ -26,12 +26,31 @@ Six thousand lines of review is a cost every future session pays to read. So a p
 closes a card **collapses what it closed**, in the same commit as the fix. The review is scaffolding,
 not a record: it should be smaller after every merge, and empty by the end.
 
-- **In [`00-overview.md`](00-overview.md)**, strike the card's row and leave one line: what shipped
-  and where. The card list is what a new session reads first, so it must say the state of the work
-  without anything else being opened.
-- **In the finding's own file**, replace the finding with two or three lines -- the claim, the commit
-  or pull request, and where the reasoning now lives. Delete the What, the Why it matters and the
-  Suggested change. They were arguments for doing the work, and the work is done.
+**What a closed entry keeps, and nothing else:**
+
+1. **The pull request it was resolved in.** That is the pointer to everything else. A reader who
+   wants the detail opens it; a reader who does not, should not have to skim past it.
+2. **One short sentence of the problem**, in the past tense it now deserves.
+3. **One short sentence of the current state**, as short as the size of the work allows.
+
+**Everything else is scrubbed** -- file names, type names, method names, measurements, test names,
+the shape of the fix, the order it was done in, what it turned out to cost. All of that is working,
+and working belongs in the code and in the pull request, both of which are maintained; a copy here
+is a second version of the truth that nothing updates. If a sentence cannot survive losing the type
+name in it, the sentence was describing the implementation rather than the state.
+
+- **In [`00-overview.md`](00-overview.md)**, strike the card's row and leave that one line. The card
+  list is what a new session reads first, so it must say the state of the work without anything else
+  being opened.
+- **In the finding's own file**, the same, and delete the What, the Why it matters and the Suggested
+  change. They were arguments for doing the work, and the work is done.
+- **Delete the scaffolding that argued for the work too**, not only the finding: a section whose job
+  was to justify a card, a rule for deciding what went in a tier, a note explaining why something was
+  sequenced where it was. An argument for work that is finished has no reader.
+- **Where a closed card leaves something for an open one, it goes in the open card's row**, not in
+  the closed one's. A card that has not been done is live working and may name whatever it needs to;
+  a card that has been done is a record and may not. Keeping the pointer on the closed entry is how
+  a struck row grows back.
 - **Move the reasoning before deleting it.** A finding usually contains the "why this and not that"
   that belongs in a comment beside the code or in `docs/decisions/`, which is where this repository
   keeps such things permanently. Migrating it is part of closing the card, not a follow-up. A

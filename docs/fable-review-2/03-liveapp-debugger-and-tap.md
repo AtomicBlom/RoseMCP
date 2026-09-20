@@ -527,9 +527,8 @@ The reasoning is on `BreakpointTable.Claim`.
 
 ## Pit-of-success inversions
 
-1. ~~Rule today: "every guard checks `_stoppedAtBreakpoint`, `_process`, `_detached`, `_exited` in the
-   right combination".~~ **Built** (LIV-02, PR #265): `TargetExecution` with a `StopRecord` arm; every
-   read is a pattern match, and `Exited` cannot be forgotten because its arm has no stop to return.
+1. ~~Five differently-spelled guards over nine fields, each checking for the right combination.~~
+   **#265** (LIV-02): one state, read by pattern match, whose exited arm has no stop to return.
 2. **Rule today:** "a callback handler returns false to hold and true to continue; on exception,
    continue". **Mechanism:** `Record` returns `CallbackOutcome { Continue, Hold }` and the catch arm has
    to construct one, so the silent-continue path is a visible choice with a `SessionNotice` beside it.
@@ -567,9 +566,8 @@ The reasoning is on `BreakpointTable.Claim`.
    `RemoveBreakpoint` on the held breakpoint known safe because `Continue` fixes the thread up and only
    `Detach` does not? A sentence reconciling the two would stop the next reader "fixing" one of them.
 2. ~~Is the reliance on mscordbi treating `Stop` on a synchronised process as a stop-count increment
-   deliberate?~~ **Answered in PR #265**: `TargetSymbols.Walk` now states the contract where it is
-   relied on. The open half is whether `BindAgainstLoadedModules`' `Stop(0)` under `_gate` has ever been
-   seen to block. (LIV-05)
+   deliberate?~~ **Answered, #265**: the contract is stated where it is relied on. The open half is
+   whether one caller's `Stop(0)` under the gate has ever been seen to block. (LIV-05)
 3. Has a WinUI 3 brush or margin live edit ever been observed to land? (LIV-09)
 4. For #208, was the host log of a failing run checked for a `selecthandle` that timed out, as the issue
    proposes? If so the LIV-07 mechanism is confirmed rather than inferred.
@@ -577,9 +575,9 @@ The reasoning is on `BreakpointTable.Claim`.
 6. Were `SetDesiredNGENCompilerFlags` / `SetJITCompilerFlags(CORDEBUG_JIT_DISABLE_OPTIMIZATION)` left out
    deliberately? `DebugProbeTarget` compensates with `MethodImplOptions.NoOptimization` (`Program.cs:62-64`),
    which suggests optimised frames lose locals in real targets too.
-7. ~~Is the `Ended` + `StoppedAtBreakpoint` pairing something the inspector has ever shown?~~ **Moot**:
-   the pairing is no longer expressible (LIV-02, PR #265). `LiveAppSessionState` and `LiveExecutionState`
-   remain orthogonal by design (`LiveExecutionState.cs:4-6`).
+7. ~~Is the `Ended` + `StoppedAtBreakpoint` pairing something the inspector has ever shown?~~
+   **Moot, #265**: the pairing is no longer expressible (LIV-02). Session state and execution state
+   remain orthogonal by design.
 
 ## Hot-reload relevant facts
 

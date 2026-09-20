@@ -8,7 +8,7 @@ namespace RoseMcp.Contracts;
 /// provider is not built for this architecture, or injection failed -- so the caller gets a reason
 /// rather than an exception.
 /// </summary>
-public sealed record LiveXamlTree
+public sealed record LiveXamlTree : LiveResult
 {
 	public IReadOnlyList<LiveXamlNode> Nodes { get; init; } = [];
 

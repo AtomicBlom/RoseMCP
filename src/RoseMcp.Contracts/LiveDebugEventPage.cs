@@ -11,7 +11,7 @@ namespace RoseMcp.Contracts;
 /// says how many.
 /// </para>
 /// </summary>
-public sealed record LiveDebugEventPage
+public sealed record LiveDebugEventPage : LiveResult
 {
 	/// <summary>The session's state now, so a reader learns of a fault or exit in the same call.</summary>
 	public required LiveAppSessionState State { get; init; }

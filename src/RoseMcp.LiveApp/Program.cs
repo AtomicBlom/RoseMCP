@@ -49,6 +49,7 @@ internal static class Program
 			})
 			.WithStdioServerTransport()
 			.WithToolsFromAssembly()
+			.WithRequestFilters(filters => filters.AddCallToolFilter(CursorStamp.Filter))
 			.WithToolErrorMessages();
 
 		await builder.Build().RunAsync();

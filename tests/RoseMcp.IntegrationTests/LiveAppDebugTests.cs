@@ -137,18 +137,27 @@ public sealed class LiveAppDebugTests
 				fromTheStart.Notices,
 				notice => notice.Contains("returned without waiting", StringComparison.Ordinal));
 
-			// And a cursor that means "since I acted" is told nothing, because nothing is wrong: the
-			// target beats in a loop, so this one is answered by a hit that had not happened when it
-			// was asked for. A notice on every correct call is a notice nobody reads.
-			var sinceNow = await session.ReadEventsAsync(
-				await CursorNowAsync(session, cancellationToken),
+			// Every answer says where the stream stood when it was produced, which is how a caller
+			// comes by a cursor without going to ask for one. It is at or past the paging cursor,
+			// which stops at the end of the page rather than at the end of the stream.
+			Assert.True(
+				fromTheStart.Cursor >= fromTheStart.NextCursor && fromTheStart.Cursor > 0,
+				$"the answer should carry the stream's position ({fromTheStart.Cursor}) at or past the "
+					+ $"page's ({fromTheStart.NextCursor})");
+
+			// And a wait from that position is told nothing, because nothing is wrong: the target
+			// beats in a loop, so this one is answered by a hit that had not happened when the answer
+			// it started from was written. A notice on every correct call is a notice nobody reads.
+			var sinceThen = await session.ReadEventsAsync(
+				fromTheStart.Cursor,
 				["BreakpointHit"],
 				limit: 500,
 				waitSeconds: 30,
 				cancellationToken);
 
-			Assert.NotEmpty(sinceNow.Events);
-			Assert.Empty(sinceNow.Notices);
+			Assert.NotEmpty(sinceThen.Events);
+			Assert.Empty(sinceThen.Notices);
+			Assert.DoesNotContain(sinceThen.Events, entry => entry.Sequence <= fromTheStart.Cursor);
 
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.
 			var nonsense = await Assert.ThrowsAsync<InvalidOperationException>(

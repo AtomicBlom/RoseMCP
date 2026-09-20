@@ -74,11 +74,12 @@ internal static class ProbeTargetSession
 	/// <param name="match">What is being waited for.</param>
 	/// <param name="cancellationToken">The calling test's token.</param>
 	/// <param name="startCursor">
-	/// Where in the stream to start. Zero is everything the session ever recorded, which is what a test
-	/// that started its own session and is asking "did this happen" wants. A test asking "did this
-	/// happen because of what I just did" passes <see cref="CursorNowAsync"/> taken before it acted, or
-	/// it matches an event from before the test began, returns having waited for nothing, and then
-	/// asserts about a state the app has not reached yet.
+	/// Where in the stream to start. Zero is everything the session ever recorded, which is what a test that
+	/// started its own session and is asking "did this happen" wants. A test asking "did this happen because
+	/// of what I just did" passes the <see cref="RoseMcp.Contracts.LiveResult.Cursor"/> off the answer that
+	/// did it, since every live-app answer carries where the stream stood when it was written. Waiting from
+	/// zero on a shared session matches an event from before the test began, returns having waited for
+	/// nothing, and asserts about a state the app has not reached yet.
 	/// </param>
 	internal static async Task<LiveDebugEvent?> WaitForEventAsync(
 		LiveAppSession session,
@@ -101,23 +102,6 @@ internal static class ProbeTargetSession
 
 		return null;
 	}
-
-	/// <summary>
-	/// The newest sequence this session has recorded, to wait from.
-	/// <para>
-	/// A test waiting for the event its own action caused has to say where "now" is before it acts.
-	/// The probe apps announce their ticks and their own state changes on a loop, and a shared
-	/// session outlives every test in its class, so <see cref="WaitForEventAsync"/> from the default
-	/// cursor answers "has this ever happened" -- which for anything the app does on a loop is yes
-	/// before the test begins, and the wait returns without having waited for anything.
-	/// </para>
-	/// </summary>
-	/// <remarks>
-	/// Reading past the end is how the number is asked for: the page comes back empty and carries the
-	/// count of everything observed, which is the sequence of the newest event there is.
-	/// </remarks>
-	internal static async Task<long> CursorNowAsync(LiveAppSession session, CancellationToken cancellationToken)
-		=> (await session.ReadEventsAsync(long.MaxValue - 1, cancellationToken)).TotalObserved;
 
 	internal static Process StartProcess(string path)
 	{

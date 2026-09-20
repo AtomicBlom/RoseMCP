@@ -403,6 +403,13 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>
+	/// Where this session's event stream stands now, which is what every answer leaving this host is
+	/// stamped with. Zero before anything has been recorded, which is also what a caller means by
+	/// "since the session started".
+	/// </summary>
+	public long EventCursor => _events.Newest()?.Sequence ?? 0;
+
+	/// <summary>
 	/// Detaches the debugger while the host is still alive, leaving the target running. The broker
 	/// calls this before it closes the host's stdin: an ICorDebug debuggee whose debugger simply dies
 	/// is taken down by the operating system, so the detach must complete first.

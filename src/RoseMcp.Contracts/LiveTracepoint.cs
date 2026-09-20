@@ -6,7 +6,7 @@ namespace RoseMcp.Contracts;
 /// breakpoint would. Each hit appears in the debug event stream as a
 /// <see cref="LiveDebugEventKind.BreakpointHit"/> event.
 /// </summary>
-public sealed record LiveTracepoint
+public sealed record LiveTracepoint : LiveResult
 {
 	/// <summary>The id the session assigned; pass it back to remove the tracepoint.</summary>
 	public required string Id { get; init; }

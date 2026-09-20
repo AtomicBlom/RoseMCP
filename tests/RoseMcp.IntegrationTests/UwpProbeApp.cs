@@ -542,7 +542,9 @@ public sealed class UwpProbeApp : IAsyncDisposable
 			Assert.False(
 				left.Selected,
 				$"this test left {left.Name ?? left.Address ?? "an element"} selected. A phase B test holds the "
-					+ "whole app, so it has to hand it back unselected.");
+					+ "whole app, so it has to hand it back unselected. This check runs in the turn's disposal, "
+					+ "so read the test's own last assertion first: a failure there leaves the app exactly like "
+					+ "this, and the message you are reading has replaced it.");
 
 			Assert.False(
 				left.Armed,

@@ -129,7 +129,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 
 	/// <summary>
 	/// Waits until an event past <paramref name="after"/> matching <paramref name="kinds"/> exists, or
-	/// until <paramref name="timeout"/>. Returns true if one arrived.
+	/// until <paramref name="timeout"/>, and says which of the three ways that ended.
 	/// <para>
 	/// This is what "notified without polling" means for a turn-based agent (#8). A client that is not
 	/// listening between its turns cannot receive a pushed notification, so the useful shape is one
@@ -143,8 +143,13 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 	/// has less of that window left to evaluate anything in, and one that learns of it on a poll
 	/// boundary can miss the window entirely.
 	/// </para>
+	/// <para>
+	/// <see cref="DebugEventWait.AlreadyBuffered"/> is told apart from <see cref="DebugEventWait.Arrived"/>
+	/// because a caller waiting for what its own action caused has been answered out of history, and
+	/// the answer looks identical either way.
+	/// </para>
 	/// </summary>
-	public async Task<bool> WaitForAsync(
+	public async Task<DebugEventWait> WaitForAsync(
 		long after,
 		IReadOnlyCollection<LiveDebugEventKind>? kinds,
 		TimeSpan timeout,
@@ -156,7 +161,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 			// Already there, so do not wait at all. Checked under the same gate that Append takes, or
 			// an event landing between the check and the registration would be missed and the caller
 			// would wait out the whole timeout for something that had already happened.
-			if (HasMatch(after, kinds)) return true;
+			if (HasMatch(after, kinds)) return DebugEventWait.AlreadyBuffered;
 
 			waiter = new Waiter(after, kinds, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
 			_waiters.Add(waiter);
@@ -177,7 +182,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 			// than a slow one.
 			lock (_gate)
 			{
-				return HasMatch(after, kinds);
+				return HasMatch(after, kinds) ? DebugEventWait.Arrived : DebugEventWait.TimedOut;
 			}
 		}
 		finally

@@ -10,7 +10,7 @@ namespace RoseMcp.Contracts;
 /// about the target and costs it nothing.
 /// </para>
 /// </summary>
-public sealed record LiveMethodSource
+public sealed record LiveMethodSource : LiveResult
 {
 	/// <summary>The method as asked for, in the <c>Assembly!Namespace.Type.Method</c> spelling.</summary>
 	public required string Location { get; init; }

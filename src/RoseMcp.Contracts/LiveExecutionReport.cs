@@ -17,7 +17,7 @@ namespace RoseMcp.Contracts;
 /// view that never existed, and <see cref="LiveStop.EventSequence"/> is what makes that detectable.
 /// </para>
 /// </summary>
-public abstract record LiveExecutionReport
+public abstract record LiveExecutionReport : LiveResult
 {
 	/// <summary>Whether the target is running or held, as of the moment this was read.</summary>
 	public required LiveExecutionState Execution { get; init; }

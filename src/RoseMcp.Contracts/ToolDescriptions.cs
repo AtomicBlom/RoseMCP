@@ -334,7 +334,8 @@ public static class ToolDescriptions
 	public const string AppUserModelIdArgument = "The app user-model id, e.g. MyApp_1a2b3c4d5e6f7!App.";
 
 	public const string AfterSequenceArgument =
-		"Return only events whose sequence is greater than this; 0 for everything buffered.";
+		"Return only events past this cursor -- every answer carries the one it was written at. 0 is "
+			+ "everything buffered.";
 
 	public const string MaxEventsArgument =
 		"Maximum events in this page (default 500). Lower it when you only need to see whether something "

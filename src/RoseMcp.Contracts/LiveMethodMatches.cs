@@ -7,7 +7,7 @@ namespace RoseMcp.Contracts;
 /// and costs it no interruption. That is what makes it usable as an autocomplete at all.
 /// </para>
 /// </summary>
-public sealed record LiveMethodMatches
+public sealed record LiveMethodMatches : LiveResult
 {
 	/// <summary>The query as asked, so an answer arriving after the text moved on can be discarded.</summary>
 	public required string Query { get; init; }

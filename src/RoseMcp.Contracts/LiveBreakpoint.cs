@@ -5,7 +5,7 @@ namespace RoseMcp.Contracts;
 /// can inspect it, then resumes when told to continue -- or on its own after a safety timeout, so an
 /// unattended stop cannot wedge the app. Its non-pausing sibling is the <see cref="LiveTracepoint"/>.
 /// </summary>
-public sealed record LiveBreakpoint
+public sealed record LiveBreakpoint : LiveResult
 {
 	/// <summary>The id the session assigned; pass it back to remove the breakpoint.</summary>
 	public required string Id { get; init; }

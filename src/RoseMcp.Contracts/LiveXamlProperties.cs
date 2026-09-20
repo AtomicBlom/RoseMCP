@@ -16,7 +16,7 @@ namespace RoseMcp.Contracts;
 /// read of an element is the accurate one, and it is our own read that spoils it.
 /// </para>
 /// </summary>
-public sealed record LiveXamlProperties
+public sealed record LiveXamlProperties : LiveResult
 {
 	public required ulong Handle { get; init; }
 

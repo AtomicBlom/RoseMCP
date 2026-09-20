@@ -192,11 +192,15 @@ public static class NameResolver
 			{
 				if (!wanted(symbol) || symbol.IsImplicitlyDeclared) continue;
 
+				// The accessibility question can only be put to this compilation about a symbol it
+				// holds, and the search answers with whichever compilation declared one.
+				if (CompilationSymbols.AsSeenBy(compilation, symbol, cancellationToken) is not { } here) continue;
+
 				// Asked of the compilation rather than of DeclaredAccessibility, so an internal type
 				// reached through InternalsVisibleTo counts and one that is merely internal does not.
-				if (!compilation.IsSymbolAccessibleWithin(symbol, compilation.Assembly)) continue;
+				if (!compilation.IsSymbolAccessibleWithin(here, compilation.Assembly)) continue;
 
-				if (seen.Add(SymbolSignature.Of(symbol))) kept.Add(symbol);
+				if (seen.Add(SymbolSignature.Of(here))) kept.Add(here);
 			}
 		}
 

@@ -330,13 +330,19 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		int waitSeconds,
 		CancellationToken cancellationToken)
 	{
-		if (waitSeconds > 0)
-		{
-			var bounded = Math.Min(waitSeconds, MaxWaitSeconds);
-			await _events.WaitForAsync(after, kinds, TimeSpan.FromSeconds(bounded), cancellationToken);
-		}
+		if (waitSeconds <= 0) return ReadEvents(after, kinds, limit);
 
-		return ReadEvents(after, kinds, limit);
+		var bounded = Math.Min(waitSeconds, MaxWaitSeconds);
+		var wait = await _events.WaitForAsync(after, kinds, TimeSpan.FromSeconds(bounded), cancellationToken);
+		var page = ReadEvents(after, kinds, limit);
+
+		// A wait from the start of the stream that never waited was answered out of history, and the
+		// page it produced is indistinguishable from one that waited for something new. Said here
+		// rather than in the tool's description, because a caller paging correctly pays nothing for a
+		// caveat that does not apply to it, and the caller who needs it is reading this answer.
+		var answeredFromHistory = after == 0 && wait == DebugEventWait.AlreadyBuffered;
+
+		return answeredFromHistory ? page with { Notices = [AnsweredFromHistory] } : page;
 	}
 
 	/// <summary>
@@ -357,6 +363,21 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	/// </para>
 	/// </summary>
 	private const int MaxWaitSeconds = 60;
+
+	/// <summary>
+	/// What a wait from the start of the stream is told when it was answered without waiting.
+	/// <para>
+	/// A page of events looks the same whether the wait produced it or history did, so nothing in the
+	/// answer distinguishes "your breakpoint hit" from "your breakpoint hit at some point before you
+	/// asked". The cursor is what separates them, and this is the one call where getting it wrong is
+	/// invisible rather than merely wrong.
+	/// </para>
+	/// </summary>
+	private const string AnsweredFromHistory =
+		"This wait returned without waiting: 'after' was 0 and a matching event was already buffered, "
+			+ "so it answered out of this session's history rather than with anything new. A wait asks "
+			+ "whether anything exists past the cursor -- so to wait for what your own action causes, read "
+			+ "once before you act and pass that read's nextCursor as 'after'.";
 
 	/// <summary>
 	/// A page of buffered debug events after the given cursor, with the session's state. <paramref

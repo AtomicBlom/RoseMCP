@@ -126,6 +126,30 @@ public sealed class LiveAppDebugTests
 			// cursor, so nothing already returned can come back whether the two were equal or not.
 			Assert.DoesNotContain(nextPage.Events, entry => entry.Sequence <= lastRead);
 
+			// A wait asks the same question a read does -- is there anything past this cursor -- so a
+			// wait from the start of the stream is answered by the hits already buffered above, at once
+			// and out of history. Nothing in the page shows that, so the page says it: an agent that
+			// acts and then waits for the result of its action is otherwise handed the past and told
+			// it is the present.
+			var fromTheStart = await session.ReadEventsAsync(0, ["BreakpointHit"], limit: 500, waitSeconds: 5, cancellationToken);
+			Assert.NotEmpty(fromTheStart.Events);
+			Assert.Contains(
+				fromTheStart.Notices,
+				notice => notice.Contains("returned without waiting", StringComparison.Ordinal));
+
+			// And a cursor that means "since I acted" is told nothing, because nothing is wrong: the
+			// target beats in a loop, so this one is answered by a hit that had not happened when it
+			// was asked for. A notice on every correct call is a notice nobody reads.
+			var sinceNow = await session.ReadEventsAsync(
+				await CursorNowAsync(session, cancellationToken),
+				["BreakpointHit"],
+				limit: 500,
+				waitSeconds: 30,
+				cancellationToken);
+
+			Assert.NotEmpty(sinceNow.Events);
+			Assert.Empty(sinceNow.Notices);
+
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.
 			var nonsense = await Assert.ThrowsAsync<InvalidOperationException>(
 				() => session.ReadEventsAsync(0, ["NotAKind"], limit: 500, cancellationToken));

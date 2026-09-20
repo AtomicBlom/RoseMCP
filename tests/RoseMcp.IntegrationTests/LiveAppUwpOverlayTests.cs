@@ -305,12 +305,21 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 			Assert.True(selected.Selected, $"expected to select Transient; got: {selected.Detail}");
 			Assert.Equal("Transient", selected.Name);
 
+			// Where the stream is now, taken before the app is given a chance to act, so the removal
+			// waited for below is the one that takes this pick away. The app announces a removal every
+			// five seconds whether anything is selected or not, and this session is shared by every
+			// test in the class, so a wait from the start of the stream matches a removal from before
+			// the pick, returns without waiting, and leaves every assertion under it running against a
+			// selection the app has not touched.
+			var since = await CursorNowAsync(session, cancellationToken);
+
 			// Now wait for the app to take it away. The exception is the only channel out of the app.
 			var removed = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseUwpTransientRemovedException") ?? false),
-				cancellationToken);
+				cancellationToken,
+				startCursor: since);
 			Assert.NotNull(removed);
 
 			// The provider clears on the removal callback, which arrives on the app's UI thread as the

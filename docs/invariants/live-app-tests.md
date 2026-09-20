@@ -50,3 +50,18 @@ again:
 after 120 seconds, which was ample when a live-app test had the machine to itself and became wrong
 the moment they shared it -- the tests that end by asserting their target is still running failed on
 it having correctly done what it was told. It is ten minutes now.
+
+A sixth, from the same family and found the same way: **a wait for an event starts from a cursor
+taken before the action, never from the beginning of the stream.** `WaitForEventAsync` defaults to
+zero, which reads everything the session ever recorded, and the probe apps announce their ticks and
+their own state changes on a loop -- so for anything the app does repeatedly the wait matches
+something from before the test began, returns in a hundredth of a second having waited for nothing,
+and leaves every assertion under it running against a state the app has not reached. `CursorNowAsync`
+is what "now" is called; pass it as `startCursor` whenever the event being waited for is one the test
+caused rather than one it is merely asking about.
+
+This is the third costume of "passes alone, fails in company", and the cheapest to wear by accident,
+because the margin is one turn of whatever loop the app is running. A session fresh enough to hold no
+such event yet makes the wait real and the test pass; the same session five seconds older holds one,
+and the test reads the app before it has done anything. Nothing about the test changes in between,
+which is what makes it read as a flake rather than as the ordering bug it is.

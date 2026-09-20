@@ -167,6 +167,38 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # A hosted runner carries no x86 runtime, and one test needs one: Attaches_to_an_x86_target
+      # builds an x86 debug host and an x86 target, both framework-dependent, so without it the
+      # target exits before anything can attach and the test skips. A skip reads as a pass, which is
+      # the reason the probe-app half is excluded by category rather than left to skip, so the last
+      # skip in this job is worth half a minute to remove. x86 is not a legacy case here: it is the
+      # default platform of the modern UWP template, so it is what an ordinary new app is built as.
+      #
+      # DOTNET_ROOT_X86 rather than installing where the official x86 installer would, because it is
+      # documented as the first thing an x86 apphost consults, it needs no administrator, and it does
+      # not rest on a guess about the default probe path. Nothing but an x86 apphost reads it, so the
+      # x64 toolchain this job otherwise runs on is untouched.
+      - name: Install the x86 .NET runtime
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'dotnet-x86'
+          $installer = Join-Path $env:RUNNER_TEMP 'dotnet-install.ps1'
+
+          Invoke-WebRequest -UseBasicParsing 'https://dot.net/v1/dotnet-install.ps1' -OutFile $installer
+          & $installer -Architecture x86 -Runtime dotnet -Channel 10.0 -InstallDir $installDir
+
+          # Asserted rather than assumed: an install that quietly produced nothing would put the test
+          # back to skipping, which is the thing this step exists to stop, and it would say so
+          # nowhere. Running it is the check, because a dotnet.exe of the wrong architecture is on
+          # disk exactly like a right one.
+          $x86Dotnet = Join-Path $installDir 'dotnet.exe'
+          if (-not (Test-Path $x86Dotnet)) { throw "No dotnet.exe under $installDir after the install." }
+
+          & $x86Dotnet --list-runtimes
+          if ($LASTEXITCODE -ne 0) { throw "The x86 runtime in $installDir does not run." }
+
+          "DOTNET_ROOT_X86=$installDir" >> $env:GITHUB_ENV
+
       - name: Cache NuGet packages
         uses: actions/cache@v6
         with:

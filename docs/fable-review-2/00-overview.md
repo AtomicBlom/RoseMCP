@@ -34,18 +34,16 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 9 | WRK-01 | #275, #276, #278 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
-**Tier 0 is done in full**, which is what the tier existed for: everything after it is guarded and
-measurable. Three of the seven wrong-answer cards in tier 1, one of the three structural refactors in
-tier 2, and five of the 27 High findings. **The debugger core and the write pipeline are both done**,
-which were the two concentrations of duplication the review named. What is left at the top:
-**card 1** (the relative path that resolves against the broker) is now first by a wide margin,
-**card 4** (the XAML pipe, and #208 with it) is next in tier 1, and **card 8** (the text/syntax line)
-is the whole of tier 2's editing work.
+**Tier 0 is done in full** (PR #295), so everything after it is guarded and measurable:
+`ResultBudgetTests` holds a ceiling for the three shapes tier 3 shrinks, `ProducedFactTests` holds
+the 26-entry exemption list that is cards 11c, 11e and 22's worklist, `tools/Check-Comments.ps1`
+holds a comment-debt baseline that can only go down, and the debugger suite tier 6 is built on runs
+in CI. Also three of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and
+five of the 27 High findings — **the debugger core and the write pipeline**, which were the two
+concentrations of duplication the review named.
 
-What tier 0 left behind for the cards that follow it: a result-size number for each of the three
-shapes tier 3 shrinks, a 26-entry exemption list that is cards 11c, 11e and 22's worklist, a
-comment-debt baseline that can only go down, and 33 debugger tests in CI rather than 11 — which is
-the suite tier 6 is built on.
+Next at the top: **card 1** (the relative path resolved against the broker) by a wide margin, then
+**card 4** (the XAML pipe, and #208 with it), then **card 8** for tier 2's editing work.
 
 Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
 would not), the layout half of **21** (PR #277 took the parties to the published layout from two to
@@ -131,8 +129,8 @@ What is still an arrangement nobody checks: the stdout rule, the one that corrup
 no guard of its own; the tap's tier rule is prose; and the published layout is asserted against a
 layout the test stages itself rather than the one the deploy script writes. Those three are card 21.
 
-**About fifty inversions are proposed across the eight files**, and Tier 0 in the card list says which
-of them to build before anything else. The seven highest-leverage:
+**About fifty inversions are proposed across the eight files**; the ones that had to come first were
+Tier 0, and are built (PR #295). The seven highest-leverage:
 
 1. ~~One `WriteOperation` pipeline type replacing six copied conventions, with the rewrite as the
    only stage a service supplies (WRK-01).~~ **Built as `EditPipeline`, PRs #275 #276 #278** — with one
@@ -315,72 +313,19 @@ and three-quarters of them need no separate card, because they fall into three r
   alternative, so there is nothing extra to schedule -- only a note in the card that the mechanism,
   not the fix, is the deliverable.
 - **The inversion is a guard that must land *before* its cards**, because the cards are exactly the
-  work it protects. These are cheap, ungated and few. They are Tier 0 below.
+  work it protects. These are cheap, ungated and few. They were Tier 0, and are done (PR #295).
 - **The inversion only exists once its card does.** One framed message type for every pipe needs the
   pipe work; notice discipline needs somewhere to live (card 9). These follow and should be written
   into the card that creates the home, not tracked separately.
 
-The test of which bucket an inversion is in: *would building it now catch a mistake in work that is
-about to happen?* If yes it is Tier 0; if it only pays after the refactor, it rides with the
-refactor.
+### ~~The pattern four reviewers found separately: computed, returned, never consumed~~
 
-### The pattern four reviewers found separately: computed, returned, never consumed
-
-Worth naming because it turned up in four subsystems, found by four people who were not looking for
-the same thing, and because the fix is the same shape every time.
-
-| Fact | Computed and emitted | Never |
-|---|---|---|
-| `WorkspaceKey` | On every result; its summary says it is "fit for a caller to quote back" and cites the six-worktree case | Accepted as an argument anywhere (AGT-21) |
-| `HostVersion` | Set by all four hosts as their `ServerInfo.Version` | Read on any internal hop, while the launcher picks the newest binary in `bin` (IPC-02) |
-| `InfoAge`, `InstallLocation`, `Notice`, `ProjectStatus`, `AnalyzerLoadFailures` | By the broker, each with a docstring arguing why a reader needs it | Rendered by any window (USE-01, USE-03) |
-| `ContainingMember`, `IsTestProject`, `GeneratedHintName` | On every reference, with `ContainingMember`'s docstring naming "the question a caller actually had" | Offered as a filter or a grouping (AGT-06, AGT-23) |
-
-Each is the same failure: the expensive half was done, the cheap half was not, and nothing fails when
-the two drift apart because a producer with no consumer breaks nothing.
-
-**The inversion, stated once for all four:** a fact worth computing per item is a fact worth
-selecting on, quoting back, or showing. So the guard is a test that a fact and its consumer exist
-together -- the `WorkspaceSummary` property that no UI project names, the `ToolNames` constant no
-tool declares, the `SourceLocation` facet no argument filters on. The repository already runs
-exactly this test for the tool surface, four times over, which is why those four rules have never
-drifted.
-
-**Where this sits in the tier list.** The four instances are carded separately and land in three
-different tiers, because each is its own bug: the version handshake at 0d, the workspace-key anchor
-at 11c, the reference facets at 11e, the window facts at 22. The *pattern* has one card of its own,
-**0f**, and it is in Tier 0 for a specific reason: seeded with those four as exemptions it passes on
-the day it is written, so it is a guard rather than a red test, and it catches a fifth instance
-appearing during tier 3 and tier 5 -- which is precisely when result records are reshaped and new
-fields are added. Each instance card then deletes its exemption, so the list is the worklist and an
-empty list is the definition of done.
-
-
-### ~~Tier 0~~ — done, PR #295
-
-Six small mechanisms, all six shipped in one pull request. Two came out different from the card:
-**0c** turned into a compile-time constraint rather than a test, which is strictly stronger, and
-**0d** fixed its producer-without-consumer instance instead of exempting it, so 0f ships with three
-of the four known cases rather than four.
-
-Three of the six also amended the finding that asked for them. The comment grep found that three of
-the phrases the convention lists fire mostly on correct comments. The result budget found the write
-figure is 1,895 rather than 4,000 for an edit that introduces no diagnostic. The CI split found the
-debugger half is 33 tests rather than the third of 55 the finding estimated.
-
-| # | Card | Why it goes first | Findings | Effort |
-|---|---|---|---|---|
-| ~~0a~~ | ~~Keep the debugger's CI coverage, and widen it deliberately.~~ **Done, PR #295.** Kept and widened: the category is renamed `ProbeApp` so it names the toolchain it excludes, and comes off the two debugger classes and the one `OperatorApiTests` method that drive a plain .NET child process. CI's debugger coverage goes **11 → 33 tests**, including both regression tests for cards 2 and 3. `ProbeAppCategoryTests` decides which half a class is in from the fixture its constructor takes and fails both ways; the rule is in `docs/invariants/live-app-tests.md`. | UIP-14, UIP-25 | — |
-| ~~0b~~ | ~~A result-size budget test.~~ **Done, PR #295**, as `ResultBudgetTests`. The three shapes tier 3 moves, measured against `tests/fixtures/Members` in four seconds: **512 bytes per outlined member** with both size controls off, **275 per reference** with previews off, **1,895 for a write result** that introduces no diagnostic — the floor, where AGT-21 measured about 4,000 for one that did. Marginal rather than amortised, so the number belongs to the shape and not to the fixture. Not every tool, which needs card 18's shared fixture; these are the ones the cards touch. | AGT-01, AGT-21, inversion 1 of file 04 | — |
-| ~~0c~~ | ~~A surface-enumerating test for `revision` and `workspace`.~~ **Done, PR #295.** It came out stronger than a test: `CallAsync` constrains its result to `WorkspaceScopedResult`, so an unattributable answer does not compile, and `ToolResultShapeTests` enumerates the declared surface for the revision and asserts the constraint itself. `rose_workspace_close` gained a `WorkspaceClosed` result, having answered with a sentence naming no workspace. UIP-17's runtime half still wants card 18's shared fixture. | BRK-12, UIP-17 | — |
-| ~~0d~~ | ~~A host-version handshake.~~ **Done, PR #295.** `ChildHostVersion.Mismatch` at both hops that launch a child, naming both versions and the path it was resolved from; said rather than refused, and surfaced as a `Notice` so it reaches the agent and not only the log. The resolution half came with it: one `RepositoryBuildOutput.Find` for all three launchers, so the worker stops picking the newest binary in `bin` regardless of configuration. This is the fourth producer-without-consumer instance, and it is fixed rather than exempted in card 0f. | IPC-02, BRK-05 | — |
-| ~~0e~~ | ~~The CI comment grep.~~ **Done, PR #295.** `tools/Check-Comments.ps1` and a per-file baseline that may only go down, run by CI. Three of the phrases the finding counted turned out not to be history at all, so the script documents them as rejected rather than implementing them; the honest debt is 43 history clauses and 153 issue tags, naming 49 issues of which 47 are closed. | UIP-23 | — |
-| ~~0f~~ | ~~A producer-with-no-consumer test, seeded with the four known cases.~~ **Done, PR #295**, as `ProducedFactTests`: a facet of an answer must be an argument name somewhere on the surface, and a fact computed for a window must be named by one. Green on day one with **26 seeded exemptions**, each carrying the card that deletes it -- 3 for card 11e, 1 for 11c, 18 for card 22, and 4 that are not defects (a line and column are the position being reported, not dimensions of it). The fourth instance is *not* exempted: card 0d fixes it in the same pull request, and its guard sits in `HostVersionTests` because a reader is not a property on a record. | USE inversion 1, IPC-02, AGT-21, AGT-23 | — |
-
-One thing Tier 0 deliberately does not include: **card 9, one write pipeline, is the highest-leverage
-inversion in the review and it is not cheap.** It stays in tier 2 where its effort puts it. But every
-card in tier 3 that touches a write result should be read with card 9 in mind, because eight
-hand-written notice iterators are why those results disagree with each other.
+Four subsystems computed a fact carrying a docstring that argued why a reader needs it, and consumed
+it nowhere; four reviewers found it without looking for the same thing. **Closed as a pattern,
+PR #295.** `ProducedFactTests` is the guard and its summary carries the reasoning, its exemption
+list is the worklist, and an empty list is the definition of done. The four instances: `HostVersion`
+fixed by card 0d, the workspace-key anchor at 11c, the reference facets at 11e, the window facts
+at 22.
 
 ### Tier 1 — wrong answers and wrong side effects
 

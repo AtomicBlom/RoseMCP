@@ -53,12 +53,9 @@
 - **Suggested change:** Make eviction the manager's job. On the `_alive` transition, the manager removes the session after one more `Describe` cycle (so a window sees `Ended` once), disposes the client, and records the eviction in `Activities`. For workers, the same shape answers #157: an idle timer per worker, eviction said in the activity log, and `rose_workspace_list` so a session can see what is warm. Test: attach to a child process, kill the child's host, assert the session leaves `Describe()` within a few ticks and the poll stops.
 
 ### ~~BRK-05 `WorkerLauncher` still has the stale-binary trap the other two launchers fixed~~
-**Done, PR #295.** One `RepositoryBuildOutput.Find`, used by all three launchers, carrying
-configuration-then-architecture-then-recency once; the two duplicate `ConfigurationOf` copies and
-the worker's recency-only search are gone. `RepositoryHostBuildTests` now stages a Release worker
-against a Debug broker, which is the case the worker had no protection from and which every Roslyn
-test drives. The reasoning is in `RepositoryBuildOutput`'s own summary, where the comments the two
-launchers carried separately are now stated once.
+**Done, PR #295.** One `RepositoryBuildOutput.Find` for all three launchers; the reasoning is in its
+own summary, and `RepositoryHostBuildTests` stages the Release-over-Debug case the worker had no
+protection from.
 
 ### BRK-06 Three definitions of "the far side is gone", one by matching an assembly name string
 - **Severity:** Medium
@@ -109,13 +106,10 @@ launchers carried separately are now stated once.
 - **Suggested change:** The host accepts a handle, `#name` or address wherever it takes an element, and roots and pages the tree for all three; the broker forwards. The parity exemption then disappears, which is the test telling you the leak is closed.
 
 ### ~~BRK-12 Attribution is by runtime type check with no compile-time constraint, and one tool returns nothing to attribute~~
-**Done, PR #295.** `WorkspaceManager.CallAsync` and `Attribute` now constrain their result to
-`WorkspaceScopedResult`, so a tool answering with anything else fails to build rather than answering
-unattributed; the run-time `is not` check is gone because the compiler has already made it true.
-`rose_workspace_close` answers with a new `WorkspaceClosed` record carrying the workspace, the key
-and whether one was open. The enumerating guard is `ToolResultShapeTests`, which also asserts the
-constraint itself, since a constraint is one word and deleting it breaks nothing that runs. The
-reasoning for the close result's missing revision is in `WorkspaceClosed`'s own summary.
+**Done, PR #295.** `CallAsync` and `Attribute` constrain their result to `WorkspaceScopedResult`, so
+an unattributable answer does not compile, and `ToolResultShapeTests` enumerates the surface for the
+revision. `rose_workspace_close` answers with a `WorkspaceClosed` record, which says in its own
+summary why it carries no revision.
 
 ### BRK-13 `MarkStopped` and `WorkerExitReason.SolutionUnloaded` are dead in the broker
 - **Severity:** Low

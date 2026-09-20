@@ -71,3 +71,19 @@ again:
 after 120 seconds, which was ample when a live-app test had the machine to itself and became wrong
 the moment they shared it -- the tests that end by asserting their target is still running failed on
 it having correctly done what it was told. It is ten minutes now.
+
+A sixth, from the same family and found the same way: **a wait starts from a cursor that means
+"before I acted", and the answer to the call that acted is where that cursor comes from.** Every
+live-app answer carries one, so `WaitForEventAsync` takes `startCursor: selected.Cursor` off the
+select it is waiting on the consequences of -- never the default of zero, which is everything the
+session ever recorded. The probe apps announce their ticks and their own state changes on a loop and
+a shared session outlives every test in its class, so waiting from zero matches something from before
+the test began, returns in a hundredth of a second having waited for nothing, and leaves every
+assertion under it running against a state the app has not reached. The rule and the reasoning behind
+it are in [an action hands back the event cursor](../decisions/an-action-hands-back-the-event-cursor.md).
+
+This is the third costume of "passes alone, fails in company", and the cheapest to wear by accident,
+because the margin is one turn of whatever loop the app is running. A session fresh enough to hold no
+such event yet makes the wait real and the test pass; the same session five seconds older holds one,
+and the test reads the app before it has done anything. Nothing about the test changes in between,
+which is what makes it read as a flake rather than as the ordering bug it is.

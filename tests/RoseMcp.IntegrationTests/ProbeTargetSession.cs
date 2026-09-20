@@ -70,6 +70,17 @@ internal static class ProbeTargetSession
 	/// timeout, which every caller asserts on rather than being thrown at, so the failure names the
 	/// event that never arrived.
 	/// </summary>
+	/// <param name="session">The session whose stream to read.</param>
+	/// <param name="match">What is being waited for.</param>
+	/// <param name="cancellationToken">The calling test's token.</param>
+	/// <param name="startCursor">
+	/// Where in the stream to start. Zero is everything the session ever recorded, which is what a test that
+	/// started its own session and is asking "did this happen" wants. A test asking "did this happen because
+	/// of what I just did" passes the <see cref="RoseMcp.Contracts.LiveResult.Cursor"/> off the answer that
+	/// did it, since every live-app answer carries where the stream stood when it was written. Waiting from
+	/// zero on a shared session matches an event from before the test began, returns having waited for
+	/// nothing, and asserts about a state the app has not reached yet.
+	/// </param>
 	internal static async Task<LiveDebugEvent?> WaitForEventAsync(
 		LiveAppSession session,
 		Func<LiveDebugEvent, bool> match,

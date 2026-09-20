@@ -5,7 +5,7 @@ namespace RoseMcp.Contracts;
 /// the way it asks a worker for <see cref="WorkerInfo"/>, so it learns the host's process id and the
 /// architecture it launched as without waiting on any real work.
 /// </summary>
-public sealed record LiveAppInfo
+public sealed record LiveAppInfo : LiveResult
 {
 	/// <summary>The host process's own id (not the target's).</summary>
 	public required int HostProcessId { get; init; }

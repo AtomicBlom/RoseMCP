@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 
 using Microsoft.Extensions.Logging;
 
@@ -59,7 +60,9 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 
 		if (!succeeded) logger.LogWarning("dotnet restore failed with exit code {ExitCode}.", exitCode);
 
-		var unrestored = StillUnrestored(stale);
+		// Every project, not the stale ones alone. What restore did is now on disk, and a project that
+		// looked fresh can still hold a cache recording its own failure inside a run that exited 0.
+		var unrestored = StillUnrestored(projectPaths);
 
 		if (succeeded && unrestored.Count > 0)
 		{
@@ -67,7 +70,7 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 				"dotnet restore succeeded but left {Count} of {Total} project(s) with no restore output, "
 					+ "starting with '{First}'.",
 				unrestored.Count,
-				stale.Length,
+				projectPaths.Count,
 				unrestored[0]);
 		}
 
@@ -82,21 +85,66 @@ public sealed class RestoreRunner(ILogger<RestoreRunner> logger)
 	}
 
 	/// <summary>
-	/// Which of these projects has no up-to-date restore output, by file name.
+	/// Which of these projects has no usable restore output, by file name.
 	/// <para>
-	/// The same question <see cref="NeedsRestore"/> answers before restore, asked again afterwards,
-	/// and that second asking is the entire check. A restore that exits 0 has not necessarily
-	/// restored anything: <c>dotnet restore</c> passes silently over projects it does not understand,
-	/// so a solution of non-SDK projects comes back succeeded with not one assets file written, and
-	/// every load after it resolves package references to nothing while calling itself healthy.
+	/// Deliberately not <see cref="NeedsRestore"/> asked a second time. That one compares timestamps,
+	/// which is the right question to ask <em>before</em> restore -- being too eager there costs a
+	/// no-op restore and nothing else. It is the wrong question afterwards, because NuGet decides
+	/// freshness by the hash in <c>project.nuget.cache</c> rather than by modification time. Touch
+	/// <c>global.json</c>, or edit a csproj without changing a package reference, and restore compares
+	/// hashes, prints "All projects are up-to-date for restore", exits 0 and rewrites nothing -- so a
+	/// timestamp check asked again returns exactly what it returned before, and a healthy solution
+	/// reports every project unrestored while naming non-SDK projects as the cause.
 	/// </para>
 	/// <para>
-	/// It costs a directory probe per project, which is what the check before restore already costs,
-	/// and it runs once per load.
+	/// What actually distinguishes the case worth reporting is that <c>dotnet restore</c> passes
+	/// silently over projects it does not understand and writes them no assets file at all. So the
+	/// postcondition is the existence of restore output, plus the cache beside it not recording a
+	/// failure for that one project inside a solution restore that exited 0.
 	/// </para>
 	/// </summary>
 	private static IReadOnlyList<string> StillUnrestored(IEnumerable<string> projectPaths) =>
-		[.. projectPaths.Where(NeedsRestore).Select(Path.GetFileName).OfType<string>()];
+		[.. projectPaths.Where(HasNoRestoreOutput).Select(Path.GetFileName).OfType<string>()];
+
+	/// <summary>
+	/// Whether this project came out of restore with nothing usable: no assets file anywhere one
+	/// could be, or an assets file whose cache records that project's own restore failing.
+	/// <para>
+	/// Public so a test can stage a directory layout and prove this reads disk the way it says. The
+	/// degraded state turns on this answer, and it is reached only through a filesystem probe.
+	/// </para>
+	/// </summary>
+	public static bool HasNoRestoreOutput(string projectPath) =>
+		AssetsFiles(projectPath) is not { Length: > 0 } assets || assets.All(RestoreRecordedFailure);
+
+	/// <summary>
+	/// Whether the cache beside an assets file records that project's own restore failing. A solution
+	/// restore exits 0 when one project inside it fails, and <c>project.nuget.cache</c> is where the
+	/// project that failed says so.
+	/// <para>
+	/// A cache that is absent, unreadable or not the shape expected counts as no failure. The assets
+	/// file is already evidence that restore produced something for this project, and a probe that
+	/// cannot read one file must not be the thing that declares a whole workspace degraded.
+	/// </para>
+	/// </summary>
+	private static bool RestoreRecordedFailure(string assetsPath)
+	{
+		var cache = Path.Combine(Path.GetDirectoryName(assetsPath) ?? ".", "project.nuget.cache");
+		if (!File.Exists(cache)) return false;
+
+		try
+		{
+			using var document = JsonDocument.Parse(File.ReadAllBytes(cache));
+
+			return document.RootElement.ValueKind == JsonValueKind.Object
+				&& document.RootElement.TryGetProperty("success", out var success)
+				&& success.ValueKind == JsonValueKind.False;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+		{
+			return false;
+		}
+	}
 
 	/// <summary>
 	/// Restore output is stale when the assets file is missing or older than any input that feeds

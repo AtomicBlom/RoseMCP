@@ -11,7 +11,7 @@ namespace RoseMcp.Contracts;
 /// says how many.
 /// </para>
 /// </summary>
-public sealed record LiveDebugEventPage
+public sealed record LiveDebugEventPage : LiveResult
 {
 	/// <summary>The session's state now, so a reader learns of a fault or exit in the same call.</summary>
 	public required LiveAppSessionState State { get; init; }
@@ -46,4 +46,11 @@ public sealed record LiveDebugEventPage
 	/// is here so a small page is not mistaken for a quiet target -- the cursor has moved past these.
 	/// </summary>
 	public int Skipped { get; init; }
+
+	/// <summary>
+	/// What could make this page read as more than it is. Empty on almost every call: the case worth
+	/// saying is a wait answered out of history rather than by something new, and saying it here costs
+	/// nothing on the calls that do not need it.
+	/// </summary>
+	public IReadOnlyList<string> Notices { get; init; } = [];
 }

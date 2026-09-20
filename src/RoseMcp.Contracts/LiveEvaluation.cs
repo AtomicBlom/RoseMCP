@@ -7,7 +7,7 @@ namespace RoseMcp.Contracts;
 /// target the way a method-call evaluation could. <see cref="Error"/> is set (and the value fields
 /// null) when the target is not stopped, the root name is not in the frame, or a field does not exist.
 /// </summary>
-public sealed record LiveEvaluation
+public sealed record LiveEvaluation : LiveResult
 {
 	public required string Expression { get; init; }
 

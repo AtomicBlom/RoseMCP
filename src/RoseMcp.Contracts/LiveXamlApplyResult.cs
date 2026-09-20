@@ -7,7 +7,7 @@ namespace RoseMcp.Contracts;
 /// engine could not do (an unmatched element, say). <see cref="Detail"/> is set, with no results, when
 /// the apply could not run at all -- the XAML would not parse, or the provider could not be injected.
 /// </summary>
-public sealed record LiveXamlApplyResult
+public sealed record LiveXamlApplyResult : LiveResult
 {
 	public int Applied { get; init; }
 

@@ -8,7 +8,7 @@ namespace RoseMcp.Contracts;
 /// and live-edit tools take it directly -- that is what turns "the thing I clicked" into something
 /// the agent can read and change.
 /// </summary>
-public sealed record LiveXamlSelection
+public sealed record LiveXamlSelection : LiveResult
 {
 	public bool Selected { get; init; }
 

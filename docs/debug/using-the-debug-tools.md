@@ -134,6 +134,10 @@ chain -- comes back as `<path: reason>` in both places rather than as a gap, so 
 reads as the value having been empty. A message whose braces do not balance, or whose placeholder is
 not a path, is refused when the tracepoint is added rather than logged verbatim on every hit.
 
+A logged string is cut to the same 200 characters everything else is, and says so the same way with
+`fullLength`. A tracepoint is for watching something happen many times, so it has no way to raise
+that: to read one value whole, stop on it and evaluate with `maxLength`.
+
 ## Limits worth knowing
 
 - Line-granular stepping and local names need a PDB; without one a step lands at the runtime's own
@@ -145,7 +149,19 @@ not a path, is refused when the tracepoint is added rather than logged verbatim 
   corrupt the target, and is left to an external debugger.
 - An object with no primitive value of its own logs as `{TypeName}`, for the same reason: naming it
   is a metadata read, and rendering it would be a call into the target.
-- A string value is capped at 200 characters, with an ellipsis, wherever one is read.
+- **A string value is cut to 200 characters wherever one is read**, so that a frame with twenty
+  locals is not a transfer of the target's heap. When it is cut, the value carries `fullLength`
+  saying how long it really is -- the trailing ellipsis cannot say so on its own, since a string is
+  allowed to end in one. To read one whole, evaluate it with `maxLength`:
+
+  ```
+  rose_debug_evaluate  sessionId: …  expression: url  maxLength: 4096
+  ```
+
+  up to 65536 characters. There is a ceiling because the answer goes into a model's context whole;
+  a value past it still reports its `fullLength`, so what is missing is never a guess. The whole
+  string is read off the target either way -- the cap is on what is reported, not on what is
+  fetched -- so asking for more is the same read, not a second trip.
 - Conditions are cheap value-compares (`name OP literal`) over the stopped frame, not full
   expressions -- a condition takes a bare name where a log message takes a path.
 - **The first read of an element's properties is the accurate one.** Reading the property chain

@@ -686,4 +686,90 @@ public sealed class LiveAppDebugTests
 			if (!child.HasExited) child.Kill(entireProcessTree: true);
 		}
 	}
+
+	/// <summary>
+	/// A string longer than the default cap says so, and can be read whole by asking for more.
+	/// <para>
+	/// The cap keeps one frame's twenty locals from being a transfer of the target's heap, and the
+	/// trailing ellipsis cannot announce itself -- a string is allowed to end in one. So a caller
+	/// forwarding a URL somewhere had no way to know it was forwarding a fragment, and no way to
+	/// get the rest: the value has no children to expand into, and reading past it would need a
+	/// method call, which nothing here will run.
+	/// </para>
+	/// <para>
+	/// Both halves are asserted on one stop, because either alone leaves the hole. Knowing a value
+	/// was cut without being able to read it is a better error and not a fix, and reading it whole
+	/// without being told when it was cut means asking for the maximum every time on the chance.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_long_string_says_how_long_it_is_and_can_be_read_whole()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var breakpoint = await session.SetBreakpointAsync(
+				"DebugProbeTarget.Program.Inspect", autoContinueSeconds: 120, condition: null, cancellationToken);
+			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken,
+				breakpoint.Cursor);
+
+			Assert.NotNull(stop);
+
+			// The default answer is the head of the value and its true length, so a caller can see
+			// both that it has a fragment and exactly how much it is missing.
+			var capped = await session.EvaluateAsync("state.LongUrl", cancellationToken);
+			Assert.Null(capped.Error);
+			Assert.Equal("string", capped.TypeName);
+			Assert.NotNull(capped.FullLength);
+			Assert.True(capped.FullLength > 400, $"the probe's URL should be past the cap; it is {capped.FullLength}");
+			Assert.EndsWith("…\"", capped.Value!, StringComparison.Ordinal);
+			Assert.DoesNotContain("end=TAIL", capped.Value!, StringComparison.Ordinal);
+
+			// Asking for more returns the whole value, and says so by no longer reporting a length.
+			var whole = await session.EvaluateAsync("state.LongUrl", maxLength: 4096, cancellationToken);
+			Assert.Null(whole.Error);
+			Assert.Null(whole.FullLength);
+			Assert.EndsWith("end=TAIL\"", whole.Value!, StringComparison.Ordinal);
+			Assert.Equal(capped.FullLength + 2, whole.Value!.Length); // the two quotes around it
+
+			// A ceiling above the value is not a second cap: what comes back is the value, not the
+			// ceiling's worth of it.
+			var ample = await session.EvaluateAsync("state.LongUrl", maxLength: 1_000_000, cancellationToken);
+			Assert.Null(ample.FullLength);
+			Assert.Equal(whole.Value, ample.Value);
+
+			// And a frame's variables carry the same signal, since that is where a caller meets the
+			// value first -- the evaluation is only where it goes to read more.
+			var frame = await session.ReadFrameVariablesAsync(0, null, cancellationToken);
+			var argument = frame.Variables.First(variable => variable.Name == "state");
+			Assert.Null(argument.FullLength); // an object is not cut short; only its strings are
+
+			var expanded = await session.ExpandValueAsync(argument.Path, 0, null, cancellationToken);
+			var url = expanded.Children.First(child => child.Name == "LongUrl");
+			Assert.Equal(capped.FullLength, url.FullLength);
+
+			// A short string is not reported as cut, which is what keeps the field meaning something.
+			var label = expanded.Children.First(child => child.Name == "Label");
+			Assert.Null(label.FullLength);
+
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+			Assert.True(await session.ContinueAsync(cancellationToken));
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited, "the target runs on after reading a long value");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
 }

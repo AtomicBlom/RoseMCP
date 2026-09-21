@@ -394,6 +394,16 @@ public static class ToolDescriptions
 	public const string EvaluateExpressionArgument =
 		"A field-access expression, e.g. this.field or state.Inner.Count.";
 
+	/// <summary>
+	/// The way out of the 200-character cap. Said as a number with a unit and a ceiling, because the
+	/// caller reaching for it is holding a value it can see the start of and needs to know both that
+	/// more is available and how much it may ask for.
+	/// </summary>
+	public const string EvaluateMaxLengthArgument =
+		"How many characters of a string value to return; 200 by default, up to 65536. Raise it to "
+			+ "read a URL, a request body or a connection string whole. fullLength on the answer says "
+			+ "how long the value is when what came back is only its start.";
+
 	public const string FrameThreadIdArgument =
 		"The thread to read, or omitted for the one the debugger is holding. rose_live_app_threads lists them.";
 

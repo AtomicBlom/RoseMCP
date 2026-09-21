@@ -344,9 +344,16 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	/// <summary>Evaluates a field-access expression against the stopped frame; runs no debuggee code.</summary>
 	public Task<LiveEvaluation> EvaluateAsync(string expression, CancellationToken cancellationToken)
+		=> EvaluateAsync(expression, maxLength: null, cancellationToken);
+
+	/// <summary>
+	/// Evaluates an expression, reading up to <paramref name="maxLength"/> characters of a string
+	/// value rather than the short default a frame's worth of variables is capped at.
+	/// </summary>
+	public Task<LiveEvaluation> EvaluateAsync(string expression, int? maxLength, CancellationToken cancellationToken)
 		=> SendAsync<LiveEvaluation>(
 			ToolNames.LiveAppEvaluate,
-			new Dictionary<string, object?> { ["expression"] = expression },
+			new Dictionary<string, object?> { ["expression"] = expression, ["maxLength"] = maxLength },
 			cancellationToken);
 
 	/// <summary>A page of a stopped thread's call stack, with file and line where symbols allow.</summary>

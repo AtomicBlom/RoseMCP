@@ -8,11 +8,12 @@ namespace RoseMcp.Contracts;
 /// </summary>
 public readonly record struct LogValue
 {
-	private LogValue(string? value, string? typeName, string? error)
+	private LogValue(string? value, string? typeName, string? error, int? fullLength)
 	{
 		Value = value;
 		TypeName = typeName;
 		Error = error;
+		FullLength = fullLength;
 	}
 
 	/// <summary>The rendered value, when it resolved.</summary>
@@ -24,11 +25,15 @@ public readonly record struct LogValue
 	/// <summary>Why it did not resolve, when it did not.</summary>
 	public string? Error { get; }
 
+	/// <summary>How long the value really is, when only the start of it was rendered.</summary>
+	public int? FullLength { get; }
+
 	/// <summary>A value that resolved. A reader that produced no text at all reports as unreadable.</summary>
-	public static LogValue Read(string? value, string? typeName) => new(value ?? "(unreadable)", typeName, null);
+	public static LogValue Read(string? value, string? typeName, int? fullLength = null)
+		=> new(value ?? "(unreadable)", typeName, null, fullLength);
 
 	/// <summary>A value that did not resolve, and what stopped it.</summary>
-	public static LogValue Unavailable(string reason) => new(null, null, reason);
+	public static LogValue Unavailable(string reason) => new(null, null, reason, null);
 }
 
 /// <summary>One piece of a log message: literal text, or a value to interpolate.</summary>
@@ -209,6 +214,7 @@ public sealed record LogMessageTemplate
 				Value = text,
 				Path = expression,
 				HasChildren = false,
+				FullLength = value.FullLength,
 			});
 		}
 

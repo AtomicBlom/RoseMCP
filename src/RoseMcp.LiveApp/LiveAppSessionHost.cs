@@ -230,11 +230,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>Evaluates a field-access expression against the stopped frame; safe, no debuggee code runs.</summary>
-	public LiveEvaluation Evaluate(string expression)
+	public LiveEvaluation Evaluate(string expression, int? maxLength = null)
 	{
 		var session = Attached();
 
-		return session?.Inspection.Evaluate(expression)
+		return session?.Inspection.Evaluate(expression, maxLength)
 			?? new LiveEvaluation { Expression = expression, Error = "This session is not attached to a target." };
 	}
 

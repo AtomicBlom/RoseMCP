@@ -457,14 +457,16 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 			+ "getters and method calls are deliberately not evaluated. Only valid while stopped. "
 			+ "Arguments and locals go by the names the breakpoint's recorded frame reports: the names "
 			+ "the source declares where the module has symbols beside it, and local_0, local_1 in slot "
-			+ "order where it has none. Returns the value and its type, or why it did not resolve.")]
+			+ "order where it has none. Returns the value and its type, or why it did not resolve. A "
+			+ "string is cut short unless maxLength says otherwise, and fullLength says when it was.")]
 	public async Task<LiveEvaluation> EvaluateAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression,
+		[Description(ToolDescriptions.EvaluateMaxLengthArgument)] int? maxLength = null,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.EvaluateAsync(expression, cancellationToken);
+		return await session.EvaluateAsync(expression, maxLength, cancellationToken);
 	}
 
 	[McpServerTool(

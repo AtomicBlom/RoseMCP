@@ -42,4 +42,17 @@ public sealed record LiveVariable
 	/// something behind it, without a read per row.
 	/// </summary>
 	public required bool HasChildren { get; init; }
+
+	/// <summary>
+	/// How long the value really is, in characters, when <see cref="Value"/> holds only the start of
+	/// it. Null means what is shown is the whole thing.
+	/// <para>
+	/// A string is cut to keep one frame's worth of locals from being a transfer of the target's
+	/// heap, and the trailing ellipsis cannot say so on its own -- a string is allowed to end in
+	/// one. Without this, a 431-character URL and a 200-character one that happens to end in an
+	/// ellipsis are the same answer, and a caller forwarding the value has no way to know it is
+	/// forwarding a fragment. <c>rose_debug_evaluate</c> takes a <c>maxLength</c> to read more.
+	/// </para>
+	/// </summary>
+	public int? FullLength { get; init; }
 }

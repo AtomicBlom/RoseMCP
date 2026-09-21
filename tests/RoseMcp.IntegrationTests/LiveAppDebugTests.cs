@@ -559,4 +559,131 @@ public sealed class LiveAppDebugTests
 			if (!child.HasExited) child.Kill(entireProcessTree: true);
 		}
 	}
+
+	/// <summary>
+	/// A tracepoint's message interpolates the frame it fired on: an argument by name, a field chain
+	/// into an object, and a local named from the module's PDB. It is the whole point of a tracepoint
+	/// -- a hit with no values says only that the code ran, which is the one thing a caller who set a
+	/// tracepoint on a method already knew.
+	/// <para>
+	/// Against the probe's <c>Inspect</c>, because it is the method with all three in it and the
+	/// object graph its argument carries is the case a bare name cannot reach. The target never
+	/// stops, which is what separates this from an evaluation: the values are read on the callback
+	/// the hit arrived on, with the target held only for as long as that takes.
+	/// </para>
+	/// <para>
+	/// The values are asserted on the event's own fields as well as in its message, because that is
+	/// what a client truncating a long page leaves a caller with -- the sentence goes and the fields
+	/// can still be read, one event at a time.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_tracepoint_message_interpolates_the_frame_it_fired_on()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+
+			// count reads a field of the argument, inner walks one level into the object that field
+			// holds, and mark indexes an array -- the three shapes a path has, in one message.
+			var tracepoint = await session.AddTracepointAsync(
+				"DebugProbeTarget.Program.Inspect",
+				"count={state.Count} inner={state.Inner.Count} mark={state.Marks[1]} missing={nope}",
+				logEveryNthHit: null,
+				condition: null,
+				cancellationToken);
+
+			Assert.True(tracepoint.Bound, $"tracepoint should bind; detail: {tracepoint.Detail}");
+
+			var hit = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit,
+				cancellationToken,
+				tracepoint.Cursor);
+
+			Assert.NotNull(hit);
+
+			// count is whatever iteration this hit was; inner and mark are fixed by the probe, so
+			// they pin the field chain and the index rather than merely showing digits appeared.
+			Assert.DoesNotContain("{state.Count}", hit!.Message, StringComparison.Ordinal);
+			Assert.Matches(@"count=\d+ inner=-1 mark=8 ", hit.Message);
+
+			// A name the frame does not have keeps its place and says why, because a hit that
+			// silently dropped it would read as the value having been empty.
+			Assert.Contains("missing=<nope:", hit.Message, StringComparison.Ordinal);
+
+			Assert.NotNull(hit.Logged);
+			Assert.Equal(
+				new[] { "state.Count", "state.Inner.Count", "state.Marks[1]", "nope" },
+				hit.Logged!.Select(value => value.Name).ToArray());
+
+			var inner = hit.Logged.Single(value => value.Name == "state.Inner.Count");
+			Assert.Equal("-1", inner.Value);
+			Assert.Equal("int", inner.TypeName);
+
+			// The one that could not be read carries the reason as its value and names no type, so
+			// the two cases are told apart on the data and not only in the sentence.
+			var missing = hit.Logged.Single(value => value.Name == "nope");
+			Assert.Null(missing.TypeName);
+			Assert.StartsWith("<nope:", missing.Value!, StringComparison.Ordinal);
+
+			// And that event can be asked for on its own, whole, which is the way back from a page
+			// the client cut short.
+			var one = await session.ReadEventsAsync(0, null, 500, 0, hit.Sequence, cancellationToken);
+			Assert.Equal(hit.Sequence, Assert.Single(one.Events).Sequence);
+			Assert.Equal(hit.Message, one.Events[0].Message);
+			Assert.Equal(4, one.Events[0].Logged!.Count);
+
+			// A sequence the buffer does not hold answers empty rather than with the next event
+			// along, which would be a different hit reported as the one asked for.
+			var beyond = await session.ReadEventsAsync(0, null, 500, 0, one.TotalObserved + 1000, cancellationToken);
+			Assert.Empty(beyond.Events);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			Assert.False(child.HasExited, "the target runs on through an interpolated tracepoint");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A message whose placeholder is not a value path is refused when the tracepoint is added, not
+	/// logged verbatim on every hit thereafter. The caller is at the call that wrote it and can fix
+	/// it; a thousand hits later, a message reading <c>{count</c> reads as interpolation not being
+	/// supported at all.
+	/// </summary>
+	[Test]
+	public async Task A_malformed_log_message_is_refused_when_the_tracepoint_is_added()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var refused = await Assert.ThrowsAsync<InvalidOperationException>(
+				() => session.AddTracepointAsync(
+					"DebugProbeTarget.Program.Beat", "count={iteration", logEveryNthHit: null, condition: null, cancellationToken));
+
+			Assert.Contains("never closed", refused.Message, StringComparison.Ordinal);
+
+			var tracepoints = await session.ListTracepointsAsync(cancellationToken);
+			Assert.Empty(tracepoints.Tracepoints);
+
+			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
 }

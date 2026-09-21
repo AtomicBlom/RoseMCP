@@ -27,6 +27,10 @@ public sealed class LiveAppEventTools(LiveAppSessionHost host)
 		int limit = 500,
 		[Description(ToolDescriptions.WaitSecondsArgument)]
 		int waitSeconds = 0,
+		[Description(ToolDescriptions.EventSequenceArgument)]
+		long? sequence = null,
 		CancellationToken cancellationToken = default)
-		=> host.ReadEventsAsync(after, ArgumentValues.EventKinds(kinds), limit, waitSeconds, cancellationToken);
+		=> sequence is { } one
+			? Task.FromResult(host.ReadEvent(one))
+			: host.ReadEventsAsync(after, ArgumentValues.EventKinds(kinds), limit, waitSeconds, cancellationToken);
 }

@@ -266,6 +266,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// </para>
 	/// </summary>
 	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string[]? kinds, int limit, int waitSeconds, CancellationToken cancellationToken)
+		=> ReadEventsAsync(after, kinds, limit, waitSeconds, sequence: null, cancellationToken);
+
+	/// <summary>
+	/// Reads a page, or the one event <paramref name="sequence"/> names when it is given -- whole,
+	/// with every field it carries, which is the way back from a page the client truncated.
+	/// </summary>
+	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string[]? kinds, int limit, int waitSeconds, long? sequence, CancellationToken cancellationToken)
 		=> SendAsync<LiveDebugEventPage>(
 			ToolNames.LiveAppEvents,
 			new Dictionary<string, object?>
@@ -274,6 +281,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 				["kinds"] = kinds,
 				["limit"] = limit,
 				["waitSeconds"] = waitSeconds,
+				["sequence"] = sequence,
 			},
 			cancellationToken);
 

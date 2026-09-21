@@ -189,7 +189,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 			+ "freshly started app produces hundreds of ModuleLoaded events, and asking for LogMessage "
 			+ "or ExceptionFirstChance alone is the difference between a readable answer and one that "
 			+ "has to be written to a file. Use waitSeconds with kinds to wait for one thing, such as "
-			+ "BreakpointHit, rather than calling this in a loop.")]
+			+ "BreakpointHit, rather than calling this in a loop. Pass 'sequence' to fetch one event "
+			+ "whole when a page came back truncated.")]
 	public async Task<LiveDebugEventPage> EventsAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.AfterSequenceArgument)]
@@ -200,10 +201,12 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 		int limit = 500,
 		[Description(ToolDescriptions.WaitSecondsArgument)]
 		int waitSeconds = 0,
+		[Description(ToolDescriptions.EventSequenceArgument)]
+		long? sequence = null,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReadEventsAsync(after, kinds, limit, waitSeconds, cancellationToken);
+		return await session.ReadEventsAsync(after, kinds, limit, waitSeconds, sequence, cancellationToken);
 	}
 
 	[McpServerTool(
@@ -267,7 +270,8 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 	[Description(
 		"Add a tracepoint at a method by name: a breakpoint that logs and immediately continues, so it "
 			+ "never freezes the target the way a stopping breakpoint would -- the right default for a "
-			+ "turn-based agent. Each hit appears in rose_debug_events. Prefer this over adding logging "
+			+ "turn-based agent. Each hit appears in rose_debug_events, carrying the values its message "
+			+ "interpolated as data as well as in the line. Prefer this over adding logging "
 			+ "statements and rebuilding, which needs a source edit and a restart to see anything. It binds "
 			+ "when the method's module is loaded, so an as-yet-unloaded module reads back as not bound.")]
 	public async Task<LiveTracepoint> AddTracepointAsync(
@@ -453,14 +457,16 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 			+ "getters and method calls are deliberately not evaluated. Only valid while stopped. "
 			+ "Arguments and locals go by the names the breakpoint's recorded frame reports: the names "
 			+ "the source declares where the module has symbols beside it, and local_0, local_1 in slot "
-			+ "order where it has none. Returns the value and its type, or why it did not resolve.")]
+			+ "order where it has none. Returns the value and its type, or why it did not resolve. A "
+			+ "string is cut short unless maxLength says otherwise, and fullLength says when it was.")]
 	public async Task<LiveEvaluation> EvaluateAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression,
+		[Description(ToolDescriptions.EvaluateMaxLengthArgument)] int? maxLength = null,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.EvaluateAsync(expression, cancellationToken);
+		return await session.EvaluateAsync(expression, maxLength, cancellationToken);
 	}
 
 	[McpServerTool(

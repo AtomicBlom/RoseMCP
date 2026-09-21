@@ -337,6 +337,16 @@ public static class ToolDescriptions
 		"Return only events past this cursor -- every answer carries the one it was written at. 0 is "
 			+ "everything buffered.";
 
+	/// <summary>
+	/// How a caller gets back to one event after a page of them was cut short. Said as the answer to
+	/// that problem rather than as "read one event", because the caller reaching for it has a
+	/// truncated page in front of it and is looking for a way out, not for a lookup.
+	/// </summary>
+	public const string EventSequenceArgument =
+		"Return just this one event, whole: every field it carries, logged values included -- use it "
+			+ "when a page came back truncated. Empty if not buffered: below oldestAvailable it was "
+			+ "dropped, above totalObserved it has not happened. Overrides the rest.";
+
 	public const string MaxEventsArgument =
 		"Maximum events in this page (default 500). Lower it when you only need to see whether something "
 			+ "is happening.";
@@ -353,8 +363,16 @@ public static class ToolDescriptions
 			+ "loaded module declares the type. Put Assembly! in front to choose when several do. Add "
 			+ "@IL_001f to log inside it.";
 
+	/// <summary>
+	/// The interpolation grammar, said as examples rather than as a rule, because the rule is
+	/// <see cref="ValuePath"/> and nobody reading a tracepoint's arguments wants to be told that.
+	/// The no-code-runs part is here rather than left to the wiki: it is the reason a property
+	/// cannot be logged, and a caller hitting that limit without knowing why reads it as a bug.
+	/// </summary>
 	public const string LogMessageArgument =
-		"Optional message logged on each hit (literal text; expression interpolation comes later).";
+		"Optional message logged on each hit. {name} interpolates an argument or local, walking "
+			+ "fields and elements: {count}, {state.Inner.Count}, {items[0].Name}. Read from memory, "
+			+ "so no property getters. {{ is a literal brace.";
 
 	public const string LogEveryNthHitArgument =
 		"Optional: log only every Nth hit to thin a hot path; every hit is still counted.";
@@ -375,6 +393,16 @@ public static class ToolDescriptions
 
 	public const string EvaluateExpressionArgument =
 		"A field-access expression, e.g. this.field or state.Inner.Count.";
+
+	/// <summary>
+	/// The way out of the 200-character cap. Said as a number with a unit and a ceiling, because the
+	/// caller reaching for it is holding a value it can see the start of and needs to know both that
+	/// more is available and how much it may ask for.
+	/// </summary>
+	public const string EvaluateMaxLengthArgument =
+		"How many characters of a string value to return; 200 by default, up to 65536. Raise it to "
+			+ "read a URL, a request body or a connection string whole. fullLength on the answer says "
+			+ "how long the value is when what came back is only its start.";
 
 	public const string FrameThreadIdArgument =
 		"The thread to read, or omitted for the one the debugger is holding. rose_live_app_threads lists them.";

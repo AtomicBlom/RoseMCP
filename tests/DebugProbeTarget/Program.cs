@@ -98,4 +98,14 @@ internal sealed class ProbeState
 
 	/// <summary>Three distinguishable values, so an off-by-one in an indexed path is visible.</summary>
 	public int[] Marks = [7, 8, 9];
+
+	/// <summary>
+	/// A string longer than the default cap on how much of one a value carries, shaped like the
+	/// values that hit it in practice -- a consent URL with a token in the query. It ends in a
+	/// distinctive marker rather than trailing off, so a test can tell "read the whole value" from
+	/// "read more of it than before" without counting characters.
+	/// </summary>
+	public string LongUrl = "https://example.invalid/authorize?response_type=code&client_id="
+		+ new string('a', 300)
+		+ "&redirect_uri=https%3a%2f%2flocalhost%2fcallback&scope=data%3aread%20data%3awrite&end=TAIL";
 }

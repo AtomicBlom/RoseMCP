@@ -35,7 +35,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 	/// Records a request for a location. The binding comes back unbound; the caller binds it against
 	/// what is loaded.
 	/// </summary>
-	/// <exception cref="ArgumentException">The location does not parse.</exception>
+	/// <exception cref="ArgumentException">The location, the log message or the condition does not parse.</exception>
 	internal BreakpointBinding Add(
 		string location,
 		bool stopOnHit,
@@ -51,6 +51,7 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 			Raw = location,
 			StopOnHit = stopOnHit,
 			LogMessage = logMessage,
+			LogTemplate = LogMessageTemplate.Parse(logMessage),
 			LogEveryNthHit = logEveryNthHit,
 			AutoContinueSeconds = autoContinueSeconds,
 			ConditionText = string.IsNullOrWhiteSpace(condition) ? null : condition.Trim(),

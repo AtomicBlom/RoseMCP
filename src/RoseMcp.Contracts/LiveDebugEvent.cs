@@ -38,4 +38,23 @@ public sealed record LiveDebugEvent
 	/// no frame was inspected (exceptions, tracepoints, session notices).
 	/// </summary>
 	public IReadOnlyList<LiveVariable>? Variables { get; init; }
+
+	/// <summary>
+	/// The values a tracepoint's message named, one per placeholder, in the order they appear in it.
+	/// Null for every other event, and for a tracepoint whose message interpolates nothing.
+	/// <para>
+	/// A field of its own rather than <see cref="Variables"/>, which is the whole top frame: these
+	/// are what somebody asked to be shown and nothing else, and one field meaning "everything in
+	/// scope" on one event and "the four things asked for" on another is a field that cannot be read
+	/// without first knowing which kind of event carried it.
+	/// </para>
+	/// <para>
+	/// They are here as well as inside <see cref="Message"/> because a value in a sentence cannot be
+	/// read back. A page of hits is long enough to be truncated by the client displaying it, and the
+	/// answer to that is to ask for one event by its sequence and read its fields -- which needs the
+	/// fields to exist. A value that could not be read carries the reason as its value, in angle
+	/// brackets, and no type.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<LiveVariable>? Logged { get; init; }
 }

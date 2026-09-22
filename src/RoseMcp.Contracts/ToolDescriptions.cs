@@ -597,12 +597,14 @@ public static class ToolDescriptions
 		What a symbol actually is: full signature, kind, accessibility, containing type, XML
 		documentation, every declaration site, and what it overrides or implements -- which is usually
 		where an override's documentation lives. Name it as Namespace.Type.Member, which needs no grep
-		first and does not go stale when an earlier edit moves a line; a file position works too, and
-		is the way to reach a local or a parameter. Pass includeSource so understanding a member does
-		not end in a file read. Each declaration reports its first and last line, so where a member
-		stops is known rather than approximated. Resolved from the compilation, so it answers from a
-		use site as well as a declaration, and about a type in a referenced assembly -- isFromSource
-		false means it cannot be renamed or edited.
+		first and does not go stale when an edit moves a line; a file position works too, and is the way
+		to reach a local or a parameter. Pass includeSource so understanding a member does not end in a
+		file read. Each declaration reports its first and last line, so where a member stops is known
+		rather than approximated. Resolved from the compilation, so it answers from a use site as well as
+		a declaration, and equally about a referenced assembly's types, members and constructors:
+		StringBuilder and System.Text.StringBuilder.AppendLine(string) both reach one. Overloads are
+		refused rather than guessed between -- add the parameter types. isFromSource false means it
+		cannot be renamed or edited.
 		""";
 
 	public const string FindReferences = """

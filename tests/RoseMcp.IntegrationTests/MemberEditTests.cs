@@ -459,15 +459,17 @@ public sealed class MemberEditTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		// Its own type, and the only refusal here that has one: a read may answer this one from metadata
-		// instead, where nothing may answer a name that is in source somewhere other than where asked.
+		// Both carry the type a read uses to answer from metadata instead. The second is why it is not
+		// enough for that type to mean "no such name": 'Shout' is declared in this solution, just not
+		// at the address asked for, and a library member addressed that way is the common case rather
+		// than the exotic one.
 		var missing = await Assert.ThrowsAsync<SymbolNotFoundException>(() => ReplaceAsync(
 			session, "Library.Greeter.Salute", "public string Salute() => _prefix;"));
 
 		Assert.Contains("Nothing in the solution is called 'Salute'", missing.Message, StringComparison.Ordinal);
 		Assert.Contains("rose_search_symbols", missing.Message, StringComparison.Ordinal);
 
-		var elsewhere = await Assert.ThrowsAsync<ArgumentException>(() => ReplaceAsync(
+		var elsewhere = await Assert.ThrowsAsync<SymbolNotFoundException>(() => ReplaceAsync(
 			session, "Library.Caller.Shout(string)", "private static string Shout(string text) => text;"));
 
 		Assert.Contains("Nothing is declared at 'Library.Caller.Shout(string)'", elsewhere.Message, StringComparison.Ordinal);

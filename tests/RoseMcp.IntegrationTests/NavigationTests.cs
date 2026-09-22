@@ -95,6 +95,123 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
+	/// The last segment of a library member's address is a name this solution almost certainly
+	/// declares somewhere of its own -- Add, Name, Count, Document. Reaching metadata only when the
+	/// name is carried nowhere at all would therefore refuse the library members most worth asking
+	/// about, and would refuse more of them the larger the solution got. The fixture's own
+	/// Calculator.Add is what makes this address one that a name search does find something for.
+	/// </summary>
+	[Test]
+	public async Task Describes_a_metadata_member_whose_name_a_source_member_also_carries()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Collections.Generic.List.Add" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.Equal("Add", info.Name);
+		Assert.Equal("Method", info.Kind);
+
+		// The library one, not the source member that shares its name.
+		Assert.Contains("List", info.ContainingType, StringComparison.Ordinal);
+		Assert.False(info.IsFromSource, "a member from metadata has no source to edit");
+	}
+
+	/// <summary>
+	/// A caller reading code sees StringBuilder, not System.Text.StringBuilder, and the source search
+	/// accepts a bare last segment. Demanding full qualification only of metadata makes the tool
+	/// stricter exactly where the caller knows least, and the refusal it produces points at
+	/// rose_search_symbols, which searches source and so answers nothing here.
+	/// </summary>
+	[Test]
+	public async Task Describes_a_metadata_type_named_without_its_namespace()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "StringBuilder" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.Equal("StringBuilder", info.Name);
+		Assert.Equal("System.Text", info.Namespace);
+		Assert.False(info.IsFromSource, "a type from metadata has no source to edit");
+	}
+
+	/// <summary>
+	/// Overloads in metadata are several symbols and must be refused as such. Answering with whichever
+	/// one came first is the failure with no symptom: AppendLine() and AppendLine(string) differ only
+	/// past the name, so a caller about to write the second reads the first's documentation and finds
+	/// nothing in it that looks wrong. The refusal names the parameter list as the way out, because
+	/// that is the argument that actually separates them.
+	/// </summary>
+	[Test]
+	public async Task Refuses_to_choose_between_overloads_that_live_in_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+			NavigationService.DescribeAsync(
+				snapshot,
+				new SymbolTarget { Symbol = "System.Text.StringBuilder.AppendLine" },
+				TestContext.Current!.Execution.CancellationToken));
+
+		Assert.Contains("AppendLine", error.Message, StringComparison.Ordinal);
+		Assert.Contains("Name the parameter types", error.Message, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// And the way out works: the parameter list the refusal asks for picks one overload out of
+	/// metadata, so the advice is something a caller can act on rather than something to read.
+	/// </summary>
+	[Test]
+	public async Task Describes_the_metadata_overload_a_parameter_list_names()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.StringBuilder.AppendJoin(string, string[])" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.Equal("AppendJoin", info.Name);
+		Assert.Contains("string separator", info.Signature, StringComparison.Ordinal);
+		Assert.False(info.IsFromSource, "a member from metadata has no source to edit");
+	}
+
+	/// <summary>
+	/// A constructor is the one address whose type part is written out in full, so it is also the one
+	/// where falling back must stay narrow: a type this solution does declare keeps its own answer,
+	/// and only a type declared nowhere here is looked for in a referenced assembly.
+	/// </summary>
+	[Test]
+	public async Task Describes_a_constructor_that_lives_in_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.StringBuilder..ctor(int)" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		Assert.Contains("StringBuilder", info.ContainingType, StringComparison.Ordinal);
+		Assert.Contains("int capacity", info.Signature, StringComparison.Ordinal);
+		Assert.False(info.IsFromSource, "a constructor from metadata has no source to edit");
+	}
+
+	/// <summary>
 	/// A name nothing carries anywhere still refuses, and with the refusal the source search wrote:
 	/// falling back to metadata must not turn "nothing is called that" into a vaguer error.
 	/// </summary>

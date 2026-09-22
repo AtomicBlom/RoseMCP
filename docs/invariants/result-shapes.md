@@ -21,6 +21,21 @@ Read before adding a tool, adding a field to a result, or changing an error path
   `ReadOnlyMemory<char>` -- naming a type that does not exist, and matching nothing. Type arguments
   come off the path, where a caller should not have to know how a declaration spells its type
   parameters, and stay on parameter types, which are what tell two overloads apart.
+- **A read falls back to metadata when source declares nothing the address reaches, and only
+  then.** Both edges of that condition are a wrong answer. Narrowed to "the name is carried nowhere
+  in the solution", the fallback never fires for any library symbol whose last segment something
+  here also declares: `Microsoft.CodeAnalysis.Document`, `System.Collections.Generic.List` and
+  `ISymbol.Name` were all refused on this repository, each answered with unrelated source members
+  in other namespaces as though they were near misses -- so the larger a solution grew, the more
+  library symbols it refused. Widened to cover every refusal, it answers from a referenced assembly
+  while source did reach something, which is a confident answer about somebody else's class: an
+  ambiguous match is several declarations here, a declaration ruled out by where it lives was still
+  found, and a type declaring no explicit constructor is still the type the caller meant.
+  `SymbolNotFoundException` is what carries the distinction, so it is thrown exactly where it
+  holds. A lone segment reaches metadata through the declaration index, because no metadata name
+  lookup finds `StringBuilder` spelled that way and the source search has always accepted a bare
+  last segment -- demanding the namespace only of metadata is strictest where the caller knows
+  least.
 - **Status may not report a field it cannot fill.** `GetStatusAsync` once passed `restore: null`,
   `loadSeconds: 0` and no load diagnostics, hard-coded, so every status answer on every solution
   carried the same three blanks. That is worse than omitting them: a failed restore reaches

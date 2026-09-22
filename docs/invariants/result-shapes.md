@@ -8,6 +8,19 @@ Read before adding a tool, adding a field to a result, or changing an error path
   solution it owns. Convert at the boundary, never at the throw sites: the exception type carries
   meaning further in -- services separate a caller's mistake from an impossible state, the manager
   separates either from a dead worker, and retry decisions turn on that.
+- **A name matching two symbols is refused, and the address a result hands back resolves.** These
+  are the two halves of addressing code by name, and each fails by producing a well-formed answer
+  about something else. A resolver keyed on a candidate's name, containing type and assembly
+  collapses every overload of a method into one, so `System.IO.File.WriteAllTextAsync` resolved to
+  whichever overload the enumeration reached first and `rose_find_references` answered that nothing
+  called it -- a confident zero, with nothing in it saying the question had been ambiguous. What
+  separates overloads is their parameters, so the key carries them and the refusal lists every
+  candidate. Then what it lists has to parse, which is the other half: `SymbolAddress`'s format
+  exists so an address read out of one answer can be handed to the next call, and dropping a
+  parameter's type arguments spelled `Scan(System.ReadOnlyMemory)` for a method taking
+  `ReadOnlyMemory<char>` -- naming a type that does not exist, and matching nothing. Type arguments
+  come off the path, where a caller should not have to know how a declaration spells its type
+  parameters, and stay on parameter types, which are what tell two overloads apart.
 - **Status may not report a field it cannot fill.** `GetStatusAsync` once passed `restore: null`,
   `loadSeconds: 0` and no load diagnostics, hard-coded, so every status answer on every solution
   carried the same three blanks. That is worse than omitting them: a failed restore reaches

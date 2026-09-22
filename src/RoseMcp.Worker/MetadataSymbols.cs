@@ -112,9 +112,25 @@ public static class MetadataSymbols
 		}
 	}
 
-	/// <summary>Assembly and full name together, which is what makes two candidates genuinely two.</summary>
+	/// <summary>
+	/// Assembly and address together, which is what makes two candidates genuinely two.
+	/// <para>
+	/// The address rather than the name, because every overload of a method shares a name, a
+	/// containing type and an assembly: keyed on those, eight <c>File.WriteAllTextAsync</c> collapse
+	/// into one candidate, the refusal below never fires, and the caller is answered about whichever
+	/// overload the enumeration reached first. That failure has no symptom -- no references found for
+	/// an overload nobody asked about is a well-formed answer, and nothing in it says the question was
+	/// ambiguous. What separates overloads is their parameters, so the key has to carry them.
+	/// </para>
+	/// <para>
+	/// An address rather than a signature because the refusal tells the caller to qualify further, and
+	/// what it lists is what they will write back: <see cref="SymbolSignature.Format"/> leads with the
+	/// return type and names the parameters, and none of that parses. Nothing reaching here is a local
+	/// or a parameter, so the fallback is for totality rather than for a case that arises.
+	/// </para>
+	/// </summary>
 	private static string Identity(ISymbol symbol) =>
-		$"{symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}"
+		$"{SymbolAddress.Of(symbol) ?? SymbolSignature.Of(symbol)}"
 			+ $" in {symbol.ContainingAssembly?.Identity.Name ?? "an unnamed assembly"}";
 
 	private static string Quote(string text) => $"'{text}'";

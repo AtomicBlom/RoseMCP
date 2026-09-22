@@ -51,6 +51,9 @@ public sealed class SymbolAddressTests
 	[Arguments("Shop.Till.Ring")]
 	[Arguments("Shop.Till.Wrap")]
 	[Arguments("Shop.Till.Total")]
+	// A generic parameter type, because dropping its type arguments spells an address naming a type
+	// that does not exist: ReadOnlyMemory is not ReadOnlyMemory<char>, and the match knows it.
+	[Arguments("Shop.Till.Scan")]
 	public void Reads_back_the_address_it_spelled(string name)
 	{
 		var symbol = Symbol(name);
@@ -90,6 +93,8 @@ public sealed class SymbolAddressTests
 				public string Ring(string item, int pence) => item;
 	
 				public string Wrap() => "wrapped";
+
+				public string Scan(System.ReadOnlyMemory<char> code) => "";
 			}
 			""";
 

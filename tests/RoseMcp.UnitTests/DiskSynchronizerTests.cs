@@ -88,6 +88,83 @@ public sealed class DiskSynchronizerTests
 		Assert.True(after.StructuralChange, $"{name} appearing changes how the project evaluates");
 	}
 
+	/// <summary>
+	/// A file the load saw and compiled into nothing is excluded on purpose -- a <c>Compile Remove</c>
+	/// somewhere in the project's imports -- so absorbing it reports errors against a project that
+	/// builds clean.
+	/// </summary>
+	[Test]
+	public async Task A_file_the_load_compiled_into_no_project_is_left_alone()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var tree = LoadedTree.Create("Program.cs");
+
+		var excluded = tree.PathTo("App", "Properties", "AssemblyInfo.cs");
+		Directory.CreateDirectory(Path.GetDirectoryName(excluded)!);
+		await File.WriteAllTextAsync(excluded, "[assembly: System.Reflection.AssemblyTitle(\"App\")]", token);
+
+		var synchronizer = new DiskSynchronizer();
+		synchronizer.Reset(tree.Solution, tree.SolutionPath, Evaluated(tree), token);
+
+		var absorbed = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
+
+		Assert.Empty(absorbed.Added);
+		Assert.Empty(absorbed.NotInTheBuild);
+	}
+
+	/// <summary>
+	/// The exclusion covers what the load looked at and nothing else, so a file written afterwards is
+	/// still absorbed -- which is the whole reason this walk exists.
+	/// </summary>
+	[Test]
+	public async Task A_file_written_after_the_load_is_still_absorbed()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var tree = LoadedTree.Create("Program.cs");
+
+		var synchronizer = new DiskSynchronizer();
+		synchronizer.Reset(tree.Solution, tree.SolutionPath, Evaluated(tree), token);
+
+		var written = tree.PathTo("App", "Added.cs");
+		await File.WriteAllTextAsync(written, "class Added;", token);
+
+		var absorbed = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
+
+		Assert.Single(absorbed.Added);
+		Assert.Contains(written, absorbed.Added);
+	}
+
+	/// <summary>
+	/// A project the build filled with no documents has said nothing about what it excludes, so its
+	/// silence is not read as exclusion -- otherwise a project whose build failed could never absorb
+	/// a file again.
+	/// </summary>
+	[Test]
+	public async Task A_project_the_load_left_empty_still_absorbs()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var tree = LoadedTree.Create();
+
+		var onDisk = tree.PathTo("App", "Program.cs");
+		await File.WriteAllTextAsync(onDisk, "class Program;", token);
+
+		var synchronizer = new DiskSynchronizer();
+		synchronizer.Reset(tree.Solution, tree.SolutionPath, Evaluated(tree), token);
+
+		var absorbed = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
+
+		Assert.Contains(onDisk, absorbed.Added);
+	}
+
+	/// <summary>Every project evaluated, importing nothing.</summary>
+	private static EvaluationInputs Evaluated(LoadedTree tree) =>
+		new(
+			new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase)
+			{
+				[tree.ProjectPath] = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+			},
+			[]);
+
 	/// <summary>A solution file and one project on disk, loaded into an ad hoc workspace.</summary>
 	private sealed class LoadedTree : IDisposable
 	{
@@ -108,7 +185,12 @@ public sealed class DiskSynchronizerTests
 
 		public Solution Solution => _workspace.CurrentSolution;
 
-		public static LoadedTree Create()
+		/// <param name="compiled">
+		/// Files written under the project and given to it as documents, standing for what a
+		/// design-time build compiled. A tree with none of them stands for a project the build could
+		/// not fill.
+		/// </param>
+		public static LoadedTree Create(params string[] compiled)
 		{
 			var root = Directory.CreateTempSubdirectory("rosemcp-sync-").FullName;
 			var solutionPath = Path.Combine(root, "Loaded.slnx");
@@ -116,16 +198,36 @@ public sealed class DiskSynchronizerTests
 
 			Directory.CreateDirectory(Path.GetDirectoryName(projectPath)!);
 			File.WriteAllText(solutionPath, "<Solution />");
-			File.WriteAllText(projectPath, "<Project />");
+
+			// SDK-style, so the default globs are what decides a new file's fate and the exclusion
+			// recorded at load is what these tests actually exercise.
+			File.WriteAllText(projectPath, """<Project Sdk="Microsoft.NET.Sdk" />""");
+
+			var projectId = ProjectId.CreateNewId();
+			var documents = new List<DocumentInfo>();
+
+			foreach (var name in compiled)
+			{
+				var path = Path.Combine(Path.GetDirectoryName(projectPath)!, name);
+
+				Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+				File.WriteAllText(path, $"// {name}");
+
+				documents.Add(DocumentInfo.Create(
+					DocumentId.CreateNewId(projectId),
+					Path.GetFileName(path),
+					filePath: path));
+			}
 
 			var workspace = new AdhocWorkspace();
 			workspace.AddProject(ProjectInfo.Create(
-				ProjectId.CreateNewId(),
+				projectId,
 				VersionStamp.Create(),
 				"App",
 				"App",
 				LanguageNames.CSharp,
-				filePath: projectPath));
+				filePath: projectPath,
+				documents: documents));
 
 			return new LoadedTree(root, workspace, solutionPath, projectPath);
 		}

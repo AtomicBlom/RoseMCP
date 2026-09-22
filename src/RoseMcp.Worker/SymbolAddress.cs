@@ -48,14 +48,20 @@ public sealed record SymbolAddress
 	/// out of one answer and wanted to edit it had to take the string apart by hand.
 	/// </para>
 	/// <para>
-	/// Type parameters are omitted because <see cref="Parse"/> strips them anyway, and parameter types
-	/// are minimally qualified, which is one of the spellings the match already accepts.
+	/// Type arguments are kept. <see cref="Parse"/> strips them from the path, where a caller should
+	/// not have to know how a declaration spells its type parameters -- but a parameter's type
+	/// arguments are part of the type it names, and <see cref="TypeMatches"/> compares against the
+	/// type's own spellings, none of which is the generic name alone. Dropped, a method taking
+	/// <c>ReadOnlyMemory&lt;char&gt;</c> is reported at <c>Scan(System.ReadOnlyMemory)</c>, which names
+	/// no type and resolves to nothing -- so the address a result hands back is one the caller cannot
+	/// hand to the next call, which is the whole reason this format exists. Parameter types are fully
+	/// qualified, which is one of the spellings the match accepts.
 	/// </para>
 	/// </summary>
 	private static readonly SymbolDisplayFormat AddressFormat = new(
 		globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
 		typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-		genericsOptions: SymbolDisplayGenericsOptions.None,
+		genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
 		memberOptions: SymbolDisplayMemberOptions.IncludeParameters | SymbolDisplayMemberOptions.IncludeContainingType,
 		parameterOptions: SymbolDisplayParameterOptions.IncludeType,
 		miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);

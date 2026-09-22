@@ -1,5 +1,3 @@
-using System.Text;
-
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
@@ -51,6 +49,25 @@ public sealed class DiskSynchronizer
 	private readonly HashSet<string> _declined = new(StringComparer.OrdinalIgnoreCase);
 
 	/// <summary>
+	/// Source files that were on disk when the solution loaded and that the design-time build
+	/// compiled into no project, so the build leaves them out on purpose.
+	/// <para>
+	/// A <c>&lt;Compile Remove&gt;</c> does this, and it is usually written in an imported file
+	/// rather than in the project, where reading the project's own text cannot find it. Absorbing one
+	/// of these invents a compilation nobody has: a UWP project that removes <c>Properties/*.cs</c>
+	/// keeps <c>AssemblyInfo.cs</c> in its folder, and adding it beside the assembly attributes the
+	/// SDK generates reports CS0579 on every attribute it carries, against a project that builds
+	/// clean.
+	/// </para>
+	/// <para>
+	/// A set of paths taken at load rather than a rule applied to any path, because the design-time
+	/// build is the authority only over files it has already seen. One appearing afterwards was never
+	/// in front of it and is absorbed on its merits.
+	/// </para>
+	/// </summary>
+	private readonly HashSet<string> _excludedByBuild = new(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>
 	/// Whether any project in the loaded solution could not be evaluated, so what it imports is unknown.
 	/// </summary>
 	private bool _anyUnevaluated;
@@ -82,13 +99,19 @@ public sealed class DiskSynchronizer
 	/// <param name="solution">The solution as loaded.</param>
 	/// <param name="solutionPath">The solution file, which is a build input in its own right.</param>
 	/// <param name="inputs">What each project's evaluation imported.</param>
-	public void Reset(Solution solution, string solutionPath, EvaluationInputs inputs)
+	/// <param name="cancellationToken">Checked while walking for the files the load left out.</param>
+	public void Reset(
+		Solution solution,
+		string solutionPath,
+		EvaluationInputs inputs,
+		CancellationToken cancellationToken = default)
 	{
 		_documents.Clear();
 		_structuralFiles.Clear();
 		_absentBuildFiles.Clear();
 		_globs.Clear();
 		_declined.Clear();
+		_excludedByBuild.Clear();
 
 		foreach (var project in solution.Projects)
 		{
@@ -115,7 +138,29 @@ public sealed class DiskSynchronizer
 
 		foreach (var import in inputs.Files) TrackStructural(import);
 
+		NoteBuildExclusions(solution, cancellationToken);
+
 		_anyUnevaluated = inputs.Unevaluated.Count > 0;
+	}
+
+	/// <summary>
+	/// Records the source files the load left out of every project, which needs every document
+	/// tracked first, so nothing still in the snapshot is read as having been left out.
+	/// <para>
+	/// A project the design-time build filled with no documents is skipped. It has no opinion to
+	/// record, and taking its silence for exclusion would leave a project whose build failed unable
+	/// to absorb any new file at all -- trading a wrong answer about six attributes for a wrong
+	/// answer about every file written into that project afterwards.
+	/// </para>
+	/// </summary>
+	private void NoteBuildExclusions(Solution solution, CancellationToken cancellationToken)
+	{
+		foreach (var path in Untracked(solution, cancellationToken))
+		{
+			var owners = Owners(solution, path);
+
+			if (owners.Any(project => project.Documents.Any())) _excludedByBuild.Add(path);
+		}
 	}
 
 	/// <summary>
@@ -208,6 +253,11 @@ public sealed class DiskSynchronizer
 		foreach (var path in Untracked(solution, cancellationToken))
 		{
 			cancellationToken.ThrowIfCancellationRequested();
+
+			// Left out by the build itself, and silently: the exclusion was in place before anyone
+			// asked, so it describes the project's ordinary shape rather than a file somebody has
+			// just written and is about to wonder why nothing can see.
+			if (_excludedByBuild.Contains(path)) continue;
 
 			var owners = Owners(solution, path);
 			if (owners.Count == 0) continue;
@@ -587,7 +637,7 @@ public sealed class DiskSynchronizer
 			await stream.CopyToAsync(buffer, cancellationToken);
 			buffer.Position = 0;
 
-			return SourceText.From(buffer, Encoding.UTF8, canBeEmbedded: false);
+			return SourceText.From(buffer, SourceEncoding.Utf8WithoutMark, canBeEmbedded: false);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{

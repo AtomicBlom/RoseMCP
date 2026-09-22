@@ -7,6 +7,9 @@ namespace RoseMcp.Worker;
 /// <summary>
 /// Writes solution changes to disk and reports them as a unified diff.
 /// <para>
+/// Each file goes back in the encoding it arrived in, which <see cref="SourceEncoding"/> explains.
+/// </para>
+/// <para>
 /// Deliberately does not use Workspace.TryApplyChanges. The session owns its own snapshot rather
 /// than the workspace's, so TryApplyChanges has nothing to apply against; and writing the files
 /// here is what lets the watcher be told which writes were ours before they land, instead of
@@ -38,7 +41,8 @@ public static class SolutionWriter
 				if (added?.FilePath is not { Length: > 0 } addedPath) continue;
 
 				var path = Rooted(addedPath, added);
-				var text = (await added.GetTextAsync(cancellationToken)).ToString();
+				var source = await added.GetTextAsync(cancellationToken);
+				var text = source.ToString();
 
 				changed.Add(path);
 				diff.Append(UnifiedDiff.RenderNewFile(path, text));
@@ -50,7 +54,7 @@ public static class SolutionWriter
 				var directory = Path.GetDirectoryName(path);
 				if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-				await File.WriteAllTextAsync(path, text, cancellationToken);
+				await SourceEncoding.WriteAsync(path, source, cancellationToken);
 			}
 
 			foreach (var documentId in projectChange.GetChangedDocuments())
@@ -62,8 +66,9 @@ public static class SolutionWriter
 				if (oldDocument?.FilePath is not { Length: > 0 } changedPath || newDocument is null) continue;
 
 				var path = Rooted(changedPath, oldDocument);
+				var updated = await newDocument.GetTextAsync(cancellationToken);
 				var oldText = (await oldDocument.GetTextAsync(cancellationToken)).ToString();
-				var newText = (await newDocument.GetTextAsync(cancellationToken)).ToString();
+				var newText = updated.ToString();
 				if (string.Equals(oldText, newText, StringComparison.Ordinal)) continue;
 
 				changed.Add(path);
@@ -76,7 +81,7 @@ public static class SolutionWriter
 				if (!write) continue;
 
 				noteSelfWrite?.Invoke(path);
-				await File.WriteAllTextAsync(path, newText, cancellationToken);
+				await SourceEncoding.WriteAsync(path, updated, cancellationToken);
 			}
 		}
 

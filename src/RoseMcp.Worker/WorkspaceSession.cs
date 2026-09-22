@@ -388,7 +388,7 @@ public sealed class WorkspaceSession : IAsyncDisposable
 		_current = load.Solution;
 		Build = load.Build;
 		Load = LoadOutcome.From(load);
-		_synchronizer.Reset(_current, _options.SolutionPath, load.Inputs);
+		_synchronizer.Reset(_current, _options.SolutionPath, load.Inputs, cancellationToken);
 		Interlocked.Increment(ref _revision);
 
 		previous.Dispose();

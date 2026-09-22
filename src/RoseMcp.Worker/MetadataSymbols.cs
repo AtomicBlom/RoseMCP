@@ -159,23 +159,31 @@ public static class MetadataSymbols
 	}
 
 	/// <summary>
-	/// Assembly and full signature together, which is what makes two candidates genuinely two.
+	/// Assembly and address together, which is what makes two candidates genuinely two.
 	/// <para>
-	/// The signature rather than the qualified name, because a name alone is one string for every
-	/// overload of a member: keyed on that, AppendLine() and AppendLine(string) collapse into a single
-	/// entry and whichever project was enumerated first decides which one the caller is told about.
-	/// That is a complete, well-formed answer about a member nobody asked for, and it arrives with no
-	/// sign that the other overloads exist.
+	/// The address rather than the name, because every overload of a method shares a name, a
+	/// containing type and an assembly: keyed on those, eight <c>File.WriteAllTextAsync</c> collapse
+	/// into one candidate, the refusal below never fires, and the caller is answered about whichever
+	/// overload the enumeration reached first. That failure has no symptom -- no references found for
+	/// an overload nobody asked about is a well-formed answer, and nothing in it says the question was
+	/// ambiguous. What separates overloads is their parameters, so the key has to carry them.
+	/// </para>
+	/// <para>
+	/// An address rather than a signature because the refusal tells the caller to qualify further, and
+	/// what it lists is what they will write back: <see cref="SymbolSignature.Format"/> leads with the
+	/// return type and names the parameters, and none of that parses. Nothing reaching here is a local
+	/// or a parameter, so the fallback is for totality rather than for a case that arises.
 	/// </para>
 	/// </summary>
 	private static string Identity(ISymbol symbol) =>
-		$"{SymbolSignature.Of(symbol)} in {symbol.ContainingAssembly?.Identity.Name ?? "an unnamed assembly"}";
+		$"{SymbolAddress.Of(symbol) ?? SymbolSignature.Of(symbol)}"
+			+ $" in {symbol.ContainingAssembly?.Identity.Name ?? "an unnamed assembly"}";
 
 	/// <summary>
 	/// Several symbols carry the name, and picking one is the thing this must never do. The refusal
 	/// names them and says how to separate them: a caller told only that its name was ambiguous has
 	/// to go and find the candidates somewhere else, which is the decompiler this exists to save it
-	/// from.
+	/// from. What it lists is addresses, so the way out is to paste one back.
 	/// </summary>
 	private static ArgumentException Ambiguous(SymbolAddress address, Dictionary<string, ISymbol> found)
 	{
@@ -192,11 +200,11 @@ public static class MetadataSymbols
 				&& string.Equals(symbol.Name, name, StringComparison.Ordinal));
 
 		var how = areOverloads
-			? "Name the parameter types to pick one, as Type.Member(int, string)."
-			: "Qualify the name further to say which.";
+			? "Qualify it further. Name the parameter types to pick one, as Type.Member(int, string)."
+			: "Qualify it further to say which.";
 
 		return new ArgumentException(
-			$"{Quote(address.Requested)} names {found.Count} symbols in the assemblies this solution "
+			$"{Quote(address.Requested)} names {found.Count} different symbols in the assemblies this solution "
 				+ $"references: {listed}. {how}");
 	}
 

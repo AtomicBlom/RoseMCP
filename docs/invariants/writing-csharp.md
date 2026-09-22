@@ -25,6 +25,19 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   call that did nothing. So `SolutionWriter` counts the lines that moved and every writing tool
   passes the sentence on, rather than the alternatives: a whole-file hunk nobody can read, or
   inventing a hunk header that is not a patch.
+- **A file goes back in the encoding it arrived in.** A byte order mark is part of the file, and the
+  two calls that look like the obvious way to do this get it wrong in opposite directions.
+  `File.WriteAllText` is UTF-8 *without* a mark whatever the file was, so a rewrite routed through it
+  strips the mark off every file that had one; `Encoding.UTF8` is UTF-8 *with* a preamble, so handing
+  it to `SourceText.From` as a stream's fallback gives every mark-less file an encoding that writes a
+  mark it never had. Detection wins wherever a mark is actually there, so that fallback decides only
+  the case it is named for -- which is what `SourceEncoding.Utf8WithoutMark` is, and why the read
+  side needs it as much as the write side. Both failures are silent in the same way: three bytes no
+  unified diff can show, on a file that compiles either way, surfacing as a review where every edited
+  file changed at byte zero for a reason nobody can point at. Text carrying no encoding is text
+  nothing read off disk -- a file being created -- and it gets the mark-less default rather than one
+  it was never given. A split carries the source file's encoding into both halves for the same
+  reason: the type moves, and the mark is not the type's to take with it or to leave behind.
 - **Nothing writes code it has not parsed, and nothing is addressed by position.** The three write
   tools resolve the declaration and parse the code *before* the file is opened, so a refusal costs
   nothing and can never leave a file half-written -- which is most of the value, since it removes

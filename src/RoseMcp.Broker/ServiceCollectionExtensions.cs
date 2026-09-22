@@ -2,7 +2,9 @@ using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 
 using RoseMcp.Broker.Tools;
@@ -132,6 +134,25 @@ public static class ServiceCollectionExtensions
 		// genuinely cannot open one, and saying so beats a tool argument that silently does nothing.
 		services.TryAddSingleton<IInspectorPresenter>(NoInspector.WithoutAnEndpoint);
 
+		// The live-app debugger is ICorDebug and dbgshim, and RoseMcp.LiveApp is net10.0-windows, so
+		// none of it is there on a Linux build. The launch sites already know that, but registration
+		// did not, and a declared tool that cannot run is worse than an absent one: the caller only
+		// finds out at the call, having already chosen the approach the tool implied was available.
+		// The same gate decides what is registered below and what is read for aliases here.
+		Type[] toolTypes = OperatingSystem.IsWindows()
+			? [typeof(BrokerTools), typeof(BrokerAnalysisTools), typeof(LiveAppDebugTools)]
+			: [typeof(BrokerTools), typeof(BrokerAnalysisTools)];
+
+		// One instance, shared by the filter that applies it and by anything asking what a tool
+		// accepts, so a test cannot pass against a map the running server does not use.
+		var aliases = ArgumentAliases.From(toolTypes);
+		services.AddSingleton(aliases);
+
+		// Registered one generic call at a time rather than from toolTypes: the overload taking a list
+		// of types is annotated RequiresUnreferencedCode, and the one that would bind instead reads a
+		// Type[] as a tool instance and registers nothing at all. ArgumentAliases.Scanned is what
+		// keeps this list and that one honest, since a tool registered here but never read for
+		// aliases is a tool whose arguments can silently go missing.
 		var builder = services
 			.AddMcpServer(server =>
 			{
@@ -143,17 +164,50 @@ public static class ServiceCollectionExtensions
 			.WithTools<BrokerTools>()
 			.WithTools<BrokerAnalysisTools>();
 
-		// The live-app debugger is ICorDebug and dbgshim, and RoseMcp.LiveApp is net10.0-windows, so
-		// none of it is there on a Linux build. The launch sites already know that, but registration
-		// did not, and a declared tool that cannot run is worse than an absent one: the caller only
-		// finds out at the call, having already chosen the approach the tool implied was available.
 		if (OperatingSystem.IsWindows()) builder = builder.WithTools<LiveAppDebugTools>();
 
 		return builder
+			.WithArgumentAliases(aliases)
 			.WithCallOrigin()
 			.WithToolErrorMessages()
 			.WithLeanListing();
 	}
+
+	/// <summary>
+	/// Normalises the argument spellings the tools declare aliases for, before the SDK binds them.
+	/// <para>
+	/// A filter rather than a second parameter per tool, for the reason <see cref="WithCallOrigin"/>
+	/// is one: 31 tools take <c>workspace</c> and 23 take <c>filePath</c>, so the alternative is 54
+	/// extra parameters, every one of them in the schema teaching a client that both spellings are
+	/// real. Here the listing still offers exactly one name.
+	/// </para>
+	/// <para>
+	/// Placed first, so what the later filters and the tool itself see is the corrected call rather
+	/// than the one that arrived.
+	/// </para>
+	/// </summary>
+	private static IMcpServerBuilder WithArgumentAliases(this IMcpServerBuilder builder, ArgumentAliases aliases) =>
+		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+		{
+			var tool = ArgumentAliases.NameOf(context);
+			var correction = aliases.Read(tool, context.Params?.Arguments);
+
+			if (correction.Refusal is { } refusal) throw new McpException(refusal);
+
+			if (correction.Arguments is { } corrected && context.Params is { } parameters)
+			{
+				parameters.Arguments = corrected;
+
+				// Logged rather than returned. Which spelling a caller reaches for is evidence about
+				// whether the parameter is named wrongly, and that question is answered by reading a
+				// run of calls rather than by telling one caller its own call was fine.
+				context.Server.Services?.GetService<ILoggerFactory>()?
+					.CreateLogger(typeof(ArgumentAliases))
+					.LogDebug("{Tool} was called with {Applied}.", tool, string.Join(", ", correction.Applied));
+			}
+
+			return await next(context, cancellationToken);
+		}));
 
 	/// <summary>
 	/// Picks the two facts about the calling session out of the request and makes them available for the

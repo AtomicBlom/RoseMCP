@@ -282,6 +282,13 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// </para>
 	/// </summary>
 	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string[]? kinds, int limit, int waitSeconds, CancellationToken cancellationToken)
+		=> ReadEventsAsync(after, kinds, limit, waitSeconds, sequence: null, cancellationToken);
+
+	/// <summary>
+	/// Reads a page, or the one event <paramref name="sequence"/> names when it is given -- whole,
+	/// with every field it carries, which is the way back from a page the client truncated.
+	/// </summary>
+	public Task<LiveDebugEventPage> ReadEventsAsync(long after, string[]? kinds, int limit, int waitSeconds, long? sequence, CancellationToken cancellationToken)
 		=> SendAsync<LiveDebugEventPage>(
 			ToolNames.LiveAppEvents,
 			new Dictionary<string, object?>
@@ -290,6 +297,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 				["kinds"] = kinds,
 				["limit"] = limit,
 				["waitSeconds"] = waitSeconds,
+				["sequence"] = sequence,
 			},
 			cancellationToken);
 
@@ -352,9 +360,16 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 	/// <summary>Evaluates a field-access expression against the stopped frame; runs no debuggee code.</summary>
 	public Task<LiveEvaluation> EvaluateAsync(string expression, CancellationToken cancellationToken)
+		=> EvaluateAsync(expression, maxLength: null, cancellationToken);
+
+	/// <summary>
+	/// Evaluates an expression, reading up to <paramref name="maxLength"/> characters of a string
+	/// value rather than the short default a frame's worth of variables is capped at.
+	/// </summary>
+	public Task<LiveEvaluation> EvaluateAsync(string expression, int? maxLength, CancellationToken cancellationToken)
 		=> SendAsync<LiveEvaluation>(
 			ToolNames.LiveAppEvaluate,
-			new Dictionary<string, object?> { ["expression"] = expression },
+			new Dictionary<string, object?> { ["expression"] = expression, ["maxLength"] = maxLength },
 			cancellationToken);
 
 	/// <summary>A page of a stopped thread's call stack, with file and line where symbols allow.</summary>

@@ -55,6 +55,34 @@ public sealed class InspectorRowTests
 		Assert.Equal("1 frame", EventRow.DescribeDetail(1, 0));
 		Assert.Equal("3 variables", EventRow.DescribeDetail(0, 3));
 		Assert.Equal("4 frames, 2 variables", EventRow.DescribeDetail(4, 2));
+
+		// A tracepoint's values are the ones its message asked for, not everything in scope, and
+		// "2 variables" on a method with nine reads as the other seven having gone missing.
+		Assert.Equal("2 logged values", EventRow.DescribeDetail(0, 2, logged: true));
+	}
+
+	/// <summary>
+	/// A tracepoint's hit carries the values its message interpolated, and the row shows them behind
+	/// the same expander a stop's frame uses -- a reader opening a row is asking what the values
+	/// were, and which field the host filled is not their question.
+	/// </summary>
+	[Test]
+	public void A_tracepoint_row_shows_what_its_message_logged()
+	{
+		var row = new EventRow(new LiveDebugEvent
+		{
+			Sequence = 42,
+			TimestampUtc = new DateTime(2026, 3, 1, 12, 0, 0, DateTimeKind.Utc),
+			Kind = LiveDebugEventKind.BreakpointHit,
+			Message = "Tracepoint A.B.C hit #3 on thread 7: count=9",
+			ThreadId = 7,
+			Logged = [Variable("count")],
+		});
+
+		Assert.True(row.Logged);
+		Assert.True(row.HasDetail);
+		Assert.Equal("count", Assert.Single(row.Variables).Name);
+		Assert.Equal("1 logged value", row.DetailHeader);
 	}
 
 	[Test]

@@ -15,5 +15,12 @@ public sealed record LiveEvaluation : LiveResult
 
 	public string? Value { get; init; }
 
+	/// <summary>
+	/// How long the value really is, when <see cref="Value"/> holds only the start of it. Null means
+	/// what is here is all of it. Ask again with a larger <c>maxLength</c> to read more; this says
+	/// how much larger it would have to be.
+	/// </summary>
+	public int? FullLength { get; init; }
+
 	public string? Error { get; init; }
 }

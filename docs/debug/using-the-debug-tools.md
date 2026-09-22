@@ -29,8 +29,8 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | `rose_debug_attach` | Attach to a running process by pid. Local, same-user only. |
 | `rose_debug_launch` | Launch a local .NET executable under the debugger, from startup. |
 | `rose_debug_launch_uwp` | Activate a packaged (UWP) app under the debugger by AUMID, from birth -- startup, first OnLaunched, and all -- through an architecture-matched host. |
-| `rose_debug_events` | Read events since a cursor: exceptions (with stacks), logs, module loads, hits. |
-| `rose_debug_add_tracepoint` | Log a method's hits and keep running (with an optional condition / hit-count filter). |
+| `rose_debug_events` | Read events since a cursor: exceptions (with stacks), logs, module loads, hits. Or one event whole, by `sequence`, when a page came back truncated. |
+| `rose_debug_add_tracepoint` | Log a method's hits and keep running, with the frame's values interpolated into the message (with an optional condition / hit-count filter). |
 | `rose_debug_set_breakpoint` | Hold the target on hit and record its stack and top-frame locals (with an optional condition). |
 | `rose_debug_continue` / `rose_debug_step` | Resume a held target, or step in / over / out. |
 | `rose_debug_list_tracepoints` / `_list_breakpoints` / `_remove_*` | Inspect and remove what is set. |
@@ -100,15 +100,70 @@ Two more things worth knowing about the loop:
 For markup with no file behind it -- something composed rather than saved -- pass `oldXaml` and
 `newXaml` instead of `filePath`.
 
+## Logging values without stopping
+
+A tracepoint's message interpolates the frame it fired on, so a hit says what the code was doing
+rather than only that it ran:
+
+```
+rose_debug_add_tracepoint
+  location:   MyApp.Cache.Evict
+  logMessage: evicting {key} -- {entry.Size} bytes, {entry.Tags[0]}, {this.count} left
+```
+
+A placeholder is the same path `rose_debug_evaluate` takes: an argument or local by name, or `arg:0`
+/ `local:2`, then `.field` and `[3]` into the object graph. `{{` and `}}` are literal braces. The
+values are read straight out of memory and none of the target's code runs, so a property with a
+getter cannot be logged -- see the limits below -- and a tracepoint on a hot method still cannot
+freeze it.
+
+Each hit carries the values twice: once in its `message`, and once in `logged`, a list of
+`{name, typeName, value}` in the order the message names them. The second is the one that survives
+a client truncating a long page. When that happens, take the `sequence` off the hit you care about
+and ask for it on its own:
+
+```
+rose_debug_events  sessionId: …  sequence: 4312
+```
+
+which answers with that one event and every field it carries. An empty answer means it is not in
+the buffer: below `oldestAvailable` the ring dropped it, above `totalObserved` it has not happened.
+
+A value that cannot be read -- a local out of scope at that instruction, a null in the middle of a
+chain -- comes back as `<path: reason>` in both places rather than as a gap, so a message never
+reads as the value having been empty. A message whose braces do not balance, or whose placeholder is
+not a path, is refused when the tracepoint is added rather than logged verbatim on every hit.
+
+A logged string is cut to the same 200 characters everything else is, and says so the same way with
+`fullLength`. A tracepoint is for watching something happen many times, so it has no way to raise
+that: to read one value whole, stop on it and evaluate with `maxLength`.
+
 ## Limits worth knowing
 
 - Line-granular stepping and local names need a PDB; without one a step lands at the runtime's own
   step boundaries and locals are indexed rather than named.
-- Expression evaluation reads field-access chains only (`rose_debug_evaluate`): an argument or local,
-  then `.field` into the object graph, read from memory. It runs none of the debuggee's own code, so
-  property getters, method calls, and an object's `ToString` are deliberately not evaluated -- that
-  needs func-eval, which can hang or corrupt the target, and is left to an external debugger.
-- Conditions are cheap value-compares (`name OP literal`) over the stopped frame, not full expressions.
+- Expression evaluation reads field-access chains only (`rose_debug_evaluate`, and the same paths in
+  a tracepoint's message): an argument or local, then `.field` into the object graph, read from
+  memory. It runs none of the debuggee's own code, so property getters, method calls, and an
+  object's `ToString` are deliberately not evaluated -- that needs func-eval, which can hang or
+  corrupt the target, and is left to an external debugger.
+- An object with no primitive value of its own logs as `{TypeName}`, for the same reason: naming it
+  is a metadata read, and rendering it would be a call into the target.
+- **A string value is cut to 200 characters wherever one is read**, so that a frame with twenty
+  locals is not a transfer of the target's heap. When it is cut, the value carries `fullLength`
+  saying how long it really is -- the trailing ellipsis cannot say so on its own, since a string is
+  allowed to end in one. To read one whole, evaluate it with `maxLength`:
+
+  ```
+  rose_debug_evaluate  sessionId: …  expression: url  maxLength: 4096
+  ```
+
+  up to 65536 characters. There is a ceiling because the answer goes into a model's context whole;
+  a value past it still reports its `fullLength`, so what is missing is never a guess. The whole
+  string is read off the target either way -- the cap is on what is reported, not on what is
+  fetched -- so asking for more is the same read, not a second trip.
+- Conditions are cheap value-compares (`name OP literal`) over the stopped frame, not full
+  expressions -- a condition takes a bare name where a log message takes a path.
 - **The first read of an element's properties is the accurate one.** Reading the property chain
   brings a `TextBlock`'s untouched collection properties into existence, and a property that exists
   is no longer a framework default -- so a second read of the same element adds `Inlines`,

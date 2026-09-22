@@ -137,16 +137,16 @@ internal sealed class CorDebugInspector(ILogger logger)
 		var value = Resolve(frame, parsed, out var failure)
 			?? throw new ArgumentException(failure ?? $"'{path}' does not resolve in frame {frameIndex}.");
 
-		var (typeName, rendered, hasChildren) = ValueReader.Read(value);
-		var (children, total, truncated) = hasChildren ? ChildrenOf(value, path) : ([], 0, false);
+		var read = ValueReader.Read(value);
+		var (children, total, truncated) = read.HasChildren ? ChildrenOf(value, path) : ([], 0, false);
 
 		return new LiveValueExpansion
 		{
 			Execution = target.Stop.State,
 			Stop = target.Stop,
 			Path = path,
-			TypeName = typeName,
-			Value = rendered,
+			TypeName = read.TypeName,
+			Value = read.Value,
 			Children = children,
 			Total = total,
 			Truncated = truncated,
@@ -425,29 +425,31 @@ internal sealed class CorDebugInspector(ILogger logger)
 
 			for (var i = 0; i < arguments.Count && variables.Count < MaxVariables; i++)
 			{
-				var (typeName, value, hasChildren) = ValueReader.Read(arguments[i]);
+				var read = ValueReader.Read(arguments[i]);
 				variables.Add(new LiveVariable
 				{
 					Name = ArgumentName(i, isStatic, parameterNames),
 					Kind = "argument",
-					TypeName = typeName,
-					Value = value,
+					TypeName = read.TypeName,
+					Value = read.Value,
 					Path = ValuePath.Argument(i),
-					HasChildren = hasChildren,
+					HasChildren = read.HasChildren,
+					FullLength = read.FullLength,
 				});
 			}
 
 			for (var i = 0; i < locals.Count && variables.Count < MaxVariables; i++)
 			{
-				var (typeName, value, hasChildren) = ValueReader.Read(locals[i]);
+				var read = ValueReader.Read(locals[i]);
 				variables.Add(new LiveVariable
 				{
 					Name = LocalName(i, named),
 					Kind = "local",
-					TypeName = typeName,
-					Value = value,
+					TypeName = read.TypeName,
+					Value = read.Value,
 					Path = ValuePath.Local(i),
-					HasChildren = hasChildren,
+					HasChildren = read.HasChildren,
+					FullLength = read.FullLength,
 				});
 			}
 		}
@@ -613,15 +615,16 @@ internal sealed class CorDebugInspector(ILogger logger)
 				total = array.Count;
 				for (var i = 0; i < total && children.Count < MaxChildren; i++)
 				{
-					var (typeName, rendered, hasChildren) = ValueReader.Read(array.GetElementAtPosition(i));
+					var read = ValueReader.Read(array.GetElementAtPosition(i));
 					children.Add(new LiveVariable
 					{
 						Name = $"[{i}]",
 						Kind = "element",
-						TypeName = typeName,
-						Value = rendered,
+						TypeName = read.TypeName,
+						Value = read.Value,
 						Path = ValuePath.Element(basePath, i),
-						HasChildren = hasChildren,
+						HasChildren = read.HasChildren,
+						FullLength = read.FullLength,
 					});
 				}
 
@@ -662,16 +665,17 @@ internal sealed class CorDebugInspector(ILogger logger)
 		{
 			// GetFieldValue wants the raw ICorDebugClass; the ClrDebug wrapper is not it, and casting
 			// the wrapper to the interface throws.
-			var (typeName, rendered, hasChildren) = ValueReader.Read(objectValue.GetFieldValue(cls.Raw, field.Token));
+			var read = ValueReader.Read(objectValue.GetFieldValue(cls.Raw, field.Token));
 
 			return new LiveVariable
 			{
 				Name = field.Name,
 				Kind = "field",
-				TypeName = typeName,
-				Value = rendered,
+				TypeName = read.TypeName,
+				Value = read.Value,
 				Path = ValuePath.Field(basePath, field.Name),
-				HasChildren = hasChildren,
+				HasChildren = read.HasChildren,
+				FullLength = read.FullLength,
 			};
 		}
 		catch (Exception)
@@ -729,6 +733,29 @@ internal sealed class CorDebugInspector(ILogger logger)
 	internal sealed record WalkedFrame(CorDebugILFrame Frame, int SkippedBefore);
 
 	/// <summary>
+	/// One already-parsed path read against a frame the caller has in hand, rendered the way every
+	/// other surface renders a value. It is the whole of an evaluation bar finding the frame, which
+	/// is what a tracepoint's interpolation needs: a message naming four values walks the stack once
+	/// rather than four times, on a callback the target is stopped for.
+	/// </summary>
+	internal LogValue ReadPath(CorDebugILFrame frame, ValuePath path)
+	{
+		try
+		{
+			var value = Resolve(frame, path, out var failure);
+			if (value is null) return LogValue.Unavailable(failure ?? "could not be read");
+
+			var read = ValueReader.Read(value);
+			return LogValue.Read(read.Value, read.TypeName, read.FullLength);
+		}
+		catch (Exception exception)
+		{
+			logger.LogDebug(exception, "Reading a value path for a log message failed.");
+			return LogValue.Unavailable(exception.Message);
+		}
+	}
+
+	/// <summary>
 	/// Evaluates a value path against the stopped frame (issue #7): an argument or local -- by name,
 	/// or as <c>arg:0</c> / <c>local:2</c> -- then <c>.field</c> and <c>[3]</c> into the object graph,
 	/// read directly from memory. It runs none of the debuggee's own code -- no property getters, no
@@ -739,7 +766,7 @@ internal sealed class CorDebugInspector(ILogger logger)
 	/// variable evaluates without translation, and the two cannot disagree about what one means.
 	/// </para>
 	/// </summary>
-	public LiveEvaluation Evaluate(CorDebugThread held, string expression)
+	public LiveEvaluation Evaluate(CorDebugThread held, string expression, int maxLength = ValueReader.DefaultMaxStringLength)
 	{
 		try
 		{
@@ -753,8 +780,14 @@ internal sealed class CorDebugInspector(ILogger logger)
 			var value = Resolve(frame, path, out var failure);
 			if (value is null) return new LiveEvaluation { Expression = expression, Error = failure };
 
-			var (typeName, rendered, _) = ValueReader.Read(value);
-			return new LiveEvaluation { Expression = expression, TypeName = typeName, Value = rendered };
+			var read = ValueReader.Read(value, maxLength);
+			return new LiveEvaluation
+			{
+				Expression = expression,
+				TypeName = read.TypeName,
+				Value = read.Value,
+				FullLength = read.FullLength,
+			};
 		}
 		catch (ArgumentException exception)
 		{

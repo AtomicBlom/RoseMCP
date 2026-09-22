@@ -29,7 +29,15 @@ internal sealed class BreakpointBinding
 	/// <summary>True for a stopping breakpoint; false for a tracepoint (log and continue).</summary>
 	public required bool StopOnHit { get; init; }
 
+	/// <summary>The message as the caller wrote it, placeholders and all, for reporting.</summary>
 	public string? LogMessage { get; init; }
+
+	/// <summary>
+	/// The parsed message rendered on each hit; null when there is no message. Parsed once here
+	/// rather than per hit, because a tracepoint on a hot method renders it thousands of times and
+	/// the text it was written from cannot change.
+	/// </summary>
+	public LogMessageTemplate? LogTemplate { get; init; }
 
 	public int? LogEveryNthHit { get; init; }
 

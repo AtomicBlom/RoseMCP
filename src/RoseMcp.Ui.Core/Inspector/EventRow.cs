@@ -27,9 +27,14 @@ public sealed class EventRow
 		ExceptionType = entry.ExceptionType ?? string.Empty;
 		HasException = ExceptionType.Length > 0;
 		Frames = entry.Frames ?? [];
-		Variables = entry.Variables ?? [];
+
+		// A stop's whole frame and a tracepoint's logged values go behind the one expander, because
+		// they answer the same question a reader has of a row -- what were the values here. Nothing
+		// carries both: a stop reads its frame and never interpolates, a tracepoint the reverse.
+		Variables = entry.Variables ?? entry.Logged ?? [];
+		Logged = entry.Logged is { Count: > 0 };
 		HasDetail = Frames.Count > 0 || Variables.Count > 0;
-		DetailHeader = DescribeDetail(Frames.Count, Variables.Count);
+		DetailHeader = DescribeDetail(Frames.Count, Variables.Count, Logged);
 	}
 
 	/// <summary>The host's own sequence, which orders the tail and identifies a row.</summary>
@@ -61,6 +66,13 @@ public sealed class EventRow
 	public IReadOnlyList<string> Frames { get; }
 
 	public IReadOnlyList<LiveVariable> Variables { get; }
+
+	/// <summary>
+	/// Whether <see cref="Variables"/> is what a tracepoint's message asked to log rather than
+	/// everything a stop had in scope. It changes what the absence of a value means -- a name not
+	/// listed here was not asked for, where a name not listed on a stop was not in scope.
+	/// </summary>
+	public bool Logged { get; }
 
 	/// <summary>Whether there is anything behind the expander, so one is only offered where there is.</summary>
 	public bool HasDetail { get; }
@@ -119,13 +131,19 @@ public sealed class EventRow
 		_ => kind.ToString().ToLowerInvariant(),
 	};
 
-	/// <summary>What the expander offers, so a reader knows whether it is worth opening.</summary>
-	public static string DescribeDetail(int frames, int variables)
+	/// <summary>
+	/// What the expander offers, so a reader knows whether it is worth opening. A tracepoint's
+	/// values are counted as logged rather than as variables, because "2 variables" on a method
+	/// with nine of them reads as the other seven having gone missing.
+	/// </summary>
+	public static string DescribeDetail(int frames, int variables, bool logged = false)
 	{
+		var noun = logged ? "logged value" : "variable";
+
 		if (frames == 0 && variables == 0) return string.Empty;
 		if (variables == 0) return Format.Count(frames, "frame");
-		if (frames == 0) return Format.Count(variables, "variable");
+		if (frames == 0) return Format.Count(variables, noun);
 
-		return $"{Format.Count(frames, "frame")}, {Format.Count(variables, "variable")}";
+		return $"{Format.Count(frames, "frame")}, {Format.Count(variables, noun)}";
 	}
 }

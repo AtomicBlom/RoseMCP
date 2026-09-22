@@ -230,11 +230,11 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 	}
 
 	/// <summary>Evaluates a field-access expression against the stopped frame; safe, no debuggee code runs.</summary>
-	public LiveEvaluation Evaluate(string expression)
+	public LiveEvaluation Evaluate(string expression, int? maxLength = null)
 	{
 		var session = Attached();
 
-		return session?.Inspection.Evaluate(expression)
+		return session?.Inspection.Evaluate(expression, maxLength)
 			?? new LiveEvaluation { Expression = expression, Error = "This session is not attached to a target." };
 	}
 
@@ -400,6 +400,32 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 				Skipped = skipped,
 			};
 		}
+	}
+
+	/// <summary>
+	/// One event, whole, addressed by its sequence. A page of hits is long enough that the client
+	/// displaying it truncates, and every event carries its sequence, so the way out of a truncated
+	/// page is to name the one event that mattered and read all of it.
+	/// <para>
+	/// An empty answer means the event is not in the buffer: either it has not happened, which
+	/// <c>totalObserved</c> says, or the ring dropped it, which <c>oldestAvailable</c> says. Told
+	/// apart by those two rather than by an error, because both are ordinary and neither is the
+	/// caller's mistake.
+	/// </para>
+	/// <para>
+	/// The cursor it answers with is the sequence asked for, not where the read got to. A point read
+	/// is not a page, and a caller that pages on from it should get everything after the event it
+	/// looked at -- including, where the event was dropped, the ones between.
+	/// </para>
+	/// </summary>
+	public LiveDebugEventPage ReadEvent(long sequence)
+	{
+		// Reading from one before it is how the buffer addresses a single event; what comes back is
+		// the first event at or past it, so it is only the one asked for if the sequence matches.
+		var page = ReadEvents(Math.Max(0, sequence - 1), kinds: null, limit: 1);
+		var found = page.Events is [{ } only] && only.Sequence == sequence;
+
+		return page with { Events = found ? page.Events : [], NextCursor = sequence };
 	}
 
 	/// <summary>

@@ -826,11 +826,17 @@ internal sealed class CorDebugSession : IDisposable
 		if (binding?.LogEveryNthHit is { } nth && ordinal % nth != 0) return true;
 
 		var location = binding?.Raw ?? "unknown location";
-		var suffix = binding?.LogMessage is { Length: > 0 } message ? $": {message}" : string.Empty;
+
+		// Rendered after the filters, not before: reading the frame is the expensive part of a hit,
+		// and a hit that is conditioned out or thinned away never needed its values.
+		var logged = binding?.LogTemplate is { } template ? _narrative.Interpolate(hit.Thread, template) : null;
+		var suffix = logged?.Text is { Length: > 0 } message ? $": {message}" : string.Empty;
+
 		_buffer.Append(
 			LiveDebugEventKind.BreakpointHit,
 			$"Tracepoint {location} hit #{ordinal} on thread {threadId?.ToString() ?? "?"}{suffix}",
-			threadId: threadId);
+			threadId: threadId,
+			logged: logged?.Values is { Count: > 0 } values ? values : null);
 		return true;
 	}
 

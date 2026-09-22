@@ -16,16 +16,43 @@ namespace RoseMcp.LiveApp.Debugging;
 /// </summary>
 internal static class ValueReader
 {
-	private const int MaxStringLength = 200;
+	/// <summary>
+	/// How much of a string comes back when nothing asks for more. A frame can hold twenty locals
+	/// and each of them a document, so the default is what keeps reading a frame from being a
+	/// transfer of the target's heap.
+	/// </summary>
+	internal const int DefaultMaxStringLength = 200;
+
+	/// <summary>
+	/// The most a caller can ask for on one value. There is a ceiling because the answer goes into a
+	/// model's context whole and an unbounded one cannot be recovered from, and it is this high
+	/// because the values that hit the default -- a URL, a connection string, a JSON body, a SQL
+	/// statement -- are the whole reason somebody set the breakpoint. A value longer than this
+	/// reports its length, so the caller knows what is missing rather than guessing.
+	/// </summary>
+	internal const int MaxRequestedStringLength = 65536;
+
 	private const int MaxDepth = 2;
+
+	/// <summary>
+	/// A value as it reads: its type, the text of it, whether it expands, and -- only when the text
+	/// is shorter than the value -- how long the value really is.
+	/// </summary>
+	internal sealed record ReadValue(string? TypeName, string? Value, bool HasChildren, int? FullLength = null);
 
 	/// <summary>
 	/// Reads a value. <c>HasChildren</c> says whether expanding it would yield anything, so a tree
 	/// can show an expander only where there is something behind it without paying a read per row.
+	/// <para>
+	/// <paramref name="maxStringLength"/> is how much of a string to render. The whole string is read
+	/// off the target either way -- the cap is on what is reported, not on what is fetched -- so
+	/// raising it for one value costs nothing but the bytes it returns.
+	/// </para>
 	/// </summary>
-	public static (string? TypeName, string? Value, bool HasChildren) Read(CorDebugValue value) => Read(value, 0);
+	public static ReadValue Read(CorDebugValue value, int maxStringLength = DefaultMaxStringLength)
+		=> Read(value, 0, maxStringLength);
 
-	private static (string? TypeName, string? Value, bool HasChildren) Read(CorDebugValue value, int depth)
+	private static ReadValue Read(CorDebugValue value, int depth, int maxStringLength = DefaultMaxStringLength)
 	{
 		try
 		{
@@ -33,27 +60,36 @@ internal static class ValueReader
 
 			if (value is CorDebugReferenceValue reference)
 			{
-				if (reference.IsNull) return (FriendlyType(elementType), "null", false);
+				if (reference.IsNull) return new ReadValue(FriendlyType(elementType), "null", false);
 
 				// Past the depth limit there is still something there, so it is expandable even
 				// though the value string says nothing about it.
-				if (depth >= MaxDepth) return (FriendlyType(elementType), "(...)", true);
+				if (depth >= MaxDepth) return new ReadValue(FriendlyType(elementType), "(...)", true);
 
-				return Read(reference.Dereference(), depth + 1);
+				return Read(reference.Dereference(), depth + 1, maxStringLength);
 			}
 
 			if (value is CorDebugStringValue stringValue)
 			{
-				return ("string", Quote(stringValue.GetString(stringValue.Length)), false);
+				// The whole string comes off the target and only the rendering is capped, so what a
+				// caller asking for more gets back is the same read, not a second trip.
+				var whole = stringValue.GetString(stringValue.Length);
+				var kept = Math.Min(whole?.Length ?? 0, Math.Max(0, maxStringLength));
+
+				return new ReadValue(
+					"string",
+					Quote(whole, maxStringLength),
+					false,
+					whole is not null && kept < whole.Length ? whole.Length : null);
 			}
 
 			if (value is CorDebugArrayValue arrayValue)
 			{
 				var count = Count(arrayValue);
-				return (FriendlyType(elementType), $"{{{FriendlyType(elementType)}[{count}]}}", count > 0);
+				return new ReadValue(FriendlyType(elementType), $"{{{FriendlyType(elementType)}[{count}]}}", count > 0);
 			}
 
-			if (value is CorDebugBoxValue) return (FriendlyType(elementType), "(boxed)", true);
+			if (value is CorDebugBoxValue) return new ReadValue(FriendlyType(elementType), "(boxed)", true);
 
 			if (value is CorDebugObjectValue objectValue)
 			{
@@ -62,19 +98,19 @@ internal static class ValueReader
 				// Reported as expandable without asking whether the type declares a field. The check
 				// is a metadata read per value on a path a person is waiting on, and being wrong
 				// costs an expander that opens onto nothing.
-				return (typeName, $"{{{typeName}}}", true);
+				return new ReadValue(typeName, $"{{{typeName}}}", true);
 			}
 
 			if (value is CorDebugGenericValue genericValue && TryReadPrimitive(genericValue, elementType, out var text))
 			{
-				return (FriendlyType(elementType), text, false);
+				return new ReadValue(FriendlyType(elementType), text, false);
 			}
 
-			return (FriendlyType(elementType), null, false);
+			return new ReadValue(FriendlyType(elementType), null, false);
 		}
 		catch (Exception)
 		{
-			return (null, "(unreadable)", false);
+			return new ReadValue(null, "(unreadable)", false);
 		}
 	}
 
@@ -151,10 +187,18 @@ internal static class ValueReader
 		}
 	}
 
-	private static string Quote(string? value)
+	/// <summary>
+	/// A string as it is reported: quoted, and cut to <paramref name="maxStringLength"/> with an
+	/// ellipsis if it is longer. The ellipsis alone cannot say a value was cut -- a string can end
+	/// in one -- so the caller is told by <see cref="ReadValue.FullLength"/> rather than by this.
+	/// </summary>
+	private static string Quote(string? value, int maxStringLength)
 	{
 		value ??= string.Empty;
-		if (value.Length > MaxStringLength) value = value[..MaxStringLength] + "…";
+
+		var keep = Math.Max(0, maxStringLength);
+		if (value.Length > keep) value = value[..keep] + "…";
+
 		return $"\"{value}\"";
 	}
 

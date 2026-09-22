@@ -546,7 +546,7 @@ public sealed class LiveAppDebugTools(LiveAppSessionManager sessions, IInspector
 			+ "app rebuilds that part of the UI.")]
 	public async Task<LiveXamlApplyResult> XamlApplyAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
-		[Description(ToolDescriptions.XamlFilePathArgument)]
+		[Description(ToolDescriptions.XamlFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.XamlOldMarkupArgument)]
 		string? oldXaml = null,

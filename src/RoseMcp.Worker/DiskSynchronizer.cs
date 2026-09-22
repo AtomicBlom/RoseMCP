@@ -1,5 +1,3 @@
-using System.Text;
-
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
@@ -639,7 +637,7 @@ public sealed class DiskSynchronizer
 			await stream.CopyToAsync(buffer, cancellationToken);
 			buffer.Position = 0;
 
-			return SourceText.From(buffer, Encoding.UTF8, canBeEmbedded: false);
+			return SourceText.From(buffer, SourceEncoding.Utf8WithoutMark, canBeEmbedded: false);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{

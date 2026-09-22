@@ -57,4 +57,8 @@ Read before adding or changing a read path, a reload trigger, or the file watche
   reloads -- over-reloading is the only answer there that cannot be stale. A watcher that loses events,
   to an overflowed buffer or a vanished directory, loses nothing else, so lost events reload only in that
   same case.
+- **Re-reading a file decides what a later write puts back.** The barrier's reader is where a file's
+  encoding is settled, so the fallback it passes for a stream with no byte order mark has to be one
+  that emits none -- `Encoding.UTF8` emits a preamble and would mark every mark-less file the sweep
+  touched. The write side of that is in [writing-csharp.md](writing-csharp.md).
 - **Every result carries a `revision`.** It is how callers detect that the world moved.

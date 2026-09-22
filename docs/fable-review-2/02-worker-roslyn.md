@@ -248,23 +248,12 @@ applying to card 11b.
 - **Suggested change:** `SplitOffConstructor` returns both readings when the last two segments repeat;
   the resolver (WRK-04) tries the type reading first. Fold into WRK-04 if that lands first.
 
-### WRK-06 `NameResolver` asks one compilation about another compilation's symbol
-- **Severity:** High
-- **Effort:** S
-- **Where:** `NameResolver.cs:197`
-- **What:** `GatherAsync` calls `SymbolFinder.FindDeclarationsAsync(project, ...)`, which returns
-  symbols owned by referenced projects' compilations, then asks
-  `compilation.IsSymbolAccessibleWithin(symbol, compilation.Assembly)` on the asking project's
-  compilation. Roslyn throws `ArgumentException("symbol must be from this compilation or some
-  referenced assembly")`, which the boundary forwards verbatim (#121, #212). The issue's table shows
-  it depends on the asking project, which is what a cross-compilation symbol looks like.
-- **Why it matters:** `rose_resolve_name`, `rose_add_file` and every write tool with `resolveUsings`
-  fail with a message about an argument the caller never passed. #212 cost a retry on a staleness
-  theory before the cause was guessed.
-- **Suggested change:** Map the candidate into the asking compilation before the check --
-  `SymbolKey.Create(symbol).Resolve(compilation).Symbol`, or `compilation.GetTypeByMetadataName` for
-  types -- and skip a candidate that does not map rather than throwing. Regression test with two
-  fixture projects, one referencing the other, resolving a name declared in the referenced one.
+### ~~WRK-06 `NameResolver` asks one compilation about another compilation's symbol~~
+**#306.** A name search answers with symbols owned by whichever compilation declared them, and the
+accessibility question was then put to a different one, which Roslyn refuses by throwing rather than
+by answering -- so resolving a name, creating a file, and every write that works out its own imports
+failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into
+the asking compilation before it is asked about, and one that will not map is passed over.
 
 ### WRK-07 The boundary cannot tell a deliberate refusal from a leaked framework exception
 - **Severity:** Medium

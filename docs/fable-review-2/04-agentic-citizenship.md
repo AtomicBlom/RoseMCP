@@ -180,8 +180,11 @@ revision 1). Sizes are the raw JSON as it arrived.
 - **Suggested change:** Take the metadata fallback whenever `matching.Count == 0` and the requested path is qualified -- that is, when nothing in source is declared *at the address the caller wrote*, rather than when nothing in source carries the last word of it. Keep the existing refusal for a bare leaf name, which is the ambiguity the exception was written for. Then have "Nothing is declared at" say whether a metadata search ran, so a caller can tell "not in your source" from "not anywhere".
 
 ### AGT-04 A leaked Roslyn exception names an argument the tool does not have
+- **The provenance half is done (#306).** A symbol is mapped into the asking compilation before it is
+  asked about, so this throw no longer happens. What is left is the general guard, which is card 13:
+  no message naming a CLR parameter should reach a caller, whatever produced it.
 - **Severity:** High
-- **Effort:** M
+- **Effort:** S, for what remains
 - **Where:** `src/RoseMcp.Worker/NameResolver.cs:197`; transcript T4a; issues #121, #212
 - **What:** `rose_resolve_name name=ToolErrorReporting`, with no `filePath`, returns
   `Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')`.

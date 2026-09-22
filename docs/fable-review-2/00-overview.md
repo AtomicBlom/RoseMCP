@@ -29,19 +29,21 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 0e | UIP-23 | #295 |
 | 0f | USE inversion 1 | #295 |
 | 1 | BRK-01, AGT-10, BRK-20 (the hop) | #305 |
+| 6 | WRK-06 | #306 |
 | 2 | LIV-03 | #270 |
 | 3 | LIV-02 | #265 |
 | 7 | WRK-08 | #269 |
 | 9 | WRK-01 | #275, #276, #278 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
-**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, four
-of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and seven of the 27 High
+**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, five
+of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and eight of the 27 High
 findings -- including **the debugger core and the write pipeline**, which were the two
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
-Next at the top: **card 4** (the XAML pipe, and #208 with it), then **card 8** for tier 2's editing
-work. Card 1 closing opens the gate on **11b**, **11c** and **1b**.
+Tier 1 has three rows left: **1b**, **5**, and **4**, which is a decision rather than work. Next at
+the top is **card 5** (the tap's escaping asymmetry), then **card 8** for tier 2's editing work.
+Card 1 opened the gate on **11b**, **11c** and **1b**.
 
 Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
 would not), the layout half of **21**, and card 0e's finding that three of the phrases the comment
@@ -316,7 +318,7 @@ These produce confident wrong results today. Everything else is cost.
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
 | 4 | **Re-cut before working it.** #300 found #208 was the test's wait, not the product, so this card lost the evidence both its findings rested on. What survives: a timed-out XAML request still runs in the app, and the pipe matches replies by position rather than identity -- visible in the source, never yet observed. Decide whether an unobserved hazard is worth M, or decline it deliberately. | UIP-15, LIV-07 | #208 | M |
 | 5 | **The tap's request side does not escape what its reply side unescapes.** A tab or newline in a property value mis-frames the edit and mis-keys its status, so an edit that landed reports as not applied. | IPC-01 | new | S |
-| 6 | **One compilation is asked about another's symbol**, leaking a Roslyn error naming an argument the caller never sent, from three tools. | WRK-06 | #121, #212 | S |
+| ~~6~~ | **#306.** One compilation was asked about another's symbol, so resolving a name and every write that worked out its own imports failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is asked about. | WRK-06 | — | — |
 | ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory, and the rule is an invariant. | WRK-08 | — | — |
 
 ### Tier 2 — the three structural refactors
@@ -343,7 +345,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. | AGT-23, AGT-06, AGT-05 | #234 | M |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 12b | **Three live-app tools answer with a bare sentence**, which is the defect card 0c fixed on `rose_workspace_close` surviving on the surface 0c's guard exempts. Give each a result record, and narrow the exemption so it excuses a live-app result from *workspace* attribution rather than from being a result. | BRK-21 | new | S |
-| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. | AGT-04, WRK-07, AGT-05 | #121 #210 | M |
+| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. | AGT-04, WRK-07, AGT-05 | #210 | M |
 | 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. | AGT-12, USE-01 | new | S |
 | 15 | **`rose_find_implementations` cannot be restricted to your own solution**, so a common framework interface returns 116 metadata matches truncated at 40. Also: a property's definition is listed three to four times. | IPC dogfooding, USE dogfooding, AGT-07 | new | S |
 

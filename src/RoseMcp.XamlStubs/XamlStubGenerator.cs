@@ -52,6 +52,12 @@ public sealed class XamlStubGenerator : IIncrementalGenerator
 			return;
 		}
 
+		if (choice.CompiledInWorkspaceBy is { } compiler)
+		{
+			Report(context, choice, documents.Length + unreadable, 0, [], [$"every file: {compiler} compiles the markup"]);
+			return;
+		}
+
 		var stubbed = 0;
 		var unresolved = new List<string>();
 		var skipped = Unreadable(unreadable);

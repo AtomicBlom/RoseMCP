@@ -40,6 +40,13 @@ Read before changing analyzer loading, `RoseMcp.XamlStubs`, or anything handing 
   Roslyn type universe; anything that does not resolve is left out and reported, never faked. Check
   changes against the `.g.i.cs` files a real build leaves in `obj` -- that comparison is what found
   the four things reasoning had missed, and it agrees exactly today.
+- **Nothing is stubbed where the markup compiler is itself a generator.** Uno Platform writes WinUI
+  markup against WinUI's names, but its XAML compiler is a source generator shipped beside `Uno.UI`,
+  so it runs in the workspace and its partials are already there. Generators cannot see each other's
+  output, so the emitter's check for an existing `InitializeComponent` never catches it, and a stub on
+  top duplicates every named field -- hundreds of CS0102 and CS0229 in a project that builds clean.
+  The signal is which assembly defines the dialect's marker type, not which SDK the project is on:
+  Uno's Windows target takes those types from the Windows App SDK, and needs the ordinary treatment.
 - **Never hand Roslyn a custom `AnalyzerReference`.** Its serializer switches on the concrete type --
   `AnalyzerFileReference`, `AnalyzerImageReference`, and an interface nested inside an internal class
   -- and throws `Unexpected value` on everything else. It checksums a project's analyzer references

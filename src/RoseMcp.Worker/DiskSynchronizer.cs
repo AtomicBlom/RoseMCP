@@ -373,6 +373,15 @@ public sealed class DiskSynchronizer
 				solution = Remove(solution, tracked);
 				update.Untracked.Add(id);
 				removed++;
+
+				// Awaited like one that was absent at load. Once the document is removed nothing tracks the
+				// path, and which .editorconfig files a project reads is fixed when it evaluates -- so one
+				// that comes back, as it does after an editor's delete-and-rename save or a checkout that
+				// rewrites it, would otherwise never be seen again. Every project goes on without it: a new
+				// file written in spaces and LF, and rose_format, reading the same empty options, calling
+				// that file formatted.
+				if (tracked.Kind == TrackedDocumentKind.AnalyzerConfig) update.Awaited.Add(Path.GetFullPath(tracked.Path));
+
 				continue;
 			}
 
@@ -427,6 +436,11 @@ public sealed class DiskSynchronizer
 		foreach (var path in update.Declined)
 		{
 			_declined.Add(path);
+		}
+
+		foreach (var path in update.Awaited)
+		{
+			_absentBuildFiles.Add(path);
 		}
 	}
 

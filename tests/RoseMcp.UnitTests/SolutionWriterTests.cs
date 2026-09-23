@@ -79,6 +79,38 @@ public sealed class SolutionWriterTests
 	}
 
 	/// <summary>
+	/// A multi-targeted project loads once per target framework, so an edit to one of its files is a
+	/// change in two projects. It is one file with one diff, and listing it twice reads as the same edit
+	/// made twice.
+	/// </summary>
+	[Test]
+	public async Task Reports_a_file_shared_by_two_target_frameworks_once()
+	{
+		using var workspace = new AdhocWorkspace();
+		var path = Path.Combine(Path.GetTempPath(), "RoseMcpSolutionWriterTests", "Shared.cs");
+
+		var android = workspace.AddProject("App(net10.0-android)", LanguageNames.CSharp);
+		var androidDocument = DocumentId.CreateNewId(android.Id);
+		var before = android.Solution.AddDocument(androidDocument, "Shared.cs", "class Shared;", filePath: path);
+
+		var desktop = before.AddProject("App(net10.0-desktop)", "App", LanguageNames.CSharp);
+		var desktopDocument = DocumentId.CreateNewId(desktop.Id);
+		before = desktop.Solution.AddDocument(desktopDocument, "Shared.cs", "class Shared;", filePath: path);
+
+		var edited = SourceText.From("class Shared { }");
+		var after = before.WithDocumentText(androidDocument, edited).WithDocumentText(desktopDocument, edited);
+
+		var outcome = await SolutionWriter.ApplyAsync(
+			before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken);
+
+		Assert.Equal([path], outcome.ChangedFiles);
+		Assert.Equal(1, CountOf(outcome.Diff, "+++ "));
+	}
+
+	private static int CountOf(string text, string value) =>
+		(text.Length - text.Replace(value, string.Empty, StringComparison.Ordinal).Length) / value.Length;
+
+	/// <summary>
 	/// A byte order mark is part of the file. Rewriting the file through an API that has its own
 	/// idea of the encoding takes the mark off every file that had one -- three bytes no diff can
 	/// show, on a change that promised to touch one member.

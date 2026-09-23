@@ -29,6 +29,11 @@ public static class SolutionWriter
 		var diff = new StringBuilder();
 		var retyped = new List<(string Path, int Lines, string To)>();
 
+		// A multi-targeted project loads once per target framework, so one file on disk is a document in
+		// each of them and every edit to it is a change in each. It is still one file and one write; listed
+		// per project it reads as the same edit made twice.
+		var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
 		foreach (var projectChange in after.GetChanges(before).GetProjectChanges())
 		{
 			// Added documents come first: a split writes the new file before the old one shrinks, so
@@ -41,6 +46,8 @@ public static class SolutionWriter
 				if (added?.FilePath is not { Length: > 0 } addedPath) continue;
 
 				var path = Rooted(addedPath, added);
+				if (!seen.Add(path)) continue;
+
 				var source = await added.GetTextAsync(cancellationToken);
 				var text = source.ToString();
 
@@ -66,11 +73,14 @@ public static class SolutionWriter
 				if (oldDocument?.FilePath is not { Length: > 0 } changedPath || newDocument is null) continue;
 
 				var path = Rooted(changedPath, oldDocument);
+				if (seen.Contains(path)) continue;
+
 				var updated = await newDocument.GetTextAsync(cancellationToken);
 				var oldText = (await oldDocument.GetTextAsync(cancellationToken)).ToString();
 				var newText = updated.ToString();
 				if (string.Equals(oldText, newText, StringComparison.Ordinal)) continue;
 
+				seen.Add(path);
 				changed.Add(path);
 				diff.Append(UnifiedDiff.Render(path, oldText, newText));
 

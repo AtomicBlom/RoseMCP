@@ -64,9 +64,9 @@ public sealed record SymbolTarget
 			}
 			catch (SymbolNotFoundException) when (includeMetadata && FilePath is null)
 			{
-				// Only after source has found nothing at all, and only when the caller pinned no file:
-				// naming one says the answer is in this solution's source, and a referenced assembly is
-				// not in it.
+				// Only after source has found nothing matching the address, and only when the caller
+				// pinned no file: naming one says the answer is in this solution's source, and a
+				// referenced assembly is not in it.
 				var found = await MetadataSymbols.FindAsync(
 					snapshot.Solution, SymbolAddress.Parse(Symbol!), cancellationToken);
 

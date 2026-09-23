@@ -58,13 +58,16 @@ public static class MoveTypeService
 		var targetText = BuildTarget(text, moving, region, lineEnding);
 		var remainingText = BuildRemainder(text, region, lineEnding);
 
-		var solution = snapshot.Solution.WithDocumentText(document.Id, SourceText.From(remainingText));
+		// Both halves keep the encoding of the file they came out of: the type moves, and a byte
+		// order mark is not something the move is entitled to add or take away from either side.
+		var solution = snapshot.Solution.WithDocumentText(
+			document.Id, SourceText.From(remainingText, text.Encoding));
 
 		var targetId = DocumentId.CreateNewId(document.Project.Id, Path.GetFileName(targetPath));
 		solution = solution.AddDocument(
 			targetId,
 			Path.GetFileName(targetPath),
-			SourceText.From(targetText),
+			SourceText.From(targetText, text.Encoding),
 			document.Folders,
 			targetPath);
 

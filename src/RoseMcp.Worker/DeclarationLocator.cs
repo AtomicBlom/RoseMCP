@@ -224,6 +224,22 @@ public static class DeclarationLocator
 	/// Nothing matched, and the reasons why are worth telling apart: the name exists nowhere, it
 	/// exists somewhere other than where the caller said, it exists only in generated code, or it
 	/// exists but not in the file the caller pinned it to.
+	/// <para>
+	/// A refusal meaning "source declares nothing this address reaches" is a
+	/// <see cref="SymbolNotFoundException"/>, whatever it goes on to say, because that is the one
+	/// condition under which a read may answer from metadata instead. Carrying the name somewhere is
+	/// not the same as being reached by the address: a solution of any size declares an Add, a Name
+	/// and a Document of its own, and none of them is what System.Collections.Generic.List.Add names.
+	/// Requiring the name to be absent everywhere would therefore refuse the library members most
+	/// worth asking about, and refuse more of them the larger the solution grew.
+	/// </para>
+	/// <para>
+	/// The rest are deliberately not that type, and each for the same reason: source did reach
+	/// something, so a referenced assembly has nothing to add and answering from one would be an
+	/// answer about a different symbol. A declaration ruled out by where it lives was still found,
+	/// and a name that turned out to be a method rather than a type is a question about this
+	/// solution whichever way it is answered.
+	/// </para>
 	/// </summary>
 	private static ArgumentException NotFound(
 		SymbolAddress address,
@@ -238,7 +254,8 @@ public static class DeclarationLocator
 		{
 			return new SymbolNotFoundException(
 				$"Nothing in the solution is called {Quote(address.Name)}. Ask rose_search_symbols, which matches "
-					+ "names by pattern and by abbreviation and returns the qualified name this argument wants.");
+					+ "names by pattern and by abbreviation and returns the qualified name this argument wants. "
+					+ "For a type in a referenced assembly, rose_resolve_name searches metadata as well as source.");
 		}
 
 		if (matching.Count == 0 && address.Constructor != ConstructorKind.None)
@@ -265,7 +282,7 @@ public static class DeclarationLocator
 				? string.Empty
 				: " No overload takes those parameter types; leave the parameter list off to be told what there is.";
 
-			return new ArgumentException(
+			return new SymbolNotFoundException(
 				$"Nothing is declared at {Quote(address.Requested)}. {Quote(address.Name)} is declared as "
 					+ $"{Summarise(qualified)}.{overloads}");
 		}
@@ -289,6 +306,13 @@ public static class DeclarationLocator
 	/// error. The type may not be there at all; it may be there with a constructor the compiler
 	/// wrote, which is not in the file and cannot be edited; or it may declare constructors that
 	/// take other parameters.
+	/// <para>
+	/// Only the first of those may be answered from metadata, and the distinction is the whole
+	/// reason it carries its own type. Once a type of that name is declared here, the caller means
+	/// that type: answering about a referenced assembly's Greeter because this solution's Greeter
+	/// leaves its constructor to the compiler would be a complete, well-formed answer about
+	/// somebody else's class.
+	/// </para>
 	/// </summary>
 	private static ArgumentException NoConstructor(SymbolAddress address, IReadOnlyList<ISymbol> named)
 	{
@@ -299,7 +323,7 @@ public static class DeclarationLocator
 
 		if (types.Length == 0)
 		{
-			return new ArgumentException(
+			return new SymbolNotFoundException(
 				$"No type called {Quote(address.Name)} is declared in this solution, so {Quote(address.Requested)} "
 					+ "names no constructor.");
 		}

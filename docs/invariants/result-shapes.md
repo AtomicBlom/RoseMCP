@@ -8,6 +8,34 @@ Read before adding a tool, adding a field to a result, or changing an error path
   solution it owns. Convert at the boundary, never at the throw sites: the exception type carries
   meaning further in -- services separate a caller's mistake from an impossible state, the manager
   separates either from a dead worker, and retry decisions turn on that.
+- **A name matching two symbols is refused, and the address a result hands back resolves.** These
+  are the two halves of addressing code by name, and each fails by producing a well-formed answer
+  about something else. A resolver keyed on a candidate's name, containing type and assembly
+  collapses every overload of a method into one, so `System.IO.File.WriteAllTextAsync` resolved to
+  whichever overload the enumeration reached first and `rose_find_references` answered that nothing
+  called it -- a confident zero, with nothing in it saying the question had been ambiguous. What
+  separates overloads is their parameters, so the key carries them and the refusal lists every
+  candidate. Then what it lists has to parse, which is the other half: `SymbolAddress`'s format
+  exists so an address read out of one answer can be handed to the next call, and dropping a
+  parameter's type arguments spelled `Scan(System.ReadOnlyMemory)` for a method taking
+  `ReadOnlyMemory<char>` -- naming a type that does not exist, and matching nothing. Type arguments
+  come off the path, where a caller should not have to know how a declaration spells its type
+  parameters, and stay on parameter types, which are what tell two overloads apart.
+- **A read falls back to metadata when source declares nothing the address reaches, and only
+  then.** Both edges of that condition are a wrong answer. Narrowed to "the name is carried nowhere
+  in the solution", the fallback never fires for any library symbol whose last segment something
+  here also declares: `Microsoft.CodeAnalysis.Document`, `System.Collections.Generic.List` and
+  `ISymbol.Name` were all refused on this repository, each answered with unrelated source members
+  in other namespaces as though they were near misses -- so the larger a solution grew, the more
+  library symbols it refused. Widened to cover every refusal, it answers from a referenced assembly
+  while source did reach something, which is a confident answer about somebody else's class: an
+  ambiguous match is several declarations here, a declaration ruled out by where it lives was still
+  found, and a type declaring no explicit constructor is still the type the caller meant.
+  `SymbolNotFoundException` is what carries the distinction, so it is thrown exactly where it
+  holds. A lone segment reaches metadata through the declaration index, because no metadata name
+  lookup finds `StringBuilder` spelled that way and the source search has always accepted a bare
+  last segment -- demanding the namespace only of metadata is strictest where the caller knows
+  least.
 - **Status may not report a field it cannot fill.** `GetStatusAsync` once passed `restore: null`,
   `loadSeconds: 0` and no load diagnostics, hard-coded, so every status answer on every solution
   carried the same three blanks. That is worse than omitting them: a failed restore reaches

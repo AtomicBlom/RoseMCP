@@ -81,6 +81,7 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 		UseStructuredContent = true)]
 	[Description("Evaluate a field-access expression against the stopped frame; runs no debuggee code.")]
 	public LiveEvaluation Evaluate(
-		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression)
-		=> host.Evaluate(expression);
+		[Description(ToolDescriptions.EvaluateExpressionArgument)] string expression,
+		[Description(ToolDescriptions.EvaluateMaxLengthArgument)] int? maxLength = null)
+		=> host.Evaluate(expression, maxLength);
 }

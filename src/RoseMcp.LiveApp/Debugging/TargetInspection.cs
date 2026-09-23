@@ -146,9 +146,20 @@ internal sealed class TargetInspection(DebuggedTarget target, ILogger logger)
 	/// <summary>
 	/// Evaluates a field-access expression against the held frame. No debuggee code runs, so a
 	/// property with a getter cannot be read and nothing the expression names can have a side effect.
+	/// <para>
+	/// <paramref name="maxLength"/> raises the cap on how much of a string comes back, for the value
+	/// somebody set the breakpoint to read: a URL, a request body, a connection string. It is
+	/// clamped rather than refused, because a caller asking for more than the ceiling wants as much
+	/// as it can have, and the answer says how long the value really is either way.
+	/// </para>
 	/// </summary>
-	internal LiveEvaluation Evaluate(string expression)
+	internal LiveEvaluation Evaluate(string expression, int? maxLength = null)
 	{
+		var keep = Math.Clamp(
+			maxLength ?? ValueReader.DefaultMaxStringLength,
+			1,
+			ValueReader.MaxRequestedStringLength);
+
 		lock (target.Gate)
 		{
 			if (!target.TryHeld(out _, out var stop))
@@ -156,7 +167,7 @@ internal sealed class TargetInspection(DebuggedTarget target, ILogger logger)
 				return new LiveEvaluation { Expression = expression, Error = "The target is not stopped; evaluation needs a stop at a breakpoint or step." };
 			}
 
-			return _inspector.Evaluate(stop.Thread, expression);
+			return _inspector.Evaluate(stop.Thread, expression, keep);
 		}
 	}
 

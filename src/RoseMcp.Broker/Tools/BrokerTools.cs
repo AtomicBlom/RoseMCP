@@ -48,7 +48,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.WorkspaceOpen)]
 	public async Task<WorkspaceSummary> OpenAsync(
-		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
 		// Returns as soon as the process is up and the MCP handshake is done -- a second or so, not the
@@ -99,7 +99,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 	[Description(ToolDescriptions.WorkspaceStatus)]
 	public async Task<WorkspaceStatusReport> StatusAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
@@ -117,7 +117,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 	[Description(ToolDescriptions.WorkspaceReload)]
 	public async Task<WorkspaceStatusReport> ReloadAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.ConfigurationArgument)] string? configuration = null,
 		[Description(ToolDescriptions.PlatformArgument)] string? platform = null,
 		[Description(ToolDescriptions.PropertiesArgument)] string[]? properties = null,
@@ -140,7 +140,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.WorkspaceClose)]
 	public Task<WorkspaceClosed> CloseAsync(
-		[Description(ToolDescriptions.WorkspaceArgument)] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		workspaces.CloseAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
 }

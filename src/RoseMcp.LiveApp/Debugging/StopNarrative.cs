@@ -90,6 +90,41 @@ internal sealed class StopNarrative(ILogger logger)
 	}
 
 	/// <summary>
+	/// A tracepoint's log message for one hit, with each <c>{path}</c> read off the top managed frame.
+	/// The frame is found once for the whole message, and each path is read straight out of memory the
+	/// way an evaluation reads one -- no debuggee code runs, so a message on a hot method cannot hang
+	/// the target however many values it names.
+	/// <para>
+	/// A thread with no managed frame still logs: the hit happened, and a message whose values all say
+	/// so is worth more than no line at all.
+	/// </para>
+	/// </summary>
+	internal LogMessageRender Interpolate(CorDebugThread thread, LogMessageTemplate template)
+	{
+		// A message of literal text still goes through the render, because unescaping {{ and }} is
+		// part of it; what it skips is reading the frame, which is the whole cost of a hit.
+		if (!template.Interpolates) return template.Render(NothingToRead);
+
+		CorDebugILFrame? frame;
+		try
+		{
+			frame = CorDebugInspector.FindTopILFrame(thread);
+		}
+		catch (Exception exception)
+		{
+			logger.LogDebug(exception, "Finding the frame to log against failed.");
+			frame = null;
+		}
+
+		if (frame is null) return template.Render(_ => LogValue.Unavailable("this hit has no managed frame to read"));
+
+		return template.Render(path => _inspector.ReadPath(frame, path));
+	}
+
+	/// <summary>The resolver for a message that holds no placeholder, so it is never asked anything.</summary>
+	private static LogValue NothingToRead(ValuePath path) => LogValue.Unavailable("no value was asked for");
+
+	/// <summary>
 	/// The type of the exception a thread is reporting, named from its class's metadata. A first-chance
 	/// exception's type is the whole reason a reader looks at the event, so it degrades to a phrase
 	/// saying which part could not be read rather than to nothing.

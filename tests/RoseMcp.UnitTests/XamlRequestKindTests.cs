@@ -8,8 +8,9 @@ namespace RoseMcp.UnitTests;
 /// Which XAML provider requests change the app, which is what decides whether a caller whose wait
 /// expired is told the request may still land.
 /// <para>
-/// Pinned here because the code that composes the message cannot be reached: the live-app host is
-/// <c>net10.0-windows</c> and both test projects reference it without an output assembly. The
+/// Pinned here because the code that composes the message cannot be reached: it is internal to the
+/// live-app host, which this project does not reference and the Windows integration tests see only
+/// the public surface of. The
 /// failure being guarded is not a wrong sentence but a missing one -- a verb added to the provider
 /// that nobody classified, timing out, and reporting a plain failure for a change that then lands.
 /// </para>

@@ -117,6 +117,27 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		}
 	}
 
+	/// <summary>
+	/// Where a worker stands: an empty folder of Rose's own under the temp directory, made if it is not
+	/// there. Anywhere but the solution's directory, because Windows holds a process's working
+	/// directory open against deletion, a worktree's solution sits at its root, and a worker stays warm
+	/// for the life of the broker -- so a worker standing in its solution's directory makes the worktree
+	/// impossible to remove until the broker goes, and the error names "another process" rather than
+	/// Rose.
+	/// <para>
+	/// A folder of its own rather than the temp directory itself, because the current directory is on
+	/// the DLL search path and the temp directory is where other programs leave DLLs. Nothing in the
+	/// worker reads its working directory: the SDK is chosen, and restore is run, by passing the
+	/// solution's directory explicitly, and the solution path arrives absolute.
+	/// </para>
+	/// </summary>
+	private static string WorkerDirectory()
+	{
+		var directory = Path.Combine(Path.GetTempPath(), "RoseMcpWorker");
+		Directory.CreateDirectory(directory);
+		return directory;
+	}
+
 	public static async Task<WorkspaceWorker> StartAsync(
 		string solutionPath,
 		string workerPath,
@@ -127,6 +148,15 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		WorkspaceBuildOverrides? build = null)
 	{
 		var logger = loggerFactory.CreateLogger<WorkspaceWorker>();
+
+		// The worker stands somewhere other than the solution's directory (see WorkerDirectory), so a
+		// relative path would be resolved against the wrong base. The broker resolves every path before
+		// it gets here; this is where that stops being an assumption.
+		if (!Path.IsPathFullyQualified(solutionPath))
+		{
+			throw new ArgumentException(
+				$"A worker needs an absolute solution path, and was given '{solutionPath}'.", nameof(solutionPath));
+		}
 
 		var arguments = new List<string> { "--solution", solutionPath };
 		if (options.NoRestore) arguments.Add("--no-restore");
@@ -160,7 +190,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				// Task Manager's Details tab shows this, which is how a human works out which of
 				// several identical worker processes belongs to which solution.
 				Name = $"rose-worker {Path.GetFileNameWithoutExtension(solutionPath)}",
-				WorkingDirectory = Path.GetDirectoryName(solutionPath),
+				WorkingDirectory = WorkerDirectory(),
 			},
 			loggerFactory);
 

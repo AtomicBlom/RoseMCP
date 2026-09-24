@@ -164,46 +164,10 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 - **Why it matters:** Unobserved exceptions are logged noise at best and, with `UnobservedTaskException` handlers, a crash at worst. The window is narrow but it is the exact moment (cancel racing completion) this class is about.
 - **Suggested change:** Hold the continuation in a field, await it in a `finally` before disposal, or use `CancellationTokenSource.TryReset`-style guard: `if (!abandon.IsCancellationRequested) try { abandon.Cancel(); } catch (ObjectDisposedException) { }`. A `CancellableToolCallTests` unit test with a fake `McpClient` would be the first test this class has at the unit level.
 
-### BRK-20 A warm worker holds its worktree's directory open, so `git worktree remove` fails until the tray is closed
-
-- **Severity:** Medium
-- **Effort:** S. The relative-path half it was entangled with is done (#305).
-- **Where:** `src/RoseMcp.Broker/WorkspaceWorker.cs:156`
-  (`WorkingDirectory = Path.GetDirectoryName(solutionPath)`),
-  `src/RoseMcp.Worker/AddFileService.cs:50` (`Path.GetFullPath(request.FilePath)`)
-- **What:** Every worker is started with its working directory set to its solution's directory. On
-  Windows a process's working directory is held open with a handle that does not share delete, so
-  that directory cannot be removed while the process lives. Verified directly: a child process
-  started with a temp directory as its working directory made `Remove-Item` fail with "because it is
-  being used by another process", and the same removal succeeded the moment the child exited.
-
-  For this repository the solution sits at the worktree root, so the directory a worker pins **is**
-  the worktree. Workers are kept warm and are never evicted (#157), so a solution opened once holds
-  its worktree open for the life of the broker. `git worktree remove` on it fails, and so does any
-  removal of a parent directory. Creating a worktree, opening it, and then removing it is an
-  ordinary sequence here -- often inside a single session.
-- **Why it matters:** The workflow breaks in a way that does not name Rose. Git reports a directory
-  in use, the obvious suspects are an editor or a shell, and the actual holder is a background worker
-  owned by a tray in the notification area.
-
-  What made this urgent rather than annoying is gone: the correct working directory was also the
-  reason a mis-routed relative path found a real file to write to, and the hop is absolute-only now
-  (#305), so nothing turns on that setting being right any more.
-- **Suggested change:** The first step is done (#305). What is left:
-
-  1. **Move the working directory somewhere inert**, so a warm worker pins nothing a person might
-     want to delete. The repository already has the concept:
-     `tests/RoseMcp.TestSupport/NowhereDirectory` points at a drive that does not exist, precisely
-     because "nowhere on a real disk can be promised clean". A worker wants the weaker version of
-     the same idea: a directory whose removal nobody will ever attempt.
-  2. **Measure before moving it.** MSBuild resolves project-relative paths against the project file
-     rather than the working directory, but a repository's own custom targets or tasks may read
-     relative paths against the process, and a design-time build runs the repository's code
-     (`docs/debug/security-model.md`). Change it behind the fixture suite and watch the XAML and
-     generator fixtures, which are the ones with non-trivial targets.
-
-  Until then, #157's eviction work would shorten the exposure but not remove it, and the two should
-  be cut as one card: an evicted worker releases the directory, which is a second reason to evict.
+### ~~BRK-20 A warm worker holds its worktree's directory open, so `git worktree remove` fails until the tray is closed~~
+**#305, #PRNUM.** A worker stood in its solution's directory, which Windows holds open against deletion, so a
+worktree Rose had opened could not be removed while the broker lived. Workers stand in an empty folder of
+Rose's own, and the hop that once made that directory load-bearing is absolute-only.
 
 ### BRK-21 Three live-app tools answer with a bare sentence, and the guard for that is blind to them
 - **Found while closing card 0c, PR #295.** Not in the original review.

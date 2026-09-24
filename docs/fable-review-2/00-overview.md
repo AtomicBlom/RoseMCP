@@ -29,6 +29,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 0e | UIP-23 | #295 |
 | 0f | USE inversion 1 | #295 |
 | 1 | BRK-01, AGT-10, BRK-20 (the hop) | #305 |
+| 1b | BRK-20 (the pin) | #PRNUM |
 | 6 | WRK-06 | #306 |
 | 2 | LIV-03 | #270 |
 | 3 | LIV-02 | #265 |
@@ -43,8 +44,8 @@ seven of tier 1's wrong-answer cards, one of tier 2's three refactors, and nine 
 findings -- including **the debugger core and the write pipeline**, which were the two
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
-Tier 1 has one row left, **1b**, a wrong side effect rather than a wrong answer. Next is **1b**, then
-**card 8** for tier 2's editing work. Card 1 opened the gate on **11b**, **11c** and **1b**.
+**Tier 1 is done in full.** Next is **card 8** for tier 2's editing work. Card 1 opened the gate on
+**11b** and **11c**, and closing 1b added **11f**: a worker now outlives the worktree it was opened on.
 
 Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
 would not), the layout half of **21**, and card 0e's finding that three of the phrases the comment
@@ -311,7 +312,7 @@ These produce confident wrong results today. Everything else is cost.
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | ~~1~~ | **#305.** A relative path was measured from the directory the broker process started in, so a call from one worktree could edit the same-named file in another and report success. It is measured from the calling session's directory, and the hop on from there is absolute-only. | BRK-01, AGT-10, BRK-20 | — | — |
-| 1b | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Unblocked by card 1: the hop is absolute-only, so the worker's working directory is no longer load-bearing and can move somewhere inert. Cut with #157, since an evicted worker releases the directory too. | BRK-20 | #157 | S |
+| ~~1b~~ | **#PRNUM.** A warm worker stood in its solution's directory, which Windows holds open against deletion, so an opened worktree could not be removed until the broker went. Workers stand in an empty folder of Rose's own. | BRK-20 | — | — |
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
 | ~~4~~ | **#317.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app now says the change may still land, and what counts as such a verb is held against the provider's own dispatch by a test. The correlation half went to card 5; cancelling a request in flight is declined, with the reason in `xaml-live-edit.md`. | UIP-15, LIV-07 | #208 | — |
@@ -341,6 +342,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction, and covers the one case card 1 leaves: an http session with no relay never says where it is. | AGT-21 | new | S |
 | 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
 | 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. | AGT-23, AGT-06, AGT-05 | #234 | M |
+| 11f | **A worker outlives the worktree it was opened on, and no session can see what is warm.** Since card 1b a worktree can be removed while its worker lives, and the worker runs on against a solution that is gone -- tolerating it as it tolerates a branch switch -- holding its memory for the life of the broker. Retire a worker whose solution has been gone past a grace period; evict idle workers on a timer, said in the activity log; and add `rose_workspace_list`, so a session can see what is loaded and quote each workspace's key back, which card 11c makes an anchor. #157 has both halves. | BRK-20 | #157 | M |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 12b | **Three live-app tools answer with a bare sentence**, which is the defect card 0c fixed on `rose_workspace_close` surviving on the surface 0c's guard exempts. Give each a result record, and narrow the exemption so it excuses a live-app result from *workspace* attribution rather than from being a result. | BRK-21 | new | S |
 | 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. | AGT-04, WRK-07, AGT-05 | #210 | M |

@@ -13,4 +13,12 @@ public sealed record XamlDialectChoice
 
 	/// <summary>True when more than one framework was referenced and the tie had to be broken.</summary>
 	public required bool WasAmbiguous { get; init; }
+
+	/// <summary>
+	/// The assembly whose own source generator compiles this project's markup inside the workspace,
+	/// or null when the markup compiler runs only in a real build -- which is the case stubs exist
+	/// for. When set, nothing is stubbed: that generator's partials are already in the compilation,
+	/// and a second set is a duplicate of every member.
+	/// </summary>
+	public string? CompiledInWorkspaceBy { get; init; }
 }

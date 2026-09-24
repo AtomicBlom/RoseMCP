@@ -58,7 +58,8 @@ public static class EditVerification
 		var was = await ErrorsAsync(diagnostics, before, projects, analyzed, cancellationToken);
 		var now = await ErrorsAsync(diagnostics, after, projects, analyzed, cancellationToken);
 
-		var (introduced, resolved) = Delta(was, now);
+		var movement = await TextMovement.BetweenAsync(before, after, cancellationToken);
+		var (introduced, resolved) = DiagnosticDelta.Compare(was, now, movement);
 		var ordered = Ordered(introduced, nearest);
 
 		return new Verification
@@ -320,45 +321,6 @@ public static class EditVerification
 	}
 
 	/// <summary>
-	/// Which errors are new, matched on everything except position.
-	/// <para>
-	/// Position is left out deliberately: an edit that adds three lines moves every diagnostic below
-	/// it, and a key including the line would report each one as both resolved and introduced --
-	/// turning a clean edit into a page of noise.
-	/// </para>
-	/// </summary>
-	private static (IReadOnlyList<DiagnosticEntry> Introduced, int Resolved) Delta(
-		IReadOnlyList<DiagnosticEntry> before,
-		IReadOnlyList<DiagnosticEntry> after)
-	{
-		var remaining = new Dictionary<string, int>(StringComparer.Ordinal);
-
-		foreach (var entry in before)
-		{
-			remaining[Key(entry)] = remaining.GetValueOrDefault(Key(entry)) + 1;
-		}
-
-		var introduced = new List<DiagnosticEntry>();
-
-		foreach (var entry in after)
-		{
-			var key = Key(entry);
-
-			// Counted rather than matched, so two identical errors in one file are two errors: fixing
-			// one of them is a real change and has to show as one.
-			if (remaining.TryGetValue(key, out var count) && count > 0)
-			{
-				remaining[key] = count - 1;
-				continue;
-			}
-
-			introduced.Add(entry);
-		}
-
-		return (introduced, remaining.Values.Sum());
-	}
-
-	/// <summary>
 	/// The edited file first, when there is one. An error there is usually the cause and an error
 	/// elsewhere usually the consequence, and a caller reading only the first line of the answer
 	/// should get the cause.
@@ -370,8 +332,6 @@ public static class EditVerification
 				.ThenBy(entry => entry.FilePath, StringComparer.OrdinalIgnoreCase)
 				.ThenBy(entry => entry.Line),
 		];
-
-	private static string Key(DiagnosticEntry entry) => $"{entry.Id}|{entry.FilePath}|{entry.Message}";
 
 	private static bool SamePath(string? left, string right) =>
 		left is { Length: > 0 } && string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);

@@ -40,7 +40,11 @@ public sealed record ProjectStatus
 	/// </summary>
 	public int XamlStubbedCount { get; init; }
 
-	/// <summary>Which XAML flavour those stubs were written against; null when none were.</summary>
+	/// <summary>
+	/// Which XAML flavour this project's markup is written in; null when none could be chosen. A project
+	/// whose markup is compiled inside the workspace -- an SDK-style WinUI project, or Uno Platform,
+	/// whose XAML compiler is a source generator -- reports its dialect with nothing stubbed.
+	/// </summary>
 	public string? XamlDialect { get; init; }
 
 	/// <summary>

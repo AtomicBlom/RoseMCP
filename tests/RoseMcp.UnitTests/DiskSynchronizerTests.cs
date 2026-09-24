@@ -89,6 +89,36 @@ public sealed class DiskSynchronizerTests
 	}
 
 	/// <summary>
+	/// An <c>.editorconfig</c> caught missing by one sweep -- an editor's delete-and-rename save, a checkout
+	/// rewriting it -- is removed from every project, and its coming back has to send the session round a
+	/// reload. Otherwise the workspace goes on without it: new files written in spaces and LF, and
+	/// rose_format calling them formatted, because it reads the same empty options.
+	/// </summary>
+	[Test]
+	public async Task An_editorconfig_that_goes_and_comes_back_is_a_structural_change()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var tree = LoadedTree.Create(editorConfig: true);
+		var config = tree.PathTo(".editorconfig");
+
+		var synchronizer = new DiskSynchronizer();
+		synchronizer.Reset(tree.Solution, tree.SolutionPath, Evaluated(tree), token);
+
+		File.Delete(config);
+
+		var swept = await synchronizer.SyncAsync(tree.Solution, token);
+		synchronizer.Commit(swept.Tracker);
+
+		Assert.Equal(1, swept.RemovedCount);
+		Assert.False((await synchronizer.AbsorbNewAsync(swept.Solution, [], token)).StructuralChange, "it is still gone");
+
+		await File.WriteAllTextAsync(config, "root = true", token);
+
+		var absorbed = await synchronizer.AbsorbNewAsync(swept.Solution, [], token);
+		Assert.True(absorbed.StructuralChange, "the projects read it again only once they are re-evaluated");
+	}
+
+	/// <summary>
 	/// A file the load saw and compiled into nothing is excluded on purpose -- a <c>Compile Remove</c>
 	/// somewhere in the project's imports -- so absorbing it reports errors against a project that
 	/// builds clean.
@@ -97,7 +127,7 @@ public sealed class DiskSynchronizerTests
 	public async Task A_file_the_load_compiled_into_no_project_is_left_alone()
 	{
 		var token = TestContext.Current!.Execution.CancellationToken;
-		using var tree = LoadedTree.Create("Program.cs");
+		using var tree = LoadedTree.Create(["Program.cs"]);
 
 		var excluded = tree.PathTo("App", "Properties", "AssemblyInfo.cs");
 		Directory.CreateDirectory(Path.GetDirectoryName(excluded)!);
@@ -120,7 +150,7 @@ public sealed class DiskSynchronizerTests
 	public async Task A_file_written_after_the_load_is_still_absorbed()
 	{
 		var token = TestContext.Current!.Execution.CancellationToken;
-		using var tree = LoadedTree.Create("Program.cs");
+		using var tree = LoadedTree.Create(["Program.cs"]);
 
 		var synchronizer = new DiskSynchronizer();
 		synchronizer.Reset(tree.Solution, tree.SolutionPath, Evaluated(tree), token);
@@ -190,8 +220,10 @@ public sealed class DiskSynchronizerTests
 		/// design-time build compiled. A tree with none of them stands for a project the build could
 		/// not fill.
 		/// </param>
-		public static LoadedTree Create(params string[] compiled)
+		/// <param name="editorConfig">Whether an .editorconfig sits at the root and the project reads it.</param>
+		public static LoadedTree Create(string[]? compiled = null, bool editorConfig = false)
 		{
+			compiled ??= [];
 			var root = Directory.CreateTempSubdirectory("rosemcp-sync-").FullName;
 			var solutionPath = Path.Combine(root, "Loaded.slnx");
 			var projectPath = Path.Combine(root, "App", "App.csproj");
@@ -219,6 +251,16 @@ public sealed class DiskSynchronizerTests
 					filePath: path));
 			}
 
+			var configs = new List<DocumentInfo>();
+
+			if (editorConfig)
+			{
+				var path = Path.Combine(root, ".editorconfig");
+				File.WriteAllText(path, "root = true");
+
+				configs.Add(DocumentInfo.Create(DocumentId.CreateNewId(projectId), ".editorconfig", filePath: path));
+			}
+
 			var workspace = new AdhocWorkspace();
 			workspace.AddProject(ProjectInfo.Create(
 				projectId,
@@ -227,7 +269,7 @@ public sealed class DiskSynchronizerTests
 				"App",
 				LanguageNames.CSharp,
 				filePath: projectPath,
-				documents: documents));
+				documents: documents).WithAnalyzerConfigDocuments(configs));
 
 			return new LoadedTree(root, workspace, solutionPath, projectPath);
 		}

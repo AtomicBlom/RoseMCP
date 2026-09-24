@@ -32,4 +32,7 @@ public sealed class DiskTrackerUpdate
 
 	/// <summary>Files reported as being outside the build, so the notice is not repeated.</summary>
 	internal List<string> Declined { get; } = [];
+
+	/// <summary>Build files that have gone, whose coming back is a reason to reload.</summary>
+	internal List<string> Awaited { get; } = [];
 }

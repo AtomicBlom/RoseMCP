@@ -165,7 +165,7 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 - **Suggested change:** Hold the continuation in a field, await it in a `finally` before disposal, or use `CancellationTokenSource.TryReset`-style guard: `if (!abandon.IsCancellationRequested) try { abandon.Cancel(); } catch (ObjectDisposedException) { }`. A `CancellableToolCallTests` unit test with a fake `McpClient` would be the first test this class has at the unit level.
 
 ### ~~BRK-20 A warm worker holds its worktree's directory open, so `git worktree remove` fails until the tray is closed~~
-**#305, #PRNUM.** A worker stood in its solution's directory, which Windows holds open against deletion, so a
+**#305, #326.** A worker stood in its solution's directory, which Windows holds open against deletion, so a
 worktree Rose had opened could not be removed while the broker lived. Workers stand in an empty folder of
 Rose's own, and the hop that once made that directory load-bearing is absolute-only.
 

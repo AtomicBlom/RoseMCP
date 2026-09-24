@@ -29,7 +29,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 0e | UIP-23 | #295 |
 | 0f | USE inversion 1 | #295 |
 | 1 | BRK-01, AGT-10, BRK-20 (the hop) | #305 |
-| 1b | BRK-20 (the pin) | #PRNUM |
+| 1b | BRK-20 (the pin) | #326 |
 | 6 | WRK-06 | #306 |
 | 2 | LIV-03 | #270 |
 | 3 | LIV-02 | #265 |
@@ -312,7 +312,7 @@ These produce confident wrong results today. Everything else is cost.
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | ~~1~~ | **#305.** A relative path was measured from the directory the broker process started in, so a call from one worktree could edit the same-named file in another and report success. It is measured from the calling session's directory, and the hop on from there is absolute-only. | BRK-01, AGT-10, BRK-20 | — | — |
-| ~~1b~~ | **#PRNUM.** A warm worker stood in its solution's directory, which Windows holds open against deletion, so an opened worktree could not be removed until the broker went. Workers stand in an empty folder of Rose's own. | BRK-20 | — | — |
+| ~~1b~~ | **#326.** A warm worker stood in its solution's directory, which Windows holds open against deletion, so an opened worktree could not be removed until the broker went. Workers stand in an empty folder of Rose's own. | BRK-20 | — | — |
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
 | ~~4~~ | **#317.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app now says the change may still land, and what counts as such a verb is held against the provider's own dispatch by a test. The correlation half went to card 5; cancelling a request in flight is declined, with the reason in `xaml-live-edit.md`. | UIP-15, LIV-07 | #208 | — |

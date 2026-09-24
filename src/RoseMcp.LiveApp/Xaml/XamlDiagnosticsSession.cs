@@ -254,7 +254,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 			return new LiveXamlSelection { Detail = Unanswered(request, $"{(rulers ? "rulers" : "select")} mode to be armed") };
 		}
 
-		var fields = served.Trim().Split('\t');
+		var fields = XamlWire.Fields(served.Trim());
 		var width = fields.Length > 1 && int.TryParse(fields[1], out var armedWidth) ? armedWidth : 0;
 		var height = fields.Length > 2 && int.TryParse(fields[2], out var armedHeight) ? armedHeight : 0;
 		if (width <= 0 || height <= 0)
@@ -423,8 +423,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		}
 
 		// This call deliberately does not inject, and over the pipe that costs nothing: the provider
-		// answers from what it holds, and a reply read from the pipe the request went out on is this
-		// request's answer by construction.
+		// answers from what it holds, and the reply is matched to this request by the id it echoes.
 		var report = SelectionOverPipe();
 		if (report is null) return new LiveXamlSelection { Detail = Unanswered("selection", "what is selected") };
 
@@ -462,18 +461,18 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 
 			foreach (var line in rows)
 			{
-				var fields = line.Split('\t');
-				if (fields.Length < 3 || !ulong.TryParse(fields[0], out var handle)) continue;
+				var fields = XamlWire.Fields(line);
+				if (fields.Length < 4 || !ulong.TryParse(fields[0], out var handle)) continue;
 
-				var name = XamlProviderWire.Unescape(fields[2]);
+				var name = fields[2];
 				byHandle.TryGetValue(handle, out var node);
 
 				candidates.Add(new LiveXamlSelectionCandidate
 				{
 					Handle = handle,
-					TypeName = XamlProviderWire.Unescape(fields[1]),
+					TypeName = fields[1],
 					Name = string.IsNullOrEmpty(name) ? null : name,
-					IsFrameworkType = fields.Length > 3 && fields[3] == "1",
+					IsFrameworkType = fields[3] == "1",
 
 					// Joined from the tree rather than repeated in the selection file: the provider
 					// reports an element's source info once, when it enumerates, and its address is
@@ -560,9 +559,9 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 	/// from the toolbar without the host being in the conversation at all, so a reply that echoed the
 	/// request would contradict the next read with nothing to say which was right.
 	/// <para>
-	/// Known, unless the provider did not answer. It needs no generation stamp: a reply read from the
-	/// pipe the request went out on is this request's answer by construction, which is what a file left
-	/// in a folder can never be.
+	/// Known, unless the provider did not answer. The reply is this request's answer because it echoes
+	/// the request's id, which is also what keeps a reply to a request the host gave up on from being
+	/// read as this one.
 	/// </para>
 	/// </remarks>
 	private (string Mode, bool JustMyXaml, bool Known) OverlayState()
@@ -590,13 +589,13 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		if (served is null) return null;
 
 		var lines = served.Split('\n');
-		var header = lines[0].Split('\t');
-		if (header.Length < 2) return null;
+		var header = XamlWire.Fields(lines[0]);
+		if (header.Length < 3) return null;
 
 		return new OverlayReport(
 			header[0],
 			header[1] == "1",
-			header.Length > 2 ? XamlProviderWire.Unescape(header[2]) : string.Empty,
+			header[2],
 			[.. lines.Skip(1).Where(line => line.Length > 0)]);
 	}
 

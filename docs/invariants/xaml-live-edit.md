@@ -101,12 +101,11 @@ Read before changing `rose_xaml_*`, `src/RoseMcp.XamlDiff/`, or the apply path i
   request it is about. The list it keeps is of *reads*, so a verb nobody classified is warned about
   rather than silently trusted, and a unit test holds it against the provider's own dispatch.
   <br>
-  What is not done, deliberately, is making the request cancellable: the pipe correlates a reply
-  with a request by position, so a request id in the frame header and an `abandon` the provider
-  checks before dispatching is the fix that would let the host stop one. That is one framed message
-  type's worth of work on a hazard nothing has been observed to hit -- no late reply has ever
-  reached the stale drain's warning in a kept log -- and it belongs with the wire format's other
-  correlation work rather than on its own.
+  What is not done, deliberately, is making the request cancellable. Each reply echoes its
+  request's id, so a late one is dropped by who it belongs to rather than read as the answer to the
+  next question; stopping the request itself would take an `abandon` the provider checks before
+  dispatching to the UI thread, which is work on a hazard nothing has been observed to hit -- a late
+  reply is logged as it is dropped, and none is in any kept log.
 - **It is a live edit, not a hot reload, and the word is doing work.** Every edit is a property set or
   an `AddChild` against the element objects that exist at that instant; the app's compiled markup is
   untouched, so anything that rebuilds that part of the UI produces the original. "Reload" would

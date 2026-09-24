@@ -16,9 +16,10 @@ namespace RoseMcp.Contracts;
 /// other default loses the warning on exactly the verb that needed it, in silence.
 /// </para>
 /// <para>
-/// Here rather than beside the host because no test can see inside the host: <c>RoseMcp.LiveApp</c>
-/// is <c>net10.0-windows</c> and both test projects reference it without an output assembly, so a
-/// rule kept there is a rule nothing can check.
+/// Here rather than beside the host because there it would be internal to <c>RoseMcp.LiveApp</c>,
+/// where no test reaches it: the unit suite does not reference the host at all, and the one test
+/// project that does, <c>RoseMcp.IntegrationTests.Windows</c>, sees only its public surface and runs
+/// only on Windows. A rule kept there is a rule nothing checks.
 /// </para>
 /// </summary>
 public static class XamlRequestKind

@@ -43,7 +43,7 @@ src/RoseMcp.Worker/SignatureRewriter.cs	issue	1
 src/RoseMcp.Worker/UsingDirectives.cs	history	1
 src/RoseMcp.Xaml.Tap/tap_channel.h	issue	2
 src/RoseMcp.Xaml.Tap/tap_object.h	history	2
-src/RoseMcp.Xaml.Tap/tap_object.h	issue	6
+src/RoseMcp.Xaml.Tap/tap_object.h	issue	5
 src/RoseMcp.Xaml.Tap/tap_overlay.h	history	2
 src/RoseMcp.Xaml.Tap/tap_overlay.h	issue	10
 src/RoseMcp.Xaml.Tap/tap_pick.h	history	1

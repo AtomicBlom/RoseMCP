@@ -106,6 +106,53 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 	}
 
 	/// <summary>
+	/// A value holding the characters the wire is delimited by reaches the app intact, and its status says
+	/// so. Escaped on the way back and not on the way out, a tab in a value moved every field after it and
+	/// a newline split one command into two -- and since a result is found again by the fields it was
+	/// sent with, the edit that half-landed then reported that it was never applied. The value is read back
+	/// rather than trusted from the status, because that failure was a status that lied.
+	/// <para>
+	/// A backslash is in it too, because the escape character is the one an escape table most easily
+	/// leaves out: unescaped on the way out and read as an escape on the way in, <c>three\four</c> reaches
+	/// the app as <c>threefour</c>, and a tab and a newline alone would not show it.
+	/// </para>
+	/// </summary>
+	[Test]
+	[ClassicSlot(7)]
+	public async Task Applies_a_value_holding_a_tab_a_newline_and_a_backslash_and_reads_it_back_intact()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		// Character references, because an XML parser turns a literal tab or newline inside an attribute
+		// into a space before the diff ever sees it.
+		const string Before = "<TextBlock Text=\"plain\" />";
+		const string After = "<TextBlock Text=\"one&#9;two&#10;three\\four\" />";
+		const string Expected = "one\ttwo\nthree\\four";
+
+		await using var turn = await probe.TakeSlotAsync(cancellationToken);
+		var session = turn.Session;
+		{
+			var built = await session.ApplyXamlAsync(
+				turn.EmptyMarkup, turn.MarkupHolding(Before), filePath: null, cancellationToken);
+			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
+
+			var applied = await session.ApplyXamlAsync(
+				turn.MarkupHolding(Before), turn.MarkupHolding(After), filePath: null, cancellationToken);
+			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+
+			var edit = applied.Results.FirstOrDefault(
+				result => result.Target == turn.Address("TextBlock[0]") && result.Property == "Text");
+			Assert.NotNull(edit);
+			Assert.Equal("applied", edit!.Status);
+
+			var tree = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
+			var caption = tree.Nodes.Single(node => node.Address == turn.Address("TextBlock[0]"));
+			var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
+			Assert.Equal(Expected, properties.Properties.FirstOrDefault(property => property.Name == "Text")?.Value);
+		}
+	}
+
+	/// <summary>
 	/// Addressing an element the markup never named (#11). Every element in the probe app used to carry
 	/// an <c>x:Name</c>, so nothing here could reach the case that matters most: a click inside a
 	/// control template lands on an element with no name, and until now there was no way to say which

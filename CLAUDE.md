@@ -41,11 +41,12 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 
 Logic goes in `Contracts` only when a test needs it and the host that owns it cannot be referenced.
 `XamlStackModules`, `ToolArgumentShape`, `PathArguments`, `XamlProviderPath`, `ValuePath`,
-`SymbolLocation`, `HostVersion`, `BreakpointCondition`, `LogMessageTemplate`, `XamlRequestKind` and
-`SandboxSweep` are the whole list, each a pure function over strings or JSON with the host's own facts
-passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a child process,
-so a rule living beside its host is a rule no test can see. It is not a licence for behaviour:
-anything holding state, touching Roslyn, or knowing what a tool does belongs in the host.
+`SymbolLocation`, `HostVersion`, `BreakpointCondition`, `LogMessageTemplate`, `XamlRequestKind`,
+`SandboxSweep` and `XamlWire` are the whole list, each a pure function over strings or JSON with the
+host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a
+child process, so a rule living beside its host is a rule the unit suite cannot see -- and one kept
+`internal` there is a rule no test can see at all. It is not a licence for behaviour: anything holding
+state, touching Roslyn, or knowing what a tool does belongs in the host.
 
 The worker is a separate process because analyzer and generator assemblies cannot be unloaded
 once loaded, MSBuild resolution is per-process, and killing a worker is the only reliable way to
@@ -84,7 +85,7 @@ touch and read that file first.
 | [analyzers-and-generators.md](docs/invariants/analyzers-and-generators.md) | analyzer loading, `RoseMcp.XamlStubs`, anything handing Roslyn an `AnalyzerReference` |
 | [xaml-live-edit.md](docs/invariants/xaml-live-edit.md) | `rose_xaml_*`, `src/RoseMcp.XamlDiff/`, the apply path in `src/RoseMcp.LiveApp/Xaml/` |
 | [tap-tiers.md](docs/invariants/tap-tiers.md) | a new file under `src/RoseMcp.Xaml.Tap/`, moving code between them, either provider's include order |
-| [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, injection, anything that advises the visual tree |
+| [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, the pipe's wire format (`tap_channel.h`, `XamlWire`), injection, anything that advises the visual tree |
 | [overlay.md](docs/invariants/overlay.md) | `tap_overlay.h`, `tap_measure.h` |
 | [hosts-and-deploy.md](docs/invariants/hosts-and-deploy.md) | `XamlStackModules`, architecture detection, `XamlProviderSession`, `tools/deploy.ps1`, what an install carries |
 | [live-app-tests.md](docs/invariants/live-app-tests.md) | any live-app test or fixture |
@@ -162,6 +163,12 @@ live-app suite in `LiveAppSessionTests`. `RoseMcp.TestSupport` holds the doubles
 test where its cost puts it: a test that needs a `FixtureSolution` or a `TestSession` is an
 integration test however small it looks.
 
+`RoseMcp.IntegrationTests.Windows` is the third, and the one easy to forget: the only test project
+with a compile reference on `RoseMcp.LiveApp`, so it is where the host's public types are driven
+directly -- the XAML pipe against a fake provider in the test process, which is the only way to make
+a provider answer late or greet as a stale copy. It runs in seconds, on Windows only. A change to the
+live-app host has not been tested until it has run too.
+
 `dotnet test` needs the `global.json` opt-in already in the repo: TUnit runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest -- without the
 opt-in it refuses outright, naming the VSTest target.
@@ -175,6 +182,7 @@ generator and the project file in turn. The banner-suppressing equivalent is `--
 
 ```
 ./tests/RoseMcp.UnitTests/bin/Debug/net10.0/RoseMcp.UnitTests.exe
+./tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/RoseMcp.IntegrationTests.Windows.exe
 ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/RenameTests/*'
 ```
 

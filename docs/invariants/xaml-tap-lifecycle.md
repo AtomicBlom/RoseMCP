@@ -1,6 +1,6 @@
 # The XAML tap: injection, threading, and teardown
 
-Read before changing `src/RoseMcp.Xaml.Tap/tap_object.h`, injection in `src/RoseMcp.LiveApp/Xaml/`, or anything that advises the visual tree.
+Read before changing `src/RoseMcp.Xaml.Tap/tap_object.h`, the pipe's wire format (`tap_channel.h`, `XamlWire`), injection in `src/RoseMcp.LiveApp/Xaml/`, or anything that advises the visual tree.
 
 - **The tap's node list follows the tree, and a resident tap is the reason that matters.** The walk at
   advise builds it, and every add after that appends. Nothing erased on a remove, which was survivable
@@ -75,11 +75,33 @@ Read before changing `src/RoseMcp.Xaml.Tap/tap_object.h`, injection in `src/Rose
   So injection carries no request at all. It stages the provider, loads it, walks the tree and puts
   the toolbar up; everything after that -- the tree, an element's properties, a batch of edits, arming
   and disarming select mode, picking by handle, clearing a pick, and reading what is picked -- is a
-  length-prefixed UTF-8 frame on a named pipe the host created and the provider connected back on. A
-  reply read from the pipe a request went out on is that request's answer by construction, which is
-  what makes the generation stamp unnecessary rather than merely unused: every handshake through the
-  folder was "does this file exist", so the host had to number each request and have the provider echo
-  it back to tell this answer from the last one.
+  length-prefixed UTF-8 frame on a named pipe the host created and the provider connected back on.
+  <br>
+  **Each request carries an id and its reply echoes it**, and the pipe does not make that redundant. A
+  reply read from the pipe a request went out on is that request's answer only while nothing times
+  out: the provider serves on the app's UI thread, which the host cannot cancel, so a request the host
+  gave up on is still answered -- later, and ahead of the reply to whatever was asked next. That frame
+  is well formed and answers a different question, which is the one failure a length-prefixed channel
+  cannot see for itself. The id is the body's first line rather than part of the header, so a provider
+  that predates it still delivers a greeting the host can read and refuse, where a longer header would
+  misread it by four bytes and wait out the bound for the rest of a frame that never comes.
+  <br>
+  **A provider is refused unless it greets with this host's protocol version and this session's key.**
+  The host and the provider ship together, so two versions meet only through a stale copy -- one left in
+  a sandbox folder, or copied over by hand in a rebuild loop -- and a stale copy reading rows it was not
+  written for answers with data, source file and line attached, rather than with an error. The key is
+  minted per session and handed over in the injection's initialisation data, because the pipe grants
+  every packaged app on the machine and reaching it proves nothing about who connected. Raise
+  `XamlWire.ProtocolVersion` and `RoseTapProtocolVersion` together whenever either end changes what it
+  writes or how it reads; a unit test reads the provider's constant and fails when the two differ.
+  <br>
+  **Every field that can hold text is escaped with one table, in both directions.** The protocol is
+  delimited by tabs and newlines, and a property value is the caller's markup, which holds either.
+  Escaped in one direction only, a tab in a value shifts every field after it and a newline splits one
+  command into two -- and since a result is found again by the fields it was sent with, an edit that
+  landed reports that it was never applied. `XamlWire` is the host's half and `tap_channel.h` the
+  provider's; a unit test holds the provider's table against the host's, because the live round trip
+  that proves them runs only where there is a probe app.
   <br>
   **A read may fall back to the other channel and a batch may not**, and that asymmetry is the thing
   to preserve if a fallback is ever reintroduced. Asking for a tree twice costs a second answer.

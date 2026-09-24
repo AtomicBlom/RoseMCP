@@ -23,9 +23,9 @@ free on a protocol the broker was already speaking outward. What it costs is rea
 unpriced here: results are JSON with no binary path, there is no correlation id, cancellation had to
 be re-implemented by hand because the SDK does not send `notifications/cancelled`
 (`CancellableToolCall`), and one SDK's quirks now show up in four processes. Where the design shows
-its age is the XAML tap pipe, which is the only boundary where the framing was invented rather than
-adopted and the only one whose protocol-level defects produce wrong answers rather than failures
-(LIV-07, LIV-08, and IPC-01 below); and at the *edges* of otherwise sound boundaries -- no version
+its age was the XAML tap pipe, the only boundary where the framing was invented rather than adopted
+and the only one whose protocol-level defects produced wrong answers rather than failures -- closed by
+#323 (IPC-01, IPC-03, LIV-07, LIV-08); and at the *edges* of otherwise sound boundaries -- no version
 handshake anywhere despite `HostVersion` existing and being sent (IPC-02), the operator token
 travelling on a command line the threat model says is readable (IPC-04), and three serializer
 configurations on a single hop (IPC-05). None of this is a wrong-tool verdict. It is a system that
@@ -41,7 +41,7 @@ change.
 | 3 | Broker -> Worker | stdio to a child, MCP | request/response + progress; priming call | Appropriate with fixes (IPC-02, IPC-05, IPC-09) |
 | 4 | Broker -> LiveApp host | stdio to a child, MCP | request/response + long-poll event read | Appropriate with fixes (IPC-02, IPC-08) |
 | 5 | Inspector -> Tray operator API | http + bearer token, REST/JSON | polled reads + long-polled event tail | Appropriate (see IPC-04 for the token) |
-| 6 | LiveApp host -> XAML tap | named pipe, 4-byte LE length + UTF-8 text payload | request/reply, strictly alternating | Appropriate with fixes (IPC-01, IPC-03, LIV-07, LIV-08) |
+| 6 | LiveApp host -> XAML tap | named pipe, 4-byte LE length + UTF-8 text payload | request/reply, each reply carrying its request's id | Appropriate (#323) |
 | 7 | LiveApp host -> UWP resume stub | named pipe, newline-delimited text | two-message handshake, fail-safe | Appropriate with fixes (IPC-06) |
 | 8 | Worker <-> XAML stub generator | a generated source document carrying JSON on a marked comment | one-way report, per compilation | Appropriate -- the only channel Roslyn offers |
 | 9 | Tray -> Inspector | process start; args, then WinAppSDK activation redirection | one-shot launch + hand-over | Appropriate with fixes (IPC-04) |
@@ -275,48 +275,16 @@ surface, and the reason they are different is written down. Fix IPC-04.
 
 ### 6. LiveApp host -> XAML tap (named pipe)
 
-**What crosses.** Two layers, and they should be judged separately.
+*The framing is good.* 4-byte little-endian length, UTF-8 payload, an exact read on both sides, and a
+64 MiB cap enforced identically at both ends, with the C++ side explaining that without it a garbage
+length is `std::terminate` inside somebody else's app (`RoseTapMaxFrame` in `tap_channel.h`). One
+encoding decision for the whole channel, taken once, with the two bugs it retires named
+(`XamlProviderPipe.ReadFrameAsync`).
 
-*The framing is good.* 4-byte little-endian length, UTF-8 payload, `ReadExactly` on both sides, a
-64 MiB cap enforced identically at both ends with the C++ side explaining that without it a garbage
-length is `std::terminate` inside somebody else's app (`tap_channel.h:99-102`). One encoding decision
-for the whole channel, taken once, with the two bugs it retires named (`XamlProviderPipe.cs:344-348`).
-
-*The payload is not.* Inside that frame there are **three** sub-encodings, all positional, none
-versioned:
-
-- requests are a verb plus space-separated tokens -- `"tree"`, `"properties {handle} all"`,
-  `"selecthandle {handle}"`, `"select ... myxaml"` -- tokenised by `Tokens()` (`tap_channel.h:277-289`);
-- `apply` is the verb, a newline, then one 7-field **tab**-separated command per line, parsed by
-  `ParseCommands` (`:253-273`), which pads short lines with `fields.resize(7)`;
-- replies are tab-separated rows, sometimes behind a status line, with column counts that differ per
-  reply type and are version-sniffed by length (LIV-08).
-
-The provider escapes every field it writes (`Escape`, `tap_tree.h:131-134`,
-`tap_properties.h:181-185`, `tap_edits.h:63-64`) and the host `Unescape`s every field it reads. The
-host does **not** escape the fields it writes and the provider does not unescape them -- see IPC-01,
-which is the most serious finding in this file.
-
-**Correlation, backpressure, who closes.** No request id (LIV-07); correlation is "the reply is the
-next frame", and a timed-out request's late reply is discarded *by position* in the next request's
-stale drain (`XamlProviderPipe.Request:186-193`). Backpressure is the `XamlDiagnosticsSession`
-re-entrant lock: one request at a time, measured rather than assumed (`:47-56`), which is the right
-answer given no ids. Either end may close; the host detects departure by reading, not by asking
-(`Connected`, `:69-81`), and `HangUp` puts the stream back to listening so a re-injected provider can
-dial in.
-
-**Security.** The pipe DACL grants the current user full control and `S-1-15-2-1` / `S-1-15-2-2`
-read-write -- that is *every packaged app on the machine*, not the target (see IPC-03). The greeting
-is a fixed string with no secret and no identity.
-
-**Verdict: appropriate with fixes.** The pipe is the right mechanism and the decision record's
-arguments hold: connecting to a pipe from inside an AppContainer is the easy direction, the loopback
-restriction is about sockets, and "a reply read from the pipe a request went out on is that request's
-answer by construction" is true *when nothing times out*. The framing is right. The payload wants one
-framed message type -- JSON, or at minimum a length-prefixed field encoding with one escaping contract
-used in both directions -- rather than three positional text formats sharing a channel. Fix IPC-01
-first; then LIV-07, LIV-08 and IPC-03 together, because a versioned greeting that carries a nonce
-answers the version question and the occupancy question in one change.
+*The payload was three positional sub-encodings, escaped in one direction only, with no request id and
+a greeting that proved nothing.* **#323** made it one contract: every field escaped with one table in
+both directions, each reply carrying its request's id, and a provider refused unless it greets with the
+host's protocol version and the session's key. **Verdict: appropriate.**
 
 ### 7. LiveApp host -> UWP resume stub (named pipe)
 
@@ -470,7 +438,7 @@ transport. Boundary by boundary, with the alternative weighed:
 | 3 Broker -> Worker (stdio MCP) | Yes | gRPC (schema + streaming, loses standalone-drivable workers and the test shape); named pipes + JSON-RPC-lite (same JSON, no tool metadata, must rewrite progress and cancel). |
 | 4 Broker -> LiveApp (stdio MCP) | Yes | As above, plus the long poll needs nothing MCP does not already give. |
 | 5 Inspector -> operator API (http REST, polled) | Yes | SSE/WebSocket: the event tail is already a 30 s long poll, so latency is identical; a push adds a second failure model and a resync to a window whose principle is "say what you could not read". State panes want the current value, which a re-read gives and a missed push does not. |
-| 6 host -> tap (named pipe) | Transport yes, payload **no** | Files in a shared folder (the rejected predecessor) is worse and the record says why. But three positional text sub-formats with one-directional escaping should be one framed message type -- JSON in the same length-prefixed frame would cost the provider one small writer and delete IPC-01, LIV-08 and half of LIV-07. |
+| 6 host -> tap (named pipe) | Yes | Files in a shared folder (the rejected predecessor) is worse and the record says why. The payload is one text contract in both directions since #323; why text rather than JSON or binary is in the same record. |
 | 7 host -> resume stub (named pipe) | Yes | Nothing smaller exists for two messages, and the fail-safe is the design. |
 | 8 worker <-> stub generator (generated document) | Yes | There is no alternative: Roslyn gives a generator source and diagnostics, and source is the right one. |
 | 9 Tray -> Inspector (args + activation redirect) | Transport yes, **secret no** | The launch mechanism is right; a secret on a command line is not (IPC-04). |
@@ -492,63 +460,19 @@ to add a side channel, and the pipe framing in `tap_channel.h` is already the de
 
 ## Findings
 
-### IPC-01 The tap's request side does not escape what its reply side unescapes
-- **Severity:** High
-- **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderWire.cs:45` (`Line`);
-  `src/RoseMcp.Xaml.Tap/tap_channel.h:209-228` (`Escape`), `:253-273` (`ParseCommands`)
-- **What:** The provider escapes `\t`, `\r`, `\n` and `\\` in every field it writes, and the host
-  `Unescape`s every field it reads (twelve call sites in `XamlDiagnosticsSession`). The reverse
-  direction does neither. `Line(op, target, property, valueType, value, arg, index)` is
-  `string.Join('\t', ...)` with no escaping, and `ParseCommands` splits the payload on `\n` into
-  lines and each line on `\t` into exactly seven fields. `value` is a XAML property value taken
-  straight out of the user's markup by the diff. A value containing a tab shifts `arg` and `index`
-  by one field each; a value containing a newline splits one command into two, the second of which
-  parses as an unknown `op` with garbage in every field.
-- **Why it matters:** `rose_xaml_apply` writes into a live application. A multi-line `Text`,
-  `ToolTip` or `Content` is ordinary XAML, not an edge case. The failure is silent in the worst way
-  available: the command is well formed, so the provider executes *something*, and the result row
-  comes back keyed on `Key(op, target, property, arg)` -- built from the same unescaped fields, so
-  the status lookup misses and the edit is reported as "not applied" while the app has been changed.
-  That is the confident-wrong-answer class the whole XAML surface is built against, and the
-  provider already contains the fix for the opposite direction.
-- **Suggested change:** Apply the same escape on the way out and the same unescape on the way in:
-  an `XamlWire.Escape` / `XamlWire.Unescape` pair used by `Line`, `Key` and every parse site, and
-  `Unescape` in `ParseCommands` on the C++ side. Then a round-trip test: build a `SetProperty` whose
-  value contains a tab, a newline and a backslash, render it, parse it with the same rules and
-  assert the value came back. Folds naturally into the one-message-type inversion below.
+### ~~IPC-01 The tap's request side does not escape what its reply side unescapes~~
+**#323.** A tab or a newline in a property value mis-framed the edit and mis-keyed its status, so an
+edit that landed reported that it had not. Both directions share one escaping contract, and a test
+holds the provider's half against the host's.
 
 ### ~~IPC-02 Nothing checks that a child process is the same build as its parent~~
 **#295.** Four hosts reported a version and nothing read one, so a child from a stale build answered
 as whatever it was and the mismatch surfaced as a missing field or an unknown tool. Both hops that
 launch a child compare it now, and say so rather than refusing.
 
-### IPC-03 The tap pipe is reachable by every packaged app, and the greeting proves nothing
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderPipe.cs:32-33`, `:96-115`;
-  `src/RoseMcp.Xaml.Tap/tap_channel.h:142-159` (`ConnectPipe`, `"hello from the provider"`);
-  `src/RoseMcp.LiveApp/Xaml/XamlProviderSession.cs:210-214` (`wszInitializationData`)
-- **What:** The pipe DACL grants `S-1-15-2-1` (ALL APPLICATION PACKAGES) and `S-1-15-2-2` read-write,
-  which is every packaged app on the machine rather than the target. The pipe name is unguessable
-  (`rosemcp-xaml-{pid}-{guid:N}`), but it is handed to the target in
-  `wszInitializationData`, so the target -- and anything that can read what the target was given --
-  knows it. `maxNumberOfServerInstances: 1`, and the first connection to greet wins: the greeting is
-  the fixed string `"hello from the provider"`, and the host logs it and sets `_connected` without
-  checking anything about it.
-- **Why it matters:** A process that occupies the channel first denies the real provider (there is
-  one server instance) and can then answer `tree`, `properties` and `selection` with fabricated rows
-  -- which carry source file and line provenance that `rose_xaml_*` hands back as fact, and which
-  `rose_xaml_apply` then aims edits at. The decision record justifies the AppContainer grant on the
-  grounds that it is "the only identity a provider inside a packaged app has", which is true and does
-  not narrow it to the target. This is the same dev-machine trust boundary the operator token exists
-  to draw, drawn nowhere here. LIV-08 asks the greeting to carry a version; it should carry a secret
-  in the same breath.
-- **Suggested change:** Mint a nonce per session, append it to `wszInitializationData` as a third
-  `|`-separated field (the slot already carries `workDir|pipeName`, so this is one more), and have
-  the provider greet with `RoseTap/<protocol version>/<nonce>`. The host refuses and hangs up on a
-  greeting that does not carry this session's nonce, saying so in the log. One change closes LIV-08
-  and this.
+### ~~IPC-03 The tap pipe is reachable by every packaged app, and the greeting proves nothing~~
+**#323.** Whatever reached the pipe first was accepted as the provider and could answer with rows of
+its own. A provider is refused unless it greets with a key minted for its session.
 
 ### IPC-04 The operator token travels on a command line the threat model treats as readable
 - **Severity:** Medium
@@ -700,14 +624,9 @@ launch a child compare it now, and say so rather than refusing.
 
 ## Pit-of-success inversions
 
-1. **Rule today:** every pipe invents its own message format, and whether a field is escaped depends
-   on which side wrote it. **Mechanism:** one framed message type for all pipes. The length-prefixed
-   UTF-8 frame in `tap_channel.h` / `XamlProviderPipe` is already the right envelope; put a single
-   payload encoding inside it (JSON is the obvious one -- the provider needs one small writer, and
-   `ParseCommands`, `SnapshotRows`, `ParseTree` and `ParseApplyResults` all disappear). If a text
-   encoding must stay, then one `XamlWire` type owns `Escape`, `Unescape`, `Field` and `Row`, and
-   both directions go through it, with a round-trip unit test over a value containing every
-   metacharacter. IPC-01, LIV-08 and half of LIV-07 are all symptoms of there being no such type.
+1. ~~Whether a field is escaped depends on which side wrote it.~~ **#323.** One text contract owns
+   escaping, rows, the request id and the greeting, in both directions, and a test holds the provider's
+   half against it.
 
 2. **Rule today:** "the child is the same build as the parent", believed rather than checked.
    **Mechanism:** a `HostHandshake.Require(McpClient, Assembly, string resolvedFrom)` called by
@@ -759,10 +678,9 @@ launch a child compare it now, and say so rather than refusing.
 - `ROSEMCP_TOKEN` currently gates the whole http server including MCP, and the operator API shares
   it. If #213 is fixed by having the relay send it, does the relay then hold a secret that also
   unlocks the operator surface -- and is that intended, or should the two separate?
-- Is there an appetite for JSON inside the tap frame? It costs the provider a small writer and a
-  dependency-free serialiser, and it deletes four hand-written parsers and one escaping contract.
-  The counter-argument is that the provider is deliberately framework-free and a JSON library is a
-  dependency; a fifty-line writer for a fixed shape is not.
+- ~~Is there an appetite for JSON inside the tap frame?~~ **Declined, #323.** Measured, it would buy no
+  speed and cost the one property a lock-step pair needs -- a stale copy refused rather than read. The
+  reasoning is in the pipe's decision record.
 - `rose_live_app_events` is a long poll through two hops (client -> broker -> host). Over http with
   several agents, does a thirty-second wait hold anything the broker needs? `WorkspaceManager`'s
   `_gate` is per workspace and a debug session is not a workspace, so I believe not -- but BRK-03

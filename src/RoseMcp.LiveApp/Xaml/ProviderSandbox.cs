@@ -1,6 +1,9 @@
+using System.ComponentModel;
 using System.Diagnostics;
 
 using Microsoft.Extensions.Logging;
+
+using RoseMcp.Contracts;
 
 namespace RoseMcp.LiveApp.Xaml;
 
@@ -43,10 +46,9 @@ internal sealed class ProviderSandbox(ILogger logger)
 
 		var root = Path.Combine(Path.GetTempPath(), "RoseMcpXaml");
 
-		// Before staging anything, clear out what earlier hosts left behind. Nothing ever deleted
-		// these: 146 folders and 225.6 MB of them on the machine this was found on, each holding a
-		// copy of the provider and each carrying a grant to ALL APPLICATION PACKAGES, so they are
-		// world-readable directories accumulating in the user's TEMP.
+		// Before staging anything, clear out what earlier hosts left behind. Each folder holds a copy of
+		// the provider and a grant to ALL APPLICATION PACKAGES, so one that outlives its host is a
+		// world-readable directory accumulating in the user's temp directory.
 		Sweep(root);
 
 		var workDir = Path.Combine(root, Environment.ProcessId.ToString());
@@ -89,66 +91,94 @@ internal sealed class ProviderSandbox(ILogger logger)
 	}
 
 	/// <summary>
-	/// Deletes the sandbox folders belonging to hosts that are gone, the way <c>RoseMcp.Logging</c>
-	/// prunes its own sessions at startup.
-	/// <para>
-	/// A folder is named after the pid that made it, so "is that pid still running" is the whole test.
-	/// A pid that has been recycled by some unrelated process reads as alive and its folder is kept,
-	/// which is the safe direction to be wrong in: the cost is one abandoned folder until the next
-	/// sweep, where deleting a live host's folder would pull the provider out from under it.
-	/// </para>
+	/// Deletes the sandbox folders whose host is gone. <see cref="SandboxSweep"/> decides each one, and
+	/// says how a recycled pid is told from a live host and why a folder that cannot be decided costs
+	/// only that folder.
 	/// </summary>
 	private void Sweep(string root)
 	{
+		List<string> folders;
 		try
 		{
 			if (!Directory.Exists(root)) return;
 
-			foreach (var folder in Directory.EnumerateDirectories(root))
-			{
-				if (!int.TryParse(Path.GetFileName(folder), out var pid)) continue;
-				if (pid == Environment.ProcessId) continue; // Ours; the caller deals with it deliberately.
-				if (IsAlive(pid)) continue;
-
-				TryDeleteDirectory(folder);
-			}
+			folders = [.. Directory.EnumerateDirectories(root)];
 		}
-		catch (Exception exception)
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
-			// Tidying, never the job: a folder that cannot be enumerated or removed costs disk and
-			// nothing else, and failing a XAML call over it would be the wrong trade entirely.
-			logger.LogDebug(exception, "Sweeping stale XAML provider sandbox folders under {Root} failed.", root);
+			// Tidying, never the job: a root that cannot be listed costs disk and nothing else, and
+			// failing a XAML call over it would be the wrong trade entirely.
+			logger.LogDebug(exception, "Could not list the XAML provider sandbox folders under {Root}.", root);
+			return;
 		}
+
+		var plan = SandboxSweep.Plan(folders, Environment.ProcessId, Directory.GetCreationTimeUtc, Holder);
+
+		var removed = 0;
+		foreach (var folder in plan.Stale)
+		{
+			if (TryDeleteDirectory(folder)) removed++;
+		}
+
+		// Counted rather than merely attempted, because a sweep that removes nothing and a sweep with
+		// nothing to remove are otherwise the same line in the log -- and one that fails on every run
+		// looks exactly like the second.
+		var nothingToReport = plan.Stale.Count == 0 && plan.Undecided == 0;
+		logger.Log(
+			nothingToReport ? LogLevel.Debug : LogLevel.Information,
+			"Swept the XAML provider sandbox folders under {Root}: removed {Removed}, {Held} still held open by an "
+				+ "app with the provider loaded, {Running} kept for a running host, {Undecided} kept because their "
+				+ "host could not be asked about.",
+			root,
+			removed,
+			plan.Stale.Count - removed,
+			plan.Running,
+			plan.Undecided);
 	}
 
-	private static bool IsAlive(int pid)
+	/// <summary>ERROR_ACCESS_DENIED, which is how a process that is not this user's refuses to be asked.</summary>
+	private const int AccessDenied = 5;
+
+	/// <summary>
+	/// What holds <paramref name="pid"/>, asked for its start time and nothing more: the start time is
+	/// what tells a recycled id from the host that made the folder, and a process that will not answer
+	/// even that is not this user's.
+	/// </summary>
+	private static SandboxProcess Holder(int pid)
 	{
 		try
 		{
 			using var process = Process.GetProcessById(pid);
-			return !process.HasExited;
+			return SandboxProcess.StartedAt(process.StartTime);
 		}
 		catch (ArgumentException)
 		{
-			return false; // No process with that id.
+			return SandboxProcess.None;
 		}
 		catch (InvalidOperationException)
 		{
-			return false;
+			// It exited between being found and being asked.
+			return SandboxProcess.None;
+		}
+		catch (Win32Exception exception) when (exception.NativeErrorCode == AccessDenied)
+		{
+			return SandboxProcess.Inaccessible;
 		}
 	}
 
-	private static void TryDeleteDirectory(string path)
+	private static bool TryDeleteDirectory(string path)
 	{
 		try
 		{
 			if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+			return true;
 		}
 		catch (Exception)
 		{
 			// Whatever is still held belongs to an app that has the provider loaded, and that app
-			// outlives the debug session on purpose -- detaching leaves it running. The next host to
-			// start sweeps it once this pid is gone, which is why the sweep and this go together.
+			// outlives the debug session on purpose -- detaching leaves it running. A later sweep takes
+			// the folder once nothing holds it, which is why the sweep and this go together.
+			return false;
 		}
 	}
 

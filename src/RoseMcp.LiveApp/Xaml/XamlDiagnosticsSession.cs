@@ -115,8 +115,10 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlTree { Detail = unready };
 
-		var served = pipe.Request("tree", Reply);
-		if (served is null) return new LiveXamlTree { Detail = Unanswered("a tree") };
+		var request = "tree";
+
+		var served = pipe.Request(request, Reply);
+		if (served is null) return new LiveXamlTree { Detail = Unanswered(request, "a tree") };
 
 		var nodes = XamlProviderWire.ParseTree(served.Split('\n', StringSplitOptions.RemoveEmptyEntries));
 		_logger.LogInformation("Read a XAML tree of {Count} element(s) from pid {Pid} over the pipe.", nodes.Count, pid);
@@ -167,7 +169,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 			}
 		}
 
-		return new LiveXamlProperties { Handle = handle, Detail = Unanswered($"the properties of handle {handle}") };
+		return new LiveXamlProperties { Handle = handle, Detail = Unanswered(request, $"the properties of handle {handle}") };
 	}
 
 	/// <summary>
@@ -206,9 +208,11 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlSelection { Detail = unready };
 
-		if (pipe.Request("idle", Reply) is null)
+		var request = "idle";
+
+		if (pipe.Request(request, Reply) is null)
 		{
-			return new LiveXamlSelection { Detail = Unanswered("the overlay to stop capturing the pointer") };
+			return new LiveXamlSelection { Detail = Unanswered(request, "the overlay to stop capturing the pointer") };
 		}
 
 		// Answered from the provider's own state rather than from the fact that it acknowledged, for
@@ -247,7 +251,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var served = pipe.Request(request, Reply);
 		if (served is null)
 		{
-			return new LiveXamlSelection { Detail = Unanswered($"{(rulers ? "rulers" : "select")} mode to be armed") };
+			return new LiveXamlSelection { Detail = Unanswered(request, $"{(rulers ? "rulers" : "select")} mode to be armed") };
 		}
 
 		var fields = served.Trim().Split('\t');
@@ -311,10 +315,12 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		var (pipe, unready) = _provider.Connect(pid);
 		if (pipe is null) return new LiveXamlSelection { Detail = unready };
 
-		var served = pipe.Request("deselect", Reply);
+		var request = "deselect";
+
+		var served = pipe.Request(request, Reply);
 		if (served is null)
 		{
-			return new LiveXamlSelection { Detail = Unanswered("the deselect to be confirmed") };
+			return new LiveXamlSelection { Detail = Unanswered(request, "the deselect to be confirmed") };
 		}
 
 		var had = served.Trim() == "cleared";
@@ -359,10 +365,12 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		// A refusal costs what an answer costs, which a channel of files could not manage: the provider
 		// writes a selection only when it has one to record, so a handle naming something that is not an
 		// element produced no file and the refusal arrived as a timeout. A reply always arrives.
-		var served = pipe.Request($"selecthandle {handle}", Reply);
+		var request = $"selecthandle {handle}";
+
+		var served = pipe.Request(request, Reply);
 		if (served is null)
 		{
-			return new LiveXamlSelection { Detail = Unanswered($"an answer about handle {handle}") };
+			return new LiveXamlSelection { Detail = Unanswered(request, $"an answer about handle {handle}") };
 		}
 
 		if (served.Trim() != "selected")
@@ -418,7 +426,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		// answers from what it holds, and a reply read from the pipe the request went out on is this
 		// request's answer by construction.
 		var report = SelectionOverPipe();
-		if (report is null) return new LiveXamlSelection { Detail = Unanswered("what is selected") };
+		if (report is null) return new LiveXamlSelection { Detail = Unanswered("selection", "what is selected") };
 
 		var (mode, justMyXaml, rows, gone) = (report.Mode, report.JustMyXaml, report.Rows, report.Gone);
 
@@ -610,7 +618,7 @@ internal sealed class XamlDiagnosticsSession : IDisposable
 		lock (_requests) return _apply.ApplyEditsCore(pid, oldXaml, newXaml, filePath);
 	}
 
-	private string Unanswered(string what) => XamlChannelBounds.Unanswered(what, Reply);
+	private string Unanswered(string request, string what) => XamlChannelBounds.Unanswered(request, what, Reply);
 
 	/// <summary>
 	/// Asks the resident provider to give back the two framework interfaces it holds.

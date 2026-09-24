@@ -36,14 +36,14 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 9 | WRK-01 | #275, #276, #278 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
-**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, five
+**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, six
 of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and eight of the 27 High
 findings -- including **the debugger core and the write pipeline**, which were the two
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
-Tier 1 has three rows left: **1b**, **5**, and **4**, which is a decision rather than work. Next at
-the top is **card 5** (the tap's escaping asymmetry), then **card 8** for tier 2's editing work.
-Card 1 opened the gate on **11b**, **11c** and **1b**.
+Tier 1 has two rows left: **1b** and **5**. Next at the top is **card 5**, which now carries the
+correlation half of card 4 as well as its own, then **card 8** for tier 2's editing work. Card 1
+opened the gate on **11b**, **11c** and **1b**.
 
 Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
 would not), the layout half of **21**, and card 0e's finding that three of the phrases the comment
@@ -316,8 +316,8 @@ These produce confident wrong results today. Everything else is cost.
 | 1b | **A warm worker pins its worktree directory open**, so `git worktree remove` fails naming a process nobody can see. Unblocked by card 1: the hop is absolute-only, so the worker's working directory is no longer load-bearing and can move somewhere inert. Cut with #157, since an evicted worker releases the directory too. | BRK-20 | #157 | S |
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
-| 4 | **Re-cut before working it.** #300 found #208 was the test's wait, not the product, so this card lost the evidence both its findings rested on. What survives: a timed-out XAML request still runs in the app, and the pipe matches replies by position rather than identity -- visible in the source, never yet observed. Decide whether an unobserved hazard is worth M, or decline it deliberately. | UIP-15, LIV-07 | #208 | M |
-| 5 | **The tap's request side does not escape what its reply side unescapes.** A tab or newline in a property value mis-frames the edit and mis-keys its status, so an edit that landed reports as not applied. | IPC-01 | new | S |
+| ~~4~~ | **#PRNUM.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app now says the change may still land, and what counts as such a verb is held against the provider's own dispatch by a test. The correlation half went to card 5; cancelling a request in flight is declined, with the reason in `xaml-live-edit.md`. | UIP-15, LIV-07 | #208 | — |
+| 5 | **The tap's request side does not escape what its reply side unescapes.** A tab or newline in a property value mis-frames the edit and mis-keys its status, so an edit that landed reports as not applied. **This is the card that creates the home for one framed message type**, so it also carries card 4's correlation half: a request id in the frame header that the reply echoes, so a late reply is dropped by identity rather than by position. `06-ipc-and-protocols.md` sequences LIV-08 and IPC-03 into the same cut -- take that as far as it is worth. | IPC-01, LIV-07 | new, #208 | S-M |
 | ~~6~~ | **#306.** One compilation was asked about another's symbol, so resolving a name and every write that worked out its own imports failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is asked about. | WRK-06 | — | — |
 | ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory, and the rule is an invariant. | WRK-08 | — | — |
 

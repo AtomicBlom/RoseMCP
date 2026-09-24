@@ -372,40 +372,15 @@ inferring it. This is the cleanest boundary in the repository.
 that excludes them is applied by hand. Kept and widened -- the exclusion now names the toolchain it
 is about, a test decides which half a class is in, and CI runs 33 debugger tests rather than 11.
 
-### UIP-15 ~~Issue #208's flake is structural, and the structure is in the product, not the test~~ — wrong, and the product half is unproven
-- **Wrong, corrected by #300.** The flake was the test. `WaitForEventAsync` started from cursor 0, so
-  on a session shared by the class it matched a removal from *before* the pick and returned in 0.01s,
-  leaving every assertion beneath it to run against a selection the app had never touched. Measured:
-  waited 0.01s, matched event #30, already 1.32s old, at a pick taken when the newest event was #33;
-  and of 22 archived tap logs, 21 show the pick still present at both reads with the tree still
-  reporting the element. This finding read the issue's own hypothesis and agreed with it rather than
-  measuring, which is the lesson worth keeping.
-- **The product mechanism below is untouched and unproven.** A host-side latency bound with nothing
-  cancellable on the app's UI thread is still what the code does, so "a timed-out request still runs
-  in the app" remains a hazard visible in the source -- but its only evidence was #208, and that
-  evidence is gone. It is no longer a demonstrated wrong answer, and the High rating was for the
-  demonstration. Severity below is what it was, not what it is; re-rate it with new evidence or
-  decline it deliberately. LIV-07 carries the same mechanism with its own file-and-line evidence.
-- **Severity:** ~~High~~ — unproven, see above
-- **Effort:** M
-- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderPipe.cs:176-253` (the host's bound), `src/RoseMcp.Xaml.Tap/tap_object.h:282` (`selecthandle` dispatched with `RoseTapRunOnUiThread`)
-- **What:** `XamlProviderPipe.Request` imposes a timeout on each step and returns `TimedOut(...)`. It
-  is a *latency* bound on the host side only: the request has already been written to the pipe, and
-  `tap_object.h` dispatches every handler onto the app's UI thread with `RoseTapRunOnUiThread`, which
-  nothing on the host side can cancel. So a `selecthandle` the host has given up on still executes
-  in the app, later, and re-publishes the selection -- which is exactly the symptom in #208 (the
-  test's own assertions pass, the turn's hand-back reads again milliseconds later and finds
-  `Selected == true`). The issue's own hypothesis is correct, and it says the right thing about its
-  own scope: "a XAML request the host has timed out on still runs in the app, so a caller's next
-  read can observe the effect of a call that reported failure."
-- **Why it matters:** This is not a flaky test. It is "the tool reported failure and did the thing
-  anyway", which is the confident-wrong-answer class this whole product is built against, and an
-  agent is the caller least equipped to notice. The test is the only reason anybody knows.
-- **Suggested change:** Give the protocol a request id and have the tap check, on the UI thread just
-  before it acts, that the host has not abandoned the request -- or at minimum make abandonment
-  poison the channel so the next read cannot silently observe a stale mutation. Then keep the test
-  as the regression guard. Separately (UIP-16), stop the fixture's hand-back check racing the same
-  system.
+### ~~UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test~~
+**Wrong, corrected by #300, and the surviving half closed by #PRNUM.** The flake was the test's own
+wait, which started from cursor 0 and matched an event from before the pick. The product hazard
+underneath it -- a timed-out request that still runs in the app -- was real but unproven, and is
+now stated in the result of any timed-out verb that changes the app. See LIV-07 for what was done
+and what was declined.
+
+The lesson worth keeping is the one this finding failed: it read the issue's own hypothesis and
+agreed with it rather than measuring.
 
 ### UIP-16 A fixture hand-back check that re-reads live state will flake whatever the product does
 - **Severity:** Medium
@@ -779,10 +754,11 @@ as "for tests that mutate" -- makes the default choice the right one. *(UIP-13)*
 1. **Was `LiveAppInspectionTests` losing its `[Category("LiveApp")]` deliberate?** If those eleven
    ICorDebug tests are meant to run on a hosted runner, that is a real gain and the CI comment needs
    rewriting to say so. If not, CI is attaching a debugger where nobody intended. (UIP-14)
-2. **Is #208's hypothesis confirmed?** The code reads exactly as the issue predicts -- the host's
-   bound is latency-only and the tap's UI-thread dispatch is uncancellable. Has the host log for a
-   failing run been checked for the timed-out `selecthandle`? If so, the finding is a product bug
-   (UIP-15) rather than a test one and should be re-labelled.
+2. ~~**Is #208's hypothesis confirmed?**~~ **No.** #300 found the flake was the test's own wait, and
+   the logs do not show the product half either: no pipe-request timeout and no discarded late reply
+   in any of the 21 kept live-app logs. The code does read as the issue predicts -- the host's bound
+   is latency-only and the tap's dispatch uncancellable -- so it is a hazard, not a demonstrated bug.
+   (UIP-15)
 3. **`Rows.Merge`: which contract is wanted?** The breakpoint list's comment wants rows to stay put;
    the docstring promises source order. Both are defensible, but only one of them is what #221 is
    asking for.

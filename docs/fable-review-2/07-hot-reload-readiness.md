@@ -501,14 +501,12 @@ The things a hot-reload epic must not refactor away.
   only thing the commit does is swap the advanced `EmitBaseline` in under the revision check, which is
   the compare-and-swap WRK-10 describes.
 
-### HOT-06 The stop state machine has no room for "applying" — **scope reduced; the prerequisite shipped**
+### HOT-06 The stop state machine has no room for "applying"
 - **Severity:** High
-- **Effort:** S (was M)
+- **Effort:** S
 - **Where:** `src/RoseMcp.LiveApp/Debugging/TargetExecution.cs`, `StopRecord.cs`
-- **Already done (PR #265, LIV-02).** The half of this finding that said the state machine was implicit
-  in a dozen fields with five differently-spelled guards, one of which reported a dead process as
-  stopped, is fixed. `TargetExecution` is `Running | Stopped(StopRecord) | Detaching | Detached |
-  Exited` as one value swapped under the gate, and every guard is a pattern match.
+- **Half done, #265** (LIV-02): what the target is doing is one value, and every guard is a pattern
+  match.
 - **What is left:** the `Applying(ApplyRecord)` arm. An apply is a state that is *neither* running nor
   stopped-at-a-breakpoint: synchronised deliberately, by us, for a bounded operation that must not be
   interrupted by the safety timer, a detach, or a second apply.
@@ -631,10 +629,8 @@ The things a hot-reload epic must not refactor away.
 Each is independently shippable and independently testable. Two prerequisites from other reviews are
 listed first because hot reload makes them load-bearing rather than tidy.
 
-### P1 -- LIV-02: the target-execution union (M)
-Not hot-reload work; the thing an apply state has to be added to. Done first, the compiler enumerates
-every site that must decide what "applying" means. Done after, a reviewer does. **Proof:** LIV-02's
-own test -- kill the probe while it is held, assert `Execution == Running` and `State == Ended`.
+### ~~P1 -- LIV-02: the target-execution union (M)~~
+**#265.**
 
 ### P2 -- WRK-10: `Prepare` off-pump, `Commit` on it (M)
 Also not hot-reload work. It is what makes an emit a read rather than a stall, and its
@@ -686,7 +682,8 @@ cap and a recorded decision (HOT-08).
 no intersecting module refuses and names both sides.
 
 ### M6 -- Apply through ICorDebug (M) -- **the probe milestone**
-`ApplyChanges` on the armed module with the target synchronised, under the `Applying` state from P1.
+`ApplyChanges` on the armed module with the target synchronised, under an `Applying` arm added to the
+union P1 built (HOT-06).
 **Proof:** the one that matters. Launch `DebugProbeTarget`, let it loop, use `rose_replace_body` to
 change what `Inspect` computes, apply, and assert through `rose_debug_evaluate` at a breakpoint that
 the new value is observed -- with no relaunch and no rebuild. That single test is the definition of

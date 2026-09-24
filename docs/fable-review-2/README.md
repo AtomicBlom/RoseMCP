@@ -10,7 +10,8 @@ Review of RoseMCP as of 2026-09-16, at 446 commits. The output divides the work 
   into `main`. So the review and the work that answers it stay together, and a card can be reviewed
   against the finding that asked for it.
 - When the review has been worked through, **one final pull request takes `feature/fable-review`
-  into `main`**.
+  into `main`**. GitHub acts on `Closes #N` only in a pull request into the default branch, so an
+  issue a card fixes stays open until then, and the final pull request has to name every one of them.
 - Work proceeds **tier by tier, in the order the card list in [`00-overview.md`](00-overview.md)
   sets out**, starting with tier 1. The tiers are ordered by value per unit of effort, and tier 2
   and tier 6 each have prerequisites named in their own rows.
@@ -138,13 +139,7 @@ to grep/Read why. A tool that was not reached for when it should have been is al
 ## Ground truth gathered before the agents ran
 
 - Production code is roughly 60k lines across 18 projects; tests roughly 31k lines.
-- ~~`rose_workspace_status` on this repository reports **Degraded**~~ -- **no longer true as of PR #269**
-  (WRK-08). `Microsoft.Extensions.Logging.Generators.dll` and
-  `Microsoft.Extensions.Options.SourceGeneration.dll` failed to load on a manifest version mismatch,
-  and one load context per analyzer directory fixed it. Re-confirmed 2026-09-20 against the **installed**
-  build rather than one compiled for the check: `"state":"Loaded"`, `"degradedReasons":[]`,
-  `"analyzerLoadFailures":[]`. The WinUI "Cannot resolve Assembly or Windows Metadata file" load
-  diagnostic remains, and is a fact about an unbuilt checkout rather than a defect.
+- ~~`rose_workspace_status` on this repository reports **Degraded**~~ -- fixed by #269 (WRK-08).
 - No `TODO`/`HACK`/`FIXME` markers in `src`. 51 issue-number tags in comments (#171 tracks the migration).
   2 warning suppressions. 23 files use a lock, semaphore, `Interlocked`, `Channel` or a concurrent collection.
 - No `Console.Write` in `src` (the stdout rule holds).

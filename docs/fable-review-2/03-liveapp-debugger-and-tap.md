@@ -132,44 +132,20 @@ What must survive a refactor, with where it lives:
 
 ## Findings
 
-### LIV-01 `CorDebugSession` owns six unrelated concerns — **closed**
-`CorDebugSession` is **879 lines from 2,396**, and is the callback dispatcher that composes nine types:
-`TargetSymbols`, `BreakpointTable`/`BreakpointBinding`, `RuntimeAttachment`, `DetachProtocol`,
-`StopRecord`/`TargetExecution`, then `DebuggedTarget`, `StopNarrative`, `TargetBreakpoints` and
-`TargetInspection`. Shipped across PRs #265, #268, #274 and #281. The reasoning for each seam —
-including what each class deliberately does *not* own — is in its own class summary.
+### ~~LIV-01 `CorDebugSession` owns six unrelated concerns~~
+**#265, #268, #274, #281.** One class held six unrelated concerns of the debugger: attach, detach,
+breakpoints, the stop machine, callback dispatch and inspection. Each has a type of its own, and the
+session is the dispatcher that composes them.
 
-Three amendments, all argued in the code rather than here. The stop machine became a *value*
-(`TargetExecution` + `StopRecord`, LIV-02) rather than the `StopController` the card asked for. Only
-the detach *policy* moved; the transitions stayed, because they are writes to the one value that says
-what the target is doing and a second writer is how that value starts disagreeing with itself
-(`DetachProtocol.cs:1-24`). And the card's six concerns were not the final cut: `DebuggedTarget` — the
-process and its execution state behind `TryHeld`/`TryLive`, replacing six spellings of the same pair of
-questions — is a seam the review did not name, and is the one that owns `_gate`.
+### ~~LIV-02 The stop state machine is implicit in nine fields and five differently-spelled guards~~
+**#265.** A target killed while held went on reporting itself stopped at a breakpoint, so a XAML verb
+answered a dead process with "resume the target and ask again". What the target is doing is one value,
+swapped whole.
 
-### LIV-02 The stop state machine is implicit in nine fields and five differently-spelled guards — **closed**
-A target killed while held went on reporting itself stopped at a breakpoint, so a XAML verb answered a
-dead process with "resume the target and ask again". Shipped as `TargetExecution` (the five states as
-one value, swapped whole) and `StopRecord` (the stop itself, owning both timers) in PR #265 (`9d95b94`),
-with `A_target_that_dies_while_held_is_no_longer_reported_as_stopped` in `LiveAppDebugTests.cs`. The
-reasoning is in `TargetExecution.cs` and `StopRecord.cs`: why every guard is a pattern match, why the
-value is swapped rather than mutated, and why the stop generation counter is gone. The two `Hold`s that
-meant different things are `HoldAtStop` and `OperatorHold`.
-
-HOT-06 builds on this and is **not** closed: the `Applying(ApplyRecord)` arm is still tier-6 work.
-
-### LIV-03 A breakpoint hit is attributed by method token alone, so two bindings in one method misreport — **closed**
-A tracepoint on `Program.Beat` and a stopping breakpoint at `Program.Beat@IL_0002` both claimed every
-hit of either, and the first registered won — so the target was never held at all while the breakpoint
-reported itself bound with a hit count of zero. Shipped in PR #270 (`5356bfb`): `BreakpointTable.Claim`
-matches on the IL offset read from the callback's breakpoint, and
-`A_tracepoint_and_a_breakpoint_in_one_method_each_fire_as_itself` covers it.
-
-**The card's suggested fix was wrong and the code says why.** Matching on the breakpoint object's
-identity is the obvious answer, but ClrDebug's interfaces are source-generated `ComWrappers` rather than
-classic RCWs, so the same COM pointer is not promised to come back as the same managed object —
-identity would have held until it quietly did not, which is the failure class this finding is about.
-The reasoning is on `BreakpointTable.Claim`.
+### ~~LIV-03 A breakpoint hit is attributed by method token alone, so two bindings in one method misreport~~
+**#270.** A tracepoint and a stopping breakpoint in one method both claimed every hit of either, so the
+target was never held while the breakpoint reported itself bound. A hit is matched on the instruction
+offset it was bound at.
 
 ### LIV-04 A failing callback handler continues the target silently
 - **Severity:** Medium
@@ -192,12 +168,8 @@ The reasoning is on `BreakpointTable.Claim`.
 - **Effort:** M
 - **Where:** `src/RoseMcp.LiveApp/Debugging/TargetBreakpoints.cs`, `AddBinding` and
   `BindAgainstLoadedModules`; `src/RoseMcp.LiveApp/Debugging/TargetSymbols.cs:65-80` (`Walk`)
-- **Scope reduced** after PR #265. The card originally led with a contradiction in the lock discipline:
-  `Break` documents stopping *outside* the gate while these two stop *inside* it, with nothing saying
-  the stop-count behaviour was being relied on deliberately. `TargetSymbols.Walk` now states it where it
-  is relied on -- "the stop and the continue are a pair, which is what makes this safe to call while the
-  target is held at a breakpoint: the stop count goes up and back down and the target stays exactly as
-  stopped as it was" -- so that half is answered. The cost half is not.
+- **Half done, #265.** Its lock-discipline half is answered where the stop-count behaviour is relied on
+  (`TargetSymbols.Walk`). The cost half, below, is not.
 - **What:** `AddBinding` calls `BindAgainstLoadedModules` on every `rose_debug_set_breakpoint` and
   `rose_debug_add_tracepoint`, which takes the target's gate, calls `process.Stop(0)` and walks
   `AppDomains -> Assemblies -> Modules` to hand `BreakpointTable` the modules. `TargetSymbols.Remember`

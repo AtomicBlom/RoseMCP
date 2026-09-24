@@ -368,9 +368,9 @@ inferring it. This is the cleanest boundary in the repository.
   largest single block.
 
 ### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
-**#295.** Eleven debugger tests were running in CI that CI said it did not run, because the category
-that excludes them is applied by hand. Kept and widened -- the exclusion now names the toolchain it
-is about, a test decides which half a class is in, and CI runs 33 debugger tests rather than 11.
+**#295.** Eleven debugger tests ran in CI that CI said it did not run, because the category excluding
+them was applied by hand. They were kept on purpose, and which half a test runs in is decided by the
+toolchain it needs.
 
 ### ~~UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test~~
 **#300, #317. Wrong:** the flake was the test's own wait, which matched an event from before the
@@ -573,10 +573,9 @@ tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
   fact two files remember separately.
 
 ### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
-**#295.** The comment conventions bound every file and nothing checked them, so the debt only grew.
-CI checks them against a per-file baseline that may only go down. **The measurement was wrong, and
-that is the more useful half:** three of the phrases this finding counted are not history clauses at
-all, and paying the rest is #171's work.
+**#295. Wrong in part:** three of the phrases this finding counted are not history clauses. Nothing
+checked the conventions, so the debt only grew; CI checks what a grep can settle against a per-file
+baseline that may only go down.
 
 ### UIP-24 Nothing formats or lints the C++ or the PowerShell
 - **Severity:** Low
@@ -602,11 +601,10 @@ all, and paying the rest is #171's work.
 - **Severity:** High
 - **Effort:** L
 - **Where:** `.github/workflows/ci.yml:129-132,181` (category exclusion), `:238-264` (providers compile only)
-- **What:** 55 tests across four classes and one method never run in CI. The `xaml-providers` job
-  compiles both taps but runs nothing against them. So the ICorDebug session, the injection, the
-  visual tree, the overlay, the pick, the properties read and the live-edit apply are verified only
-  when one person runs the suite on one machine with a C++ toolset, the Windows App SDK and developer
-  mode. The exclusion is well-reasoned in the file -- a hosted runner genuinely lacks the toolchains,
+- **What:** The live-app tests that need a tap never run in CI: the `xaml-providers` job compiles both
+  taps but runs nothing against them. So the injection, the visual tree, the overlay, the pick, the
+  properties read and the live-edit apply are verified only when one person runs the suite on one
+  machine with a C++ toolset, the Windows App SDK and developer mode. The exclusion is well-reasoned in the file -- a hosted runner genuinely lacks the toolchains,
   and skips reading as passes is worse -- but the consequence is that the invariants `overlay.md`,
   `xaml-tap-lifecycle.md` and half of `xaml-live-edit.md` are review-only in practice, and
   `live-app-tests.md`'s own hardest-won rule ("green once is not green") cannot be applied at all,
@@ -615,13 +613,10 @@ all, and paying the rest is #171's work.
   with the most open bugs (8 `live-app` labels), and it is the half with the least automated
   evidence.
 - **Suggested change:** A self-hosted runner is the honest answer and the expensive one. Short of
-  that, two things that cost little and recover most of the value: (1) a scheduled `workflow_dispatch`
-  / nightly job on the developer machine's own runner, or a documented `./tools/Rose.ps1 live-app`
-  that runs the suite N times and reports a flake rate -- the measurement `live-app-tests.md` says is
-  required and that nothing currently produces; (2) split the live-app suite by what it actually
-  needs, as `LiveAppInspectionTests` accidentally demonstrates -- the ICorDebug half needs only a
-  .NET process and *can* run on a hosted Windows runner (see UIP-14). Doing (2) deliberately would
-  move roughly a third of those 55 tests into CI today.
+  that, one thing that costs little and recovers most of the value: a scheduled `workflow_dispatch` /
+  nightly job on the developer machine's own runner, or a documented `./tools/Rose.ps1 live-app` that
+  runs the suite N times and reports a flake rate -- the measurement `live-app-tests.md` says is
+  required and that nothing currently produces.
 
 ### UIP-26 The docs are strong and the index has already drifted: twelve spot-checks, seven hold
 - **Severity:** Medium

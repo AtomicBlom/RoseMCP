@@ -43,6 +43,38 @@ public sealed class BrokerWorkerTests
 		Assert.Contains("timed out", failure.Message, StringComparison.OrdinalIgnoreCase);
 	}
 
+	/// <summary>
+	/// A warm worker keeps nothing of its solution's directory open, so the directory can be deleted
+	/// while the worker lives -- which is <c>git worktree remove</c> on a worktree Rose has opened.
+	/// Windows holds a process's working directory open against deletion, a worktree's solution sits
+	/// at its root, and workers stay warm for the life of the broker, so a worker started in its
+	/// solution's directory makes its worktree impossible to remove, and the error names "another
+	/// process" rather than Rose.
+	/// <para>
+	/// Deleted once the load has finished, because a load may briefly stand a build host in the
+	/// solution's directory, and what this is about is the worker that stays.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_warm_worker_does_not_keep_its_solution_directory_from_being_deleted()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = CreateManager();
+
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
+
+		await manager.CallAsync<WorkspaceStatusReport>(
+			hints, ToolNames.WorkspaceStatus, new Dictionary<string, object?>(), retryIfWorkerDied: true, cancellationToken);
+
+		var worker = await manager.GetOrStartAsync(hints, cancellationToken);
+		Assert.True(worker.IsAlive);
+
+		Directory.Delete(fixture.Root, recursive: true);
+
+		Assert.False(Directory.Exists(fixture.Root));
+	}
+
 	[Test]
 	public async Task Restart_replaces_the_worker_process()
 	{

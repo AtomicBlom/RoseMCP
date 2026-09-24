@@ -22,7 +22,43 @@ public static class XamlDialectSelector
 	public static IReadOnlyList<IXamlDialect> All { get; } =
 		[WindowsXamlDialect.WinUi, WindowsXamlDialect.Uwp, WpfXamlDialect.Instance];
 
+	/// <summary>
+	/// The assembly Uno Platform defines its XAML framework types in, on every target but Windows.
+	/// </summary>
+	private const string UnoFrameworkAssembly = "Uno.UI";
+
 	public static XamlDialectChoice Select(Compilation compilation, IReadOnlyList<XamlDocument> documents)
+	{
+		var choice = Choose(compilation, documents);
+		if (choice.Dialect is null) return choice;
+
+		if (!DefinesFramework(compilation, choice.Dialect, UnoFrameworkAssembly)) return choice;
+
+		return choice with
+		{
+			Reason = $"{choice.Reason}, defined by {UnoFrameworkAssembly}, whose own source generator compiles the markup",
+			CompiledInWorkspaceBy = UnoFrameworkAssembly,
+		};
+	}
+
+	/// <summary>
+	/// Whether the named assembly is the one defining a dialect's framework types.
+	/// <para>
+	/// This is how an Uno Platform project is told apart from WinUI, and it has to be: Uno writes the
+	/// same markup against the same Microsoft.UI.Xaml names, so the dialect really is WinUI (or UWP,
+	/// for Uno's older flavour). What differs is who compiles it. Uno's XAML compiler is a Roslyn source
+	/// generator shipped in the same package as Uno.UI, so it runs inside the workspace and its partials
+	/// are already there; generators cannot see each other's output, so the emitter's own check for an
+	/// existing InitializeComponent cannot catch it. On Uno's Windows target the types come from the
+	/// Windows App SDK instead and the real markup compiler applies, which is why the question is asked
+	/// of the compilation and not of the SDK the project is on.
+	/// </para>
+	/// </summary>
+	private static bool DefinesFramework(Compilation compilation, IXamlDialect dialect, string assemblyName) =>
+		compilation.GetTypesByMetadataName(dialect.MarkerTypeName)
+			.Any(type => string.Equals(type.ContainingAssembly.Name, assemblyName, StringComparison.Ordinal));
+
+	private static XamlDialectChoice Choose(Compilation compilation, IReadOnlyList<XamlDocument> documents)
 	{
 		var referenced = All
 			.Where(dialect => compilation.GetTypeByMetadataName(dialect.MarkerTypeName) is not null)

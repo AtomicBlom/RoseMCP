@@ -332,7 +332,9 @@ the argument help says so, and the hop on from there carries absolute paths only
 - **Cheaper than when filed.** Card 9 shipped, so the notices this finding wants trimmed are decided in
   `EditPipeline.Report()` rather than in six hand-written iterators. Card 9's own rule applies to the
   trim: a line saying *which* compile ran is a fact and stays; a line framing the compile is shared and
-  can be conditioned in one place.
+  can be conditioned in one place. #316 took the worst case of redundancy 1 with it -- a multi-targeted
+  project listed the file and its whole diff once per framework, and is deduplicated by path now -- and
+  added one more conditional notice to weigh.
 - **What:** Measured on one real `rose_replace_member` response that added a doc comment and one
   statement, and came back with one error. Roughly 4,000 characters, about 1,000 tokens. It breaks
   down as:

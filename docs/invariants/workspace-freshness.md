@@ -49,7 +49,11 @@ Read before adding or changing a read path, a reload trigger, or the file watche
   names -- which is what catches an edit to a file brought in with `<Import>`, or to a
   `Directory.Build.props` nearer a project than its solution, both of which otherwise leave the
   workspace answering from the evaluation before the edit. Evaluation lists only imports that exist, so
-  a build file appearing still reloads by its name. The watcher remembers build files and nothing else:
+  a build file appearing still reloads by its name -- and that includes one that was there at load, went,
+  and came back. An `.editorconfig` caught missing by one sweep, which an editor's delete-and-rename save
+  or a checkout rewriting it will do, is removed from every project and then tracked by nothing, so
+  unless its return is awaited the workspace carries on without it: new files in spaces and LF, and
+  `rose_format` reading the same empty options and calling them formatted. The watcher remembers build files and nothing else:
   every read stats each tracked document and walks the project directories for new source files, so a
   thousand source files changing needs nothing from the event stream, and a list holding every event
   would need a cap that turns the number of events into a reason to reload. A project whose evaluation

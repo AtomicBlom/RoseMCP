@@ -568,6 +568,14 @@ public static class MemberEditService
 			return replacement.WithLeadingTrivia(existingTrivia);
 		}
 
+		supplied = DocumentationSummary.KeptInto(supplied, existingTrivia, out var keptSummary);
+
+		if (keptSummary)
+		{
+			notices.Add("Kept the <summary> from the declaration's documentation, since the code's documentation "
+				+ "comment had none. Write a <summary> in the code to replace it.");
+		}
+
 		return replacement.WithLeadingTrivia(
 			existingTrivia.TakeWhile(trivia => !MemberSyntax.IsComment(trivia)).Concat(supplied));
 	}

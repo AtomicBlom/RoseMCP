@@ -73,13 +73,16 @@ Things a refactor must carry across intact.
   `DeclarationLocator` lists candidates on every refusal (`DeclarationLocator.cs:336-362`);
   `AttributeEdit.Several` refuses two attributes of one name rather than picking the first
   (`AttributeEdit.cs:289-297`); `GuardSharedDeclaration` refuses `int a, b;` (`MemberEditService.cs:617-628`).
-- **Verification reports the delta, not the haystack.** `EditVerification.Delta` keys on
-  id+file+message and counts duplicates (`EditVerification.cs:330-359`); `DiagnosticsService` keeps
-  the compiler and analyzer halves apart so a compiler-only request cannot poison the analyzer delta
-  (`DiagnosticsService.cs:296-310`). **Amended by #299:** the cache key was praised here too, and it
-  was a wrong-answer bug -- `GetDependentSemanticVersionAsync` does not move for a change confined to
-  a method body, so after one absorbed from disk every read was served the previous result set. The
-  separation of the halves is the part that was sound.
+- **Verification reports the delta, not the haystack.** `DiagnosticsService` keeps the compiler and
+  analyzer halves apart, so a compiler-only request cannot poison the analyzer delta
+  (`DiagnosticsService.cs:296-310`). That separation is the only part of this bullet that has held:
+  **twice it also praised a key that produced a confident wrong answer.** #299 found the cache key
+  does not move for a change confined to a method body, so after one absorbed from disk every read
+  was served the previous result set. #316 found the delta's own id+file+message key reported the
+  wrong entry whenever an edit added an error identical to ones already in the file -- the count came
+  out right and the error named was an existing one further down that had merely moved. Errors are
+  paired by following each position through a line diff now (`DiagnosticDelta`, `TextMovement`). A
+  key that ignores position is the shape to distrust in this subsystem.
 - **Arguments mapped by the compiler.** `CallSiteBinding.For` reads `IInvocationOperation.Arguments`
   and refuses any site it cannot bind (`CallSiteBinding.cs:73-110`); `CallSiteRewriter` moves the
   caller's own `ArgumentSyntax` nodes rather than regenerating them (`CallSiteRewriter.cs:81-96`);
@@ -465,7 +468,8 @@ reason — so this is a sentence, not a defect. Fold it into card 13.
   not attach `.editorconfig`, or a document in a project new to the workspace -- the indent is four
   spaces and the ending is whatever the *payload* mostly uses, which for a new file is the caller's
   LF. `rose_format` then reports "Every file was already formatted" against the same empty rules
-  (#218).
+  (#218). #316 closed one way into that state, a tracked `.editorconfig` that vanished and returned
+  unnoticed, by reloading when it comes back. The fallback itself is untouched and #218 is open.
 - **Why it matters:** The writing tool and the checking tool agree with each other and disagree with
   `dotnet format`, and the caller has done everything the documentation asked.
 - **Suggested change:** Fall back in order: analyzer config; a sibling `.cs` document in the same

@@ -25,7 +25,7 @@ be re-implemented by hand because the SDK does not send `notifications/cancelled
 (`CancellableToolCall`), and one SDK's quirks now show up in four processes. Where the design shows
 its age was the XAML tap pipe, the only boundary where the framing was invented rather than adopted
 and the only one whose protocol-level defects produced wrong answers rather than failures -- closed by
-#PRNUM (IPC-01, IPC-03, LIV-07, LIV-08); and at the *edges* of otherwise sound boundaries -- no version
+#323 (IPC-01, IPC-03, LIV-07, LIV-08); and at the *edges* of otherwise sound boundaries -- no version
 handshake anywhere despite `HostVersion` existing and being sent (IPC-02), the operator token
 travelling on a command line the threat model says is readable (IPC-04), and three serializer
 configurations on a single hop (IPC-05). None of this is a wrong-tool verdict. It is a system that
@@ -41,7 +41,7 @@ change.
 | 3 | Broker -> Worker | stdio to a child, MCP | request/response + progress; priming call | Appropriate with fixes (IPC-02, IPC-05, IPC-09) |
 | 4 | Broker -> LiveApp host | stdio to a child, MCP | request/response + long-poll event read | Appropriate with fixes (IPC-02, IPC-08) |
 | 5 | Inspector -> Tray operator API | http + bearer token, REST/JSON | polled reads + long-polled event tail | Appropriate (see IPC-04 for the token) |
-| 6 | LiveApp host -> XAML tap | named pipe, 4-byte LE length + UTF-8 text payload | request/reply, each reply carrying its request's id | Appropriate (#PRNUM) |
+| 6 | LiveApp host -> XAML tap | named pipe, 4-byte LE length + UTF-8 text payload | request/reply, each reply carrying its request's id | Appropriate (#323) |
 | 7 | LiveApp host -> UWP resume stub | named pipe, newline-delimited text | two-message handshake, fail-safe | Appropriate with fixes (IPC-06) |
 | 8 | Worker <-> XAML stub generator | a generated source document carrying JSON on a marked comment | one-way report, per compilation | Appropriate -- the only channel Roslyn offers |
 | 9 | Tray -> Inspector | process start; args, then WinAppSDK activation redirection | one-shot launch + hand-over | Appropriate with fixes (IPC-04) |
@@ -282,7 +282,7 @@ encoding decision for the whole channel, taken once, with the two bugs it retire
 (`XamlProviderPipe.ReadFrameAsync`).
 
 *The payload was three positional sub-encodings, escaped in one direction only, with no request id and
-a greeting that proved nothing.* **#PRNUM** made it one contract: every field escaped with one table in
+a greeting that proved nothing.* **#323** made it one contract: every field escaped with one table in
 both directions, each reply carrying its request's id, and a provider refused unless it greets with the
 host's protocol version and the session's key. **Verdict: appropriate.**
 
@@ -438,7 +438,7 @@ transport. Boundary by boundary, with the alternative weighed:
 | 3 Broker -> Worker (stdio MCP) | Yes | gRPC (schema + streaming, loses standalone-drivable workers and the test shape); named pipes + JSON-RPC-lite (same JSON, no tool metadata, must rewrite progress and cancel). |
 | 4 Broker -> LiveApp (stdio MCP) | Yes | As above, plus the long poll needs nothing MCP does not already give. |
 | 5 Inspector -> operator API (http REST, polled) | Yes | SSE/WebSocket: the event tail is already a 30 s long poll, so latency is identical; a push adds a second failure model and a resync to a window whose principle is "say what you could not read". State panes want the current value, which a re-read gives and a missed push does not. |
-| 6 host -> tap (named pipe) | Yes | Files in a shared folder (the rejected predecessor) is worse and the record says why. The payload is one text contract in both directions since #PRNUM; why text rather than JSON or binary is in the same record. |
+| 6 host -> tap (named pipe) | Yes | Files in a shared folder (the rejected predecessor) is worse and the record says why. The payload is one text contract in both directions since #323; why text rather than JSON or binary is in the same record. |
 | 7 host -> resume stub (named pipe) | Yes | Nothing smaller exists for two messages, and the fail-safe is the design. |
 | 8 worker <-> stub generator (generated document) | Yes | There is no alternative: Roslyn gives a generator source and diagnostics, and source is the right one. |
 | 9 Tray -> Inspector (args + activation redirect) | Transport yes, **secret no** | The launch mechanism is right; a secret on a command line is not (IPC-04). |
@@ -461,7 +461,7 @@ to add a side channel, and the pipe framing in `tap_channel.h` is already the de
 ## Findings
 
 ### ~~IPC-01 The tap's request side does not escape what its reply side unescapes~~
-**#PRNUM.** A tab or a newline in a property value mis-framed the edit and mis-keyed its status, so an
+**#323.** A tab or a newline in a property value mis-framed the edit and mis-keyed its status, so an
 edit that landed reported that it had not. Both directions share one escaping contract, and a test
 holds the provider's half against the host's.
 
@@ -471,7 +471,7 @@ as whatever it was and the mismatch surfaced as a missing field or an unknown to
 launch a child compare it now, and say so rather than refusing.
 
 ### ~~IPC-03 The tap pipe is reachable by every packaged app, and the greeting proves nothing~~
-**#PRNUM.** Whatever reached the pipe first was accepted as the provider and could answer with rows of
+**#323.** Whatever reached the pipe first was accepted as the provider and could answer with rows of
 its own. A provider is refused unless it greets with a key minted for its session.
 
 ### IPC-04 The operator token travels on a command line the threat model treats as readable
@@ -624,7 +624,7 @@ its own. A provider is refused unless it greets with a key minted for its sessio
 
 ## Pit-of-success inversions
 
-1. ~~Whether a field is escaped depends on which side wrote it.~~ **#PRNUM.** One text contract owns
+1. ~~Whether a field is escaped depends on which side wrote it.~~ **#323.** One text contract owns
    escaping, rows, the request id and the greeting, in both directions, and a test holds the provider's
    half against it.
 
@@ -678,7 +678,7 @@ its own. A provider is refused unless it greets with a key minted for its sessio
 - `ROSEMCP_TOKEN` currently gates the whole http server including MCP, and the operator API shares
   it. If #213 is fixed by having the relay send it, does the relay then hold a secret that also
   unlocks the operator surface -- and is that intended, or should the two separate?
-- ~~Is there an appetite for JSON inside the tap frame?~~ **Declined, #PRNUM.** Measured, it would buy no
+- ~~Is there an appetite for JSON inside the tap frame?~~ **Declined, #323.** Measured, it would buy no
   speed and cost the one property a lock-step pair needs -- a stale copy refused rather than read. The
   reasoning is in the pipe's decision record.
 - `rose_live_app_events` is a long poll through two hops (client -> broker -> host). Over http with

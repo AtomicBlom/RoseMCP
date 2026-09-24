@@ -33,7 +33,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 2 | LIV-03 | #270 |
 | 3 | LIV-02 | #265 |
 | 4 | UIP-15, LIV-07 (the honest result) | #317 |
-| 5 | IPC-01, LIV-07 (the id), LIV-08, IPC-03 | #PRNUM |
+| 5 | IPC-01, LIV-07 (the id), LIV-08, IPC-03 | #323 |
 | 7 | WRK-08 | #269 |
 | 9 | WRK-01 | #275, #276, #278 |
 | — | LIV-01 | #265, #268, #274, #281 |
@@ -139,7 +139,7 @@ Tier 0, and are built (PR #295). The seven highest-leverage:
    resolves for one tool resolves for all (WRK-04, AGT-03).
 3. ~~A path type that cannot be resolved without a base (BRK-01, AGT-10).~~ **#305.**
 4. ~~Nine fields and five spellings of "is the target stopped" replaced by one state (LIV-02).~~ **#265.**
-5. ~~One framed-message type for every pipe (IPC-01, LIV-07, LIV-08).~~ **#PRNUM.** One wire contract
+5. ~~One framed-message type for every pipe (IPC-01, LIV-07, LIV-08).~~ **#323.** One wire contract
    for the tap's pipe, the only one carrying a caller's text, kept as text rather than JSON.
 6. ~~Attribution by runtime type check, replaced by one the compiler enforces (BRK-12).~~ **#295.**
 7. ~~A fact computed for a window that no window names, caught by a test (USE-01, USE-03).~~ **#295.**
@@ -315,7 +315,7 @@ These produce confident wrong results today. Everything else is cost.
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
 | ~~4~~ | **#317.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app now says the change may still land, and what counts as such a verb is held against the provider's own dispatch by a test. The correlation half went to card 5; cancelling a request in flight is declined, with the reason in `xaml-live-edit.md`. | UIP-15, LIV-07 | #208 | — |
-| ~~5~~ | **#PRNUM.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key, and a test holds the provider's half against the host's. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
+| ~~5~~ | **#323.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key, and a test holds the provider's half against the host's. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
 | ~~6~~ | **#306.** One compilation was asked about another's symbol, so resolving a name and every write that worked out its own imports failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is asked about. | WRK-06 | — | — |
 | ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory, and the rule is an invariant. | WRK-08 | — | — |
 

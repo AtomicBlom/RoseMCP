@@ -234,7 +234,7 @@ The reasoning is on `BreakpointTable.Claim`.
   being handed anything new; `Frames` and `DescribeFrame` then go.
 
 ### ~~LIV-07 A request the host has timed out on still runs in the app, and the pipe cannot tell whose reply is whose~~
-**#317, #PRNUM.** A XAML request the host had timed out on could still run in the app, the caller was
+**#317, #323.** A XAML request the host had timed out on could still run in the app, the caller was
 told only that it failed, and its late reply was matched by position. A timed-out verb that changes the
 app says the change may still land, and a reply is matched to its request by an id it echoes.
 
@@ -244,7 +244,7 @@ as it is dropped, and none is in any kept log. Revisit it if one ever is. The re
 `docs/invariants/xaml-live-edit.md`.
 
 ### ~~LIV-08 The wire format is versioned by column count and the greeting carries no identity~~
-**#PRNUM.** A stale provider's shorter rows were read as data with fields missing. The greeting names a
+**#323.** A stale provider's shorter rows were read as data with fields missing. The greeting names a
 protocol version the host refuses on mismatch, so every parser requires the full row.
 
 ### LIV-09 `XamlDiff` hard-codes UWP type names in a framework-neutral library
@@ -507,14 +507,14 @@ protocol version the host refuses on mismatch, so every parser requires the full
    `readonly ref struct` only the lock wrapper can construct. The session already does this for the
    debugger side with `StoppedTarget`; make it the same shape on the XAML side.
 4. ~~"A mutating request that timed out may still run", held by a reviewer remembering it.~~ **#317,
-   #PRNUM.** Which verbs mutate is a classification a test holds against the provider's dispatch, and
+   #323.** Which verbs mutate is a classification a test holds against the provider's dispatch, and
    each request carries an id its reply echoes.
 5. **Rule today:** "the tap's tier purity is checked by include order and by nothing else"
    (`tap-tiers.md`: "not currently checked by a test"). **Mechanism:** a compile-only translation unit per
    tier in each `build.ps1` (`tap_tier2_check.cpp` includes `tap_channel.h` through `tap_object.h` with no
    projection headers and no aliases defined), so a violation fails the build in a file named for the
    tier rather than being absorbed by moving an include.
-6. ~~"An older provider writes fewer columns; check the length" at every parse site.~~ **#PRNUM.** A
+6. ~~"An older provider writes fewer columns; check the length" at every parse site.~~ **#323.** A
    provider that greets with another protocol version is refused by name, and a test holds the
    provider's version and escape table against the host's.
 7. **Rule today:** "comments are self-contained and present tense; no `used to`, no decision numbers".

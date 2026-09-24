@@ -234,7 +234,7 @@ The reasoning is on `BreakpointTable.Claim`.
   being handed anything new; `Frames` and `DescribeFrame` then go.
 
 ### ~~LIV-07 A request the host has timed out on still runs in the app, and the pipe cannot tell whose reply is whose~~
-**#PRNUM.** A XAML request the host had timed out on could still run in the app, and the caller was
+**#317.** A XAML request the host had timed out on could still run in the app, and the caller was
 told only that it failed. A timed-out verb that changes the app now says the change may still land,
 and the classification behind that is guarded against the provider's own dispatch.
 

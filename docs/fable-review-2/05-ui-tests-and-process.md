@@ -373,7 +373,7 @@ that excludes them is applied by hand. Kept and widened -- the exclusion now nam
 is about, a test decides which half a class is in, and CI runs 33 debugger tests rather than 11.
 
 ### ~~UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test~~
-**Wrong, corrected by #300, and the surviving half closed by #PRNUM.** The flake was the test's own
+**Wrong, corrected by #300, and the surviving half closed by #317.** The flake was the test's own
 wait, which started from cursor 0 and matched an event from before the pick. The product hazard
 underneath it -- a timed-out request that still runs in the app -- was real but unproven, and is
 now stated in the result of any timed-out verb that changes the app. See LIV-07 for what was done

@@ -26,10 +26,20 @@ public static partial class RoseLogFile
 	public const int DefaultPartsPerSession = 3;
 
 	/// <summary>
-	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{component}. Nested under its own "Logs" folder,
-	/// separate from the install root that shares the same vendor/product parent, so a deploy
-	/// publishing over the install never touches a session's log files. The root is a parameter so
-	/// a test can point it somewhere disposable rather than at the machine's real profile.
+	/// The variable that sends every Rose process's logs to one directory, which is kept whole: a
+	/// directory named here is never pruned. It exists for a test run, which starts far more than
+	/// <see cref="DefaultSessionsKept"/> hosts -- so pruning its logs to the newest sessions deletes the
+	/// evidence of any failure early in the run, before anybody can read it. Set once in the process
+	/// that starts the others, it reaches every child through the inherited environment.
+	/// </summary>
+	public const string RootVariable = "ROSEMCP_LOG_ROOT";
+
+	/// <summary>
+	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{component}, or {logRoot}/{component} when a root is
+	/// named. Nested under its own "Logs" folder, separate from the install root that shares the same
+	/// vendor/product parent, so a deploy publishing over the install never touches a session's log
+	/// files. The roots are parameters so a test can point them somewhere disposable rather than at
+	/// the machine's real profile.
 	/// <para>
 	/// An empty answer from the environment is turned into a real path rather than passed on.
 	/// <see cref="Environment.GetFolderPath(Environment.SpecialFolder)"/> returns an empty string
@@ -40,8 +50,13 @@ public static partial class RoseLogFile
 	/// the temp directory keeps them somewhere findable and keeps the shape identical.
 	/// </para>
 	/// </summary>
-	public static string DirectoryFor(string component, string? localAppData = null)
+	/// <param name="component">Server, Worker, LiveApp, Tray or Inspector -- the process, not the assembly.</param>
+	/// <param name="localAppData">Overrides the profile root.</param>
+	/// <param name="logRoot">A directory to log under instead, as <see cref="RootVariable"/> names one.</param>
+	public static string DirectoryFor(string component, string? localAppData = null, string? logRoot = null)
 	{
+		if (logRoot is { Length: > 0 }) return Path.Combine(logRoot, component);
+
 		var configured = localAppData is { Length: > 0 }
 			? localAppData
 			: Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

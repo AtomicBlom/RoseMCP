@@ -27,7 +27,8 @@ public static class RoseFileLogging
 
 	/// <summary>
 	/// Writes this process's logs to
-	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{component}/[{solution}-]{timestamp}.log.
+	/// %LOCALAPPDATA%/BinaryVibrance/RoseMCP/Logs/{component}/[{solution}-]{timestamp}.log, or under
+	/// the directory <see cref="RoseLogFile.RootVariable"/> names when it is set.
 	/// </summary>
 	/// <param name="logging">The host's logging builder.</param>
 	/// <param name="component">Server, Worker, or Tray -- the process, not the assembly.</param>
@@ -49,8 +50,11 @@ public static class RoseFileLogging
 
 		try
 		{
-			var directory = RoseLogFile.DirectoryFor(component, localAppData);
-			RoseLogFile.PruneSessions(directory);
+			var logRoot = Environment.GetEnvironmentVariable(RoseLogFile.RootVariable);
+			var directory = RoseLogFile.DirectoryFor(component, localAppData, logRoot);
+
+			// A named root holds one run's evidence and is kept whole; see RoseLogFile.RootVariable.
+			if (string.IsNullOrEmpty(logRoot)) RoseLogFile.PruneSessions(directory);
 
 			var path = RoseLogFile.Claim(directory, solutionPath, DateTimeOffset.UtcNow);
 

@@ -224,14 +224,38 @@ jobs:
       # a run dies with TimeoutException: Initialization timed out on whichever tests happened to
       # start a worker during the spike -- a different set each run, which is what makes it read as
       # flakiness rather than as load. Three and not four, because one test can hold several workers.
+      #
+      # Bounded below the job's own limit, so a suite that hangs fails this step and leaves the job
+      # the time to keep its evidence, rather than being cancelled with nothing uploaded.
       - name: Integration tests, excluding the ones that need a probe app
+        timeout-minutes: 20
         run: ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --maximum-parallel-tests 3 --treenode-filter '/*/*/*/*[Category!=ProbeApp]'
 
       # The Windows-only half, which is its own project because it takes a compile reference on
       # RoseMcp.LiveApp (net10.0-windows). Keeping that out of the project above is what leaves the
       # door open to running the rest off Windows.
+      #
+      # Run whatever the step above did. Skipped after a failure there, a break in this half is
+      # invisible until the other is fixed, and one failure is read as the only one.
       - name: Integration tests that need Windows
+        if: ${{ !cancelled() }}
         run: ./tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/RoseMcp.IntegrationTests.Windows.exe
+
+      # A failed or cancelled run keeps its evidence. Every Rose process the suite starts logs into
+      # its own directory under TestResults, which nothing prunes during the run, and a failing test
+      # lists and attaches the logs written while it ran (FailureEvidence). On a hosted runner all of
+      # it goes with the runner unless it is uploaded, and a failure seen only under load is exactly
+      # the one that cannot be reproduced afterwards to find out.
+      - name: Keep the evidence of a failed run
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-evidence
+          path: |
+            tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/
+            tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/TestResults/
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The native XAML providers, for every architecture a shipped install can carry.
   #

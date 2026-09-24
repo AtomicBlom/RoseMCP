@@ -45,6 +45,19 @@ public sealed class LoggingTests : IDisposable
 		Assert.Equal(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Logs", "Worker"), directory);
 	}
 
+	/// <summary>
+	/// A named root takes the place of the profile, component by component, so a test run's processes
+	/// all log into the one directory it can collect -- whatever profile root they would otherwise use.
+	/// </summary>
+	[Test]
+	public void Puts_a_component_directly_under_a_named_root()
+	{
+		var run = Path.Combine(_root, "run");
+
+		Assert.Equal(Path.Combine(run, "LiveApp"), RoseLogFile.DirectoryFor("LiveApp", _root, run));
+		Assert.Equal(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Logs", "LiveApp"), RoseLogFile.DirectoryFor("LiveApp", _root, string.Empty));
+	}
+
 	[Test]
 	public void Keeps_the_solution_name_readable_in_the_encoded_form()
 	{

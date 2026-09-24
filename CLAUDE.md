@@ -187,6 +187,14 @@ by the OS however the holder dies, so there is never a stale one to clear. A `Ro
 fails while a suite runs for the same reason -- it holds the assemblies the build copies -- so wait
 for the holder either way.
 
+**A failing integration test hands you its logs.** Every Rose process the suite starts logs under
+`tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/logs/<run>` rather than the machine's
+own folder (`ROSEMCP_LOG_ROOT`), nothing prunes it during the run, and a test that fails, times out
+or is cancelled lists and attaches every log written while it ran -- the tap logs of live sandboxes
+included. CI uploads the lot as `integration-evidence` when the job fails. Read them before
+concluding anything: a failure that appears only under load is still a failure, because a developer
+running several apps and taps at once is under load.
+
 Run a worker standalone against a fixture -- the fastest way to debug Roslyn behaviour without
 the broker in the way:
 

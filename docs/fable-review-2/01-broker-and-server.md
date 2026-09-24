@@ -167,7 +167,7 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 ### ~~BRK-20 A warm worker holds its worktree's directory open, so `git worktree remove` fails until the tray is closed~~
 **#305, #326.** A worker stood in its solution's directory, which Windows holds open against deletion, so a
 worktree Rose had opened could not be removed while the broker lived. Workers stand in an empty folder of
-Rose's own, and the hop that once made that directory load-bearing is absolute-only.
+Rose's own, and every path one is sent is absolute.
 
 ### BRK-21 Three live-app tools answer with a bare sentence, and the guard for that is blind to them
 - **Found while closing card 0c, PR #295.** Not in the original review.

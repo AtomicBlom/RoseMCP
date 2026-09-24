@@ -31,9 +31,9 @@ unit tests. Where it was fragile was in two places a refactor had to fix rather 
 debugger half is now done** (PRs #265, #268, #270, #274 and #281, closing LIV-01, LIV-02 and LIV-03):
 `CorDebugSession` is 879 lines from 2,396 across nine types, the stop state machine is one value, and
 both High findings -- a dead target reporting as stopped, and a breakpoint hit attributed by method
-token alone -- are fixed with a regression test each. **The XAML half stands**: the pipe's "a reply is
-this request's answer by construction" claim holds only while no request ever times out, which is the
-mechanism behind #208, and that is still the highest-value card left in this file. On hot reload:
+token alone -- are fixed with a regression test each. **The XAML half is done too** (#317 and #323,
+closing LIV-07 and LIV-08): a reply is matched to its request by an id it echoes, and a timed-out verb
+that changes the app says the change may still land. On hot reload:
 nothing exists beyond the launch, attach and module-load hooks a debugger has anyway, and the launch
 path sets no environment on the target.
 
@@ -83,12 +83,13 @@ What must survive a refactor, with where it lives:
   waiters with `RunContinuationsAsynchronously` so no reader code runs on mscordbi's thread (`:122-126`),
   re-checks the buffer rather than the deadline token after the wait (`:174-181`), and advances the cursor
   over skipped kinds (`:244-246`).
-- **The pipe channel.** Length-prefixed UTF-8 frames at both ends (`XamlProviderPipe.cs:354-371`,
-  `tap_channel.h:114-207`); one pump owns every read so a departed provider is noticed between requests
-  (`XamlProviderPipe.cs:274-319`); a stale reply is drained and logged before a new request
-  (`:186-193`); the greeting source is replaced on hang-up so a caller cannot be handed a dead tap's
-  greeting (`:326-346`). The reconnect path is tested where it can be, in the one project that references
-  `RoseMcp.LiveApp` as a library (`tests/RoseMcp.IntegrationTests.Windows/XamlProviderPipeTests.cs`).
+- **The pipe channel.** Length-prefixed UTF-8 frames at both ends (`XamlProviderPipe.ReadFrameAsync`,
+  `tap_channel.h`); one pump owns every read so a departed provider is noticed between requests
+  (`XamlProviderPipe.PumpAsync`); a reply is taken by the id its request carried, and any other is
+  dropped and logged (`TakeReply`); on hang-up the uncollected replies are discarded and the greeting
+  source replaced, so a caller cannot be handed a dead tap's answer or its greeting (`HangUp`). The
+  reconnect path is tested where it can be, in the one project that references `RoseMcp.LiveApp` as a
+  library (`tests/RoseMcp.IntegrationTests.Windows/XamlProviderPipeTests.cs`).
 - **Two XAML classes split by which invariant governs them.** `XamlProviderSession` (staging, grants,
   architecture, injection) knows no wire format; `XamlDiagnosticsSession` (verbs, parsing, apply) knows
   no staging (`XamlProviderSession.cs:25-36`). Every public entry takes `_requests` once and calls a
@@ -363,7 +364,7 @@ protocol version the host refuses on mismatch, so every parser requires the full
   also what the retries are silently multiplying.
 - **Suggested change:** Count launch attempts in the fixture and fail the run if any launch needed more
   than one, with the faulted `Detail` in the message, so the resume-stub race is a red test with a
-  reason. Once LIV-07 and LIV-12 land, narrow `ProbeKeys.LiveApp` and measure. Make
+  reason. LIV-07 has landed; once LIV-12 does, narrow `ProbeKeys.LiveApp` and measure. Make
   `SelectTransientAsync` select through the tree once the element is present and assert on a single
   attempt, so a timed-out select is a failure rather than a retry.
 
@@ -536,9 +537,7 @@ protocol version the host refuses on mismatch, so every parser requires the full
    whether one caller's `Stop(0)` under the gate has ever been seen to block. (LIV-05)
 3. Has a WinUI 3 brush or margin live edit ever been observed to land? (LIV-09)
 4. ~~For #208, was the host log of a failing run checked for a `selecthandle` that timed out?~~
-   **Checked, and no.** Across the 21 kept live-app logs there is no pipe-request timeout and no late
-   reply, though a late reply is logged as it is discarded. The mechanism stays inferred from the
-   source, which is why only the honest result was built and cancelling in flight was declined. (LIV-07)
+   **Checked: no kept log holds one**, which is why cancelling in flight was declined. (LIV-07)
 5. Is `DllCanUnloadNow` returning `S_OK` intentional? (LIV-11)
 6. Were `SetDesiredNGENCompilerFlags` / `SetJITCompilerFlags(CORDEBUG_JIT_DISABLE_OPTIMIZATION)` left out
    deliberately? `DebugProbeTarget` compensates with `MethodImplOptions.NoOptimization` (`Program.cs:62-64`),

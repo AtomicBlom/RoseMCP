@@ -172,4 +172,6 @@ using Rose.
 **Operational note for a future run:** a reviewer reading a 20k-line project in full costs 400-500k
 tokens. Four in parallel plus the parent exhausted a session limit on the first attempt. Tell each
 reviewer to write its file incrementally (header and Strengths first, findings appended) so an
-interruption costs nothing, and give exact file paths rather than folder hints.
+interruption costs nothing, and give exact file paths rather than folder hints. Tell each one too
+that an issue's guess at its own cause is a claim to measure, not evidence to cite: several findings
+here rested on #208's, and the cause was the test's own wait.

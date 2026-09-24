@@ -45,12 +45,13 @@ findings -- including **the debugger core and the write pipeline**, which were t
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
 **Tier 1 is done in full.** Next is **card 8** for tier 2's editing work. Card 1 opened the gate on
-**11b** and **11c**, and closing 1b added **11f**: a worker now outlives the worktree it was opened on.
+**11b** and **11c**.
 
-Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
-would not), the layout half of **21**, and card 0e's finding that three of the phrases the comment
-convention lists are not history clauses at all. Card 9 also found a wrong answer the review missed
--- four write tools reporting a project clean while the caller's errors sat in it.
+Four cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
+would not), the layout half of **21**, **11f** (closing 1b lets a worktree go while its worker runs
+on), and card 0e's finding that three of the phrases the comment convention lists are not history
+clauses at all. Card 9 also found a wrong answer the review missed -- four write tools reporting a
+project clean while the caller's errors sat in it.
 
 Each closed finding is struck in its own file: the pull request, the problem, the state.
 
@@ -140,8 +141,8 @@ Tier 0, and are built (PR #295). The seven highest-leverage:
    resolves for one tool resolves for all (WRK-04, AGT-03).
 3. ~~A path type that cannot be resolved without a base (BRK-01, AGT-10).~~ **#305.**
 4. ~~Nine fields and five spellings of "is the target stopped" replaced by one state (LIV-02).~~ **#265.**
-5. ~~One framed-message type for every pipe (IPC-01, LIV-07, LIV-08).~~ **#323.** One wire contract
-   for the tap's pipe, the only one carrying a caller's text, kept as text rather than JSON.
+5. ~~One framed-message type for every pipe (IPC-01, LIV-07, LIV-08).~~ **#323**, for the tap's pipe
+   alone: it is the only one carrying a caller's text.
 6. ~~Attribution by runtime type check, replaced by one the compiler enforces (BRK-12).~~ **#295.**
 7. ~~A fact computed for a window that no window names, caught by a test (USE-01, USE-03).~~ **#295.**
 
@@ -195,7 +196,8 @@ Six things, in order of leverage. All are expanded as cards below.
 
 ### 6. Are the technologies and protocols for IPC appropriate?
 
-**Yes: eleven of twelve boundaries, and the twelfth is a payload problem, not a transport one.**
+**Yes: eleven of twelve boundaries were right, and the twelfth, the XAML tap pipe, was a payload
+problem rather than a transport one, fixed by #323.**
 
 MCP over stdio for the internal parent-child hops is called the standout decision: not the reflex
 choice, and it pays three times over, because the worker and the live-app host are *also* standalone
@@ -209,9 +211,6 @@ load-bearing in four processes.
 Polling for the inspector is **correct**, and the premise that it might not be was wrong: the event
 tail is already a long poll with a thirty-second wait, so its latency equals SSE, and interval
 polling is used only for state panes where a re-read is idempotent.
-
-The one wrong payload: the XAML tap pipe is the only boundary whose framing was invented rather than
-adopted, and the only one whose protocol defects produce wrong answers rather than failures.
 
 ### 7. How far is C# hot reload?
 
@@ -315,8 +314,8 @@ These produce confident wrong results today. Everything else is cost.
 | ~~1b~~ | **#326.** A warm worker stood in its solution's directory, which Windows holds open against deletion, so an opened worktree could not be removed until the broker went. Workers stand in an empty folder of Rose's own. | BRK-20 | — | — |
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
-| ~~4~~ | **#317.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app now says the change may still land, and what counts as such a verb is held against the provider's own dispatch by a test. The correlation half went to card 5; cancelling a request in flight is declined, with the reason in `xaml-live-edit.md`. | UIP-15, LIV-07 | #208 | — |
-| ~~5~~ | **#323.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key, and a test holds the provider's half against the host's. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
+| ~~4~~ | **#317.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app says the change may still land; cancelling one in flight is declined. | UIP-15, LIV-07 | — | — |
+| ~~5~~ | **#323.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
 | ~~6~~ | **#306.** One compilation was asked about another's symbol, so resolving a name and every write that worked out its own imports failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is asked about. | WRK-06 | — | — |
 | ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory, and the rule is an invariant. | WRK-08 | — | — |
 
@@ -342,7 +341,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction, and covers the one case card 1 leaves: an http session with no relay never says where it is. | AGT-21 | new | S |
 | 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
 | 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. | AGT-23, AGT-06, AGT-05 | #234 | M |
-| 11f | **A worker outlives the worktree it was opened on, and no session can see what is warm.** Since card 1b a worktree can be removed while its worker lives, and the worker runs on against a solution that is gone -- tolerating it as it tolerates a branch switch -- holding its memory for the life of the broker. Retire a worker whose solution has been gone past a grace period; evict idle workers on a timer, said in the activity log; and add `rose_workspace_list`, so a session can see what is loaded and quote each workspace's key back, which card 11c makes an anchor. #157 has both halves. | BRK-20 | #157 | M |
+| 11f | **A worker outlives the worktree it was opened on, an ended live-app session is never dropped, and no session can see what is warm.** Since card 1b a worktree can be removed while its worker lives, and the worker runs on against a solution that is gone -- tolerating it as it tolerates a branch switch -- holding its memory for the life of the broker. Make eviction the manager's job, said in the activity log: retire a worker whose solution has been gone past a grace period, evict idle workers on a timer, and drop an ended live-app session, which is otherwise polled every second for the life of the broker. Add `rose_workspace_list`, so a session can see what is loaded and quote each workspace's key back, which card 11c makes an anchor. #157 has the worker half and BRK-04 the shape. | BRK-04, BRK-20 | #157 | M |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 12b | **Three live-app tools answer with a bare sentence**, which is the defect card 0c fixed on `rose_workspace_close` surviving on the surface 0c's guard exempts. Give each a result record, and narrow the exemption so it excuses a live-app result from *workspace* attribution rather than from being a result. | BRK-21 | new | S |
 | 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. | AGT-04, WRK-07, AGT-05 | #210 | M |

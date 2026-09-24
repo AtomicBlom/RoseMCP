@@ -28,9 +28,9 @@ folder layout, a test class's category attribute, a header's include graph, "eve
 revision" -- is review-only, and three of them have already drifted under review: a category lost in
 a split, 100 history clauses where #171 counted 90, and four doc claims that describe code that has
 moved. The one structural hole is that the newest, least conventional and most bug-dense third of the
-product -- debugger, tap, live edit, 55 tests -- never runs in CI at all, which is how #208 came to
-be a real "the call reported failure and did the thing anyway" defect found by a test nobody runs on a
-schedule. The one growing debt is `TestSession.OpenAsync`: 254 real solution loads and 299 fixture
+product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part does now
+(#295), and the tap and live-edit part does not. The one growing debt is `TestSession.OpenAsync`:
+254 real solution loads and 299 fixture
 copies across six distinct fixtures, with zero sharing on the Roslyn half while the live-app half next
 door has a proven sharing model. None of this is vibe-coded; it is carefully built and
 under-mechanised, which is a much better problem to have.
@@ -373,14 +373,9 @@ that excludes them is applied by hand. Kept and widened -- the exclusion now nam
 is about, a test decides which half a class is in, and CI runs 33 debugger tests rather than 11.
 
 ### ~~UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test~~
-**Wrong, corrected by #300, and the surviving half closed by #317.** The flake was the test's own
-wait, which started from cursor 0 and matched an event from before the pick. The product hazard
-underneath it -- a timed-out request that still runs in the app -- was real but unproven, and is
-now stated in the result of any timed-out verb that changes the app. See LIV-07 for what was done
-and what was declined.
-
-The lesson worth keeping is the one this finding failed: it read the issue's own hypothesis and
-agreed with it rather than measuring.
+**#300, #317. Wrong:** the flake was the test's own wait, which matched an event from before the
+pick. The product hazard it named, a timed-out request that still runs in the app, is stated in the
+result of any timed-out verb that changes the app.
 
 ### UIP-16 A fixture hand-back check that re-reads live state will flake whatever the product does
 - **Severity:** Medium
@@ -388,8 +383,9 @@ agreed with it rather than measuring.
 - **Where:** `tests/RoseMcp.IntegrationTests/UwpProbeApp.cs:501-526` (`SessionTurn.DisposeAsync`, the hand-back assertion at `:524`), and the slot hand-back rule in `docs/invariants/live-app-tests.md`
 - **What:** The hand-back check reads the app's selection *again*, after the test's own read, and
   fails the test if it is not clean. It is asserting against an asynchronous system that a second
-  party (the app's UI thread) can still change. #208 is the first case; it will not be the last,
-  because the check is structurally a second sample of a value that moves.
+  party (the app's UI thread) can still change. #208 looked like a case and was not: the test's own
+  wait was wrong (#300), and the check was right to fail it. The argument is structural and no case
+  has been seen: the check is a second sample of a value that moves.
 - **Why it matters:** The invariant doc is right that residue must fail the test that left it --
   that is what turned three costumed bugs into one. But a check that can fail for reasons other than
   residue converts a product race into a *test* failure attributed to the wrong test, which is the
@@ -617,8 +613,7 @@ all, and paying the rest is #171's work.
   because nothing samples repeatedly.
 - **Why it matters:** This is the half the review brief calls "largely vibe-coded", it is the half
   with the most open bugs (8 `live-app` labels), and it is the half with the least automated
-  evidence. #208 is exactly what that combination produces: a real product defect found by a test
-  nobody runs on a schedule.
+  evidence.
 - **Suggested change:** A self-hosted runner is the honest answer and the expensive one. Short of
   that, two things that cost little and recover most of the value: (1) a scheduled `workflow_dispatch`
   / nightly job on the developer machine's own runner, or a documented `./tools/Rose.ps1 live-app`
@@ -754,11 +749,8 @@ as "for tests that mutate" -- makes the default choice the right one. *(UIP-13)*
 1. **Was `LiveAppInspectionTests` losing its `[Category("LiveApp")]` deliberate?** If those eleven
    ICorDebug tests are meant to run on a hosted runner, that is a real gain and the CI comment needs
    rewriting to say so. If not, CI is attaching a debugger where nobody intended. (UIP-14)
-2. ~~**Is #208's hypothesis confirmed?**~~ **No.** #300 found the flake was the test's own wait, and
-   the logs do not show the product half either: no pipe-request timeout and no discarded late reply
-   in any of the 21 kept live-app logs. The code does read as the issue predicts -- the host's bound
-   is latency-only and the tap's dispatch uncancellable -- so it is a hazard, not a demonstrated bug.
-   (UIP-15)
+2. ~~**Is #208's hypothesis confirmed?**~~ **No** (#300): the flake was the test's own wait, and no
+   kept log shows the product half. (UIP-15)
 3. **`Rows.Merge`: which contract is wanted?** The breakpoint list's comment wants rows to stay put;
    the docstring promises source order. Both are defensible, but only one of them is what #221 is
    asking for.

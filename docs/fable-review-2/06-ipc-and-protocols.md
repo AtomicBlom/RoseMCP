@@ -452,9 +452,9 @@ hundreds of kilobytes, and are meaningless to a human reading a log or an activi
 MCP argument inflates them by a third, puts them through three JSON round trips on the relayed path
 (IPC-09), and makes every `ActivityLog` target string and every error message carry a wall of text.
 The shape that fits what already exists: the worker writes the delta to a file under its own temp
-area and the tool argument carries the *path* plus a hash -- the same move `XamlProviderSession`
-already makes for the provider DLL, with the same sweep-on-start cleanup
-(`SweepDeadSandboxFolders`). Worker and live-app host are on the same machine by construction (the
+area and the tool argument carries the *path* plus a hash -- the same move `ProviderSandbox` already
+makes for the provider DLL, with the same sweep-on-start cleanup. Worker and live-app host are on the
+same machine by construction (the
 broker starts both), so a path is a legitimate reference. If they ever are not, that is the moment
 to add a side channel, and the pipe framing in `tap_channel.h` is already the design for it.
 
@@ -462,8 +462,7 @@ to add a side channel, and the pipe framing in `tap_channel.h` is already the de
 
 ### ~~IPC-01 The tap's request side does not escape what its reply side unescapes~~
 **#323.** A tab or a newline in a property value mis-framed the edit and mis-keyed its status, so an
-edit that landed reported that it had not. Both directions share one escaping contract, and a test
-holds the provider's half against the host's.
+edit that landed reported that it had not. Both directions share one escaping contract.
 
 ### ~~IPC-02 Nothing checks that a child process is the same build as its parent~~
 **#295.** Four hosts reported a version and nothing read one, so a child from a stale build answered

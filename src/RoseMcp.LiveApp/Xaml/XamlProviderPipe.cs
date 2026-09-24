@@ -328,6 +328,7 @@ public sealed class XamlProviderPipe : IDisposable
 			// for. Answered to WaitForProvider rather than queued, or the next request reads it as its
 			// own reply and every answer after that is one behind.
 			var greeted = false;
+			TaskCompletionSource<string?>? refusedGreeting = null;
 			while (true)
 			{
 				var frame = await ReadFrameAsync(server, stopping);
@@ -348,9 +349,7 @@ public sealed class XamlProviderPipe : IDisposable
 				{
 					_refused = refusal;
 					_logger.LogWarning("Refused the XAML provider that connected on {PipeName}. {Reason}", Name, refusal);
-
-					// Released now rather than at the bound, since waiting longer cannot change the answer.
-					_greeting.TrySetResult(null);
+					refusedGreeting = _greeting;
 					break;
 				}
 
@@ -366,6 +365,12 @@ public sealed class XamlProviderPipe : IDisposable
 			}
 
 			HangUp(server);
+
+			// A refusal releases whoever was waiting now rather than at the bound, since waiting longer
+			// cannot change the answer -- but only once HangUp has put a fresh source in place. Released
+			// first, a caller that wakes and asks again snapshots the refused source, already answered,
+			// and is told about a provider that is gone.
+			refusedGreeting?.TrySetResult(null);
 		}
 	}
 

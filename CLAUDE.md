@@ -41,11 +41,11 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 
 Logic goes in `Contracts` only when a test needs it and the host that owns it cannot be referenced.
 `XamlStackModules`, `ToolArgumentShape`, `PathArguments`, `XamlProviderPath`, `ValuePath`,
-`SymbolLocation`, `HostVersion`, `BreakpointCondition`, `LogMessageTemplate`, `XamlRequestKind` and
-`SandboxSweep` are the whole list, each a pure function over strings or JSON with the host's own facts
-passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a child process,
-so a rule living beside its host is a rule no test can see. It is not a licence for behaviour:
-anything holding state, touching Roslyn, or knowing what a tool does belongs in the host.
+`SymbolLocation`, `HostVersion`, `BreakpointCondition`, `LogMessageTemplate`, `XamlRequestKind`,
+`SandboxSweep` and `XamlWire` are the whole list, each a pure function over strings or JSON with the
+host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a
+child process, so a rule living beside its host is a rule no test can see. It is not a licence for
+behaviour: anything holding state, touching Roslyn, or knowing what a tool does belongs in the host.
 
 The worker is a separate process because analyzer and generator assemblies cannot be unloaded
 once loaded, MSBuild resolution is per-process, and killing a worker is the only reliable way to
@@ -84,7 +84,7 @@ touch and read that file first.
 | [analyzers-and-generators.md](docs/invariants/analyzers-and-generators.md) | analyzer loading, `RoseMcp.XamlStubs`, anything handing Roslyn an `AnalyzerReference` |
 | [xaml-live-edit.md](docs/invariants/xaml-live-edit.md) | `rose_xaml_*`, `src/RoseMcp.XamlDiff/`, the apply path in `src/RoseMcp.LiveApp/Xaml/` |
 | [tap-tiers.md](docs/invariants/tap-tiers.md) | a new file under `src/RoseMcp.Xaml.Tap/`, moving code between them, either provider's include order |
-| [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, injection, anything that advises the visual tree |
+| [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, the pipe's wire format (`tap_channel.h`, `XamlWire`), injection, anything that advises the visual tree |
 | [overlay.md](docs/invariants/overlay.md) | `tap_overlay.h`, `tap_measure.h` |
 | [hosts-and-deploy.md](docs/invariants/hosts-and-deploy.md) | `XamlStackModules`, architecture detection, `XamlProviderSession`, `tools/deploy.ps1`, what an install carries |
 | [live-app-tests.md](docs/invariants/live-app-tests.md) | any live-app test or fixture |

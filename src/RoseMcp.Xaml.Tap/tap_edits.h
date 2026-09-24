@@ -60,8 +60,11 @@ public:
 			// by what it sent, and op-target-property alone stops being unique the moment one slot gets
 			// two children: both rows would be "AddChild <slot> <blank>", and the second child's outcome
 			// would overwrite the first's.
-			const std::wstring row = command.op + L'\t' + Escape(command.target.c_str()) + L'\t'
-				+ Escape(command.property.c_str()) + L'\t' + status + L'\t' + Escape(command.arg.c_str());
+			//
+			// Every field escaped, the status included: it is prose, and it names what the caller sent,
+			// so it can carry anything the caller's markup did.
+			const std::wstring row = Escape(command.op.c_str()) + L'\t' + Escape(command.target.c_str()) + L'\t'
+				+ Escape(command.property.c_str()) + L'\t' + Escape(status.c_str()) + L'\t' + Escape(command.arg.c_str());
 			rows += Utf8(row);
 			rows += '\n';
 		}

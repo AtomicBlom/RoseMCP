@@ -234,36 +234,18 @@ The reasoning is on `BreakpointTable.Claim`.
   being handed anything new; `Frames` and `DescribeFrame` then go.
 
 ### ~~LIV-07 A request the host has timed out on still runs in the app, and the pipe cannot tell whose reply is whose~~
-**#317.** A XAML request the host had timed out on could still run in the app, and the caller was
-told only that it failed. A timed-out verb that changes the app now says the change may still land,
-and the classification behind that is guarded against the provider's own dispatch.
+**#317, #PRNUM.** A XAML request the host had timed out on could still run in the app, the caller was
+told only that it failed, and its late reply was matched by position. A timed-out verb that changes the
+app says the change may still land, and a reply is matched to its request by an id it echoes.
 
-**The correlation half is card 5's**, which cuts the frame format: a request id the reply echoes, so
-a late reply is dropped by identity rather than by position.
-
-**Cancelling a request in flight is declined.** It needs the id plus an `abandon` the provider checks
-before dispatching, and nothing has been observed to hit the hazard -- no late reply has reached the
-stale drain's warning in a kept log. Revisit it if one ever does. The reasoning is in
+**Cancelling a request in flight is declined.** It needs an `abandon` the provider checks before
+dispatching, on top of the id, and nothing has been observed to hit the hazard: a late reply is logged
+as it is dropped, and none is in any kept log. Revisit it if one ever is. The reasoning is in
 `docs/invariants/xaml-live-edit.md`.
 
-### LIV-08 The wire format is versioned by column count and the greeting carries no identity
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderWire.cs`, the `fields.Length >` guards in `Node`, `Property` and `Selection`;
-  `src/RoseMcp.Xaml.Tap/tap_channel.h:158` (`"hello from the provider"`); `tap_tree.h:110-141`
-  (`SnapshotRows`), `tap_properties.h:181-185`, `tap_edits.h:63-64`
-- **What:** The host reads column 9 of a tree row and column 11 of a property row only if present,
-  with comments explaining that an older provider in a recycled sandbox writes fewer columns. The
-  provider greets with a fixed string. Row layout is duplicated as positional literals at both ends
-  (positional field indices in `XamlProviderWire`, string concatenation in three headers) with nothing checking they agree.
-- **Why it matters:** `hosts-and-deploy.md` already worries about an install whose host and provider
-  disagree; today that disagreement is absorbed silently as "no address" or "no unrenderable flag"
-  rather than refused by name. The next added column has to remember the length check at every parse
-  site.
-- **Suggested change:** The greeting carries `RoseTap/<protocol version>/<CLSID>`; the host refuses a
-  provider whose protocol version it does not speak, naming both versions in the detail. Put the version
-  and the column names in one `XamlWireFormat` constant in Contracts and a generated or hand-mirrored
-  `tap_wire.h`, with a unit test that parses a fixture row the provider is known to emit.
+### ~~LIV-08 The wire format is versioned by column count and the greeting carries no identity~~
+**#PRNUM.** A stale provider's shorter rows were read as data with fields missing. The greeting names a
+protocol version the host refuses on mismatch, so every parser requires the full row.
 
 ### LIV-09 `XamlDiff` hard-codes UWP type names in a framework-neutral library
 - **Severity:** Medium
@@ -524,19 +506,17 @@ stale drain's warning in a kept log. Revisit it if one ever does. The reasoning 
    **Mechanism:** the `Core` methods and every `XamlProviderSession` method take a `HeldRequests` token, a
    `readonly ref struct` only the lock wrapper can construct. The session already does this for the
    debugger side with `StoppedTarget`; make it the same shape on the XAML side.
-4. **Rule today:** "a read may fall back to the other channel and a batch may not" (asymmetry to preserve,
-   `xaml-live-edit.md`). **Mechanism:** split `XamlProviderPipe.Request` into `Query(verb)` and
-   `Command(verb)`, where `Command` stamps an id and never retries. Half built: which verbs mutate is
-   already a classification a test holds against the provider's dispatch (`XamlRequestKind`), so what
-   is left is the id, which card 5 carries.
+4. ~~"A mutating request that timed out may still run", held by a reviewer remembering it.~~ **#317,
+   #PRNUM.** Which verbs mutate is a classification a test holds against the provider's dispatch, and
+   each request carries an id its reply echoes.
 5. **Rule today:** "the tap's tier purity is checked by include order and by nothing else"
    (`tap-tiers.md`: "not currently checked by a test"). **Mechanism:** a compile-only translation unit per
    tier in each `build.ps1` (`tap_tier2_check.cpp` includes `tap_channel.h` through `tap_object.h` with no
    projection headers and no aliases defined), so a violation fails the build in a file named for the
    tier rather than being absorbed by moving an include.
-6. **Rule today:** "an older provider writes fewer columns; check the length" at every parse site.
-   **Mechanism:** a protocol version in the greeting, refused by name on mismatch, and one
-   `XamlWireFormat` that both ends are generated from or tested against. (LIV-08)
+6. ~~"An older provider writes fewer columns; check the length" at every parse site.~~ **#PRNUM.** A
+   provider that greets with another protocol version is refused by name, and a test holds the
+   provider's version and escape table against the host's.
 7. **Rule today:** "comments are self-contained and present tense; no `used to`, no decision numbers".
    **Mechanism:** a CI step that greps `src` for `\b(used to|previously|no longer|for now|until now)\b|\bD[0-9]{1,2}\b|§`
    with an allowlist, failing on new hits. Forty-five today, up three since this was written. (LIV-20)
@@ -557,9 +537,8 @@ stale drain's warning in a kept log. Revisit it if one ever does. The reasoning 
 3. Has a WinUI 3 brush or margin live edit ever been observed to land? (LIV-09)
 4. ~~For #208, was the host log of a failing run checked for a `selecthandle` that timed out?~~
    **Checked, and no.** Across the 21 kept live-app logs there is no pipe-request timeout and no late
-   reply: the stale drain logs a warning when it discards one, and that warning has never fired in a
-   log anybody still has. The mechanism stays inferred from the source, which is why only the honest
-   result was built and cancelling in flight was declined. (LIV-07)
+   reply, though a late reply is logged as it is discarded. The mechanism stays inferred from the
+   source, which is why only the honest result was built and cancelling in flight was declined. (LIV-07)
 5. Is `DllCanUnloadNow` returning `S_OK` intentional? (LIV-11)
 6. Were `SetDesiredNGENCompilerFlags` / `SetJITCompilerFlags(CORDEBUG_JIT_DISABLE_OPTIMIZATION)` left out
    deliberately? `DebugProbeTarget` compensates with `MethodImplOptions.NoOptimization` (`Program.cs:62-64`),

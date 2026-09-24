@@ -157,6 +157,10 @@ internal sealed class XamlProviderSession(ILogger logger) : IDisposable
 
 		if (_pipe?.Connected != true)
 		{
+			// A refusal is said as itself. From outside it looks exactly like a provider that never
+			// connected, which sends the reader looking for one that failed to load.
+			if (_pipe?.Refused is { } refused) return (null, $"The XAML provider that connected was refused. {refused}");
+
 			return (null, "The XAML provider loaded but did not connect back on its pipe, which is how every request "
 				+ $"reaches it. It was given {Bounds.Greeting.TotalSeconds:0.##}s to connect.");
 		}
@@ -217,9 +221,10 @@ internal sealed class XamlProviderSession(ILogger logger) : IDisposable
 		while (true)
 		{
 			// wszInitializationData is an arbitrary string handed to the TAP, and it already carries
-			// the work directory, so the pipe name rides in the same slot -- no new plumbing to
-			// establish the channel. Separated by '|', which cannot occur in a Windows path.
-			var initData = _pipe is null ? workDir : $"{workDir}|{_pipe.Name}";
+			// the work directory, so the pipe name and the key the provider must greet with ride in the
+			// same slot -- no new plumbing to establish the channel. Separated by '|', which cannot occur
+			// in a Windows path.
+			var initData = _pipe is null ? workDir : $"{workDir}|{_pipe.Name}|{_pipe.Nonce}";
 
 			var attempt = Initialise(tap, pid, stagedProvider, initData);
 			if (attempt is null) return (null, WedgedInjectionDetail(pid));
@@ -342,7 +347,7 @@ internal sealed class XamlProviderSession(ILogger logger) : IDisposable
 		// The pipe says what it read as the greeting; what is worth adding is how long it was given,
 		// because a provider loaded into a saturated UI thread and one that never loaded at all are
 		// the same silence until the bound is in the line.
-		if (_pipe.WaitForProvider(Bounds.Greeting) is null)
+		if (_pipe.WaitForProvider(Bounds.Greeting) is null && _pipe.Refused is null)
 		{
 			logger.LogWarning(
 				"The XAML provider did not connect on {PipeName} within {Seconds}s; no request can reach it.",

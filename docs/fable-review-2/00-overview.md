@@ -18,7 +18,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 07 Hot-reload readiness | 12 | 4/7/1 | Fragile but well-aimed; 5-6.5 weeks to v1 |
 | 08 UI usability | 17 | 3/10/4 | Adequate, and **aimed at the wrong job** |
 
-**Closed so far (2026-09-20).**
+**Closed so far (2026-09-24).**
 
 | Card | Findings | Shipped in |
 |---|---|---|
@@ -32,18 +32,19 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 6 | WRK-06 | #306 |
 | 2 | LIV-03 | #270 |
 | 3 | LIV-02 | #265 |
+| 4 | UIP-15, LIV-07 (the honest result) | #317 |
+| 5 | IPC-01, LIV-07 (the id), LIV-08, IPC-03 | #PRNUM |
 | 7 | WRK-08 | #269 |
 | 9 | WRK-01 | #275, #276, #278 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
-**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, six
-of tier 1's seven wrong-answer cards, one of tier 2's three refactors, and eight of the 27 High
+**Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, all
+seven of tier 1's wrong-answer cards, one of tier 2's three refactors, and nine of the 27 High
 findings -- including **the debugger core and the write pipeline**, which were the two
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
-Tier 1 has two rows left: **1b** and **5**. Next at the top is **card 5**, which now carries the
-correlation half of card 4 as well as its own, then **card 8** for tier 2's editing work. Card 1
-opened the gate on **11b**, **11c** and **1b**.
+Tier 1 has one row left, **1b**, a wrong side effect rather than a wrong answer. Next is **1b**, then
+**card 8** for tier 2's editing work. Card 1 opened the gate on **11b**, **11c** and **1b**.
 
 Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
 would not), the layout half of **21**, and card 0e's finding that three of the phrases the comment
@@ -138,8 +139,8 @@ Tier 0, and are built (PR #295). The seven highest-leverage:
    resolves for one tool resolves for all (WRK-04, AGT-03).
 3. ~~A path type that cannot be resolved without a base (BRK-01, AGT-10).~~ **#305.**
 4. ~~Nine fields and five spellings of "is the target stopped" replaced by one state (LIV-02).~~ **#265.**
-5. **One framed-message type for every pipe**, which deletes the tap's escaping asymmetry and half of
-   its correlation problem at once (IPC-01, LIV-07, LIV-08).
+5. ~~One framed-message type for every pipe (IPC-01, LIV-07, LIV-08).~~ **#PRNUM.** One wire contract
+   for the tap's pipe, the only one carrying a caller's text, kept as text rather than JSON.
 6. ~~Attribution by runtime type check, replaced by one the compiler enforces (BRK-12).~~ **#295.**
 7. ~~A fact computed for a window that no window names, caught by a test (USE-01, USE-03).~~ **#295.**
 
@@ -293,9 +294,6 @@ and three-quarters of them need no separate card, because they fall into three r
   mechanism, not the fix, is the deliverable.
 - **The inversion is a guard that must land *before* its cards**, because the cards are exactly the
   work it protects. These are cheap, ungated and few. They were Tier 0, and are done (PR #295).
-- **The inversion only exists once its card does.** One framed message type for every pipe needs the
-  pipe work; notice discipline needs somewhere to live (card 9). These follow and should be written
-  into the card that creates the home, not tracked separately.
 
 ### ~~The pattern four reviewers found separately: computed, returned, never consumed~~
 
@@ -317,7 +315,7 @@ These produce confident wrong results today. Everything else is cost.
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
 | ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
 | ~~4~~ | **#317.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app now says the change may still land, and what counts as such a verb is held against the provider's own dispatch by a test. The correlation half went to card 5; cancelling a request in flight is declined, with the reason in `xaml-live-edit.md`. | UIP-15, LIV-07 | #208 | — |
-| 5 | **The tap's request side does not escape what its reply side unescapes.** A tab or newline in a property value mis-frames the edit and mis-keys its status, so an edit that landed reports as not applied. **This is the card that creates the home for one framed message type**, so it also carries card 4's correlation half: a request id in the frame header that the reply echoes, so a late reply is dropped by identity rather than by position. `06-ipc-and-protocols.md` sequences LIV-08 and IPC-03 into the same cut -- take that as far as it is worth. | IPC-01, LIV-07 | new, #208 | S-M |
+| ~~5~~ | **#PRNUM.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key, and a test holds the provider's half against the host's. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
 | ~~6~~ | **#306.** One compilation was asked about another's symbol, so resolving a name and every write that worked out its own imports failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is asked about. | WRK-06 | — | — |
 | ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory, and the rule is an invariant. | WRK-08 | — | — |
 

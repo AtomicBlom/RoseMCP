@@ -1,10 +1,13 @@
 using System.IO.Pipes;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Threading.Channels;
 
 using Microsoft.Extensions.Logging;
+
+using RoseMcp.Contracts;
 
 namespace RoseMcp.LiveApp.Xaml;
 
@@ -49,13 +52,21 @@ public sealed class XamlProviderPipe : IDisposable
 	private Task? _pump;
 
 	/// <summary>
-	/// The greeting of the provider holding the far end. Replaced with a fresh, uncompleted source
-	/// when one goes, or a caller waiting for the next provider is handed the departed one's greeting
-	/// the moment it asks and takes a dead tap for a live one.
+	/// The greeting of the provider holding the far end, or null for one that was refused. Replaced with
+	/// a fresh, uncompleted source when one goes, or a caller waiting for the next provider is handed the
+	/// departed one's greeting the moment it asks and takes a dead tap for a live one.
 	/// </summary>
-	private volatile TaskCompletionSource<string> _greeting = NewGreeting();
+	private volatile TaskCompletionSource<string?> _greeting = NewGreeting();
 
 	private volatile bool _connected;
+
+	private volatile string? _refused;
+
+	/// <summary>
+	/// The id of the last request sent, which the reply to it echoes. Incremented rather than reset per
+	/// connection, so no two requests a host ever sends share one.
+	/// </summary>
+	private int _lastRequest;
 
 	public XamlProviderPipe(ILogger logger)
 	{
@@ -68,6 +79,20 @@ public sealed class XamlProviderPipe : IDisposable
 
 	/// <summary>The pipe name, without the <c>\\.\pipe\</c> prefix. Handed to the provider verbatim.</summary>
 	public string Name { get; }
+
+	/// <summary>
+	/// The key the provider has to present when it greets, handed to it in the injection's
+	/// initialisation data. The pipe grants every packaged app on the machine, so reaching it proves
+	/// nothing about who connected; only the provider this session injected was given this.
+	/// </summary>
+	public string Nonce { get; } = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+
+	/// <summary>
+	/// Why the last provider to connect was refused, or null when none has been since one was accepted.
+	/// Said to a caller in place of "did not connect", which is what a refusal looks like from outside
+	/// and which sends the reader looking for a provider that failed to load.
+	/// </summary>
+	public string? Refused => _refused;
 
 	/// <summary>
 	/// Whether a provider is holding the far end and has greeted the host, which is the whole of what
@@ -133,8 +158,8 @@ public sealed class XamlProviderPipe : IDisposable
 
 	/// <summary>
 	/// Waits for a provider to connect and greet the host, up to <paramref name="timeout"/>. Returns
-	/// the greeting, or null if none arrived -- which is the whole question this class exists to
-	/// answer before any request is moved onto it.
+	/// the greeting, or null if none arrived or the one that did was refused, which <see cref="Refused"/>
+	/// then says -- the whole question this class exists to answer before any request is moved onto it.
 	/// </summary>
 	/// <remarks>
 	/// Hanging up on a departed provider and listening for the next one happens where the departure is
@@ -162,10 +187,12 @@ public sealed class XamlProviderPipe : IDisposable
 	/// Sends a request and returns the reply, or null when the provider is not there, does not
 	/// answer, or answers with an empty frame.
 	/// <para>
-	/// No generation number, and that is the point of a pipe. Every handshake through a folder is
-	/// "does this file exist", so the host has to stamp a number on the request and have the provider
-	/// echo it back to tell this answer from the last one. A reply read from the pipe the request went
-	/// out on is <em>this</em> request's answer by construction.
+	/// Each request carries an id and its reply echoes it, and that is not redundant with the pipe. A
+	/// reply read from the pipe a request went out on is that request's answer only while nothing times
+	/// out: the provider serves on the app's UI thread, which nothing here can cancel, so a request this
+	/// host gave up on is still answered, later, ahead of the reply to whatever was asked next. The frame
+	/// is well formed and answers a different question, which is the one failure a length-prefixed
+	/// channel cannot see for itself -- so the id is what says whose reply it is.
 	/// </para>
 	/// <para>
 	/// Every step is bounded, and a step that expires says which pipe and how long it waited. It has
@@ -179,21 +206,11 @@ public sealed class XamlProviderPipe : IDisposable
 		var server = _server;
 		if (server is null || !_connected) return null;
 
+		var id = unchecked((uint)Interlocked.Increment(ref _lastRequest));
+
 		try
 		{
-			// A reply left behind by a request that gave up would be handed to this one as its answer,
-			// which is the single failure a length-prefixed channel cannot detect for itself: the frame
-			// is well formed and answers a different question.
-			while (_replies.Reader.TryRead(out var stale))
-			{
-				_logger.LogWarning(
-					"Discarding a late XAML provider reply of {Length} chars on {PipeName} before asking for '{Request}'.",
-					stale.Length,
-					Name,
-					request);
-			}
-
-			var payload = Encoding.UTF8.GetBytes(request);
+			var payload = Encoding.UTF8.GetBytes(XamlWire.Frame(id, request));
 			var header = new byte[4];
 			header[0] = (byte)(payload.Length & 0xFF);
 			header[1] = (byte)((payload.Length >> 8) & 0xFF);
@@ -209,7 +226,7 @@ public sealed class XamlProviderPipe : IDisposable
 			var flushing = server.FlushAsync();
 			if (!flushing.Wait(timeout)) return TimedOut(request, timeout, "flushing the request");
 
-			var reply = TakeReply(timeout);
+			var reply = TakeReply(id, request, timeout);
 			if (reply is null) return TimedOut(request, timeout, "waiting for the reply");
 
 			return reply.Length == 0 ? null : reply;
@@ -222,17 +239,34 @@ public sealed class XamlProviderPipe : IDisposable
 	}
 
 	/// <summary>
-	/// The next frame the pump has read, or null if none arrives inside the bound. The pump owns every
-	/// read on the stream, so a request takes its answer from here rather than from the pipe: one
-	/// reader is what lets a departure be noticed between requests as well as during one.
+	/// The body of the reply to request <paramref name="id"/>, or null if none arrives inside the bound.
+	/// The pump owns every read on the stream, so a request takes its answer from here rather than from
+	/// the pipe: one reader is what lets a departure be noticed between requests as well as during one.
+	/// <para>
+	/// A reply carrying any other id answers a request this host gave up on, and is dropped by who it
+	/// belongs to rather than by where it sits. Said as it is dropped, because it is the one sign that a
+	/// request reported as unanswered was served after all.
+	/// </para>
 	/// </summary>
-	private string? TakeReply(TimeSpan timeout)
+	private string? TakeReply(uint id, string request, TimeSpan timeout)
 	{
 		using var expiry = new CancellationTokenSource(timeout);
 
 		try
 		{
-			return _replies.Reader.ReadAsync(expiry.Token).AsTask().GetAwaiter().GetResult();
+			while (true)
+			{
+				var frame = _replies.Reader.ReadAsync(expiry.Token).AsTask().GetAwaiter().GetResult();
+				if (XamlWire.TryReadFrame(frame, out var answered, out var body) && answered == id) return body;
+
+				_logger.LogWarning(
+					"Discarding a late XAML provider reply to request {Answered} on {PipeName} while waiting for "
+						+ "request {Id}, '{Request}'.",
+					answered,
+					Name,
+					id,
+					request);
+			}
 		}
 		catch (Exception exception) when (exception is OperationCanceledException or ChannelClosedException)
 		{
@@ -305,7 +339,23 @@ public sealed class XamlProviderPipe : IDisposable
 					continue;
 				}
 
+				// Refused before anything is asked of it. A provider from another build reads rows it was
+				// not written for, and one that is not ours answers with whatever it likes -- both of which
+				// come back as data, with source file and line attached, where a refusal comes back as a
+				// reason.
+				var refusal = XamlWire.RefuseGreeting(frame, Nonce);
+				if (refusal is not null)
+				{
+					_refused = refusal;
+					_logger.LogWarning("Refused the XAML provider that connected on {PipeName}. {Reason}", Name, refusal);
+
+					// Released now rather than at the bound, since waiting longer cannot change the answer.
+					_greeting.TrySetResult(null);
+					break;
+				}
+
 				greeted = true;
+				_refused = null;
 
 				// Before the source is completed, so a caller released by the greeting cannot look at
 				// Connected and be told the provider that just greeted it is not there.
@@ -399,7 +449,7 @@ public sealed class XamlProviderPipe : IDisposable
 		return true;
 	}
 
-	private static TaskCompletionSource<string> NewGreeting() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+	private static TaskCompletionSource<string?> NewGreeting() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 	public void Dispose()
 	{

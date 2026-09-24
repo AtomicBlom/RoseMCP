@@ -233,37 +233,18 @@ The reasoning is on `BreakpointTable.Claim`.
   `StopNarrative` already holds its own `CorDebugInspector`, so it can reach the honest walk without
   being handed anything new; `Frames` and `DescribeFrame` then go.
 
-### LIV-07 A request the host has timed out on still runs in the app, and the pipe cannot tell whose reply is whose
-- **Amended by #300.** The mechanism stands on its own file-and-line evidence; the attribution to
-  #208 does not. That flake was the test's wait starting from cursor 0, not a late `selecthandle`, so
-  strike "it is also the structural cause of the #208 flake" and the claim that the suite's flakiness
-  is a protocol property showing through the fixture. What is left is a hazard the source plainly
-  admits and nothing has yet been observed to hit.
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.LiveApp/Xaml/XamlProviderPipe.cs:176-221` (`Request`), `:186-193` (stale drain);
-  `src/RoseMcp.Xaml.Tap/tap_object.h:582-613` (`PipeReaderLoop`); decision
-  `the-xaml-provider-is-injected-by-the-host-and-answers-on-a-pipe.md` ("a reply read from the pipe a
-  request went out on is that request's answer by construction")
-- **What:** `Request` writes a frame, waits `Snapshot` (15 s) for a reply, and returns null on expiry.
-  The frame is already in the pipe; the provider's reader will serve it whenever the UI thread frees,
-  and `selecthandle`, `select`, `deselect` and `apply` all mutate. The late reply is then read by the
-  *next* `Request` and discarded as "stale" by position (`:186`). Correctness therefore depends on
-  strictly alternating request/reply with no expiries, which is the assumption the pipe decision made
-  and #208 is the case where it fails: `SelectTransientAsync` retries `selecthandle` up to 20 times
-  (`LiveAppUwpOverlayTests.cs:332`), a timed-out attempt executes after the removal cleared the pick,
-  and the hand-back check reads a pick the test was told did not happen. The invariant "a batch may not
-  be retried" (`xaml-live-edit.md`) protects against double-sending; nothing protects against
-  single-sending-late.
-- **Why it matters:** A state-changing call that reported failure can succeed afterwards, which is the
-  exact class of wrong answer the pipe was adopted to remove. It is also the structural cause of the
-  #208 flake, so the test-suite flakiness is a protocol property showing through the fixture rather than
-  a fixture bug (see LIV-15).
-- **Suggested change:** Four bytes: a request id in the frame header, echoed in the reply, so `Request`
-  matches by id and a late reply is dropped by identity rather than position. For mutating verbs, have
-  the provider check an "abandoned" set before dispatching to the UI thread (the host sends `abandon <id>`
-  on expiry), so a request the host gave up on does not mutate the app. Say in the tool result of a
-  timed-out mutating verb that it may still land, until that is done.
+### ~~LIV-07 A request the host has timed out on still runs in the app, and the pipe cannot tell whose reply is whose~~
+**#317.** A XAML request the host had timed out on could still run in the app, and the caller was
+told only that it failed. A timed-out verb that changes the app now says the change may still land,
+and the classification behind that is guarded against the provider's own dispatch.
+
+**The correlation half is card 5's**, which cuts the frame format: a request id the reply echoes, so
+a late reply is dropped by identity rather than by position.
+
+**Cancelling a request in flight is declined.** It needs the id plus an `abandon` the provider checks
+before dispatching, and nothing has been observed to hit the hazard -- no late reply has reached the
+stale drain's warning in a kept log. Revisit it if one ever does. The reasoning is in
+`docs/invariants/xaml-live-edit.md`.
 
 ### LIV-08 The wire format is versioned by column count and the greeting carries no identity
 - **Severity:** Medium
@@ -544,10 +525,10 @@ The reasoning is on `BreakpointTable.Claim`.
    `readonly ref struct` only the lock wrapper can construct. The session already does this for the
    debugger side with `StoppedTarget`; make it the same shape on the XAML side.
 4. **Rule today:** "a read may fall back to the other channel and a batch may not" (asymmetry to preserve,
-   `xaml-live-edit.md`); "a mutating request that timed out may still run" (LIV-07). **Mechanism:** split
-   `XamlProviderPipe.Request` into `Query(verb)` and `Command(verb)`, where `Command` stamps an id, never
-   retries, and on expiry sends `abandon <id>`; the verbs are an enum with a `Mutates` flag so a new verb
-   has to say which it is.
+   `xaml-live-edit.md`). **Mechanism:** split `XamlProviderPipe.Request` into `Query(verb)` and
+   `Command(verb)`, where `Command` stamps an id and never retries. Half built: which verbs mutate is
+   already a classification a test holds against the provider's dispatch (`XamlRequestKind`), so what
+   is left is the id, which card 5 carries.
 5. **Rule today:** "the tap's tier purity is checked by include order and by nothing else"
    (`tap-tiers.md`: "not currently checked by a test"). **Mechanism:** a compile-only translation unit per
    tier in each `build.ps1` (`tap_tier2_check.cpp` includes `tap_channel.h` through `tap_object.h` with no
@@ -574,8 +555,11 @@ The reasoning is on `BreakpointTable.Claim`.
    deliberate?~~ **Answered, #265**: the contract is stated where it is relied on. The open half is
    whether one caller's `Stop(0)` under the gate has ever been seen to block. (LIV-05)
 3. Has a WinUI 3 brush or margin live edit ever been observed to land? (LIV-09)
-4. For #208, was the host log of a failing run checked for a `selecthandle` that timed out, as the issue
-   proposes? If so the LIV-07 mechanism is confirmed rather than inferred.
+4. ~~For #208, was the host log of a failing run checked for a `selecthandle` that timed out?~~
+   **Checked, and no.** Across the 21 kept live-app logs there is no pipe-request timeout and no late
+   reply: the stale drain logs a warning when it discards one, and that warning has never fired in a
+   log anybody still has. The mechanism stays inferred from the source, which is why only the honest
+   result was built and cancelling in flight was declined. (LIV-07)
 5. Is `DllCanUnloadNow` returning `S_OK` intentional? (LIV-11)
 6. Were `SetDesiredNGENCompilerFlags` / `SetJITCompilerFlags(CORDEBUG_JIT_DISABLE_OPTIMIZATION)` left out
    deliberately? `DebugProbeTarget` compensates with `MethodImplOptions.NoOptimization` (`Program.cs:62-64`),

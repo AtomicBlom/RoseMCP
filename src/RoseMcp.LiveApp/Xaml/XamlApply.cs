@@ -37,7 +37,7 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 
 	private TimeSpan Reply => _provider.Bounds.Snapshot;
 
-	private string Unanswered(string what) => XamlChannelBounds.Unanswered(what, Reply);
+	private string Unanswered(string request, string what) => XamlChannelBounds.Unanswered(request, what, Reply);
 
 	internal LiveXamlApplyResult ApplyEditsCore(int pid, string? oldXaml, string? newXaml, string? filePath)
 	{
@@ -136,7 +136,8 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 			var (pipe, unready) = _provider.Connect(pid);
 			if (pipe is null) return new LiveXamlApplyResult { Detail = unready };
 
-			var served = pipe.Request("apply\n" + string.Join("\n", commands), Reply);
+			var request = "apply\n" + string.Join("\n", commands);
+			var served = pipe.Request(request, Reply);
 			if (served is null)
 			{
 				// Not retried anywhere, and the baseline is deliberately left where it was. A structural
@@ -145,9 +146,9 @@ internal sealed class XamlApply(XamlProviderSession provider, ILogger logger)
 				// into the app. The message says what that costs the caller.
 				return new LiveXamlApplyResult
 				{
-					Detail = Unanswered("a batch of edits to be applied")
-						+ " The edits may or may not have reached the app, so applying the same change again could "
-						+ "add a second copy of anything this one was adding.",
+					Detail = Unanswered(request, "a batch of edits to be applied")
+						+ " Applying the same change again could therefore add a second copy of anything this one "
+						+ "was adding.",
 				};
 			}
 

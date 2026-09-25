@@ -470,6 +470,10 @@ reason — so this is a sentence, not a defect. Fold it into card 13.
   LF. `rose_format` then reports "Every file was already formatted" against the same empty rules
   (#218). #316 closed one way into that state, a tracked `.editorconfig` that vanished and returned
   unnoticed, by reloading when it comes back. The fallback itself is untouched and #218 is open.
+  It reaches past the edit, too, and not only in new files. The formatter sets the whitespace in
+  front of the next token, so in a tab-indented file with nothing saying otherwise, a member edit
+  re-indents the member after it to four spaces and a deletion re-indents the whole type. #333's
+  guard found it on the existing edit tests, and `OverreachReportTests` pins it.
 - **Why it matters:** The writing tool and the checking tool agree with each other and disagree with
   `dotnet format`, and the caller has done everything the documentation asked.
 - **Suggested change:** Fall back in order: analyzer config; a sibling `.cs` document in the same

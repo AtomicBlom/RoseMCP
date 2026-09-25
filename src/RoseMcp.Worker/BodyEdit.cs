@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace RoseMcp.Worker;
 
@@ -60,6 +61,10 @@ public static class BodyEdit
 	/// That the replacement's own lines disagree about which baseline they were written at, so the
 	/// caller can be told rather than left with a splice whose indentation nothing downstream reports.
 	/// </param>
+	/// <param name="matched">
+	/// Each span of <paramref name="body"/> the match covers, so a caller can say which lines it was asked
+	/// to change: one per token on the token path, and the matched text on the other.
+	/// </param>
 	/// <exception cref="ArgumentException">
 	/// Nothing matched, more than one thing did, find carries a comment the token matching cannot see,
 	/// or the match straddles code and trivia.
@@ -70,14 +75,15 @@ public static class BodyEdit
 		string replace,
 		bool includeTrivia = false,
 		Action<int>? rewritten = null,
-		Action<string>? mixed = null)
+		Action<string>? mixed = null,
+		Action<TextSpan>? matched = null)
 	{
 		if (string.IsNullOrWhiteSpace(find))
 		{
 			throw new ArgumentException("Nothing to find. Pass the code to look for, or use code to write the whole body.");
 		}
 
-		if (includeTrivia) return InText(body, find, replace, rewritten);
+		if (includeTrivia) return InText(body, find, replace, rewritten, matched);
 
 		var wanted = Tokens(find);
 
@@ -120,6 +126,10 @@ public static class BodyEdit
 		var start = present[at].SpanStart;
 		var end = present[at + wanted.Count - 1].Span.End;
 
+		// Token by token rather than as one span, because what lies between two of them was not in find:
+		// a comment there is trivia the matching could not see, and the caller did not ask to change it.
+		foreach (var token in present.Skip(at).Take(wanted.Count)) matched?.Invoke(token.Span);
+
 		return string.Concat(body.AsSpan(0, start), Placed(replace, IndentOf(body, start), mixed), body.AsSpan(end));
 	}
 
@@ -149,7 +159,7 @@ public static class BodyEdit
 	/// they are taken literally in both.
 	/// </para>
 	/// </summary>
-	private static string InText(string body, string find, string replace, Action<int>? rewritten)
+	private static string InText(string body, string find, string replace, Action<int>? rewritten, Action<TextSpan>? matched)
 	{
 		var needle = find;
 		var written = replace;
@@ -193,6 +203,8 @@ public static class BodyEdit
 		var start = matches[0];
 
 		GuardStraddled(body, start, needle.Length, written);
+
+		matched?.Invoke(new TextSpan(start, needle.Length));
 
 		if (changed > 0) rewritten?.Invoke(changed);
 
@@ -424,6 +436,21 @@ public static class BodyEdit
 		var head = above.Length == 0 ? string.Empty : string.Join("\n", above) + "\n\n";
 
 		return $"{head}{written}\n\n{last.ToFullString().Trim()}";
+	}
+
+	/// <summary>
+	/// Where <see cref="Inserted"/> puts code at one end of <paramref name="block"/>, which is all an
+	/// insertion asks to change: in front of the first statement, in front of a closing jump, or after
+	/// the last statement.
+	/// </summary>
+	public static int InsertionPoint(BlockSyntax block, bool atStart)
+	{
+		var statements = block.Statements;
+
+		if (statements.Count == 0) return block.OpenBraceToken.FullSpan.End;
+		if (atStart) return statements[0].FullSpan.Start;
+
+		return IsJump(statements[^1]) ? statements[^1].FullSpan.Start : statements[^1].FullSpan.End;
 	}
 
 	/// <summary>

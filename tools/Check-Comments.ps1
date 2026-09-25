@@ -68,6 +68,9 @@ $script:Rules = [ordered]@{
 #>
 $script:OpenIssues = @(
     39  # The Roslyn fixtures are copied per test rather than shared, and the wait is the reason.
+    195 # A match drops the comments between its tokens; a test pins the damage until it stops.
+    217 # An insertion or an anchored replacement lays out lines it was not asked to; pinned the same way.
+    218 # With no .editorconfig a write takes Roslyn's four spaces and re-indents a neighbour; pinned too.
 )
 
 $script:Advice = @{
@@ -110,21 +113,48 @@ function Get-CommentText
     return $null
 }
 
+<#
+    The files the conventions apply to: the repository's own, which is what git tracks plus whatever
+    is new and not ignored.
+
+    Asked of git rather than of the file system, because the file system also holds what a build
+    leaves inside the source tree. A provider build writes a C++/WinRT projection under
+    src/RoseMcp.Xaml.WinUi.Tap/generated -- thousands of headers nobody here wrote and nothing here
+    can change, which would fail the check on any machine that has built a provider -- and bin and
+    obj are the best-known cases of the same thing. The ignore rules already say which paths those are, so
+    they decide here too. A file not yet added is still read, since the check is run before a commit
+    as often as after one.
+#>
 function Get-ScannedFile
 {
     $patterns = @(
-        @{ Path = 'src'; Include = @('*.cs', '*.h', '*.cpp', '*.csproj') },
-        @{ Path = 'tests'; Include = @('*.cs', '*.csproj') },
-        @{ Path = '.github'; Include = @('*.yml') }
+        @{ Path = 'src/'; Include = @('.cs', '.h', '.cpp', '.csproj') },
+        @{ Path = 'tests/'; Include = @('.cs', '.csproj') },
+        @{ Path = '.github/'; Include = @('.yml') }
     )
 
-    foreach ($pattern in $patterns)
-    {
-        $directory = Join-Path $root $pattern.Path
-        if (-not (Test-Path $directory)) { continue }
+    # Separated by NUL, so no path comes back quoted or escaped.
+    $listed = (git -C $root ls-files -z --cached --others --exclude-standard) -split "`0"
 
-        Get-ChildItem -Path $directory -Recurse -File -Include $pattern.Include
-            | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' }
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "git ls-files failed in $root, so there is no telling which files are the repository's own."
+    }
+
+    foreach ($path in $listed)
+    {
+        if ($path.Length -eq 0) { continue }
+
+        $pattern = $patterns
+            | Where-Object { $path.StartsWith($_.Path, [StringComparison]::Ordinal) }
+            | Select-Object -First 1
+
+        if ($null -eq $pattern) { continue }
+        if ([IO.Path]::GetExtension($path).ToLowerInvariant() -notin $pattern.Include) { continue }
+
+        # A file deleted from the working tree stays in the index until the deletion is staged.
+        $full = Join-Path $root $path
+        if (Test-Path -LiteralPath $full -PathType Leaf) { Get-Item -LiteralPath $full }
     }
 
     foreach ($name in 'Directory.Build.props', 'Directory.Packages.props')

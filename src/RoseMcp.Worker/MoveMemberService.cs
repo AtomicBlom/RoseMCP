@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Formatting;
+using Microsoft.CodeAnalysis.Text;
 
 using RoseMcp.Contracts;
 
@@ -61,11 +62,11 @@ public static class MoveMemberService
 
 		progress?.Report("Moving it", 45);
 
-		var moved = await ApplyAsync(snapshot.Solution, source, target, request, sites, notices, cancellationToken);
+		var (moved, asked) = await ApplyAsync(snapshot.Solution, source, target, request, sites, notices, cancellationToken);
 
 		progress?.Report(request.Apply ? "Writing the files" : "Building the diff", 70);
 
-		await edit.WriteAsync(moved, cancellationToken);
+		await edit.WriteAsync(moved, asked, cancellationToken);
 
 		var path = source.Document.FilePath!;
 
@@ -122,9 +123,10 @@ public static class MoveMemberService
 
 	/// <summary>
 	/// The whole move as one change set: out of the source type, into the target, and every call site
-	/// pointed at the new home.
+	/// pointed at the new home -- with what each of those asks to change, which is the member where it
+	/// was, the place it goes, and the call sites, and nothing else in either type.
 	/// </summary>
-	private static async Task<Solution> ApplyAsync(
+	private static async Task<(Solution Solution, Asked Asked)> ApplyAsync(
 		Solution solution,
 		DeclarationTarget source,
 		TypeTarget target,
@@ -137,18 +139,22 @@ public static class MoveMemberService
 
 		// Call sites first, while every position still means what it did when they were found. Editing
 		// the declarations first would move the offsets the reference search returned.
-		var current = request.CallSites == CallSiteStyle.Qualify
+		var (current, asked) = request.CallSites == CallSiteStyle.Qualify
 			? await QualifyAsync(solution, source, target, sites, cancellationToken)
 			: await ImportAsync(solution, sites, qualified, cancellationToken);
 
 		current = await RemoveAsync(current, source, cancellationToken);
 		current = await InsertAsync(current, source, target, notices, cancellationToken);
 
-		return current;
+		asked = asked
+			.And(source.Document, source.Declaration.FullSpan)
+			.And(target.Document, new TextSpan(InsertionPoint(target), 0));
+
+		return (current, asked);
 	}
 
-	/// <summary>Writes the new type in front of every call.</summary>
-	private static async Task<Solution> QualifyAsync(
+	/// <summary>Writes the new type in front of every call, asking for each name it replaces.</summary>
+	private static async Task<(Solution Solution, Asked Asked)> QualifyAsync(
 		Solution solution,
 		DeclarationTarget source,
 		TypeTarget target,
@@ -156,6 +162,7 @@ public static class MoveMemberService
 		CancellationToken cancellationToken)
 	{
 		var current = solution;
+		var asked = Asked.Nothing;
 
 		foreach (var group in sites.GroupBy(site => site.SourceTree))
 		{
@@ -183,22 +190,28 @@ public static class MoveMemberService
 
 			if (replacements.Count == 0) continue;
 
+			asked = asked.And(document, replacements.Keys.Select(replaced => replaced.Span));
+
 			current = current.WithDocumentSyntaxRoot(
 				document.Id,
 				root.ReplaceNodes(replacements.Keys, (original, _) => replacements[original]));
 		}
 
-		return current;
+		return (current, asked);
 	}
 
-	/// <summary>Adds a using static to every file that calls it, leaving the calls alone.</summary>
-	private static async Task<Solution> ImportAsync(
+	/// <summary>
+	/// Adds a using static to every file that calls it, leaving the calls alone, and asking for the
+	/// imports of each of those files.
+	/// </summary>
+	private static async Task<(Solution Solution, Asked Asked)> ImportAsync(
 		Solution solution,
 		IReadOnlyList<Location> sites,
 		string qualified,
 		CancellationToken cancellationToken)
 	{
 		var current = solution;
+		var asked = Asked.Nothing;
 		var name = $"static {qualified.Replace("global::", string.Empty, StringComparison.Ordinal)}";
 
 		foreach (var group in sites.GroupBy(site => site.SourceTree))
@@ -207,10 +220,11 @@ public static class MoveMemberService
 
 			if (group.Key is null || current.GetDocument(group.Key) is not { } document) continue;
 
+			asked = asked.And(document, await EditImports.RegionAsync(document, cancellationToken));
 			current = await ResolvedImports.ApplyAsync(current, document.Id, [name], cancellationToken);
 		}
 
-		return current;
+		return (current, asked);
 	}
 
 	private static async Task<Solution> RemoveAsync(
@@ -300,6 +314,17 @@ public static class MoveMemberService
 
 		return await FormatAsync(written, document.Id, marker, cancellationToken);
 	}
+
+	/// <summary>
+	/// Where <see cref="InsertAsync"/> puts the member in the type as it was: after its last member, or
+	/// inside the braces of a type that has none.
+	/// </summary>
+	private static int InsertionPoint(TypeTarget target) => target.Declaration switch
+	{
+		TypeDeclarationSyntax { Members.Count: > 0 } type => type.Members[^1].FullSpan.End,
+		TypeDeclarationSyntax type => type.OpenBraceToken.FullSpan.End,
+		var other => other.Span.End,
+	};
 
 	/// <summary>
 	/// The declaration with the directives out of its leading trivia, which belong to the file it is

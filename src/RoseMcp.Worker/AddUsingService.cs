@@ -54,7 +54,7 @@ public static class AddUsingService
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 55);
 
-		await edit.WriteAsync(solution, cancellationToken);
+		await edit.WriteAsync(solution, Asked.Nothing.And(document, UsingDirectives.Region(unit)), cancellationToken);
 
 		if (request.Verify && edit.Changed) progress?.Report("Compiling to see what the import did", 75);
 

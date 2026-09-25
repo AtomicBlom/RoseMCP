@@ -31,9 +31,9 @@ unit tests. Where it was fragile was in two places a refactor had to fix rather 
 debugger half is now done** (PRs #265, #268, #270, #274 and #281, closing LIV-01, LIV-02 and LIV-03):
 `CorDebugSession` is 879 lines from 2,396 across nine types, the stop state machine is one value, and
 both High findings -- a dead target reporting as stopped, and a breakpoint hit attributed by method
-token alone -- are fixed with a regression test each. **The XAML half stands**: the pipe's "a reply is
-this request's answer by construction" claim holds only while no request ever times out, which is the
-mechanism behind #208, and that is still the highest-value card left in this file. On hot reload:
+token alone -- are fixed with a regression test each. **The XAML half is done too** (#317 and #323,
+closing LIV-07 and LIV-08): a reply is matched to its request by an id it echoes, and a timed-out verb
+that changes the app says the change may still land. On hot reload:
 nothing exists beyond the launch, attach and module-load hooks a debugger has anyway, and the launch
 path sets no environment on the target.
 
@@ -83,12 +83,13 @@ What must survive a refactor, with where it lives:
   waiters with `RunContinuationsAsynchronously` so no reader code runs on mscordbi's thread (`:122-126`),
   re-checks the buffer rather than the deadline token after the wait (`:174-181`), and advances the cursor
   over skipped kinds (`:244-246`).
-- **The pipe channel.** Length-prefixed UTF-8 frames at both ends (`XamlProviderPipe.cs:354-371`,
-  `tap_channel.h:114-207`); one pump owns every read so a departed provider is noticed between requests
-  (`XamlProviderPipe.cs:274-319`); a stale reply is drained and logged before a new request
-  (`:186-193`); the greeting source is replaced on hang-up so a caller cannot be handed a dead tap's
-  greeting (`:326-346`). The reconnect path is tested where it can be, in the one project that references
-  `RoseMcp.LiveApp` as a library (`tests/RoseMcp.IntegrationTests.Windows/XamlProviderPipeTests.cs`).
+- **The pipe channel.** Length-prefixed UTF-8 frames at both ends (`XamlProviderPipe.ReadFrameAsync`,
+  `tap_channel.h`); one pump owns every read so a departed provider is noticed between requests
+  (`XamlProviderPipe.PumpAsync`); a reply is taken by the id its request carried, and any other is
+  dropped and logged (`TakeReply`); on hang-up the uncollected replies are discarded and the greeting
+  source replaced, so a caller cannot be handed a dead tap's answer or its greeting (`HangUp`). The
+  reconnect path is tested where it can be, in the one project that references `RoseMcp.LiveApp` as a
+  library (`tests/RoseMcp.IntegrationTests.Windows/XamlProviderPipeTests.cs`).
 - **Two XAML classes split by which invariant governs them.** `XamlProviderSession` (staging, grants,
   architecture, injection) knows no wire format; `XamlDiagnosticsSession` (verbs, parsing, apply) knows
   no staging (`XamlProviderSession.cs:25-36`). Every public entry takes `_requests` once and calls a
@@ -131,44 +132,20 @@ What must survive a refactor, with where it lives:
 
 ## Findings
 
-### LIV-01 `CorDebugSession` owns six unrelated concerns — **closed**
-`CorDebugSession` is **879 lines from 2,396**, and is the callback dispatcher that composes nine types:
-`TargetSymbols`, `BreakpointTable`/`BreakpointBinding`, `RuntimeAttachment`, `DetachProtocol`,
-`StopRecord`/`TargetExecution`, then `DebuggedTarget`, `StopNarrative`, `TargetBreakpoints` and
-`TargetInspection`. Shipped across PRs #265, #268, #274 and #281. The reasoning for each seam —
-including what each class deliberately does *not* own — is in its own class summary.
+### ~~LIV-01 `CorDebugSession` owns six unrelated concerns~~
+**#265, #268, #274, #281.** One class held six unrelated concerns of the debugger: attach, detach,
+breakpoints, the stop machine, callback dispatch and inspection. Each has a type of its own, and the
+session is the dispatcher that composes them.
 
-Three amendments, all argued in the code rather than here. The stop machine became a *value*
-(`TargetExecution` + `StopRecord`, LIV-02) rather than the `StopController` the card asked for. Only
-the detach *policy* moved; the transitions stayed, because they are writes to the one value that says
-what the target is doing and a second writer is how that value starts disagreeing with itself
-(`DetachProtocol.cs:1-24`). And the card's six concerns were not the final cut: `DebuggedTarget` — the
-process and its execution state behind `TryHeld`/`TryLive`, replacing six spellings of the same pair of
-questions — is a seam the review did not name, and is the one that owns `_gate`.
+### ~~LIV-02 The stop state machine is implicit in nine fields and five differently-spelled guards~~
+**#265.** A target killed while held went on reporting itself stopped at a breakpoint, so a XAML verb
+answered a dead process with "resume the target and ask again". What the target is doing is one value,
+swapped whole.
 
-### LIV-02 The stop state machine is implicit in nine fields and five differently-spelled guards — **closed**
-A target killed while held went on reporting itself stopped at a breakpoint, so a XAML verb answered a
-dead process with "resume the target and ask again". Shipped as `TargetExecution` (the five states as
-one value, swapped whole) and `StopRecord` (the stop itself, owning both timers) in PR #265 (`9d95b94`),
-with `A_target_that_dies_while_held_is_no_longer_reported_as_stopped` in `LiveAppDebugTests.cs`. The
-reasoning is in `TargetExecution.cs` and `StopRecord.cs`: why every guard is a pattern match, why the
-value is swapped rather than mutated, and why the stop generation counter is gone. The two `Hold`s that
-meant different things are `HoldAtStop` and `OperatorHold`.
-
-HOT-06 builds on this and is **not** closed: the `Applying(ApplyRecord)` arm is still tier-6 work.
-
-### LIV-03 A breakpoint hit is attributed by method token alone, so two bindings in one method misreport — **closed**
-A tracepoint on `Program.Beat` and a stopping breakpoint at `Program.Beat@IL_0002` both claimed every
-hit of either, and the first registered won — so the target was never held at all while the breakpoint
-reported itself bound with a hit count of zero. Shipped in PR #270 (`5356bfb`): `BreakpointTable.Claim`
-matches on the IL offset read from the callback's breakpoint, and
-`A_tracepoint_and_a_breakpoint_in_one_method_each_fire_as_itself` covers it.
-
-**The card's suggested fix was wrong and the code says why.** Matching on the breakpoint object's
-identity is the obvious answer, but ClrDebug's interfaces are source-generated `ComWrappers` rather than
-classic RCWs, so the same COM pointer is not promised to come back as the same managed object —
-identity would have held until it quietly did not, which is the failure class this finding is about.
-The reasoning is on `BreakpointTable.Claim`.
+### ~~LIV-03 A breakpoint hit is attributed by method token alone, so two bindings in one method misreport~~
+**#270.** A tracepoint and a stopping breakpoint in one method both claimed every hit of either, so the
+target was never held while the breakpoint reported itself bound. A hit is matched on the instruction
+offset it was bound at.
 
 ### LIV-04 A failing callback handler continues the target silently
 - **Severity:** Medium
@@ -191,12 +168,8 @@ The reasoning is on `BreakpointTable.Claim`.
 - **Effort:** M
 - **Where:** `src/RoseMcp.LiveApp/Debugging/TargetBreakpoints.cs`, `AddBinding` and
   `BindAgainstLoadedModules`; `src/RoseMcp.LiveApp/Debugging/TargetSymbols.cs:65-80` (`Walk`)
-- **Scope reduced** after PR #265. The card originally led with a contradiction in the lock discipline:
-  `Break` documents stopping *outside* the gate while these two stop *inside* it, with nothing saying
-  the stop-count behaviour was being relied on deliberately. `TargetSymbols.Walk` now states it where it
-  is relied on -- "the stop and the continue are a pair, which is what makes this safe to call while the
-  target is held at a breakpoint: the stop count goes up and back down and the target stays exactly as
-  stopped as it was" -- so that half is answered. The cost half is not.
+- **Half done, #265.** Its lock-discipline half is answered where the stop-count behaviour is relied on
+  (`TargetSymbols.Walk`). The cost half, below, is not.
 - **What:** `AddBinding` calls `BindAgainstLoadedModules` on every `rose_debug_set_breakpoint` and
   `rose_debug_add_tracepoint`, which takes the target's gate, calls `process.Stop(0)` and walks
   `AppDomains -> Assemblies -> Modules` to hand `BreakpointTable` the modules. `TargetSymbols.Remember`
@@ -363,7 +336,7 @@ protocol version the host refuses on mismatch, so every parser requires the full
   also what the retries are silently multiplying.
 - **Suggested change:** Count launch attempts in the fixture and fail the run if any launch needed more
   than one, with the faulted `Detail` in the message, so the resume-stub race is a red test with a
-  reason. Once LIV-07 and LIV-12 land, narrow `ProbeKeys.LiveApp` and measure. Make
+  reason. LIV-07 has landed; once LIV-12 does, narrow `ProbeKeys.LiveApp` and measure. Make
   `SelectTransientAsync` select through the tree once the element is present and assert on a single
   attempt, so a timed-out select is a failure rather than a retry.
 
@@ -536,9 +509,7 @@ protocol version the host refuses on mismatch, so every parser requires the full
    whether one caller's `Stop(0)` under the gate has ever been seen to block. (LIV-05)
 3. Has a WinUI 3 brush or margin live edit ever been observed to land? (LIV-09)
 4. ~~For #208, was the host log of a failing run checked for a `selecthandle` that timed out?~~
-   **Checked, and no.** Across the 21 kept live-app logs there is no pipe-request timeout and no late
-   reply, though a late reply is logged as it is discarded. The mechanism stays inferred from the
-   source, which is why only the honest result was built and cancelling in flight was declined. (LIV-07)
+   **Checked: no kept log holds one**, which is why cancelling in flight was declined. (LIV-07)
 5. Is `DllCanUnloadNow` returning `S_OK` intentional? (LIV-11)
 6. Were `SetDesiredNGENCompilerFlags` / `SetJITCompilerFlags(CORDEBUG_JIT_DISABLE_OPTIMIZATION)` left out
    deliberately? `DebugProbeTarget` compensates with `MethodImplOptions.NoOptimization` (`Program.cs:62-64`),

@@ -110,29 +110,10 @@ Things a refactor must carry across intact.
 
 ## Findings
 
-### WRK-01 The write pipeline is a convention copied into six services, not a type — **closed**
-`EditPipeline` owns the sequence and all six services go through it; `Listed = 20` is declared once,
-down from nine declarations under one name with three different values. Shipped in PRs #275, #276 and
-#278.
-
-**The card understated it, and the conversion is what proved so.** The review named three divergences.
-Reading the notices found that only one line of five was in all ten call sites, and that *three of the
-six services reported a project clean while the caller's own errors sat in it* — `rose_replace_doc_comment`,
-`rose_set_attribute`, `rose_move_member` and `rose_add_file` each read "this edit introduced nothing"
-as "the project compiles". That is a confidently wrong answer the review did not find, and each fix
-landed with a test that fails against the old rule on exactly that sentence. A fifth hole — no tool
-saying what an edit *resolved*, though every result DTO carries `ResolvedDiagnosticCount` — was found
-the same way.
-
-**The suggested change was wrong in one respect.** The card asked for "one `EditReport` type that every
-result record is projected from". One voice would have destroyed a fact: `ChangeSignatureService`
-compiles `AllProjects` and phrases its lines accordingly, and which compile ran is information, not
-drift. So `EditPipeline.Report()` is the default for a tool with no reason to differ, and a tool with
-one keeps its wording. The distinction that came out of it — lines carrying a **fact** stay with their
-tool, lines carrying a **framing** of the compile are shared — is the reusable part and is worth
-applying to card 11b.
-
-**WRK-23 does not disappear with this**, which its own text predicted it would. See below.
+### ~~WRK-01 The write pipeline is a convention copied into six services, not a type~~
+**#275, #276, #278.** Six services each carried their own copy of the write conventions, and four
+tools on them reported a project clean while the caller's errors sat in it. One pipeline owns the
+conventions.
 
 ### WRK-02 Two tiers write source, and every open fidelity bug is in the text tier
 - **Severity:** High
@@ -252,11 +233,10 @@ applying to card 11b.
   the resolver (WRK-04) tries the type reading first. Fold into WRK-04 if that lands first.
 
 ### ~~WRK-06 `NameResolver` asks one compilation about another compilation's symbol~~
-**#306.** A name search answers with symbols owned by whichever compilation declared them, and the
-accessibility question was then put to a different one, which Roslyn refuses by throwing rather than
-by answering -- so resolving a name, creating a file, and every write that works out its own imports
-failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into
-the asking compilation before it is asked about, and one that will not map is passed over.
+**#306.** One compilation was asked about another's symbol, which Roslyn refuses by throwing, so
+resolving a name and every write that worked out its own imports failed in most of this repository,
+naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is
+asked about.
 
 ### WRK-07 The boundary cannot tell a deliberate refusal from a leaked framework exception
 - **Severity:** Medium
@@ -278,23 +258,10 @@ the asking compilation before it is asked about, and one that will not map is pa
   forbidding `throw new ArgumentException`/`InvalidOperationException` outside the `Refusal`
   hierarchy. See inversion 4.
 
-### WRK-08 The shadow-copy loader flattens every analyzer into one `AssemblyLoadContext` — **closed**
-Two assembly versions sharing a simple name resolved to whichever arrived last, so a generator loaded
-and produced nothing while MSBuild went on passing it to the compiler — which is why Rose reported
-*this repository* as Degraded, and would have done the same to any solution mixing a framework
-reference and a NuGet reference to one Microsoft.Extensions package. Shipped in PR #269 (`88f70c1`):
-one `AnalyzerLoadContext` per analyzer directory, `AnalyzerVersionIsolationTests` in the fast suite,
-and the rule written into `docs/invariants/analyzers-and-generators.md`.
-
-**Verified end to end on 2026-09-18**, which took some doing and is itself the finding below: a worker
-built from this commit reports `"state":"Loaded"`, `"degradedReasons":[]`, `"analyzerLoadFailures":[]`
-against `RoseMcp.slnx`. The ground-truth note in the review brief — "`rose_workspace_status` on this
-repository reports Degraded" — no longer holds.
-
-**Left over, and not worth its own card:** the WinUI load diagnostic ("Cannot resolve Assembly or
-Windows Metadata file … `RoseMcp.Ui.dll`") still does not say the remedy, which is to build the
-referenced project first. Rose already classifies it correctly — a load diagnostic, not a degraded
-reason — so this is a sentence, not a defect. Fold it into card 13.
+### ~~WRK-08 The shadow-copy loader flattens every analyzer into one `AssemblyLoadContext`~~
+**#269.** Every analyzer shared one load context, so of two assemblies sharing a name the last to
+arrive won, and a generator loaded and produced nothing -- which is why Rose called this repository
+degraded. Each analyzer directory has a context of its own.
 
 ### WRK-09 `DiagnosticsService` never evicts, and a reload orphans every entry
 - **Severity:** Medium
@@ -545,12 +512,9 @@ reason — so this is a sentence, not a defect. Fold it into card 13.
   a service through `MutateAsync` or `ReadAsync`. But seven mutation tools inline the same five lines
   that `RunAsync` wraps, and `EditAsync` is `RunAsync` specialised for one lambda shape. A new tool
   copies whichever it sees first.
-- **Why it matters:** ~~Low on its own; it is the tool-layer half of WRK-01 and disappears with it.~~
-  **That prediction was wrong.** WRK-01 shipped and this survived it untouched: `EditPipeline` is a
-  *service*-layer type, and the inline `WorkProgress.Split` / `sharedWork.Follow` / `host.SessionAsync`
-  / `session.MutateAsync` preamble is in the tool layer, which the pipeline never reaches. The two
-  duplications looked like one because they sit either side of the same call. So this is a card of its
-  own now, not a consequence of another, and nothing else is going to absorb it.
+- **Why it matters:** Low on its own, and nothing else will absorb it. It survives WRK-01 because
+  `EditPipeline` is a *service*-layer type and this preamble is in the tool layer, which the pipeline
+  never reaches: the two duplications looked like one because they sit either side of the same call.
 - **Suggested change:** Every mutation tool goes through `RunAsync`; add `ReadAsync` for the reads in
   `NavigationTools`/`AnalysisTools` so the `Follow` handle cannot be forgotten either.
 

@@ -45,12 +45,13 @@ findings -- including **the debugger core and the write pipeline**, which were t
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
 **Tier 1 is done in full.** Next is **card 8** for tier 2's editing work. Card 1 opened the gate on
-**11b** and **11c**, and closing 1b added **11f**: a worker now outlives the worktree it was opened on.
+**11b** and **11c**.
 
-Three cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
-would not), the layout half of **21**, and card 0e's finding that three of the phrases the comment
-convention lists are not history clauses at all. Card 9 also found a wrong answer the review missed
--- four write tools reporting a project clean while the caller's errors sat in it.
+Four cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
+would not), the layout half of **21**, **11f** (closing 1b lets a worktree go while its worker runs
+on), and card 0e's finding that three of the phrases the comment convention lists are not history
+clauses at all. Card 9 also found a wrong answer the review missed -- four write tools reporting a
+project clean while the caller's errors sat in it.
 
 Each closed finding is struck in its own file: the pull request, the problem, the state.
 
@@ -140,8 +141,8 @@ Tier 0, and are built (PR #295). The seven highest-leverage:
    resolves for one tool resolves for all (WRK-04, AGT-03).
 3. ~~A path type that cannot be resolved without a base (BRK-01, AGT-10).~~ **#305.**
 4. ~~Nine fields and five spellings of "is the target stopped" replaced by one state (LIV-02).~~ **#265.**
-5. ~~One framed-message type for every pipe (IPC-01, LIV-07, LIV-08).~~ **#323.** One wire contract
-   for the tap's pipe, the only one carrying a caller's text, kept as text rather than JSON.
+5. ~~One framed-message type for every pipe (IPC-01, LIV-07, LIV-08).~~ **#323**, for the tap's pipe
+   alone: it is the only one carrying a caller's text.
 6. ~~Attribution by runtime type check, replaced by one the compiler enforces (BRK-12).~~ **#295.**
 7. ~~A fact computed for a window that no window names, caught by a test (USE-01, USE-03).~~ **#295.**
 
@@ -195,7 +196,8 @@ Six things, in order of leverage. All are expanded as cards below.
 
 ### 6. Are the technologies and protocols for IPC appropriate?
 
-**Yes: eleven of twelve boundaries, and the twelfth is a payload problem, not a transport one.**
+**Yes: eleven of twelve boundaries were right, and the twelfth, the XAML tap pipe, was a payload
+problem rather than a transport one, fixed by #323.**
 
 MCP over stdio for the internal parent-child hops is called the standout decision: not the reflex
 choice, and it pays three times over, because the worker and the live-app host are *also* standalone
@@ -209,9 +211,6 @@ load-bearing in four processes.
 Polling for the inspector is **correct**, and the premise that it might not be was wrong: the event
 tail is already a long poll with a thirty-second wait, so its latency equals SSE, and interval
 polling is used only for state panes where a re-read is idempotent.
-
-The one wrong payload: the XAML tap pipe is the only boundary whose framing was invented rather than
-adopted, and the only one whose protocol defects produce wrong answers rather than failures.
 
 ### 7. How far is C# hot reload?
 
@@ -286,7 +285,7 @@ satisfies them without anyone tracking a graph. One is left:
 ### How the pit-of-success inversions relate to the cards
 
 Roughly fifty inversions are proposed across the eight files. They are not a separate workstream,
-and three-quarters of them need no separate card, because they fall into three relationships:
+and most need no separate card, because they relate to the cards in one of two ways:
 
 - **The card *is* the inversion.** Cards 1, 3, 9 and 10 are the four biggest inversions written as
   work: a path type that cannot be resolved without a base, a target-execution union, one write
@@ -298,12 +297,8 @@ and three-quarters of them need no separate card, because they fall into three r
 
 ### ~~The pattern four reviewers found separately: computed, returned, never consumed~~
 
-Four subsystems computed a fact carrying a docstring that argued why a reader needs it, and consumed
-it nowhere; four reviewers found it without looking for the same thing. **Closed as a pattern,
-PR #295.** `ProducedFactTests` is the guard and its summary carries the reasoning, its exemption
-list is the worklist, and an empty list is the definition of done. The four instances: `HostVersion`
-fixed by card 0d, the workspace-key anchor at 11c, the reference facets at 11e, the window facts
-at 22.
+**#295.** Four subsystems computed a fact whose summary argued a reader needed it, and nothing read
+it. A test fails on a fact nothing consumes unless it is listed with the reason.
 
 ### Tier 1 — wrong answers and wrong side effects
 
@@ -314,11 +309,11 @@ These produce confident wrong results today. Everything else is cost.
 | ~~1~~ | **#305.** A relative path was measured from the directory the broker process started in, so a call from one worktree could edit the same-named file in another and report success. It is measured from the calling session's directory, and the hop on from there is absolute-only. | BRK-01, AGT-10, BRK-20 | — | — |
 | ~~1b~~ | **#326.** A warm worker stood in its solution's directory, which Windows holds open against deletion, so an opened worktree could not be removed until the broker went. Workers stand in an empty folder of Rose's own. | BRK-20 | — | — |
 | ~~2~~ | **#270.** A breakpoint hit was attributed by method token alone, so two bindings in one method could not be told apart. Hits are matched on the instruction offset. | LIV-03 | — | — |
-| ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. HOT-06's remaining half belongs with card 32, the first card with an apply to have a state for. | LIV-02 | — | — |
-| ~~4~~ | **#317.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app now says the change may still land, and what counts as such a verb is held against the provider's own dispatch by a test. The correlation half went to card 5; cancelling a request in flight is declined, with the reason in `xaml-live-edit.md`. | UIP-15, LIV-07 | #208 | — |
-| ~~5~~ | **#323.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key, and a test holds the provider's half against the host's. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
+| ~~3~~ | **#265.** A dead target reported as stopped. Execution is one state with one spelling. | LIV-02 | — | — |
+| ~~4~~ | **#317.** A XAML request the host had timed out on could still run in the app, and the caller was told only that it failed. A timed-out verb that changes the app says the change may still land; cancelling one in flight is declined. | UIP-15, LIV-07 | — | — |
+| ~~5~~ | **#323.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
 | ~~6~~ | **#306.** One compilation was asked about another's symbol, so resolving a name and every write that worked out its own imports failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is asked about. | WRK-06 | — | — |
-| ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory, and the rule is an invariant. | WRK-08 | — | — |
+| ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory. | WRK-08 | — | — |
 
 ### Tier 2 — the three structural refactors
 
@@ -327,7 +322,7 @@ Each closes a class of bug rather than a bug, and each is a prerequisite for som
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
 | 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Six open fidelity issues close as a consequence.** A write names the lines it changed that nothing asked for (#333), so each fix is done when its sentence stops appearing. `OverreachReportTests` pins #217's three shapes, #195's dropped comment, and a case the review missed: with no .editorconfig, a member edit re-indents the member after it (WRK-19). The sentence cannot see #197, whose list the caller writes whole, or damage inside a span the caller asked for (#217's doubled indentation, #199). AGT-17's `rose_format` half is left. | WRK-02, WRK-03, WRK-19, AGT-17 | #195 #197 #199 #200 #217 #218 | M-L |
-| ~~9~~ | **#275, #276, #278.** Six services each carried their own copy of the write conventions. One pipeline owns them. It was bigger than the card: four tools reported a project clean while the caller's errors sat in it, which the review did not find. | WRK-01 | — | — |
+| ~~9~~ | **#275, #276, #278.** Six services each carried their own copy of the write conventions, and four tools on them reported a project clean while the caller's errors sat in it. One pipeline owns the conventions. | WRK-01 | — | — |
 | 9b | **Route every mutation tool through `RunAsync`.** Seven tools inline the same `WorkProgress.Split` / `sharedWork.Follow` / `SessionAsync` / `MutateAsync` preamble that `RunAsync` already wraps; add `ReadAsync` so the `Follow` handle cannot be forgotten on reads either. Was assumed to disappear with card 9 and did not. | WRK-23 | new | S |
 | 10 | **One compilation-backed symbol resolver.** Today two-and-a-half resolvers disagree, so positional record properties are unaddressable when the name is common, and a metadata symbol is unreachable if any source symbol shares its leaf name. Every DTO in `Contracts` is a positional record. | WRK-04, WRK-05, WRK-14, AGT-03 | #233 #210 #239 | M |
 
@@ -339,13 +334,13 @@ Highest leverage on adoption. Cheap relative to impact.
 |---|---|---|---|---|
 | 11 | **Result size discipline, reads.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 | M |
 | 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Both halves are unblocked**: card 1 shipped, so returning relative paths no longer makes agents send ones that resolve anywhere, and card 9 shipped, so `EditPipeline.Report()` is the one place a notice is decided. Apply card 9's own rule when trimming: a line stating *which* compile ran is a fact and stays. | AGT-21 | new | M |
-| 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction, and covers the one case card 1 leaves: an http session with no relay never says where it is. | AGT-21 | new | S |
+| 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction, and covers the one case card 1 leaves: an http session with no relay never says where it is. Done when `WorkspaceKey` leaves `ProducedFactTests`' exemption list. | AGT-21 | new | S |
 | 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
-| 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. | AGT-23, AGT-06, AGT-05 | #234 | M |
-| 11f | **A worker outlives the worktree it was opened on, and no session can see what is warm.** Since card 1b a worktree can be removed while its worker lives, and the worker runs on against a solution that is gone -- tolerating it as it tolerates a branch switch -- holding its memory for the life of the broker. Retire a worker whose solution has been gone past a grace period; evict idle workers on a timer, said in the activity log; and add `rose_workspace_list`, so a session can see what is loaded and quote each workspace's key back, which card 11c makes an anchor. #157 has both halves. | BRK-20 | #157 | M |
+| 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. Done when its three facets leave `ProducedFactTests`' exemption list. | AGT-23, AGT-06, AGT-05 | #234 | M |
+| 11f | **A worker outlives the worktree it was opened on, an ended live-app session is never dropped, and no session can see what is warm.** Since card 1b a worktree can be removed while its worker lives, and the worker runs on against a solution that is gone -- tolerating it as it tolerates a branch switch -- holding its memory for the life of the broker. Make eviction the manager's job, said in the activity log: retire a worker whose solution has been gone past a grace period, evict idle workers on a timer, and drop an ended live-app session, which is otherwise polled every second for the life of the broker. Add `rose_workspace_list`, so a session can see what is loaded and quote each workspace's key back, which card 11c makes an anchor. #157 has the worker half and BRK-04 the shape. | BRK-04, BRK-20 | #157 | M |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 12b | **Three live-app tools answer with a bare sentence**, which is the defect card 0c fixed on `rose_workspace_close` surviving on the surface 0c's guard exempts. Give each a result record, and narrow the exemption so it excuses a live-app result from *workspace* attribution rather than from being a result. | BRK-21 | new | S |
-| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. | AGT-04, WRK-07, AGT-05 | #210 | M |
+| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. The WinUI load diagnostic ("Cannot resolve Assembly or Windows Metadata file") goes with it: it should say its remedy, which is to build the referenced project first. | AGT-04, WRK-07, AGT-05 | #210 | M |
 | 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. | AGT-12, USE-01 | new | S |
 | 15 | **`rose_find_implementations` cannot be restricted to your own solution**, so a common framework interface returns 116 metadata matches truncated at 40. Also: a property's definition is listed three to four times. | IPC dogfooding, USE dogfooding, AGT-07 | new | S |
 
@@ -366,7 +361,7 @@ Commit to the supervising user, or decide not to. Everything here follows from t
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 22 | **Render the facts already computed for a window.** Degraded reasons with their remedies, analyzer load failures, per-project health, restore state, information age, session notice. The cheapest wins in the repository. | USE-01, USE-03 | new | M |
+| 22 | **Render the facts already computed for a window.** Degraded reasons with their remedies, analyzer load failures, per-project health, restore state, information age, session notice. The cheapest wins in the repository. Done when its entries leave `ProducedFactTests`' exemption list. | USE-01, USE-03 | new | M |
 | 23 | **Show what the agent is doing, in the inspector.** The data is already on the object the window holds; the tray renders it and the inspector does not. | USE-02 | new | S |
 | 24 | **The activity log is the only record of what an agent did to your solution.** It is eight entries, collapsed, tertiary grey, dropped on close. Persist it, give it client attribution, promote it. | USE-04, USE-05 | new | M |
 | 25 | **Make facts copyable.** Nothing in a window whose job is feeding facts to an agent can be copied except one XAML address. | USE-09, USE-14 | new | S |
@@ -437,13 +432,8 @@ Filed here so they reach the issue tracker. Several are not in any existing issu
 13. No way to ask Rose what its own tool listing looks like to a client, so surface changes are
     reviewable only as pass/fail.
 14. No negative-space or bulk query ("which members of this type does nobody reference"), which sent
-    two reviewers to grep. **Partly answered by `rose_find_split_options` (PR #290)**, which reports
-    which members would move together, from field co-occurrence and call-graph dominance. It is the
-    first tool here that answers a question about a type rather than about a symbol, and it has already
-    chosen two refactors (#287, #291) — in #291 it rediscovered, from state alone, a boundary that two
-    other files described in prose and it had never read. It does not answer the negative-space
-    question above: "nothing references this" was still established by hand with `rose_find_references`
-    while writing #274.
+    two reviewers to grep. `rose_find_split_options` (#290) answers a question about a type rather
+    than a symbol, but not this one.
 
 ## Suggested reading order for splitting cards
 

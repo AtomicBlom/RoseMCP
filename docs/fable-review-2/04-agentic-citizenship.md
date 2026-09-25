@@ -188,9 +188,9 @@ revision 1). Sizes are the raw JSON as it arrived.
 - **Where:** `src/RoseMcp.Worker/NameResolver.cs:197`; transcript T4a; issues #121, #212
 - **What:** `rose_resolve_name name=ToolErrorReporting`, with no `filePath`, returns
   `Parameter 'symbol' must be a symbol from this compilation or some referenced assembly. (Parameter 'symbol')`.
-  `rose_resolve_name` declares `name`, `filePath`, `arity`, `maxResults` and `workspace`. There is no `symbol`. The throw is `compilation.IsSymbolAccessibleWithin(symbol, compilation.Assembly)` at `NameResolver.cs:197`, asked of a compilation the candidate did not come from -- filed as #121 in this repository and still open. It is the same sentence #212 reports out of `rose_replace_member`, where it means "a name in your *code* did not resolve" and names the one argument that was correct. With a `filePath` the same call succeeds and gives a genuinely excellent answer (T4b), so the failure is in the shape of the call, not in the question.
+  `rose_resolve_name` declares `name`, `filePath`, `arity`, `maxResults` and `workspace`. There is no `symbol`. The throw is `compilation.IsSymbolAccessibleWithin(symbol, compilation.Assembly)` at `NameResolver.cs:197`, asked of a compilation the candidate did not come from -- filed as #121. It is the same sentence #212 reports out of `rose_replace_member`, where it means "a name in your *code* did not resolve" and names the one argument that was correct. With a `filePath` the same call succeeds and gives a genuinely excellent answer (T4b), so the failure is in the shape of the call, not in the question.
 - **Why it matters:** This is the worst error on the surface and it is on the tool whose entire job is unsticking a caller who is already stuck. Every honest reading of it is wrong and expensive -- re-derive the address, reload the workspace, check the project -- and #212 records a retry spent on each. It also breaks the assembly's own stated rule ("Every other refusal on this surface says what was wrong with what the caller sent and what to send instead", `ToolArgumentShape.cs:11-13`) in the one place a caller has no other move.
-- **Suggested change:** Fix the provenance at `NameResolver.cs:197` -- ask the compilation the symbol came from, or map the candidate in with `SymbolFinder.FindSimilarSymbols` before testing accessibility. Then add the general guard at the boundary: **no message naming a CLR parameter may reach a caller**, because the caller's vocabulary is the tool's schema. A filter that rewrites any message containing `(Parameter '` into one naming the tool's own arguments, plus a test over all three `ToolErrorReporting` copies, closes the class rather than this instance.
+- **Suggested change:** Add the general guard at the boundary: **no message naming a CLR parameter may reach a caller**, because the caller's vocabulary is the tool's schema. A filter that rewrites any message containing `(Parameter '` into one naming the tool's own arguments, plus a test over all three `ToolErrorReporting` copies, closes the class rather than this instance.
 
 ### AGT-05 `definitionsOnly=true` reports `truncated: true` over an empty list
 - **Severity:** Medium
@@ -646,14 +646,7 @@ line set against the span the request named; anything outside it goes in the res
 diff. That one guard sits in the write pipeline rather than in each writer, so #197's reflow,
 #217's re-indent and #195's deleted comment are caught by the same code and a new writer inherits it.
 
-**6. A relative path cannot be resolved without a base.**
-*Rule today:* the caller remembers to pass absolute paths when several checkouts exist; the docs say
-"solution-relative" and the code resolves against the process's working directory.
-*Mechanism:* make the base a type. A tool argument arrives as a `string`, and the only way to turn
-it into something the file system sees is `RepositoryPath.From(raw, origin)`, which takes the
-session's origin directory and throws where the path is relative and no origin is known. Then a tool
-that forgets does not silently write elsewhere; it does not compile. Mirrors what `WorkspaceHints`
-already did for the routing ranking.
+**6. ~~A relative path cannot be resolved without a base.~~** **#305.**
 
 **7. Every annotation that spends the user's consent is on a list with a reason.**
 *Rule today:* `ReadOnly` is; `Destructive` and `Idempotent` are 51 hand-written booleans nothing

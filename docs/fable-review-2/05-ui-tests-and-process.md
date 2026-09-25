@@ -28,9 +28,9 @@ folder layout, a test class's category attribute, a header's include graph, "eve
 revision" -- is review-only, and three of them have already drifted under review: a category lost in
 a split, 100 history clauses where #171 counted 90, and four doc claims that describe code that has
 moved. The one structural hole is that the newest, least conventional and most bug-dense third of the
-product -- debugger, tap, live edit, 55 tests -- never runs in CI at all, which is how #208 came to
-be a real "the call reported failure and did the thing anyway" defect found by a test nobody runs on a
-schedule. The one growing debt is `TestSession.OpenAsync`: 254 real solution loads and 299 fixture
+product -- debugger, tap, live edit, 55 tests -- never ran in CI at all; the debugger part does now
+(#295), and the tap and live-edit part does not. The one growing debt is `TestSession.OpenAsync`:
+254 real solution loads and 299 fixture
 copies across six distinct fixtures, with zero sharing on the Roslyn half while the live-app half next
 door has a proven sharing model. None of this is vibe-coded; it is carefully built and
 under-mechanised, which is a much better problem to have.
@@ -368,19 +368,14 @@ inferring it. This is the cleanest boundary in the repository.
   largest single block.
 
 ### ~~UIP-14 `LiveAppInspectionTests` lost its `[Category("LiveApp")]` in the split, so eleven debugger tests now run in CI that CI says it does not run~~
-**#295.** Eleven debugger tests were running in CI that CI said it did not run, because the category
-that excludes them is applied by hand. Kept and widened -- the exclusion now names the toolchain it
-is about, a test decides which half a class is in, and CI runs 33 debugger tests rather than 11.
+**#295.** Eleven debugger tests ran in CI that CI said it did not run, because the category excluding
+them was applied by hand. They were kept on purpose, and which half a test runs in is decided by the
+toolchain it needs.
 
 ### ~~UIP-15 Issue #208's flake is structural, and the structure is in the product, not the test~~
-**Wrong, corrected by #300, and the surviving half closed by #317.** The flake was the test's own
-wait, which started from cursor 0 and matched an event from before the pick. The product hazard
-underneath it -- a timed-out request that still runs in the app -- was real but unproven, and is
-now stated in the result of any timed-out verb that changes the app. See LIV-07 for what was done
-and what was declined.
-
-The lesson worth keeping is the one this finding failed: it read the issue's own hypothesis and
-agreed with it rather than measuring.
+**#300, #317. Wrong:** the flake was the test's own wait, which matched an event from before the
+pick. The product hazard it named, a timed-out request that still runs in the app, is stated in the
+result of any timed-out verb that changes the app.
 
 ### UIP-16 A fixture hand-back check that re-reads live state will flake whatever the product does
 - **Severity:** Medium
@@ -388,8 +383,9 @@ agreed with it rather than measuring.
 - **Where:** `tests/RoseMcp.IntegrationTests/UwpProbeApp.cs:501-526` (`SessionTurn.DisposeAsync`, the hand-back assertion at `:524`), and the slot hand-back rule in `docs/invariants/live-app-tests.md`
 - **What:** The hand-back check reads the app's selection *again*, after the test's own read, and
   fails the test if it is not clean. It is asserting against an asynchronous system that a second
-  party (the app's UI thread) can still change. #208 is the first case; it will not be the last,
-  because the check is structurally a second sample of a value that moves.
+  party (the app's UI thread) can still change. #208 looked like a case and was not: the test's own
+  wait was wrong (#300), and the check was right to fail it. The argument is structural and no case
+  has been seen: the check is a second sample of a value that moves.
 - **Why it matters:** The invariant doc is right that residue must fail the test that left it --
   that is what turned three costumed bugs into one. But a check that can fail for reasons other than
   residue converts a product race into a *test* failure attributed to the wrong test, which is the
@@ -577,10 +573,9 @@ tar records an execute bit, and `Assert-WindowsPackage` gating the artifact.
   fact two files remember separately.
 
 ### ~~UIP-23 The comment conventions are unenforced and the debt is growing, not shrinking~~
-**#295.** The comment conventions bound every file and nothing checked them, so the debt only grew.
-CI checks them against a per-file baseline that may only go down. **The measurement was wrong, and
-that is the more useful half:** three of the phrases this finding counted are not history clauses at
-all, and paying the rest is #171's work.
+**#295. Wrong in part:** three of the phrases this finding counted are not history clauses. Nothing
+checked the conventions, so the debt only grew; CI checks what a grep can settle against a per-file
+baseline that may only go down.
 
 ### UIP-24 Nothing formats or lints the C++ or the PowerShell
 - **Severity:** Low
@@ -606,27 +601,22 @@ all, and paying the rest is #171's work.
 - **Severity:** High
 - **Effort:** L
 - **Where:** `.github/workflows/ci.yml:129-132,181` (category exclusion), `:238-264` (providers compile only)
-- **What:** 55 tests across four classes and one method never run in CI. The `xaml-providers` job
-  compiles both taps but runs nothing against them. So the ICorDebug session, the injection, the
-  visual tree, the overlay, the pick, the properties read and the live-edit apply are verified only
-  when one person runs the suite on one machine with a C++ toolset, the Windows App SDK and developer
-  mode. The exclusion is well-reasoned in the file -- a hosted runner genuinely lacks the toolchains,
+- **What:** The live-app tests that need a tap never run in CI: the `xaml-providers` job compiles both
+  taps but runs nothing against them. So the injection, the visual tree, the overlay, the pick, the
+  properties read and the live-edit apply are verified only when one person runs the suite on one
+  machine with a C++ toolset, the Windows App SDK and developer mode. The exclusion is well-reasoned in the file -- a hosted runner genuinely lacks the toolchains,
   and skips reading as passes is worse -- but the consequence is that the invariants `overlay.md`,
   `xaml-tap-lifecycle.md` and half of `xaml-live-edit.md` are review-only in practice, and
   `live-app-tests.md`'s own hardest-won rule ("green once is not green") cannot be applied at all,
   because nothing samples repeatedly.
 - **Why it matters:** This is the half the review brief calls "largely vibe-coded", it is the half
   with the most open bugs (8 `live-app` labels), and it is the half with the least automated
-  evidence. #208 is exactly what that combination produces: a real product defect found by a test
-  nobody runs on a schedule.
+  evidence.
 - **Suggested change:** A self-hosted runner is the honest answer and the expensive one. Short of
-  that, two things that cost little and recover most of the value: (1) a scheduled `workflow_dispatch`
-  / nightly job on the developer machine's own runner, or a documented `./tools/Rose.ps1 live-app`
-  that runs the suite N times and reports a flake rate -- the measurement `live-app-tests.md` says is
-  required and that nothing currently produces; (2) split the live-app suite by what it actually
-  needs, as `LiveAppInspectionTests` accidentally demonstrates -- the ICorDebug half needs only a
-  .NET process and *can* run on a hosted Windows runner (see UIP-14). Doing (2) deliberately would
-  move roughly a third of those 55 tests into CI today.
+  that, one thing that costs little and recovers most of the value: a scheduled `workflow_dispatch` /
+  nightly job on the developer machine's own runner, or a documented `./tools/Rose.ps1 live-app` that
+  runs the suite N times and reports a flake rate -- the measurement `live-app-tests.md` says is
+  required and that nothing currently produces.
 
 ### UIP-26 The docs are strong and the index has already drifted: twelve spot-checks, seven hold
 - **Severity:** Medium
@@ -754,11 +744,8 @@ as "for tests that mutate" -- makes the default choice the right one. *(UIP-13)*
 1. **Was `LiveAppInspectionTests` losing its `[Category("LiveApp")]` deliberate?** If those eleven
    ICorDebug tests are meant to run on a hosted runner, that is a real gain and the CI comment needs
    rewriting to say so. If not, CI is attaching a debugger where nobody intended. (UIP-14)
-2. ~~**Is #208's hypothesis confirmed?**~~ **No.** #300 found the flake was the test's own wait, and
-   the logs do not show the product half either: no pipe-request timeout and no discarded late reply
-   in any of the 21 kept live-app logs. The code does read as the issue predicts -- the host's bound
-   is latency-only and the tap's dispatch uncancellable -- so it is a hazard, not a demonstrated bug.
-   (UIP-15)
+2. ~~**Is #208's hypothesis confirmed?**~~ **No** (#300): the flake was the test's own wait, and no
+   kept log shows the product half. (UIP-15)
 3. **`Rows.Merge`: which contract is wanted?** The breakpoint list's comment wants rows to stay put;
    the docstring promises source order. Both are defensible, but only one of them is what #221 is
    asking for.

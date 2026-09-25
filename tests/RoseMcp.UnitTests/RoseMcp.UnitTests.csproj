@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlStubs\RoseMcp.XamlStubs.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlDiff\RoseMcp.XamlDiff.csproj" />
+    <ProjectReference Include="..\..\src\RoseMcp.Patterns\RoseMcp.Patterns.csproj" />
     <!-- The symbol reader, for the same reason RoseMcp.Ui.Core exists: RoseMcp.LiveApp is
          net10.0-windows and cannot be referenced from here, and reading a portable PDB correctly is
          exactly the kind of thing a test has to be able to reach. -->

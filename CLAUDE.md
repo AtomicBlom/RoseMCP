@@ -29,6 +29,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.Broker` | `WorkspaceManager`, worker supervision, the tool layer, the activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts. |
 | `RoseMcp.Server` | Console host. `--transport stdio` (default) or `--transport http`. |
 | `RoseMcp.Worker` | Owns exactly one `MSBuildWorkspace`. All Roslyn work happens here. |
+| `RoseMcp.Patterns` | Structural search and replace: a rule's find bound in a project's own compilation and matched on the operation tree. References `Microsoft.CodeAnalysis.CSharp` and nothing from Workspaces, so it can run wherever a `Compilation` does, an analyzer included. See [the decision](docs/decisions/code-is-rewritten-by-what-it-binds-to.md). |
 | `RoseMcp.XamlStubs` | The XAML stub generator, loaded by the worker as an analyzer assembly rather than referenced as a library. |
 | `RoseMcp.XamlDiff` | Takes markup apart for the live-edit path. Plain `net10.0`, so a test can see inside it. |
 | `RoseMcp.LiveApp` | The live-app host: one ICorDebug session and one XAML diagnostics session, for one debugged process. |

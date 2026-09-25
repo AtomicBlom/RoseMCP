@@ -68,6 +68,9 @@ $script:Rules = [ordered]@{
 #>
 $script:OpenIssues = @(
     39  # The Roslyn fixtures are copied per test rather than shared, and the wait is the reason.
+    195 # A match drops the comments between its tokens; a test pins the damage until it stops.
+    217 # An insertion or an anchored replacement lays out lines it was not asked to; pinned the same way.
+    218 # With no .editorconfig a write takes Roslyn's four spaces and re-indents a neighbour; pinned too.
 )
 
 $script:Advice = @{

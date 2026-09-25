@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 using RoseMcp.Contracts;
 
@@ -64,7 +65,13 @@ internal static class EditImports
 			notices.Add($"Did not import {covered}.");
 		}
 
-		return written with { Root = insertion.Root };
+		if (insertion.Added.Count == 0) return written with { Root = insertion.Root };
+
+		return written with
+		{
+			Root = insertion.Root,
+			Asked = [.. written.Asked, await RegionAsync(document, cancellationToken)],
+		};
 	}
 
 	/// <summary>
@@ -102,4 +109,13 @@ internal static class EditImports
 
 		return (added, imports);
 	}
+
+	/// <summary>
+	/// Where imports go in <paramref name="document"/> as it stood before the edit, which is what adding
+	/// one asks to change.
+	/// </summary>
+	internal static async Task<TextSpan> RegionAsync(Document document, CancellationToken cancellationToken) =>
+		await document.GetSyntaxRootAsync(cancellationToken) is CompilationUnitSyntax root
+			? UsingDirectives.Region(root)
+			: new TextSpan(0, 0);
 }

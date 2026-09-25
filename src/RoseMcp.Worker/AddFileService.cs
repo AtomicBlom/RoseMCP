@@ -78,7 +78,8 @@ public static class AddFileService
 
 		progress?.Report(request.Apply ? "Writing to disk" : "Building the diff", 70);
 
-		await edit.WriteAsync(solution, cancellationToken);
+		// A file that is not there yet, so nothing already there was asked to change.
+		await edit.WriteAsync(solution, Asked.Nothing, cancellationToken);
 
 		if (request.Verify) progress?.Report("Compiling to see what the file did", 80);
 

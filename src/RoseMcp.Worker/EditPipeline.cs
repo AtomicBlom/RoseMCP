@@ -96,11 +96,16 @@ internal sealed class EditPipeline
 	/// <summary>
 	/// Writes <paramref name="written"/>, or works out what writing it would do when the caller asked
 	/// for a preview.
+	/// <para>
+	/// <paramref name="asked"/> is what the caller asked to change, and it is required because a write
+	/// that cannot say what it was asked to do cannot say what it did besides -- which is the one thing
+	/// about an edit its caller cannot check without reading the file back.
+	/// </para>
 	/// </summary>
-	internal async Task WriteAsync(Solution written, CancellationToken cancellationToken)
+	internal async Task WriteAsync(Solution written, Asked asked, CancellationToken cancellationToken)
 	{
 		Solution = written;
-		Outcome = await SolutionWriter.ApplyAsync(_snapshot.Solution, written, _apply, _noteSelfWrite, cancellationToken);
+		Outcome = await WrittenAsync(written, asked, cancellationToken);
 
 		if (!Changed) Notices.Add("The file already said exactly that, so nothing changed.");
 	}
@@ -122,10 +127,13 @@ internal sealed class EditPipeline
 
 	/// <summary>
 	/// Writes and compiles again, for a rewrite made in the light of what the first compile found.
-	/// The scope is the one already compiled, so the two answers are about the same projects.
+	/// The scope is the one already compiled, so the two answers are about the same projects, and
+	/// <paramref name="asked"/> is everything asked of the edit as a whole, since the outcome is
+	/// measured against the files as they were before either write.
 	/// </summary>
 	internal async Task RewriteAsync(
 		Solution rewritten,
+		Asked asked,
 		string path,
 		IReadOnlyList<string> scope,
 		CancellationToken cancellationToken)
@@ -133,12 +141,27 @@ internal sealed class EditPipeline
 		if (ReferenceEquals(rewritten, Solution)) return;
 
 		Solution = rewritten;
-
-		Outcome = await SolutionWriter.ApplyAsync(
-			_snapshot.Solution, rewritten, _apply, _noteSelfWrite, cancellationToken);
+		Outcome = await WrittenAsync(rewritten, asked, cancellationToken);
 
 		Verification = await EditVerification.RunAsync(
 			_diagnostics, _snapshot.Solution, rewritten, scope, path, cancellationToken);
+	}
+
+	/// <summary>
+	/// What writing <paramref name="written"/> does, with a sentence for every file it changes further
+	/// than <paramref name="asked"/> reaches.
+	/// <para>
+	/// Measured before anything is written, so a measurement that fails leaves every file as it was.
+	/// Said first among what the write has to say, because it is the one line that changes whether the
+	/// caller should keep what was written.
+	/// </para>
+	/// </summary>
+	private async Task<WriteOutcome> WrittenAsync(Solution written, Asked asked, CancellationToken cancellationToken)
+	{
+		var overreach = await Overreach.SentencesAsync(_snapshot.Solution, written, asked, cancellationToken);
+		var outcome = await SolutionWriter.ApplyAsync(_snapshot.Solution, written, _apply, _noteSelfWrite, cancellationToken);
+
+		return overreach.Count == 0 ? outcome : outcome with { Notices = [.. overreach, .. outcome.Notices] };
 	}
 
 	/// <summary>

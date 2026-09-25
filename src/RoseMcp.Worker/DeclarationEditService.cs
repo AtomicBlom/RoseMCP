@@ -51,6 +51,7 @@ public static class DeclarationEditService
 					DocComment.Replace(
 						declaration.GetLeadingTrivia(), request.Comment!, context.Indent, context.LineEnding));
 			},
+			CommentRegion,
 			noteSelfWrite,
 			cancellationToken,
 			progress);
@@ -77,6 +78,7 @@ public static class DeclarationEditService
 					context.Indent,
 					context.LineEnding,
 					notices),
+			declaration => AttributeRegion(declaration, request.Parameter),
 			noteSelfWrite,
 			cancellationToken,
 			progress);
@@ -131,6 +133,7 @@ public static class DeclarationEditService
 		DiagnosticsService diagnostics,
 		DeclarationEditRequest request,
 		Func<MemberDeclarationSyntax, Context, List<string>, MemberDeclarationSyntax> rewrite,
+		Func<MemberDeclarationSyntax, TextSpan> asked,
 		Action<string>? noteSelfWrite,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress)
@@ -168,7 +171,7 @@ public static class DeclarationEditService
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 60);
 
-		await edit.WriteAsync(finished, cancellationToken);
+		await edit.WriteAsync(finished, Asked.Nothing.And(document, asked(target.Declaration)), cancellationToken);
 
 		var path = document.FilePath!;
 
@@ -240,6 +243,31 @@ public static class DeclarationEditService
 			: (IReadOnlyList<TextSpan>)[.. nodes.Select(node => node.FullSpan)];
 
 		return formatted.WithText(Whitespace.Apply(root, text, rules, spans)).Project.Solution;
+	}
+
+	/// <summary>
+	/// What writing a documentation comment asks to change: the trivia in front of the declaration,
+	/// where the comment is or where it goes.
+	/// </summary>
+	private static TextSpan CommentRegion(MemberDeclarationSyntax declaration) =>
+		TextSpan.FromBounds(declaration.FullSpan.Start, declaration.SpanStart);
+
+	/// <summary>
+	/// What setting an attribute asks to change: the parameter it goes on, or else the declaration's own
+	/// attribute lists, or the place in front of its first token where the first one goes.
+	/// </summary>
+	private static TextSpan AttributeRegion(MemberDeclarationSyntax declaration, string? parameter)
+	{
+		var named = parameter is { Length: > 0 }
+			? ParameterLists.Of(declaration)?.Parameters.FirstOrDefault(candidate => candidate.Identifier.Text == parameter)
+			: null;
+
+		if (named is not null) return named.Span;
+
+		var lists = declaration.AttributeLists;
+		var after = lists.Count > 0 ? lists[^1].GetLastToken().GetNextToken() : declaration.GetFirstToken();
+
+		return TextSpan.FromBounds(lists.Count > 0 ? lists[0].SpanStart : after.SpanStart, after.SpanStart);
 	}
 
 	private static int LineOf(DeclarationTarget target) =>

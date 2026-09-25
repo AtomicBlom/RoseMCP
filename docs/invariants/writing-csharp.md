@@ -25,6 +25,26 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   call that did nothing. So `SolutionWriter` counts the lines that moved and every writing tool
   passes the sentence on, rather than the alternatives: a whole-file hunk nobody can read, or
   inventing a hunk header that is not a patch.
+- **A write names every line it changed that nothing it was asked to do reaches.** Layout the
+  formatter has no rule about is layout nothing checks. A body reflowed by an insertion, a value
+  pulled up onto its declaration's line, a comment dropped from between two matched statements: each
+  compiles, passes `dotnet format` and reports success. A caller who can find any of it only by
+  reading the file back has no reason left to use a tool rather than a text edit. So
+  `EditPipeline.WriteAsync` takes an `Asked`, the spans of each file as it was that the request
+  reaches. `Overreach` diffs the lines and names every one that changed outside those spans, first
+  among what the result says. The spans are declared by the tool that makes the edit, where the
+  rewrite is worked out, rather than inferred from what changed, because a span drawn to fit the
+  change would cover the damage it exists to find. Each is as narrow as the request:
+  - A whole body asks for the body, and for the end of the signature only when an arrow trades
+    places with a block.
+  - An anchor asks for each token it matched, so a comment between two of them is not the caller's.
+  - An insertion asks for the place it goes.
+
+  Blank lines beside what was asked go with it, because a diff pairs identical blank lines
+  arbitrarily. It is a sentence rather than a refusal, because a line can change harmlessly, such as
+  trailing whitespace trimmed where the file asks for it, and only the caller holding the diff can
+  tell that from a reflow. It says nothing about what happens inside the spans: a replacement
+  written at the wrong depth is still the replacement the caller asked for.
 - **A file goes back in the encoding it arrived in.** A byte order mark is part of the file, and the
   two calls that look like the obvious way to do this get it wrong in opposite directions.
   `File.WriteAllText` is UTF-8 *without* a mark whatever the file was, so a rewrite routed through it

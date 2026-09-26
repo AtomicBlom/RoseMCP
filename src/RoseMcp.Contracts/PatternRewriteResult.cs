@@ -78,6 +78,9 @@ public sealed record PatternRuleOutcome
 	/// </summary>
 	public required IReadOnlyList<string> BoundTo { get; init; }
 
+	/// <summary>How many overloads the rule covers in all, of which <see cref="BoundTo"/> names the first few.</summary>
+	public required int Overloads { get; init; }
+
 	/// <summary>The sites it won.</summary>
 	public required int Matched { get; init; }
 

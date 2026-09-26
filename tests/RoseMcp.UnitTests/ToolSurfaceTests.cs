@@ -284,7 +284,6 @@ public sealed class ToolSurfaceTests
 		ToolNames.DebugListTracepoints,
 		ToolNames.DebugRemoveBreakpoint,
 		ToolNames.DebugRemoveTracepoint,
-		ToolNames.ReplacePattern,
 		ToolNames.WorkspaceClose,
 		ToolNames.XamlDeselect,
 	];

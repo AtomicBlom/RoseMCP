@@ -22,6 +22,12 @@ public static class PatternReport
 	/// <summary>How many files are listed.</summary>
 	public const int FileRows = 50;
 
+	/// <summary>
+	/// How many of a rule's overloads are named. A library with span and memory forms of every method
+	/// gives one rule forty; the first few say which method it is, and the count says how far it reaches.
+	/// </summary>
+	public const int Overloads = 6;
+
 	/// <summary>How many of the most rewritten files are listed after the ones with something to look at.</summary>
 	public const int TopRewritten = 10;
 
@@ -121,7 +127,8 @@ public static class PatternReport
 		return new PatternRuleOutcome
 		{
 			Rule = number,
-			BoundTo = boundTo.GetValueOrDefault(number) ?? [],
+			BoundTo = [.. (boundTo.GetValueOrDefault(number) ?? []).Take(Overloads)],
+			Overloads = boundTo.GetValueOrDefault(number)?.Count ?? 0,
 			Matched = won.Count,
 			Rewritten = won.Count(IsRewritten),
 			Skipped = won.Count(site => site.SkippedId is not null),

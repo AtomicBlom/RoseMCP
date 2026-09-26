@@ -22,10 +22,10 @@ public sealed class StopInspectionTests
 			Frame(0, "MyApp.Widget.Refresh", line: 40, isActive: false),
 			Frame(1, "MyApp.Widget.Run", line: 12, isActive: true)));
 
-		Assert.Equal(2, stop.Frames.Count);
-		Assert.Equal("MyApp.Widget.Run", stop.Selected!.Method);
-		Assert.Equal(77, stop.StopSequence);
-		Assert.Equal(9, stop.ThreadId);
+		stop.Frames.Count.ShouldBe(2);
+		stop.Selected!.Method.ShouldBe("MyApp.Widget.Run");
+		stop.StopSequence.ShouldBe(77);
+		stop.ThreadId.ShouldBe(9);
 	}
 
 	/// <summary>
@@ -37,7 +37,7 @@ public sealed class StopInspectionTests
 	{
 		var stop = new StopInspection(Stack(Frame(0, "MyApp.Widget.Refresh", line: 40, isActive: false)));
 
-		Assert.Equal("MyApp.Widget.Refresh", stop.Selected!.Method);
+		stop.Selected!.Method.ShouldBe("MyApp.Widget.Refresh");
 	}
 
 	[Test]
@@ -47,8 +47,8 @@ public sealed class StopInspectionTests
 
 		stop.Show(stop.Selected!, Source(firstLine: 40, "var a = 1;", "var b = 2;", "return a + b;"));
 
-		Assert.Equal([false, true, false], stop.Source.Select(row => row.IsCurrent));
-		Assert.False(stop.HasSourceDetail);
+		stop.Source.Select(row => row.IsCurrent).ShouldBe([false, true, false]);
+		stop.HasSourceDetail.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -68,7 +68,7 @@ public sealed class StopInspectionTests
 
 		stop.Show(inner, Source(firstLine: 40, "var a = 1;", "var b = 2;"));
 
-		Assert.Empty(stop.Source);
+		stop.Source.ShouldBeEmpty();
 	}
 
 	[Test]
@@ -78,9 +78,9 @@ public sealed class StopInspectionTests
 
 		stop.ShowNothing("System.Private.CoreLib has no symbols on this machine.");
 
-		Assert.Empty(stop.Source);
-		Assert.True(stop.HasSourceDetail);
-		Assert.Contains("no symbols", stop.SourceDetail);
+		stop.Source.ShouldBeEmpty();
+		stop.HasSourceDetail.ShouldBeTrue();
+		stop.SourceDetail.ShouldContain("no symbols", Case.Sensitive);
 	}
 
 	private static LiveStackFrames Stack(params LiveStackFrame[] frames) => new()

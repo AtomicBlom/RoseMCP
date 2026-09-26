@@ -15,10 +15,13 @@ public sealed class SolutionLoaderTests
 		using var load = await LoadAsync(fixture);
 		var report = load.Result.Report;
 
-		Assert.Equal(WorkspaceState.Loaded, report.State);
-		Assert.Empty(report.DegradedReasons);
-		Assert.Equal(["App", "Core"], report.Projects.Select(project => project.Name).Order());
-		Assert.All(report.Projects, project => Assert.True(project.LoadedSuccessfully));
+		report.State.ShouldBe(WorkspaceState.Loaded);
+		report.DegradedReasons.ShouldBeEmpty();
+		report.Projects.Select(project => project.Name).Order().ShouldBe(["App", "Core"]);
+		foreach (var project in report.Projects)
+		{
+			project.LoadedSuccessfully.ShouldBeTrue();
+		}
 	}
 
 	[Test]
@@ -28,15 +31,15 @@ public sealed class SolutionLoaderTests
 
 		using (var first = await LoadAsync(fixture))
 		{
-			Assert.True(first.Result.Report.Restore?.Ran);
-			Assert.True(first.Result.Report.Restore?.Succeeded);
+			(first.Result.Report.Restore?.Ran).ShouldBe(true);
+			(first.Result.Report.Restore?.Succeeded).ShouldBe(true);
 		}
 
 		using var second = await LoadAsync(fixture);
-		Assert.False(second.Result.Report.Restore?.Ran, "the second load skips a restore it does not need");
+		(second.Result.Report.Restore?.Ran).ShouldBe(false, "the second load skips a restore it does not need");
 
 		// A skipped restore must not read as a failed one.
-		Assert.Null(second.Result.Report.Restore?.Succeeded);
+		(second.Result.Report.Restore?.Succeeded).ShouldBeNull();
 	}
 
 	[Test]
@@ -50,12 +53,12 @@ public sealed class SolutionLoaderTests
 
 		var consumer = report.Projects.Single(project => project.Name == "Consumer");
 
-		Assert.Equal(WorkspaceState.Loaded, report.State);
-		Assert.Empty(report.DegradedReasons);
-		Assert.Empty(consumer.MissingAnalyzerOutputs);
+		report.State.ShouldBe(WorkspaceState.Loaded);
+		report.DegradedReasons.ShouldBeEmpty();
+		consumer.MissingAnalyzerOutputs.ShouldBeEmpty();
 
 		// GreetableAttribute.g.cs from post-initialisation, plus Widget.Greeting.g.cs.
-		Assert.Equal(2, consumer.GeneratedDocumentCount);
+		consumer.GeneratedDocumentCount.ShouldBe(2);
 	}
 
 	/// <summary>
@@ -73,15 +76,15 @@ public sealed class SolutionLoaderTests
 
 		var consumer = report.Projects.Single(project => project.Name == "Consumer");
 
-		Assert.Equal(WorkspaceState.Degraded, report.State);
-		Assert.Equal(0, consumer.GeneratedDocumentCount);
-		Assert.Contains("Gen", consumer.MissingAnalyzerOutputs);
+		report.State.ShouldBe(WorkspaceState.Degraded);
+		consumer.GeneratedDocumentCount.ShouldBe(0);
+		consumer.MissingAnalyzerOutputs.ShouldContain("Gen");
 
 		// The reason has to be actionable, not just true.
-		var reason = Assert.Single(report.DegradedReasons);
-		Assert.Contains("Gen", reason, StringComparison.Ordinal);
-		Assert.Contains("dotnet build", reason, StringComparison.Ordinal);
-		Assert.Contains("Gen.csproj", reason, StringComparison.Ordinal);
+		var reason = report.DegradedReasons.ShouldHaveSingleItem();
+		reason.ShouldContain("Gen", Case.Sensitive);
+		reason.ShouldContain("dotnet build", Case.Sensitive);
+		reason.ShouldContain("Gen.csproj", Case.Sensitive);
 	}
 
 	[Test]
@@ -91,7 +94,7 @@ public sealed class SolutionLoaderTests
 
 		using (var degraded = await LoadAsync(fixture))
 		{
-			Assert.Equal(WorkspaceState.Degraded, degraded.Result.Report.State);
+			degraded.Result.Report.State.ShouldBe(WorkspaceState.Degraded);
 		}
 
 		fixture.Build("WithGenerator", "Gen", "Gen.csproj");
@@ -99,8 +102,8 @@ public sealed class SolutionLoaderTests
 		using var healthy = await LoadAsync(fixture);
 		var consumer = healthy.Result.Report.Projects.Single(project => project.Name == "Consumer");
 
-		Assert.Equal(WorkspaceState.Loaded, healthy.Result.Report.State);
-		Assert.Equal(2, consumer.GeneratedDocumentCount);
+		healthy.Result.Report.State.ShouldBe(WorkspaceState.Loaded);
+		consumer.GeneratedDocumentCount.ShouldBe(2);
 	}
 
 	/// <summary>
@@ -120,12 +123,11 @@ public sealed class SolutionLoaderTests
 
 		using var load = await LoadAsync(fixture);
 
-		Assert.Equal("Release", load.Result.Build.Configuration);
-		Assert.Equal("Release|AnyCPU", load.Result.Report.BuildConfiguration);
+		load.Result.Build.Configuration.ShouldBe("Release");
+		load.Result.Report.BuildConfiguration.ShouldBe("Release|AnyCPU");
 		// Among the notices rather than the only one: a fixture nobody has built also gets told that
 		// its output is older than its sources, which is true and beside the point here.
-		Assert.Contains(
-			load.Result.Report.Notices,
+		load.Result.Report.Notices.ShouldContain(
 			notice => notice.Contains(WorkspaceConfigFile.FileName, StringComparison.Ordinal));
 	}
 

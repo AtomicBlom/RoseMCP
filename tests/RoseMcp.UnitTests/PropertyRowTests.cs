@@ -26,7 +26,7 @@ public sealed class PropertyRowTests
 	[Arguments("ImplicitStyleReference", PropertyOrigin.Style)]
 	[Arguments("ParentTemplate", PropertyOrigin.Style)]
 	public void A_provenance_falls_in_the_bucket_a_reader_acts_on(string provenance, PropertyOrigin origin) =>
-		Assert.Equal(origin, PropertyRow.OriginOf(provenance));
+		PropertyRow.OriginOf(provenance).ShouldBe(origin);
 
 	/// <summary>
 	/// <c>DefaultStyle</c> is a style, and a substring match would file it under Default -- which
@@ -36,8 +36,8 @@ public sealed class PropertyRowTests
 	[Test]
 	public void A_default_style_is_a_style()
 	{
-		Assert.Equal(PropertyOrigin.Style, PropertyRow.OriginOf("DefaultStyle"));
-		Assert.Equal(PropertyOrigin.Style, PropertyRow.OriginOf("DefaultStyleTrigger"));
+		PropertyRow.OriginOf("DefaultStyle").ShouldBe(PropertyOrigin.Style);
+		PropertyRow.OriginOf("DefaultStyleTrigger").ShouldBe(PropertyOrigin.Style);
 	}
 
 	/// <summary>
@@ -50,10 +50,10 @@ public sealed class PropertyRowTests
 	{
 		var row = new PropertyRow(Property("Fill", provenance: "SomethingNew"));
 
-		Assert.Equal(PropertyOrigin.Elsewhere, row.Origin);
-		Assert.Equal("SomethingNew", row.Provenance);
-		Assert.True(row.IsElsewhere);
-		Assert.False(row.IsDefault);
+		row.Origin.ShouldBe(PropertyOrigin.Elsewhere);
+		row.Provenance.ShouldBe("SomethingNew");
+		row.IsElsewhere.ShouldBeTrue();
+		row.IsDefault.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -64,9 +64,9 @@ public sealed class PropertyRowTests
 	[Test]
 	public void An_unrenderable_value_and_a_null_one_do_not_read_alike()
 	{
-		Assert.Equal(PropertyRow.Unavailable, new PropertyRow(Property("CornerRadius", unavailable: true)).Value);
-		Assert.Equal(PropertyRow.Null, new PropertyRow(Property("Tag", value: null)).Value);
-		Assert.Equal(string.Empty, new PropertyRow(Property("Text", value: "")).Value);
+		new PropertyRow(Property("CornerRadius", unavailable: true)).Value.ShouldBe(PropertyRow.Unavailable);
+		new PropertyRow(Property("Tag", value: null)).Value.ShouldBe(PropertyRow.Null);
+		new PropertyRow(Property("Text", value: "")).Value.ShouldBe(string.Empty);
 	}
 
 	/// <summary>
@@ -86,9 +86,8 @@ public sealed class PropertyRowTests
 			Property("Delta", provenance: "Local"),
 		]);
 
-		Assert.Equal(
-			new[] { "Beta", "Delta", "Gamma", "Alpha", "Alpha2", "Zebra" },
-			sorted.Select(row => row.Name).ToArray());
+		sorted.Select(row => row.Name).ToArray().ShouldBe(
+			new[] { "Beta", "Delta", "Gamma", "Alpha", "Alpha2", "Zebra" });
 	}
 
 	/// <summary>
@@ -105,12 +104,12 @@ public sealed class PropertyRowTests
 			sourceFile: @"D:\app\Themes\Generic.xaml",
 			sourceLine: 88));
 
-		Assert.Equal("Generic.xaml:88", fromStyle.Where);
-		Assert.True(fromStyle.HasWhere);
+		fromStyle.Where.ShouldBe("Generic.xaml:88");
+		fromStyle.HasWhere.ShouldBeTrue();
 
 		var fromMarkup = new PropertyRow(Property("Background", provenance: "Local"));
-		Assert.Equal(string.Empty, fromMarkup.Where);
-		Assert.False(fromMarkup.HasWhere);
+		fromMarkup.Where.ShouldBe(string.Empty);
+		fromMarkup.HasWhere.ShouldBeFalse();
 	}
 
 	private static LiveXamlProperty Property(

@@ -48,10 +48,10 @@ public sealed class LiveSessionReportTests
 	{
 		var json = JsonSerializer.Serialize(Held(), ContractJson.Options);
 
-		Assert.Contains("\"execution\":\"StoppedAtBreakpoint\"", json);
-		Assert.Contains("\"xamlStack\":\"WinUi\"", json);
-		Assert.Contains("\"xamlProvider\":\"Resident\"", json);
-		Assert.Contains("\"resume\":\"HeldByOperator\"", json);
+		json.ShouldContain("\"execution\":\"StoppedAtBreakpoint\"", Case.Sensitive);
+		json.ShouldContain("\"xamlStack\":\"WinUi\"", Case.Sensitive);
+		json.ShouldContain("\"xamlProvider\":\"Resident\"", Case.Sensitive);
+		json.ShouldContain("\"resume\":\"HeldByOperator\"", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -65,12 +65,12 @@ public sealed class LiveSessionReportTests
 		var json = JsonSerializer.Serialize(Held(), ContractJson.Options);
 		var read = JsonSerializer.Deserialize<LiveAppSessionSummary>(json, ContractJson.Options);
 
-		Assert.NotNull(read?.Stop);
-		Assert.Equal(57, read!.Stop!.EventSequence);
-		Assert.Equal(12, read.Stop.ThreadId);
-		Assert.Equal("bp-3", read.Stop.BreakpointId);
-		Assert.Equal(LiveStopResume.HeldByOperator, read.Stop.Resume);
-		Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, read.Execution);
+		(read?.Stop).ShouldNotBeNull();
+		read!.Stop!.EventSequence.ShouldBe(57);
+		read.Stop.ThreadId.ShouldBe(12);
+		read.Stop.BreakpointId.ShouldBe("bp-3");
+		read.Stop.Resume.ShouldBe(LiveStopResume.HeldByOperator);
+		read.Execution.ShouldBe(LiveExecutionState.StoppedAtBreakpoint);
 	}
 
 	/// <summary>
@@ -87,8 +87,8 @@ public sealed class LiveSessionReportTests
 		var json = JsonSerializer.Serialize(running, ContractJson.Options);
 		var read = JsonSerializer.Deserialize<LiveAppSessionSummary>(json, ContractJson.Options);
 
-		Assert.Contains("\"execution\":\"Running\"", json);
-		Assert.Null(read?.Stop);
+		json.ShouldContain("\"execution\":\"Running\"", Case.Sensitive);
+		(read?.Stop).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -104,7 +104,7 @@ public sealed class LiveSessionReportTests
 		var read = JsonSerializer.Deserialize<LiveAppSessionSummary>(
 			JsonSerializer.Serialize(fresh, ContractJson.Options), ContractJson.Options);
 
-		Assert.Null(read?.LastEventAge);
-		Assert.Null(read?.InfoAge);
+		(read?.LastEventAge).ShouldBeNull();
+		(read?.InfoAge).ShouldBeNull();
 	}
 }

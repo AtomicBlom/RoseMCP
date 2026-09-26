@@ -48,13 +48,13 @@ public sealed class MethodSearchTests
 
 		var found = MethodSearch.Search([fixture.ModulePath], "Refresh", 20);
 
-		Assert.Equal("Probe.Widget", found.Matches[0].TypeName);
-		Assert.Equal("Refresh", found.Matches[0].MethodName);
-		Assert.Equal("Widget.Refresh", found.Matches[0].DisplayName);
-		Assert.Equal("RefreshAll", found.Matches[1].MethodName);
-		Assert.Equal("Run", found.Matches[^1].MethodName);
-		Assert.Equal(1, found.ModulesSearched);
-		Assert.Equal(0, found.ModulesUnreadable);
+		found.Matches[0].TypeName.ShouldBe("Probe.Widget");
+		found.Matches[0].MethodName.ShouldBe("Refresh");
+		found.Matches[0].DisplayName.ShouldBe("Widget.Refresh");
+		found.Matches[1].MethodName.ShouldBe("RefreshAll");
+		found.Matches[^1].MethodName.ShouldBe("Run");
+		found.ModulesSearched.ShouldBe(1);
+		found.ModulesUnreadable.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -68,10 +68,10 @@ public sealed class MethodSearchTests
 
 		var match = MethodSearch.Search([fixture.ModulePath], "Widget.Refresh", 1).Matches[0];
 
-		Assert.Equal("Probe!Probe.Widget.Refresh", match.Location);
-		Assert.Equal("Probe", match.Module);
-		Assert.Equal(fixture.ModulePath, match.ModulePath);
-		Assert.True(match.HasSymbols);
+		match.Location.ShouldBe("Probe!Probe.Widget.Refresh");
+		match.Module.ShouldBe("Probe");
+		match.ModulePath.ShouldBe(fixture.ModulePath);
+		match.HasSymbols.ShouldBeTrue();
 	}
 
 	/// <summary>A property is one of the things somebody means by "the method or property", under its own name.</summary>
@@ -82,8 +82,8 @@ public sealed class MethodSearchTests
 
 		var found = MethodSearch.Search([fixture.ModulePath], "Title", 20);
 
-		Assert.Contains(found.Matches, match => match.DisplayName == "Widget.Title (get)");
-		Assert.Contains(found.Matches, match => match.DisplayName == "Widget.Title (set)");
+		found.Matches.ShouldContain(match => match.DisplayName == "Widget.Title (get)");
+		found.Matches.ShouldContain(match => match.DisplayName == "Widget.Title (set)");
 	}
 
 	/// <summary>
@@ -96,10 +96,10 @@ public sealed class MethodSearchTests
 		using var fixture = CompiledModule.Of(WidgetSource);
 
 		var found = MethodSearch.Search([fixture.ModulePath], "refreshInner", 20);
-		Assert.Empty(found.Matches);
+		found.Matches.ShouldBeEmpty();
 
 		// And the containing method is, so the absence above is the filter rather than the module.
-		Assert.Contains(MethodSearch.Search([fixture.ModulePath], "Twice", 20).Matches, match => match.MethodName == "Twice");
+		MethodSearch.Search([fixture.ModulePath], "Twice", 20).Matches.ShouldContain(match => match.MethodName == "Twice");
 	}
 
 	/// <summary>
@@ -113,8 +113,8 @@ public sealed class MethodSearchTests
 
 		var match = MethodSearch.Search([fixture.ModulePath], "Refresh", 1).Matches[0];
 
-		Assert.Equal("Refresh", match.MethodName);
-		Assert.False(match.HasSymbols);
+		match.MethodName.ShouldBe("Refresh");
+		match.HasSymbols.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -128,8 +128,8 @@ public sealed class MethodSearchTests
 
 		var found = MethodSearch.Search([fixture.ModulePath], "Refresh", 1);
 
-		Assert.Equal("Refresh", Assert.Single(found.Matches).MethodName);
-		Assert.True(found.Total > 1, $"more than one method matched, and {found.Total} were counted");
+		found.Matches.ShouldHaveSingleItem().MethodName.ShouldBe("Refresh");
+		(found.Total > 1).ShouldBeTrue($"more than one method matched, and {found.Total} were counted");
 	}
 
 	/// <summary>
@@ -144,9 +144,9 @@ public sealed class MethodSearchTests
 
 		var found = MethodSearch.Search([missing, fixture.ModulePath], "Refresh", 20);
 
-		Assert.Equal(1, found.ModulesSearched);
-		Assert.Equal(1, found.ModulesUnreadable);
-		Assert.NotEmpty(found.Matches);
+		found.ModulesSearched.ShouldBe(1);
+		found.ModulesUnreadable.ShouldBe(1);
+		found.Matches.ShouldNotBeEmpty();
 	}
 
 	/// <summary>
@@ -160,7 +160,7 @@ public sealed class MethodSearchTests
 
 		var found = MethodSearch.Search([fixture.ModulePath], "R", 20);
 
-		Assert.Empty(found.Matches);
-		Assert.Equal(0, found.ModulesSearched);
+		found.Matches.ShouldBeEmpty();
+		found.ModulesSearched.ShouldBe(0);
 	}
 }

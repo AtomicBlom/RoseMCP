@@ -1,3 +1,4 @@
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -22,10 +23,16 @@ public sealed class BuildFreshnessTests
 		var freshness = BuildFreshness.Of(snapshot.Solution, null, TestContext.Current!.Execution.CancellationToken);
 
 		// A fresh copy has no bin directory at all, which is the state a clone starts in.
-		Assert.NotEmpty(freshness);
-		Assert.All(freshness, project => Assert.True(project.Stale));
-		Assert.All(freshness, project => Assert.Null(project.OutputWrittenUtc));
-		Assert.Contains(freshness, project => project.Verdict.Contains("Nothing has been built", StringComparison.Ordinal));
+		freshness.ShouldNotBeEmpty();
+		foreach (var project in freshness)
+		{
+			project.Stale.ShouldBeTrue();
+		}
+		foreach (var project in freshness)
+		{
+			project.OutputWrittenUtc.ShouldBeNull();
+		}
+		freshness.ShouldContain(project => project.Verdict.Contains("Nothing has been built", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -42,10 +49,10 @@ public sealed class BuildFreshnessTests
 
 		var built = await FreshnessAsync(session, "Core");
 
-		Assert.False(built.Stale, "the project is fresh before its source is touched");
-		Assert.NotNull(built.OutputPath);
-		Assert.NotNull(built.OutputWrittenUtc);
-		Assert.Equal(0, built.SourcesNewerThanOutput);
+		built.Stale.ShouldBeFalse("the project is fresh before its source is touched");
+		built.OutputPath.ShouldNotBeNull();
+		built.OutputWrittenUtc.ShouldNotBeNull();
+		built.SourcesNewerThanOutput.ShouldBe(0);
 
 		// Touched the way an edit touches it, well after the build.
 		var calculator = fixture.Path("Simple", "Core", "Calculator.cs");
@@ -53,10 +60,10 @@ public sealed class BuildFreshnessTests
 
 		var touched = await FreshnessAsync(session, "Core");
 
-		Assert.True(touched.Stale);
-		Assert.Equal(1, touched.SourcesNewerThanOutput);
-		Assert.Equal(calculator, touched.NewestSourcePath, ignoreCase: true);
-		Assert.Contains("Build before running", touched.Verdict, StringComparison.Ordinal);
+		touched.Stale.ShouldBeTrue();
+		touched.SourcesNewerThanOutput.ShouldBe(1);
+		touched.NewestSourcePath.ShouldBe(calculator, StringCompareShould.IgnoreCase);
+		touched.Verdict.ShouldContain("Build before running", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -71,15 +78,15 @@ public sealed class BuildFreshnessTests
 
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		Assert.False((await FreshnessAsync(session, "Core")).Stale);
+		(await FreshnessAsync(session, "Core")).Stale.ShouldBeFalse();
 
 		File.SetLastWriteTimeUtc(
 			fixture.Path("Simple", "Core", "Core.csproj"), DateTime.UtcNow.AddMinutes(1));
 
 		var touched = await FreshnessAsync(session, "Core");
 
-		Assert.True(touched.Stale);
-		Assert.EndsWith("Core.csproj", touched.NewestSourcePath, StringComparison.OrdinalIgnoreCase);
+		touched.Stale.ShouldBeTrue();
+		touched.NewestSourcePath.ShouldEndWith("Core.csproj", Case.Insensitive);
 	}
 
 	/// <summary>Naming one project answers about that one and not the rest.</summary>
@@ -91,8 +98,8 @@ public sealed class BuildFreshnessTests
 
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Single(BuildFreshness.Of(snapshot.Solution, "Core", TestContext.Current!.Execution.CancellationToken));
-		Assert.Empty(BuildFreshness.Of(snapshot.Solution, "Nonexistent", TestContext.Current!.Execution.CancellationToken));
+		BuildFreshness.Of(snapshot.Solution, "Core", TestContext.Current!.Execution.CancellationToken).ShouldHaveSingleItem();
+		BuildFreshness.Of(snapshot.Solution, "Nonexistent", TestContext.Current!.Execution.CancellationToken).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -118,18 +125,17 @@ public sealed class BuildFreshnessTests
 			loadSeconds: 0,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains(
-			status.Notices,
+		status.Notices.ShouldContain(
 			notice => notice.Contains("newer than their last build output", StringComparison.Ordinal));
 
-		Assert.Empty(status.DegradedReasons);
-		Assert.Equal(Contracts.WorkspaceState.Loaded, status.State);
+		status.DegradedReasons.ShouldBeEmpty();
+		status.State.ShouldBe(Contracts.WorkspaceState.Loaded);
 	}
 
 	private static async Task<Contracts.ProjectFreshness> FreshnessAsync(WorkspaceSession session, string project)
 	{
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		return Assert.Single(BuildFreshness.Of(snapshot.Solution, project, TestContext.Current!.Execution.CancellationToken));
+		return BuildFreshness.Of(snapshot.Solution, project, TestContext.Current!.Execution.CancellationToken).ShouldHaveSingleItem();
 	}
 }

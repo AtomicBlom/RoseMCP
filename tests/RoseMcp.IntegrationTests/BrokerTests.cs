@@ -51,15 +51,15 @@ public sealed class BrokerTests
 
 		var started = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(fixture.SolutionPath, started.Workspace);
-		Assert.NotEmpty(started.WorkspaceKey);
-		Assert.True(started.Alive, $"the worker should be alive; exit reason was '{started.ExitReason}'");
+		started.Workspace.ShouldBe(fixture.SolutionPath);
+		started.WorkspaceKey.ShouldNotBeEmpty();
+		started.Alive.ShouldBeTrue($"the worker should be alive; exit reason was '{started.ExitReason}'");
 
 		// Polling is the same call, so it must not start a second worker.
 		var polled = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(started.ProcessId, polled.ProcessId);
-		Assert.Single(manager.Workers);
+		polled.ProcessId.ShouldBe(started.ProcessId);
+		manager.Workers.ShouldHaveSingleItem();
 
 		// And the promise that makes starting early safe: every other tool still blocks until the
 		// workspace can answer, so a question asked immediately gets a real answer rather than a
@@ -67,8 +67,8 @@ public sealed class BrokerTests
 		var status = await tools.StatusAsync(
 			new Progress<ProgressNotificationValue>(), fixture.SolutionPath, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(WorkspaceState.Loaded, status.State);
-		Assert.NotEmpty(status.Projects);
+		status.State.ShouldBe(WorkspaceState.Loaded);
+		status.Projects.ShouldNotBeEmpty();
 
 		// Loaded now, so opening again has nothing to wait for and says nothing about waiting. The
 		// notice belongs to the loading answer alone: told unconditionally it would read as "still
@@ -76,8 +76,8 @@ public sealed class BrokerTests
 		// completion must not be told.
 		var settled = await tools.OpenAsync(fixture.SolutionPath, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(WorkspaceState.Loaded, settled.State);
-		Assert.DoesNotContain(settled.Notices, notice => notice.Contains("Still loading", StringComparison.Ordinal));
+		settled.State.ShouldBe(WorkspaceState.Loaded);
+		settled.Notices.ShouldNotContain(notice => notice.Contains("Still loading", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -114,17 +114,17 @@ public sealed class BrokerTests
 		// of the pairing untested on every machine fast enough to skip it.
 		if (opened.State == WorkspaceState.Loading)
 		{
-			Assert.Contains(opened.Notices, notice => notice.Contains("rose_workspace_open", StringComparison.Ordinal));
+			opened.Notices.ShouldContain(notice => notice.Contains("rose_workspace_open", StringComparison.Ordinal));
 
-			Assert.Null(opened.ProjectCount);
-			Assert.Null(opened.LoadSeconds);
+			opened.ProjectCount.ShouldBeNull();
+			opened.LoadSeconds.ShouldBeNull();
 		}
 		else
 		{
-			Assert.Equal(WorkspaceState.Loaded, opened.State);
+			opened.State.ShouldBe(WorkspaceState.Loaded);
 
-			Assert.NotNull(opened.ProjectCount);
-			Assert.NotNull(opened.LoadSeconds);
+			opened.ProjectCount.ShouldNotBeNull();
+			opened.LoadSeconds.ShouldNotBeNull();
 		}
 	}
 
@@ -148,7 +148,7 @@ public sealed class BrokerTests
 		var status = await restarted.CallAsync<WorkspaceStatusReport>(
 			ToolNames.WorkspaceStatus, new Dictionary<string, object?>(), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("Release|AnyCPU", status.BuildConfiguration);
+		status.BuildConfiguration.ShouldBe("Release|AnyCPU");
 	}
 
 	/// <summary>
@@ -165,15 +165,15 @@ public sealed class BrokerTests
 		var status = await first.CallAsync<WorkspaceStatusReport>(
 			ToolNames.WorkspaceStatus, new Dictionary<string, object?>(), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(WorkspaceState.Loaded, status.State);
+		status.State.ShouldBe(WorkspaceState.Loaded);
 
 		// Resolve from a source file this time; it must land on the same worker.
 		var second = await manager.GetOrStartAsync(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.Path("Simple", "Core", "Calculator.cs"))),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Same(first, second);
-		Assert.Single(manager.Workers);
+		second.ShouldBeSameAs(first);
+		manager.Workers.ShouldHaveSingleItem();
 	}
 
 	[Test]
@@ -186,7 +186,7 @@ public sealed class BrokerTests
 		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(simple.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(generator.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(2, manager.Workers.Count);
+		manager.Workers.Count.ShouldBe(2);
 
 		// A call with nothing to go on is resolved from where the asking came from, and this manager
 		// is rooted somewhere with no solution -- so it fails, and names both what it looked at and
@@ -196,12 +196,12 @@ public sealed class BrokerTests
 		// exception it does not recognise as "An error occurred invoking 'rose_diagnostics'." and
 		// throws the message away, leaving a caller that could have corrected the call itself with
 		// nothing to go on.
-		var error = await Assert.ThrowsAsync<McpException>(
-			() => manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken));
+		var error = await Should.ThrowAsync<McpException>(
+			() => manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("workspace argument", error.Message, StringComparison.Ordinal);
-		Assert.Contains(simple.SolutionPath, error.Message, StringComparison.OrdinalIgnoreCase);
-		Assert.Contains(generator.SolutionPath, error.Message, StringComparison.OrdinalIgnoreCase);
+		error.Message.ShouldContain("workspace argument", Case.Sensitive);
+		error.Message.ShouldContain(simple.SolutionPath, Case.Insensitive);
+		error.Message.ShouldContain(generator.SolutionPath, Case.Insensitive);
 	}
 
 	/// <summary>
@@ -224,8 +224,8 @@ public sealed class BrokerTests
 
 		var bare = await manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.NotSame(theirs, bare);
-		Assert.Equal(mine.SolutionPath, bare.SolutionPath, ignoreCase: true);
+		bare.ShouldNotBeSameAs(theirs);
+		bare.SolutionPath.ShouldBe(mine.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -241,10 +241,10 @@ public sealed class BrokerTests
 		await manager.GetOrStartAsync(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
-		var error = await Assert.ThrowsAsync<McpException>(
-			() => manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken));
+		var error = await Should.ThrowAsync<McpException>(
+			() => manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains(fixture.SolutionPath, error.Message, StringComparison.OrdinalIgnoreCase);
+		error.Message.ShouldContain(fixture.SolutionPath, Case.Insensitive);
 	}
 
 	[Test]
@@ -257,14 +257,14 @@ public sealed class BrokerTests
 
 		var closed = await manager.CloseAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(closed.Closed);
-		Assert.Equal(fixture.SolutionPath, closed.Workspace);
-		Assert.NotEmpty(closed.WorkspaceKey);
-		Assert.Empty(manager.Workers);
-		Assert.False(worker.IsAlive, "closing the workspace stops its worker");
+		closed.Closed.ShouldBeTrue();
+		closed.Workspace.ShouldBe(fixture.SolutionPath);
+		closed.WorkspaceKey.ShouldNotBeEmpty();
+		manager.Workers.ShouldBeEmpty();
+		worker.IsAlive.ShouldBeFalse("closing the workspace stops its worker");
 
 		// Closing something that is not open is a no-op, not an error.
-		Assert.False((await manager.CloseAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken)).Closed);
+		(await manager.CloseAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken)).Closed.ShouldBeFalse();
 	}
 
 	[Test]
@@ -274,13 +274,13 @@ public sealed class BrokerTests
 
 		var missing = Path.Combine(Path.GetTempPath(), $"nope-{Guid.NewGuid():N}", "Nope.sln");
 
-		var error = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(missing)), TestContext.Current!.Execution.CancellationToken));
+		var error = await Should.ThrowAsync<InvalidOperationException>(
+			() => manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(missing)), TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
 		// Naming the path matters: this is also what a caller sees after a branch switch removes
 		// the solution out from under them.
-		Assert.Contains(missing, error.Message, StringComparison.OrdinalIgnoreCase);
-		Assert.Empty(manager.Workers);
+		error.Message.ShouldContain(missing, Case.Insensitive);
+		manager.Workers.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -295,18 +295,18 @@ public sealed class BrokerTests
 
 		await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
-		var summary = Assert.Single(manager.Describe());
+		var summary = manager.Describe().ShouldHaveSingleItem();
 
-		Assert.Equal("Simple", summary.DisplayName);
-		Assert.True(summary.Alive);
-		Assert.Equal("Running", summary.ExitReason);
-		Assert.NotNull(summary.ProcessId);
-		Assert.NotEqual(Environment.ProcessId, summary.ProcessId);
+		summary.DisplayName.ShouldBe("Simple");
+		summary.Alive.ShouldBeTrue();
+		summary.ExitReason.ShouldBe("Running");
+		summary.ProcessId.ShouldNotBeNull();
+		summary.ProcessId.ShouldNotBe(Environment.ProcessId);
 
 		// A Roslyn host is never this small; a zero here would mean we sampled the wrong thing.
-		Assert.True(summary.WorkingSetBytes > 1_000_000, $"working set was {summary.WorkingSetBytes}");
-		Assert.True(summary.ManagedHeapBytes > 0);
-		Assert.True(summary.Uptime > TimeSpan.Zero);
+		(summary.WorkingSetBytes > 1_000_000).ShouldBeTrue($"working set was {summary.WorkingSetBytes}");
+		(summary.ManagedHeapBytes > 0).ShouldBeTrue();
+		(summary.Uptime > TimeSpan.Zero).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -322,7 +322,7 @@ public sealed class BrokerTests
 		// No open call, no path.
 		var worker = await manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(fixture.SolutionPath, worker.SolutionPath, ignoreCase: true);
+		worker.SolutionPath.ShouldBe(fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -336,10 +336,10 @@ public sealed class BrokerTests
 		var nowhere = NowhereDirectory.Path();
 		await using var manager = CreateManager(nowhere);
 
-		var error = await Assert.ThrowsAsync<McpException>(
-			() => manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken));
+		var error = await Should.ThrowAsync<McpException>(
+			() => manager.GetOrStartAsync(WorkspaceHints.None, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains(nowhere, error.Message, StringComparison.OrdinalIgnoreCase);
+		error.Message.ShouldContain(nowhere, Case.Insensitive);
 	}
 
 	/// <summary>
@@ -360,12 +360,12 @@ public sealed class BrokerTests
 			() => manager.Describe().Single() is { LoadSeconds: not null } summary ? summary : null,
 			TimeSpan.FromMinutes(2));
 
-		Assert.Equal(WorkspaceState.Loaded, loaded.State);
-		Assert.Equal("Debug|AnyCPU", loaded.BuildConfiguration);
-		Assert.Equal(2, loaded.ProjectCount);
-		Assert.Empty(loaded.FailedProjects);
-		Assert.Empty(loaded.DegradedReasons);
-		Assert.True(loaded.LoadSeconds > 0);
+		loaded.State.ShouldBe(WorkspaceState.Loaded);
+		loaded.BuildConfiguration.ShouldBe("Debug|AnyCPU");
+		loaded.ProjectCount.ShouldBe(2);
+		loaded.FailedProjects.ShouldBeEmpty();
+		loaded.DegradedReasons.ShouldBeEmpty();
+		(loaded.LoadSeconds > 0).ShouldBeTrue();
 	}
 
 	/// <summary>Waits for something to show up, since the load is followed on another thread.</summary>

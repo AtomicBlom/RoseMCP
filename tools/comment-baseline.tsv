@@ -2,7 +2,6 @@
 # The counts may only go down. See CLAUDE.md, Conventions, for what each rule is about.
 .github/workflows/ci.yml	issue	2
 .github/workflows/release.yml	issue	2
-Directory.Packages.props	history	1
 src/RoseMcp.Broker/CallOrigin.cs	history	1
 src/RoseMcp.Broker/LiveAppSession.cs	issue	1
 src/RoseMcp.Broker/LocalAttachPolicy.cs	issue	1

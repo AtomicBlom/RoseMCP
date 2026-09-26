@@ -4,8 +4,6 @@ using System.Text.Json;
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
-using Xunit.Sdk;
-
 using static RoseMcp.IntegrationTests.BrokerHarness;
 
 namespace RoseMcp.IntegrationTests;
@@ -37,10 +35,10 @@ public sealed class BrokerWorkerTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager(workerHandshakeTimeout: TimeSpan.FromMilliseconds(1));
 
-		var failure = await Assert.ThrowsAnyAsync<Exception>(() => manager.GetOrStartAsync(
+		var failure = await Should.ThrowAsync<Exception>(() => manager.GetOrStartAsync(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken));
 
-		Assert.Contains("timed out", failure.Message, StringComparison.OrdinalIgnoreCase);
+		failure.Message.ShouldContain("timed out", Case.Insensitive);
 	}
 
 	/// <summary>
@@ -68,11 +66,11 @@ public sealed class BrokerWorkerTests
 			hints, ToolNames.WorkspaceStatus, new Dictionary<string, object?>(), retryIfWorkerDied: true, cancellationToken);
 
 		var worker = await manager.GetOrStartAsync(hints, cancellationToken);
-		Assert.True(worker.IsAlive);
+		worker.IsAlive.ShouldBeTrue();
 
 		Directory.Delete(fixture.Root, recursive: true);
 
-		Assert.False(Directory.Exists(fixture.Root));
+		Directory.Exists(fixture.Root).ShouldBeFalse();
 	}
 
 	[Test]
@@ -84,10 +82,10 @@ public sealed class BrokerWorkerTests
 		var before = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 		var after = await manager.RestartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.NotSame(before, after);
-		Assert.Equal(WorkerExitReason.StoppedByBroker, before.ExitReason);
-		Assert.True(after.IsAlive);
-		Assert.Single(manager.Workers);
+		after.ShouldNotBeSameAs(before);
+		before.ExitReason.ShouldBe(WorkerExitReason.StoppedByBroker);
+		after.IsAlive.ShouldBeTrue();
+		manager.Workers.ShouldHaveSingleItem();
 	}
 
 	/// <summary>
@@ -133,10 +131,9 @@ public sealed class BrokerWorkerTests
 
 		await cancelling.CancelAsync();
 
-		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => slow);
+		await Should.ThrowAsync<OperationCanceledException>(() => slow);
 
-		Assert.Contains(
-			manager.Activities.Recent(fixture.SolutionPath),
+		manager.Activities.Recent(fixture.SolutionPath).ShouldContain(
 			activity => activity.Operation == ToolNames.Diagnostics && activity.Outcome == ActivityOutcome.Cancelled);
 
 		// And the worker answers the next question, rather than the cancellation having taken it with it.
@@ -147,7 +144,7 @@ public sealed class BrokerWorkerTests
 			retryIfWorkerDied: false,
 			cancellationToken);
 
-		Assert.Equal(WorkspaceState.Loaded, afterwards.State);
+		afterwards.State.ShouldBe(WorkspaceState.Loaded);
 	}
 
 	/// <summary>
@@ -192,8 +189,7 @@ public sealed class BrokerWorkerTests
 
 		server.CloseStandardInput();
 
-		Assert.True(
-			await server.WaitForExitAsync(TimeSpan.FromMinutes(2), cancellationToken),
+		(await server.WaitForExitAsync(TimeSpan.FromMinutes(2), cancellationToken)).ShouldBeTrue(
 			$"the server (pid {server.Id}) was still running two minutes after its client's stdin closed");
 
 		// And the worker goes with it, which is the invariant this extends rather than replaces.
@@ -203,7 +199,7 @@ public sealed class BrokerWorkerTests
 			await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
 		}
 
-		Assert.DoesNotContain(worker, WorkerProcessIds());
+		WorkerProcessIds().ShouldNotContain(worker);
 
 		// Whether the in-flight call was answered is a race, and asserting either way is wrong. The
 		// server finishes work already running before it exits -- measured at fourteen seconds for a
@@ -218,11 +214,10 @@ public sealed class BrokerWorkerTests
 		try
 		{
 			using var answered = await call;
-			Assert.True(
-				answered.RootElement.TryGetProperty("result", out _) || answered.RootElement.TryGetProperty("error", out _),
+			(answered.RootElement.TryGetProperty("result", out _) || answered.RootElement.TryGetProperty("error", out _)).ShouldBeTrue(
 				"a reply that arrives at all has to be a JSON-RPC result or error");
 		}
-		catch (Exception exception) when (exception is not TrueException)
+		catch (Exception exception) when (exception is not ShouldAssertException)
 		{
 			// The other legitimate outcome: the stream went before the answer did.
 		}
@@ -253,15 +248,15 @@ public sealed class BrokerWorkerTests
 
 		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), cancellationToken);
 
-		Assert.True(worker.IsAlive, $"the worker should be alive; exit reason was '{worker.ExitReason}'");
-		Assert.NotNull(worker.ProcessId);
+		worker.IsAlive.ShouldBeTrue($"the worker should be alive; exit reason was '{worker.ExitReason}'");
+		worker.ProcessId.ShouldNotBeNull();
 
 		// The load, and then the heap read that follows it. Both are calls, and a call notices a dead
 		// worker by itself -- which is the behaviour this test has to run after rather than alongside.
 		await WaitForLoadAsync(worker, cancellationToken);
 		await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
 
-		Assert.True(worker.IsAlive, "the worker should still be alive with nothing having been asked of it");
+		worker.IsAlive.ShouldBeTrue("the worker should still be alive with nothing having been asked of it");
 
 		using (var process = Process.GetProcessById(worker.ProcessId!.Value))
 		{
@@ -274,14 +269,14 @@ public sealed class BrokerWorkerTests
 			await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
 		}
 
-		Assert.False(worker.IsAlive, "a worker killed from outside should be reported dead without being called");
-		Assert.Equal(WorkerExitReason.Crashed, worker.ExitReason);
+		worker.IsAlive.ShouldBeFalse("a worker killed from outside should be reported dead without being called");
+		worker.ExitReason.ShouldBe(WorkerExitReason.Crashed);
 
 		// And the description the tray reads agrees, which is the thing that was wrong.
-		var described = Assert.Single(manager.Describe());
+		var described = manager.Describe().ShouldHaveSingleItem();
 
-		Assert.False(described.Alive, "the description a tray polls should agree that the worker is gone");
-		Assert.Equal(WorkspaceState.Faulted, described.State);
+		described.Alive.ShouldBeFalse("the description a tray polls should agree that the worker is gone");
+		described.State.ShouldBe(WorkspaceState.Faulted);
 	}
 
 	/// <summary>
@@ -343,14 +338,14 @@ public sealed class BrokerWorkerTests
 			retryIfWorkerDied: true,
 			cancellationToken);
 
-		Assert.Equal(WorkspaceState.Loaded, status.State);
-		Assert.NotEmpty(status.Projects);
+		status.State.ShouldBe(WorkspaceState.Loaded);
+		status.Projects.ShouldNotBeEmpty();
 
-		var replacement = Assert.Single(manager.Workers);
+		var replacement = manager.Workers.ShouldHaveSingleItem();
 
-		Assert.NotEqual(original.ProcessId, replacement.ProcessId);
-		Assert.Equal(fixture.SolutionPath, replacement.SolutionPath);
-		Assert.True(replacement.IsAlive, $"the replacement should be alive; exit reason was '{replacement.ExitReason}'");
+		replacement.ProcessId.ShouldNotBe(original.ProcessId);
+		replacement.SolutionPath.ShouldBe(fixture.SolutionPath);
+		replacement.IsAlive.ShouldBeTrue($"the replacement should be alive; exit reason was '{replacement.ExitReason}'");
 	}
 
 	/// <summary>The worker this server started, waited for rather than assumed to exist already.</summary>

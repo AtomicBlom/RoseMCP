@@ -32,7 +32,7 @@ public sealed class XamlProviderPipeTests
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
 
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
 		// The host waits on a thread of its own, which is not a nicety: the pipe is created with no
 		// output buffer, so a client that writes before the server has accepted blocks in its write
@@ -43,9 +43,9 @@ public sealed class XamlProviderPipeTests
 		using var provider = await ConnectAsync(pipe.Name);
 		await SendFrameAsync(provider, XamlWire.Greeting(pipe.Nonce));
 
-		Assert.Equal(XamlWire.Greeting(pipe.Nonce), await waiting);
-		Assert.True(pipe.Connected);
-		Assert.Null(pipe.Refused);
+		(await waiting).ShouldBe(XamlWire.Greeting(pipe.Nonce));
+		pipe.Connected.ShouldBeTrue();
+		pipe.Refused.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -68,7 +68,7 @@ public sealed class XamlProviderPipeTests
 	public async Task Listens_again_for_a_provider_that_reconnects_after_the_first_one_goes()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
 		(await GreetAsync(pipe)).Dispose();
 
@@ -77,12 +77,12 @@ public sealed class XamlProviderPipeTests
 		var waiting = Task.Run(() => pipe.WaitForProvider(Patience));
 
 		await Task.Delay(200);
-		Assert.False(waiting.IsCompleted, "the wait was answered before the second provider greeted");
+		waiting.IsCompleted.ShouldBeFalse("the wait was answered before the second provider greeted");
 
 		await SendFrameAsync(second, XamlWire.Greeting(pipe.Nonce));
 
-		Assert.Equal(XamlWire.Greeting(pipe.Nonce), await waiting);
-		Assert.True(pipe.Connected);
+		(await waiting).ShouldBe(XamlWire.Greeting(pipe.Nonce));
+		pipe.Connected.ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -94,7 +94,7 @@ public sealed class XamlProviderPipeTests
 	public async Task Serves_a_request_over_the_reconnected_pipe()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
 		(await GreetAsync(pipe)).Dispose();
 		using var second = await GreetAsync(pipe);
@@ -103,11 +103,11 @@ public sealed class XamlProviderPipeTests
 		var answering = Task.Run(async () =>
 		{
 			var (id, request) = await ReadRequestAsync(second);
-			Assert.Equal("tree", request);
+			request.ShouldBe("tree");
 			await SendFrameAsync(second, XamlWire.Frame(id, "one\ttwo"));
 		});
 
-		Assert.Equal("one\ttwo", pipe.Request("tree", Patience));
+		pipe.Request("tree", Patience).ShouldBe("one\ttwo");
 		await answering;
 	}
 
@@ -122,7 +122,7 @@ public sealed class XamlProviderPipeTests
 	public async Task Drops_a_late_reply_by_its_id_and_answers_the_next_request_with_its_own()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
 		using var provider = await GreetAsync(pipe);
 		var gaveUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -136,14 +136,14 @@ public sealed class XamlProviderPipeTests
 			await SendFrameAsync(provider, XamlWire.Frame(first, "the tree, late"));
 
 			var (second, request) = await ReadRequestAsync(provider);
-			Assert.Equal("selection", request);
+			request.ShouldBe("selection");
 			await SendFrameAsync(provider, XamlWire.Frame(second, "the selection"));
 		});
 
-		Assert.Null(pipe.Request("tree", TimeSpan.FromMilliseconds(300)));
+		pipe.Request("tree", TimeSpan.FromMilliseconds(300)).ShouldBeNull();
 		gaveUp.SetResult();
 
-		Assert.Equal("the selection", pipe.Request("selection", Patience));
+		pipe.Request("selection", Patience).ShouldBe("the selection");
 		await serving;
 	}
 
@@ -158,7 +158,7 @@ public sealed class XamlProviderPipeTests
 	public async Task Refuses_a_provider_older_than_the_host_and_says_why()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
 		var waiting = Task.Run(() => pipe.WaitForProvider(Patience));
 
@@ -167,12 +167,12 @@ public sealed class XamlProviderPipeTests
 
 		// Released as soon as the greeting is refused, rather than at the bound.
 		var answered = await Task.WhenAny(waiting, Task.Delay(Patience / 2));
-		Assert.Same(waiting, answered);
-		Assert.Null(await waiting);
+		answered.ShouldBeSameAs(waiting);
+		(await waiting).ShouldBeNull();
 
-		Assert.False(pipe.Connected);
-		Assert.NotNull(pipe.Refused);
-		Assert.Contains("older than this host", pipe.Refused);
+		pipe.Connected.ShouldBeFalse();
+		pipe.Refused.ShouldNotBeNull();
+		pipe.Refused.ShouldContain("older than this host", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -183,16 +183,16 @@ public sealed class XamlProviderPipeTests
 	public async Task Refuses_a_provider_that_does_not_present_the_sessions_key()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
 		var waiting = Task.Run(() => pipe.WaitForProvider(Patience));
 
 		using var provider = await ConnectAsync(pipe.Name);
 		await SendFrameAsync(provider, XamlWire.Greeting("not-this-sessions-key"));
 
-		Assert.Null(await waiting);
-		Assert.False(pipe.Connected);
-		Assert.Contains("key", pipe.Refused!);
+		(await waiting).ShouldBeNull();
+		pipe.Connected.ShouldBeFalse();
+		pipe.Refused!.ShouldContain("key", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -204,19 +204,19 @@ public sealed class XamlProviderPipeTests
 	public async Task Accepts_the_right_provider_after_refusing_one()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
 		var refused = Task.Run(() => pipe.WaitForProvider(Patience));
 		using (var impostor = await ConnectAsync(pipe.Name))
 		{
 			await SendFrameAsync(impostor, XamlWire.Greeting("not-this-sessions-key"));
-			Assert.Null(await refused);
+			(await refused).ShouldBeNull();
 		}
 
 		using var provider = await GreetAsync(pipe);
 
-		Assert.True(pipe.Connected);
-		Assert.Null(pipe.Refused);
+		pipe.Connected.ShouldBeTrue();
+		pipe.Refused.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -227,11 +227,11 @@ public sealed class XamlProviderPipeTests
 	public void Gives_up_on_a_provider_that_never_connects()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
-		Assert.Null(pipe.WaitForProvider(TimeSpan.FromMilliseconds(250)));
-		Assert.False(pipe.Connected);
-		Assert.Null(pipe.Refused);
+		pipe.WaitForProvider(TimeSpan.FromMilliseconds(250)).ShouldBeNull();
+		pipe.Connected.ShouldBeFalse();
+		pipe.Refused.ShouldBeNull();
 	}
 
 	private static async Task<NamedPipeClientStream> ConnectAsync(string name)
@@ -273,7 +273,7 @@ public sealed class XamlProviderPipeTests
 	private static async Task<(uint Id, string Request)> ReadRequestAsync(Stream stream)
 	{
 		var frame = await ReadFrameAsync(stream);
-		Assert.True(XamlWire.TryReadFrame(frame, out var id, out var request), $"a request with no id: '{frame}'");
+		XamlWire.TryReadFrame(frame, out var id, out var request).ShouldBeTrue($"a request with no id: '{frame}'");
 
 		return (id, request);
 	}
@@ -284,7 +284,7 @@ public sealed class XamlProviderPipeTests
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
 
-		Assert.StartsWith($"rosemcp-xaml-{Environment.ProcessId}-", pipe.Name, StringComparison.Ordinal);
+		pipe.Name.ShouldStartWith($"rosemcp-xaml-{Environment.ProcessId}-", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -300,7 +300,7 @@ public sealed class XamlProviderPipeTests
 		var provider = await ConnectAsync(pipe.Name);
 		await SendFrameAsync(provider, XamlWire.Greeting(pipe.Nonce));
 
-		Assert.Equal(XamlWire.Greeting(pipe.Nonce), await waiting);
+		(await waiting).ShouldBe(XamlWire.Greeting(pipe.Nonce));
 
 		return provider;
 	}
@@ -314,14 +314,14 @@ public sealed class XamlProviderPipeTests
 	public async Task Reports_whether_it_still_believes_a_departed_provider_is_connected()
 	{
 		using var pipe = new XamlProviderPipe(NullLogger.Instance);
-		Assert.Null(pipe.Listen());
+		pipe.Listen().ShouldBeNull();
 
 		var provider = await GreetAsync(pipe);
-		Assert.True(pipe.Connected);
+		pipe.Connected.ShouldBeTrue();
 
 		provider.Dispose();
 		await Task.Delay(250);
 
-		Assert.False(pipe.Connected, "a host that still believes a departed provider is connected never hangs up and never listens again");
+		pipe.Connected.ShouldBeFalse("a host that still believes a departed provider is connected never hangs up and never listens again");
 	}
 }

@@ -50,7 +50,7 @@ public sealed class PublishedLayoutTests : IDisposable
 	{
 		var resolved = WorkerLauncher.ResolveWorkerPath(new BrokerOptions(), _root, searchRepository: false);
 
-		Assert.Equal(Path.GetDirectoryName(Path.GetFullPath(resolved)), Path.GetFullPath(_root));
+		Path.GetFullPath(_root).ShouldBe(Path.GetDirectoryName(Path.GetFullPath(resolved)));
 	}
 
 	/// <summary>
@@ -67,7 +67,7 @@ public sealed class PublishedLayoutTests : IDisposable
 
 		var resolved = WorkerLauncher.ResolveWorkerPath(new BrokerOptions(), tray, searchRepository: false);
 
-		Assert.Equal(Path.GetDirectoryName(Path.GetFullPath(resolved)), Path.GetFullPath(_root));
+		Path.GetFullPath(_root).ShouldBe(Path.GetDirectoryName(Path.GetFullPath(resolved)));
 	}
 
 	/// <summary>
@@ -82,10 +82,9 @@ public sealed class PublishedLayoutTests : IDisposable
 
 		var resolved = InspectorLauncher.ResolvePath(baseDirectory: tray, searchRepository: false);
 
-		Assert.NotNull(resolved);
-		Assert.Equal(
-			Path.GetFullPath(Path.Combine(_root, "inspector", InspectorLauncher.ExecutableName)),
-			Path.GetFullPath(resolved!));
+		resolved.ShouldNotBeNull();
+		Path.GetFullPath(resolved!).ShouldBe(
+			Path.GetFullPath(Path.Combine(_root, "inspector", InspectorLauncher.ExecutableName)));
 	}
 
 	/// <summary>
@@ -96,10 +95,9 @@ public sealed class PublishedLayoutTests : IDisposable
 	{
 		var resolved = InspectorLauncher.ResolvePath(baseDirectory: _root, searchRepository: false);
 
-		Assert.NotNull(resolved);
-		Assert.Equal(
-			Path.GetFullPath(Path.Combine(_root, "inspector", InspectorLauncher.ExecutableName)),
-			Path.GetFullPath(resolved!));
+		resolved.ShouldNotBeNull();
+		Path.GetFullPath(resolved!).ShouldBe(
+			Path.GetFullPath(Path.Combine(_root, "inspector", InspectorLauncher.ExecutableName)));
 	}
 
 	/// <summary>
@@ -113,7 +111,7 @@ public sealed class PublishedLayoutTests : IDisposable
 
 		var resolved = InspectorLauncher.ResolvePath(baseDirectory: elsewhere, searchRepository: false);
 
-		Assert.Null(resolved);
+		resolved.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -128,15 +126,15 @@ public sealed class PublishedLayoutTests : IDisposable
 		var withSession = InspectorLauncher.CommandLine(
 			@"C:\Program Files\Rose\inspector\RoseMcp.Inspector.exe", "127.0.0.1", 5077, token, "session-abcd1234");
 
-		Assert.StartsWith("\"C:\\Program Files\\Rose\\inspector\\RoseMcp.Inspector.exe\"", withSession);
-		Assert.Contains("--port 5077", withSession);
-		Assert.Contains("--token a-token", withSession);
-		Assert.Contains("--session session-abcd1234", withSession);
+		withSession.ShouldStartWith("\"C:\\Program Files\\Rose\\inspector\\RoseMcp.Inspector.exe\"", Case.Sensitive);
+		withSession.ShouldContain("--port 5077", Case.Sensitive);
+		withSession.ShouldContain("--token a-token", Case.Sensitive);
+		withSession.ShouldContain("--session session-abcd1234", Case.Sensitive);
 
 		var withoutSession = InspectorLauncher.CommandLine(
 			@"C:\Rose\RoseMcp.Inspector.exe", "127.0.0.1", 5077, token, sessionId: null);
 
-		Assert.DoesNotContain("--session", withoutSession);
+		withoutSession.ShouldNotContain("--session", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -149,15 +147,13 @@ public sealed class PublishedLayoutTests : IDisposable
 	{
 		var arguments = InspectorLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1");
 
-		Assert.Equal(
-			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1"],
-			arguments);
+		arguments.ShouldBe(
+			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1"]);
 
 		// The target's pid rides along when the launcher knows it, because the inspector keys its
 		// single instance on the process and cannot ask anybody what that is in time.
-		Assert.Equal(
-			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1", "--target-pid", "4242"],
-			InspectorLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1", 4242));
+		InspectorLauncher.Arguments("127.0.0.1", 5077, new OperatorToken("a-token"), "session-1", 4242).ShouldBe(
+			["--host", "127.0.0.1", "--port", "5077", "--token", "a-token", "--session", "session-1", "--target-pid", "4242"]);
 	}
 
 	/// <summary>
@@ -173,9 +169,8 @@ public sealed class PublishedLayoutTests : IDisposable
 			var resolved = LiveAppHostLauncher.ResolveHostPath(
 				architecture, new BrokerOptions(), directory, searchRepository: false);
 
-			Assert.Equal(
-				Path.GetFullPath(Path.Combine(_root, "live-app", rid)),
-				Path.GetDirectoryName(Path.GetFullPath(resolved)));
+			Path.GetDirectoryName(Path.GetFullPath(resolved)).ShouldBe(
+				Path.GetFullPath(Path.Combine(_root, "live-app", rid)));
 		}
 	}
 
@@ -187,12 +182,12 @@ public sealed class PublishedLayoutTests : IDisposable
 	[Test]
 	public void Says_which_layout_it_wanted_when_the_host_is_not_published()
 	{
-		var error = Assert.Throws<FileNotFoundException>(
+		var error = Should.Throw<FileNotFoundException>(
 			() => LiveAppHostLauncher.ResolveHostPath(
-				TargetArchitecture.X86, new BrokerOptions(), _root, searchRepository: false));
+				TargetArchitecture.X86, new BrokerOptions(), _root, searchRepository: false)).ShouldBeOfType<FileNotFoundException>();
 
-		Assert.Contains("win-x86", error.Message, StringComparison.Ordinal);
-		Assert.Contains("live-app", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("win-x86", Case.Sensitive);
+		error.Message.ShouldContain("live-app", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -213,15 +208,15 @@ public sealed class PublishedLayoutTests : IDisposable
 	{
 		var directory = RoseLogFile.DirectoryFor(component);
 
-		Assert.True(Path.IsPathFullyQualified(directory), $"{directory} is relative, so it lands wherever the client started us.");
-		Assert.EndsWith(Path.Combine("BinaryVibrance", "RoseMCP", "Logs", component), directory, StringComparison.Ordinal);
+		Path.IsPathFullyQualified(directory).ShouldBeTrue($"{directory} is relative, so it lands wherever the client started us.");
+		directory.ShouldEndWith(Path.Combine("BinaryVibrance", "RoseMCP", "Logs", component), Case.Sensitive);
 	}
 
 	/// <summary>An empty root is the same case arriving from the caller rather than the environment.</summary>
 	[Test]
 	public void Treats_an_empty_root_the_way_it_treats_a_missing_one()
 	{
-		Assert.True(Path.IsPathFullyQualified(RoseLogFile.DirectoryFor("Server", string.Empty)));
+		Path.IsPathFullyQualified(RoseLogFile.DirectoryFor("Server", string.Empty)).ShouldBeTrue();
 	}
 
 	public void Dispose()
@@ -257,9 +252,8 @@ public sealed class PublishedLayoutTests : IDisposable
 
 		var resolved = XamlProviderPath.Resolve(Lookup(Path.Combine(_root, "live-app", "win-x64")));
 
-		Assert.Equal(
-			Path.Combine(_root, "live-app", "win-x64", "xaml-provider", "win-x64", "RoseMcp.Xaml.Uwp.Tap.dll"),
-			resolved);
+		resolved.ShouldBe(
+			Path.Combine(_root, "live-app", "win-x64", "xaml-provider", "win-x64", "RoseMcp.Xaml.Uwp.Tap.dll"));
 	}
 
 	/// <summary>
@@ -269,7 +263,7 @@ public sealed class PublishedLayoutTests : IDisposable
 	[Test]
 	public void Says_nothing_when_no_provider_is_installed()
 	{
-		Assert.Null(XamlProviderPath.Resolve(Lookup(Path.Combine(_root, "live-app", "win-x64"))));
+		XamlProviderPath.Resolve(Lookup(Path.Combine(_root, "live-app", "win-x64"))).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -281,7 +275,7 @@ public sealed class PublishedLayoutTests : IDisposable
 	{
 		Stage(Path.Combine("live-app", "win-x64", "xaml-provider", "win-arm64", "RoseMcp.Xaml.Uwp.Tap.dll"));
 
-		Assert.Null(XamlProviderPath.Resolve(Lookup(Path.Combine(_root, "live-app", "win-x64"))));
+		XamlProviderPath.Resolve(Lookup(Path.Combine(_root, "live-app", "win-x64"))).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -298,11 +292,10 @@ public sealed class PublishedLayoutTests : IDisposable
 		var host = Path.Combine(_root, "live-app", "win-x64");
 		var override_ = Path.Combine(_root, "elsewhere", "RoseMcp.Xaml.Uwp.Tap.dll");
 
-		Assert.Equal(override_, XamlProviderPath.Resolve(Lookup(host) with { Configured = override_ }));
+		XamlProviderPath.Resolve(Lookup(host) with { Configured = override_ }).ShouldBe(override_);
 
-		Assert.Equal(
-			Path.Combine(host, "xaml-provider", "win-x64", "RoseMcp.Xaml.Uwp.Tap.dll"),
-			XamlProviderPath.Resolve(Lookup(host) with { Configured = Path.Combine(_root, "gone.dll") }));
+		XamlProviderPath.Resolve(Lookup(host) with { Configured = Path.Combine(_root, "gone.dll") }).ShouldBe(
+			Path.Combine(host, "xaml-provider", "win-x64", "RoseMcp.Xaml.Uwp.Tap.dll"));
 	}
 
 	/// <summary>
@@ -316,9 +309,9 @@ public sealed class PublishedLayoutTests : IDisposable
 
 		var host = Path.Combine(_root, "live-app", "win-x64");
 
-		Assert.Null(XamlProviderPath.Resolve(Lookup(host)));
-		Assert.NotNull(XamlProviderPath.Resolve(
-			Lookup(host) with { ProviderFileName = "RoseMcp.Xaml.WinUi.Tap.dll" }));
+		XamlProviderPath.Resolve(Lookup(host)).ShouldBeNull();
+		XamlProviderPath.Resolve(
+			Lookup(host) with { ProviderFileName = "RoseMcp.Xaml.WinUi.Tap.dll" }).ShouldNotBeNull();
 	}
 
 	/// <summary>

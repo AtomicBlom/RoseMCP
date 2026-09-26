@@ -29,10 +29,10 @@ public sealed class XamlTreeBuilderTests
 			Node(1, parent: 0, "Grid"),
 		]));
 
-		Assert.Single(inspection.Roots);
-		Assert.Equal("Grid", inspection.Roots[0].TypeName);
-		Assert.Equal("Border", inspection.Roots[0].Children[0].TypeName);
-		Assert.Equal("TextBlock", inspection.Roots[0].Children[0].Children[0].TypeName);
+		inspection.Roots.ShouldHaveSingleItem();
+		inspection.Roots[0].TypeName.ShouldBe("Grid");
+		inspection.Roots[0].Children[0].TypeName.ShouldBe("Border");
+		inspection.Roots[0].Children[0].Children[0].TypeName.ShouldBe("TextBlock");
 	}
 
 	/// <summary>
@@ -52,9 +52,8 @@ public sealed class XamlTreeBuilderTests
 			Node(3, 1, "Second", childIndex: 1),
 		]));
 
-		Assert.Equal(
-			new[] { "First", "Second", "Third" },
-			inspection.Roots[0].Children.Select(row => row.TypeName).ToArray());
+		inspection.Roots[0].Children.Select(row => row.TypeName).ToArray().ShouldBe(
+			new[] { "First", "Second", "Third" });
 	}
 
 	/// <summary>
@@ -71,11 +70,11 @@ public sealed class XamlTreeBuilderTests
 			Node(9, parent: 77, "Popup"),
 		]));
 
-		Assert.Equal(2, inspection.Roots.Count);
+		inspection.Roots.Count.ShouldBe(2);
 
 		var orphan = inspection.Roots.Single(row => row.TypeName == "Popup");
-		Assert.True(orphan.IsOrphan);
-		Assert.False(inspection.Roots.Single(row => row.TypeName == "Grid").IsOrphan);
+		orphan.IsOrphan.ShouldBeTrue();
+		inspection.Roots.Single(row => row.TypeName == "Grid").IsOrphan.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -92,8 +91,8 @@ public sealed class XamlTreeBuilderTests
 			Node(2, parent: 1, "Border"),
 		]));
 
-		Assert.Equal(2, inspection.Roots.Count);
-		Assert.True(inspection.Roots.All(row => row.IsOrphan));
+		inspection.Roots.Count.ShouldBe(2);
+		inspection.Roots.All(row => row.IsOrphan).ShouldBeTrue();
 	}
 
 	/// <summary>One row per handle: an element cannot be in two places, and two rows would be.</summary>
@@ -108,8 +107,8 @@ public sealed class XamlTreeBuilderTests
 			Node(2, 1, "Border"),
 		]));
 
-		Assert.Single(inspection.Roots[0].Children);
-		Assert.Equal(2, inspection.Count);
+		inspection.Roots[0].Children.ShouldHaveSingleItem();
+		inspection.Count.ShouldBe(2);
 	}
 
 	/// <summary>
@@ -128,9 +127,9 @@ public sealed class XamlTreeBuilderTests
 
 		inspection.Absorb(Tree([Node(1, 0, "Grid"), Node(2, 1, "Border"), Node(3, 2, "TextBlock")]));
 
-		Assert.Same(border, inspection.Row(2));
-		Assert.False(border.IsExpanded);
-		Assert.Same(border, inspection.Selected);
+		inspection.Row(2).ShouldBeSameAs(border);
+		border.IsExpanded.ShouldBeFalse();
+		inspection.Selected.ShouldBeSameAs(border);
 	}
 
 	/// <summary>
@@ -148,10 +147,10 @@ public sealed class XamlTreeBuilderTests
 
 		inspection.Absorb(Tree([Node(1, 0, "Grid")]));
 
-		Assert.Null(inspection.Row(3));
-		Assert.Null(inspection.Selected);
-		Assert.Empty(inspection.Roots[0].Children);
-		Assert.True(inspection.HasPropertiesDetail);
+		inspection.Row(3).ShouldBeNull();
+		inspection.Selected.ShouldBeNull();
+		inspection.Roots[0].Children.ShouldBeEmpty();
+		inspection.HasPropertiesDetail.ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -168,10 +167,10 @@ public sealed class XamlTreeBuilderTests
 
 		inspection.Absorb(Tree([Node(1, 0, "Grid"), Node(2, 1, "Border"), Node(3, 2, "StackPanel")]));
 
-		Assert.Same(moved, inspection.Row(3));
-		Assert.Single(inspection.Roots[0].Children);
-		Assert.Same(moved, inspection.Row(2)!.Children[0]);
-		Assert.Same(inspection.Row(2), moved.Parent);
+		inspection.Row(3).ShouldBeSameAs(moved);
+		inspection.Roots[0].Children.ShouldHaveSingleItem();
+		inspection.Row(2)!.Children[0].ShouldBeSameAs(moved);
+		moved.Parent.ShouldBeSameAs(inspection.Row(2));
 	}
 
 	/// <summary>
@@ -190,10 +189,10 @@ public sealed class XamlTreeBuilderTests
 			Node(4, 3, "TextBlock"),
 		]));
 
-		Assert.True(inspection.Row(1)!.IsExpanded);
-		Assert.True(inspection.Row(2)!.IsExpanded);
-		Assert.True(inspection.Row(3)!.IsExpanded);
-		Assert.False(inspection.Row(4)!.IsExpanded);
+		inspection.Row(1)!.IsExpanded.ShouldBeTrue();
+		inspection.Row(2)!.IsExpanded.ShouldBeTrue();
+		inspection.Row(3)!.IsExpanded.ShouldBeTrue();
+		inspection.Row(4)!.IsExpanded.ShouldBeFalse();
 	}
 
 	/// <summary>The chain a reveal expands, root first and the element itself last.</summary>
@@ -203,11 +202,10 @@ public sealed class XamlTreeBuilderTests
 		var inspection = new XamlInspection();
 		inspection.Absorb(Tree([Node(1, 0, "Grid"), Node(2, 1, "Border"), Node(3, 2, "TextBlock")]));
 
-		Assert.Equal(
-			new[] { "Grid", "Border", "TextBlock" },
-			XamlTreeBuilder.Ancestors(inspection, 3).Select(row => row.TypeName).ToArray());
+		XamlTreeBuilder.Ancestors(inspection, 3).Select(row => row.TypeName).ToArray().ShouldBe(
+			new[] { "Grid", "Border", "TextBlock" });
 
-		Assert.Empty(XamlTreeBuilder.Ancestors(inspection, 99));
+		XamlTreeBuilder.Ancestors(inspection, 99).ShouldBeEmpty();
 	}
 
 	private static LiveXamlTree Tree(LiveXamlNode[] nodes) => new() { Nodes = nodes, Total = nodes.Length };

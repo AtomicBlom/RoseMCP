@@ -23,9 +23,8 @@ public sealed class DiskSynchronizerTests
 			tree.SolutionPath,
 			new EvaluationInputs(new Dictionary<string, IReadOnlySet<string>>(), [tree.ProjectPath]));
 
-		Assert.True(synchronizer.UntrackedImportChanged([tree.PathTo("build", "Shared.props")]));
-		Assert.False(
-			synchronizer.UntrackedImportChanged([tree.PathTo("App", "App.csproj.user")]),
+		synchronizer.UntrackedImportChanged([tree.PathTo("build", "Shared.props")]).ShouldBeTrue();
+		synchronizer.UntrackedImportChanged([tree.PathTo("App", "App.csproj.user")]).ShouldBeFalse(
 			"only a file a project could import counts");
 	}
 
@@ -49,7 +48,7 @@ public sealed class DiskSynchronizerTests
 				},
 				[]));
 
-		Assert.False(synchronizer.UntrackedImportChanged([tree.PathTo("build", "Shared.props")]));
+		synchronizer.UntrackedImportChanged([tree.PathTo("build", "Shared.props")]).ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -80,12 +79,12 @@ public sealed class DiskSynchronizerTests
 				[]));
 
 		var before = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
-		Assert.False(before.StructuralChange, "nothing has appeared yet");
+		before.StructuralChange.ShouldBeFalse("nothing has appeared yet");
 
 		await File.WriteAllTextAsync(tree.PathTo(folder, name), "<Project />", token);
 
 		var after = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
-		Assert.True(after.StructuralChange, $"{name} appearing changes how the project evaluates");
+		after.StructuralChange.ShouldBeTrue($"{name} appearing changes how the project evaluates");
 	}
 
 	/// <summary>
@@ -109,13 +108,13 @@ public sealed class DiskSynchronizerTests
 		var swept = await synchronizer.SyncAsync(tree.Solution, token);
 		synchronizer.Commit(swept.Tracker);
 
-		Assert.Equal(1, swept.RemovedCount);
-		Assert.False((await synchronizer.AbsorbNewAsync(swept.Solution, [], token)).StructuralChange, "it is still gone");
+		swept.RemovedCount.ShouldBe(1);
+		(await synchronizer.AbsorbNewAsync(swept.Solution, [], token)).StructuralChange.ShouldBeFalse("it is still gone");
 
 		await File.WriteAllTextAsync(config, "root = true", token);
 
 		var absorbed = await synchronizer.AbsorbNewAsync(swept.Solution, [], token);
-		Assert.True(absorbed.StructuralChange, "the projects read it again only once they are re-evaluated");
+		absorbed.StructuralChange.ShouldBeTrue("the projects read it again only once they are re-evaluated");
 	}
 
 	/// <summary>
@@ -138,8 +137,8 @@ public sealed class DiskSynchronizerTests
 
 		var absorbed = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
 
-		Assert.Empty(absorbed.Added);
-		Assert.Empty(absorbed.NotInTheBuild);
+		absorbed.Added.ShouldBeEmpty();
+		absorbed.NotInTheBuild.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -160,8 +159,8 @@ public sealed class DiskSynchronizerTests
 
 		var absorbed = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
 
-		Assert.Single(absorbed.Added);
-		Assert.Contains(written, absorbed.Added);
+		absorbed.Added.ShouldHaveSingleItem();
+		absorbed.Added.ShouldContain(written);
 	}
 
 	/// <summary>
@@ -183,7 +182,7 @@ public sealed class DiskSynchronizerTests
 
 		var absorbed = await synchronizer.AbsorbNewAsync(tree.Solution, [], token);
 
-		Assert.Contains(onDisk, absorbed.Added);
+		absorbed.Added.ShouldContain(onDisk);
 	}
 
 	/// <summary>Every project evaluated, importing nothing.</summary>

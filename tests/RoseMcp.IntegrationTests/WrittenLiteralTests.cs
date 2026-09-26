@@ -44,7 +44,7 @@ public sealed class WrittenLiteralTests
 			Code = $"public static string Report()\r\n{{\r\n\treturn {Supplied};\r\n}}",
 		});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		await AssertLiteralAsync(fixture, result, indent: "\t\t\t");
 	}
@@ -68,7 +68,7 @@ public sealed class WrittenLiteralTests
 			Code = $"public static string Second()\r\n{{\r\n\treturn {Supplied};\r\n}}",
 		});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		await AssertLiteralAsync(fixture, result, indent: "\t\t\t", file: "Prose.cs");
 	}
@@ -90,7 +90,7 @@ public sealed class WrittenLiteralTests
 			Code = $"{{\r\n\treturn {Supplied};\r\n}}",
 		});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		await AssertLiteralAsync(fixture, result, indent: "\t\t\t");
 	}
@@ -112,7 +112,7 @@ public sealed class WrittenLiteralTests
 			Code = $"=> {Supplied};",
 		});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		await AssertLiteralAsync(fixture, result, indent: "\t\t");
 	}
@@ -135,14 +135,14 @@ public sealed class WrittenLiteralTests
 			Replace = Supplied,
 		});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Prose.cs");
 
 		// Spliced exactly as written: the first line lands at the anchor and every line after it keeps
 		// the indentation the caller gave it, because a literal's leading whitespace is its value.
-		Assert.Equal(Supplied, Block(text));
-		Assert.Equal("first\r\n\r\nsecond", Value(text));
+		Block(text).ShouldBe(Supplied);
+		Value(text).ShouldBe("first\r\n\r\nsecond");
 	}
 
 	/// <summary>
@@ -166,13 +166,13 @@ public sealed class WrittenLiteralTests
 			IncludeTrivia = true,
 		});
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Literal.cs");
 
-		Assert.Equal("first\r\n\r\nthird", Value(text));
-		Assert.DoesNotContain("second", text, StringComparison.Ordinal);
+		Value(text).ShouldBe("first\r\n\r\nthird");
+		text.ShouldNotContain("second", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -203,12 +203,12 @@ public sealed class WrittenLiteralTests
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Literal.cs");
 
-		Assert.Equal(Supplied, Block(text));
-		Assert.Equal("first\r\n\r\nsecond", Value(text));
+		Block(text).ShouldBe(Supplied);
+		Value(text).ShouldBe("first\r\n\r\nsecond");
 	}
 
 	/// <summary>
@@ -235,7 +235,7 @@ public sealed class WrittenLiteralTests
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await File.ReadAllTextAsync(
 			fixture.Path("Members", "Library", Path.Combine("Deep", "Outer.cs")),
@@ -243,10 +243,9 @@ public sealed class WrittenLiteralTests
 
 		// One level deeper than it sat, which is how much deeper the member itself now sits. The
 		// literal keeps its place inside the member rather than being flattened onto it.
-		Assert.Equal("\"\"\"\r\n\t\t\t\t\t\t\tfirst\r\n\r\n\t\t\t\t\t\t\tsecond\r\n\t\t\t\t\t\t\t\"\"\"", Block(text));
-		Assert.Equal("first\r\n\r\nsecond", Value(text));
-		Assert.Contains(
-			result.Notices,
+		Block(text).ShouldBe("\"\"\"\r\n\t\t\t\t\t\t\tfirst\r\n\r\n\t\t\t\t\t\t\tsecond\r\n\t\t\t\t\t\t\t\"\"\"");
+		Value(text).ShouldBe("first\r\n\r\nsecond");
+		result.Notices.ShouldContain(
 			notice => notice.Contains("re-indented", StringComparison.OrdinalIgnoreCase));
 	}
 
@@ -264,8 +263,8 @@ public sealed class WrittenLiteralTests
 		var text = await ReadAsync(fixture, file);
 		var block = Block(text);
 
-		Assert.Equal($"\"\"\"\r\n{indent}first\r\n\r\n{indent}second\r\n{indent}\"\"\"", block);
-		Assert.Equal("first\r\n\r\nsecond", Value(text));
+		block.ShouldBe($"\"\"\"\r\n{indent}first\r\n\r\n{indent}second\r\n{indent}\"\"\"");
+		Value(text).ShouldBe("first\r\n\r\nsecond");
 
 		// Either half of the promise is acceptable and neither may be skipped: a literal whose text
 		// changed with nothing said about it is the failure this sweep is for. The value survives, no
@@ -277,12 +276,12 @@ public sealed class WrittenLiteralTests
 
 		if (string.Equals(block, Supplied, StringComparison.Ordinal))
 		{
-			Assert.False(said, "The literal came out exactly as supplied, and the result claims it moved.");
+			said.ShouldBeFalse("The literal came out exactly as supplied, and the result claims it moved.");
 
 			return;
 		}
 
-		Assert.True(said, $"The literal moved and nothing said so. Supplied [{Supplied}], landed [{block}].");
+		said.ShouldBeTrue($"The literal moved and nothing said so. Supplied [{Supplied}], landed [{block}].");
 	}
 
 	/// <summary>
@@ -294,12 +293,12 @@ public sealed class WrittenLiteralTests
 	{
 		var opened = text.IndexOf("\"\"\"\r\n", StringComparison.Ordinal);
 
-		Assert.True(opened >= 0, "The file holds no multi-line raw literal.");
+		(opened >= 0).ShouldBeTrue("The file holds no multi-line raw literal.");
 
 		var body = text[(opened + 5)..];
 		var closed = body.IndexOf("\"\"\"", StringComparison.Ordinal);
 
-		Assert.True(closed >= 0, "The literal is never closed.");
+		(closed >= 0).ShouldBeTrue("The literal is never closed.");
 
 		var lines = body[..closed].Split("\r\n");
 		var stripping = lines[^1];
@@ -319,11 +318,11 @@ public sealed class WrittenLiteralTests
 	{
 		var opened = text.IndexOf("\"\"\"\r\n", StringComparison.Ordinal);
 
-		Assert.True(opened >= 0, $"The file holds no multi-line raw literal: {text}");
+		(opened >= 0).ShouldBeTrue($"The file holds no multi-line raw literal: {text}");
 
 		var closed = text.IndexOf("\"\"\"", opened + 5, StringComparison.Ordinal);
 
-		Assert.True(closed >= 0, $"The literal is never closed: {text}");
+		(closed >= 0).ShouldBeTrue($"The literal is never closed: {text}");
 
 		return text[opened..(closed + 3)];
 	}

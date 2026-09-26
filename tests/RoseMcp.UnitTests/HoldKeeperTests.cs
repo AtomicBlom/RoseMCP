@@ -35,19 +35,19 @@ public sealed class HoldKeeperTests
 		pump.Run(keeper.Want(stack, true));
 		pump.Run(keeper.Want(threads, true));
 
-		Assert.Equal(1, host.Takes);
-		Assert.True(keeper.Held);
+		host.Takes.ShouldBe(1);
+		keeper.Held.ShouldBeTrue();
 
 		// The second reader leaving is not the last word: somebody is still reading.
 		pump.Run(keeper.Want(threads, false));
 
-		Assert.Equal(0, host.Releases);
-		Assert.True(keeper.Held);
+		host.Releases.ShouldBe(0);
+		keeper.Held.ShouldBeTrue();
 
 		pump.Run(keeper.Want(stack, false));
 
-		Assert.Equal(1, host.Releases);
-		Assert.False(keeper.Held);
+		host.Releases.ShouldBe(1);
+		keeper.Held.ShouldBeFalse();
 	});
 
 	/// <summary>
@@ -65,7 +65,7 @@ public sealed class HoldKeeperTests
 		pump.Run(keeper.Want(reader, true));
 		pump.Run(keeper.Want(reader, true));
 
-		Assert.Equal(1, host.Takes);
+		host.Takes.ShouldBe(1);
 	});
 
 	/// <summary>
@@ -82,16 +82,16 @@ public sealed class HoldKeeperTests
 		var threads = new object();
 
 		pump.Run(keeper.Want(stack, true));
-		Assert.Equal(1, host.Takes);
+		host.Takes.ShouldBe(1);
 
 		// One pass, the way a tab change tells every pane before any of them is answered.
 		var leaving = keeper.Want(stack, false);
 		var arriving = keeper.Want(threads, true);
 		pump.Run(Task.WhenAll(leaving, arriving));
 
-		Assert.Equal(0, host.Releases);
-		Assert.Equal(1, host.Takes);
-		Assert.True(keeper.Held);
+		host.Releases.ShouldBe(0);
+		host.Takes.ShouldBe(1);
+		keeper.Held.ShouldBeTrue();
 	});
 
 	/// <summary>
@@ -107,12 +107,12 @@ public sealed class HoldKeeperTests
 
 		pump.Run(keeper.AtStop(11));
 		pump.Run(keeper.Want(reader, true));
-		Assert.Equal(1, host.Takes);
+		host.Takes.ShouldBe(1);
 
 		pump.Run(keeper.AtStop(12));
 
-		Assert.Equal(2, host.Takes);
-		Assert.Equal(0, host.Releases);
+		host.Takes.ShouldBe(2);
+		host.Releases.ShouldBe(0);
 	});
 
 	/// <summary>
@@ -129,20 +129,20 @@ public sealed class HoldKeeperTests
 		pump.Run(keeper.AtStop(11));
 		pump.Run(keeper.Want(reader, true));
 
-		Assert.False(keeper.Held);
-		Assert.Equal("Nothing is stopped, so there is no stop to hold.", keeper.Detail);
+		keeper.Held.ShouldBeFalse();
+		keeper.Detail.ShouldBe("Nothing is stopped, so there is no stop to hold.");
 
 		// Asked again at the same stop, by a reader leaving and coming back.
 		pump.Run(keeper.Want(reader, false));
 		pump.Run(keeper.Want(reader, true));
-		Assert.Equal(1, host.Takes);
+		host.Takes.ShouldBe(1);
 
 		host.Stopped = true;
 		pump.Run(keeper.AtStop(12));
 
-		Assert.Equal(2, host.Takes);
-		Assert.True(keeper.Held);
-		Assert.Equal(string.Empty, keeper.Detail);
+		host.Takes.ShouldBe(2);
+		keeper.Held.ShouldBeTrue();
+		keeper.Detail.ShouldBe(string.Empty);
 	});
 
 	/// <summary>
@@ -161,10 +161,10 @@ public sealed class HoldKeeperTests
 		pump.Run(keeper.Want(reader, false));
 		pump.Run(keeper.Want(reader, true));
 
-		Assert.Equal(1, host.Takes);
-		Assert.False(keeper.Held);
-		Assert.Equal("the tray is not listening", keeper.Detail);
-		Assert.Single(reported);
+		host.Takes.ShouldBe(1);
+		keeper.Held.ShouldBeFalse();
+		keeper.Detail.ShouldBe("the tray is not listening");
+		reported.ShouldHaveSingleItem();
 	});
 
 	/// <summary>
@@ -179,13 +179,13 @@ public sealed class HoldKeeperTests
 		var reader = new object();
 
 		pump.Run(keeper.Want(reader, true));
-		Assert.Equal(1, host.Takes);
+		host.Takes.ShouldBe(1);
 
 		pump.Run(keeper.Tick(Now.AddSeconds(30)));
-		Assert.Equal(1, host.Takes);
+		host.Takes.ShouldBe(1);
 
 		pump.Run(keeper.Tick(Now.AddSeconds(70)));
-		Assert.Equal(2, host.Takes);
+		host.Takes.ShouldBe(2);
 	});
 
 	/// <summary>Nothing is renewed for nobody: a hold with no reader is one that is being given back.</summary>
@@ -197,7 +197,7 @@ public sealed class HoldKeeperTests
 
 		pump.Run(keeper.Tick(Now));
 
-		Assert.Equal(0, host.Takes);
+		host.Takes.ShouldBe(0);
 	});
 
 	/// <summary>
@@ -213,8 +213,8 @@ public sealed class HoldKeeperTests
 
 		pump.Run(keeper.ReleaseAsync());
 
-		Assert.Equal(1, host.Releases);
-		Assert.False(keeper.Held);
+		host.Releases.ShouldBe(1);
+		keeper.Held.ShouldBeFalse();
 	});
 
 	/// <summary>
@@ -262,7 +262,7 @@ public sealed class HoldKeeperTests
 
 			// Nothing left to run and still not finished means it is waiting on something no test can
 			// produce. Saying so beats blocking, which would present as a suite that hangs.
-			Assert.True(work.IsCompleted, "The work is waiting on something this pump cannot run.");
+			work.IsCompleted.ShouldBeTrue("The work is waiting on something this pump cannot run.");
 
 			work.GetAwaiter().GetResult();
 		}

@@ -21,10 +21,10 @@ public sealed class SourceLinesTests
 
 		var excerpt = SourceLines.Read(file.Path, firstLine: 3, lastLine: 4, context: 1);
 
-		Assert.Equal(2, excerpt.FirstLine);
-		Assert.Equal(["two", "three", "four", "five"], excerpt.Lines);
-		Assert.Null(excerpt.Problem);
-		Assert.True(excerpt.HasText);
+		excerpt.FirstLine.ShouldBe(2);
+		excerpt.Lines.ShouldBe(["two", "three", "four", "five"]);
+		excerpt.Problem.ShouldBeNull();
+		excerpt.HasText.ShouldBeTrue();
 	}
 
 	/// <summary>Context that would run off either end is clamped rather than refused.</summary>
@@ -35,8 +35,8 @@ public sealed class SourceLinesTests
 
 		var excerpt = SourceLines.Read(file.Path, firstLine: 1, lastLine: 3, context: 5);
 
-		Assert.Equal(1, excerpt.FirstLine);
-		Assert.Equal(["one", "two", "three"], excerpt.Lines);
+		excerpt.FirstLine.ShouldBe(1);
+		excerpt.Lines.ShouldBe(["one", "two", "three"]);
 	}
 
 	/// <summary>
@@ -51,10 +51,10 @@ public sealed class SourceLinesTests
 
 		var excerpt = SourceLines.Read(path, firstLine: 10, lastLine: 20);
 
-		Assert.False(excerpt.HasText);
-		Assert.NotNull(excerpt.Problem);
-		Assert.Contains(path, excerpt.Problem!);
-		Assert.Contains("built", excerpt.Problem!);
+		excerpt.HasText.ShouldBeFalse();
+		excerpt.Problem.ShouldNotBeNull();
+		excerpt.Problem!.ShouldContain(path, Case.Sensitive);
+		excerpt.Problem!.ShouldContain("built", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -68,8 +68,8 @@ public sealed class SourceLinesTests
 
 		var excerpt = SourceLines.Read(file.Path, firstLine: 40, lastLine: 45);
 
-		Assert.False(excerpt.HasText);
-		Assert.Contains("not the one the module was built from", excerpt.Problem!);
+		excerpt.HasText.ShouldBeFalse();
+		excerpt.Problem!.ShouldContain("not the one the module was built from", Case.Sensitive);
 	}
 
 	[Test]
@@ -77,8 +77,8 @@ public sealed class SourceLinesTests
 	{
 		var excerpt = SourceLines.Read(string.Empty, firstLine: 1, lastLine: 2);
 
-		Assert.False(excerpt.HasText);
-		Assert.Equal("The symbols name no file for this method.", excerpt.Problem);
+		excerpt.HasText.ShouldBeFalse();
+		excerpt.Problem.ShouldBe("The symbols name no file for this method.");
 	}
 
 	private sealed class TemporaryFile : IDisposable

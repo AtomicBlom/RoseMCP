@@ -26,7 +26,7 @@ public sealed class NewFileTests
 		await using var scope = await OpenAsync();
 
 		var before = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
-		Assert.DoesNotContain(Documents(before), name => name == "Doubler.cs");
+		Documents(before).ShouldNotContain(name => name == "Doubler.cs");
 
 		await WriteAsync(scope, "Doubler.cs", """
 			namespace Core;
@@ -39,10 +39,10 @@ public sealed class NewFileTests
 
 		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains(Documents(after), name => name == "Doubler.cs");
-		Assert.True(after.Revision > before.Revision, "absorbing a new file must advance the revision");
-		Assert.Contains(after.Notices, notice => notice.Contains("Doubler.cs", StringComparison.Ordinal));
-		Assert.Empty(await ErrorsAsync(after));
+		Documents(after).ShouldContain(name => name == "Doubler.cs");
+		(after.Revision > before.Revision).ShouldBeTrue("absorbing a new file must advance the revision");
+		after.Notices.ShouldContain(notice => notice.Contains("Doubler.cs", StringComparison.Ordinal));
+		(await ErrorsAsync(after)).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -75,7 +75,7 @@ public sealed class NewFileTests
 
 		var snapshot = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Empty(await ErrorsAsync(snapshot));
+		(await ErrorsAsync(snapshot)).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -99,8 +99,11 @@ public sealed class NewFileTests
 		var snapshot = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var errors = await ErrorsAsync(snapshot);
 
-		Assert.Contains(errors, error => error.Id == "CS0103");
-		Assert.All(errors, error => Assert.EndsWith("Broken.cs", error.Location.SourceTree!.FilePath, StringComparison.OrdinalIgnoreCase));
+		errors.ShouldContain(error => error.Id == "CS0103");
+		foreach (var error in errors)
+		{
+			error.Location.SourceTree!.FilePath.ShouldEndWith("Broken.cs", Case.Insensitive);
+		}
 	}
 
 	/// <summary>
@@ -128,8 +131,8 @@ public sealed class NewFileTests
 			.SelectMany(project => project.Documents)
 			.Single(candidate => candidate.Name == "Deep.cs");
 
-		Assert.Equal("Core", document.Project.Name);
-		Assert.Equal(["Nested"], document.Folders);
+		document.Project.Name.ShouldBe("Core");
+		document.Folders.ShouldBe(["Nested"]);
 	}
 
 	/// <summary>
@@ -152,7 +155,7 @@ public sealed class NewFileTests
 
 		var snapshot = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.DoesNotContain(Documents(snapshot), name => name == "Generated.cs");
+		Documents(snapshot).ShouldNotContain(name => name == "Generated.cs");
 	}
 
 	/// <summary>
@@ -177,10 +180,10 @@ public sealed class NewFileTests
 			scope,
 			candidate => candidate.Notices.Any(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase)));
 
-		Assert.Contains(snapshot.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		snapshot.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var core = snapshot.Solution.Projects.Single(project => project.Name == "Core");
-		Assert.Contains("APPEARED", core.ParseOptions!.PreprocessorSymbolNames);
+		core.ParseOptions!.PreprocessorSymbolNames.ShouldContain("APPEARED");
 	}
 
 	/// <summary>
@@ -196,9 +199,9 @@ public sealed class NewFileTests
 		var first = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 		var second = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(first.Revision, second.Revision);
-		Assert.Same(first.Solution, second.Solution);
-		Assert.Empty(second.Notices);
+		second.Revision.ShouldBe(first.Revision);
+		second.Solution.ShouldBeSameAs(first.Solution);
+		second.Notices.ShouldBeEmpty();
 	}
 
 	/// <summary>

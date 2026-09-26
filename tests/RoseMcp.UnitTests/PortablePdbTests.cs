@@ -20,11 +20,11 @@ public sealed class PortablePdbTests
 		using var fixture = CompiledModule.NestedLocals();
 		using var symbols = ModuleSymbols.TryLoad(fixture.ModulePath);
 
-		Assert.NotNull(symbols);
-		Assert.Equal(PdbState.Loaded, symbols!.PdbState);
-		Assert.NotNull(symbols.Pdb);
-		Assert.Null(symbols.PdbProblem);
-		Assert.Equal("Probe.pdb", Path.GetFileName(symbols.Pdb!.Path));
+		symbols.ShouldNotBeNull();
+		symbols!.PdbState.ShouldBe(PdbState.Loaded);
+		symbols.Pdb.ShouldNotBeNull();
+		symbols.PdbProblem.ShouldBeNull();
+		Path.GetFileName(symbols.Pdb!.Path).ShouldBe("Probe.pdb");
 	}
 
 	/// <summary>
@@ -41,30 +41,29 @@ public sealed class PortablePdbTests
 		var pdb = symbols.Pdb!;
 
 		var scopes = pdb.LocalScopes(token);
-		Assert.Equal(2, scopes.Count);
+		scopes.Count.ShouldBe(2);
 
 		// Outermost first, which is what lets an inner block's name replace an outer one for a slot
 		// they share.
 		var outer = scopes[0];
 		var inner = scopes[1];
-		Assert.Contains(outer.Locals, local => local.Name == "outerTotal");
-		Assert.Contains(inner.Locals, local => local.Name == "innerStep");
+		outer.Locals.ShouldContain(local => local.Name == "outerTotal");
+		inner.Locals.ShouldContain(local => local.Name == "innerStep");
 
-		Assert.True(inner.StartOffset > outer.StartOffset, "the block's IL starts after the method's");
-		Assert.True(
-			inner.StartOffset + inner.Length <= outer.StartOffset + outer.Length,
+		(inner.StartOffset > outer.StartOffset).ShouldBeTrue("the block's IL starts after the method's");
+		(inner.StartOffset + inner.Length <= outer.StartOffset + outer.Length).ShouldBeTrue(
 			"the block's IL ends inside the method's");
-		Assert.True(outer.Covers(0), "the method's own scope covers its first instruction");
-		Assert.False(inner.Covers(0), "the block's scope does not");
+		outer.Covers(0).ShouldBeTrue("the method's own scope covers its first instruction");
+		inner.Covers(0).ShouldBeFalse("the block's scope does not");
 
 		// So at the first instruction there is one local to name, and inside the block there are two.
 		var atStart = pdb.LocalNames(token, 0);
-		Assert.Equal("outerTotal", Assert.Single(atStart).Value);
+		atStart.ShouldHaveSingleItem().Value.ShouldBe("outerTotal");
 
 		var inBlock = pdb.LocalNames(token, inner.StartOffset);
-		Assert.Equal(2, inBlock.Count);
-		Assert.Contains(inBlock, named => named.Value == "outerTotal");
-		Assert.Contains(inBlock, named => named.Value == "innerStep");
+		inBlock.Count.ShouldBe(2);
+		inBlock.ShouldContain(named => named.Value == "outerTotal");
+		inBlock.ShouldContain(named => named.Value == "innerStep");
 	}
 
 	/// <summary>
@@ -81,22 +80,22 @@ public sealed class PortablePdbTests
 		var pdb = symbols.Pdb!;
 
 		var atStart = pdb.Position(token, 0);
-		Assert.NotNull(atStart);
-		Assert.Equal(fixture.SourcePath, atStart!.File);
+		atStart.ShouldNotBeNull();
+		atStart!.File.ShouldBe(fixture.SourcePath);
 
 		// The method's first instruction is its opening brace, the line above its first statement.
-		Assert.Equal(fixture.LineOf("var outerTotal") - 1, atStart.Line);
+		atStart.Line.ShouldBe(fixture.LineOf("var outerTotal") - 1);
 
 		var lines = pdb.SequencePointsOf(token)
 			.Where(point => !point.IsHidden)
 			.Select(point => point.Position!.Line)
 			.ToList();
-		Assert.Contains(fixture.LineOf("var innerStep"), lines);
-		Assert.Contains(fixture.LineOf("return outerTotal"), lines);
+		lines.ShouldContain(fixture.LineOf("var innerStep"));
+		lines.ShouldContain(fixture.LineOf("return outerTotal"));
 
 		// An offset past the end of the method belongs to its last point rather than to nothing:
 		// the search is for the last point at or before the offset.
-		Assert.NotNull(pdb.Position(token, 9000));
+		pdb.Position(token, 9000).ShouldNotBeNull();
 	}
 
 	/// <summary>
@@ -113,11 +112,11 @@ public sealed class PortablePdbTests
 
 		using var symbols = ModuleSymbols.TryLoad(fixture.ModulePath, _ => new MemoryStream(stale, writable: false));
 
-		Assert.NotNull(symbols);
-		Assert.Equal(PdbState.Mismatched, symbols!.PdbState);
-		Assert.Null(symbols.Pdb);
-		Assert.NotNull(symbols.PdbProblem);
-		Assert.Contains("Probe.pdb", symbols.PdbProblem);
+		symbols.ShouldNotBeNull();
+		symbols!.PdbState.ShouldBe(PdbState.Mismatched);
+		symbols.Pdb.ShouldBeNull();
+		symbols.PdbProblem.ShouldNotBeNull();
+		symbols.PdbProblem.ShouldContain("Probe.pdb", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -130,11 +129,11 @@ public sealed class PortablePdbTests
 		using var fixture = CompiledModule.NestedLocals(withSymbols: false);
 		using var symbols = ModuleSymbols.TryLoad(fixture.ModulePath);
 
-		Assert.NotNull(symbols);
-		Assert.Equal(PdbState.NotFound, symbols!.PdbState);
-		Assert.Null(symbols.Pdb);
-		Assert.Null(symbols.PdbProblem);
-		Assert.NotEqual(0, CompiledModule.TokenOf(symbols.Metadata, "Nested"));
+		symbols.ShouldNotBeNull();
+		symbols!.PdbState.ShouldBe(PdbState.NotFound);
+		symbols.Pdb.ShouldBeNull();
+		symbols.PdbProblem.ShouldBeNull();
+		CompiledModule.TokenOf(symbols.Metadata, "Nested").ShouldNotBe(0);
 	}
 
 	/// <summary>A path that is not a managed assembly, and one that is not a file, both read as nothing.</summary>
@@ -143,8 +142,8 @@ public sealed class PortablePdbTests
 	{
 		using var fixture = CompiledModule.NestedLocals();
 
-		Assert.Null(ModuleSymbols.TryLoad(fixture.SourcePath));
-		Assert.Null(ModuleSymbols.TryLoad(Path.Combine(Path.GetTempPath(), $"rose-absent-{Guid.NewGuid():n}.dll")));
+		ModuleSymbols.TryLoad(fixture.SourcePath).ShouldBeNull();
+		ModuleSymbols.TryLoad(Path.Combine(Path.GetTempPath(), $"rose-absent-{Guid.NewGuid():n}.dll")).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -162,9 +161,9 @@ public sealed class PortablePdbTests
 		// A method definition token (0x06) for a row this module does not have.
 		const int Absent = 0x06000000 | 0x00FFFFFF;
 
-		Assert.Empty(pdb.LocalScopes(Absent));
-		Assert.Empty(pdb.LocalNames(Absent, 0));
-		Assert.Empty(pdb.SequencePointsOf(Absent));
-		Assert.Null(pdb.Position(Absent, 0));
+		pdb.LocalScopes(Absent).ShouldBeEmpty();
+		pdb.LocalNames(Absent, 0).ShouldBeEmpty();
+		pdb.SequencePointsOf(Absent).ShouldBeEmpty();
+		pdb.Position(Absent, 0).ShouldBeNull();
 	}
 }

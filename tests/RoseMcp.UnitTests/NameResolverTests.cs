@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -11,8 +12,8 @@ public sealed class NameResolverTests
 	{
 		var (name, arity) = NameResolver.Parse("Encoding");
 
-		Assert.Equal("Encoding", name);
-		Assert.Null(arity);
+		name.ShouldBe("Encoding");
+		arity.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -23,7 +24,7 @@ public sealed class NameResolverTests
 	[Arguments("Encoding.UTF8", "Encoding")]
 	[Arguments("Path.Combine", "Path")]
 	public void Takes_the_first_segment_of_a_dotted_name(string supplied, string expected) =>
-		Assert.Equal(expected, NameResolver.Parse(supplied).Name);
+		NameResolver.Parse(supplied).Name.ShouldBe(expected);
 
 	/// <summary>
 	/// Counted at the top level only, so a type argument that is itself generic does not inflate
@@ -38,8 +39,8 @@ public sealed class NameResolverTests
 	{
 		var parsed = NameResolver.Parse(supplied);
 
-		Assert.Equal(expected, parsed.Name);
-		Assert.Equal(arity, parsed.Arity);
+		parsed.Name.ShouldBe(expected);
+		parsed.Arity.ShouldBe(arity);
 	}
 
 	/// <summary>
@@ -51,7 +52,7 @@ public sealed class NameResolverTests
 	[Arguments("List<>", 1)]
 	[Arguments("Dictionary<,>", 2)]
 	public void Counts_an_unbound_generic_by_its_commas(string supplied, int arity) =>
-		Assert.Equal(arity, NameResolver.Parse(supplied).Arity);
+		NameResolver.Parse(supplied).Arity.ShouldBe(arity);
 
 	/// <summary>
 	/// A caller that says how the name is used outranks the spelling, because the spelling is
@@ -60,8 +61,8 @@ public sealed class NameResolverTests
 	[Test]
 	public void Keeps_an_arity_the_caller_supplied()
 	{
-		Assert.Equal(3, NameResolver.Parse("List<int>", 3).Arity);
-		Assert.Equal(2, NameResolver.Parse("Palette", 2).Arity);
+		NameResolver.Parse("List<int>", 3).Arity.ShouldBe(3);
+		NameResolver.Parse("Palette", 2).Arity.ShouldBe(2);
 	}
 
 	/// <summary>
@@ -77,7 +78,7 @@ public sealed class NameResolverTests
 	{
 		var (name, parsed) = NameResolver.Parse(supplied);
 
-		Assert.Equal(expected, name);
-		Assert.Equal(arity, parsed);
+		name.ShouldBe(expected);
+		parsed.ShouldBe(arity);
 	}
 }

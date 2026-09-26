@@ -19,8 +19,8 @@ public sealed class LogMessageTemplateTests
 	[Test]
 	public void An_absent_message_is_not_a_template()
 	{
-		Assert.Null(LogMessageTemplate.Parse(null));
-		Assert.Null(LogMessageTemplate.Parse(string.Empty));
+		LogMessageTemplate.Parse(null).ShouldBeNull();
+		LogMessageTemplate.Parse(string.Empty).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -32,8 +32,8 @@ public sealed class LogMessageTemplateTests
 	{
 		var template = LogMessageTemplate.Parse("reached the refresh")!;
 
-		Assert.False(template.Interpolates);
-		Assert.Equal("reached the refresh", template.Render(_ => LogValue.Unavailable("never asked")).Text);
+		template.Interpolates.ShouldBeFalse();
+		template.Render(_ => LogValue.Unavailable("never asked")).Text.ShouldBe("reached the refresh");
 	}
 
 	[Test]
@@ -42,7 +42,7 @@ public sealed class LogMessageTemplateTests
 	[Arguments("{a} then {b}", "<a> then <b>")]
 	[Arguments("{ count }", "<count>")]
 	public void A_placeholder_is_replaced_by_its_value(string message, string expected)
-		=> Assert.Equal(expected, Render(message));
+		=> Render(message).ShouldBe(expected);
 
 	/// <summary>
 	/// A doubled brace is one literal brace, which is the only way to log text that contains one --
@@ -55,8 +55,8 @@ public sealed class LogMessageTemplateTests
 	[Arguments("{{{count}}}", "{<count>}")]
 	public void Doubled_braces_are_literal(string message, string expected)
 	{
-		Assert.False(LogMessageTemplate.Parse("{{}}")!.Interpolates);
-		Assert.Equal(expected, Render(message));
+		LogMessageTemplate.Parse("{{}}")!.Interpolates.ShouldBeFalse();
+		Render(message).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -72,7 +72,7 @@ public sealed class LogMessageTemplateTests
 	[Arguments("{state..Count}")]
 	[Arguments("{items[}")]
 	public void A_malformed_message_is_refused(string message)
-		=> Assert.Throws<ArgumentException>(() => LogMessageTemplate.Parse(message));
+		=> Should.Throw<ArgumentException>(() => LogMessageTemplate.Parse(message)).ShouldBeOfType<ArgumentException>();
 
 	/// <summary>
 	/// A placeholder is a value path, the same grammar an evaluation takes, so what a caller was
@@ -84,12 +84,12 @@ public sealed class LogMessageTemplateTests
 		var template = LogMessageTemplate.Parse("{state.Inner.Count} {arg:0} {items[3].Name}")!;
 		var paths = template.Segments.Where(segment => segment.Path is not null).Select(segment => segment.Path!).ToList();
 
-		Assert.Equal(3, paths.Count);
-		Assert.Equal(ValuePathRoot.Name, paths[0].Kind);
-		Assert.Equal(2, paths[0].Steps.Count);
-		Assert.Equal(ValuePathRoot.Argument, paths[1].Kind);
-		Assert.Equal(0, paths[1].Slot);
-		Assert.Equal(3, paths[2].Steps[0].Index);
+		paths.Count.ShouldBe(3);
+		paths[0].Kind.ShouldBe(ValuePathRoot.Name);
+		paths[0].Steps.Count.ShouldBe(2);
+		paths[1].Kind.ShouldBe(ValuePathRoot.Argument);
+		paths[1].Slot.ShouldBe(0);
+		paths[2].Steps[0].Index.ShouldBe(3);
 	}
 
 	/// <summary>
@@ -105,7 +105,7 @@ public sealed class LogMessageTemplateTests
 				? LogValue.Read("7", "int")
 				: LogValue.Unavailable("not an argument or local in this frame"));
 
-		Assert.Equal("count=7 name=<name: not an argument or local in this frame>", rendered.Text);
+		rendered.Text.ShouldBe("count=7 name=<name: not an argument or local in this frame>");
 	}
 
 	/// <summary>
@@ -122,23 +122,23 @@ public sealed class LogMessageTemplateTests
 				? LogValue.Read("7", "int")
 				: LogValue.Unavailable("out of scope"));
 
-		Assert.Equal(2, rendered.Values.Count);
+		rendered.Values.Count.ShouldBe(2);
 
-		Assert.Equal("count", rendered.Values[0].Name);
-		Assert.Equal("count", rendered.Values[0].Path);
-		Assert.Equal(LogMessageTemplate.LoggedKind, rendered.Values[0].Kind);
-		Assert.Equal("int", rendered.Values[0].TypeName);
-		Assert.Equal("7", rendered.Values[0].Value);
+		rendered.Values[0].Name.ShouldBe("count");
+		rendered.Values[0].Path.ShouldBe("count");
+		rendered.Values[0].Kind.ShouldBe(LogMessageTemplate.LoggedKind);
+		rendered.Values[0].TypeName.ShouldBe("int");
+		rendered.Values[0].Value.ShouldBe("7");
 
 		// A value that was not there is still reported, because which one went missing is a fact
 		// about the hit and dropping it leaves a reader counting positions to work out which.
-		Assert.Equal("name", rendered.Values[1].Name);
-		Assert.Null(rendered.Values[1].TypeName);
-		Assert.Equal("<name: out of scope>", rendered.Values[1].Value);
+		rendered.Values[1].Name.ShouldBe("name");
+		rendered.Values[1].TypeName.ShouldBeNull();
+		rendered.Values[1].Value.ShouldBe("<name: out of scope>");
 	}
 
 	/// <summary>A value the reader could not render at all is unreadable, not empty.</summary>
 	[Test]
 	public void A_value_that_rendered_to_nothing_reports_as_unreadable()
-		=> Assert.Equal("(unreadable)", Render("{count}", _ => LogValue.Read(null, "int")));
+		=> Render("{count}", _ => LogValue.Read(null, "int")).ShouldBe("(unreadable)");
 }

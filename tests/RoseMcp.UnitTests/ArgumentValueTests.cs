@@ -17,7 +17,7 @@ public sealed class ArgumentValueTests
 	[Arguments("file", DiagnosticScope.Document)]
 	[Arguments("PROJECT", DiagnosticScope.Project)]
 	public void Reads_the_scopes_it_accepts(string? given, DiagnosticScope expected) =>
-		Assert.Equal(expected, ArgumentValues.Scope(given));
+		ArgumentValues.Scope(given).ShouldBe(expected);
 
 	/// <summary>
 	/// The one that cost the most: scope "proj" analysed the whole solution and came back with
@@ -26,9 +26,9 @@ public sealed class ArgumentValueTests
 	[Test]
 	public void Refuses_a_scope_it_does_not_know_and_says_what_it_takes()
 	{
-		var error = Assert.Throws<ArgumentException>(() => ArgumentValues.Scope("proj"));
+		var error = Should.Throw<ArgumentException>(() => ArgumentValues.Scope("proj")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Equal("Unknown scope 'proj'. Use document, project, solution.", error.Message);
+		error.Message.ShouldBe("Unknown scope 'proj'. Use document, project, solution.");
 	}
 
 	[Test]
@@ -37,14 +37,14 @@ public sealed class ArgumentValueTests
 	[Arguments("in", StepDirection.In)]
 	[Arguments("Out", StepDirection.Out)]
 	public void Reads_the_step_modes_it_accepts(string? given, StepDirection expected) =>
-		Assert.Equal(expected, ArgumentValues.Step(given));
+		ArgumentValues.Step(given).ShouldBe(expected);
 
 	[Test]
 	public void Refuses_a_step_mode_it_does_not_know()
 	{
-		var error = Assert.Throws<ArgumentException>(() => ArgumentValues.Step("into"));
+		var error = Should.Throw<ArgumentException>(() => ArgumentValues.Step("into")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Equal("Unknown step mode 'into'. Use in, over, out.", error.Message);
+		error.Message.ShouldBe("Unknown step mode 'into'. Use in, over, out.");
 	}
 
 	[Test]
@@ -52,19 +52,19 @@ public sealed class ArgumentValueTests
 	{
 		var kinds = ArgumentValues.EventKinds(["LogMessage", "breakpointhit"]);
 
-		Assert.NotNull(kinds);
-		Assert.Equal(2, kinds.Count);
-		Assert.Contains(LiveDebugEventKind.LogMessage, kinds);
-		Assert.Contains(LiveDebugEventKind.BreakpointHit, kinds);
+		kinds.ShouldNotBeNull();
+		kinds.Count.ShouldBe(2);
+		kinds.ShouldContain(LiveDebugEventKind.LogMessage);
+		kinds.ShouldContain(LiveDebugEventKind.BreakpointHit);
 	}
 
 	/// <summary>Nothing asked for is no filter, which is what an empty list means anyway.</summary>
 	[Test]
 	public void Takes_no_filter_as_no_filter()
 	{
-		Assert.Null(ArgumentValues.EventKinds(null));
-		Assert.Null(ArgumentValues.EventKinds([]));
-		Assert.Null(ArgumentValues.EventKinds(["   "]));
+		ArgumentValues.EventKinds(null).ShouldBeNull();
+		ArgumentValues.EventKinds([]).ShouldBeNull();
+		ArgumentValues.EventKinds(["   "]).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -78,8 +78,8 @@ public sealed class ArgumentValueTests
 	{
 		var kinds = ArgumentValues.EventKinds(["LogMessage,BreakpointHit"]);
 
-		Assert.NotNull(kinds);
-		Assert.Equal(2, kinds.Count);
+		kinds.ShouldNotBeNull();
+		kinds.Count.ShouldBe(2);
 	}
 
 	/// <summary>
@@ -91,11 +91,11 @@ public sealed class ArgumentValueTests
 	[Test]
 	public void Refuses_an_event_kind_it_does_not_know_and_lists_them_all()
 	{
-		var error = Assert.Throws<ArgumentException>(() => ArgumentValues.EventKinds(["LogMessage,Breakpoint"]));
+		var error = Should.Throw<ArgumentException>(() => ArgumentValues.EventKinds(["LogMessage,Breakpoint"])).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("Unknown event kind 'Breakpoint'.", error.Message, StringComparison.Ordinal);
-		Assert.Contains("BreakpointHit", error.Message, StringComparison.Ordinal);
-		Assert.Contains("ModuleLoaded", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("Unknown event kind 'Breakpoint'.", Case.Sensitive);
+		error.Message.ShouldContain("BreakpointHit", Case.Sensitive);
+		error.Message.ShouldContain("ModuleLoaded", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -106,15 +106,15 @@ public sealed class ArgumentValueTests
 	[Test]
 	public void Reads_the_scope_from_what_the_call_named()
 	{
-		Assert.Equal(DiagnosticScope.Document, DiagnosticTarget.From("Widget.cs", null, null).Scope);
-		Assert.Equal("Widget.cs", DiagnosticTarget.From("Widget.cs", null, null).Target);
+		DiagnosticTarget.From("Widget.cs", null, null).Scope.ShouldBe(DiagnosticScope.Document);
+		DiagnosticTarget.From("Widget.cs", null, null).Target.ShouldBe("Widget.cs");
 
-		Assert.Equal(DiagnosticScope.Project, DiagnosticTarget.From(null, "Core", null).Scope);
-		Assert.Equal("Core", DiagnosticTarget.From(null, "Core", null).Target);
+		DiagnosticTarget.From(null, "Core", null).Scope.ShouldBe(DiagnosticScope.Project);
+		DiagnosticTarget.From(null, "Core", null).Target.ShouldBe("Core");
 
 		// Nothing named is the whole solution, which is the one case scope is still for.
-		Assert.Equal(DiagnosticScope.Solution, DiagnosticTarget.From(null, null, null).Scope);
-		Assert.Null(DiagnosticTarget.From(null, null, "solution").Target);
+		DiagnosticTarget.From(null, null, null).Scope.ShouldBe(DiagnosticScope.Solution);
+		DiagnosticTarget.From(null, null, "solution").Target.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -132,8 +132,8 @@ public sealed class ArgumentValueTests
 		string? scope,
 		string expected)
 	{
-		var error = Assert.Throws<ArgumentException>(() => DiagnosticTarget.From(filePath, project, scope));
+		var error = Should.Throw<ArgumentException>(() => DiagnosticTarget.From(filePath, project, scope)).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains(expected, error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain(expected, Case.Sensitive);
 	}
 }

@@ -52,8 +52,7 @@ public sealed class LiveAppUwpModernTests(UwpModernProbeApp uwpModern)
 
 		var session = await manager.StartAsync(target, cancellationToken);
 		var summary = session.Describe();
-		Assert.True(
-			summary.State == LiveAppSessionState.Ready,
+		(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 		// Thrown once in OnLaunched, before the window is shown, so only a debugger that was present
@@ -64,16 +63,16 @@ public sealed class LiveAppUwpModernTests(UwpModernProbeApp uwpModern)
 			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 				&& (entry.ExceptionType?.Contains("RoseUwpModernStartupException") ?? false),
 			cancellationToken);
-		Assert.NotNull(startup);
+		startup.ShouldNotBeNull();
 
 		var ticking = await WaitForEventAsync(
 			session,
 			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 				&& (entry.ExceptionType?.Contains("RoseUwpModernProbeException") ?? false),
 			cancellationToken);
-		Assert.NotNull(ticking);
+		ticking.ShouldNotBeNull();
 
-		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -108,8 +107,7 @@ public sealed class LiveAppUwpModernTests(UwpModernProbeApp uwpModern)
 
 		var session = await manager.StartAsync(target, cancellationToken);
 		var summary = session.Describe();
-		Assert.True(
-			summary.State == LiveAppSessionState.Ready,
+		(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 		// Well into running, so an empty tree cannot be an app that has not built one yet.
@@ -118,32 +116,32 @@ public sealed class LiveAppUwpModernTests(UwpModernProbeApp uwpModern)
 			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 				&& (entry.ExceptionType?.Contains("RoseUwpModernProbeException") ?? false),
 			cancellationToken);
-		Assert.NotNull(running);
+		running.ShouldNotBeNull();
 
 		var tree = await session.ReadXamlTreeAsync(cancellationToken);
-		Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
-		Assert.NotEmpty(tree.Nodes);
+		(tree.Detail is null).ShouldBeTrue($"expected a tree, got detail: {tree.Detail}");
+		tree.Nodes.ShouldNotBeEmpty();
 
 		// The same names the classic UWP probe declares, because the two apps mirror each other on
 		// purpose -- the modern one is generated from the classic one's markup.
 		foreach (var name in new[] { "RootGrid", "Panel", "Pane", "Counter", "Caption" })
 		{
-			Assert.Contains(tree.Nodes, node => node.Name == name);
+			tree.Nodes.ShouldContain(node => node.Name == name);
 		}
 
 		var panelSubtree = await session.ReadXamlTreeAsync("Panel", offset: 0, limit: 0, cancellationToken);
-		Assert.Contains(panelSubtree.Nodes, node => node.Name == "Panel");
-		Assert.Contains(panelSubtree.Nodes, node => node.Name == "Caption");
-		Assert.DoesNotContain(panelSubtree.Nodes, node => node.Name == "RootGrid");
+		panelSubtree.Nodes.ShouldContain(node => node.Name == "Panel");
+		panelSubtree.Nodes.ShouldContain(node => node.Name == "Caption");
+		panelSubtree.Nodes.ShouldNotContain(node => node.Name == "RootGrid");
 
 		// Source info survives the projection. It comes from the markup compiler rather than the
 		// runtime, and a UseUwp project runs the same compiler, so it should -- but it is the one piece
 		// of this that is generated at build time rather than read off the live tree.
-		var pane = Assert.Single(tree.Nodes, node => node.Name == "Pane");
+		var pane = tree.Nodes.Where(node => node.Name == "Pane").ShouldHaveSingleItem();
 		var properties = await session.ReadXamlPropertiesAsync(pane.Handle, includeDefaults: false, cancellationToken);
-		Assert.NotEmpty(properties.Properties);
-		Assert.Contains(properties.Properties, property => property.Name == "CornerRadius");
+		properties.Properties.ShouldNotBeEmpty();
+		properties.Properties.ShouldContain(property => property.Name == "CornerRadius");
 
-		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 	}
 }

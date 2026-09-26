@@ -24,7 +24,7 @@ public sealed class TargetArchitectureProbeTests
 	[Arguments("RoseMcp.ProbeApp.UwpModern_1.0.0.0_arm64__m6jgrvk8sw5nm", TargetArchitecture.Arm64)]
 	public void Reads_the_architecture_a_full_name_carries(string fullName, TargetArchitecture expected)
 	{
-		Assert.Equal(expected, TargetArchitectureProbe.ArchitectureFromFullName(fullName));
+		TargetArchitectureProbe.ArchitectureFromFullName(fullName).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -38,7 +38,7 @@ public sealed class TargetArchitectureProbeTests
 	[Arguments("Contoso.App_1.0.0.0_arm__8wekyb3d8bbwe")]
 	public void An_architecture_with_no_host_is_unknown(string fullName)
 	{
-		Assert.Equal(TargetArchitecture.Unknown, TargetArchitectureProbe.ArchitectureFromFullName(fullName));
+		TargetArchitectureProbe.ArchitectureFromFullName(fullName).ShouldBe(TargetArchitecture.Unknown);
 	}
 
 	/// <summary>
@@ -53,7 +53,7 @@ public sealed class TargetArchitectureProbeTests
 	[Arguments("a_b_c_d_e_f")]
 	public void A_name_that_is_not_a_full_name_is_unknown(string name)
 	{
-		Assert.Equal(TargetArchitecture.Unknown, TargetArchitectureProbe.ArchitectureFromFullName(name));
+		TargetArchitectureProbe.ArchitectureFromFullName(name).ShouldBe(TargetArchitecture.Unknown);
 	}
 
 	/// <summary>
@@ -63,9 +63,8 @@ public sealed class TargetArchitectureProbeTests
 	[Test]
 	public void Matching_ignores_case()
 	{
-		Assert.Equal(
-			TargetArchitecture.Arm64,
-			TargetArchitectureProbe.ArchitectureFromFullName("Contoso.App_1.0.0.0_ARM64__8wekyb3d8bbwe"));
+		TargetArchitectureProbe.ArchitectureFromFullName("Contoso.App_1.0.0.0_ARM64__8wekyb3d8bbwe").ShouldBe(
+			TargetArchitecture.Arm64);
 	}
 
 	/// <summary>
@@ -76,8 +75,7 @@ public sealed class TargetArchitectureProbeTests
 	[Test]
 	public void An_aumid_carries_no_architecture()
 	{
-		Assert.Equal(
-			TargetArchitecture.Unknown,
-			TargetArchitectureProbe.ArchitectureFromFullName("RoseMcp.ProbeApp.UwpModern_m6jgrvk8sw5nm!App"));
+		TargetArchitectureProbe.ArchitectureFromFullName("RoseMcp.ProbeApp.UwpModern_m6jgrvk8sw5nm!App").ShouldBe(
+			TargetArchitecture.Unknown);
 	}
 }

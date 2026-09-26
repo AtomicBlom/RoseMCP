@@ -1,6 +1,5 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-
 using RoseMcp.XamlStubs;
 
 namespace RoseMcp.UnitTests;
@@ -64,14 +63,14 @@ public sealed class XamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class Widget { } }");
 
-		Assert.Null(emission.SkipReason);
-		Assert.Contains("partial class Widget : global::Windows.UI.Xaml.Controls.UserControl", emission.Source!, StringComparison.Ordinal);
-		Assert.Contains("private global::Windows.UI.Xaml.Controls.Grid Root;", emission.Source!, StringComparison.Ordinal);
-		Assert.Contains("private global::Windows.UI.Xaml.Controls.Button Go;", emission.Source!, StringComparison.Ordinal);
+		emission.SkipReason.ShouldBeNull();
+		emission.Source!.ShouldContain("partial class Widget : global::Windows.UI.Xaml.Controls.UserControl", Case.Sensitive);
+		emission.Source!.ShouldContain("private global::Windows.UI.Xaml.Controls.Grid Root;", Case.Sensitive);
+		emission.Source!.ShouldContain("private global::Windows.UI.Xaml.Controls.Button Go;", Case.Sensitive);
 
 		// Resolved out of the type universe, so an in-house control works exactly like a built-in one.
-		Assert.Contains("private global::House.Controls.FancyThing Custom;", emission.Source!, StringComparison.Ordinal);
-		Assert.Empty(emission.UnresolvedTypes);
+		emission.Source!.ShouldContain("private global::House.Controls.FancyThing Custom;", Case.Sensitive);
+		emission.UnresolvedTypes.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -106,7 +105,7 @@ public sealed class XamlStubTests
 		var emission = Emit(markup, behind);
 		var complete = Compile(FakeFramework, behind, emission.Source!);
 
-		Assert.Empty(complete.GetDiagnostics(TestContext.Current!.Execution.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
+		complete.GetDiagnostics(TestContext.Current!.Execution.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning).ShouldBeEmpty();
 	}
 
 	[Test]
@@ -135,14 +134,14 @@ public sealed class XamlStubTests
 		var emission = Emit(markup, "namespace App { partial class Widget { } }");
 
 		// Named visual states do get fields; the real generator emits them.
-		Assert.Contains("VisualStateGroup Sizes;", emission.Source!, StringComparison.Ordinal);
-		Assert.Contains("VisualState Narrow;", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("VisualStateGroup Sizes;", Case.Sensitive);
+		emission.Source!.ShouldContain("VisualState Narrow;", Case.Sensitive);
 
 		// A named resource does get one; the real generator emits those.
-		Assert.Contains("Button NamedResource;", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("Button NamedResource;", Case.Sensitive);
 
 		// A name inside a template belongs to that template's namescope, and gets nothing.
-		Assert.DoesNotContain("AlsoNotAField", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldNotContain("AlsoNotAField", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -164,13 +163,13 @@ public sealed class XamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class Widget { } }");
 
-		Assert.DoesNotContain("Absent", emission.Source!, StringComparison.Ordinal);
-		Assert.Contains("Button Present;", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldNotContain("Absent", Case.Sensitive);
+		emission.Source!.ShouldContain("Button Present;", Case.Sensitive);
 
-		var unresolved = Assert.Single(emission.UnresolvedTypes);
+		var unresolved = emission.UnresolvedTypes.ShouldHaveSingleItem();
 
-		Assert.Contains("Absent", unresolved, StringComparison.Ordinal);
-		Assert.Contains("Nowhere.Controls", unresolved, StringComparison.Ordinal);
+		unresolved.ShouldContain("Absent", Case.Sensitive);
+		unresolved.ShouldContain("Nowhere.Controls", Case.Sensitive);
 	}
 
 	[Test]
@@ -184,8 +183,8 @@ public sealed class XamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class Widget { public void InitializeComponent() { } } }");
 
-		Assert.Null(emission.Source);
-		Assert.Contains("already in the compilation", emission.SkipReason!, StringComparison.Ordinal);
+		emission.Source.ShouldBeNull();
+		emission.SkipReason!.ShouldContain("already in the compilation", Case.Sensitive);
 	}
 
 	/// <summary>Two partials naming different base classes is CS0263, so the other part wins.</summary>
@@ -202,8 +201,8 @@ public sealed class XamlStubTests
 			markup,
 			"namespace App { partial class Widget : Windows.UI.Xaml.Controls.Page { } }");
 
-		Assert.Contains("partial class Widget\n", emission.Source!, StringComparison.Ordinal);
-		Assert.DoesNotContain("UserControl", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("partial class Widget\n", Case.Sensitive);
+		emission.Source!.ShouldNotContain("UserControl", Case.Sensitive);
 	}
 
 	[Test]
@@ -219,8 +218,8 @@ public sealed class XamlStubTests
 
 		var without = withBind.Replace("{x:Bind Title}", "plain", StringComparison.Ordinal);
 
-		Assert.Contains("Bindings", Emit(withBind, "namespace App { partial class Bound { } }").Source!, StringComparison.Ordinal);
-		Assert.DoesNotContain("Bindings", Emit(without, "namespace App { partial class Bound { } }").Source!, StringComparison.Ordinal);
+		Emit(withBind, "namespace App { partial class Bound { } }").Source!.ShouldContain("Bindings", Case.Sensitive);
+		Emit(without, "namespace App { partial class Bound { } }").Source!.ShouldNotContain("Bindings", Case.Sensitive);
 	}
 
 	[Test]
@@ -232,18 +231,18 @@ public sealed class XamlStubTests
 
 		var document = XamlDocumentReader.Read("Theme.xaml", markup);
 
-		Assert.NotNull(document);
-		Assert.Null(document.ClassName);
+		document.ShouldNotBeNull();
+		document.ClassName.ShouldBeNull();
 
 		var emission = XamlStubEmitter.Emit(Compile(FakeFramework), WindowsXamlDialect.Uwp, document);
 
-		Assert.Contains("no x:Class", emission.SkipReason!, StringComparison.Ordinal);
+		emission.SkipReason!.ShouldContain("no x:Class", Case.Sensitive);
 	}
 
 	[Test]
 	public void Survives_markup_that_is_not_valid_xml()
 	{
-		Assert.Null(XamlDocumentReader.Read("Broken.xaml", "<UserControl <<< />"));
+		XamlDocumentReader.Read("Broken.xaml", "<UserControl <<< />").ShouldBeNull();
 	}
 
 	/// <summary>The dialect is chosen from what the project references, not from the markup.</summary>
@@ -252,10 +251,10 @@ public sealed class XamlStubTests
 	{
 		var chosen = XamlDialectSelector.Select(Compile(FakeFramework), []);
 
-		Assert.NotNull(chosen.Dialect);
-		Assert.Equal("UWP", chosen.Dialect.Name);
-		Assert.False(chosen.WasAmbiguous, "the dialect was not ambiguous");
-		Assert.Contains("Windows.UI.Xaml.Controls.Control", chosen.Reason, StringComparison.Ordinal);
+		chosen.Dialect.ShouldNotBeNull();
+		chosen.Dialect.Name.ShouldBe("UWP");
+		chosen.WasAmbiguous.ShouldBeFalse("the dialect was not ambiguous");
+		chosen.Reason.ShouldContain("Windows.UI.Xaml.Controls.Control", Case.Sensitive);
 	}
 
 	[Test]
@@ -263,8 +262,8 @@ public sealed class XamlStubTests
 	{
 		var chosen = XamlDialectSelector.Select(Compile("namespace Plain { public class Thing { } }"), []);
 
-		Assert.Null(chosen.Dialect);
-		Assert.Contains("no XAML framework", chosen.Reason, StringComparison.Ordinal);
+		chosen.Dialect.ShouldBeNull();
+		chosen.Reason.ShouldContain("no XAML framework", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -283,7 +282,7 @@ public sealed class XamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class Widget { } }");
 
-		Assert.Contains("private global::Windows.UI.Xaml.Controls.UserControl shell;", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("private global::Windows.UI.Xaml.Controls.UserControl shell;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -306,8 +305,8 @@ public sealed class XamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class Widget { } }");
 
-		Assert.Contains("Storyboard FadeIn;", emission.Source!, StringComparison.Ordinal);
-		Assert.DoesNotContain("Unnamed", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("Storyboard FadeIn;", Case.Sensitive);
+		emission.Source!.ShouldNotContain("Unnamed", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -328,8 +327,8 @@ public sealed class XamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class Widget { } }");
 
-		Assert.Contains("internal global::Windows.UI.Xaml.Controls.Button Shared;", emission.Source!, StringComparison.Ordinal);
-		Assert.Contains("private global::Windows.UI.Xaml.Controls.Button Own;", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("internal global::Windows.UI.Xaml.Controls.Button Shared;", Case.Sensitive);
+		emission.Source!.ShouldContain("private global::Windows.UI.Xaml.Controls.Button Own;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -348,18 +347,14 @@ public sealed class XamlStubTests
 		var behind = "namespace App { partial class Program { } }";
 		var withMain = "namespace App { partial class Program { public static void Main(string[] args) { } } }";
 
-		Assert.Contains(
-			"public static void Main(string[] args)",
-			Emit(markup, behind, OutputKind.WindowsApplication).Source!,
-			StringComparison.Ordinal);
+		Emit(markup, behind, OutputKind.WindowsApplication).Source!.ShouldContain(
+			"public static void Main(string[] args)", Case.Sensitive);
 
-		Assert.DoesNotContain(
-			"static void Main",
-			Emit(markup, withMain, OutputKind.WindowsApplication).Source!,
-			StringComparison.Ordinal);
+		Emit(markup, withMain, OutputKind.WindowsApplication).Source!.ShouldNotContain(
+			"static void Main", Case.Sensitive);
 
 		// A library needs no entry point at all.
-		Assert.DoesNotContain("static void Main", Emit(markup, behind).Source!, StringComparison.Ordinal);
+		Emit(markup, behind).Source!.ShouldNotContain("static void Main", Case.Sensitive);
 	}
 
 	private static XamlStubEmission Emit(
@@ -369,7 +364,7 @@ public sealed class XamlStubTests
 	{
 		var document = XamlDocumentReader.Read("Widget.xaml", markup);
 
-		Assert.NotNull(document);
+		document.ShouldNotBeNull();
 
 		return XamlStubEmitter.Emit(
 			Compile(outputKind, FakeFramework, codeBehind), WindowsXamlDialect.Uwp, document);

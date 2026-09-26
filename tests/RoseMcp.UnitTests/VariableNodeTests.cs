@@ -20,16 +20,16 @@ public sealed class VariableNodeTests
 	[Test]
 	public void An_object_reads_as_its_type_and_a_primitive_as_its_value()
 	{
-		Assert.Equal("42", new VariableNode(Variable("count", value: "42", type: "int", children: false)).Value);
-		Assert.Equal("{MyApp.Widget}", new VariableNode(Variable("widget", value: null, type: "MyApp.Widget", children: true)).Value);
+		new VariableNode(Variable("count", value: "42", type: "int", children: false)).Value.ShouldBe("42");
+		new VariableNode(Variable("widget", value: null, type: "MyApp.Widget", children: true)).Value.ShouldBe("{MyApp.Widget}");
 	}
 
 	/// <summary>The expander appears only where the host has said there is something behind it.</summary>
 	[Test]
 	public void Only_a_value_with_something_inside_offers_to_expand()
 	{
-		Assert.True(new VariableNode(Variable("widget", null, "MyApp.Widget", children: true)).HasUnrealizedChildren);
-		Assert.False(new VariableNode(Variable("count", "42", "int", children: false)).HasUnrealizedChildren);
+		new VariableNode(Variable("widget", null, "MyApp.Widget", children: true)).HasUnrealizedChildren.ShouldBeTrue();
+		new VariableNode(Variable("count", "42", "int", children: false)).HasUnrealizedChildren.ShouldBeFalse();
 	}
 
 	[Test]
@@ -38,14 +38,14 @@ public sealed class VariableNodeTests
 		var node = new VariableNode(Variable("widget", null, "MyApp.Widget", children: true));
 
 		node.Loading();
-		Assert.True(node.IsLoading);
+		node.IsLoading.ShouldBeTrue();
 
 		node.Fill(Expansion(Variable("title", "\"hello\"", "string", children: false)));
 
-		Assert.False(node.IsLoading);
-		Assert.False(node.HasUnrealizedChildren);
-		Assert.Equal("title", Assert.Single(node.Children).Name);
-		Assert.False(node.HasLoadDetail);
+		node.IsLoading.ShouldBeFalse();
+		node.HasUnrealizedChildren.ShouldBeFalse();
+		node.Children.ShouldHaveSingleItem().Name.ShouldBe("title");
+		node.HasLoadDetail.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -60,8 +60,8 @@ public sealed class VariableNodeTests
 
 		node.Fill(Expansion());
 
-		Assert.Empty(node.Children);
-		Assert.False(node.HasUnrealizedChildren);
+		node.Children.ShouldBeEmpty();
+		node.HasUnrealizedChildren.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -75,8 +75,8 @@ public sealed class VariableNodeTests
 
 		node.Fill(Expansion(truncated: true, total: 4000, Variable("[0]", "1", "int", children: false)));
 
-		Assert.True(node.HasLoadDetail);
-		Assert.Equal("showing 1 of 4000", node.LoadDetail);
+		node.HasLoadDetail.ShouldBeTrue();
+		node.LoadDetail.ShouldBe("showing 1 of 4000");
 	}
 
 	/// <summary>
@@ -91,9 +91,9 @@ public sealed class VariableNodeTests
 		node.Loading();
 		node.Failed("The target is no longer stopped.");
 
-		Assert.False(node.IsLoading);
-		Assert.True(node.HasUnrealizedChildren);
-		Assert.Equal("The target is no longer stopped.", node.LoadDetail);
+		node.IsLoading.ShouldBeFalse();
+		node.HasUnrealizedChildren.ShouldBeTrue();
+		node.LoadDetail.ShouldBe("The target is no longer stopped.");
 	}
 
 	private static LiveVariable Variable(string name, string? value, string? type, bool children) => new()

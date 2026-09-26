@@ -572,6 +572,35 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
 	[McpServerTool(
+		Name = ToolNames.ReplacePattern,
+		Title = "Rewrite a code pattern everywhere",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplacePattern)]
+	public Task<PatternRewriteResult> ReplacePatternAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description(ToolDescriptions.RulesArgument)] PatternRule[] rules,
+		[Description(ToolDescriptions.PatternUsingsArgument)] string[]? usings = null,
+		[Description(ToolDescriptions.PatternFilePathsArgument)] string[]? filePaths = null,
+		[Description(ToolDescriptions.PatternApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
+		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		CancellationToken cancellationToken = default) =>
+		ForwardAsync<PatternRewriteResult>(WorkspaceHints.From(paths.Of(workspace), paths.Each(filePaths ?? [])), ToolNames.ReplacePattern, new()
+		{
+			["rules"] = rules,
+			["usings"] = usings,
+			["filePaths"] = filePaths,
+			["apply"] = apply,
+			["verify"] = verify,
+			["expectedRevision"] = expectedRevision,
+		}, cancellationToken, progress, retryIfWorkerDied: false);
+
+	[McpServerTool(
 		Name = ToolNames.BuildFreshness,
 		Title = "Is the build output newer than the sources",
 		ReadOnly = true,

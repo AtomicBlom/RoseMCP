@@ -33,12 +33,12 @@ public sealed class ProgressReportingTests
 
 		var reports = progress.Reports;
 
-		Assert.NotEmpty(reports);
+		reports.ShouldNotBeEmpty();
 
 		// The projects in the fixture, by name, because "loading" on its own does not tell anyone
 		// which of forty projects is the slow one.
-		Assert.Contains(reports, report => report.Message.Contains("Core", StringComparison.Ordinal));
-		Assert.Contains(reports, report => report.Message.Contains("App", StringComparison.Ordinal));
+		reports.ShouldContain(report => report.Message.Contains("Core", StringComparison.Ordinal));
+		reports.ShouldContain(report => report.Message.Contains("App", StringComparison.Ordinal));
 
 		// A bar that goes backwards is worse than no bar, which is what the sliced scales exist to
 		// prevent.
@@ -46,7 +46,7 @@ public sealed class ProgressReportingTests
 
 		// Restore, the design-time build and the generator pass all have to have happened for a
 		// load to be finished, so the last word cannot be an early phase.
-		Assert.True(reports[^1].Percent >= 75, $"the load finished at {reports[^1].Percent}");
+		(reports[^1].Percent >= 75).ShouldBeTrue($"the load finished at {reports[^1].Percent}");
 	}
 
 	[Test]
@@ -66,8 +66,8 @@ public sealed class ProgressReportingTests
 
 		var reports = progress.Reports;
 
-		Assert.Contains(reports, report => report.Message.StartsWith("Analysing", StringComparison.Ordinal));
-		Assert.Contains(reports, report => report.Message.Contains("Core", StringComparison.Ordinal));
+		reports.ShouldContain(report => report.Message.StartsWith("Analysing", StringComparison.Ordinal));
+		reports.ShouldContain(report => report.Message.Contains("Core", StringComparison.Ordinal));
 		AssertNeverGoesBackwards(reports);
 	}
 
@@ -90,8 +90,8 @@ public sealed class ProgressReportingTests
 				.FirstOrDefault(activity => activity.Operation == WorkspaceWorker.LoadOperation),
 			TimeSpan.FromMinutes(2));
 
-		Assert.Equal(ActivityOutcome.Succeeded, load.Outcome);
-		Assert.True(load.Elapsed > TimeSpan.Zero);
+		load.Outcome.ShouldBe(ActivityOutcome.Succeeded);
+		(load.Elapsed > TimeSpan.Zero).ShouldBeTrue();
 
 		// A message at all means a progress notification crossed the process boundary and was
 		// matched to the right activity.
@@ -102,7 +102,7 @@ public sealed class ProgressReportingTests
 		// no percentage deliberately clears it, since a sender that has stopped knowing must not
 		// leave a bar frozen. On a fixture this small the load can finish with only such a report
 		// seen. Percentages are covered where they can be observed in order, by the tests above.
-		Assert.False(string.IsNullOrWhiteSpace(load.Message), "the load reported no progress");
+		string.IsNullOrWhiteSpace(load.Message).ShouldBeFalse("the load reported no progress");
 	}
 
 	private static void AssertNeverGoesBackwards(IReadOnlyList<(string Message, double? Percent)> reports)
@@ -113,7 +113,7 @@ public sealed class ProgressReportingTests
 		{
 			if (percent is not { } value) continue;
 
-			Assert.True(value >= highest, $"'{message}' reported {value} after {highest}");
+			(value >= highest).ShouldBeTrue($"'{message}' reported {value} after {highest}");
 			highest = value;
 		}
 	}

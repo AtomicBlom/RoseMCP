@@ -37,7 +37,7 @@ public sealed class ArgumentAliasTests
 
 			foreach (var alias in aliases.For(tool.Name).Keys)
 			{
-				Assert.DoesNotContain(alias, declared);
+				declared.ShouldNotContain(alias);
 			}
 		}
 	}
@@ -57,7 +57,7 @@ public sealed class ArgumentAliasTests
 
 			foreach (var canonical in aliases.For(tool.Name).Values)
 			{
-				Assert.Contains(canonical, declared);
+				declared.ShouldContain(canonical);
 			}
 		}
 	}
@@ -73,11 +73,11 @@ public sealed class ArgumentAliasTests
 		var (aliases, tools) = Registered();
 		var routed = tools.Where(tool => Arguments(tool).Contains("workspace")).ToArray();
 
-		Assert.NotEmpty(routed);
+		routed.ShouldNotBeEmpty();
 
 		foreach (var tool in routed)
 		{
-			Assert.Equal("workspace", aliases.For(tool.Name).GetValueOrDefault("solution"));
+			aliases.For(tool.Name).GetValueOrDefault("solution").ShouldBe("workspace");
 		}
 	}
 
@@ -88,11 +88,11 @@ public sealed class ArgumentAliasTests
 		var (aliases, tools) = Registered();
 		var reading = tools.Where(tool => Arguments(tool).Contains("filePath")).ToArray();
 
-		Assert.NotEmpty(reading);
+		reading.ShouldNotBeEmpty();
 
 		foreach (var tool in reading)
 		{
-			Assert.Equal("filePath", aliases.For(tool.Name).GetValueOrDefault("file"));
+			aliases.For(tool.Name).GetValueOrDefault("file").ShouldBe("filePath");
 		}
 	}
 
@@ -113,7 +113,7 @@ public sealed class ArgumentAliasTests
 			.Select(tool => tool.Name)
 			.ToArray();
 
-		Assert.Equal([ToolNames.MoveTypeToFile], withheld);
+		withheld.ShouldBe([ToolNames.MoveTypeToFile]);
 	}
 
 	/// <summary>
@@ -127,26 +127,26 @@ public sealed class ArgumentAliasTests
 	{
 		var (aliases, tools) = Registered();
 
-		Assert.NotEmpty(tools);
-		Assert.Empty(tools.Select(tool => tool.Name).Except(aliases.Scanned, StringComparer.Ordinal));
+		tools.ShouldNotBeEmpty();
+		tools.Select(tool => tool.Name).Except(aliases.Scanned, StringComparer.Ordinal).ShouldBeEmpty();
 	}
 
 	/// <summary>Refused where it is written, not where it is read: registration fails rather than one call.</summary>
 	[Test]
 	public void An_alias_that_shadows_an_argument_is_refused_at_startup()
 	{
-		var error = Assert.Throws<InvalidOperationException>(() => ArgumentAliases.From([typeof(Shadowing)]));
+		var error = Should.Throw<InvalidOperationException>(() => ArgumentAliases.From([typeof(Shadowing)])).ShouldBeOfType<InvalidOperationException>();
 
-		Assert.Contains("'path'", error.Message);
+		error.Message.ShouldContain("'path'", Case.Sensitive);
 	}
 
 	/// <summary>Two arguments claiming one spelling cannot both be what a caller meant.</summary>
 	[Test]
 	public void Two_arguments_claiming_one_alias_are_refused_at_startup()
 	{
-		var error = Assert.Throws<InvalidOperationException>(() => ArgumentAliases.From([typeof(Doubled)]));
+		var error = Should.Throw<InvalidOperationException>(() => ArgumentAliases.From([typeof(Doubled)])).ShouldBeOfType<InvalidOperationException>();
 
-		Assert.Contains("cannot stand for two", error.Message);
+		error.Message.ShouldContain("cannot stand for two", Case.Sensitive);
 	}
 
 	/// <summary>The whole point: what the caller sent under the other name is what binds.</summary>
@@ -157,10 +157,10 @@ public sealed class ArgumentAliasTests
 
 		var correction = aliases.Read("aliased", Sent(("path", "D:/repo/App.cs")));
 
-		Assert.Null(correction.Refusal);
-		Assert.NotNull(correction.Arguments);
-		Assert.Equal("D:/repo/App.cs", correction.Arguments!["filePath"].GetString());
-		Assert.DoesNotContain("path", correction.Arguments.Keys);
+		correction.Refusal.ShouldBeNull();
+		correction.Arguments.ShouldNotBeNull();
+		correction.Arguments!["filePath"].GetString().ShouldBe("D:/repo/App.cs");
+		correction.Arguments.Keys.ShouldNotContain("path");
 	}
 
 	/// <summary>
@@ -174,10 +174,10 @@ public sealed class ArgumentAliasTests
 
 		var correction = aliases.Read("aliased", Sent(("filePath", "A.cs"), ("path", "B.cs")));
 
-		Assert.Null(correction.Arguments);
-		Assert.NotNull(correction.Refusal);
-		Assert.Contains("'filePath'", correction.Refusal!);
-		Assert.Contains("'path'", correction.Refusal!);
+		correction.Arguments.ShouldBeNull();
+		correction.Refusal.ShouldNotBeNull();
+		correction.Refusal!.ShouldContain("'filePath'", Case.Sensitive);
+		correction.Refusal!.ShouldContain("'path'", Case.Sensitive);
 	}
 
 	/// <summary>A call that got the name right costs nothing and is handed on untouched.</summary>
@@ -188,9 +188,9 @@ public sealed class ArgumentAliasTests
 
 		var correction = aliases.Read("aliased", Sent(("filePath", "A.cs")));
 
-		Assert.Null(correction.Refusal);
-		Assert.Null(correction.Arguments);
-		Assert.Empty(correction.Applied);
+		correction.Refusal.ShouldBeNull();
+		correction.Arguments.ShouldBeNull();
+		correction.Applied.ShouldBeEmpty();
 	}
 
 	/// <summary>The aliases the running server applies, and the tools exactly as a client is sent them.</summary>

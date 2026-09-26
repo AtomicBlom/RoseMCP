@@ -38,7 +38,7 @@ public sealed class OperatorApiTests
 
 		using var answer = await broker.Anonymous.GetAsync(broker.Url("/operator/sessions"), cancellationToken);
 
-		Assert.Equal(HttpStatusCode.Unauthorized, answer.StatusCode);
+		answer.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 	}
 
 	[Test]
@@ -52,7 +52,7 @@ public sealed class OperatorApiTests
 
 		using var answer = await broker.Anonymous.SendAsync(request, cancellationToken);
 
-		Assert.Equal(HttpStatusCode.Unauthorized, answer.StatusCode);
+		answer.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 	}
 
 	[Test]
@@ -64,8 +64,8 @@ public sealed class OperatorApiTests
 		var sessions = await broker.Client.GetFromJsonAsync<LiveAppSessionSummary[]>(
 			broker.Url("/operator/sessions"), ContractJson.Options, cancellationToken);
 
-		Assert.NotNull(sessions);
-		Assert.Empty(sessions!);
+		sessions.ShouldNotBeNull();
+		sessions!.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -82,13 +82,13 @@ public sealed class OperatorApiTests
 		using var answer = await broker.Client.GetAsync(
 			broker.Url("/operator/sessions/session-nothere"), cancellationToken);
 
-		Assert.Equal(HttpStatusCode.NotFound, answer.StatusCode);
+		answer.StatusCode.ShouldBe(HttpStatusCode.NotFound);
 
 		var error = await answer.Content.ReadFromJsonAsync<OperatorError>(ContractJson.Options, cancellationToken);
 
-		Assert.NotNull(error);
-		Assert.Contains("session-nothere", error!.Message);
-		Assert.Contains("/operator/sessions", error.Message);
+		error.ShouldNotBeNull();
+		error!.Message.ShouldContain("session-nothere", Case.Sensitive);
+		error.Message.ShouldContain("/operator/sessions", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -126,35 +126,35 @@ public sealed class OperatorApiTests
 				cancellationToken: cancellationToken);
 
 			var sessionId = attached.StructuredContent?.Deserialize<LiveAppSessionSummary>(ContractJson.Options)?.SessionId;
-			Assert.NotNull(sessionId);
+			sessionId.ShouldNotBeNull();
 
 			var listed = await broker.Client.GetFromJsonAsync<LiveAppSessionSummary[]>(
 				broker.Url("/operator/sessions"), ContractJson.Options, cancellationToken);
 
-			Assert.NotNull(listed);
-			Assert.Contains(listed!, summary => summary.SessionId == sessionId);
+			listed.ShouldNotBeNull();
+			listed!.ShouldContain(summary => summary.SessionId == sessionId);
 
 			// And reachable one at a time, which is what every other route depends on.
 			using var one = await broker.Client.GetAsync(broker.Url($"/operator/sessions/{sessionId}"), cancellationToken);
-			Assert.Equal(HttpStatusCode.OK, one.StatusCode);
+			one.StatusCode.ShouldBe(HttpStatusCode.OK);
 
 			// Detached from here too, leaving the target running: an operator holds the whole machine's
 			// sessions, so ending one is theirs to do.
 			using var detached = await broker.Client.PostAsync(
 				broker.Url($"/operator/sessions/{sessionId}/detach"), content: null, cancellationToken);
 
-			Assert.Equal(HttpStatusCode.OK, detached.StatusCode);
+			detached.StatusCode.ShouldBe(HttpStatusCode.OK);
 
 			var closed = await detached.Content.ReadFromJsonAsync<LiveSessionClosed>(
 				ContractJson.Options, cancellationToken);
 
-			Assert.NotNull(closed);
-			Assert.True(closed!.Closed, "the operator path closes a session an agent started");
-			Assert.False(target.HasExited, "a detach leaves the target running");
+			closed.ShouldNotBeNull();
+			closed!.Closed.ShouldBeTrue("the operator path closes a session an agent started");
+			target.HasExited.ShouldBeFalse("a detach leaves the target running");
 
 			// Gone by name, which is the other half of a close.
 			using var again = await broker.Client.GetAsync(broker.Url($"/operator/sessions/{sessionId}"), cancellationToken);
-			Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
+			again.StatusCode.ShouldBe(HttpStatusCode.NotFound);
 		}
 		finally
 		{

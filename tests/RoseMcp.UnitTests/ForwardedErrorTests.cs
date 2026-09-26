@@ -19,7 +19,7 @@ public sealed class ForwardedErrorTests
 			"An error occurred invoking 'rose_replace_member': The code declares 2 members and this "
 				+ "replaces one. (workspace: A.slnx)"));
 
-		Assert.Equal("The code declares 2 members and this replaces one. (workspace: A.slnx)", message);
+		message.ShouldBe("The code declares 2 members and this replaces one. (workspace: A.slnx)");
 	}
 
 	/// <summary>Once, so a message that quotes the sentence itself keeps its own copy.</summary>
@@ -29,22 +29,22 @@ public sealed class ForwardedErrorTests
 		var message = ForwardedError.Message(Failed(
 			"An error occurred invoking 'rose_format': An error occurred invoking 'rose_format': no"));
 
-		Assert.Equal("An error occurred invoking 'rose_format': no", message);
+		message.ShouldBe("An error occurred invoking 'rose_format': no");
 	}
 
 	[Test]
 	public void Leaves_a_message_that_never_had_one()
 	{
-		Assert.Equal("Nothing in the solution is called 'Widget'.", ForwardedError.Message(Failed(
-			"Nothing in the solution is called 'Widget'.")));
+		ForwardedError.Message(Failed(
+			"Nothing in the solution is called 'Widget'.")).ShouldBe("Nothing in the solution is called 'Widget'.");
 	}
 
 	/// <summary>A result that did not fail has no message, which is how the caller tells.</summary>
 	[Test]
 	public void Reports_nothing_for_a_result_that_succeeded()
 	{
-		Assert.Null(ForwardedError.Message(new CallToolResult { Content = [] }));
-		Assert.Null(ForwardedError.Message(new CallToolResult { IsError = true, Content = [] }));
+		ForwardedError.Message(new CallToolResult { Content = [] }).ShouldBeNull();
+		ForwardedError.Message(new CallToolResult { IsError = true, Content = [] }).ShouldBeNull();
 	}
 
 	private static CallToolResult Failed(string text) =>

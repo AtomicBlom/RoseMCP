@@ -16,18 +16,16 @@ public sealed class CommandLineTests
 	[Test]
 	public void The_executable_is_dropped_and_the_rest_kept()
 	{
-		Assert.Equal(
-			["--port", "5077", "--session", "a1b2c3d4"],
-			CommandLine.Split(@"C:\rose\inspector\RoseMcp.Inspector.exe --port 5077 --session a1b2c3d4"));
+		CommandLine.Split(@"C:\rose\inspector\RoseMcp.Inspector.exe --port 5077 --session a1b2c3d4").ShouldBe(
+			["--port", "5077", "--session", "a1b2c3d4"]);
 	}
 
 	/// <summary>A path with a space in it is one argument, which is the case this exists for.</summary>
 	[Test]
 	public void A_quoted_argument_with_spaces_stays_one_argument()
 	{
-		Assert.Equal(
-			["--token", "a b c"],
-			CommandLine.Split(@"""C:\Program Files\Rose\RoseMcp.Inspector.exe"" --token ""a b c"""));
+		CommandLine.Split(@"""C:\Program Files\Rose\RoseMcp.Inspector.exe"" --token ""a b c""").ShouldBe(
+			["--token", "a b c"]);
 	}
 
 	/// <summary>
@@ -39,33 +37,33 @@ public sealed class CommandLineTests
 	{
 		// Two backslashes before the closing quote halve to one, and the quote still closes -- which
 		// is what lets a quoted path end in a separator.
-		Assert.Equal([@"C:\dir\"], CommandLine.Split(@"exe ""C:\dir\\"""));
+		CommandLine.Split(@"exe ""C:\dir\\""").ShouldBe([@"C:\dir\"]);
 
 		// An odd backslash escapes the quote rather than ending the quoted run.
-		Assert.Equal([@"say""it"], CommandLine.Split(@"exe say\""it"));
+		CommandLine.Split(@"exe say\""it").ShouldBe([@"say""it"]);
 
 		// Backslashes that are not before a quote are literal, however many there are.
-		Assert.Equal([@"C:\dir\\ next"], CommandLine.Split(@"exe ""C:\dir\\ next"""));
+		CommandLine.Split(@"exe ""C:\dir\\ next""").ShouldBe([@"C:\dir\\ next"]);
 	}
 
 	[Test]
 	public void Runs_of_whitespace_do_not_make_empty_arguments()
 	{
-		Assert.Equal(["--port", "5077"], CommandLine.Split("exe   --port \t 5077  "));
+		CommandLine.Split("exe   --port \t 5077  ").ShouldBe(["--port", "5077"]);
 	}
 
 	[Test]
 	public void An_empty_quoted_argument_is_still_an_argument()
 	{
-		Assert.Equal(["--token", string.Empty], CommandLine.Split(@"exe --token """""));
+		CommandLine.Split(@"exe --token """"").ShouldBe(["--token", string.Empty]);
 	}
 
 	[Test]
 	public void Nothing_at_all_reads_as_no_arguments()
 	{
-		Assert.Empty(CommandLine.Split(null));
-		Assert.Empty(CommandLine.Split(string.Empty));
-		Assert.Empty(CommandLine.Split("exe"));
+		CommandLine.Split(null).ShouldBeEmpty();
+		CommandLine.Split(string.Empty).ShouldBeEmpty();
+		CommandLine.Split("exe").ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -75,7 +73,7 @@ public sealed class CommandLineTests
 	[Test]
 	public void The_first_token_can_be_kept()
 	{
-		Assert.Equal(["--port", "5077"], CommandLine.Split("--port 5077", skipExecutable: false));
+		CommandLine.Split("--port 5077", skipExecutable: false).ShouldBe(["--port", "5077"]);
 	}
 
 	/// <summary>What a command line composes to, read back, is what went into it.</summary>
@@ -84,8 +82,7 @@ public sealed class CommandLineTests
 	{
 		var line = @"""C:\Program Files\Rose\inspector\RoseMcp.Inspector.exe"" --port 5077 --token tok-1 --session s1";
 
-		Assert.Equal(
-			new InspectorOptions { Port = 5077, Token = "tok-1", SessionId = "s1" },
-			InspectorOptions.Parse(CommandLine.Split(line)));
+		InspectorOptions.Parse(CommandLine.Split(line)).ShouldBe(
+			new InspectorOptions { Port = 5077, Token = "tok-1", SessionId = "s1" });
 	}
 }

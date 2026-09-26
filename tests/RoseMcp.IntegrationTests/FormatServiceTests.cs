@@ -1,3 +1,4 @@
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -75,19 +76,19 @@ public sealed class FormatServiceTests
 
 		var result = await FormatAsync(session, [path]);
 
-		Assert.True(result.Applied);
-		Assert.Equal([path], result.ChangedFiles);
+		result.Applied.ShouldBeTrue();
+		result.ChangedFiles.ShouldBe([path]);
 
 		var formatted = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		// Tabs, Allman braces: the formatter's half.
-		Assert.Contains("\tpublic int Twice()" + Crlf + "\t{", formatted, StringComparison.Ordinal);
-		Assert.DoesNotContain("    public", formatted, StringComparison.Ordinal);
+		formatted.ShouldContain("\tpublic int Twice()" + Crlf + "\t{", Case.Sensitive);
+		formatted.ShouldNotContain("    public", Case.Sensitive);
 
 		// Every line ending, the trailing space and the final newline: the half the formatter leaves.
-		Assert.DoesNotContain(Lf, formatted.Replace(Crlf, string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
-		Assert.DoesNotContain(" " + Crlf, formatted, StringComparison.Ordinal);
-		Assert.EndsWith(Crlf, formatted, StringComparison.Ordinal);
+		formatted.Replace(Crlf, string.Empty, StringComparison.Ordinal).ShouldNotContain(Lf, Case.Sensitive);
+		formatted.ShouldNotContain(" " + Crlf, Case.Sensitive);
+		formatted.ShouldEndWith(Crlf, Case.Sensitive);
 	}
 
 	[Test]
@@ -98,12 +99,12 @@ public sealed class FormatServiceTests
 
 		var result = await FormatAsync(session, [path], apply: false);
 
-		Assert.False(result.Applied, "a preview writes nothing");
-		Assert.NotEmpty(result.Diff);
-		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
+		result.Applied.ShouldBeFalse("a preview writes nothing");
+		result.Diff.ShouldNotBeEmpty();
+		string.Join(" ", result.Notices).ShouldContain("Preview only", Case.Sensitive);
 
 		// Which is what makes this usable as a formatting check: the file is untouched.
-		Assert.Equal(Mangled, await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken));
+		(await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken)).ShouldBe(Mangled);
 	}
 
 	[Test]
@@ -115,8 +116,8 @@ public sealed class FormatServiceTests
 		var absent = fixture.Path("Simple", "Core", "NotHere.cs");
 		var result = await FormatAsync(session, [absent]);
 
-		Assert.Empty(result.ChangedFiles);
-		Assert.Contains("NotHere.cs", string.Join(" ", result.Notices), StringComparison.Ordinal);
+		result.ChangedFiles.ShouldBeEmpty();
+		string.Join(" ", result.Notices).ShouldContain("NotHere.cs", Case.Sensitive);
 	}
 
 	/// <summary>A file already correct must produce no diff at all, or every call is a false change.</summary>
@@ -129,8 +130,8 @@ public sealed class FormatServiceTests
 		await FormatAsync(session, [path]);
 		var second = await FormatAsync(session, [path]);
 
-		Assert.Empty(second.ChangedFiles);
-		Assert.Contains("already formatted", string.Join(" ", second.Notices), StringComparison.Ordinal);
+		second.ChangedFiles.ShouldBeEmpty();
+		string.Join(" ", second.Notices).ShouldContain("already formatted", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -155,18 +156,18 @@ public sealed class FormatServiceTests
 
 		var result = await FormatAsync(session, [path]);
 
-		Assert.True(result.Applied);
-		Assert.Equal([path], result.ChangedFiles);
-		Assert.Empty(result.Diff);
+		result.Applied.ShouldBeTrue();
+		result.ChangedFiles.ShouldBe([path]);
+		result.Diff.ShouldBeEmpty();
 
 		var notices = string.Join(" ", result.Notices);
 
-		Assert.Contains("line ending(s) to CRLF", notices, StringComparison.Ordinal);
-		Assert.Contains("Endings.cs", notices, StringComparison.Ordinal);
+		notices.ShouldContain("line ending(s) to CRLF", Case.Sensitive);
+		notices.ShouldContain("Endings.cs", Case.Sensitive);
 
 		var formatted = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.DoesNotContain(Lf, formatted.Replace(Crlf, string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+		formatted.Replace(Crlf, string.Empty, StringComparison.Ordinal).ShouldNotContain(Lf, Case.Sensitive);
 	}
 
 	/// <summary>
@@ -187,12 +188,12 @@ public sealed class FormatServiceTests
 		var result = await FormatAsync(session, [path]);
 		var notices = string.Join(" ", result.Notices);
 
-		Assert.Contains("Literal.cs", notices, StringComparison.Ordinal);
-		Assert.Contains("line endings the file does not use", notices, StringComparison.Ordinal);
+		notices.ShouldContain("Literal.cs", Case.Sensitive);
+		notices.ShouldContain("line endings the file does not use", Case.Sensitive);
 
 		// And it is still not rewritten, because doing so would change what the program says.
 		var after = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
-		Assert.Contains("one" + Lf + "two", after, StringComparison.Ordinal);
+		after.ShouldContain("one" + Lf + "two", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -213,9 +214,9 @@ public sealed class FormatServiceTests
 		var result = await FormatAsync(session, [path]);
 		var notices = string.Join(" ", result.Notices);
 
-		Assert.Empty(result.ChangedFiles);
-		Assert.DoesNotContain("Every file was already formatted", notices, StringComparison.Ordinal);
-		Assert.Contains("dotnet format", notices, StringComparison.Ordinal);
+		result.ChangedFiles.ShouldBeEmpty();
+		notices.ShouldNotContain("Every file was already formatted", Case.Sensitive);
+		notices.ShouldContain("dotnet format", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -236,7 +237,7 @@ public sealed class FormatServiceTests
 
 		var result = await FormatAsync(session, [path]);
 
-		Assert.DoesNotContain("line endings the file does not use", string.Join(" ", result.Notices), StringComparison.Ordinal);
+		string.Join(" ", result.Notices).ShouldNotContain("line endings the file does not use", Case.Sensitive);
 	}
 
 	private static FixtureSolution Prepare(out string manglePath)

@@ -48,8 +48,7 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 
 		var session = await manager.StartAsync(target, cancellationToken);
 		var summary = session.Describe();
-		Assert.True(
-			summary.State == LiveAppSessionState.Ready,
+		(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 		var marker = await WaitForEventAsync(
@@ -57,9 +56,9 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
 			cancellationToken);
-		Assert.NotNull(marker);
+		marker.ShouldNotBeNull();
 
-		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -91,8 +90,7 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 
 		var session = await manager.StartAsync(target, cancellationToken);
 		var summary = session.Describe();
-		Assert.True(
-			summary.State == LiveAppSessionState.Ready,
+		(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 		var marker = await WaitForEventAsync(
@@ -100,9 +98,9 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
 			cancellationToken);
-		Assert.NotNull(marker);
+		marker.ShouldNotBeNull();
 
-		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -138,8 +136,7 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 
 		var session = await manager.StartAsync(target, cancellationToken);
 		var summary = session.Describe();
-		Assert.True(
-			summary.State == LiveAppSessionState.Ready,
+		(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 		// Well into running, so an empty tree cannot be an app that has not built one yet.
@@ -148,27 +145,27 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 			entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 				&& (entry.ExceptionType?.Contains("RoseWinUiProbeException") ?? false),
 			cancellationToken);
-		Assert.NotNull(running);
+		running.ShouldNotBeNull();
 
 		var tree = await session.ReadXamlTreeAsync(cancellationToken);
-		Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
-		Assert.NotEmpty(tree.Nodes);
+		(tree.Detail is null).ShouldBeTrue($"expected a tree, got detail: {tree.Detail}");
+		tree.Nodes.ShouldNotBeEmpty();
 
 		// The same names the UWP probe declares, because the two apps mirror each other on purpose.
 		foreach (var name in new[] { "RootGrid", "Panel", "Pane", "Counter", "Caption" })
 		{
-			Assert.Contains(tree.Nodes, node => node.Name == name);
+			tree.Nodes.ShouldContain(node => node.Name == name);
 		}
 
 		// Rooting works the same here: a named element's subtree carries its descendants and not its
 		// parent. Asserted on WinUI too because the address grammar is computed from the live tree,
 		// and the live tree is the half that differs between the frameworks.
 		var panelSubtree = await session.ReadXamlTreeAsync("Panel", offset: 0, limit: 0, cancellationToken);
-		Assert.Contains(panelSubtree.Nodes, node => node.Name == "Panel");
-		Assert.Contains(panelSubtree.Nodes, node => node.Name == "Caption");
-		Assert.DoesNotContain(panelSubtree.Nodes, node => node.Name == "RootGrid");
+		panelSubtree.Nodes.ShouldContain(node => node.Name == "Panel");
+		panelSubtree.Nodes.ShouldContain(node => node.Name == "Caption");
+		panelSubtree.Nodes.ShouldNotContain(node => node.Name == "RootGrid");
 
-		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -207,18 +204,18 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
-			Assert.NotEmpty(tree.Nodes);
+			(tree.Detail is null).ShouldBeTrue($"expected a tree, got detail: {tree.Detail}");
+			tree.Nodes.ShouldNotBeEmpty();
 
 			foreach (var name in new[] { "RootGrid", "Panel", "Pane", "Counter", "Caption" })
 			{
-				Assert.Contains(tree.Nodes, node => node.Name == name);
+				tree.Nodes.ShouldContain(node => node.Name == name);
 			}
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -271,10 +268,10 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 				var session = await first.StartAsync(target, cancellationToken);
 				var tree = await session.ReadXamlTreeAsync(cancellationToken);
 
-				Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
-				Assert.Contains(tree.Nodes, node => node.Name == "RootGrid");
-				Assert.Contains(firstLogs.Lines, line => line.Contains("provider connected on", StringComparison.Ordinal));
-				Assert.True(await first.CloseAsync(session.SessionId, cancellationToken));
+				(tree.Detail is null).ShouldBeTrue($"expected a tree, got detail: {tree.Detail}");
+				tree.Nodes.ShouldContain(node => node.Name == "RootGrid");
+				firstLogs.Lines.ShouldContain(line => line.Contains("provider connected on", StringComparison.Ordinal));
+				(await first.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 			}
 
 			var secondLogs = new RecordingLoggerFactory();
@@ -284,14 +281,14 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 			var again = await second.StartAsync(target, cancellationToken);
 			var reread = await again.ReadXamlTreeAsync(cancellationToken);
 
-			Assert.True(reread.Detail is null, $"expected a tree on the second session, got detail: {reread.Detail}");
-			Assert.Contains(reread.Nodes, node => node.Name == "RootGrid");
+			(reread.Detail is null).ShouldBeTrue($"expected a tree on the second session, got detail: {reread.Detail}");
+			reread.Nodes.ShouldContain(node => node.Name == "RootGrid");
 
 			// The provider connects for the second session as well, rather than the session falling
 			// back to the work folder without saying so.
-			Assert.Contains(secondLogs.Lines, line => line.Contains("provider connected on", StringComparison.Ordinal));
+			secondLogs.Lines.ShouldContain(line => line.Contains("provider connected on", StringComparison.Ordinal));
 
-			Assert.True(await second.CloseAsync(again.SessionId, cancellationToken));
+			(await second.CloseAsync(again.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -353,12 +350,12 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 
-			Assert.NotNull(tree.Detail);
-			Assert.Contains("the XAML diagnostics injection call", tree.Detail, StringComparison.Ordinal);
-			Assert.Contains("timed out after", tree.Detail, StringComparison.Ordinal);
-			Assert.Empty(tree.Nodes);
+			tree.Detail.ShouldNotBeNull();
+			tree.Detail.ShouldContain("the XAML diagnostics injection call", Case.Sensitive);
+			tree.Detail.ShouldContain("timed out after", Case.Sensitive);
+			tree.Nodes.ShouldBeEmpty();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -412,19 +409,19 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 			// back from the work folder would mean the provider had not connected.
 			var first = await session.ReadXamlTreeAsync(cancellationToken);
 
-			Assert.True(first.Detail is null, $"expected a tree, got detail: {first.Detail}");
-			Assert.Equal("pipe", first.Channel);
+			(first.Detail is null).ShouldBeTrue($"expected a tree, got detail: {first.Detail}");
+			first.Channel.ShouldBe("pipe");
 
 			var second = await session.ReadXamlTreeAsync(cancellationToken);
 
-			Assert.True(second.Detail is null, $"expected a tree, got detail: {second.Detail}");
-			Assert.Equal("pipe", second.Channel);
+			(second.Detail is null).ShouldBeTrue($"expected a tree, got detail: {second.Detail}");
+			second.Channel.ShouldBe("pipe");
 
 			// The same tree either way, which is what made the pipe's silence invisible.
-			Assert.Contains(second.Nodes, node => node.Name == "RootGrid");
-			Assert.Equal(first.Count, second.Count);
+			second.Nodes.ShouldContain(node => node.Name == "RootGrid");
+			second.Count.ShouldBe(first.Count);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -476,50 +473,52 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
 			var caption = tree.Nodes.FirstOrDefault(node => node.Name == "Caption");
 
-			Assert.NotNull(pane);
-			Assert.NotNull(caption);
+			pane.ShouldNotBeNull();
+			caption.ShouldNotBeNull();
 
 			var properties = await session.ReadXamlPropertiesAsync(pane!.Handle, includeDefaults: false, cancellationToken);
 
-			Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
+			(properties.Detail is null).ShouldBeTrue($"expected properties, got detail: {properties.Detail}");
 
 			// The markup sets CornerRadius="8" on Pane. The framework stringifies it as nothing, so a
 			// value here is the rescue firing -- and the rescue only fires if it recognises the type
 			// under its Microsoft.UI.Xaml name.
 			var cornerRadius = properties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
 
-			Assert.NotNull(cornerRadius);
-			Assert.False(
-				string.IsNullOrEmpty(cornerRadius!.Value),
+			cornerRadius.ShouldNotBeNull();
+			string.IsNullOrEmpty(cornerRadius!.Value).ShouldBeFalse(
 				"CornerRadius came back empty, which is the shared header comparing against the UWP type name.");
 
 			// A property the framework does stringify, to show the empty one above is not simply how
 			// this element reads.
 			var padding = properties.Properties.FirstOrDefault(property => property.Name == "Padding");
 
-			Assert.NotNull(padding);
-			Assert.False(string.IsNullOrEmpty(padding!.Value), "Padding reports a value, which is what makes the empty one above a finding");
+			padding.ShouldNotBeNull();
+			string.IsNullOrEmpty(padding!.Value).ShouldBeFalse("Padding reports a value, which is what makes the empty one above a finding");
 
 			// And the apply half: a property edit lands and reads back.
 			var markup = Path.Combine(TestToolchain.RepositoryRoot(), "tests", "apps", "winui", "MainWindow.xaml");
 			var before = await File.ReadAllTextAsync(markup, cancellationToken);
 			var after = before.Replace("Text=\"Rose WinUI Probe\"", "Text=\"edited on winui\"", StringComparison.Ordinal);
 
-			Assert.NotEqual(before, after);
+			after.ShouldNotBe(before);
 
 			var edit = await session.ApplyXamlAsync(before, after, filePath: null, cancellationToken);
 
-			Assert.True(edit.Detail is null, $"expected the edit to apply, got detail: {edit.Detail}");
-			Assert.Equal(1, edit.Applied);
-			Assert.All(edit.Results, result => Assert.Equal("applied", result.Status));
+			(edit.Detail is null).ShouldBeTrue($"expected the edit to apply, got detail: {edit.Detail}");
+			edit.Applied.ShouldBe(1);
+			foreach (var result in edit.Results)
+			{
+				result.Status.ShouldBe("applied");
+			}
 
 			var afterwards = await session.ReadXamlPropertiesAsync(caption!.Handle, includeDefaults: false, cancellationToken);
 			var text = afterwards.Properties.FirstOrDefault(property => property.Name == "Text");
 
-			Assert.NotNull(text);
-			Assert.Equal("edited on winui", text!.Value);
+			text.ShouldNotBeNull();
+			text!.Value.ShouldBe("edited on winui");
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{

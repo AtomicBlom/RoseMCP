@@ -22,8 +22,8 @@ public sealed class SymbolCacheTests
 
 		var first = cache.For(fixture.ModulePath);
 
-		Assert.NotNull(first);
-		Assert.Same(first, cache.For(fixture.ModulePath));
+		first.ShouldNotBeNull();
+		cache.For(fixture.ModulePath).ShouldBeSameAs(first);
 	}
 
 	/// <summary>
@@ -37,13 +37,13 @@ public sealed class SymbolCacheTests
 		using var cache = new SymbolCache();
 
 		var first = cache.For(fixture.ModulePath);
-		Assert.NotNull(first);
+		first.ShouldNotBeNull();
 
 		File.SetLastWriteTimeUtc(fixture.ModulePath, File.GetLastWriteTimeUtc(fixture.ModulePath).AddMinutes(1));
 
 		var second = cache.For(fixture.ModulePath);
-		Assert.NotNull(second);
-		Assert.NotSame(first, second);
+		second.ShouldNotBeNull();
+		second.ShouldNotBeSameAs(first);
 	}
 
 	/// <summary>
@@ -56,8 +56,8 @@ public sealed class SymbolCacheTests
 		using var cache = new SymbolCache();
 		var missing = Path.Combine(Path.GetTempPath(), $"rose-absent-{Guid.NewGuid():n}.dll");
 
-		Assert.Null(cache.For(missing));
-		Assert.Null(cache.For(missing));
+		cache.For(missing).ShouldBeNull();
+		cache.For(missing).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -71,11 +71,11 @@ public sealed class SymbolCacheTests
 		using var cache = new SymbolCache();
 		var appearing = Path.Combine(Path.GetDirectoryName(fixture.ModulePath)!, "Appearing.dll");
 
-		Assert.Null(cache.For(appearing));
+		cache.For(appearing).ShouldBeNull();
 
 		File.Copy(fixture.ModulePath, appearing);
 
-		Assert.NotNull(cache.For(appearing));
+		cache.For(appearing).ShouldNotBeNull();
 	}
 
 	/// <summary>Evicting is for a caller that knows the output has just been replaced.</summary>
@@ -86,13 +86,13 @@ public sealed class SymbolCacheTests
 		using var cache = new SymbolCache();
 
 		var first = cache.For(fixture.ModulePath);
-		Assert.NotNull(first);
+		first.ShouldNotBeNull();
 
 		cache.Evict(fixture.ModulePath);
 
 		var second = cache.For(fixture.ModulePath);
-		Assert.NotNull(second);
-		Assert.NotSame(first, second);
+		second.ShouldNotBeNull();
+		second.ShouldNotBeSameAs(first);
 
 		// Evicting something never read is a no-op rather than a throw: a caller telling the cache
 		// about a rebuild does not know what it has read.
@@ -109,7 +109,7 @@ public sealed class SymbolCacheTests
 		using var fixture = CompiledModule.NestedLocals();
 		using var cache = new SymbolCache();
 
-		Assert.NotNull(cache.For(fixture.ModulePath));
+		cache.For(fixture.ModulePath).ShouldNotBeNull();
 
 		File.Delete(fixture.ModulePath);
 		File.Delete(fixture.PdbPath);

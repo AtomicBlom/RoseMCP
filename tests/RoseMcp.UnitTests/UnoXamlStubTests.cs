@@ -1,7 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
-
 using RoseMcp.XamlStubs;
 
 namespace RoseMcp.UnitTests;
@@ -47,8 +46,8 @@ public sealed class UnoXamlStubTests
 
 		var choice = XamlDialectSelector.Select(Compile("Uno.UI"), [document!]);
 
-		Assert.Same(WindowsXamlDialect.WinUi, choice.Dialect);
-		Assert.Equal("Uno.UI", choice.CompiledInWorkspaceBy);
+		choice.Dialect.ShouldBeSameAs(WindowsXamlDialect.WinUi);
+		choice.CompiledInWorkspaceBy.ShouldBe("Uno.UI");
 	}
 
 	/// <summary>
@@ -62,8 +61,8 @@ public sealed class UnoXamlStubTests
 
 		var choice = XamlDialectSelector.Select(Compile("Microsoft.WinUI"), [document!]);
 
-		Assert.Same(WindowsXamlDialect.WinUi, choice.Dialect);
-		Assert.Null(choice.CompiledInWorkspaceBy);
+		choice.Dialect.ShouldBeSameAs(WindowsXamlDialect.WinUi);
+		choice.CompiledInWorkspaceBy.ShouldBeNull();
 	}
 
 	[Test]
@@ -78,10 +77,10 @@ public sealed class UnoXamlStubTests
 			.GetRunResult();
 
 		var generated = result.GeneratedTrees.Select(tree => Path.GetFileName(tree.FilePath)).ToArray();
-		Assert.DoesNotContain(generated, name => name.Contains(".xamlstub.", StringComparison.Ordinal));
+		generated.ShouldNotContain(name => name.Contains(".xamlstub.", StringComparison.Ordinal));
 
 		var report = result.GeneratedTrees.Single().GetText(TestContext.Current!.Execution.CancellationToken).ToString();
-		Assert.Contains("Uno.UI", report, StringComparison.Ordinal);
+		report.ShouldContain("Uno.UI", Case.Sensitive);
 	}
 
 	/// <summary>

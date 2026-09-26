@@ -18,15 +18,15 @@ public sealed class ParameterPlanTests
 	{
 		var plan = Plan("string name", "string name, bool loud = false");
 
-		Assert.True(plan.CallSitesUnaffected);
-		Assert.Empty(plan.Removed);
-		Assert.Equal(["loud"], plan.Added.Select(parameter => parameter.Name));
+		plan.CallSitesUnaffected.ShouldBeTrue();
+		plan.Removed.ShouldBeEmpty();
+		plan.Added.Select(parameter => parameter.Name).ShouldBe(["loud"]);
 	}
 
 	[Test]
 	public void Knows_that_a_required_parameter_does_not()
 	{
-		Assert.False(Plan("string name", "string name, bool loud").CallSitesUnaffected);
+		Plan("string name", "string name, bool loud").CallSitesUnaffected.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -38,8 +38,8 @@ public sealed class ParameterPlanTests
 	{
 		var plan = Plan("string title, string name", "string title, bool loud = false, string name");
 
-		Assert.False(plan.CallSitesUnaffected, "a parameter inserted in the middle moves the call sites");
-		Assert.Null(plan.WhyImpossible());
+		plan.CallSitesUnaffected.ShouldBeFalse("a parameter inserted in the middle moves the call sites");
+		plan.WhyImpossible().ShouldBeNull();
 	}
 
 	[Test]
@@ -47,8 +47,8 @@ public sealed class ParameterPlanTests
 	{
 		var plan = Plan("string name, bool loud", "string name");
 
-		Assert.Equal(["loud"], plan.Removed);
-		Assert.False(plan.CallSitesUnaffected, "a removed parameter moves the call sites");
+		plan.Removed.ShouldBe(["loud"]);
+		plan.CallSitesUnaffected.ShouldBeFalse("a removed parameter moves the call sites");
 	}
 
 	/// <summary>
@@ -60,9 +60,9 @@ public sealed class ParameterPlanTests
 	{
 		var plan = Plan("string name", "object name");
 
-		Assert.Equal(["name"], plan.Retyped);
-		Assert.Empty(plan.Added);
-		Assert.Empty(plan.Removed);
+		plan.Retyped.ShouldBe(["name"]);
+		plan.Added.ShouldBeEmpty();
+		plan.Removed.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -74,8 +74,8 @@ public sealed class ParameterPlanTests
 	{
 		var plan = Plan("string name", "string other");
 
-		Assert.Equal(["name"], plan.Removed);
-		Assert.Equal(["other"], plan.Added.Select(parameter => parameter.Name));
+		plan.Removed.ShouldBe(["name"]);
+		plan.Added.Select(parameter => parameter.Name).ShouldBe(["other"]);
 	}
 
 	[Test]
@@ -83,8 +83,8 @@ public sealed class ParameterPlanTests
 	{
 		var refusal = Plan("string title, string name", "string name, string title").WhyImpossible();
 
-		Assert.NotNull(refusal);
-		Assert.Contains("would move in front of", refusal, StringComparison.Ordinal);
+		refusal.ShouldNotBeNull();
+		refusal.ShouldContain("would move in front of", Case.Sensitive);
 	}
 
 	/// <summary>Emptying the list is a removal of everything, not an impossibility.</summary>
@@ -93,9 +93,9 @@ public sealed class ParameterPlanTests
 	{
 		var plan = Plan("string name, bool loud", string.Empty);
 
-		Assert.Equal(["name", "loud"], plan.Removed);
-		Assert.Empty(plan.Parameters);
-		Assert.Null(plan.WhyImpossible());
+		plan.Removed.ShouldBe(["name", "loud"]);
+		plan.Parameters.ShouldBeEmpty();
+		plan.WhyImpossible().ShouldBeNull();
 	}
 
 	private static ParameterPlan Plan(string existing, string wanted) =>

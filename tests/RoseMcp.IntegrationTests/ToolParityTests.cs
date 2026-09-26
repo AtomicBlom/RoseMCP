@@ -32,18 +32,17 @@ public sealed class ToolParityTests
 		var broker = Parameters(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);
 		var host = Parameters(HostAssembly());
 
-		Assert.NotEmpty(ToolNames.LiveAppPairs);
+		ToolNames.LiveAppPairs.ShouldNotBeEmpty();
 
 		foreach (var (declared, forwarded) in ToolNames.LiveAppPairs)
 		{
-			Assert.True(broker.ContainsKey(declared), $"the broker does not declare {declared}");
-			Assert.True(host.ContainsKey(forwarded), $"the host does not declare {forwarded}");
+			broker.ContainsKey(declared).ShouldBeTrue($"the broker does not declare {declared}");
+			host.ContainsKey(forwarded).ShouldBeTrue($"the host does not declare {forwarded}");
 
 			// One string per pair, so a failure shows both argument lists rather than reporting that
 			// two arrays differ.
-			Assert.Equal(
-				$"{declared}: {string.Join(" | ", host[forwarded])}",
-				$"{declared}: {string.Join(" | ", broker[declared])}");
+			$"{declared}: {string.Join(" | ", broker[declared])}".ShouldBe(
+				$"{declared}: {string.Join(" | ", host[forwarded])}");
 		}
 	}
 
@@ -63,7 +62,7 @@ public sealed class ToolParityTests
 			"net10.0-windows",
 			"RoseMcp.LiveApp.dll");
 
-		Assert.True(File.Exists(path), $"the live-app host is not built at {path}");
+		File.Exists(path).ShouldBeTrue($"the live-app host is not built at {path}");
 
 		return Assembly.LoadFrom(path);
 	}

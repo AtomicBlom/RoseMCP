@@ -1,4 +1,5 @@
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.ProbeTargetSession;
 
@@ -37,20 +38,20 @@ public sealed class LiveAppDebugTests
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
 
 			var source = await session.ReadMethodSourceAsync("Elsewhere.Pulse.Tick", cancellationToken);
-			Assert.Equal("DebugProbeTarget", source.Module);
+			source.Module.ShouldBe("DebugProbeTarget");
 
 			var breakpoint = await session.SetBreakpointAsync("Elsewhere.Pulse.Tick", autoContinueSeconds: null, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"a bare name should bind in the module declaring its type; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"a bare name should bind in the module declaring its type; detail: {breakpoint.Detail}");
 
 			var hit = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("Elsewhere.Pulse.Tick"),
 				cancellationToken);
-			Assert.NotNull(hit);
+			hit.ShouldNotBeNull();
 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
-			Assert.True(await session.ContinueAsync(cancellationToken));
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await session.ContinueAsync(cancellationToken)).ShouldBeTrue();
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -80,33 +81,36 @@ public sealed class LiveAppDebugTests
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var tracepoint = await session.AddTracepointAsync(
 				"DebugProbeTarget.Program.Beat", "beat", logEveryNthHit: null, condition: null, cancellationToken);
-			Assert.True(tracepoint.Bound, $"tracepoint should bind against the loaded module; detail: {tracepoint.Detail}");
+			tracepoint.Bound.ShouldBeTrue($"tracepoint should bind against the loaded module; detail: {tracepoint.Detail}");
 
 			var hit = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit,
 				cancellationToken);
-			Assert.NotNull(hit);
-			Assert.Contains("beat", hit!.Message);
+			hit.ShouldNotBeNull();
+			hit!.Message.ShouldContain("beat", Case.Sensitive);
 
 			// Filtering by kind, over the wire, because that is where it has to work. A freshly
 			// started app buffers hundreds of ModuleLoaded events, and a caller after the tracepoint
 			// hits should not have to pull all of them across to find one.
 			var unfiltered = await session.ReadEventsAsync(0, cancellationToken);
-			Assert.Contains(unfiltered.Events, entry => entry.Kind == LiveDebugEventKind.ModuleLoaded);
-			Assert.Equal(0, unfiltered.Skipped);
+			unfiltered.Events.ShouldContain(entry => entry.Kind == LiveDebugEventKind.ModuleLoaded);
+			unfiltered.Skipped.ShouldBe(0);
 
 			var hitsOnly = await session.ReadEventsAsync(0, ["BreakpointHit"], limit: 500, cancellationToken);
-			Assert.NotEmpty(hitsOnly.Events);
-			Assert.All(hitsOnly.Events, entry => Assert.Equal(LiveDebugEventKind.BreakpointHit, entry.Kind));
+			hitsOnly.Events.ShouldNotBeEmpty();
+			foreach (var entry in hitsOnly.Events)
+			{
+				entry.Kind.ShouldBe(LiveDebugEventKind.BreakpointHit);
+			}
 
 			// The two things that make a filter usable rather than a trap: it says how much it passed
 			// over, and paging with its cursor moves forward instead of re-reading forever.
-			Assert.True(hitsOnly.Skipped > 0, "the filter should report the events it passed over");
+			(hitsOnly.Skipped > 0).ShouldBeTrue("the filter should report the events it passed over");
 
 			var lastRead = hitsOnly.Events[^1].Sequence;
 
@@ -115,15 +119,14 @@ public sealed class LiveAppDebugTests
 			// about what the target emitted in the last millisecond rather than about the contract.
 			// Asserting strictly greater is asserting that the last event examined was skipped, which is
 			// a coin toss against a target emitting continuously, and says nothing about paging.
-			Assert.True(
-				hitsOnly.NextCursor >= lastRead,
+			(hitsOnly.NextCursor >= lastRead).ShouldBeTrue(
 				$"the filtered cursor ({hitsOnly.NextCursor}) should be at or past the last event it returned ({lastRead})");
 
 			var nextPage = await session.ReadEventsAsync(hitsOnly.NextCursor, ["BreakpointHit"], limit: 500, cancellationToken);
 
 			// Paging forward is the property, and this checks it directly: reading is exclusive of the
 			// cursor, so nothing already returned can come back whether the two were equal or not.
-			Assert.DoesNotContain(nextPage.Events, entry => entry.Sequence <= lastRead);
+			nextPage.Events.ShouldNotContain(entry => entry.Sequence <= lastRead);
 
 			// A wait asks the same question a read does -- is there anything past this cursor -- so a
 			// wait from the start of the stream is answered by the hits already buffered above, at once
@@ -131,16 +134,14 @@ public sealed class LiveAppDebugTests
 			// acts and then waits for the result of its action is otherwise handed the past and told
 			// it is the present.
 			var fromTheStart = await session.ReadEventsAsync(0, ["BreakpointHit"], limit: 500, waitSeconds: 5, cancellationToken);
-			Assert.NotEmpty(fromTheStart.Events);
-			Assert.Contains(
-				fromTheStart.Notices,
+			fromTheStart.Events.ShouldNotBeEmpty();
+			fromTheStart.Notices.ShouldContain(
 				notice => notice.Contains("returned without waiting", StringComparison.Ordinal));
 
 			// Every answer says where the stream stood when it was produced, which is how a caller
 			// comes by a cursor without going to ask for one. It is at or past the paging cursor,
 			// which stops at the end of the page rather than at the end of the stream.
-			Assert.True(
-				fromTheStart.Cursor >= fromTheStart.NextCursor && fromTheStart.Cursor > 0,
+			(fromTheStart.Cursor >= fromTheStart.NextCursor && fromTheStart.Cursor > 0).ShouldBeTrue(
 				$"the answer should carry the stream's position ({fromTheStart.Cursor}) at or past the "
 					+ $"page's ({fromTheStart.NextCursor})");
 
@@ -154,21 +155,21 @@ public sealed class LiveAppDebugTests
 				waitSeconds: 30,
 				cancellationToken);
 
-			Assert.NotEmpty(sinceThen.Events);
-			Assert.Empty(sinceThen.Notices);
-			Assert.DoesNotContain(sinceThen.Events, entry => entry.Sequence <= fromTheStart.Cursor);
+			sinceThen.Events.ShouldNotBeEmpty();
+			sinceThen.Notices.ShouldBeEmpty();
+			sinceThen.Events.ShouldNotContain(entry => entry.Sequence <= fromTheStart.Cursor);
 
 			// An unrecognised kind narrows to nothing rather than silently widening to everything.
-			var nonsense = await Assert.ThrowsAsync<InvalidOperationException>(
-				() => session.ReadEventsAsync(0, ["NotAKind"], limit: 500, cancellationToken));
+			var nonsense = await Should.ThrowAsync<InvalidOperationException>(
+				() => session.ReadEventsAsync(0, ["NotAKind"], limit: 500, cancellationToken)).OfExactType();
 
-			Assert.Contains("Unknown event kind 'NotAKind'", nonsense.Message, StringComparison.Ordinal);
+			nonsense.Message.ShouldContain("Unknown event kind 'NotAKind'", Case.Sensitive);
 
 			var remaining = await session.RemoveTracepointAsync(tracepoint.Id, cancellationToken);
-			Assert.Empty(remaining.Tracepoints);
+			remaining.Tracepoints.ShouldBeEmpty();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target runs on through the tracepoint");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target runs on through the tracepoint");
 		}
 		finally
 		{
@@ -198,31 +199,31 @@ public sealed class LiveAppDebugTests
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
 
 			// The hit holds the target and records the stop with a stack that names the method.
 			var stop = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(stop);
-			Assert.NotNull(stop!.Frames);
-			Assert.Contains(stop.Frames!, frame => frame.Contains("DebugProbeTarget.Program.Beat"));
+			stop.ShouldNotBeNull();
+			stop!.Frames.ShouldNotBeNull();
+			stop.Frames!.ShouldContain(frame => frame.Contains("DebugProbeTarget.Program.Beat"));
 
 			// The stop captured the top frame's arguments (#7): Beat(int iteration).
-			Assert.NotNull(stop.Variables);
+			stop.Variables.ShouldNotBeNull();
 			var iteration = stop.Variables!.FirstOrDefault(variable => variable.Name == "iteration");
-			Assert.NotNull(iteration);
-			Assert.Equal("argument", iteration!.Kind);
-			Assert.Equal("int", iteration.TypeName);
-			Assert.True(int.TryParse(iteration.Value, out _), $"expected an int value, got '{iteration.Value}'");
+			iteration.ShouldNotBeNull();
+			iteration!.Kind.ShouldBe("argument");
+			iteration.TypeName.ShouldBe("int");
+			int.TryParse(iteration.Value, out _).ShouldBeTrue($"expected an int value, got '{iteration.Value}'");
 
 			// Remove the breakpoint so continuing does not immediately re-stop, then resume.
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
-			Assert.True(await session.ContinueAsync(cancellationToken));
+			(await session.ContinueAsync(cancellationToken)).ShouldBeTrue();
 
 			// Resumed: the loop runs past the (now removed) breakpoint and throws again, after the stop.
 			var afterResume = await WaitForEventAsync(
@@ -232,10 +233,10 @@ public sealed class LiveAppDebugTests
 					&& entry.Sequence > stop.Sequence,
 				cancellationToken,
 				startCursor: stop.Sequence);
-			Assert.NotNull(afterResume);
+			afterResume.ShouldNotBeNull();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "a stop holds the target rather than killing it");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("a stop holds the target rather than killing it");
 		}
 		finally
 		{
@@ -265,7 +266,7 @@ public sealed class LiveAppDebugTests
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			// An ordering rather than an equality, because the probe counts up every 200ms and never
 			// repeats a value: "iteration == 30" is satisfiable for 200ms exactly, and a machine busy
@@ -275,26 +276,25 @@ public sealed class LiveAppDebugTests
 			// on the first hit, which is zero.
 			var breakpoint = await session.SetBreakpointAsync(
 				"DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: "iteration >= 30", cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
-			Assert.Equal("iteration >= 30", breakpoint.Condition);
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
+			breakpoint.Condition.ShouldBe("iteration >= 30");
 
 			var stop = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(stop);
+			stop.ShouldNotBeNull();
 
 			// Every hit below the conditioned value was gated out, which is the whole claim: an
 			// unconditional breakpoint on this method stops at zero.
 			var iteration = stop!.Variables!.First(variable => variable.Name == "iteration");
-			Assert.True(
-				int.TryParse(iteration.Value, out var reached) && reached >= 30,
+			(int.TryParse(iteration.Value, out var reached) && reached >= 30).ShouldBeTrue(
 				$"stopped at iteration '{iteration.Value}', so hits below 30 were not gated out");
 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
 			await session.ContinueAsync(cancellationToken);
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target is still running after a conditional stop");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target is still running after a conditional stop");
 		}
 		finally
 		{
@@ -324,36 +324,36 @@ public sealed class LiveAppDebugTests
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Inspect", autoContinueSeconds: null, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
 
 			var stop = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(stop);
+			stop.ShouldNotBeNull();
 
 			// A field on the argument, and a two-level chain into the graph.
 			var label = await session.EvaluateAsync("state.Label", cancellationToken);
-			Assert.True(label.Error is null, $"state.Label should evaluate; error: {label.Error}");
-			Assert.Equal("string", label.TypeName);
-			Assert.Equal("\"beat\"", label.Value);
+			(label.Error is null).ShouldBeTrue($"state.Label should evaluate; error: {label.Error}");
+			label.TypeName.ShouldBe("string");
+			label.Value.ShouldBe("\"beat\"");
 
 			var innerCount = await session.EvaluateAsync("state.Inner.Count", cancellationToken);
-			Assert.Null(innerCount.Error);
-			Assert.Equal("int", innerCount.TypeName);
-			Assert.Equal("-1", innerCount.Value);
+			innerCount.Error.ShouldBeNull();
+			innerCount.TypeName.ShouldBe("int");
+			innerCount.Value.ShouldBe("-1");
 
 			// A field that does not exist reports why rather than throwing.
 			var missing = await session.EvaluateAsync("state.Nope", cancellationToken);
-			Assert.NotNull(missing.Error);
+			missing.Error.ShouldNotBeNull();
 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
-			Assert.True(await session.ContinueAsync(cancellationToken));
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target is still running after an evaluation");
+			(await session.ContinueAsync(cancellationToken)).ShouldBeTrue();
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target is still running after an evaluation");
 		}
 		finally
 		{
@@ -382,34 +382,34 @@ public sealed class LiveAppDebugTests
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
 
 			var stop = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(stop);
+			stop.ShouldNotBeNull();
 
 			// Remove the breakpoint so only the step holds the target, then step.
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
-			Assert.True(await session.StepAsync("over", cancellationToken));
+			(await session.StepAsync("over", cancellationToken)).ShouldBeTrue();
 
 			var stepComplete = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.StepComplete && entry.Sequence > stop!.Sequence,
 				cancellationToken,
 				startCursor: stop!.Sequence);
-			Assert.NotNull(stepComplete);
-			Assert.NotNull(stepComplete!.Frames);
-			Assert.Contains(stepComplete.Frames!, frame => frame.Contains("DebugProbeTarget.Program"));
+			stepComplete.ShouldNotBeNull();
+			stepComplete!.Frames.ShouldNotBeNull();
+			stepComplete.Frames!.ShouldContain(frame => frame.Contains("DebugProbeTarget.Program"));
 
 			// Release the step hold and confirm the target keeps running.
 			await session.ContinueAsync(cancellationToken);
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target is still running after a step");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target is still running after a step");
 		}
 		finally
 		{
@@ -443,23 +443,23 @@ public sealed class LiveAppDebugTests
 		try
 		{
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			// Long enough that the safety timer cannot be what ends this stop: the point is a target
 			// that dies while still held, so a stop released on its own would prove nothing.
 			var breakpoint = await session.SetBreakpointAsync(
 				"DebugProbeTarget.Program.Beat", autoContinueSeconds: 300, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
 
 			var stop = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(stop);
+			stop.ShouldNotBeNull();
 
 			// While the target is there, the stop is the reason a XAML read cannot be served.
 			var held = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Contains("The target is stopped", held.Detail ?? string.Empty, StringComparison.Ordinal);
+			(held.Detail ?? string.Empty).ShouldContain("The target is stopped", Case.Sensitive);
 
 			child.Kill(entireProcessTree: true);
 			child.WaitForExit(10_000);
@@ -474,10 +474,10 @@ public sealed class LiveAppDebugTests
 				await Task.Delay(200, cancellationToken);
 			}
 
-			Assert.DoesNotContain("The target is stopped", gone.Detail ?? string.Empty, StringComparison.Ordinal);
-			Assert.DoesNotContain("Resume the target", gone.Detail ?? string.Empty, StringComparison.Ordinal);
+			(gone.Detail ?? string.Empty).ShouldNotContain("The target is stopped", Case.Sensitive);
+			(gone.Detail ?? string.Empty).ShouldNotContain("Resume the target", Case.Sensitive);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -510,48 +510,46 @@ public sealed class LiveAppDebugTests
 		try
 		{
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			// Past the method's first instruction, so the two bindings differ by offset and the test is
 			// about attribution rather than about one binding.
 			var source = await session.ReadMethodSourceAsync("DebugProbeTarget.Program.Beat", cancellationToken);
 			var inside = source.Positions.FirstOrDefault(position => position.IlOffset > 0);
-			Assert.NotNull(inside);
+			inside.ShouldNotBeNull();
 
 			var tracepoint = await session.AddTracepointAsync(
 				"DebugProbeTarget.Program.Beat", "beat traced", logEveryNthHit: null, condition: null, cancellationToken);
-			Assert.True(tracepoint.Bound, $"tracepoint should bind; detail: {tracepoint.Detail}");
+			tracepoint.Bound.ShouldBeTrue($"tracepoint should bind; detail: {tracepoint.Detail}");
 
 			// Generous, so the assertions below are not racing the safety timer for the stop.
 			var breakpoint = await session.SetBreakpointAsync(
 				inside!.Location, autoContinueSeconds: 60, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind at {inside.Location}; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind at {inside.Location}; detail: {breakpoint.Detail}");
 
 			var held = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(held);
+			held.ShouldNotBeNull();
 
 			// The stop belongs to the breakpoint, by id rather than by the sentence it carries.
 			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
-			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);
-			Assert.Equal(breakpoint.Id, frames.Stop!.BreakpointId);
+			frames.Execution.ShouldBe(LiveExecutionState.StoppedAtBreakpoint);
+			frames.Stop!.BreakpointId.ShouldBe(breakpoint.Id);
 
 			// And each counted its own hits: the tracepoint logged the entry it is on, the breakpoint
 			// took the one inside.
 			var traced = await session.ListTracepointsAsync(cancellationToken);
-			Assert.True(
-				Assert.Single(traced.Tracepoints).HitCount > 0,
+			(traced.Tracepoints.ShouldHaveSingleItem().HitCount > 0).ShouldBeTrue(
 				"the tracepoint should have counted the hit at the method's entry");
 
 			var stopping = await session.ListBreakpointsAsync(cancellationToken);
-			Assert.True(
-				Assert.Single(stopping.Breakpoints).HitCount > 0,
+			(stopping.Breakpoints.ShouldHaveSingleItem().HitCount > 0).ShouldBeTrue(
 				"the breakpoint should have counted the hit at its own offset");
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "a stop holds the target rather than killing it");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("a stop holds the target rather than killing it");
 		}
 		finally
 		{
@@ -586,7 +584,7 @@ public sealed class LiveAppDebugTests
 		try
 		{
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			// count reads a field of the argument, inner walks one level into the object that field
 			// holds, and mark indexes an array -- the three shapes a path has, in one message.
@@ -597,7 +595,7 @@ public sealed class LiveAppDebugTests
 				condition: null,
 				cancellationToken);
 
-			Assert.True(tracepoint.Bound, $"tracepoint should bind; detail: {tracepoint.Detail}");
+			tracepoint.Bound.ShouldBeTrue($"tracepoint should bind; detail: {tracepoint.Detail}");
 
 			var hit = await WaitForEventAsync(
 				session,
@@ -605,46 +603,45 @@ public sealed class LiveAppDebugTests
 				cancellationToken,
 				tracepoint.Cursor);
 
-			Assert.NotNull(hit);
+			hit.ShouldNotBeNull();
 
 			// count is whatever iteration this hit was; inner and mark are fixed by the probe, so
 			// they pin the field chain and the index rather than merely showing digits appeared.
-			Assert.DoesNotContain("{state.Count}", hit!.Message, StringComparison.Ordinal);
-			Assert.Matches(@"count=\d+ inner=-1 mark=8 ", hit.Message);
+			hit!.Message.ShouldNotContain("{state.Count}", Case.Sensitive);
+			hit.Message.ShouldMatch(@"count=\d+ inner=-1 mark=8 ");
 
 			// A name the frame does not have keeps its place and says why, because a hit that
 			// silently dropped it would read as the value having been empty.
-			Assert.Contains("missing=<nope:", hit.Message, StringComparison.Ordinal);
+			hit.Message.ShouldContain("missing=<nope:", Case.Sensitive);
 
-			Assert.NotNull(hit.Logged);
-			Assert.Equal(
-				new[] { "state.Count", "state.Inner.Count", "state.Marks[1]", "nope" },
-				hit.Logged!.Select(value => value.Name).ToArray());
+			hit.Logged.ShouldNotBeNull();
+			hit.Logged!.Select(value => value.Name).ToArray().ShouldBe(
+				new[] { "state.Count", "state.Inner.Count", "state.Marks[1]", "nope" });
 
 			var inner = hit.Logged.Single(value => value.Name == "state.Inner.Count");
-			Assert.Equal("-1", inner.Value);
-			Assert.Equal("int", inner.TypeName);
+			inner.Value.ShouldBe("-1");
+			inner.TypeName.ShouldBe("int");
 
 			// The one that could not be read carries the reason as its value and names no type, so
 			// the two cases are told apart on the data and not only in the sentence.
 			var missing = hit.Logged.Single(value => value.Name == "nope");
-			Assert.Null(missing.TypeName);
-			Assert.StartsWith("<nope:", missing.Value!, StringComparison.Ordinal);
+			missing.TypeName.ShouldBeNull();
+			missing.Value!.ShouldStartWith("<nope:", Case.Sensitive);
 
 			// And that event can be asked for on its own, whole, which is the way back from a page
 			// the client cut short.
 			var one = await session.ReadEventsAsync(0, null, 500, 0, hit.Sequence, cancellationToken);
-			Assert.Equal(hit.Sequence, Assert.Single(one.Events).Sequence);
-			Assert.Equal(hit.Message, one.Events[0].Message);
-			Assert.Equal(4, one.Events[0].Logged!.Count);
+			one.Events.ShouldHaveSingleItem().Sequence.ShouldBe(hit.Sequence);
+			one.Events[0].Message.ShouldBe(hit.Message);
+			one.Events[0].Logged!.Count.ShouldBe(4);
 
 			// A sequence the buffer does not hold answers empty rather than with the next event
 			// along, which would be a different hit reported as the one asked for.
 			var beyond = await session.ReadEventsAsync(0, null, 500, 0, one.TotalObserved + 1000, cancellationToken);
-			Assert.Empty(beyond.Events);
+			beyond.Events.ShouldBeEmpty();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target runs on through an interpolated tracepoint");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target runs on through an interpolated tracepoint");
 		}
 		finally
 		{
@@ -669,16 +666,16 @@ public sealed class LiveAppDebugTests
 		{
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
 
-			var refused = await Assert.ThrowsAsync<InvalidOperationException>(
+			var refused = await Should.ThrowAsync<InvalidOperationException>(
 				() => session.AddTracepointAsync(
-					"DebugProbeTarget.Program.Beat", "count={iteration", logEveryNthHit: null, condition: null, cancellationToken));
+					"DebugProbeTarget.Program.Beat", "count={iteration", logEveryNthHit: null, condition: null, cancellationToken)).OfExactType();
 
-			Assert.Contains("never closed", refused.Message, StringComparison.Ordinal);
+			refused.Message.ShouldContain("never closed", Case.Sensitive);
 
 			var tracepoints = await session.ListTracepointsAsync(cancellationToken);
-			Assert.Empty(tracepoints.Tracepoints);
+			tracepoints.Tracepoints.ShouldBeEmpty();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -714,7 +711,7 @@ public sealed class LiveAppDebugTests
 
 			var breakpoint = await session.SetBreakpointAsync(
 				"DebugProbeTarget.Program.Inspect", autoContinueSeconds: 120, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
 
 			var stop = await WaitForEventAsync(
 				session,
@@ -722,49 +719,49 @@ public sealed class LiveAppDebugTests
 				cancellationToken,
 				breakpoint.Cursor);
 
-			Assert.NotNull(stop);
+			stop.ShouldNotBeNull();
 
 			// The default answer is the head of the value and its true length, so a caller can see
 			// both that it has a fragment and exactly how much it is missing.
 			var capped = await session.EvaluateAsync("state.LongUrl", cancellationToken);
-			Assert.Null(capped.Error);
-			Assert.Equal("string", capped.TypeName);
-			Assert.NotNull(capped.FullLength);
-			Assert.True(capped.FullLength > 400, $"the probe's URL should be past the cap; it is {capped.FullLength}");
-			Assert.EndsWith("…\"", capped.Value!, StringComparison.Ordinal);
-			Assert.DoesNotContain("end=TAIL", capped.Value!, StringComparison.Ordinal);
+			capped.Error.ShouldBeNull();
+			capped.TypeName.ShouldBe("string");
+			capped.FullLength.ShouldNotBeNull();
+			(capped.FullLength > 400).ShouldBeTrue($"the probe's URL should be past the cap; it is {capped.FullLength}");
+			capped.Value!.ShouldEndWith("…\"", Case.Sensitive);
+			capped.Value!.ShouldNotContain("end=TAIL", Case.Sensitive);
 
 			// Asking for more returns the whole value, and says so by no longer reporting a length.
 			var whole = await session.EvaluateAsync("state.LongUrl", maxLength: 4096, cancellationToken);
-			Assert.Null(whole.Error);
-			Assert.Null(whole.FullLength);
-			Assert.EndsWith("end=TAIL\"", whole.Value!, StringComparison.Ordinal);
-			Assert.Equal(capped.FullLength + 2, whole.Value!.Length); // the two quotes around it
+			whole.Error.ShouldBeNull();
+			whole.FullLength.ShouldBeNull();
+			whole.Value!.ShouldEndWith("end=TAIL\"", Case.Sensitive);
+			((int?)whole.Value!.Length).ShouldBe(capped.FullLength + 2); // the two quotes around it
 
 			// A ceiling above the value is not a second cap: what comes back is the value, not the
 			// ceiling's worth of it.
 			var ample = await session.EvaluateAsync("state.LongUrl", maxLength: 1_000_000, cancellationToken);
-			Assert.Null(ample.FullLength);
-			Assert.Equal(whole.Value, ample.Value);
+			ample.FullLength.ShouldBeNull();
+			ample.Value.ShouldBe(whole.Value);
 
 			// And a frame's variables carry the same signal, since that is where a caller meets the
 			// value first -- the evaluation is only where it goes to read more.
 			var frame = await session.ReadFrameVariablesAsync(0, null, cancellationToken);
 			var argument = frame.Variables.First(variable => variable.Name == "state");
-			Assert.Null(argument.FullLength); // an object is not cut short; only its strings are
+			argument.FullLength.ShouldBeNull(); // an object is not cut short; only its strings are
 
 			var expanded = await session.ExpandValueAsync(argument.Path, 0, null, cancellationToken);
 			var url = expanded.Children.First(child => child.Name == "LongUrl");
-			Assert.Equal(capped.FullLength, url.FullLength);
+			url.FullLength.ShouldBe(capped.FullLength);
 
 			// A short string is not reported as cut, which is what keeps the field meaning something.
 			var label = expanded.Children.First(child => child.Name == "Label");
-			Assert.Null(label.FullLength);
+			label.FullLength.ShouldBeNull();
 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
-			Assert.True(await session.ContinueAsync(cancellationToken));
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target runs on after reading a long value");
+			(await session.ContinueAsync(cancellationToken)).ShouldBeTrue();
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target runs on after reading a long value");
 		}
 		finally
 		{

@@ -71,7 +71,7 @@ public sealed class ResultBudgetTests
 			TestContext.Current!.Execution.CancellationToken);
 
 		var members = outline.Types.Sum(type => type.Members.Count);
-		Assert.True(members > 0, "the fixture type should have members to measure");
+		(members > 0).ShouldBeTrue("the fixture type should have members to measure");
 
 		AssertWithin(
 			PerOutlinedMember,
@@ -87,7 +87,7 @@ public sealed class ResultBudgetTests
 			includePreviews: false);
 
 		var hits = references.References.Count + references.Definitions.Count;
-		Assert.True(hits > 0, "the fixture should have references to measure");
+		(hits > 0).ShouldBeTrue("the fixture should have references to measure");
 
 		AssertWithin(
 			PerReference,
@@ -113,7 +113,7 @@ public sealed class ResultBudgetTests
 			"Library.Greeter.Count",
 			"/// <summary>How many greetings have been asked for.</summary>\npublic int Count { get; set; }");
 
-		Assert.True(result.Applied, $"the edit should apply; notices were '{string.Join(" | ", result.Notices)}'");
+		result.Applied.ShouldBeTrue($"the edit should apply; notices were '{string.Join(" | ", result.Notices)}'");
 
 		AssertWithin(PerWriteResult, Size(result), 1, "a write result for a one-line edit");
 	}
@@ -132,8 +132,7 @@ public sealed class ResultBudgetTests
 	{
 		var each = size / items;
 
-		Assert.True(
-			each <= budget,
+		(each <= budget).ShouldBeTrue(
 			$"{shape} costs {each} bytes against a budget of {budget} ({size} bytes over {items} items). "
 				+ "Lower the budget if this is a result being shrunk; otherwise the shape has grown.");
 	}

@@ -66,33 +66,33 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 		{
 			var built = await session.ApplyXamlAsync(
 				turn.EmptyMarkup, turn.MarkupHolding(Before), filePath: null, cancellationToken);
-			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
+			(built.Detail is null).ShouldBeTrue($"expected the slot to be filled, got detail: {built.Detail}");
 
 			var applied = await session.ApplyXamlAsync(
 				turn.MarkupHolding(Before), turn.MarkupHolding(After), filePath: null, cancellationToken);
-			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+			(applied.Detail is null).ShouldBeTrue($"expected an apply, got detail: {applied.Detail}");
 
 			var edit = applied.Results.FirstOrDefault(
 				result => result.Target == turn.Address("TextBlock[0]") && result.Property == "FontSize");
-			Assert.NotNull(edit);
-			Assert.Equal("applied", edit!.Status);
+			edit.ShouldNotBeNull();
+			edit!.Status.ShouldBe("applied");
 
 			// The struct-valued edit, which is the one that used to come back "SetProperty failed
 			// 0x80004005" because it had been built as a Double.
 			var radius = applied.Results.FirstOrDefault(
 				result => result.Target == turn.Address("Border[0]") && result.Property == "CornerRadius");
-			Assert.NotNull(radius);
-			Assert.Equal("applied", radius!.Status);
+			radius.ShouldNotBeNull();
+			radius!.Status.ShouldBe("applied");
 
-			Assert.Equal(2, applied.Applied);
+			applied.Applied.ShouldBe(2);
 
 			// The live element actually changed: reading its font size back gives the new value.
 			var tree = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
 			var caption = tree.Nodes.Single(node => node.Address == turn.Address("TextBlock[0]"));
 			var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
 			var fontSize = properties.Properties.FirstOrDefault(property => property.Name == "FontSize");
-			Assert.NotNull(fontSize);
-			Assert.Equal("40", fontSize!.Value);
+			fontSize.ShouldNotBeNull();
+			fontSize!.Value.ShouldBe("40");
 
 			// And the struct-valued edit is now read back too, rather than trusted from its status.
 			// It used to be asserted only through "applied", because a CornerRadius came back as an
@@ -100,8 +100,8 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 			var pane = tree.Nodes.Single(node => node.Address == turn.Address("Border[0]"));
 			var paneProperties = await session.ReadXamlPropertiesAsync(pane.Handle, includeDefaults: false, cancellationToken);
 			var cornerRadius = paneProperties.Properties.FirstOrDefault(property => property.Name == "CornerRadius");
-			Assert.NotNull(cornerRadius);
-			Assert.Equal("0,0,0,0", cornerRadius!.Value);
+			cornerRadius.ShouldNotBeNull();
+			cornerRadius!.Value.ShouldBe("0,0,0,0");
 		}
 	}
 
@@ -134,21 +134,21 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 		{
 			var built = await session.ApplyXamlAsync(
 				turn.EmptyMarkup, turn.MarkupHolding(Before), filePath: null, cancellationToken);
-			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
+			(built.Detail is null).ShouldBeTrue($"expected the slot to be filled, got detail: {built.Detail}");
 
 			var applied = await session.ApplyXamlAsync(
 				turn.MarkupHolding(Before), turn.MarkupHolding(After), filePath: null, cancellationToken);
-			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+			(applied.Detail is null).ShouldBeTrue($"expected an apply, got detail: {applied.Detail}");
 
 			var edit = applied.Results.FirstOrDefault(
 				result => result.Target == turn.Address("TextBlock[0]") && result.Property == "Text");
-			Assert.NotNull(edit);
-			Assert.Equal("applied", edit!.Status);
+			edit.ShouldNotBeNull();
+			edit!.Status.ShouldBe("applied");
 
 			var tree = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
 			var caption = tree.Nodes.Single(node => node.Address == turn.Address("TextBlock[0]"));
 			var properties = await session.ReadXamlPropertiesAsync(caption.Handle, includeDefaults: false, cancellationToken);
-			Assert.Equal(Expected, properties.Properties.FirstOrDefault(property => property.Name == "Text")?.Value);
+			(properties.Properties.FirstOrDefault(property => property.Name == "Text")?.Value).ShouldBe(Expected);
 		}
 	}
 
@@ -188,27 +188,27 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 		{
 			var built = await session.ApplyXamlAsync(
 				turn.EmptyMarkup, turn.MarkupHolding(Pair), filePath: null, cancellationToken);
-			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
+			(built.Detail is null).ShouldBeTrue($"expected the slot to be filled, got detail: {built.Detail}");
 
 			// The provider derives an address from the live tree, so this half stands on its own: two
 			// unnamed siblings of one type are told apart by their position under the named anchor.
 			var before = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
 			var addresses = before.Nodes.Select(node => node.Address).ToList();
-			Assert.Contains(turn.Address("Border[0]"), addresses);
-			Assert.Contains(turn.Address("Border[1]"), addresses);
+			addresses.ShouldContain(turn.Address("Border[0]"));
+			addresses.ShouldContain(turn.Address("Border[1]"));
 
 			var applied = await session.ApplyXamlAsync(
 				turn.MarkupHolding(Pair), turn.MarkupHolding(Changed), filePath: null, cancellationToken);
-			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+			(applied.Detail is null).ShouldBeTrue($"expected an apply, got detail: {applied.Detail}");
 
 			var edit = applied.Results.FirstOrDefault(
 				result => result.Target == turn.Address("Border[1]") && result.Property == "Background");
-			Assert.NotNull(edit);
-			Assert.Equal("applied", edit!.Status);
+			edit.ShouldNotBeNull();
+			edit!.Status.ShouldBe("applied");
 
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Equal(ChangedBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[1]"), cancellationToken));
-			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[0]"), cancellationToken));
+			(await BackgroundAtAsync(session, tree, turn.Address("Border[1]"), cancellationToken)).ShouldBe(ChangedBackground);
+			(await BackgroundAtAsync(session, tree, turn.Address("Border[0]"), cancellationToken)).ShouldBe(FirstBackground);
 		}
 	}
 
@@ -252,19 +252,19 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 		{
 			var built = await session.ApplyXamlAsync(
 				turn.EmptyMarkup, turn.MarkupHolding(Pair), filePath: null, cancellationToken);
-			Assert.True(built.Detail is null, $"expected the slot to be filled, got detail: {built.Detail}");
+			(built.Detail is null).ShouldBeTrue($"expected the slot to be filled, got detail: {built.Detail}");
 
 			var before = await session.ReadXamlTreeAsync(turn.Slot, offset: 0, limit: 0, cancellationToken);
-			Assert.Equal(2, before.Nodes.Count(node => node.Address == turn.Address("Border[0]") || node.Address == turn.Address("Border[1]")));
+			before.Nodes.Count(node => node.Address == turn.Address("Border[0]") || node.Address == turn.Address("Border[1]")).ShouldBe(2);
 
 			var applied = await session.ApplyXamlAsync(
 				turn.MarkupHolding(Pair), turn.MarkupHolding(Survivor), filePath: null, cancellationToken);
-			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+			(applied.Detail is null).ShouldBeTrue($"expected an apply, got detail: {applied.Detail}");
 
 			var removal = applied.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
-			Assert.NotNull(removal);
-			Assert.Equal(turn.Address("Border[1]"), removal!.Target);
-			Assert.Equal("applied", removal.Status);
+			removal.ShouldNotBeNull();
+			removal!.Target.ShouldBe(turn.Address("Border[1]"));
+			removal.Status.ShouldBe("applied");
 
 			// Read back off a fresh enumeration, so this checks the app rather than the provider's own
 			// bookkeeping: every injection builds a new tap and walks the tree again.
@@ -272,11 +272,11 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 			var remaining = tree.Nodes
 				.Where(node => node.Address == turn.Address("Border[0]") || node.Address == turn.Address("Border[1]"))
 				.ToList();
-			var survivor = Assert.Single(remaining);
-			Assert.Equal(turn.Address("Border[0]"), survivor.Address);
+			var survivor = remaining.ShouldHaveSingleItem();
+			survivor.Address.ShouldBe(turn.Address("Border[0]"));
 
 			// And it is the one that was meant to stay.
-			Assert.Equal(FirstBackground, await BackgroundAtAsync(session, tree, turn.Address("Border[0]"), cancellationToken));
+			(await BackgroundAtAsync(session, tree, turn.Address("Border[0]"), cancellationToken)).ShouldBe(FirstBackground);
 
 		}
 	}
@@ -315,7 +315,7 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 			"<Grid Background=\"#FF00FFFF\"><Rectangle Fill=\"#FFFF00FF\" Width=\"10\" Height=\"10\" /></Grid>";
 
 		var start = oldXaml.IndexOf(SecondBorder, StringComparison.Ordinal);
-		Assert.True(start >= 0, "the probe markup no longer holds the second unnamed Border");
+		(start >= 0).ShouldBeTrue("the probe markup no longer holds the second unnamed Border");
 		var close = oldXaml.IndexOf("</Border>", start, StringComparison.Ordinal) + "</Border>".Length;
 
 		var newXaml = oldXaml
@@ -336,44 +336,44 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 				},
 				cancellationToken);
 
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var running = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
 				cancellationToken);
-			Assert.NotNull(running);
+			running.ShouldNotBeNull();
 
 			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+			(applied.Detail is null).ShouldBeTrue($"expected an apply, got detail: {applied.Detail}");
 
 			var add = applied.Results.FirstOrDefault(result => result.Kind == "AddChild");
-			Assert.NotNull(add);
-			Assert.Equal("applied", add!.Status);
+			add.ShouldNotBeNull();
+			add!.Status.ShouldBe("applied");
 
 			var removal = applied.Results.FirstOrDefault(result => result.Kind == "RemoveChild");
-			Assert.NotNull(removal);
-			Assert.Equal("applied", removal!.Status);
+			removal.ShouldNotBeNull();
+			removal!.Status.ShouldBe("applied");
 
 			// The non-brush property, on a named element, so all three kinds are in the one apply.
 			var opacity = applied.Results.FirstOrDefault(result => result.Property == "Opacity");
-			Assert.NotNull(opacity);
-			Assert.Equal("applied", opacity!.Status);
+			opacity.ShouldNotBeNull();
+			opacity!.Status.ShouldBe("applied");
 
 			// The added element is in the app, and it arrived built rather than merely present: its own
 			// property is set, and the child it was given is underneath it. Existing is not complete.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Equal("#FF00FFFF", await BackgroundAtAsync(session, tree, "#Pair/Grid[0]", cancellationToken));
+			(await BackgroundAtAsync(session, tree, "#Pair/Grid[0]", cancellationToken)).ShouldBe("#FF00FFFF");
 
 			var nested = tree.Nodes.SingleOrDefault(node => node.Address == "#Pair/Grid[0]/Rectangle[0]");
-			Assert.NotNull(nested);
-			Assert.EndsWith("Rectangle", nested!.TypeName, StringComparison.Ordinal);
+			nested.ShouldNotBeNull();
+			nested!.TypeName.ShouldEndWith("Rectangle", Case.Sensitive);
 
 			// And the removal happened: one Border left under the anchor, not two.
-			Assert.Single(tree.Nodes, node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]");
+			tree.Nodes.Where(node => node.Address is "#Pair/Border[0]" or "#Pair/Border[1]").ShouldHaveSingleItem();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -398,7 +398,7 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 		var xamlPath = Path.Combine(RepositoryRoot(), "tests", "apps", "uwp-classic", "MainPage.xaml");
 		var oldXaml = File.ReadAllText(xamlPath);
 
-		Assert.Contains("Grid.Row=\"0\"", oldXaml);
+		oldXaml.ShouldContain("Grid.Row=\"0\"", Case.Sensitive);
 		var newXaml = oldXaml.Replace("Grid.Row=\"0\"", "Grid.Row=\"1\"");
 
 		await using var manager = CreateManager();
@@ -414,32 +414,32 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 				},
 				cancellationToken);
 
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var running = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
 				cancellationToken);
-			Assert.NotNull(running);
+			running.ShouldNotBeNull();
 
 			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+			(applied.Detail is null).ShouldBeTrue($"expected an apply, got detail: {applied.Detail}");
 
 			var edit = applied.Results.FirstOrDefault(result => result.Property == "Grid.Row");
-			Assert.NotNull(edit);
-			Assert.Equal("#Attached", edit!.Target);
-			Assert.Equal("applied", edit.Status);
+			edit.ShouldNotBeNull();
+			edit!.Target.ShouldBe("#Attached");
+			edit.Status.ShouldBe("applied");
 
 			// Read back off the app, because "applied" only says SetProperty returned S_OK.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			var element = tree.Nodes.Single(node => node.Name == "Attached");
 			var properties = await session.ReadXamlPropertiesAsync(element.Handle, includeDefaults: false, cancellationToken);
 			var row = properties.Properties.FirstOrDefault(property => property.Name == "Grid.Row");
-			Assert.NotNull(row);
-			Assert.Equal("1", row!.Value);
+			row.ShouldNotBeNull();
+			row!.Value.ShouldBe("1");
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -477,36 +477,36 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 
 		const string Was = "#FF445566";
 		const string Now = "#FFAA3300";
-		Assert.Contains($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", oldXaml);
+		oldXaml.ShouldContain($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", Case.Sensitive);
 		var newXaml = oldXaml.Replace($"x:Key=\"ProbeAccent\" Color=\"{Was}\"", $"x:Key=\"ProbeAccent\" Color=\"{Now}\"");
 
 		{
 
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var running = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
 				cancellationToken);
-			Assert.NotNull(running);
+			running.ShouldNotBeNull();
 
 			// The element is drawing the old colour through the key before anything is changed.
 			var before = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Equal(Was, await BackgroundAtAsync(session, before, "#Themed", cancellationToken));
+			(await BackgroundAtAsync(session, before, "#Themed", cancellationToken)).ShouldBe(Was);
 
 			var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-			Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+			(applied.Detail is null).ShouldBeTrue($"expected an apply, got detail: {applied.Detail}");
 
 			var edit = applied.Results.FirstOrDefault(result => result.Kind == "SetResource");
-			Assert.NotNull(edit);
-			Assert.Equal("#RootGrid", edit!.Target);
-			Assert.Equal("ProbeAccent", edit.Property);
-			Assert.Equal("applied", edit.Status);
+			edit.ShouldNotBeNull();
+			edit!.Target.ShouldBe("#RootGrid");
+			edit.Property.ShouldBe("ProbeAccent");
+			edit.Status.ShouldBe("applied");
 
 			// And the element that resolves the key follows it.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.Equal(Now, await BackgroundAtAsync(session, tree, "#Themed", cancellationToken));
+			(await BackgroundAtAsync(session, tree, "#Themed", cancellationToken)).ShouldBe(Now);
 
 		}
 	}
@@ -547,30 +547,28 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 
 		const string DataTemplateWas = "<Border Background=\"#FF556677\" Padding=\"4\">";
 		const string ControlTemplateWas = "<Border Background=\"#FF667788\" Padding=\"4\" />";
-		Assert.Contains(DataTemplateWas, oldXaml);
-		Assert.Contains(ControlTemplateWas, oldXaml);
+		oldXaml.ShouldContain(DataTemplateWas, Case.Sensitive);
+		oldXaml.ShouldContain(ControlTemplateWas, Case.Sensitive);
 
 		var newXaml = oldXaml
 			.Replace(DataTemplateWas, "<Border Background=\"#FF991122\" Padding=\"4\">")
 			.Replace(ControlTemplateWas, "<Border Background=\"#FF223399\" Padding=\"4\" />");
 
 		var applied = await session.ApplyXamlAsync(oldXaml, newXaml, filePath: null, cancellationToken);
-		Assert.True(applied.Detail is null, $"expected an apply, got detail: {applied.Detail}");
+		(applied.Detail is null).ShouldBeTrue($"expected an apply, got detail: {applied.Detail}");
 
 		var reported = string.Join(
 			" | ",
 			applied.Results.Select(result => $"{result.Kind} '{result.Property}' on {result.Target}: {result.Status}"));
 
-		Assert.True(
-			applied.Results.Count == 0,
+		(applied.Results.Count == 0).ShouldBeTrue(
 			$"a template resource has no live edit to report, and this reported: {reported}");
 
 		var notes = string.Join(" | ", applied.Notes);
 		foreach (var (key, type) in new[] { ("ProbeItemTemplate", "DataTemplate"), ("ProbeControlTemplate", "ControlTemplate") })
 		{
-			Assert.True(
-				applied.Notes.Any(note =>
-					note.Contains(key, StringComparison.Ordinal) && note.Contains(type, StringComparison.Ordinal)),
+			applied.Notes.Any(note =>
+					note.Contains(key, StringComparison.Ordinal) && note.Contains(type, StringComparison.Ordinal)).ShouldBeTrue(
 				$"a note has to name {key} and say it is a {type}; notes were: {notes}");
 		}
 	}
@@ -629,40 +627,40 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 			};
 
 			var session = await manager.StartAsync(target, cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var running = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
 				cancellationToken);
-			Assert.NotNull(running);
+			running.ShouldNotBeNull();
 
 			// The app's own markup, untouched since it was launched. There is nothing to apply, and
 			// this side says so with evidence rather than by diffing the file against itself -- which
 			// would report nothing either, and would mean something else entirely.
 			var first = await session.ApplyXamlAsync(null, null, sourcePath, cancellationToken);
-			Assert.True(first.Detail is null, $"expected a baseline, got detail: {first.Detail}");
-			Assert.Empty(first.Results);
-			Assert.Contains(first.Notes, note => note.Contains("Nothing has edited") && note.Contains("MainPage.xaml"));
+			(first.Detail is null).ShouldBeTrue($"expected a baseline, got detail: {first.Detail}");
+			first.Results.ShouldBeEmpty();
+			first.Notes.ShouldContain(note => note.Contains("Nothing has edited") && note.Contains("MainPage.xaml"));
 
 			// A file that has changed since the app started is the other first-apply case: what the
 			// app was built from is gone, so it records the file and says so rather than guessing.
 			File.WriteAllText(editable, original);
 			var registered = await session.ApplyXamlAsync(null, null, editable, cancellationToken);
-			Assert.True(registered.Detail is null, $"expected a baseline, got detail: {registered.Detail}");
-			Assert.Empty(registered.Results);
-			Assert.Contains(registered.Notes, note => note.Contains("no longer on disk"));
+			(registered.Detail is null).ShouldBeTrue($"expected a baseline, got detail: {registered.Detail}");
+			registered.Results.ShouldBeEmpty();
+			registered.Notes.ShouldContain(note => note.Contains("no longer on disk"));
 
 			// One edit, applied with nothing passed but the path.
 			File.WriteAllText(editable, original.Replace("FontSize=\"24\"", "FontSize=\"40\""));
 			var fontSize = await session.ApplyXamlAsync(null, null, editable, cancellationToken);
-			Assert.True(fontSize.Detail is null, $"expected an apply, got detail: {fontSize.Detail}");
-			var sizeEdit = Assert.Single(fontSize.Results);
-			Assert.Equal("#Caption", sizeEdit.Target);
-			Assert.Equal("FontSize", sizeEdit.Property);
-			Assert.Equal("applied", sizeEdit.Status);
-			Assert.Equal("40", await CaptionValueAsync(session, "FontSize", cancellationToken));
+			(fontSize.Detail is null).ShouldBeTrue($"expected an apply, got detail: {fontSize.Detail}");
+			var sizeEdit = fontSize.Results.ShouldHaveSingleItem();
+			sizeEdit.Target.ShouldBe("#Caption");
+			sizeEdit.Property.ShouldBe("FontSize");
+			sizeEdit.Status.ShouldBe("applied");
+			(await CaptionValueAsync(session, "FontSize", cancellationToken)).ShouldBe("40");
 
 			// A second edit, same session, no relaunch -- and a different property, which is what makes
 			// the single result below mean the baseline moved with the first apply.
@@ -673,24 +671,24 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 					.Replace("Text=\"Rose UWP Probe\"", "Text=\"Edited twice\""));
 
 			var caption = await session.ApplyXamlAsync(null, null, editable, cancellationToken);
-			Assert.True(caption.Detail is null, $"expected an apply, got detail: {caption.Detail}");
-			var textEdit = Assert.Single(caption.Results);
-			Assert.Equal("#Caption", textEdit.Target);
-			Assert.Equal("Text", textEdit.Property);
-			Assert.Equal("applied", textEdit.Status);
+			(caption.Detail is null).ShouldBeTrue($"expected an apply, got detail: {caption.Detail}");
+			var textEdit = caption.Results.ShouldHaveSingleItem();
+			textEdit.Target.ShouldBe("#Caption");
+			textEdit.Property.ShouldBe("Text");
+			textEdit.Status.ShouldBe("applied");
 
 			// Both edits are on the running app: the second landed, and the first is still there rather
 			// than having been undone by a diff that started over from the original.
-			Assert.Equal("Edited twice", await CaptionValueAsync(session, "Text", cancellationToken));
-			Assert.Equal("40", await CaptionValueAsync(session, "FontSize", cancellationToken));
+			(await CaptionValueAsync(session, "Text", cancellationToken)).ShouldBe("Edited twice");
+			(await CaptionValueAsync(session, "FontSize", cancellationToken)).ShouldBe("40");
 
 			// And an apply with nothing to apply says which of the two nothings it was.
 			var unchanged = await session.ApplyXamlAsync(null, null, editable, cancellationToken);
-			Assert.True(unchanged.Detail is null, $"expected an apply, got detail: {unchanged.Detail}");
-			Assert.Empty(unchanged.Results);
-			Assert.Contains(unchanged.Notes, note => note.Contains("unchanged since the last apply"));
+			(unchanged.Detail is null).ShouldBeTrue($"expected an apply, got detail: {unchanged.Detail}");
+			unchanged.Results.ShouldBeEmpty();
+			unchanged.Notes.ShouldContain(note => note.Contains("unchanged since the last apply"));
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{

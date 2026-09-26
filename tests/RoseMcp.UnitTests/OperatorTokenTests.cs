@@ -20,9 +20,8 @@ public sealed class OperatorTokenTests
 
 		// 32 bytes as base64url with no padding. Nothing in that alphabet needs escaping in a shell,
 		// a URL or a header, which is the point of choosing it.
-		Assert.Equal(43, token.Length);
-		Assert.True(
-			token.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_'),
+		token.Length.ShouldBe(43);
+		token.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_').ShouldBeTrue(
 			"a minted token is base64url, so nothing needs escaping anywhere it is passed");
 	}
 
@@ -31,7 +30,7 @@ public sealed class OperatorTokenTests
 	{
 		var minted = Enumerable.Range(0, 20).Select(_ => OperatorToken.Mint().Value).ToHashSet();
 
-		Assert.Equal(20, minted.Count);
+		minted.Count.ShouldBe(20);
 	}
 
 	[Test]
@@ -39,7 +38,7 @@ public sealed class OperatorTokenTests
 	{
 		var token = OperatorToken.Mint();
 
-		Assert.True(token.Matches($"Bearer {token.Value}"));
+		token.Matches($"Bearer {token.Value}").ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -55,7 +54,7 @@ public sealed class OperatorTokenTests
 	{
 		var token = OperatorToken.Mint();
 
-		Assert.True(token.Matches($"{scheme} {token.Value}"));
+		token.Matches($"{scheme} {token.Value}").ShouldBeTrue();
 	}
 
 	[Test]
@@ -63,7 +62,7 @@ public sealed class OperatorTokenTests
 	{
 		var token = new OperatorToken("AbCdEf");
 
-		Assert.False(token.Matches("Bearer abcdef"), "the value is a secret, not a word");
+		token.Matches("Bearer abcdef").ShouldBeFalse("the value is a secret, not a word");
 	}
 
 	/// <summary>
@@ -85,7 +84,7 @@ public sealed class OperatorTokenTests
 	{
 		var token = new OperatorToken("abcdef");
 
-		Assert.False(token.Matches(authorization), $"'{authorization}' is not this token");
+		token.Matches(authorization).ShouldBeFalse($"'{authorization}' is not this token");
 	}
 
 	/// <summary>
@@ -97,7 +96,7 @@ public sealed class OperatorTokenTests
 	{
 		var token = new OperatorToken("a-token-somebody-chose");
 
-		Assert.Equal("a-token-somebody-chose", token.Value);
-		Assert.True(token.Matches("Bearer a-token-somebody-chose"));
+		token.Value.ShouldBe("a-token-somebody-chose");
+		token.Matches("Bearer a-token-somebody-chose").ShouldBeTrue();
 	}
 }

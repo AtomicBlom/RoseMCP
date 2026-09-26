@@ -71,6 +71,7 @@ $script:OpenIssues = @(
     195 # A match drops the comments between its tokens; a test pins the damage until it stops.
     217 # An insertion or an anchored replacement lays out lines it was not asked to; pinned the same way.
     218 # With no .editorconfig a write takes Roslyn's four spaces and re-indents a neighbour; pinned too.
+    339 # One surface outgrew its model-facing ceiling; the ceiling stays raised until the surface splits.
 )
 
 $script:Advice = @{

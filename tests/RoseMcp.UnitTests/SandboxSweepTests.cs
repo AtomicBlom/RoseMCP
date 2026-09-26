@@ -30,7 +30,7 @@ public sealed class SandboxSweepTests
 	{
 		var plan = Plan([Folder(100)], _ => SandboxProcess.None);
 
-		Assert.Equal([Folder(100)], plan.Stale);
+		plan.Stale.ShouldBe([Folder(100)]);
 	}
 
 	/// <summary>Started before the folder was made, so it is the host that made it.</summary>
@@ -39,8 +39,8 @@ public sealed class SandboxSweepTests
 	{
 		var plan = Plan([Folder(100)], _ => SandboxProcess.StartedAt(Made.AddSeconds(-2)));
 
-		Assert.Empty(plan.Stale);
-		Assert.Equal(1, plan.Running);
+		plan.Stale.ShouldBeEmpty();
+		plan.Running.ShouldBe(1);
 	}
 
 	/// <summary>
@@ -52,7 +52,7 @@ public sealed class SandboxSweepTests
 	{
 		var plan = Plan([Folder(100)], _ => SandboxProcess.StartedAt(Made.AddMinutes(5)));
 
-		Assert.Equal([Folder(100)], plan.Stale);
+		plan.Stale.ShouldBe([Folder(100)]);
 	}
 
 	/// <summary>
@@ -64,7 +64,7 @@ public sealed class SandboxSweepTests
 	{
 		var plan = Plan([Folder(100)], _ => SandboxProcess.Inaccessible);
 
-		Assert.Equal([Folder(100)], plan.Stale);
+		plan.Stale.ShouldBe([Folder(100)]);
 	}
 
 	/// <summary>
@@ -81,8 +81,8 @@ public sealed class SandboxSweepTests
 			[Folder(100), Folder(200), Folder(300), Folder(400)],
 			pid => pid == 200 ? throw new Win32Exception(5) : SandboxProcess.None);
 
-		Assert.Equal([Folder(100), Folder(300), Folder(400)], plan.Stale);
-		Assert.Equal(1, plan.Undecided);
+		plan.Stale.ShouldBe([Folder(100), Folder(300), Folder(400)]);
+		plan.Undecided.ShouldBe(1);
 	}
 
 	[Test]
@@ -93,8 +93,8 @@ public sealed class SandboxSweepTests
 			_ => SandboxProcess.StartedAt(Made.AddMinutes(5)),
 			folder => folder == Folder(100) ? throw new IOException("gone as it was read") : Made);
 
-		Assert.Equal([Folder(200)], plan.Stale);
-		Assert.Equal(1, plan.Undecided);
+		plan.Stale.ShouldBe([Folder(200)]);
+		plan.Undecided.ShouldBe(1);
 	}
 
 	/// <summary>
@@ -108,9 +108,9 @@ public sealed class SandboxSweepTests
 			[Folder(OwnProcessId), Path.Combine("RoseMcpXaml", "notes")],
 			pid => throw new InvalidOperationException($"asked about {pid}"));
 
-		Assert.Empty(plan.Stale);
-		Assert.Equal(0, plan.Running);
-		Assert.Equal(0, plan.Undecided);
+		plan.Stale.ShouldBeEmpty();
+		plan.Running.ShouldBe(0);
+		plan.Undecided.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -125,7 +125,7 @@ public sealed class SandboxSweepTests
 		var running = Plan([Folder(100)], _ => SandboxProcess.StartedAt(Made.AddSeconds(-2).ToLocalTime()));
 		var reused = Plan([Folder(200)], _ => SandboxProcess.StartedAt(Made.AddMinutes(5).ToLocalTime()));
 
-		Assert.Equal(1, running.Running);
-		Assert.Equal([Folder(200)], reused.Stale);
+		running.Running.ShouldBe(1);
+		reused.Stale.ShouldBe([Folder(200)]);
 	}
 }

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -19,19 +20,19 @@ public sealed class MoveMemberTests
 
 		var result = await MoveAsync(session, "Library.Regioned.Twice", "Library.Greeter");
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var source = await ReadAsync(fixture, "Regioned.cs");
 		var target = await ReadAsync(fixture, "Greeter.cs");
 		var caller = await ReadAsync(fixture, "Builds.cs");
 
-		Assert.DoesNotContain("Twice", source, StringComparison.Ordinal);
-		Assert.Contains("public static int Twice(int value)", target, StringComparison.Ordinal);
+		source.ShouldNotContain("Twice", Case.Sensitive);
+		target.ShouldContain("public static int Twice(int value)", Case.Sensitive);
 
 		// The call site in another file now names the new home, which is the half a person forgets.
-		Assert.Contains("Greeter.Twice(21)", caller, StringComparison.Ordinal);
-		Assert.Contains("call site(s) now name Greeter", string.Join(" ", result.Notices), StringComparison.Ordinal);
+		caller.ShouldContain("Greeter.Twice(21)", Case.Sensitive);
+		string.Join(" ", result.Notices).ShouldContain("call site(s) now name Greeter", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -49,12 +50,12 @@ public sealed class MoveMemberTests
 		var source = await ReadAsync(fixture, "Regioned.cs");
 		var target = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.DoesNotContain("Trebles it", source, StringComparison.Ordinal);
-		Assert.Contains("Trebles it", target, StringComparison.Ordinal);
+		source.ShouldNotContain("Trebles it", Case.Sensitive);
+		target.ShouldContain("Trebles it", Case.Sensitive);
 
 		// The region it left is still balanced.
-		Assert.Contains("#region Helpers", source, StringComparison.Ordinal);
-		Assert.Contains("#endregion", source, StringComparison.Ordinal);
+		source.ShouldContain("#region Helpers", Case.Sensitive);
+		source.ShouldContain("#endregion", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -77,16 +78,14 @@ public sealed class MoveMemberTests
 
 		var result = await MoveAsync(session, "Library.Wrapped.Join", "Library.Greeter");
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var target = await ReadAsync(fixture, "Greeter.cs");
 
 		// One tab for the member, two for the parameters it wrapped onto their own lines.
-		Assert.Contains(
-			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third)\r\n\t{\r\n",
-			target,
-			StringComparison.Ordinal);
+		target.ShouldContain(
+			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third)\r\n\t{\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -102,17 +101,15 @@ public sealed class MoveMemberTests
 
 		var result = await MoveAsync(session, "Library.Arrowed.Spread", "Library.Greeter");
 
-		Assert.True(result.Applied, "the move is written; only its layout is under test");
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue("the move is written; only its layout is under test");
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var target = await ReadAsync(fixture, "Greeter.cs");
 
 		// One tab for the member, two for the body, three for the lines it wraps onto.
-		Assert.Contains(
+		target.ShouldContain(
 			"\tpublic static string Spread(string first, string second, string third) =>\r\n\t\tfirst"
-				+ "\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;",
-			target,
-			StringComparison.Ordinal);
+				+ "\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -129,11 +126,11 @@ public sealed class MoveMemberTests
 
 		var result = await MoveAsync(session, "Library.Wrapped.Join", "Library.Greeter");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var target = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("\t}\r\n\r\n\tpublic static string Join(", target, StringComparison.Ordinal);
+		target.ShouldContain("\t}\r\n\r\n\tpublic static string Join(", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -149,9 +146,8 @@ public sealed class MoveMemberTests
 		var result = await MoveAsync(
 			session, "Library.Regioned.Twice", "Library.Greeter", CallSiteStyle.UsingStatic);
 
-		Assert.True(result.Applied);
-		Assert.Contains(
-			result.Notices,
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldContain(
 			notice => notice.Contains("left as written", StringComparison.Ordinal));
 	}
 
@@ -167,12 +163,12 @@ public sealed class MoveMemberTests
 
 		var before = await ReadAsync(fixture, "Greeter.cs");
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => MoveAsync(session, "Library.Greeter.Greet(string)", "Library.Regioned"));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => MoveAsync(session, "Library.Greeter.Greet(string)", "Library.Regioned")).OfExactType();
 
-		Assert.Contains("is an instance member", thrown.Message, StringComparison.Ordinal);
-		Assert.Contains("Make it static first", thrown.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+		thrown.Message.ShouldContain("is an instance member", Case.Sensitive);
+		thrown.Message.ShouldContain("Make it static first", Case.Sensitive);
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
 	/// <summary>Moving a member to where it already is is a mistake worth naming rather than a no-op.</summary>
@@ -182,10 +178,10 @@ public sealed class MoveMemberTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => MoveAsync(session, "Library.Regioned.Twice", "Library.Regioned"));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => MoveAsync(session, "Library.Regioned.Twice", "Library.Regioned")).OfExactType();
 
-		Assert.Contains("is already in", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("is already in", Case.Sensitive);
 	}
 
 	private static Task<MemberEditResult> MoveAsync(
@@ -236,12 +232,12 @@ public sealed class MoveMemberTests
 
 		var result = await MoveAsync(session, "Library.Imports.Formatted", "Library.Greeter");
 
-		Assert.True(result.Applied);
-		Assert.NotEmpty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldNotBeEmpty();
 
 		var said = string.Join(" ", result.Notices);
 
-		Assert.Contains("System.Globalization", said, StringComparison.Ordinal);
-		Assert.Contains("This introduced", said, StringComparison.Ordinal);
+		said.ShouldContain("System.Globalization", Case.Sensitive);
+		said.ShouldContain("This introduced", Case.Sensitive);
 	}
 }

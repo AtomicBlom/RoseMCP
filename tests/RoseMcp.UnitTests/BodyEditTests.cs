@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -16,13 +17,13 @@ public sealed class BodyEditTests
 	[Test]
 	public void Refuses_an_anchor_carrying_a_comment()
 	{
-		var error = Assert.Throws<ArgumentException>(
-			() => BodyEdit.Anchored("{\n\t// why\n\treturn 1;\n}", "// why\nreturn 1;", "// because\nreturn 2;"));
+		var error = Should.Throw<ArgumentException>(
+			() => BodyEdit.Anchored("{\n\t// why\n\treturn 1;\n}", "// why\nreturn 1;", "// because\nreturn 2;")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("carries a comment", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("carries a comment", Case.Sensitive);
 		// Naming the payload that can do it, which is now the switch that makes the comment matchable
 		// rather than only the whole-body rewrite.
-		Assert.Contains("includeTrivia", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("includeTrivia", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -35,8 +36,8 @@ public sealed class BodyEditTests
 	{
 		var body = BodyEdit.Anchored("{\n\treturn 1;\n}", "return 1;", "// because\nreturn 2;");
 
-		Assert.Contains("// because", body, StringComparison.Ordinal);
-		Assert.DoesNotContain("return 1;", body, StringComparison.Ordinal);
+		body.ShouldContain("// because", Case.Sensitive);
+		body.ShouldNotContain("return 1;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -46,10 +47,10 @@ public sealed class BodyEditTests
 	[Test]
 	public void Refuses_a_comment_between_the_tokens_of_an_anchor()
 	{
-		var error = Assert.Throws<ArgumentException>(
-			() => BodyEdit.Anchored("{\n\tvar x = 1;\n\treturn x;\n}", "var x = 1; // one\nreturn x;", "return 2;"));
+		var error = Should.Throw<ArgumentException>(
+			() => BodyEdit.Anchored("{\n\tvar x = 1;\n\treturn x;\n}", "var x = 1; // one\nreturn x;", "return 2;")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("carries a comment", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("carries a comment", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -69,8 +70,8 @@ public sealed class BodyEditTests
 			"Send(one);",
 			"Send(\n\t\t\t\t\t\tone,\n\t\t\t\t\t\ttwo);");
 
-		Assert.Contains("\n\t\t\t\t\t\tone,", body, StringComparison.Ordinal);
-		Assert.DoesNotContain("\t\t\t\t\t\t\tone,", body, StringComparison.Ordinal);
+		body.ShouldContain("\n\t\t\t\t\t\tone,", Case.Sensitive);
+		body.ShouldNotContain("\t\t\t\t\t\t\tone,", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -88,8 +89,8 @@ public sealed class BodyEditTests
 			"Send(one);",
 			"Send(\n\tone,\n\ttwo);");
 
-		Assert.Contains("\n\t\tone,", body, StringComparison.Ordinal);
-		Assert.Contains("\n\t\ttwo);", body, StringComparison.Ordinal);
+		body.ShouldContain("\n\t\tone,", Case.Sensitive);
+		body.ShouldContain("\n\t\ttwo);", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -106,8 +107,8 @@ public sealed class BodyEditTests
 			"Send(one);",
 			"\t\tSend(\n\t\t\tone,\n\t\t\ttwo);");
 
-		Assert.Contains("\n\t\tone,", body, StringComparison.Ordinal);
-		Assert.DoesNotContain("\n\t\t\tone,", body, StringComparison.Ordinal);
+		body.ShouldContain("\n\t\tone,", Case.Sensitive);
+		body.ShouldNotContain("\n\t\t\tone,", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -133,9 +134,9 @@ public sealed class BodyEditTests
 			includeTrivia: true,
 			count => rewritten = count);
 
-		Assert.Contains("\t\tfirst\r\n\t\tthird\r\n", body, StringComparison.Ordinal);
-		Assert.DoesNotContain("second", body, StringComparison.Ordinal);
-		Assert.Equal(1, rewritten);
+		body.ShouldContain("\t\tfirst\r\n\t\tthird\r\n", Case.Sensitive);
+		body.ShouldNotContain("second", Case.Sensitive);
+		rewritten.ShouldBe(1);
 	}
 
 	/// <summary>
@@ -157,11 +158,11 @@ public sealed class BodyEditTests
 			includeTrivia: true,
 			count => rewritten = count);
 
-		Assert.Contains("first\nthird\n", body, StringComparison.Ordinal);
-		Assert.DoesNotContain("second", body, StringComparison.Ordinal);
+		body.ShouldContain("first\nthird\n", Case.Sensitive);
+		body.ShouldNotContain("second", Case.Sensitive);
 
 		// Nothing was rewritten, so nothing is claimed: the caller's endings were taken literally.
-		Assert.Equal(0, rewritten);
+		rewritten.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -172,13 +173,13 @@ public sealed class BodyEditTests
 	[Test]
 	public void Leaves_a_needle_that_carries_a_carriage_return_alone()
 	{
-		var thrown = Assert.Throws<ArgumentException>(() => BodyEdit.Anchored(
+		var thrown = Should.Throw<ArgumentException>(() => BodyEdit.Anchored(
 			"{\r\n\t// one\n\t// two\r\n}",
 			"// one\r\n\t// two",
 			"// three",
-			includeTrivia: true));
+			includeTrivia: true)).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("does not contain", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("does not contain", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -195,7 +196,7 @@ public sealed class BodyEditTests
 			"counts what was\n\t   asked for",
 			includeTrivia: true);
 
-		Assert.Contains("/* counts what was\r\n\t   asked for */", body, StringComparison.Ordinal);
+		body.ShouldContain("/* counts what was\r\n\t   asked for */", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -212,7 +213,7 @@ public sealed class BodyEditTests
 			"what was\n\t// asked for",
 			includeTrivia: true);
 
-		Assert.Contains("// counts what was\r\n\t// asked for\r\n", body, StringComparison.Ordinal);
+		body.ShouldContain("// counts what was\r\n\t// asked for\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -222,13 +223,13 @@ public sealed class BodyEditTests
 	[Test]
 	public void Refuses_a_replacement_that_leaves_a_comment_line_without_its_delimiter()
 	{
-		var thrown = Assert.Throws<ArgumentException>(() => BodyEdit.Anchored(
+		var thrown = Should.Throw<ArgumentException>(() => BodyEdit.Anchored(
 			"{\r\n\t// counts what is\r\n\t// there\r\n\treturn 1;\r\n}",
 			"what is\n\t// there",
 			"what was\n\tasked for",
-			includeTrivia: true));
+			includeTrivia: true)).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("'asked for' does not", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("'asked for' does not", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -240,9 +241,9 @@ public sealed class BodyEditTests
 	[Arguments("{\r\n\t// one\r\n\r\n\t// two\r\n\treturn 1;\r\n}", "one\n\n\t// two")]
 	public void Still_refuses_a_match_that_leaves_the_comment(string body, string find)
 	{
-		var thrown = Assert.Throws<ArgumentException>(() => BodyEdit.Anchored(body, find, "x", includeTrivia: true));
+		var thrown = Should.Throw<ArgumentException>(() => BodyEdit.Anchored(body, find, "x", includeTrivia: true)).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("part of a comment and part of the code", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("part of a comment and part of the code", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -269,11 +270,11 @@ public sealed class BodyEditTests
 			"var q = source\n\t\t\t.Where(x => x)\n\t\t\t.ToList();\n_ = q;",
 			mixed: notices.Add);
 
-		var notice = Assert.Single(notices);
+		var notice = notices.ShouldHaveSingleItem();
 
-		Assert.Contains("mixes", notice, StringComparison.Ordinal);
-		Assert.Contains("line 4", notice, StringComparison.Ordinal);
-		Assert.Contains("lines 2, 3", notice, StringComparison.Ordinal);
+		notice.ShouldContain("mixes", Case.Sensitive);
+		notice.ShouldContain("line 4", Case.Sensitive);
+		notice.ShouldContain("lines 2, 3", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -293,6 +294,6 @@ public sealed class BodyEditTests
 			"if (a)\n{\n\tif (b)\n\t{\n\t\tC();\n\t}\n}",
 			mixed: notices.Add);
 
-		Assert.Empty(notices);
+		notices.ShouldBeEmpty();
 	}
 }

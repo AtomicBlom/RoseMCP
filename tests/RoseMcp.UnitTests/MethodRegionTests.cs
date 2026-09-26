@@ -61,8 +61,8 @@ public sealed class MethodRegionTests
 
 		var region = MethodRegion.Of(extents, CompiledModule.TokenOf(symbols.Metadata, "WithLambda"));
 
-		Assert.Equal(2, region.Count);
-		Assert.Contains(region, extent => Covers(extent, fixture.LineOf("value * 3")));
+		region.Count.ShouldBe(2);
+		region.ShouldContain(extent => Covers(extent, fixture.LineOf("value * 3")));
 	}
 
 	[Test]
@@ -74,8 +74,8 @@ public sealed class MethodRegionTests
 
 		var region = MethodRegion.Of(extents, CompiledModule.TokenOf(symbols.Metadata, "WithLocalFunction"));
 
-		Assert.Equal(2, region.Count);
-		Assert.Contains(region, extent => Covers(extent, fixture.LineOf("value + 7")));
+		region.Count.ShouldBe(2);
+		region.ShouldContain(extent => Covers(extent, fixture.LineOf("value + 7")));
 	}
 
 	/// <summary>
@@ -92,20 +92,19 @@ public sealed class MethodRegionTests
 		var extents = symbols!.Pdb!.Extents();
 		var token = CompiledModule.TokenOf(symbols.Metadata, "WithAwait");
 
-		Assert.DoesNotContain(extents, extent => extent.MethodToken == token);
+		extents.ShouldNotContain(extent => extent.MethodToken == token);
 
 		var region = MethodRegion.Of(extents, token);
-		var moveNext = Assert.Single(region);
-		Assert.Equal(token, moveNext.KickoffToken);
+		var moveNext = region.ShouldHaveSingleItem();
+		moveNext.KickoffToken.ShouldBe(token);
 
 		var afterTheAwait = fixture.LineOf("seed + 11");
 		var lines = MethodRegion.Lines(region);
-		Assert.NotNull(lines);
-		Assert.True(
-			lines!.Value.FirstLine <= afterTheAwait && afterTheAwait <= lines.Value.LastLine,
+		lines.ShouldNotBeNull();
+		(lines!.Value.FirstLine <= afterTheAwait && afterTheAwait <= lines.Value.LastLine).ShouldBeTrue(
 			$"the region a reader is shown covers lines {lines.Value.FirstLine}-{lines.Value.LastLine} "
 				+ $"and the line after the await is {afterTheAwait}");
-		Assert.Equal(fixture.SourcePath, lines.Value.File);
+		lines.Value.File.ShouldBe(fixture.SourcePath);
 	}
 
 	/// <summary>
@@ -119,8 +118,8 @@ public sealed class MethodRegionTests
 		using var fixture = CompiledModule.Of(BodiesSource);
 		using var symbols = ModuleSymbols.TryLoad(fixture.ModulePath);
 
-		Assert.Empty(MethodRegion.Of(symbols!.Pdb!.Extents(), 0x06FFFFFF));
-		Assert.Null(MethodRegion.Lines([]));
+		MethodRegion.Of(symbols!.Pdb!.Extents(), 0x06FFFFFF).ShouldBeEmpty();
+		MethodRegion.Lines([]).ShouldBeNull();
 	}
 
 	private static bool Covers(MethodExtent extent, int line) => extent.FirstLine <= line && line <= extent.LastLine;

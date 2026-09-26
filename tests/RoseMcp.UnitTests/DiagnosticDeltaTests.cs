@@ -41,9 +41,9 @@ public sealed class DiagnosticDeltaTests
 			[Error(5, 7), Error(8, 18), Error(9, 18)],
 			movement);
 
-		var entry = Assert.Single(introduced);
-		Assert.Equal(5, entry.Line);
-		Assert.Equal(0, resolved);
+		var entry = introduced.ShouldHaveSingleItem();
+		entry.Line.ShouldBe(5);
+		resolved.ShouldBe(0);
 	}
 
 	/// <summary>Lines that only moved are neither introduced nor resolved.</summary>
@@ -58,8 +58,8 @@ public sealed class DiagnosticDeltaTests
 			[Error(9, 18), Error(10, 18)],
 			movement);
 
-		Assert.Empty(introduced);
-		Assert.Equal(0, resolved);
+		introduced.ShouldBeEmpty();
+		resolved.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -77,8 +77,8 @@ public sealed class DiagnosticDeltaTests
 			[Error(7, 19)],
 			TextMovement.Of(ShellPath, Before, after));
 
-		Assert.Empty(introduced);
-		Assert.Equal(0, resolved);
+		introduced.ShouldBeEmpty();
+		resolved.ShouldBe(0);
 	}
 
 	[Test]
@@ -89,8 +89,8 @@ public sealed class DiagnosticDeltaTests
 			[Error(7, 18)],
 			TextMovement.None);
 
-		Assert.Empty(introduced);
-		Assert.Equal(1, resolved);
+		introduced.ShouldBeEmpty();
+		resolved.ShouldBe(1);
 	}
 
 	[Test]
@@ -98,8 +98,8 @@ public sealed class DiagnosticDeltaTests
 	{
 		var movement = TextMovement.Of(ShellPath, Before, Insert(Before, line: 4, "\t\tvar a = 1;"));
 
-		Assert.Equal(((int, int)?)(3, 2), movement.Map(ShellPath, 3, 2));
-		Assert.Equal(((int, int)?)(9, 18), movement.Map(ShellPath, 8, 18));
+		movement.Map(ShellPath, 3, 2).ShouldBe(((int, int)?)(3, 2));
+		movement.Map(ShellPath, 8, 18).ShouldBe(((int, int)?)(9, 18));
 	}
 
 	/// <summary>
@@ -111,7 +111,7 @@ public sealed class DiagnosticDeltaTests
 	{
 		var rebuilt = SourceText.From(Insert(Before, line: 4, "\t\tvar a = 1;").ToString());
 
-		Assert.Equal(((int, int)?)(9, 18), TextMovement.Of(ShellPath, Before, rebuilt).Map(ShellPath, 8, 18));
+		TextMovement.Of(ShellPath, Before, rebuilt).Map(ShellPath, 8, 18).ShouldBe(((int, int)?)(9, 18));
 	}
 
 	[Test]
@@ -119,7 +119,7 @@ public sealed class DiagnosticDeltaTests
 	{
 		var rewritten = SourceText.From(Before.ToString().Replace("void A()", "void Renamed()", StringComparison.Ordinal));
 
-		Assert.Null(TextMovement.Of(ShellPath, Before, rewritten).Map(ShellPath, 7, 18));
+		TextMovement.Of(ShellPath, Before, rewritten).Map(ShellPath, 7, 18).ShouldBeNull();
 	}
 
 	private static SourceText Insert(SourceText text, int line, string inserted)

@@ -1,3 +1,5 @@
+using RoseMcp.TestSupport;
+
 namespace RoseMcp.IntegrationTests;
 
 public sealed class RenameTests
@@ -10,19 +12,19 @@ public sealed class RenameTests
 
 		var result = await RenameAsync(session, fixture, "Product");
 
-		Assert.True(result.Applied);
-		Assert.Equal(2, result.FilesChanged);
-		Assert.Equal("Multiply", result.OldName);
-		Assert.Empty(result.Conflicts);
+		result.Applied.ShouldBeTrue();
+		result.FilesChanged.ShouldBe(2);
+		result.OldName.ShouldBe("Multiply");
+		result.Conflicts.ShouldBeEmpty();
 
 		var calculator = await File.ReadAllTextAsync(
 			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
 		var program = await File.ReadAllTextAsync(
 			fixture.Path("Simple", "App", "Program.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("Product", calculator, StringComparison.Ordinal);
-		Assert.DoesNotContain("Multiply", calculator, StringComparison.Ordinal);
-		Assert.Contains("Calculator.Product", program, StringComparison.Ordinal);
+		calculator.ShouldContain("Product", Case.Sensitive);
+		calculator.ShouldNotContain("Multiply", Case.Sensitive);
+		program.ShouldContain("Calculator.Product", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -37,9 +39,9 @@ public sealed class RenameTests
 
 		var result = await RenameAsync(session, fixture, "Product");
 
-		Assert.Contains("-\tpublic static int Multiply(int left, int right) => left * right;", result.Diff, StringComparison.Ordinal);
-		Assert.Contains("+\tpublic static int Product(int left, int right) => left * right;", result.Diff, StringComparison.Ordinal);
-		Assert.Contains("@@", result.Diff, StringComparison.Ordinal);
+		result.Diff.ShouldContain("-\tpublic static int Multiply(int left, int right) => left * right;", Case.Sensitive);
+		result.Diff.ShouldContain("+\tpublic static int Product(int left, int right) => left * right;", Case.Sensitive);
+		result.Diff.ShouldContain("@@", Case.Sensitive);
 	}
 
 	[Test]
@@ -53,17 +55,17 @@ public sealed class RenameTests
 
 		var result = await RenameAsync(session, fixture, "Product", apply: false);
 
-		Assert.False(result.Applied, "a preview writes nothing");
-		Assert.NotEmpty(result.Diff);
+		result.Applied.ShouldBeFalse("a preview writes nothing");
+		result.Diff.ShouldNotBeEmpty();
 
 		var after = await File.ReadAllTextAsync(
 			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(before, after);
+		after.ShouldBe(before);
 
 		// A preview must not advance the revision, or the snapshot would disagree with disk.
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
-		Assert.Equal(result.Revision, snapshot.Revision);
+		snapshot.Revision.ShouldBe(result.Revision);
 	}
 
 	[Test]
@@ -76,7 +78,7 @@ public sealed class RenameTests
 		await RenameAsync(session, fixture, "Product");
 		var after = (await session.ReadAsync(TestContext.Current!.Execution.CancellationToken)).Revision;
 
-		Assert.True(after > before);
+		(after > before).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -91,14 +93,14 @@ public sealed class RenameTests
 
 		await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var error = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => RenameAsync(session, fixture, "Product", expectedRevision: 9999));
+		var error = await Should.ThrowAsync<InvalidOperationException>(
+			() => RenameAsync(session, fixture, "Product", expectedRevision: 9999)).OfExactType();
 
-		Assert.Contains("9999", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("9999", Case.Sensitive);
 
 		var calculator = await File.ReadAllTextAsync(
 			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
-		Assert.Contains("Multiply", calculator, StringComparison.Ordinal);
+		calculator.ShouldContain("Multiply", Case.Sensitive);
 	}
 
 	[Test]
@@ -114,12 +116,12 @@ public sealed class RenameTests
 			NewName = "Terminal",
 		};
 
-		var error = await Assert.ThrowsAsync<InvalidOperationException>(
+		var error = await Should.ThrowAsync<InvalidOperationException>(
 			() => session.MutateAsync(
 				(snapshot, token) => RenameService.RenameAsync(snapshot, request, null, token),
-				TestContext.Current!.Execution.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("metadata", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("metadata", Case.Sensitive);
 	}
 
 	private static Task<Contracts.RenameResult> RenameAsync(
@@ -162,14 +164,14 @@ public sealed class RenameTests
 			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("Multiply", result.OldName);
-		Assert.True(result.Applied);
+		result.OldName.ShouldBe("Multiply");
+		result.Applied.ShouldBeTrue();
 
 		var program = await File.ReadAllTextAsync(
 			fixture.Path("Simple", "App", "Program.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("Times", program, StringComparison.Ordinal);
-		Assert.DoesNotContain("Multiply", program, StringComparison.Ordinal);
+		program.ShouldContain("Times", Case.Sensitive);
+		program.ShouldNotContain("Multiply", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -188,12 +190,12 @@ public sealed class RenameTests
 			NewName = "Hail",
 		};
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+		var thrown = await Should.ThrowAsync<ArgumentException>(
 			() => session.MutateAsync(
 				(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
-				TestContext.Current!.Execution.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("matches 2 declarations", thrown.Message, StringComparison.Ordinal);
-		Assert.Contains("Name the parameter types", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("matches 2 declarations", Case.Sensitive);
+		thrown.Message.ShouldContain("Name the parameter types", Case.Sensitive);
 	}
 }

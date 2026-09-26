@@ -41,8 +41,8 @@ public sealed class RelayTests
 
 		var status = Structured(answer);
 
-		Assert.Equal(fixture.SolutionPath, status.GetProperty("workspace").GetString());
-		Assert.Equal(nameof(WorkspaceState.Loaded), status.GetProperty("state").GetString());
+		status.GetProperty("workspace").GetString().ShouldBe(fixture.SolutionPath);
+		status.GetProperty("state").GetString().ShouldBe(nameof(WorkspaceState.Loaded));
 
 		// And the tray is the process holding it, which is what says nothing was served locally.
 		using var loaded = await relay.DescribeWorkspacesAsync(cancellationToken);
@@ -51,7 +51,7 @@ public sealed class RelayTests
 			.Select(workspace => workspace.GetProperty("workspace").GetString())
 			.ToList();
 
-		Assert.Contains(fixture.SolutionPath, paths);
+		paths.ShouldContain(fixture.SolutionPath);
 	}
 
 	/// <summary>
@@ -99,15 +99,14 @@ public sealed class RelayTests
 
 			var text = ErrorText(failed);
 
-			Assert.True(
-				failed.RootElement.GetProperty("result").GetProperty("isError").GetBoolean(),
+			failed.RootElement.GetProperty("result").GetProperty("isError").GetBoolean().ShouldBeTrue(
 				$"call {attempt} should have failed with the tray gone, and said: {text}");
 
 			// The reason is the discriminator, and it is the whole assertion. The SDK writes its own
 			// preamble in front of every tool failure including the ones that do explain themselves,
 			// so "An error occurred invoking" appearing says nothing; what separated the first call
 			// from the rest was that only the first went on to say anything after it.
-			Assert.Contains("is not answering", text, StringComparison.Ordinal);
+			text.ShouldContain("is not answering", Case.Sensitive);
 		}
 	}
 
@@ -118,7 +117,7 @@ public sealed class RelayTests
 
 		if (result.TryGetProperty("isError", out var failed) && failed.GetBoolean())
 		{
-			Assert.Fail($"the call failed: {ErrorText(reply)}");
+			throw new ShouldAssertException($"the call failed: {ErrorText(reply)}");
 		}
 
 		return result.GetProperty("structuredContent");

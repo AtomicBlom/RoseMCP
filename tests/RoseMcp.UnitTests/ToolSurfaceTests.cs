@@ -51,6 +51,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.ProjectGraph,
 		ToolNames.ReadGeneratedDocument,
 		ToolNames.RenameSymbol,
+		ToolNames.ReplacePattern,
 		ToolNames.ReplaceBody,
 		ToolNames.ReplaceDocComment,
 		ToolNames.ReplaceMember,
@@ -178,7 +179,7 @@ public sealed class ToolSurfaceTests
 	{
 		var expected = OperatingSystem.IsWindows() ? [.. Roslyn, .. LiveApp] : Roslyn;
 
-		Assert.Equal(Sorted(expected), Advertised());
+		Advertised().ShouldBe(Sorted(expected));
 	}
 
 	[Test]
@@ -186,7 +187,7 @@ public sealed class ToolSurfaceTests
 	{
 		foreach (var name in Advertised())
 		{
-			Assert.StartsWith("rose_", name, StringComparison.Ordinal);
+			name.ShouldStartWith("rose_", Case.Sensitive);
 		}
 	}
 
@@ -202,7 +203,7 @@ public sealed class ToolSurfaceTests
 
 		foreach (var name in HostInternal)
 		{
-			Assert.DoesNotContain(name, advertised);
+			advertised.ShouldNotContain(name);
 		}
 	}
 
@@ -213,7 +214,7 @@ public sealed class ToolSurfaceTests
 	[Test]
 	public void The_two_halves_of_the_surface_are_disjoint()
 	{
-		Assert.Empty(Roslyn.Intersect(LiveApp, StringComparer.Ordinal));
+		Roslyn.Intersect(LiveApp, StringComparer.Ordinal).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -227,7 +228,7 @@ public sealed class ToolSurfaceTests
 		var advertised = Advertised().ToHashSet(StringComparer.Ordinal);
 		var claimed = Sorted(ReadOnlyAdvertised());
 
-		Assert.Equal(Sorted(ReadOnly.Where(advertised.Contains)), claimed);
+		claimed.ShouldBe(Sorted(ReadOnly.Where(advertised.Contains)));
 	}
 
 	/// <summary>
@@ -241,9 +242,9 @@ public sealed class ToolSurfaceTests
 	{
 		foreach (var tool in Listed())
 		{
-			Assert.Null(tool.OutputSchema);
-			Assert.DoesNotContain('\r', tool.Description ?? string.Empty);
-			Assert.DoesNotContain("\\r", tool.InputSchema.GetRawText(), StringComparison.Ordinal);
+			tool.OutputSchema.ShouldBeNull();
+			(tool.Description ?? string.Empty).ShouldNotContain('\r');
+			tool.InputSchema.GetRawText().ShouldNotContain("\\r", Case.Sensitive);
 		}
 	}
 
@@ -262,7 +263,7 @@ public sealed class ToolSurfaceTests
 
 		var options = provider.GetRequiredService<IOptions<McpServerOptions>>().Value;
 
-		Assert.NotEmpty(options.Filters.Request.ListToolsFilters);
+		options.Filters.Request.ListToolsFilters.ShouldNotBeEmpty();
 	}
 
 	/// <summary>
@@ -303,13 +304,13 @@ public sealed class ToolSurfaceTests
 
 		var instructions = provider.GetRequiredService<IOptions<McpServerOptions>>().Value.ServerInstructions;
 
-		Assert.NotNull(instructions);
+		instructions.ShouldNotBeNull();
 
 		var exempt = Unrouted.ToHashSet(StringComparer.Ordinal);
 
 		foreach (var name in Advertised().Where(name => !exempt.Contains(name)))
 		{
-			Assert.Contains(name, instructions, StringComparison.Ordinal);
+			instructions.ShouldContain(name, Case.Sensitive);
 		}
 	}
 
@@ -330,7 +331,7 @@ public sealed class ToolSurfaceTests
 
 		foreach (var name in Unrouted.Where(advertised.Contains))
 		{
-			Assert.DoesNotContain(name, instructions, StringComparison.Ordinal);
+			instructions.ShouldNotContain(name, Case.Sensitive);
 		}
 	}
 
@@ -348,7 +349,7 @@ public sealed class ToolSurfaceTests
 
 		var instructions = provider.GetRequiredService<IOptions<McpServerOptions>>().Value.ServerInstructions ?? string.Empty;
 
-		Assert.InRange(instructions.Length, 1, 4000);
+		instructions.Length.ShouldBeInRange(1, 4000);
 	}
 
 	/// <summary>

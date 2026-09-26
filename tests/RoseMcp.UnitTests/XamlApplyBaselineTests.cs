@@ -23,10 +23,10 @@ public sealed class XamlApplyBaselineTests
 		var baseline = new XamlApplyBaseline();
 
 		var registration = baseline.Prepare(@"C:\app\MainPage.xaml", First, XamlBaselineAge.UnchangedSinceTargetStarted);
-		Assert.Null(registration.OldXaml);
+		registration.OldXaml.ShouldBeNull();
 
 		var second = baseline.Prepare(@"C:\app\MainPage.xaml", Second, XamlBaselineAge.ChangedSinceTargetStarted);
-		Assert.Equal(First, second.OldXaml);
+		second.OldXaml.ShouldBe(First);
 
 		baseline.Advance(@"C:\app\MainPage.xaml", Second);
 
@@ -34,7 +34,7 @@ public sealed class XamlApplyBaselineTests
 		// since the app started on every apply -- which for a property is merely wasteful and for an
 		// added element is a second copy of it.
 		var third = baseline.Prepare(@"C:\app\MainPage.xaml", Third, XamlBaselineAge.ChangedSinceTargetStarted);
-		Assert.Equal(Second, third.OldXaml);
+		third.OldXaml.ShouldBe(Second);
 	}
 
 	/// <summary>
@@ -49,11 +49,11 @@ public sealed class XamlApplyBaselineTests
 
 		var plan = baseline.Prepare(@"C:\app\MainPage.xaml", First, XamlBaselineAge.ChangedSinceTargetStarted);
 
-		Assert.Null(plan.OldXaml);
-		Assert.NotNull(plan.Note);
-		Assert.Contains("MainPage.xaml", plan.Note);
-		Assert.Contains("oldXaml", plan.Note);
-		Assert.True(baseline.Knows(@"C:\app\MainPage.xaml"));
+		plan.OldXaml.ShouldBeNull();
+		plan.Note.ShouldNotBeNull();
+		plan.Note.ShouldContain("MainPage.xaml", Case.Sensitive);
+		plan.Note.ShouldContain("oldXaml", Case.Sensitive);
+		baseline.Knows(@"C:\app\MainPage.xaml").ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -69,8 +69,8 @@ public sealed class XamlApplyBaselineTests
 	{
 		var plan = new XamlApplyBaseline().Prepare(@"C:\app\MainPage.xaml", First, age);
 
-		Assert.Null(plan.OldXaml);
-		Assert.Contains(expected, plan.Note);
+		plan.OldXaml.ShouldBeNull();
+		plan.Note!.ShouldContain(expected, Case.Sensitive);
 	}
 
 	/// <summary>
@@ -86,8 +86,8 @@ public sealed class XamlApplyBaselineTests
 
 		var plan = baseline.Prepare(@"C:\app\MainPage.xaml", First, XamlBaselineAge.ChangedSinceTargetStarted);
 
-		Assert.Equal(First, plan.OldXaml);
-		Assert.Contains("unchanged since the last apply", plan.Note);
+		plan.OldXaml.ShouldBe(First);
+		plan.Note!.ShouldContain("unchanged since the last apply", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -103,7 +103,7 @@ public sealed class XamlApplyBaselineTests
 
 		var plan = baseline.Prepare(@"c:\app\mainpage.XAML", Second, XamlBaselineAge.ChangedSinceTargetStarted);
 
-		Assert.Equal(First, plan.OldXaml);
+		plan.OldXaml.ShouldBe(First);
 	}
 
 	/// <summary>
@@ -116,12 +116,12 @@ public sealed class XamlApplyBaselineTests
 		var baseline = new XamlApplyBaseline();
 		baseline.Advance(@"C:\app\MainPage.xaml", First);
 
-		Assert.False(baseline.Knows(@"C:\app\Settings.xaml"), "a file with no baseline is not known");
+		baseline.Knows(@"C:\app\Settings.xaml").ShouldBeFalse("a file with no baseline is not known");
 
 		var plan = baseline.Prepare(@"C:\app\Settings.xaml", Second, XamlBaselineAge.UnchangedSinceTargetStarted);
 
-		Assert.Null(plan.OldXaml);
-		Assert.Contains("Settings.xaml", plan.Note);
-		Assert.Equal(First, baseline.Prepare(@"C:\app\MainPage.xaml", Third, XamlBaselineAge.Unknown).OldXaml);
+		plan.OldXaml.ShouldBeNull();
+		plan.Note!.ShouldContain("Settings.xaml", Case.Sensitive);
+		baseline.Prepare(@"C:\app\MainPage.xaml", Third, XamlBaselineAge.Unknown).OldXaml.ShouldBe(First);
 	}
 }

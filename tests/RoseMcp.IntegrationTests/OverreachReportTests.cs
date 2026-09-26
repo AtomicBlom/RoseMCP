@@ -62,10 +62,10 @@ public sealed class OverreachReportTests
 
 		var text = await ReadAsync(fixture, "Routes.cs");
 
-		Assert.Contains("new List<string>();\r\n\t\troutes.Add(", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("\r\n\t\t\tstring.Concat(\"/sessions\", \"/threads\"));", text, StringComparison.Ordinal);
-		Assert.StartsWith(
-			"Routes.cs: lines 8, 10-11 and 13 changed.", Reached(result.Notices, "Routes.cs"), StringComparison.Ordinal);
+		text.ShouldContain("new List<string>();\r\n\t\troutes.Add(", Case.Sensitive);
+		text.ShouldNotContain("\r\n\t\t\tstring.Concat(\"/sessions\", \"/threads\"));", Case.Sensitive);
+		Reached(result.Notices, "Routes.cs").ShouldStartWith(
+			"Routes.cs: lines 8, 10-11 and 13 changed.", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -96,8 +96,8 @@ public sealed class OverreachReportTests
 
 		var text = await ReadAsync(fixture, "Phrases.cs");
 
-		Assert.Contains("public const string Greeting = \"Goodbye, \"", text, StringComparison.Ordinal);
-		Assert.StartsWith("Phrases.cs: line 5 changed.", Reached(result.Notices, "Phrases.cs"), StringComparison.Ordinal);
+		text.ShouldContain("public const string Greeting = \"Goodbye, \"", Case.Sensitive);
+		Reached(result.Notices, "Phrases.cs").ShouldStartWith("Phrases.cs: line 5 changed.", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -135,8 +135,8 @@ public sealed class OverreachReportTests
 
 		var text = await ReadAsync(fixture, "Lists.cs");
 
-		Assert.Contains("Names = [", text, StringComparison.Ordinal);
-		Assert.StartsWith("Lists.cs: lines 5-6 changed.", Reached(result.Notices, "Lists.cs"), StringComparison.Ordinal);
+		text.ShouldContain("Names = [", Case.Sensitive);
+		Reached(result.Notices, "Lists.cs").ShouldStartWith("Lists.cs: lines 5-6 changed.", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -177,8 +177,8 @@ public sealed class OverreachReportTests
 
 		var text = await ReadAsync(fixture, "Steps.cs");
 
-		Assert.DoesNotContain("depends on the first", text, StringComparison.Ordinal);
-		Assert.StartsWith("Steps.cs: line 8 changed.", Reached(result.Notices, "Steps.cs"), StringComparison.Ordinal);
+		text.ShouldNotContain("depends on the first", Case.Sensitive);
+		Reached(result.Notices, "Steps.cs").ShouldStartWith("Steps.cs: line 8 changed.", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -197,8 +197,8 @@ public sealed class OverreachReportTests
 		var text = await File.ReadAllTextAsync(
 			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("\r\n    private static int Twice", text, StringComparison.Ordinal);
-		Assert.StartsWith("Calculator.cs: line 9 changed.", Reached(result.Notices, "Calculator.cs"), StringComparison.Ordinal);
+		text.ShouldContain("\r\n    private static int Twice", Case.Sensitive);
+		Reached(result.Notices, "Calculator.cs").ShouldStartWith("Calculator.cs: line 9 changed.", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -288,7 +288,7 @@ public sealed class OverreachReportTests
 		{
 			var reached = notices.FirstOrDefault(IsOverreach);
 
-			Assert.True(reached is null, $"{edit}: {reached}");
+			(reached is null).ShouldBeTrue($"{edit}: {reached}");
 		}
 	}
 

@@ -12,7 +12,7 @@
   <ItemGroup>
     <PackageReference Include="TUnit.Core" />
     <PackageReference Include="TUnit.Engine" />
-    <PackageReference Include="xunit.v3.assert" />
+    <PackageReference Include="Shouldly" />
 
     <!-- Worker code running in this process uses the SDK's MSBuild, found at run time, exactly as the
          worker does. Without this, Roslyn's MSBuild workspace copies its own Microsoft.Build.Framework
@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\src\RoseMcp.Worker\RoseMcp.Worker.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlStubs\RoseMcp.XamlStubs.csproj" />
     <ProjectReference Include="..\..\src\RoseMcp.XamlDiff\RoseMcp.XamlDiff.csproj" />
+    <ProjectReference Include="..\..\src\RoseMcp.Patterns\RoseMcp.Patterns.csproj" />
     <!-- The symbol reader, for the same reason RoseMcp.Ui.Core exists: RoseMcp.LiveApp is
          net10.0-windows and cannot be referenced from here, and reading a portable PDB correctly is
          exactly the kind of thing a test has to be able to reach. -->
@@ -38,10 +39,7 @@
 
   <ItemGroup>
     <Using Include="TUnit.Core" />
-
-    <!-- The assertion API by its own name, aliased rather than imported, because TUnit.Core also
-         reaches an Assert and an unqualified one would be ambiguous in every file. -->
-    <Using Include="Xunit.Assert" Alias="Assert" />
+    <Using Include="Shouldly" />
     <!-- These used to sit in the RoseMcp.Worker.Tests namespace, nested inside RoseMcp.Worker, so
          every worker type resolved without a using. The projects are named for what they test now,
          which costs that; a global using is the same reach without 28 files of noise. -->

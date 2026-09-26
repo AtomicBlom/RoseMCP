@@ -1,4 +1,5 @@
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -16,12 +17,12 @@ public sealed class NavigationTests
 			new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 7, Column = 20 },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("Multiply", info.Name);
-		Assert.Equal("Method", info.Kind);
-		Assert.Equal("Public", info.Accessibility);
-		Assert.Contains("Core.Calculator.Multiply", info.Signature, StringComparison.Ordinal);
-		Assert.True(info.IsFromSource);
-		Assert.Single(info.Declarations);
+		info.Name.ShouldBe("Multiply");
+		info.Kind.ShouldBe("Method");
+		info.Accessibility.ShouldBe("Public");
+		info.Signature.ShouldContain("Core.Calculator.Multiply", Case.Sensitive);
+		info.IsFromSource.ShouldBeTrue();
+		info.Declarations.ShouldHaveSingleItem();
 	}
 
 	/// <summary>Pointing at a use site must work as well as pointing at the declaration.</summary>
@@ -37,11 +38,9 @@ public sealed class NavigationTests
 			new SymbolTarget { FilePath = fixture.Path("Simple", "App", "Program.cs"), Line = 4, Column = 30 },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("Multiply", info.Name);
-		Assert.Equal(
-			fixture.Path("Simple", "Core", "Calculator.cs"),
-			info.Declarations.Single().FilePath,
-			ignoreCase: true);
+		info.Name.ShouldBe("Multiply");
+		info.Declarations.Single().FilePath.ShouldBe(
+			fixture.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -61,15 +60,15 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "System.Text.StringBuilder" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("StringBuilder", info.Name);
-		Assert.Equal("NamedType", info.Kind);
-		Assert.Equal("System.Text", info.Namespace);
+		info.Name.ShouldBe("StringBuilder");
+		info.Kind.ShouldBe("NamedType");
+		info.Namespace.ShouldBe("System.Text");
 
 		// No file to point at, and the assembly said in its place: the two together are what tell a
 		// caller this is not something it can edit.
-		Assert.False(info.IsFromSource, "a type from metadata has no source to edit");
-		Assert.Empty(info.Declarations);
-		Assert.NotNull(info.ContainingAssembly);
+		info.IsFromSource.ShouldBeFalse("a type from metadata has no source to edit");
+		info.Declarations.ShouldBeEmpty();
+		info.ContainingAssembly.ShouldNotBeNull();
 	}
 
 	/// <summary>
@@ -88,10 +87,10 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "System.Text.Encoding.UTF8" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("UTF8", info.Name);
-		Assert.Equal("Property", info.Kind);
-		Assert.Contains("Encoding", info.ContainingType, StringComparison.Ordinal);
-		Assert.False(info.IsFromSource, "a member from metadata has no source to edit");
+		info.Name.ShouldBe("UTF8");
+		info.Kind.ShouldBe("Property");
+		info.ContainingType!.ShouldContain("Encoding", Case.Sensitive);
+		info.IsFromSource.ShouldBeFalse("a member from metadata has no source to edit");
 	}
 
 	/// <summary>
@@ -113,12 +112,12 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "System.Collections.Generic.List.Add" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("Add", info.Name);
-		Assert.Equal("Method", info.Kind);
+		info.Name.ShouldBe("Add");
+		info.Kind.ShouldBe("Method");
 
 		// The library one, not the source member that shares its name.
-		Assert.Contains("List", info.ContainingType, StringComparison.Ordinal);
-		Assert.False(info.IsFromSource, "a member from metadata has no source to edit");
+		info.ContainingType!.ShouldContain("List", Case.Sensitive);
+		info.IsFromSource.ShouldBeFalse("a member from metadata has no source to edit");
 	}
 
 	/// <summary>
@@ -139,9 +138,9 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "StringBuilder" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("StringBuilder", info.Name);
-		Assert.Equal("System.Text", info.Namespace);
-		Assert.False(info.IsFromSource, "a type from metadata has no source to edit");
+		info.Name.ShouldBe("StringBuilder");
+		info.Namespace.ShouldBe("System.Text");
+		info.IsFromSource.ShouldBeFalse("a type from metadata has no source to edit");
 	}
 
 	/// <summary>
@@ -158,14 +157,14 @@ public sealed class NavigationTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+		var error = await Should.ThrowAsync<ArgumentException>(() =>
 			NavigationService.DescribeAsync(
 				snapshot,
 				new SymbolTarget { Symbol = "System.Text.StringBuilder.AppendLine" },
-				TestContext.Current!.Execution.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("AppendLine", error.Message, StringComparison.Ordinal);
-		Assert.Contains("Name the parameter types", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("AppendLine", Case.Sensitive);
+		error.Message.ShouldContain("Name the parameter types", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -184,9 +183,9 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "System.Text.StringBuilder.AppendJoin(string, string[])" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("AppendJoin", info.Name);
-		Assert.Contains("string separator", info.Signature, StringComparison.Ordinal);
-		Assert.False(info.IsFromSource, "a member from metadata has no source to edit");
+		info.Name.ShouldBe("AppendJoin");
+		info.Signature.ShouldContain("string separator", Case.Sensitive);
+		info.IsFromSource.ShouldBeFalse("a member from metadata has no source to edit");
 	}
 
 	/// <summary>
@@ -206,9 +205,9 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "System.Text.StringBuilder..ctor(int)" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("StringBuilder", info.ContainingType, StringComparison.Ordinal);
-		Assert.Contains("int capacity", info.Signature, StringComparison.Ordinal);
-		Assert.False(info.IsFromSource, "a constructor from metadata has no source to edit");
+		info.ContainingType!.ShouldContain("StringBuilder", Case.Sensitive);
+		info.Signature.ShouldContain("int capacity", Case.Sensitive);
+		info.IsFromSource.ShouldBeFalse("a constructor from metadata has no source to edit");
 	}
 
 	/// <summary>
@@ -222,13 +221,13 @@ public sealed class NavigationTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var error = await Assert.ThrowsAsync<SymbolNotFoundException>(() =>
+		var error = await Should.ThrowAsync<SymbolNotFoundException>(() =>
 			NavigationService.DescribeAsync(
 				snapshot,
 				new SymbolTarget { Symbol = "Nowhere.At.All.Whatsoever" },
-				TestContext.Current!.Execution.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("Whatsoever", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("Whatsoever", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -250,11 +249,12 @@ public sealed class NavigationTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Empty(result.Definitions);
-		Assert.Equal(2, result.TotalCount);
-		Assert.All(
-			result.References,
-			location => Assert.EndsWith("Program.cs", location.FilePath, StringComparison.OrdinalIgnoreCase));
+		result.Definitions.ShouldBeEmpty();
+		result.TotalCount.ShouldBe(2);
+		foreach (var location in result.References)
+		{
+			location.FilePath.ShouldEndWith("Program.cs", Case.Insensitive);
+		}
 	}
 
 	/// <summary>
@@ -275,27 +275,36 @@ public sealed class NavigationTests
 		var full = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.NotEmpty(full.References);
-		Assert.All(full.References, location => Assert.NotNull(location.Preview));
+		full.References.ShouldNotBeEmpty();
+		foreach (var location in full.References)
+		{
+			location.Preview.ShouldNotBeNull();
+		}
 
 		var plain = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, includePreviews: false);
 
 		// The count and the places are the same answer; only the lines of source are gone.
-		Assert.Equal(full.TotalCount, plain.TotalCount);
-		Assert.Equal(full.References.Count, plain.References.Count);
-		Assert.All(plain.References, location => Assert.Null(location.Preview));
-		Assert.All(plain.References, location => Assert.NotNull(location.ContainingMember));
-		Assert.True(Size(plain) < Size(full));
+		plain.TotalCount.ShouldBe(full.TotalCount);
+		plain.References.Count.ShouldBe(full.References.Count);
+		foreach (var location in plain.References)
+		{
+			location.Preview.ShouldBeNull();
+		}
+		foreach (var location in plain.References)
+		{
+			location.ContainingMember.ShouldNotBeNull();
+		}
+		(Size(plain) < Size(full)).ShouldBeTrue();
 
 		var counted = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, definitionsOnly: true);
 
-		Assert.Empty(counted.References);
-		Assert.NotEmpty(counted.Definitions);
-		Assert.Equal(full.TotalCount, counted.TotalCount);
-		Assert.True(counted.Truncated);
-		Assert.True(Size(counted) < Size(plain));
+		counted.References.ShouldBeEmpty();
+		counted.Definitions.ShouldNotBeEmpty();
+		counted.TotalCount.ShouldBe(full.TotalCount);
+		counted.Truncated.ShouldBeTrue();
+		(Size(counted) < Size(plain)).ShouldBeTrue();
 
 		var scoped = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core");
@@ -303,8 +312,11 @@ public sealed class NavigationTests
 		// Add is called from App and never from the project declaring it, so narrowing to Core empties
 		// the list while the symbol goes on being used -- which the caller can tell apart only because
 		// naming a project the solution does not have is refused instead.
-		Assert.Empty(scoped.References);
-		Assert.All(full.References, location => Assert.Equal("App", location.Project));
+		scoped.References.ShouldBeEmpty();
+		foreach (var location in full.References)
+		{
+			location.Project.ShouldBe("App");
+		}
 	}
 
 	/// <summary>
@@ -324,7 +336,7 @@ public sealed class NavigationTests
 
 		var match = found.Matches.First(candidate => candidate.Signature.Contains("Notifier.Notify", StringComparison.Ordinal));
 
-		Assert.NotNull(match.Address);
+		match.Address.ShouldNotBeNull();
 
 		// The whole claim: the address goes back in as symbol, and answers about the same member.
 		var described = await NavigationService.DescribeAsync(
@@ -332,14 +344,14 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = match.Address },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(match.Signature, described.Signature);
-		Assert.Equal(match.Address, described.Address);
+		described.Signature.ShouldBe(match.Signature);
+		described.Address.ShouldBe(match.Address);
 
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot, new SymbolTarget { Symbol = described.Address }, 200, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(match.Address, references.Address);
-		Assert.NotEmpty(references.References);
+		references.Address.ShouldBe(match.Address);
+		references.References.ShouldNotBeEmpty();
 	}
 
 	/// <summary>
@@ -360,16 +372,16 @@ public sealed class NavigationTests
 			.Select(match => match.Address)
 			.ToArray();
 
-		Assert.Equal(2, addresses.Length);
-		Assert.Contains("Library.Greeter.Greet(string)", addresses);
-		Assert.Contains("Library.Greeter.Greet(string, string)", addresses);
+		addresses.Length.ShouldBe(2);
+		addresses.ShouldContain("Library.Greeter.Greet(string)");
+		addresses.ShouldContain("Library.Greeter.Greet(string, string)");
 
 		foreach (var address in addresses)
 		{
 			var described = await NavigationService.DescribeAsync(
 				snapshot, new SymbolTarget { Symbol = address }, TestContext.Current!.Execution.CancellationToken);
 
-			Assert.Equal(address, described.Address);
+			described.Address.ShouldBe(address);
 		}
 	}
 
@@ -384,16 +396,16 @@ public sealed class NavigationTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+		var error = await Should.ThrowAsync<ArgumentException>(() =>
 			NavigationService.FindReferencesAsync(
 				snapshot,
 				new SymbolTarget { Symbol = "Core.Calculator.Add" },
 				200,
 				TestContext.Current!.Execution.CancellationToken,
-				project: "Kernel"));
+				project: "Kernel")).OfExactType();
 
-		Assert.Contains("Kernel", error.Message, StringComparison.Ordinal);
-		Assert.Contains("Core", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("Kernel", Case.Sensitive);
+		error.Message.ShouldContain("Core", Case.Sensitive);
 	}
 
 	/// <summary>How big an answer is on the wire, which is the thing the narrowing exists to change.</summary>
@@ -417,11 +429,11 @@ public sealed class NavigationTests
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken);
 
-		var reference = Assert.Single(references.References);
+		var reference = references.References.ShouldHaveSingleItem();
 
-		Assert.Equal(fixture.Path("Simple", "App", "Program.cs"), reference.FilePath, ignoreCase: true);
-		Assert.Equal(4, reference.Line);
-		Assert.Contains("Calculator.Multiply", reference.Preview!, StringComparison.Ordinal);
+		reference.FilePath.ShouldBe(fixture.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
+		reference.Line.ShouldBe(4);
+		reference.Preview!.ShouldContain("Calculator.Multiply", Case.Sensitive);
 	}
 
 	[Test]
@@ -431,14 +443,14 @@ public sealed class NavigationTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var error = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+		var error = await Should.ThrowAsync<ArgumentOutOfRangeException>(
 			() => NavigationService.DescribeAsync(
 				snapshot,
 				new SymbolTarget { FilePath = fixture.Path("Simple", "Core", "Calculator.cs"), Line = 9999, Column = 1 },
-				TestContext.Current!.Execution.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
 		// Guessing at a line number should not produce an opaque index error.
-		Assert.Contains("line(s)", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("line(s)", Case.Sensitive);
 	}
 
 	[Test]
@@ -450,7 +462,7 @@ public sealed class NavigationTests
 
 		var result = await NavigationService.SearchAsync(snapshot, "Calc", 50, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains(result.Matches, match => match.Name == "Calculator" && match.Kind == "NamedType");
+		result.Matches.ShouldContain(match => match.Name == "Calculator" && match.Kind == "NamedType");
 	}
 
 	/// <summary>
@@ -470,9 +482,9 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "Core.Calculator.Multiply" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("Multiply", info.Name);
-		Assert.Equal("Method", info.Kind);
-		Assert.Contains("Core.Calculator.Multiply", info.Signature, StringComparison.Ordinal);
+		info.Name.ShouldBe("Multiply");
+		info.Kind.ShouldBe("Method");
+		info.Signature.ShouldContain("Core.Calculator.Multiply", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -492,15 +504,15 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		var span = Assert.Single(info.DeclarationSpans);
+		var span = info.DeclarationSpans.ShouldHaveSingleItem();
 		var lines = await File.ReadAllLinesAsync(span.FilePath, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.EndsWith("Greeter.cs", span.FilePath, StringComparison.OrdinalIgnoreCase);
-		Assert.Equal(5, span.LineCount);
+		span.FilePath.ShouldEndWith("Greeter.cs", Case.Insensitive);
+		span.LineCount.ShouldBe(5);
 
 		// The documentation comment is the first line of it, and the closing brace the last.
-		Assert.Contains("/// <summary>The greeting for one name.</summary>", lines[span.StartLine - 1], StringComparison.Ordinal);
-		Assert.Equal("\t}", lines[span.EndLine - 1]);
+		lines[span.StartLine - 1].ShouldContain("/// <summary>The greeting for one name.</summary>", Case.Sensitive);
+		lines[span.EndLine - 1].ShouldBe("\t}");
 	}
 
 	/// <summary>A partial has a declaration in each of its files, and both are worth knowing.</summary>
@@ -516,9 +528,9 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "Library.Split" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(2, info.DeclarationSpans.Count);
-		Assert.Contains(info.DeclarationSpans, span => span.FilePath.EndsWith("Split.cs", StringComparison.OrdinalIgnoreCase));
-		Assert.Contains(info.DeclarationSpans, span => span.FilePath.EndsWith("SplitAgain.cs", StringComparison.OrdinalIgnoreCase));
+		info.DeclarationSpans.Count.ShouldBe(2);
+		info.DeclarationSpans.ShouldContain(span => span.FilePath.EndsWith("Split.cs", StringComparison.OrdinalIgnoreCase));
+		info.DeclarationSpans.ShouldContain(span => span.FilePath.EndsWith("SplitAgain.cs", StringComparison.OrdinalIgnoreCase));
 	}
 
 	/// <summary>
@@ -532,11 +544,11 @@ public sealed class NavigationTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
+		var error = await Should.ThrowAsync<ArgumentException>(
 			() => NavigationService.DescribeAsync(
-				snapshot, new SymbolTarget(), TestContext.Current!.Execution.CancellationToken));
+				snapshot, new SymbolTarget(), TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("Name the symbol", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("Name the symbol", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -557,10 +569,10 @@ public sealed class NavigationTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var reference = Assert.Single(references.References);
+		var reference = references.References.ShouldHaveSingleItem();
 
-		Assert.Equal(fixture.Path("Simple", "App", "Program.cs"), reference.FilePath, ignoreCase: true);
-		Assert.Equal(4, reference.Line);
+		reference.FilePath.ShouldBe(fixture.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
+		reference.Line.ShouldBe(4);
 	}
 
 	/// <summary>
@@ -574,11 +586,11 @@ public sealed class NavigationTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+		var thrown = await Should.ThrowAsync<ArgumentException>(
 			() => NavigationService.FindReferencesAsync(
-				snapshot, new SymbolTarget(), 200, TestContext.Current!.Execution.CancellationToken));
+				snapshot, new SymbolTarget(), 200, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("local variable or a parameter", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("local variable or a parameter", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -598,13 +610,13 @@ public sealed class NavigationTests
 			TestContext.Current!.Execution.CancellationToken,
 			includeSource: true);
 
-		var source = Assert.Single(info.Source);
+		var source = info.Source.ShouldHaveSingleItem();
 
-		Assert.Contains("public string Greet(string name)", source, StringComparison.Ordinal);
-		Assert.Contains("return $\"{_prefix}, {name}!\";", source, StringComparison.Ordinal);
+		source.ShouldContain("public string Greet(string name)", Case.Sensitive);
+		source.ShouldContain("return $\"{_prefix}, {name}!\";", Case.Sensitive);
 
 		// The documentation comment comes with it: half of what a reader wanted the source for.
-		Assert.Contains("<summary>The greeting for one name.</summary>", source, StringComparison.Ordinal);
+		source.ShouldContain("<summary>The greeting for one name.</summary>", Case.Sensitive);
 	}
 
 	/// <summary>Not asked for, not paid for: the field stays empty rather than always carrying a body.</summary>
@@ -620,6 +632,6 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Empty(info.Source);
+		info.Source.ShouldBeEmpty();
 	}
 }

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -27,16 +28,14 @@ public sealed class AddUsingTests
 
 		var result = await AddAsync(session, fixture, "Imports.cs", ["System.Text"]);
 
-		Assert.True(result.Applied);
-		Assert.Equal(["System.Text"], result.Added);
+		result.Applied.ShouldBeTrue();
+		result.Added.ShouldBe(["System.Text"]);
 
 		var text = await ReadAsync(fixture, "Imports.cs");
 
 		// After System.Globalization, before the blank line that starts the Library group.
-		Assert.Contains(
-			"using System.Globalization;\r\nusing System.Text;\r\n\r\nusing Library.Nested;\r\n",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"using System.Globalization;\r\nusing System.Text;\r\n\r\nusing Library.Nested;\r\n", Case.Sensitive);
 	}
 
 	/// <summary>A namespace whose group is not there yet starts one, separated the way the file separates them.</summary>
@@ -50,10 +49,8 @@ public sealed class AddUsingTests
 
 		var text = await ReadAsync(fixture, "Imports.cs");
 
-		Assert.Contains(
-			"using System.Globalization;\r\n\r\nusing Library.Nested;\r\n\r\nusing Microsoft.Win32;\r\n",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"using System.Globalization;\r\n\r\nusing Library.Nested;\r\n\r\nusing Microsoft.Win32;\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -71,7 +68,7 @@ public sealed class AddUsingTests
 
 		var text = await ReadAsync(fixture, "Imports.cs");
 
-		Assert.StartsWith("// A file header, which has to stay at the top.\r\nusing System.Buffers;\r\n", text, StringComparison.Ordinal);
+		text.ShouldStartWith("// A file header, which has to stay at the top.\r\nusing System.Buffers;\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -89,15 +86,15 @@ public sealed class AddUsingTests
 		var result = await AddAsync(
 			session, fixture, "Imports.cs", ["System.Globalization", "System.Collections.Generic", "Library"]);
 
-		Assert.Empty(result.Added);
-		Assert.False(result.Applied, "an import already in scope is reported rather than added");
-		Assert.Equal(before, await ReadAsync(fixture, "Imports.cs"));
+		result.Added.ShouldBeEmpty();
+		result.Applied.ShouldBeFalse("an import already in scope is reported rather than added");
+		(await ReadAsync(fixture, "Imports.cs")).ShouldBe(before);
 
 		var reasons = string.Join(" | ", result.AlreadyInScope);
 
-		Assert.Contains("System.Globalization: already imported here", reasons, StringComparison.Ordinal);
-		Assert.Contains("System.Collections.Generic: in scope already, from a global or implicit using", reasons, StringComparison.Ordinal);
-		Assert.Contains("Library: in scope already, since this file is in namespace Library", reasons, StringComparison.Ordinal);
+		reasons.ShouldContain("System.Globalization: already imported here", Case.Sensitive);
+		reasons.ShouldContain("System.Collections.Generic: in scope already, from a global or implicit using", Case.Sensitive);
+		reasons.ShouldContain("Library: in scope already, since this file is in namespace Library", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -124,11 +121,11 @@ public sealed class AddUsingTests
 
 		var result = await AddAsync(session, fixture, "Greeter.cs", ["System.Text"]);
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.True(result.ResolvedDiagnosticCount > 0, "the import is what made the file compile");
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		(result.ResolvedDiagnosticCount > 0).ShouldBeTrue("the import is what made the file compile");
+		result.TotalErrorCount.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -149,14 +146,14 @@ public sealed class AddUsingTests
 			Usings = ["System.Text"],
 		});
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(0, result.TotalErrorCount);
-		Assert.Contains(result.Notices, notice => notice.Contains("Imported System.Text", StringComparison.Ordinal));
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
+		result.Notices.ShouldContain(notice => notice.Contains("Imported System.Text", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.StartsWith("using System.Text;\r\n\r\nnamespace Library;\r\n", text, StringComparison.Ordinal);
+		text.ShouldStartWith("using System.Text;\r\n\r\nnamespace Library;\r\n", Case.Sensitive);
 	}
 
 	/// <summary>And one already in scope is reported from that call too, rather than written twice.</summary>
@@ -174,14 +171,13 @@ public sealed class AddUsingTests
 			Usings = ["System.Collections.Generic"],
 		});
 
-		Assert.True(result.Applied);
-		Assert.Contains(
-			result.Notices,
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldContain(
 			notice => notice.Contains("Did not import System.Collections.Generic", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.DoesNotContain("using System.Collections.Generic;", text, StringComparison.Ordinal);
+		text.ShouldNotContain("using System.Collections.Generic;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -198,14 +194,14 @@ public sealed class AddUsingTests
 
 		var result = await AddAsync(session, fixture, "Statics.cs", ["Library.Nested"]);
 
-		Assert.Equal(["Library.Nested"], result.Added);
+		result.Added.ShouldBe(["Library.Nested"]);
 
 		var text = await ReadAsync(fixture, "Statics.cs");
 		var plain = text.IndexOf("using Library.Nested;", StringComparison.Ordinal);
 		var statics = text.IndexOf("using static System.Math;", StringComparison.Ordinal);
 
-		Assert.True(plain > 0, $"the import was not written at all: {text}");
-		Assert.True(plain < statics, $"a plain using landed below the static block: {text}");
+		(plain > 0).ShouldBeTrue($"the import was not written at all: {text}");
+		(plain < statics).ShouldBeTrue($"a plain using landed below the static block: {text}");
 	}
 
 	/// <summary>
@@ -220,13 +216,12 @@ public sealed class AddUsingTests
 
 		var result = await AddAsync(session, fixture, "Statics.cs", ["Library.Nested"]);
 
-		Assert.Equal(["Library.Nested"], result.Added);
+		result.Added.ShouldBe(["Library.Nested"]);
 
 		var text = await ReadAsync(fixture, "Statics.cs");
 
-		Assert.True(
-			text.IndexOf("using System.Globalization;", StringComparison.Ordinal)
-				< text.IndexOf("using Library.Nested;", StringComparison.Ordinal),
+		(text.IndexOf("using System.Globalization;", StringComparison.Ordinal)
+				< text.IndexOf("using Library.Nested;", StringComparison.Ordinal)).ShouldBeTrue(
 			$"System did not come first: {text}");
 	}
 
@@ -243,15 +238,15 @@ public sealed class AddUsingTests
 
 		var result = await AddAsync(session, fixture, "Imports.cs", ["using static System.Math;"]);
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Equal(["static System.Math"], result.Added);
-		Assert.Empty(result.IntroducedDiagnostics.Where(entry => entry.Id.StartsWith("CS", StringComparison.Ordinal)));
-		Assert.Empty(result.Notices.Where(notice => notice.Contains("ambiguous", StringComparison.Ordinal)));
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.Added.ShouldBe(["static System.Math"]);
+		result.IntroducedDiagnostics.Where(entry => entry.Id.StartsWith("CS", StringComparison.Ordinal)).ShouldBeEmpty();
+		result.Notices.Where(notice => notice.Contains("ambiguous", StringComparison.Ordinal)).ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Imports.cs");
 
-		Assert.Contains("using Library.Nested;\r\n\r\nusing static System.Math;\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("using Library.Nested;\r\n\r\nusing static System.Math;\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -268,18 +263,14 @@ public sealed class AddUsingTests
 		var result = await AddAsync(
 			session, fixture, "Statics.cs", ["static System.Math", "static System.Globalization.CultureInfo"]);
 
-		Assert.Equal(["static System.Globalization.CultureInfo"], result.Added);
-		Assert.Contains(
-			"static System.Math: already imported here",
-			string.Join(" | ", result.AlreadyInScope),
-			StringComparison.Ordinal);
+		result.Added.ShouldBe(["static System.Globalization.CultureInfo"]);
+		string.Join(" | ", result.AlreadyInScope).ShouldContain(
+			"static System.Math: already imported here", Case.Sensitive);
 
 		var text = await ReadAsync(fixture, "Statics.cs");
 
-		Assert.Contains(
-			"using System.Globalization;\r\n\r\nusing static System.Globalization.CultureInfo;\r\nusing static System.Math;\r\n",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"using System.Globalization;\r\n\r\nusing static System.Globalization.CultureInfo;\r\nusing static System.Math;\r\n", Case.Sensitive);
 	}
 
 	/// <summary>An alias goes after the static block, which is where the IDE's own sort puts one.</summary>
@@ -291,14 +282,12 @@ public sealed class AddUsingTests
 
 		var result = await AddAsync(session, fixture, "Statics.cs", ["Invariant = System.Globalization.CultureInfo"]);
 
-		Assert.Equal(["Invariant = System.Globalization.CultureInfo"], result.Added);
+		result.Added.ShouldBe(["Invariant = System.Globalization.CultureInfo"]);
 
 		var text = await ReadAsync(fixture, "Statics.cs");
 
-		Assert.Contains(
-			"using static System.Math;\r\n\r\nusing Invariant = System.Globalization.CultureInfo;\r\n",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"using static System.Math;\r\n\r\nusing Invariant = System.Globalization.CultureInfo;\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -313,14 +302,14 @@ public sealed class AddUsingTests
 
 		var before = await ReadAsync(fixture, "Statics.cs");
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(() => AddAsync(
+		var thrown = await Should.ThrowAsync<ArgumentException>(() => AddAsync(
 			session,
 			fixture,
 			"Statics.cs",
-			["Invariant = System.Globalization.CultureInfo", "Invariant = System.Text.Encoding"]));
+			["Invariant = System.Globalization.CultureInfo", "Invariant = System.Text.Encoding"])).OfExactType();
 
-		Assert.Contains("Invariant already stands for System.Globalization.CultureInfo", thrown.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Statics.cs"));
+		thrown.Message.ShouldContain("Invariant already stands for System.Globalization.CultureInfo", Case.Sensitive);
+		(await ReadAsync(fixture, "Statics.cs")).ShouldBe(before);
 	}
 
 	/// <summary>
@@ -335,11 +324,11 @@ public sealed class AddUsingTests
 
 		var before = await ReadAsync(fixture, "Imports.cs");
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => AddAsync(session, fixture, "Imports.cs", ["System.Text", "static"]));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => AddAsync(session, fixture, "Imports.cs", ["System.Text", "static"])).OfExactType();
 
-		Assert.Contains("'static' is not an import", thrown.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Imports.cs"));
+		thrown.Message.ShouldContain("'static' is not an import", Case.Sensitive);
+		(await ReadAsync(fixture, "Imports.cs")).ShouldBe(before);
 	}
 
 	/// <summary>The write tools' usings argument reads imports the same way, static ones included.</summary>
@@ -357,14 +346,14 @@ public sealed class AddUsingTests
 			Usings = ["static System.Math"],
 		});
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(0, result.TotalErrorCount);
-		Assert.Contains(result.Notices, notice => notice.Contains("Imported static System.Math", StringComparison.Ordinal));
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
+		result.Notices.ShouldContain(notice => notice.Contains("Imported static System.Math", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.StartsWith("using static System.Math;\r\n", text, StringComparison.Ordinal);
+		text.ShouldStartWith("using static System.Math;\r\n", Case.Sensitive);
 	}
 
 	private static Task<UsingResult> AddAsync(

@@ -26,7 +26,7 @@ public sealed class InspectorRowTests
 	[Arguments(LiveDebugEventKind.LogMessage, EventRow.EventTone.Neutral)]
 	public void An_events_tone_separates_the_ones_worth_scanning_for(LiveDebugEventKind kind, EventRow.EventTone tone)
 	{
-		Assert.Equal(tone, EventRow.ToneOf(kind));
+		EventRow.ToneOf(kind).ShouldBe(tone);
 	}
 
 	/// <summary>
@@ -36,29 +36,28 @@ public sealed class InspectorRowTests
 	[Test]
 	public void Every_kind_has_a_short_label_and_the_two_exception_kinds_differ()
 	{
-		Assert.NotEqual(
-			EventRow.Label(LiveDebugEventKind.ExceptionFirstChance),
-			EventRow.Label(LiveDebugEventKind.ExceptionUnhandled));
+		EventRow.Label(LiveDebugEventKind.ExceptionUnhandled).ShouldNotBe(
+			EventRow.Label(LiveDebugEventKind.ExceptionFirstChance));
 
 		foreach (var kind in Enum.GetValues<LiveDebugEventKind>())
 		{
 			var label = EventRow.Label(kind);
-			Assert.NotEmpty(label);
-			Assert.True(label.Length <= 12, $"'{label}' is too long for a pill");
+			label.ShouldNotBeEmpty();
+			(label.Length <= 12).ShouldBeTrue($"'{label}' is too long for a pill");
 		}
 	}
 
 	[Test]
 	public void An_expander_says_what_is_behind_it()
 	{
-		Assert.Equal(string.Empty, EventRow.DescribeDetail(0, 0));
-		Assert.Equal("1 frame", EventRow.DescribeDetail(1, 0));
-		Assert.Equal("3 variables", EventRow.DescribeDetail(0, 3));
-		Assert.Equal("4 frames, 2 variables", EventRow.DescribeDetail(4, 2));
+		EventRow.DescribeDetail(0, 0).ShouldBe(string.Empty);
+		EventRow.DescribeDetail(1, 0).ShouldBe("1 frame");
+		EventRow.DescribeDetail(0, 3).ShouldBe("3 variables");
+		EventRow.DescribeDetail(4, 2).ShouldBe("4 frames, 2 variables");
 
 		// A tracepoint's values are the ones its message asked for, not everything in scope, and
 		// "2 variables" on a method with nine reads as the other seven having gone missing.
-		Assert.Equal("2 logged values", EventRow.DescribeDetail(0, 2, logged: true));
+		EventRow.DescribeDetail(0, 2, logged: true).ShouldBe("2 logged values");
 	}
 
 	/// <summary>
@@ -79,10 +78,10 @@ public sealed class InspectorRowTests
 			Logged = [Variable("count")],
 		});
 
-		Assert.True(row.Logged);
-		Assert.True(row.HasDetail);
-		Assert.Equal("count", Assert.Single(row.Variables).Name);
-		Assert.Equal("1 logged value", row.DetailHeader);
+		row.Logged.ShouldBeTrue();
+		row.HasDetail.ShouldBeTrue();
+		row.Variables.ShouldHaveSingleItem().Name.ShouldBe("count");
+		row.DetailHeader.ShouldBe("1 logged value");
 	}
 
 	[Test]
@@ -99,13 +98,13 @@ public sealed class InspectorRowTests
 			Variables = [Variable("state")],
 		});
 
-		Assert.Equal(41, row.Sequence);
-		Assert.Equal("breakpoint", row.KindLabel);
-		Assert.Equal("thread 7", row.Thread);
-		Assert.True(row.HasThread);
-		Assert.False(row.HasException);
-		Assert.True(row.HasDetail);
-		Assert.Equal("2 frames, 1 variable", row.DetailHeader);
+		row.Sequence.ShouldBe(41);
+		row.KindLabel.ShouldBe("breakpoint");
+		row.Thread.ShouldBe("thread 7");
+		row.HasThread.ShouldBeTrue();
+		row.HasException.ShouldBeFalse();
+		row.HasDetail.ShouldBeTrue();
+		row.DetailHeader.ShouldBe("2 frames, 1 variable");
 	}
 
 	/// <summary>
@@ -127,11 +126,11 @@ public sealed class InspectorRowTests
 			Detail = "no loaded module declares A.B.C",
 		});
 
-		Assert.False(row.Bound);
-		Assert.Equal("not bound yet", row.BoundLabel);
-		Assert.Equal("0 hits", row.Hits);
-		Assert.True(row.HasDetail);
-		Assert.Equal("when count > 3 · auto-continues after 30s", row.Conditions);
+		row.Bound.ShouldBeFalse();
+		row.BoundLabel.ShouldBe("not bound yet");
+		row.Hits.ShouldBe("0 hits");
+		row.HasDetail.ShouldBeTrue();
+		row.Conditions.ShouldBe("when count > 3 · auto-continues after 30s");
 
 		row.Update(new LiveBreakpoint
 		{
@@ -143,11 +142,11 @@ public sealed class InspectorRowTests
 			AutoContinueSeconds = 0,
 		});
 
-		Assert.True(row.Bound);
-		Assert.Equal("bound", row.BoundLabel);
-		Assert.Equal("1 hit", row.Hits);
-		Assert.False(row.HasDetail);
-		Assert.Equal("held until continued", row.Conditions);
+		row.Bound.ShouldBeTrue();
+		row.BoundLabel.ShouldBe("bound");
+		row.Hits.ShouldBe("1 hit");
+		row.HasDetail.ShouldBeFalse();
+		row.Conditions.ShouldBe("held until continued");
 	}
 
 	[Test]
@@ -163,8 +162,8 @@ public sealed class InspectorRowTests
 			LogEveryNthHit = 10,
 		});
 
-		Assert.Equal("every 10th hit · logs \"beat\"", row.Behaviour);
-		Assert.Equal("12 hits", row.Hits);
+		row.Behaviour.ShouldBe("every 10th hit · logs \"beat\"");
+		row.Hits.ShouldBe("12 hits");
 	}
 
 	[Test]
@@ -180,7 +179,7 @@ public sealed class InspectorRowTests
 	[Arguments(111, "111th")]
 	public void Ordinals_read_the_way_english_does(int value, string expected)
 	{
-		Assert.Equal(expected, TracepointRow.Ordinal(value));
+		TracepointRow.Ordinal(value).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -194,12 +193,12 @@ public sealed class InspectorRowTests
 
 		session.Absorb(Page(1, InspectedSession.MaxEvents + 5));
 
-		Assert.Equal(InspectedSession.MaxEvents, session.Events.Count);
-		Assert.True(session.HasNotice);
-		Assert.Contains("5 earlier events", session.Notice);
+		session.Events.Count.ShouldBe(InspectedSession.MaxEvents);
+		session.HasNotice.ShouldBeTrue();
+		session.Notice.ShouldContain("5 earlier events", Case.Sensitive);
 
 		// The oldest went, so the newest is what is left at the end.
-		Assert.Equal(InspectedSession.MaxEvents + 5, session.Events[^1].Sequence);
+		session.Events[^1].Sequence.ShouldBe(InspectedSession.MaxEvents + 5);
 	}
 
 	/// <summary>
@@ -213,10 +212,10 @@ public sealed class InspectorRowTests
 
 		session.Absorb(Page(1, 3, nextCursor: 9));
 
-		Assert.Equal(9, session.Cursor);
-		Assert.Equal(3, session.Events.Count);
-		Assert.True(session.HasEvents);
-		Assert.False(session.HasNotice);
+		session.Cursor.ShouldBe(9);
+		session.Events.Count.ShouldBe(3);
+		session.HasEvents.ShouldBeTrue();
+		session.HasNotice.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -232,8 +231,8 @@ public sealed class InspectorRowTests
 		// The next page starts at 20: sequences 3 to 19 went out of the host's buffer.
 		session.Absorb(Page(20, 1, nextCursor: 20, oldestAvailable: 20, totalObserved: 20));
 
-		Assert.True(session.HasNotice);
-		Assert.Contains("17 earlier events", session.Notice);
+		session.HasNotice.ShouldBeTrue();
+		session.Notice.ShouldContain("17 earlier events", Case.Sensitive);
 	}
 
 	/// <summary>Breakpoint rows survive a poll, so the row a reader is about to click stays put.</summary>
@@ -246,8 +245,8 @@ public sealed class InspectorRowTests
 		var row = session.Breakpoints[0];
 		session.Absorb(new LiveBreakpointList { Breakpoints = [Breakpoint("bp-1", bound: true)] });
 
-		Assert.Same(row, session.Breakpoints[0]);
-		Assert.True(row.Bound);
+		session.Breakpoints[0].ShouldBeSameAs(row);
+		row.Bound.ShouldBeTrue();
 	}
 
 	private static LiveBreakpoint Breakpoint(string id, bool bound) => new()

@@ -32,18 +32,17 @@ public sealed class LiveResultParityTests
 
 		// A test that found no tools would pass while proving nothing, and would go on passing if the
 		// attribute or the assembly ever moved.
-		Assert.True(answers.Count > 10, $"only {answers.Count} live-app tools were found, so this proved nothing");
+		answers.Count.ShouldBeGreaterThan(10, "so few live-app tools were found that this proved nothing");
 
 		var offenders = answers
 			.Where(answer => !typeof(LiveResult).IsAssignableFrom(answer.Answer))
 			.Select(answer => $"{answer.Tool} answers with {answer.Answer.Name}")
 			.ToList();
 
-		Assert.True(
-			offenders.Count == 0,
+		offenders.ShouldBeEmpty(
 			"a live-app tool's result type has to derive from LiveResult, or the cursor stamped on the "
 				+ "answer is dropped where the broker reads it, and the caller cannot wait for what its "
-				+ $"own action caused: {string.Join("; ", offenders)}");
+				+ "own action caused");
 	}
 
 	/// <summary>Every tool the host exposes, with the type it answers with.</summary>

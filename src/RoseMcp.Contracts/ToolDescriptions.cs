@@ -688,6 +688,51 @@ public static class ToolDescriptions
 		ask for the endings inside one while no build complains.
 		""";
 
+	public const string ReplacePattern = """
+		Rewrites every call or statement matching a C# pattern, matched by what the code binds to rather
+		than how it is spelled: named or reordered arguments, aliases, using static and both forms of an
+		extension call all match. Use it rather than sed or a throwaway Roslyn script for one mechanical
+		change across many files, such as moving to another assertion library. A rule is a find and a
+		replace written as C# with placeholders; the first rule to match a site wins, and a rule an
+		earlier one hides is refused. A capture keeps its own text. A replacement that would not compile
+		at its site is left alone and reported with the compiler's reason. The result is a summary, not a
+		diff: counts per rule with the overloads it covers, skipped sites by reason, and the calls into
+		the same types that no rule matched. Preview with apply=false first.
+		""";
+
+	/// <summary>
+	/// The rules, and the example that teaches their shape: the object form is the one thing about this
+	/// argument a caller cannot guess from its name.
+	/// </summary>
+	public const string RulesArgument =
+		"Ordered {find, replace} rules; at each site the first that matches wins. Example: {\"find\": "
+			+ "\"Assert.Equal($e$, $a$)\", \"replace\": \"$a$.ShouldBe($e$)\"}. A find ending in ; matches a statement.";
+
+	/// <summary>The placeholder grammar, which is carried here because a find is where it is written.</summary>
+	public const string PatternFindArgument =
+		"A call, or a call statement ending in ;. $x$ is any expression, $x:Type$ one convertible to Type, "
+			+ "$x:id$ an identifier such as a lambda's parameter, $T$ a type argument. Naming an argument, as "
+			+ "filter: $p$, picks the overloads with that parameter.";
+
+	public const string PatternReplaceArgument =
+		"C# using the placeholders the find captured. Each keeps the text it matched.";
+
+	public const string PatternUsingsArgument =
+		"Namespaces the patterns are written against beyond the project's own: Shouldly, or static "
+			+ "System.Math. One a written replacement needs is imported into that file.";
+
+	public const string PatternFilePathsArgument =
+		"Files or directories to rewrite in: absolute, or relative to where your session is running. "
+			+ "Defaults to the whole solution.";
+
+	/// <summary>
+	/// Not the shared apply text, which promises the diff: at the size a mass rewrite runs to, the diff
+	/// is left out, and a preview is the summary.
+	/// </summary>
+	public const string PatternApplyArgument =
+		"Write the change. False returns the same summary without touching disk, with the diff while it "
+			+ "is small enough to read. Defaults to true.";
+
 	public const string ListCodeFixes = """
 		What the solution's own analyzers offer to fix in one file: the diagnostic, the titles of the
 		fixes available for it, and whether that fix can be applied to a whole project or solution at

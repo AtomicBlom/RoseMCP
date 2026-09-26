@@ -34,6 +34,8 @@ public static class ToolNames
 
 	public const string ChangeSignature = "rose_change_signature";
 
+	public const string ReplacePattern = "rose_replace_pattern";
+
 	public const string BuildFreshness = "rose_build_freshness";
 
 	public const string AddUsing = "rose_add_using";

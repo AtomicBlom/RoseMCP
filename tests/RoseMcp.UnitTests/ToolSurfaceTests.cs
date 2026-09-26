@@ -51,6 +51,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.ProjectGraph,
 		ToolNames.ReadGeneratedDocument,
 		ToolNames.RenameSymbol,
+		ToolNames.ReplacePattern,
 		ToolNames.ReplaceBody,
 		ToolNames.ReplaceDocComment,
 		ToolNames.ReplaceMember,
@@ -283,6 +284,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.DebugListTracepoints,
 		ToolNames.DebugRemoveBreakpoint,
 		ToolNames.DebugRemoveTracepoint,
+		ToolNames.ReplacePattern,
 		ToolNames.WorkspaceClose,
 		ToolNames.XamlDeselect,
 	];

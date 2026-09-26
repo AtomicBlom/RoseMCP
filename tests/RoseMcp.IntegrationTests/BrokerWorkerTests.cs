@@ -4,8 +4,6 @@ using System.Text.Json;
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
-using Xunit.Sdk;
-
 using static RoseMcp.IntegrationTests.BrokerHarness;
 
 namespace RoseMcp.IntegrationTests;
@@ -219,7 +217,7 @@ public sealed class BrokerWorkerTests
 			(answered.RootElement.TryGetProperty("result", out _) || answered.RootElement.TryGetProperty("error", out _)).ShouldBeTrue(
 				"a reply that arrives at all has to be a JSON-RPC result or error");
 		}
-		catch (Exception exception) when (exception is not TrueException)
+		catch (Exception exception) when (exception is not ShouldAssertException)
 		{
 			// The other legitimate outcome: the stream went before the answer did.
 		}

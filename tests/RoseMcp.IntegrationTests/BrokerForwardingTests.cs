@@ -5,8 +5,6 @@ using ModelContextProtocol;
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
-using Xunit.Sdk;
-
 using static RoseMcp.IntegrationTests.BrokerHarness;
 
 namespace RoseMcp.IntegrationTests;

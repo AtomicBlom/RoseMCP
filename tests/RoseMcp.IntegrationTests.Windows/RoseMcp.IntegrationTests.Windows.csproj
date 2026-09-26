@@ -16,7 +16,6 @@
   <ItemGroup>
     <PackageReference Include="TUnit.Core" />
     <PackageReference Include="TUnit.Engine" />
-    <PackageReference Include="xunit.v3.assert" />
     <PackageReference Include="Shouldly" />
   </ItemGroup>
 
@@ -27,10 +26,6 @@
 
   <ItemGroup>
     <Using Include="TUnit.Core" />
-
-    <!-- The assertion API by its own name, aliased rather than imported, because TUnit.Core also
-         reaches an Assert and an unqualified one would be ambiguous in every file. -->
-    <Using Include="Xunit.Assert" Alias="Assert" />
     <Using Include="Shouldly" />
   </ItemGroup>
 

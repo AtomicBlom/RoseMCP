@@ -72,7 +72,9 @@ internal sealed class SiteRewriter : CSharpSyntaxRewriter
 
 		var captures = site.Captures.ToDictionary(
 			entry => entry.Key,
-			entry => new CapturedSyntax(entry.Value.Node is { } captured ? Carried(site.Node, captured) : null, entry.Value.Token),
+			entry => entry.Value.Node is { } captured
+				? new CapturedSyntax(Carried(site.Node, captured), entry.Value.Token, LineBreak(site.Node, captured))
+				: new CapturedSyntax(null, entry.Value.Token),
 			StringComparer.Ordinal);
 
 		var replacement = Template.Instantiate(site.Rule, captures, node, out var refusal);
@@ -115,6 +117,29 @@ internal sealed class SiteRewriter : CSharpSyntaxRewriter
 		}
 
 		return rewritten;
+	}
+
+	/// <summary>
+	/// The line break and indentation a capture began its line with, when it began one inside the site. The
+	/// break is trailing trivia of the token before the capture, which goes with the site, so an argument
+	/// the caller put on a line of its own would otherwise be pulled up onto a call that then runs off the
+	/// screen. Empty when the capture shared its line, or when a comment before it already moves with it.
+	/// </summary>
+	private static SyntaxTriviaList LineBreak(SyntaxNode site, SyntaxNode captured)
+	{
+		var first = captured.GetFirstToken();
+		var before = first.GetPreviousToken();
+
+		var beginsLine = site.Span.Contains(before.Span)
+			&& before.TrailingTrivia.Any(SyntaxKind.EndOfLineTrivia)
+			&& !before.TrailingTrivia.Any(IsComment);
+
+		if (!beginsLine) return default;
+
+		var lineEnd = before.TrailingTrivia.Last(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+		var indentation = first.LeadingTrivia.Reverse().TakeWhile(trivia => trivia.IsKind(SyntaxKind.WhitespaceTrivia)).Reverse();
+
+		return SyntaxFactory.TriviaList([lineEnd, .. indentation]);
 	}
 
 	/// <summary>Whether a piece of trivia is a comment.</summary>

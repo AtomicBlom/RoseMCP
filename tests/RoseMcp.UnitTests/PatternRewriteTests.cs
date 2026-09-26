@@ -68,6 +68,31 @@ public sealed class PatternRewriteTests
 		Assert.Contains("text!.ShouldContain(\"a\", Case.Sensitive)", text, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// An argument the caller put on a line of its own stays on one, at the indentation it had, rather than
+	/// being pulled up onto the call; a capture that moves to the receiver joins the call as it always did.
+	/// </summary>
+	[Test]
+	public void Keeps_an_argument_on_the_line_the_caller_gave_it()
+	{
+		var (text, _) = Rewrite(
+			"using Shouldly; class C { void M(string s) {\n\t\tAssert.Contains(\n\t\t\t\"a\",\n\t\t\ts,\n\t\t\tStringComparison.Ordinal);\n\t} }",
+			Rule("Assert.Contains($sub:string$, $s:string$, StringComparison.Ordinal)", "$s$.ShouldContain($sub$, Case.Sensitive)"));
+
+		Assert.Contains("\t\ts.ShouldContain(\n\t\t\t\"a\", Case.Sensitive);", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>An argument that begins a line after the template's comma leaves no space at the end of the line before it.</summary>
+	[Test]
+	public void Leaves_no_space_before_an_argument_that_begins_a_line()
+	{
+		var (text, _) = Rewrite(
+			"class C { void M(List<int> xs) {\n\t\tAssert.Contains(1,\n\t\t\txs);\n\t} }",
+			Rule("Assert.Contains($item$, $xs$)", "Assert.Contains($item$, $xs$)"));
+
+		Assert.Contains("Assert.Contains(1,\n\t\t\txs);", text, StringComparison.Ordinal);
+	}
+
 	/// <summary>A site inside another's capture is rewritten first, and the outer replacement takes the result.</summary>
 	[Test]
 	public void Composes_a_site_inside_another()

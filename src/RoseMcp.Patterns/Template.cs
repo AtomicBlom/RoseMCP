@@ -11,8 +11,9 @@ namespace RoseMcp.Patterns;
 /// A capture is the caller's own syntax moved into place, never regenerated from its text, so what it
 /// holds -- comments, a verbatim string, the spelling of a name -- arrives exactly as written. Only the
 /// whitespace at its outer edges is dropped, since it described where the capture used to sit; the
-/// formatter lays it out where it sits now. A capture with a comment at its edge keeps its edges whole,
-/// because a line comment without the line break after it would swallow the code that follows.
+/// formatter lays it out where it sits now. Two things survive that: a comment at an edge, because a line
+/// comment without the line break after it would swallow the code that follows, and the line break before
+/// an argument the caller put on a line of its own, because a call is not the formatter's to wrap.
 /// </para>
 /// </summary>
 internal static class Template
@@ -34,7 +35,25 @@ internal static class Template
 
 		if (refusal is not null || filled is null) return null;
 
+		filled = WithoutSpaceBeforeBreaks(filled);
+
 		return filled is ExpressionSyntax expression ? Parenthesiser.Fit(expression, site) : filled;
+	}
+
+	/// <summary>
+	/// <paramref name="node"/> without the template's spacing where a capture now begins a line: the space
+	/// after a comma in <c>, $m$</c> would otherwise end the line before an argument the caller put on a
+	/// line of its own.
+	/// </summary>
+	private static SyntaxNode WithoutSpaceBeforeBreaks(SyntaxNode node)
+	{
+		var spaced = node.DescendantTokens()
+			.Where(token => token.TrailingTrivia.Count > 0
+				&& token.TrailingTrivia.All(trivia => trivia.IsKind(SyntaxKind.WhitespaceTrivia))
+				&& token.GetNextToken().LeadingTrivia.FirstOrDefault().IsKind(SyntaxKind.EndOfLineTrivia))
+			.ToList();
+
+		return spaced.Count == 0 ? node : node.ReplaceTokens(spaced, (_, rewritten) => rewritten.WithTrailingTrivia());
 	}
 
 	/// <summary>A node with the whitespace at its edges dropped, unless an edge holds a comment.</summary>
@@ -71,7 +90,13 @@ internal static class Template
 					return Around(Clean(capture.Node!), node);
 			}
 
-			if (capture.Node is ExpressionSyntax expression) return Around(Parenthesiser.Fit(Clean(expression), node), node);
+			if (capture.Node is ExpressionSyntax expression)
+			{
+				var placed = Around(Parenthesiser.Fit(Clean(expression), node), node);
+				var keepsItsLine = capture.LineBreak.Count > 0 && node.Parent is ArgumentSyntax;
+
+				return keepsItsLine ? placed.WithLeadingTrivia(capture.LineBreak.AddRange(placed.GetLeadingTrivia())) : placed;
+			}
 
 			Refusal ??= $"the lambda it matched has a block body, and rule {rule.Number}'s replace writes ${name}$ where an "
 				+ "expression goes; a block can only be written where a statement goes";
@@ -178,4 +203,8 @@ internal static class Template
 /// </summary>
 /// <param name="Node">The expression, type or lambda body.</param>
 /// <param name="Token">The identifier, for an identifier placeholder.</param>
-internal readonly record struct CapturedSyntax(SyntaxNode? Node, SyntaxToken Token);
+/// <param name="LineBreak">
+/// The line break and indentation the capture began its line with, when the caller put it on a line of
+/// its own inside the site; empty when it shared a line.
+/// </param>
+internal readonly record struct CapturedSyntax(SyntaxNode? Node, SyntaxToken Token, SyntaxTriviaList LineBreak = default);

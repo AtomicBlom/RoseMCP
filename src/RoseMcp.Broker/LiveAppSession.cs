@@ -103,7 +103,7 @@ public sealed class LiveAppSession : IAsyncDisposable
 
 		logger.LogInformation("Starting a live-app host for {Target} as {Architecture}.", target.Description, architecture);
 
-		var client = await McpClient.CreateAsync(transport, loggerFactory: loggerFactory, cancellationToken: cancellationToken);
+		var client = await McpClient.CreateAsync(transport, ChildHostHandshake.Options(), loggerFactory, cancellationToken);
 
 		// A host published per architecture under its own runtime folder is the one most likely to be
 		// a different build from the broker, since an install can half update and a repository holds

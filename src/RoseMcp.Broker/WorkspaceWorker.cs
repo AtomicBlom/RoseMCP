@@ -200,7 +200,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		// cold worker loses to its own design-time build when several start at once.
 		var client = await McpClient.CreateAsync(
 			transport,
-			new McpClientOptions { InitializationTimeout = options.WorkerHandshakeTimeout },
+			ChildHostHandshake.Options(options.WorkerHandshakeTimeout),
 			loggerFactory,
 			cancellationToken);
 

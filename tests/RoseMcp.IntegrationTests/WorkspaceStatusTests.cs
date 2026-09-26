@@ -29,8 +29,8 @@ public sealed class WorkspaceStatusTests
 		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
 		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(status.LoadSeconds > 0, "a load that took no time did not happen");
-		Assert.NotNull(status.Restore);
+		(status.LoadSeconds > 0).ShouldBeTrue("a load that took no time did not happen");
+		status.Restore.ShouldNotBeNull();
 	}
 
 	/// <summary>
@@ -47,12 +47,12 @@ public sealed class WorkspaceStatusTests
 		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
 		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.NotEmpty(status.Projects);
-		Assert.All(
-			status.Projects,
-			project => Assert.False(
-				string.IsNullOrWhiteSpace(project.TargetFramework),
-				"every project reports the framework it was built for"));
+		status.Projects.ShouldNotBeEmpty();
+		foreach (var project in status.Projects)
+		{
+			string.IsNullOrWhiteSpace(project.TargetFramework).ShouldBeFalse(
+						"every project reports the framework it was built for");
+		}
 	}
 
 	/// <summary>
@@ -69,8 +69,11 @@ public sealed class WorkspaceStatusTests
 		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
 		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.All(status.Projects, project => Assert.True(project.LoadedSuccessfully));
-		Assert.DoesNotContain(status.DegradedReasons, reason => reason.Contains("did not load", StringComparison.Ordinal));
+		foreach (var project in status.Projects)
+		{
+			project.LoadedSuccessfully.ShouldBeTrue();
+		}
+		status.DegradedReasons.ShouldNotContain(reason => reason.Contains("did not load", StringComparison.Ordinal));
 	}
 
 	private static WorkspaceHost Host(FixtureSolution fixture) => new(

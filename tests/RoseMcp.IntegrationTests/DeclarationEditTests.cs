@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -20,17 +21,17 @@ public sealed class DeclarationEditTests
 
 		var result = await CommentAsync(session, "Library.Greeter.Greet(string)", "The greeting for one name, shouted.");
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("\t/// <summary>The greeting for one name, shouted.</summary>\r\n", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("The greeting for one name.", text, StringComparison.Ordinal);
+		text.ShouldContain("\t/// <summary>The greeting for one name, shouted.</summary>\r\n", Case.Sensitive);
+		text.ShouldNotContain("The greeting for one name.", Case.Sensitive);
 
 		// The code under it is untouched, which is the whole point of the tool being separate.
-		Assert.Contains("public string Greet(string name)", text, StringComparison.Ordinal);
+		text.ShouldContain("public string Greet(string name)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -50,10 +51,10 @@ public sealed class DeclarationEditTests
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("/// <summary>Says hello.</summary>\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("/// <remarks>\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("/// At various lengths.\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("/// </remarks>\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("/// <summary>Says hello.</summary>\r\n", Case.Sensitive);
+		text.ShouldContain("/// <remarks>\r\n", Case.Sensitive);
+		text.ShouldContain("/// At various lengths.\r\n", Case.Sensitive);
+		text.ShouldContain("/// </remarks>\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -67,14 +68,13 @@ public sealed class DeclarationEditTests
 
 		var result = await CommentAsync(session, "Library.Greeter.Count", "How many greetings have gone out.");
 
-		Assert.True(result.Applied);
-		Assert.Contains(
-			result.Notices,
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldContain(
 			notice => notice.Contains("had no documentation comment", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("/// <summary>How many greetings have gone out.</summary>", text, StringComparison.Ordinal);
+		text.ShouldContain("/// <summary>How many greetings have gone out.</summary>", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -94,13 +94,11 @@ public sealed class DeclarationEditTests
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains(
+		text.ShouldContain(
 			"public int Count { get; set; }\r\n"
 				+ "\r\n"
 				+ "\t/// <summary>The greeting for one name, shouted.</summary>\r\n"
-				+ "\tpublic string Greet(string name)",
-			text,
-			StringComparison.Ordinal);
+				+ "\tpublic string Greet(string name)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -117,13 +115,11 @@ public sealed class DeclarationEditTests
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains(
+		text.ShouldContain(
 			"public int PrefixLength => _prefix.Length;\r\n"
 				+ "\r\n"
 				+ "\t/// <summary>How many greetings have gone out.</summary>\r\n"
-				+ "\tpublic int Count { get; set; }",
-			text,
-			StringComparison.Ordinal);
+				+ "\tpublic int Count { get; set; }", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -138,11 +134,11 @@ public sealed class DeclarationEditTests
 
 		var before = await ReadAsync(fixture, "Greeter.cs");
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => CommentAsync(session, "Library.Greeter.Greet(string)", "<summary>Unclosed"));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => CommentAsync(session, "Library.Greeter.Greet(string)", "<summary>Unclosed")).OfExactType();
 
-		Assert.Contains("not well-formed XML", thrown.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+		thrown.Message.ShouldContain("not well-formed XML", Case.Sensitive);
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
 	[Test]
@@ -154,17 +150,17 @@ public sealed class DeclarationEditTests
 		var result = await AttributeAsync(
 			session, "Library.Greeter.Greet(string)", "Obsolete(\"use Greet(title, name)\")", AttributeAction.Set);
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("[Obsolete(\"use Greet(title, name)\")]", text, StringComparison.Ordinal);
+		text.ShouldContain("[Obsolete(\"use Greet(title, name)\")]", Case.Sensitive);
 
 		// The documentation comment stays above the attribute, which is where a declaration puts it.
 		var comment = text.IndexOf("<summary>The greeting for one name", StringComparison.Ordinal);
 		var attribute = text.IndexOf("[Obsolete", StringComparison.Ordinal);
 
-		Assert.True(comment < attribute);
+		(comment < attribute).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -193,14 +189,12 @@ public sealed class DeclarationEditTests
 
 		var result = await AttributeAsync(session, "Library.Greeter.Greet(string)", attribute, AttributeAction.Add);
 
-		Assert.True(result.Applied, "the attribute is written; only its layout is under test");
+		result.Applied.ShouldBeTrue("the attribute is written; only its layout is under test");
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains(
-			"\t[Obsolete(\r\n\t\t\"use Greet\",\r\n\t\terror: false)]\r\n\tpublic string Greet(string name)",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\t[Obsolete(\r\n\t\t\"use Greet\",\r\n\t\terror: false)]\r\n\tpublic string Greet(string name)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -217,17 +211,15 @@ public sealed class DeclarationEditTests
 		var result = await AttributeAsync(
 			session, "Library.Arrowed.Spread", "Obsolete(\"use Describe\")", AttributeAction.Add);
 
-		Assert.True(result.Applied, "the attribute is written; the body is what is under test");
+		result.Applied.ShouldBeTrue("the attribute is written; the body is what is under test");
 
 		var text = await ReadAsync(fixture, "Arrowed.cs");
 
-		Assert.Contains("\t[Obsolete(\"use Describe\")]\r\n\tpublic static string Spread(", text, StringComparison.Ordinal);
+		text.ShouldContain("\t[Obsolete(\"use Describe\")]\r\n\tpublic static string Spread(", Case.Sensitive);
 
 		// Two tabs for the body, three for the lines it wraps onto, exactly as before.
-		Assert.Contains(
-			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -244,11 +236,11 @@ public sealed class DeclarationEditTests
 		var result = await AttributeAsync(
 			session, "Library.Greeter.Greet(string)", "Marked", AttributeAction.Add, parameter: "name");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("Greet([Marked] string name)", text, StringComparison.Ordinal);
+		text.ShouldContain("Greet([Marked] string name)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -262,12 +254,12 @@ public sealed class DeclarationEditTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
+		var error = await Should.ThrowAsync<ArgumentException>(
 			() => AttributeAsync(
-				session, "Library.Greeter.Greet(string)", "Marked", AttributeAction.Add, parameter: "missing"));
+				session, "Library.Greeter.Greet(string)", "Marked", AttributeAction.Add, parameter: "missing")).OfExactType();
 
-		Assert.Contains("no parameter called missing", error.Message, StringComparison.Ordinal);
-		Assert.Contains("name", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("no parameter called missing", Case.Sensitive);
+		error.Message.ShouldContain("name", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -283,12 +275,12 @@ public sealed class DeclarationEditTests
 		await AttributeAsync(session, "Library.Greeter.Count", "Marked(1)", AttributeAction.Add);
 		await AttributeAsync(session, "Library.Greeter.Count", "Marked(2)", AttributeAction.Add);
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => AttributeAsync(session, "Library.Greeter.Count", "Marked(3)", AttributeAction.Set));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => AttributeAsync(session, "Library.Greeter.Count", "Marked(3)", AttributeAction.Set)).OfExactType();
 
-		Assert.Contains("carries 2 attributes called Marked", thrown.Message, StringComparison.Ordinal);
-		Assert.Contains("Marked(1)", thrown.Message, StringComparison.Ordinal);
-		Assert.Contains("Marked(2)", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("carries 2 attributes called Marked", Case.Sensitive);
+		thrown.Message.ShouldContain("Marked(1)", Case.Sensitive);
+		thrown.Message.ShouldContain("Marked(2)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -305,13 +297,13 @@ public sealed class DeclarationEditTests
 
 		var result = await AttributeAsync(session, "Library.Greeter.Count", "Marked", AttributeAction.Remove);
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.DoesNotContain("Marked", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("[]", text, StringComparison.Ordinal);
+		text.ShouldNotContain("Marked", Case.Sensitive);
+		text.ShouldNotContain("[]", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -328,12 +320,12 @@ public sealed class DeclarationEditTests
 
 		var result = await AttributeAsync(session, "Library.Greeter.Count", "Marked(2)", AttributeAction.Set);
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("Marked(2)", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("Marked(1)", text, StringComparison.Ordinal);
+		text.ShouldContain("Marked(2)", Case.Sensitive);
+		text.ShouldNotContain("Marked(1)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -348,10 +340,10 @@ public sealed class DeclarationEditTests
 
 		var before = await ReadAsync(fixture, "Greeter.cs");
 
-		await Assert.ThrowsAsync<ArgumentException>(
-			() => AttributeAsync(session, "Library.Greeter.Count", "Obsolete(\"unclosed", AttributeAction.Set));
+		await Should.ThrowAsync<ArgumentException>(
+			() => AttributeAsync(session, "Library.Greeter.Count", "Obsolete(\"unclosed", AttributeAction.Set)).OfExactType();
 
-		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
 	private static Task<MemberEditResult> CommentAsync(WorkspaceSession session, string symbol, string comment)
@@ -418,17 +410,17 @@ public sealed class DeclarationEditTests
 			session,
 			MemberEdits.Request(MemberEditKind.Add, "Library.Prose", "public static string Missing() => Absent.Name;"));
 
-		Assert.NotEmpty(broken.IntroducedDiagnostics);
+		broken.IntroducedDiagnostics.ShouldNotBeEmpty();
 
 		var result = await CommentAsync(session, "Library.Greeter.Greet(string)", "The greeting, with the project already broken elsewhere.");
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var said = string.Join(" ", result.Notices);
 
-		Assert.DoesNotContain("compiles clean", said, StringComparison.Ordinal);
-		Assert.Contains("were there before this edit", said, StringComparison.Ordinal);
+		said.ShouldNotContain("compiles clean", Case.Sensitive);
+		said.ShouldContain("were there before this edit", Case.Sensitive);
 	}
 }

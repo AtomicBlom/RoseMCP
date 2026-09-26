@@ -32,13 +32,13 @@ public sealed class CodeFixTests
 
 		var result = await ApplyAsync(session, "CA1822", path);
 
-		Assert.True(result.Occurrences >= 1, $"CA1822 was not reported: {string.Join(" ", result.Notices)}");
-		Assert.True(result.Applied, string.Join(" ", result.Notices));
-		Assert.NotEmpty(result.FixTitle);
+		(result.Occurrences >= 1).ShouldBeTrue($"CA1822 was not reported: {string.Join(" ", result.Notices)}");
+		result.Applied.ShouldBeTrue(string.Join(" ", result.Notices));
+		result.FixTitle.ShouldNotBeEmpty();
 
 		var fixedText = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("static int Value()", fixedText, StringComparison.Ordinal);
+		fixedText.ShouldContain("static int Value()", Case.Sensitive);
 	}
 
 	/// <summary>Document scope really is one document: the other file keeps its diagnostic.</summary>
@@ -52,9 +52,9 @@ public sealed class CodeFixTests
 		var fixedText = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		// Both members in the file, not just the one the fix started from.
-		Assert.Contains("static int Value()", fixedText, StringComparison.Ordinal);
-		Assert.Contains("static int Other()", fixedText, StringComparison.Ordinal);
-		Assert.Equal([path], result.ChangedFiles);
+		fixedText.ShouldContain("static int Value()", Case.Sensitive);
+		fixedText.ShouldContain("static int Other()", Case.Sensitive);
+		result.ChangedFiles.ShouldBe([path]);
 	}
 
 	[Test]
@@ -65,9 +65,9 @@ public sealed class CodeFixTests
 
 		var result = await ApplyAsync(session, "CA1822", path, apply: false);
 
-		Assert.False(result.Applied, "a preview writes nothing");
-		Assert.NotEmpty(result.Diff);
-		Assert.Equal(Fixable, await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken));
+		result.Applied.ShouldBeFalse("a preview writes nothing");
+		result.Diff.ShouldNotBeEmpty();
+		(await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken)).ShouldBe(Fixable);
 	}
 
 	[Test]
@@ -78,9 +78,9 @@ public sealed class CodeFixTests
 
 		var result = await ApplyAsync(session, "CS0168", path);
 
-		Assert.False(result.Applied, "an id nothing can fix is reported rather than applied");
-		Assert.Equal(0, result.Occurrences);
-		Assert.NotEmpty(result.Notices);
+		result.Applied.ShouldBeFalse("an id nothing can fix is reported rather than applied");
+		result.Occurrences.ShouldBe(0);
+		result.Notices.ShouldNotBeEmpty();
 	}
 
 	[Test]
@@ -94,10 +94,10 @@ public sealed class CodeFixTests
 
 		var fix = list.Fixes.FirstOrDefault(candidate => candidate.DiagnosticId == "CA1822");
 
-		Assert.NotNull(fix);
-		Assert.NotEmpty(fix.FixTitles);
-		Assert.True(fix.SupportsFixAll);
-		Assert.True(fix.Line > 0);
+		fix.ShouldNotBeNull();
+		fix.FixTitles.ShouldNotBeEmpty();
+		fix.SupportsFixAll.ShouldBeTrue();
+		(fix.Line > 0).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -122,7 +122,7 @@ public sealed class CodeFixTests
 		var project = snapshot.Solution.Projects.First(candidate => candidate.Name == "Consumer");
 
 		// Reads every analyzer assembly the project has, the generator's included.
-		Assert.NotEmpty(catalog.FixableIds(project));
+		catalog.FixableIds(project).ShouldNotBeEmpty();
 
 		using var stream = new FileStream(generatorAssembly, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 	}
@@ -143,11 +143,11 @@ public sealed class CodeFixTests
 		var project = snapshot.Solution.Projects.First(candidate => candidate.Name == "Core");
 		var ids = Catalog().FixableIds(project);
 
-		Assert.Contains(ids, id => id.StartsWith("IDE", StringComparison.Ordinal));
+		ids.ShouldContain(id => id.StartsWith("IDE", StringComparison.Ordinal));
 
 		// And the compiler's own fixes, which arrive in the same assembly: "add a using", "remove
 		// the unreachable code", and the rest of what an editor offers on a red squiggle.
-		Assert.Contains(ids, id => id.StartsWith("CS", StringComparison.Ordinal));
+		ids.ShouldContain(id => id.StartsWith("CS", StringComparison.Ordinal));
 	}
 
 	private static FixtureSolution Prepare(out string fixablePath)

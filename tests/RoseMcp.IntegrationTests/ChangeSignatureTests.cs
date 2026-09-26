@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -28,18 +29,17 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Greeter.Greet(string)", "string name, bool loud = false");
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("public string Greet(string name, bool loud = false)", text, StringComparison.Ordinal);
+		text.ShouldContain("public string Greet(string name, bool loud = false)", Case.Sensitive);
 
 		// Caller.cs calls it and needed nothing, and is named anyway.
-		Assert.Contains(
-			result.UnchangedCallSites,
+		result.UnchangedCallSites.ShouldContain(
 			site => site.Location.FilePath.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase)
 				&& site.Reason.Contains("every new parameter has a default", StringComparison.Ordinal));
 	}
@@ -73,17 +73,15 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Wrapped.Join(string, string, string)", written);
 
-		Assert.True(result.Applied, "the change is written; only its layout is under test");
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue("the change is written; only its layout is under test");
+		result.TotalErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
 		// One tab for the member, two for the parameters it wrapped onto their own lines.
-		Assert.Contains(
+		text.ShouldContain(
 			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third,"
-				+ "\r\n\t\tstring fourth = \"\")\r\n",
-			text,
-			StringComparison.Ordinal);
+				+ "\r\n\t\tstring fourth = \"\")\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -101,11 +99,11 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(
 			session, "Library.Wrapped.Join(string, string, string)", "string first, string second");
 
-		Assert.True(result.Applied, "the change is written; only its layout is under test");
+		result.Applied.ShouldBeTrue("the change is written; only its layout is under test");
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
-		Assert.Contains("\tpublic static string Join(string first, string second)\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("\tpublic static string Join(string first, string second)\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -122,16 +120,14 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(
 			session, "Library.Arrowed.Spread", "string first, string second, string third, string fourth = \"\"");
 
-		Assert.True(result.Applied, "the change is written; the body is what is under test");
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue("the change is written; the body is what is under test");
+		result.TotalErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Arrowed.cs");
 
 		// Two tabs for the body, three for the lines it wraps onto, exactly as before.
-		Assert.Contains(
-			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \", \" + third;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -170,33 +166,31 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Anticipating.Describe(string)", "string text, bool loud = false");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Anticipating.cs");
 
 		// The argument is still there. This is the whole card: it used to come back as Describe("x").
-		Assert.Contains("Describe(\"x\", true)", text, StringComparison.Ordinal);
+		text.ShouldContain("Describe(\"x\", true)", Case.Sensitive);
 
 		// Reported as one it did not touch, and reported once. It used to appear in both lists at
 		// once, the second time with a reason that was not what had happened to it.
-		Assert.Contains(
-			result.UnchangedCallSites,
+		result.UnchangedCallSites.ShouldContain(
 			site => site.Location.FilePath.EndsWith("Anticipating.cs", StringComparison.OrdinalIgnoreCase)
 				&& site.Reason.Contains("does not compile as it stands", StringComparison.Ordinal)
 				&& site.Reason.Contains("may already be right", StringComparison.Ordinal));
 
-		Assert.DoesNotContain(
-			result.UpdatedCallSites,
+		result.UpdatedCallSites.ShouldNotContain(
 			site => site.FilePath.EndsWith("Anticipating.cs", StringComparison.OrdinalIgnoreCase));
 
 		var updated = result.UpdatedCallSites.Select(site => (site.FilePath, site.Line));
 		var unchanged = result.UnchangedCallSites.Select(site => (site.Location.FilePath, site.Location.Line));
-		Assert.Empty(updated.Intersect(unchanged));
+		updated.Intersect(unchanged).ShouldBeEmpty();
 
 		// Leaving it alone is what makes it compile: the parameter it was written for now exists.
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.True(result.ResolvedDiagnosticCount > 0, "expected the call site's error to go away");
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		(result.ResolvedDiagnosticCount > 0).ShouldBeTrue("expected the call site's error to go away");
 	}
 
 	/// <summary>
@@ -212,15 +206,15 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(
 			session, "Library.Greeter.Greet(string)", "string name, bool loud", ["loud=false"]);
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var caller = await ReadAsync(fixture, "Caller.cs");
 
 		// Positionally, because it lands in its own slot: a named argument is only needed once
 		// something before it has been omitted or moved.
-		Assert.Contains("Greet(\"world\", false)", caller, StringComparison.Ordinal);
-		Assert.Single(result.UpdatedCallSites);
+		caller.ShouldContain("Greet(\"world\", false)", Case.Sensitive);
+		result.UpdatedCallSites.ShouldHaveSingleItem();
 	}
 
 	/// <summary>
@@ -235,12 +229,12 @@ public sealed class ChangeSignatureTests
 
 		var before = await ReadAsync(fixture, "Greeter.cs");
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
-			() => ChangeAsync(session, "Library.Greeter.Greet(string)", "string name, bool loud"));
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Greeter.Greet(string)", "string name, bool loud")).OfExactType();
 
-		Assert.Contains("loud would be required", error.Message, StringComparison.Ordinal);
-		Assert.Contains("name=expression", error.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+		error.Message.ShouldContain("loud would be required", Case.Sensitive);
+		error.Message.ShouldContain("name=expression", Case.Sensitive);
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
 	/// <summary>
@@ -274,16 +268,16 @@ public sealed class ChangeSignatureTests
 			"Library.Arrowed.Describe(string, string)",
 			"string first, string second, string third");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Arrowed.cs");
 
-		Assert.Contains("string third", text, StringComparison.Ordinal);
-		Assert.Contains("Describe(\"one\", \"two\", \"three\")", text, StringComparison.Ordinal);
+		text.ShouldContain("string third", Case.Sensitive);
+		text.ShouldContain("Describe(\"one\", \"two\", \"three\")", Case.Sensitive);
 
 		// Reported rather than silently skipped, and it compiles now that the parameter is there.
-		Assert.NotEmpty(result.UnchangedCallSites);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.UnchangedCallSites.ShouldNotBeEmpty();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -299,9 +293,9 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Arrowed.Spread", "string first, string second, string third, bool loud");
 
-		Assert.True(result.Applied);
-		Assert.Contains("bool loud", await ReadAsync(fixture, "Arrowed.cs"), StringComparison.Ordinal);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		(await ReadAsync(fixture, "Arrowed.cs")).ShouldContain("bool loud", Case.Sensitive);
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -318,18 +312,18 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(
 			session, "Library.Notifier.Notify(string)", "string message, bool urgent = false");
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Layers.cs");
 
 		// The interface, the base, and the override -- which keeps calling its parameter text.
-		Assert.Contains("string Notify(string message, bool urgent = false);", text, StringComparison.Ordinal);
-		Assert.Contains("public virtual string Notify(string message, bool urgent = false)", text, StringComparison.Ordinal);
-		Assert.Contains("public override string Notify(string text, bool urgent = false)", text, StringComparison.Ordinal);
+		text.ShouldContain("string Notify(string message, bool urgent = false);", Case.Sensitive);
+		text.ShouldContain("public virtual string Notify(string message, bool urgent = false)", Case.Sensitive);
+		text.ShouldContain("public override string Notify(string text, bool urgent = false)", Case.Sensitive);
 
-		Assert.Equal(3, result.UpdatedDeclarations.Count);
+		result.UpdatedDeclarations.Count.ShouldBe(3);
 	}
 
 	/// <summary>
@@ -348,13 +342,12 @@ public sealed class ChangeSignatureTests
 
 		var text = await ReadAsync(fixture, "Layers.cs");
 
-		Assert.Contains("<param name=\"urgent\"></param>", text, StringComparison.Ordinal);
-		Assert.Contains("<param name=\"message\">What to say.</param>", text, StringComparison.Ordinal);
-		Assert.NotEmpty(result.DocumentationUpdated);
+		text.ShouldContain("<param name=\"urgent\"></param>", Case.Sensitive);
+		text.ShouldContain("<param name=\"message\">What to say.</param>", Case.Sensitive);
+		result.DocumentationUpdated.ShouldNotBeEmpty();
 
 		// And it says the tag it added has no description, which is not something to invent.
-		Assert.Contains(
-			result.Notices,
+		result.Notices.ShouldContain(
 			notice => notice.Contains("needs a description", StringComparison.Ordinal));
 	}
 
@@ -371,20 +364,23 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Notifier.Notify(string)", string.Empty);
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Layers.cs");
 
 		// The declarations, the tag and the arguments all went.
-		Assert.Contains("public virtual string Notify()", text, StringComparison.Ordinal);
-		Assert.Contains("public override string Notify()", text, StringComparison.Ordinal);
-		Assert.Contains("string Notify();", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("<param name=\"message\">", text, StringComparison.Ordinal);
-		Assert.Contains("notifier.Notify()", text, StringComparison.Ordinal);
+		text.ShouldContain("public virtual string Notify()", Case.Sensitive);
+		text.ShouldContain("public override string Notify()", Case.Sensitive);
+		text.ShouldContain("string Notify();", Case.Sensitive);
+		text.ShouldNotContain("<param name=\"message\">", Case.Sensitive);
+		text.ShouldContain("notifier.Notify()", Case.Sensitive);
 
 		// And the two bodies that still refer to the parameter are named, in one answer.
-		Assert.Equal(2, result.IntroducedDiagnostics.Count);
-		Assert.All(result.IntroducedDiagnostics, entry => Assert.Equal("CS0103", entry.Id));
+		result.IntroducedDiagnostics.Count.ShouldBe(2);
+		foreach (var entry in result.IntroducedDiagnostics)
+		{
+			entry.Id.ShouldBe("CS0103");
+		}
 	}
 
 	/// <summary>
@@ -398,11 +394,11 @@ public sealed class ChangeSignatureTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
-			() => ChangeAsync(session, "Library.Greeter.Greet(string, string)", "string name, string title"));
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Greeter.Greet(string, string)", "string name, string title")).OfExactType();
 
-		Assert.Contains("would move in front of", error.Message, StringComparison.Ordinal);
-		Assert.Contains("New parameters can go anywhere", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("would move in front of", Case.Sensitive);
+		error.Message.ShouldContain("New parameters can go anywhere", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -421,9 +417,9 @@ public sealed class ChangeSignatureTests
 			"string title, bool loud, string name",
 			["loud=true"]);
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -438,8 +434,7 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Greeter.Greet(string)", "object name");
 
-		Assert.Contains(
-			result.Notices,
+		result.Notices.ShouldContain(
 			notice => notice.Contains("Retyped name", StringComparison.Ordinal));
 	}
 
@@ -465,10 +460,10 @@ public sealed class ChangeSignatureTests
 				token),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(result.Applied, "a preview writes nothing");
-		Assert.Equal(before, await ReadAsync(fixture, "Layers.cs"));
-		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
-		Assert.Contains("urgent", result.Diff, StringComparison.Ordinal);
+		result.Applied.ShouldBeFalse("a preview writes nothing");
+		(await ReadAsync(fixture, "Layers.cs")).ShouldBe(before);
+		string.Join(" ", result.Notices).ShouldContain("Preview only", Case.Sensitive);
+		result.Diff.ShouldContain("urgent", Case.Sensitive);
 	}
 
 	/// <summary>A member with no parameter list to change is told so rather than mangled.</summary>
@@ -478,11 +473,11 @@ public sealed class ChangeSignatureTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
-			() => ChangeAsync(session, "Library.Greeter.Count", "int value"));
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Greeter.Count", "int value")).OfExactType();
 
-		Assert.Contains("no parameter list", error.Message, StringComparison.Ordinal);
-		Assert.Contains("rose_replace_member", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("no parameter list", Case.Sensitive);
+		error.Message.ShouldContain("rose_replace_member", Case.Sensitive);
 	}
 
 	private static Task<SignatureChangeResult> ChangeAsync(
@@ -536,14 +531,14 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, symbol, "string name, int count = 1");
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Constructed.cs");
 
-		Assert.Contains("public Assembled(string name, int count = 1)", text, StringComparison.Ordinal);
+		text.ShouldContain("public Assembled(string name, int count = 1)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -559,14 +554,14 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Composed.Composed(string)", "string name, int count = 1");
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
 
 		var text = await ReadAsync(fixture, "Constructed.cs");
 
-		Assert.Contains("public sealed class Composed(string name, int count = 1)", text, StringComparison.Ordinal);
+		text.ShouldContain("public sealed class Composed(string name, int count = 1)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -582,17 +577,16 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(
 			session, "Library.Assembled.Assembled(string)", "string name, int count", ["count=1"]);
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
-		Assert.Contains(
-			result.UpdatedCallSites,
+		result.UpdatedCallSites.ShouldContain(
 			site => site.FilePath.EndsWith("Builds.cs", StringComparison.OrdinalIgnoreCase));
 
 		var text = await File.ReadAllTextAsync(
 			fixture.Path("Members", "Library", "Builds.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("new Assembled(\"one\", 1)", text, StringComparison.Ordinal);
+		text.ShouldContain("new Assembled(\"one\", 1)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -605,10 +599,10 @@ public sealed class ChangeSignatureTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => ChangeAsync(session, "Library.Greeter.Greeter()", "int count"));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Greeter.Greeter()", "int count")).OfExactType();
 
-		Assert.Contains("written by the compiler", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("written by the compiler", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -626,20 +620,18 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(
 			session, "Library.INotifier.Notify(string)", "string message, bool loud = false");
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
-		var forwarder = Assert.Single(
-			result.UnchangedCallSites,
-			site => site.Reason.Contains("whole body of Send", StringComparison.Ordinal));
+		var forwarder = result.UnchangedCallSites.Where(
+			site => site.Reason.Contains("whole body of Send", StringComparison.Ordinal)).ShouldHaveSingleItem();
 
-		Assert.Contains("forwards its own parameters through", forwarder.Reason, StringComparison.Ordinal);
-		Assert.Contains("Change", forwarder.Reason, StringComparison.Ordinal);
+		forwarder.Reason.ShouldContain("forwards its own parameters through", Case.Sensitive);
+		forwarder.Reason.ShouldContain("Change", Case.Sensitive);
 
 		// A method that happens to contain a call is not a forwarder: SendTwice calls it twice and
 		// concatenates, so calling that mechanical would be telling the caller something untrue.
-		Assert.DoesNotContain(
-			result.UnchangedCallSites,
+		result.UnchangedCallSites.ShouldNotContain(
 			site => site.Reason.Contains("whole body of SendTwice", StringComparison.Ordinal));
 	}
 
@@ -662,23 +654,23 @@ public sealed class ChangeSignatureTests
 			"string first, string separator, string second",
 			["separator=\"-\""]);
 
-		Assert.True(result.Applied, "the change applies; the two sites it cannot rewrite are reported, not refused");
+		result.Applied.ShouldBeTrue("the change applies; the two sites it cannot rewrite are reported, not refused");
 
 		var named = result.UnchangedCallSites
 			.Where(site => site.Location.FilePath.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase))
 			.ToArray();
 
-		Assert.Equal(2, named.Length);
+		named.Length.ShouldBe(2);
 
-		Assert.All(
-			named,
-			site => Assert.Contains("names the member without calling it", site.Reason, StringComparison.Ordinal));
+		foreach (var site in named)
+		{
+			site.Reason.ShouldContain("names the member without calling it", Case.Sensitive);
+		}
 
 		// The delegate conversion is now wrong, and saying so is the whole point of reporting a site
 		// nothing could be done about.
-		Assert.Contains(
-			result.IntroducedDiagnostics,
-			diagnostic => diagnostic.FilePath?.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase) == true);
+		result.IntroducedDiagnostics.Any(
+			diagnostic => diagnostic.FilePath?.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase) == true).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -700,25 +692,27 @@ public sealed class ChangeSignatureTests
 
 		var result = await ChangeAsync(session, "Library.Rooted.Rooted(string)", "string name, int age", ["age=0"]);
 
-		Assert.True(result.Applied, "the initialisers are reported rather than refusing the whole change");
+		result.Applied.ShouldBeTrue("the initialisers are reported rather than refusing the whole change");
 
 		var initialisers = result.UnchangedCallSites
 			.Where(site => site.Location.FilePath.EndsWith("Shaped.cs", StringComparison.OrdinalIgnoreCase))
 			.ToArray();
 
-		Assert.Equal(2, initialisers.Length);
+		initialisers.Length.ShouldBe(2);
 
-		Assert.All(
-			initialisers,
-			site => Assert.Contains("base or this initialiser", site.Reason, StringComparison.Ordinal));
+		foreach (var site in initialisers)
+		{
+			site.Reason.ShouldContain("base or this initialiser", Case.Sensitive);
+		}
 
-		Assert.All(
-			initialisers,
-			site => Assert.DoesNotContain("without calling it", site.Reason, StringComparison.Ordinal));
+		foreach (var site in initialisers)
+		{
+			site.Reason.ShouldNotContain("without calling it", Case.Sensitive);
+		}
 
 		// Both are real calls that now pass too few arguments, which is what makes the sentence above
 		// the wrong one.
-		Assert.Equal(2, result.IntroducedDiagnostics.Count(diagnostic => diagnostic.Id == "CS7036"));
+		result.IntroducedDiagnostics.Count(diagnostic => diagnostic.Id == "CS7036").ShouldBe(2);
 	}
 
 	/// <summary>
@@ -735,21 +729,19 @@ public sealed class ChangeSignatureTests
 		var result = await ChangeAsync(
 			session, "Library.Greeter.Greet(string)", "string name, bool loud", ["loud=NoSuchThing"]);
 
-		Assert.True(result.Applied, "the declaration and its call sites are written; the expression is the caller's");
+		result.Applied.ShouldBeTrue("the declaration and its call sites are written; the expression is the caller's");
 
 		var text = await ReadAsync(fixture, "Caller.cs");
 
-		Assert.Contains("Greet(\"world\", NoSuchThing)", text, StringComparison.Ordinal);
+		text.ShouldContain("Greet(\"world\", NoSuchThing)", Case.Sensitive);
 
-		Assert.Contains(
-			result.IntroducedDiagnostics,
+		result.IntroducedDiagnostics.Any(
 			diagnostic => diagnostic.Id == "CS0103"
-				&& diagnostic.FilePath?.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase) == true);
+				&& diagnostic.FilePath?.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase) == true).ShouldBeTrue();
 
 		// The name does not resolve, which is a different thing from an argument on the wrong
 		// parameter -- so nothing here is called a defect in the tool.
-		Assert.DoesNotContain(
-			result.Notices,
+		result.Notices.ShouldNotContain(
 			notice => notice.Contains("defect in rose_change_signature", StringComparison.Ordinal));
 	}
 }

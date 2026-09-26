@@ -27,7 +27,7 @@ public sealed class WorkspaceRoutingTests
 
 		var routed = manager.WorkspaceFor(WorkspaceHints.From(RootedPath.Absolute(repository.Second)));
 
-		Assert.Equal(repository.Second, routed, ignoreCase: true);
+		routed.ShouldBe(repository.Second, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -40,9 +40,9 @@ public sealed class WorkspaceRoutingTests
 		using var repository = new SeveralSolutions();
 		var manager = Manager(rootedAt: repository.Root);
 
-		var error = Assert.Throws<AmbiguousSolutionException>(() => manager.WorkspaceFor(WorkspaceHints.None));
+		var error = Should.Throw<AmbiguousSolutionException>(() => manager.WorkspaceFor(WorkspaceHints.None)).ShouldBeOfType<AmbiguousSolutionException>();
 
-		Assert.Equal(3, error.Candidates.Count);
+		error.Candidates.Count.ShouldBe(3);
 	}
 
 	/// <summary>
@@ -59,7 +59,7 @@ public sealed class WorkspaceRoutingTests
 		var routed = manager.WorkspaceFor(
 			WorkspaceHints.From(null, RootedPath.Absolute(Path.Combine(repository.Root, "Second", "Thing.cs"))));
 
-		Assert.Equal(repository.Second, routed, ignoreCase: true);
+		routed.ShouldBe(repository.Second, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -76,8 +76,8 @@ public sealed class WorkspaceRoutingTests
 
 		// A project name with no folder of its own, which is the ordinary shape: the project is named
 		// for what it does and lives beside its siblings.
-		Assert.Throws<AmbiguousSolutionException>(
-			() => manager.WorkspaceFor(WorkspaceHints.From(null, paths.Of("Second.Core"))));
+		Should.Throw<AmbiguousSolutionException>(
+			() => manager.WorkspaceFor(WorkspaceHints.From(null, paths.Of("Second.Core")))).ShouldBeOfType<AmbiguousSolutionException>();
 	}
 
 	/// <summary>
@@ -103,7 +103,7 @@ public sealed class WorkspaceRoutingTests
 
 		var routed = manager.WorkspaceFor(WorkspaceHints.From(null, paths.Of(Path.Combine("Core", "Calculator.cs"))));
 
-		Assert.Equal(worktree.SolutionPath, routed, ignoreCase: true);
+		routed.ShouldBe(worktree.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -116,8 +116,8 @@ public sealed class WorkspaceRoutingTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		var manager = Manager(rootedAt: Path.GetDirectoryName(fixture.SolutionPath)!);
 
-		Assert.Equal(
-			fixture.SolutionPath, manager.WorkspaceFor(WorkspaceHints.None), ignoreCase: true);
+		manager.WorkspaceFor(WorkspaceHints.None).ShouldBe(
+			fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -132,8 +132,8 @@ public sealed class WorkspaceRoutingTests
 
 		using var origin = CallOrigin.Use(Path.GetDirectoryName(fixture.SolutionPath)!);
 
-		Assert.Equal(
-			fixture.SolutionPath, manager.WorkspaceFor(WorkspaceHints.None), ignoreCase: true);
+		manager.WorkspaceFor(WorkspaceHints.None).ShouldBe(
+			fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -146,10 +146,10 @@ public sealed class WorkspaceRoutingTests
 		using var repository = new SeveralSolutions();
 		var manager = Manager(rootedAt: NowhereDirectory.Path());
 
-		var error = Assert.Throws<AmbiguousSolutionException>(
-			() => manager.WorkspaceFor(WorkspaceHints.From(null, RootedPath.Absolute(repository.Root))));
+		var error = Should.Throw<AmbiguousSolutionException>(
+			() => manager.WorkspaceFor(WorkspaceHints.From(null, RootedPath.Absolute(repository.Root)))).ShouldBeOfType<AmbiguousSolutionException>();
 
-		Assert.Equal(repository.Root, error.Directory, ignoreCase: true);
+		error.Directory.ShouldBe(repository.Root, StringCompareShould.IgnoreCase);
 	}
 
 	private static WorkspaceManager Manager(string rootedAt) => BrokerHarness.CreateManager(rootedAt);

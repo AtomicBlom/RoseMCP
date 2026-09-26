@@ -1,3 +1,4 @@
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -20,12 +21,15 @@ public sealed class ImplementationTests
 		var result = await NavigationService.FindImplementationsAsync(
 			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("implementing", result.Relationship, StringComparison.Ordinal);
-		Assert.Contains("Circle", result.Matches.Select(match => match.Name));
-		Assert.Contains("Square", result.Matches.Select(match => match.Name));
+		result.Relationship.ShouldContain("implementing", Case.Sensitive);
+		result.Matches.Select(match => match.Name).ShouldContain("Circle");
+		result.Matches.Select(match => match.Name).ShouldContain("Square");
 
 		// And they come back with somewhere to go, not just a name.
-		Assert.All(result.Matches, match => Assert.NotNull(match.Location));
+		foreach (var match in result.Matches)
+		{
+			match.Location.ShouldNotBeNull();
+		}
 	}
 
 	[Test]
@@ -41,10 +45,13 @@ public sealed class ImplementationTests
 		var result = await NavigationService.FindImplementationsAsync(
 			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(2, result.Matches.Count);
-		Assert.All(result.Matches, match => Assert.Equal("Area", match.Name));
-		Assert.Contains(result.Matches, match => match.Signature.Contains("Circle", StringComparison.Ordinal));
-		Assert.Contains(result.Matches, match => match.Signature.Contains("Square", StringComparison.Ordinal));
+		result.Matches.Count.ShouldBe(2);
+		foreach (var match in result.Matches)
+		{
+			match.Name.ShouldBe("Area");
+		}
+		result.Matches.ShouldContain(match => match.Signature.Contains("Circle", StringComparison.Ordinal));
+		result.Matches.ShouldContain(match => match.Signature.Contains("Square", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -65,9 +72,9 @@ public sealed class ImplementationTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("derived", result.Relationship, StringComparison.Ordinal);
-		Assert.Contains("Circle", result.Matches.Select(match => match.Name));
-		Assert.Contains("Square", result.Matches.Select(match => match.Name));
+		result.Relationship.ShouldContain("derived", Case.Sensitive);
+		result.Matches.Select(match => match.Name).ShouldContain("Circle");
+		result.Matches.Select(match => match.Name).ShouldContain("Square");
 	}
 
 	/// <summary>
@@ -88,8 +95,8 @@ public sealed class ImplementationTests
 		var result = await NavigationService.FindImplementationsAsync(
 			snapshot, new SymbolTarget { FilePath = path, Line = line, Column = column }, 200, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("derived", result.Relationship, StringComparison.Ordinal);
-		Assert.Empty(result.Matches);
+		result.Relationship.ShouldContain("derived", Case.Sensitive);
+		result.Matches.ShouldBeEmpty();
 	}
 
 	[Test]
@@ -107,10 +114,10 @@ public sealed class ImplementationTests
 			new SymbolTarget { FilePath = path, Line = line, Column = column },
 			TestContext.Current!.Execution.CancellationToken);
 
-		var implemented = Assert.Single(info.BaseDefinitions);
+		var implemented = info.BaseDefinitions.ShouldHaveSingleItem();
 
-		Assert.Equal("Area", implemented.Name);
-		Assert.Contains("IShape", implemented.Signature, StringComparison.Ordinal);
+		implemented.Name.ShouldBe("Area");
+		implemented.Signature.ShouldContain("IShape", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -122,7 +129,7 @@ public sealed class ImplementationTests
 		var text = File.ReadAllText(path);
 		var index = text.IndexOf(needle, StringComparison.Ordinal);
 
-		Assert.True(index >= 0, $"'{needle}' is not in {Path.GetFileName(path)}");
+		(index >= 0).ShouldBeTrue($"'{needle}' is not in {Path.GetFileName(path)}");
 
 		var before = text[..index];
 		var lastBreak = before.LastIndexOf('\n');
@@ -147,7 +154,7 @@ public sealed class ImplementationTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("implementing", result.Relationship, StringComparison.Ordinal);
-		Assert.Contains("Circle", result.Matches.Select(match => match.Name));
+		result.Relationship.ShouldContain("implementing", Case.Sensitive);
+		result.Matches.Select(match => match.Name).ShouldContain("Circle");
 	}
 }

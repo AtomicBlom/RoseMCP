@@ -46,19 +46,18 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 
 			var session = await manager.StartAsync(target, cancellationToken);
 			var summary = session.Describe();
-			Assert.True(
-				summary.State == LiveAppSessionState.Ready,
+			(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
-			Assert.Equal(TargetArchitecture.X64, summary.Architecture);
+			summary.Architecture.ShouldBe(TargetArchitecture.X64);
 
 			var marker = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseUwpProbeException") ?? false),
 				cancellationToken);
-			Assert.NotNull(marker);
+			marker.ShouldNotBeNull();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -92,8 +91,7 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 
 			var session = await manager.StartAsync(target, cancellationToken);
 			var summary = session.Describe();
-			Assert.True(
-				summary.State == LiveAppSessionState.Ready,
+			(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 			// The startup exception fires inside OnLaunched, before the timer's first tick; only a
@@ -103,9 +101,9 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseUwpStartupException") ?? false),
 				cancellationToken);
-			Assert.NotNull(startup);
+			startup.ShouldNotBeNull();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -139,8 +137,8 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 
 		var second = await turn.Session.ReadXamlTreeAsync(cancellationToken);
 
-		Assert.True(second.Detail is null, $"expected a tree, got detail: {second.Detail}");
-		Assert.Equal("pipe", second.Channel);
+		(second.Detail is null).ShouldBeTrue($"expected a tree, got detail: {second.Detail}");
+		second.Channel.ShouldBe("pipe");
 	}
 
 	/// <summary>
@@ -195,12 +193,11 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 			cancellationToken);
 
 		var tree = await session.ReadXamlTreeAsync(cancellationToken);
-		Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
+		(tree.Detail is null).ShouldBeTrue($"expected a tree, got detail: {tree.Detail}");
 
-		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 
-		Assert.Contains(
-			logs.Lines,
+		logs.Lines.ShouldContain(
 			line => line.Contains("released its diagnostics interfaces on detach", StringComparison.Ordinal));
 	}
 
@@ -245,27 +242,24 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 
 			// On the session, which is what a caller reading one result sees.
 			var summary = session.Describe();
-			Assert.NotNull(summary.InstallLocation);
-			Assert.Equal(
-				Path.GetFullPath(probe.LayoutDirectory!).TrimEnd(Path.DirectorySeparatorChar),
-				Path.GetFullPath(summary.InstallLocation!).TrimEnd(Path.DirectorySeparatorChar),
-				ignoreCase: true);
+			summary.InstallLocation.ShouldNotBeNull();
+			Path.GetFullPath(summary.InstallLocation!).TrimEnd(Path.DirectorySeparatorChar).ShouldBe(
+				Path.GetFullPath(probe.LayoutDirectory!).TrimEnd(Path.DirectorySeparatorChar), StringCompareShould.IgnoreCase);
 
 			// And in the event stream, where somebody reading what happened sees it at the moment it
 			// mattered rather than having to go and ask.
 			var events = await session.ReadEventsAsync(0, null, 500, cancellationToken);
-			Assert.Contains(
-				events.Events,
+			events.Events.Any(
 				entry => entry.Kind == LiveDebugEventKind.SessionNotice
-					&& (entry.Message?.Contains("is registered from", StringComparison.Ordinal) ?? false));
+					&& (entry.Message?.Contains("is registered from", StringComparison.Ordinal) ?? false)).ShouldBeTrue();
 
 			// And on the tree, because that is the tool that answers plausibly rather than failing:
 			// its nodes carry source files, and a stale registration makes those the wrong files.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.True(tree.Detail is null, $"expected a tree, got detail: {tree.Detail}");
-			Assert.Equal(summary.InstallLocation, tree.InstallLocation);
+			(tree.Detail is null).ShouldBeTrue($"expected a tree, got detail: {tree.Detail}");
+			tree.InstallLocation.ShouldBe(summary.InstallLocation);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -321,9 +315,9 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 			// The answer every concurrent read below has to match. Read on its own, so it is the
 			// uncontended truth about the app rather than one of the results under test.
 			var alone = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.True(alone.Detail is null, $"expected a tree, got detail: {alone.Detail}");
+			(alone.Detail is null).ShouldBeTrue($"expected a tree, got detail: {alone.Detail}");
 			var expected = Stable(alone);
-			Assert.True(expected > 1, $"the probe should have more than one element, got {expected}");
+			(expected > 1).ShouldBeTrue($"the probe should have more than one element, got {expected}");
 			var caption = alone.Nodes.First(node => node.Name == "Caption");
 
 			for (var attempt = 0; attempt < 5; attempt++)
@@ -334,8 +328,8 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 
 				foreach (var tree in trees)
 				{
-					Assert.True(tree.Detail is null, $"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
-					Assert.Equal(expected, Stable(tree));
+					(tree.Detail is null).ShouldBeTrue($"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
+					Stable(tree).ShouldBe(expected);
 				}
 			}
 
@@ -346,17 +340,17 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 				var tree = await treeTask;
 				var properties = await propertiesTask;
 
-				Assert.True(tree.Detail is null, $"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
-				Assert.Equal(expected, Stable(tree));
+				(tree.Detail is null).ShouldBeTrue($"attempt {attempt}: expected a tree, got detail: {tree.Detail}");
+				Stable(tree).ShouldBe(expected);
 
-				Assert.True(properties.Detail is null, $"attempt {attempt}: expected properties, got detail: {properties.Detail}");
-				Assert.Equal(caption.Handle, properties.Handle);
-				Assert.NotEmpty(properties.Properties);
+				(properties.Detail is null).ShouldBeTrue($"attempt {attempt}: expected properties, got detail: {properties.Detail}");
+				properties.Handle.ShouldBe(caption.Handle);
+				properties.Properties.ShouldNotBeEmpty();
 
 				// The element it answered about, rather than only the handle it echoed. How many
 				// properties come back is deliberately not asserted: that count is not stable across
 				// repeat reads even without concurrency, which is its own defect and not this one.
-				Assert.Contains(properties.Properties, property => property.Name == "Text");
+				properties.Properties.ShouldContain(property => property.Name == "Text");
 			}
 
 		}
@@ -399,7 +393,7 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 				},
 				cancellationToken);
 
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			// The timer tick, which the probe runs forever, so the breakpoint is certain to be hit.
 			var breakpoint = await session.SetBreakpointAsync(
@@ -408,39 +402,37 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 				condition: null,
 				cancellationToken);
 
-			Assert.True(breakpoint.Bound, $"the breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"the breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
 
 			var stop = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(stop);
+			stop.ShouldNotBeNull();
 
 			var refused = Stopwatch.StartNew();
 			var whileStopped = await session.ReadXamlTreeAsync(cancellationToken);
 			refused.Stop();
 
-			Assert.Empty(whileStopped.Nodes);
-			Assert.NotNull(whileStopped.Detail);
-			Assert.Contains("stopped", whileStopped.Detail!);
+			whileStopped.Nodes.ShouldBeEmpty();
+			whileStopped.Detail.ShouldNotBeNull();
+			whileStopped.Detail!.ShouldContain("stopped", Case.Sensitive);
 
 			// The number that matters: refused rather than waited out. The endpoint's own bound is twenty
 			// seconds, so anything in that region means the guard did not fire and the old failure is back.
-			Assert.True(
-				refused.Elapsed < TimeSpan.FromSeconds(5),
+			(refused.Elapsed < TimeSpan.FromSeconds(5)).ShouldBeTrue(
 				$"expected an immediate refusal, not a wait for the endpoint; took {refused.Elapsed.TotalSeconds:0.0}s");
 
 			// And the guard is not a one-way door: resumed, the same read works.
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
-			Assert.True(await session.ContinueAsync(cancellationToken));
+			(await session.ContinueAsync(cancellationToken)).ShouldBeTrue();
 
 			var afterResume = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.True(
-				afterResume.Detail is null,
+			(afterResume.Detail is null).ShouldBeTrue(
 				$"expected a tree once the target was resumed, got detail: {afterResume.Detail}");
-			Assert.NotEmpty(afterResume.Nodes);
+			afterResume.Nodes.ShouldNotBeEmpty();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -494,11 +486,11 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 				cancellationToken);
 
 			var summary = session.Describe();
-			Assert.Equal(LiveAppSessionState.Faulted, summary.State);
-			Assert.Contains("already running", summary.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+			summary.State.ShouldBe(LiveAppSessionState.Faulted);
+			(summary.Detail ?? string.Empty).ShouldContain("already running", Case.Insensitive);
 
 			// The remedy is named, and it is the one that works.
-			Assert.Contains("rose_debug_attach", summary.Detail ?? string.Empty, StringComparison.Ordinal);
+			(summary.Detail ?? string.Empty).ShouldContain("rose_debug_attach", Case.Sensitive);
 
 			await manager.CloseAsync(session.SessionId, cancellationToken);
 		}

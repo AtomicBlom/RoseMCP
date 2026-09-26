@@ -1,4 +1,5 @@
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.MemberEdits;
 
@@ -35,7 +36,7 @@ public sealed class MemberEditBodyTests
 
 		var text = await ReadAsync(fixture, "Prose.cs");
 
-		Assert.Contains("// Counts what is there, which is the only thing this can honestly report.", text, StringComparison.Ordinal);
+		text.ShouldContain("// Counts what is there, which is the only thing this can honestly report.", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -59,10 +60,8 @@ public sealed class MemberEditBodyTests
 
 		var text = await ReadAsync(fixture, "Prose.cs");
 
-		Assert.Contains(
-			"public const string Description = \"Reads a thing. Name it, rather than pointing at a line.\";",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"public const string Description = \"Reads a thing. Name it, rather than pointing at a line.\";", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -84,7 +83,7 @@ public sealed class MemberEditBodyTests
 
 		var text = await ReadAsync(fixture, "Prose.cs");
 
-		Assert.Contains("public const string Description = \"Replaced outright.\";", text, StringComparison.Ordinal);
+		text.ShouldContain("public const string Description = \"Replaced outright.\";", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -98,7 +97,7 @@ public sealed class MemberEditBodyTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
+		var error = await Should.ThrowAsync<ArgumentException>(
 			() => EditAsync(session, new MemberEditRequest
 			{
 				Kind = MemberEditKind.ReplaceBody,
@@ -108,9 +107,9 @@ public sealed class MemberEditBodyTests
 				Find = "\"total\";",
 				Replace = "\"count\";",
 				IncludeTrivia = true,
-			}));
+			})).OfExactType();
 
-		Assert.Contains("part of a string and part of the code", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("part of a string and part of the code", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -132,12 +131,12 @@ public sealed class MemberEditBodyTests
 			Replace = "$\"{_prefix}, dear {name}!\"",
 		});
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("dear {name}", text, StringComparison.Ordinal);
+		text.ShouldContain("dear {name}", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -158,11 +157,11 @@ public sealed class MemberEditBodyTests
 			Replace = "return text.ToLowerInvariant();",
 		});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("ToLowerInvariant", text, StringComparison.Ordinal);
+		text.ShouldContain("ToLowerInvariant", Case.Sensitive);
 	}
 
 	/// <summary>An anchor that matches nothing changes nothing and says what to do about it.</summary>
@@ -174,17 +173,17 @@ public sealed class MemberEditBodyTests
 
 		var before = await ReadAsync(fixture, "Greeter.cs");
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+		var thrown = await Should.ThrowAsync<ArgumentException>(
 			() => EditAsync(session, new MemberEditRequest
 			{
 				Kind = MemberEditKind.ReplaceBody,
 				Symbol = "Library.Greeter.Shout",
 				Find = "return text.Trim();",
 				Replace = "return text;",
-			}));
+			})).OfExactType();
 
-		Assert.Contains("does not contain", thrown.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+		thrown.Message.ShouldContain("does not contain", Case.Sensitive);
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
 	/// <summary>
@@ -205,17 +204,16 @@ public sealed class MemberEditBodyTests
 			Code = "text = text.Trim();",
 		});
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Contains(
-			result.Notices,
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.Notices.ShouldContain(
 			notice => notice.Contains("before the closing return", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 		var trimmed = text.IndexOf("text = text.Trim();", StringComparison.Ordinal);
 		var returned = text.IndexOf("return text.ToUpperInvariant();", StringComparison.Ordinal);
 
-		Assert.True(trimmed > 0 && trimmed < returned);
+		(trimmed > 0 && trimmed < returned).ShouldBeTrue();
 	}
 
 	/// <summary>An expression body has no statement list, and the refusal says what to pass instead.</summary>
@@ -225,17 +223,17 @@ public sealed class MemberEditBodyTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+		var thrown = await Should.ThrowAsync<ArgumentException>(
 			() => EditAsync(session, new MemberEditRequest
 			{
 				Kind = MemberEditKind.ReplaceBody,
 				Symbol = "Library.Greeter.Greet(string, string)",
 				Position = BodyPosition.Start,
 				Code = "var x = 1;",
-			}));
+			})).OfExactType();
 
-		Assert.Contains("has an expression body", thrown.Message, StringComparison.Ordinal);
-		Assert.Contains("Pass code with the whole body", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("has an expression body", Case.Sensitive);
+		thrown.Message.ShouldContain("Pass code with the whole body", Case.Sensitive);
 	}
 
 	/// <summary>Two ways of saying what the body becomes is ambiguous, and refused rather than ranked.</summary>
@@ -245,7 +243,7 @@ public sealed class MemberEditBodyTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+		var thrown = await Should.ThrowAsync<ArgumentException>(
 			() => EditAsync(session, new MemberEditRequest
 			{
 				Kind = MemberEditKind.ReplaceBody,
@@ -253,8 +251,8 @@ public sealed class MemberEditBodyTests
 				Code = "return text;",
 				Find = "text.ToUpperInvariant()",
 				Replace = "text",
-			}));
+			})).OfExactType();
 
-		Assert.Contains("Pass one of code", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("Pass one of code", Case.Sensitive);
 	}
 }

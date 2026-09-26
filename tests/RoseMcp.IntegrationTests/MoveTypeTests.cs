@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -21,20 +22,20 @@ public sealed class MoveTypeTests
 
 		var target = fixture.Path("MultiType", "Shapes", "Circle.cs");
 
-		Assert.Equal(target, result.TargetPath, ignoreCase: true);
-		Assert.True(result.Applied);
-		Assert.True(File.Exists(target), $"{target} was not written");
+		result.TargetPath.ShouldBe(target, StringCompareShould.IgnoreCase);
+		result.Applied.ShouldBeTrue();
+		File.Exists(target).ShouldBeTrue($"{target} was not written");
 
 		var moved = await File.ReadAllTextAsync(target, TestContext.Current!.Execution.CancellationToken);
 
 		// The namespace and the declaration, and the doc comment that belongs to it.
-		Assert.Contains("namespace Shapes;", moved, StringComparison.Ordinal);
-		Assert.Contains("public sealed record Circle(double Radius) : IShape", moved, StringComparison.Ordinal);
-		Assert.Contains("/// A circle.", moved, StringComparison.Ordinal);
+		moved.ShouldContain("namespace Shapes;", Case.Sensitive);
+		moved.ShouldContain("public sealed record Circle(double Radius) : IShape", Case.Sensitive);
+		moved.ShouldContain("/// A circle.", Case.Sensitive);
 
 		// And nothing else that was in the file it came from.
-		Assert.DoesNotContain("interface IShape", moved, StringComparison.Ordinal);
-		Assert.DoesNotContain("class Square", moved, StringComparison.Ordinal);
+		moved.ShouldNotContain("interface IShape", Case.Sensitive);
+		moved.ShouldNotContain("class Square", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -54,13 +55,13 @@ public sealed class MoveTypeTests
 		var remaining = await File.ReadAllTextAsync(
 			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("using System.Globalization;", moved, StringComparison.Ordinal);
-		Assert.DoesNotContain("using System.Globalization;", remaining, StringComparison.Ordinal);
-		Assert.Contains("using System.Globalization;", result.RemovedUsings);
+		moved.ShouldContain("using System.Globalization;", Case.Sensitive);
+		remaining.ShouldNotContain("using System.Globalization;", Case.Sensitive);
+		result.RemovedUsings.ShouldContain("using System.Globalization;");
 
-		Assert.DoesNotContain("record Circle", remaining, StringComparison.Ordinal);
-		Assert.Contains("public interface IShape", remaining, StringComparison.Ordinal);
-		Assert.Contains("public sealed class Square", remaining, StringComparison.Ordinal);
+		remaining.ShouldNotContain("record Circle", Case.Sensitive);
+		remaining.ShouldContain("public interface IShape", Case.Sensitive);
+		remaining.ShouldContain("public sealed class Square", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -80,14 +81,14 @@ public sealed class MoveTypeTests
 		var remaining = await File.ReadAllTextAsync(
 			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("\r\n", moved, StringComparison.Ordinal);
-		Assert.DoesNotContain("\n\n", moved.Replace("\r\n", "\n").Replace("\n\n", "<blank>"), StringComparison.Ordinal);
-		Assert.Contains("\tpublic double Area() => Math.PI * Radius * Radius;", moved, StringComparison.Ordinal);
-		Assert.EndsWith("}\r\n", moved, StringComparison.Ordinal);
+		moved.ShouldContain("\r\n", Case.Sensitive);
+		moved.Replace("\r\n", "\n").Replace("\n\n", "<blank>").ShouldNotContain("\n\n", Case.Sensitive);
+		moved.ShouldContain("\tpublic double Area() => Math.PI * Radius * Radius;", Case.Sensitive);
+		moved.ShouldEndWith("}\r\n", Case.Sensitive);
 
 		// The hole the type left closed up: no double blank line, and one newline at the end.
-		Assert.DoesNotContain("\r\n\r\n\r\n", remaining, StringComparison.Ordinal);
-		Assert.EndsWith("}\r\n", remaining, StringComparison.Ordinal);
+		remaining.ShouldNotContain("\r\n\r\n\r\n", Case.Sensitive);
+		remaining.ShouldEndWith("}\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -105,7 +106,7 @@ public sealed class MoveTypeTests
 
 		var diagnostics = await DiagnoseAsync(session);
 
-		Assert.Empty(diagnostics.Diagnostics);
+		diagnostics.Diagnostics.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -130,7 +131,7 @@ public sealed class MoveTypeTests
 
 		var diagnostics = await DiagnoseAsync(session);
 
-		Assert.Contains(diagnostics.Diagnostics, diagnostic => diagnostic.Id == "CS0117");
+		diagnostics.Diagnostics.ShouldContain(diagnostic => diagnostic.Id == "CS0117");
 	}
 
 	[Test]
@@ -144,15 +145,15 @@ public sealed class MoveTypeTests
 
 		var result = await MoveAsync(session, fixture, "Circle", apply: false);
 
-		Assert.False(result.Applied, "a preview writes nothing");
-		Assert.False(File.Exists(fixture.Path("MultiType", "Shapes", "Circle.cs")));
-		Assert.Equal(before, await File.ReadAllTextAsync(
-			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken));
+		result.Applied.ShouldBeFalse("a preview writes nothing");
+		File.Exists(fixture.Path("MultiType", "Shapes", "Circle.cs")).ShouldBeFalse();
+		(await File.ReadAllTextAsync(
+			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken)).ShouldBe(before);
 
 		// The diff still describes both halves of the move that did not happen.
-		Assert.Contains("+++ ", result.Diff, StringComparison.Ordinal);
-		Assert.Contains("record Circle", result.Diff, StringComparison.Ordinal);
-		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
+		result.Diff.ShouldContain("+++ ", Case.Sensitive);
+		result.Diff.ShouldContain("record Circle", Case.Sensitive);
+		string.Join(" ", result.Notices).ShouldContain("Preview only", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -165,11 +166,11 @@ public sealed class MoveTypeTests
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => MoveAsync(session, fixture, "Usage", file: "Usage.cs"));
+		var error = await Should.ThrowAsync<InvalidOperationException>(
+			() => MoveAsync(session, fixture, "Usage", file: "Usage.cs")).OfExactType();
 
-		Assert.Contains("only type", error.Message, StringComparison.Ordinal);
-		Assert.Contains("Rename the file", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("only type", Case.Sensitive);
+		error.Message.ShouldContain("Rename the file", Case.Sensitive);
 	}
 
 	[Test]
@@ -178,10 +179,10 @@ public sealed class MoveTypeTests
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => MoveAsync(session, fixture, "Circle", targetPath: "Usage.cs"));
+		var error = await Should.ThrowAsync<InvalidOperationException>(
+			() => MoveAsync(session, fixture, "Circle", targetPath: "Usage.cs")).OfExactType();
 
-		Assert.Contains("already exists", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("already exists", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -194,12 +195,12 @@ public sealed class MoveTypeTests
 		using var fixture = FixtureSolution.Copy("MultiType", "MultiType.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
-			() => MoveAsync(session, fixture, "Triangle"));
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => MoveAsync(session, fixture, "Triangle")).OfExactType();
 
-		Assert.Contains("Triangle", error.Message, StringComparison.Ordinal);
-		Assert.Contains("Circle", error.Message, StringComparison.Ordinal);
-		Assert.Contains("ShapeKind", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("Triangle", Case.Sensitive);
+		error.Message.ShouldContain("Circle", Case.Sensitive);
+		error.Message.ShouldContain("ShapeKind", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -221,12 +222,12 @@ public sealed class MoveTypeTests
 			fixture.Path("MultiType", "Shapes", "Shapes.cs"), TestContext.Current!.Execution.CancellationToken);
 
 		// The type that needed the import took it, and kept it at the top where it belongs.
-		Assert.StartsWith("using System.Globalization;\r\n\r\nnamespace Shapes;", moved, StringComparison.Ordinal);
+		moved.ShouldStartWith("using System.Globalization;\r\n\r\nnamespace Shapes;", Case.Sensitive);
 
 		// The file it left had only that one, so it now opens on its namespace rather than on the
 		// hole the using left.
-		Assert.StartsWith("namespace Shapes;", remaining, StringComparison.Ordinal);
-		Assert.DoesNotContain("\r\n\r\n\r\n", remaining, StringComparison.Ordinal);
+		remaining.ShouldStartWith("namespace Shapes;", Case.Sensitive);
+		remaining.ShouldNotContain("\r\n\r\n\r\n", Case.Sensitive);
 	}
 
 	private static Task<MoveTypeResult> MoveAsync(

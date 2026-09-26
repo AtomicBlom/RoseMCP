@@ -16,9 +16,9 @@ public sealed class DiagnosticsTests
 			new DiagnosticsRequest(),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Empty(result.Diagnostics);
-		Assert.False(result.Truncated, "a clean solution's answer is complete rather than truncated");
-		Assert.False(result.IncludedAnalyzers, "analyzers stay off unless they are asked for");
+		result.Diagnostics.ShouldBeEmpty();
+		result.Truncated.ShouldBeFalse("a clean solution's answer is complete rather than truncated");
+		result.IncludedAnalyzers.ShouldBeFalse("analyzers stay off unless they are asked for");
 	}
 
 	[Test]
@@ -45,10 +45,10 @@ public sealed class DiagnosticsTests
 
 		var error = result.Diagnostics.First(diagnostic => diagnostic.Id == "CS0103");
 
-		Assert.Equal("Error", error.Severity);
-		Assert.Equal(calculator, error.FilePath, ignoreCase: true);
-		Assert.Equal(4, error.Line);
-		Assert.Null(error.GeneratedHintName);
+		error.Severity.ShouldBe("Error");
+		error.FilePath.ShouldBe(calculator, StringCompareShould.IgnoreCase);
+		error.Line.ShouldBe(4);
+		error.GeneratedHintName.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -66,7 +66,7 @@ public sealed class DiagnosticsTests
 		await service.AnalyseAsync(snapshot, new DiagnosticsRequest(), TestContext.Current!.Execution.CancellationToken);
 
 		var afterFirst = service.CompilationsAnalysed;
-		Assert.True(afterFirst > 0, "the first pass must actually analyse something");
+		(afterFirst > 0).ShouldBeTrue("the first pass must actually analyse something");
 
 		for (var i = 0; i < 3; i++)
 		{
@@ -76,7 +76,7 @@ public sealed class DiagnosticsTests
 				TestContext.Current!.Execution.CancellationToken);
 		}
 
-		Assert.Equal(afterFirst, service.CompilationsAnalysed);
+		service.CompilationsAnalysed.ShouldBe(afterFirst);
 	}
 
 	[Test]
@@ -103,7 +103,7 @@ public sealed class DiagnosticsTests
 			new DiagnosticsRequest(),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(service.CompilationsAnalysed > afterFirst, "an edit must invalidate the cache");
+		(service.CompilationsAnalysed > afterFirst).ShouldBeTrue("an edit must invalidate the cache");
 	}
 
 	/// <summary>
@@ -128,7 +128,7 @@ public sealed class DiagnosticsTests
 			new DiagnosticsRequest { MinimumSeverity = Microsoft.CodeAnalysis.DiagnosticSeverity.Error },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Empty(clean.Diagnostics);
+		clean.Diagnostics.ShouldBeEmpty();
 
 		await File.WriteAllTextAsync(
 			calculator,
@@ -140,6 +140,6 @@ public sealed class DiagnosticsTests
 			new DiagnosticsRequest { MinimumSeverity = Microsoft.CodeAnalysis.DiagnosticSeverity.Error },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Id == "CS0103");
+		result.Diagnostics.ShouldContain(diagnostic => diagnostic.Id == "CS0103");
 	}
 }

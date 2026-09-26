@@ -62,29 +62,29 @@ public sealed class LiveAppSessionTests
 			var session = await manager.StartAsync(target, cancellationToken);
 
 			var summary = session.Describe();
-			Assert.Equal(LiveAppSessionState.Ready, summary.State);
-			Assert.Equal(ExpectedArchitecture, summary.Architecture);
-			Assert.Equal(child.Id, summary.TargetProcessId);
-			Assert.NotNull(summary.HostProcessId);
-			Assert.Single(manager.Describe());
+			summary.State.ShouldBe(LiveAppSessionState.Ready);
+			summary.Architecture.ShouldBe(ExpectedArchitecture);
+			summary.TargetProcessId.ShouldBe(child.Id);
+			summary.HostProcessId.ShouldNotBeNull();
+			manager.Describe().ShouldHaveSingleItem();
 
 			var marker = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
 				cancellationToken);
-			Assert.NotNull(marker);
-			Assert.Contains("RoseDebugProbeException", marker!.ExceptionType);
+			marker.ShouldNotBeNull();
+			marker!.ExceptionType!.ShouldContain("RoseDebugProbeException", Case.Sensitive);
 
 			// The exception carries a stack, and the throwing method is on it (#7, stack walk).
-			Assert.NotNull(marker.Frames);
-			Assert.Contains(marker.Frames!, frame => frame.Contains("DebugProbeTarget.Program"));
+			marker.Frames.ShouldNotBeNull();
+			marker.Frames!.ShouldContain(frame => frame.Contains("DebugProbeTarget.Program"));
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.Empty(manager.Sessions);
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			manager.Sessions.ShouldBeEmpty();
 
 			// Detach leaves the target running; the debugger did not take it down.
-			Assert.False(child.HasExited, "the target survives being attached to and throwing");
+			child.HasExited.ShouldBeFalse("the target survives being attached to and throwing");
 		}
 		finally
 		{
@@ -118,28 +118,28 @@ public sealed class LiveAppSessionTests
 			using (CallSession.Use("mcp-session-one"))
 			{
 				session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
-				Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+				session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
-				Assert.NotNull(manager.Find(session.SessionId));
-				Assert.Contains(manager.DescribeOwned(), row => row.SessionId == session.SessionId);
+				manager.Find(session.SessionId).ShouldNotBeNull();
+				manager.DescribeOwned().ShouldContain(row => row.SessionId == session.SessionId);
 			}
 
 			using (CallSession.Use("mcp-session-two"))
 			{
-				Assert.Null(manager.Find(session.SessionId));
-				Assert.Empty(manager.DescribeOwned());
+				manager.Find(session.SessionId).ShouldBeNull();
+				manager.DescribeOwned().ShouldBeEmpty();
 
 				// The loudest thing one client can do to another, and it goes through the same check.
-				Assert.False(await manager.CloseAsync(session.SessionId, cancellationToken));
+				(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeFalse();
 			}
 
 			// The tray window and GET /admin/sessions read the whole picture, and still do: their reader
 			// is the person running the broker rather than one of its clients.
-			Assert.Contains(manager.Describe(), row => row.SessionId == session.SessionId);
+			manager.Describe().ShouldContain(row => row.SessionId == session.SessionId);
 
 			using (CallSession.Use("mcp-session-one"))
 			{
-				Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+				(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 			}
 		}
 		finally
@@ -170,7 +170,7 @@ public sealed class LiveAppSessionTests
 		try
 		{
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			// Everything so far, so the wait below has nothing already buffered to satisfy it.
 			var caughtUp = await session.ReadEventsAsync(0, cancellationToken);
@@ -180,17 +180,19 @@ public sealed class LiveAppSessionTests
 				caughtUp.NextCursor, [nameof(LiveDebugEventKind.ExceptionFirstChance)], 50, 30, cancellationToken);
 			clock.Stop();
 
-			Assert.NotEmpty(waited.Events);
-			Assert.All(waited.Events, entry => Assert.Equal(LiveDebugEventKind.ExceptionFirstChance, entry.Kind));
-			Assert.Contains(waited.Events, entry => entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false);
+			waited.Events.ShouldNotBeEmpty();
+			foreach (var entry in waited.Events)
+			{
+				entry.Kind.ShouldBe(LiveDebugEventKind.ExceptionFirstChance);
+			}
+			waited.Events.Any(entry => entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false).ShouldBeTrue();
 
 			// The probe throws twice a second, so an answer that took anything like the full thirty
 			// seconds came from the deadline rather than from the event.
-			Assert.True(
-				clock.Elapsed < TimeSpan.FromSeconds(20),
+			(clock.Elapsed < TimeSpan.FromSeconds(20)).ShouldBeTrue(
 				$"the wait should have been woken by the event, not the timeout; it took {clock.Elapsed}");
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -221,13 +223,13 @@ public sealed class LiveAppSessionTests
 				caughtUp.NextCursor, [nameof(LiveDebugEventKind.BreakpointHit)], 50, 2, cancellationToken);
 			clock.Stop();
 
-			Assert.Empty(waited.Events);
-			Assert.Equal(LiveAppSessionState.Ready, waited.State);
+			waited.Events.ShouldBeEmpty();
+			waited.State.ShouldBe(LiveAppSessionState.Ready);
 
 			// It waited rather than answering at once, which is what makes the empty answer meaningful.
-			Assert.True(clock.Elapsed >= TimeSpan.FromSeconds(1.5), $"expected it to wait; it took {clock.Elapsed}");
+			(clock.Elapsed >= TimeSpan.FromSeconds(1.5)).ShouldBeTrue($"expected it to wait; it took {clock.Elapsed}");
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -252,12 +254,12 @@ public sealed class LiveAppSessionTests
 		try
 		{
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 
-			Assert.Null(session.DetachFailure);
-			Assert.False(child.HasExited, "detaching leaves the target running");
+			session.DetachFailure.ShouldBeNull();
+			child.HasExited.ShouldBeFalse("detaching leaves the target running");
 		}
 		finally
 		{
@@ -286,9 +288,9 @@ public sealed class LiveAppSessionTests
 		await child.WaitForExitAsync(cancellationToken);
 		await WaitForEventAsync(session, entry => entry.Kind == LiveDebugEventKind.ProcessExited, cancellationToken);
 
-		Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+		(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 
-		Assert.Null(session.DetachFailure);
+		session.DetachFailure.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -309,10 +311,10 @@ public sealed class LiveAppSessionTests
 		try
 		{
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind against the loaded module; detail: {breakpoint.Detail}");
 
 			// Waited for rather than merely set: an unbound breakpoint is not what ICorDebug objects to,
 			// so a close raced ahead of the bind would pass while proving nothing.
@@ -323,10 +325,10 @@ public sealed class LiveAppSessionTests
 
 			// Neither removed nor continued: the breakpoint is bound and the target is held, which is
 			// exactly the state the detach used to refuse.
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 
-			Assert.Null(session.DetachFailure);
-			Assert.False(child.HasExited, "detaching past a bound breakpoint leaves the target running");
+			session.DetachFailure.ShouldBeNull();
+			child.HasExited.ShouldBeFalse("detaching past a bound breakpoint leaves the target running");
 		}
 		finally
 		{
@@ -357,22 +359,22 @@ public sealed class LiveAppSessionTests
 		try
 		{
 			var summary = session.Describe();
-			Assert.Equal(LiveAppSessionState.Ready, summary.State);
-			Assert.Equal(ExpectedArchitecture, summary.Architecture);
-			Assert.NotNull(summary.TargetProcessId);
+			summary.State.ShouldBe(LiveAppSessionState.Ready);
+			summary.Architecture.ShouldBe(ExpectedArchitecture);
+			summary.TargetProcessId.ShouldNotBeNull();
 			launchedPid = summary.TargetProcessId;
 
 			var created = await WaitForEventAsync(session, entry => entry.Kind == LiveDebugEventKind.ProcessCreated, cancellationToken);
-			Assert.NotNull(created);
+			created.ShouldNotBeNull();
 
 			var marker = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
 				cancellationToken);
-			Assert.NotNull(marker);
+			marker.ShouldNotBeNull();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -452,7 +454,7 @@ public sealed class LiveAppSessionTests
 			using var reply = JsonDocument.Parse(await ReadReplyAsync(host, cancellationToken));
 			var info = reply.RootElement.GetProperty("result").GetProperty("structuredContent");
 
-			Assert.Equal(nameof(LiveAppSessionState.Ready), info.GetProperty("state").GetString());
+			info.GetProperty("state").GetString().ShouldBe(nameof(LiveAppSessionState.Ready));
 
 			targetProcessId = info.GetProperty("targetProcessId").GetInt32();
 		}
@@ -516,7 +518,7 @@ public sealed class LiveAppSessionTests
 			await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
 		}
 
-		Assert.Fail($"{what} (pid {processId}) was still running 30s after the client went away.");
+		throw new ShouldAssertException($"{what} (pid {processId}) was still running 30s after the client went away.");
 	}
 
 	private static bool IsRunning(int processId)
@@ -565,20 +567,19 @@ public sealed class LiveAppSessionTests
 
 			var session = await manager.StartAsync(target, cancellationToken);
 			var summary = session.Describe();
-			Assert.True(
-				summary.State == LiveAppSessionState.Ready,
+			(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 				$"expected Ready, got {summary.State}: {summary.Detail} (host arch {summary.Architecture}, host pid {summary.HostProcessId})");
-			Assert.Equal(TargetArchitecture.X64, summary.Architecture);
+			summary.Architecture.ShouldBe(TargetArchitecture.X64);
 
 			var marker = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance
 					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
 				cancellationToken);
-			Assert.NotNull(marker);
+			marker.ShouldNotBeNull();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target survives an attach across architectures");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target survives an attach across architectures");
 		}
 		finally
 		{
@@ -630,11 +631,10 @@ public sealed class LiveAppSessionTests
 			var session = await manager.StartAsync(target, cancellationToken);
 			var summary = session.Describe();
 
-			Assert.True(
-				summary.State == LiveAppSessionState.Ready,
+			(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
 				$"expected Ready, got {summary.State}: {summary.Detail} (host arch {summary.Architecture}, host pid {summary.HostProcessId})");
 
-			Assert.Equal(TargetArchitecture.X86, summary.Architecture);
+			summary.Architecture.ShouldBe(TargetArchitecture.X86);
 
 			// Attaching is not the claim; debugging is. The target throws on a cycle, so a first-chance
 			// exception arriving through the x86 host is the whole of what was unproven.
@@ -644,10 +644,10 @@ public sealed class LiveAppSessionTests
 					&& (entry.ExceptionType?.Contains("RoseDebugProbeException") ?? false),
 				cancellationToken);
 
-			Assert.NotNull(marker);
+			marker.ShouldNotBeNull();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the x86 target survives the attach");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the x86 target survives the attach");
 		}
 		finally
 		{
@@ -672,7 +672,7 @@ public sealed class LiveAppSessionTests
 
 		var session = await manager.StartAsync(target, cancellationToken);
 
-		Assert.Equal(LiveAppSessionState.Faulted, session.Describe().State);
+		session.Describe().State.ShouldBe(LiveAppSessionState.Faulted);
 	}
 
 	/// <summary>
@@ -710,31 +710,31 @@ public sealed class LiveAppSessionTests
 				},
 				cancellationToken);
 
-			Assert.Equal(LiveAppSessionState.Ready, session.Describe().State);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
 
 			// Let the target throw at least once, so there is a heartbeat to report.
 			var beat = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.ExceptionFirstChance,
 				cancellationToken);
-			Assert.NotNull(beat);
+			beat.ShouldNotBeNull();
 
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 
-			Assert.Empty(tree.Nodes);
-			Assert.NotNull(tree.Detail);
-			Assert.Contains("last debug event", tree.Detail!);
+			tree.Nodes.ShouldBeEmpty();
+			tree.Detail.ShouldNotBeNull();
+			tree.Detail!.ShouldContain("last debug event", Case.Sensitive);
 
 			// The number, not just the sentence. An event inside the endpoint's own budget proves the
 			// target was executing throughout the wait that just failed -- which is the whole distinction
 			// this exists to draw, and the bound is that budget rather than a figure picked here.
 			var match = System.Text.RegularExpressions.Regex.Match(tree.Detail!, @"was (\d+(?:\.\d+)?)s ago");
-			Assert.True(match.Success, $"the detail should quote the heartbeat's age; got: {tree.Detail}");
+			match.Success.ShouldBeTrue($"the detail should quote the heartbeat's age; got: {tree.Detail}");
 
 			var age = double.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-			Assert.InRange(age, 0, 20);
+			age.ShouldBeInRange(0, 20);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{

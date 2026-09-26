@@ -37,15 +37,15 @@ public sealed class BrokerForwardingTests
 
 		var elsewhere = Path.Combine(Path.GetTempPath(), $"absent-{Guid.NewGuid():N}", "Nowhere.cs");
 
-		var error = await Assert.ThrowsAnyAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
+		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
 			new Dictionary<string, object?> { ["filePath"] = elsewhere, ["line"] = 1, ["column"] = 1 },
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken));
 
-		Assert.Contains(elsewhere, error.Message, StringComparison.OrdinalIgnoreCase);
-		Assert.Contains(fixture.SolutionPath, error.Message, StringComparison.OrdinalIgnoreCase);
+		error.Message.ShouldContain(elsewhere, Case.Insensitive);
+		error.Message.ShouldContain(fixture.SolutionPath, Case.Insensitive);
 	}
 
 	/// <summary>
@@ -77,9 +77,9 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(replaced.Applied);
-		Assert.True(replaced.Verified);
-		Assert.Empty(replaced.IntroducedDiagnostics);
+		replaced.Applied.ShouldBeTrue();
+		replaced.Verified.ShouldBeTrue();
+		replaced.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var body = await manager.CallAsync<MemberEditResult>(
 			hints,
@@ -92,7 +92,7 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(body.Applied);
+		body.Applied.ShouldBeTrue();
 
 		var added = await manager.CallAsync<MemberEditResult>(
 			hints,
@@ -106,21 +106,19 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(added.Applied);
-		Assert.Equal(["Doubled"], added.Members);
+		added.Applied.ShouldBeTrue();
+		added.Members.ShouldBe(["Doubled"]);
 
 		// And the file on disk carries all three, in the repository's own formatting.
 		var text = await File.ReadAllTextAsync(
 			fixture.Path("Members", "Library", "Greeter.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("\tpublic string Greet(string name) => $\"{_prefix}! {name}\";\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("\tpublic int Doubled => Count * 2;\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("\tpublic string Greet(string name) => $\"{_prefix}! {name}\";\r\n", Case.Sensitive);
+		text.ShouldContain("\tpublic int Doubled => Count * 2;\r\n", Case.Sensitive);
 
 		// Statements, so a block: the shape follows what was supplied rather than what was there.
-		Assert.Contains(
-			"\tprivate static string Shout(string text)\r\n\t{\r\n\t\treturn text.ToLowerInvariant();\r\n\t}\r\n",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\tprivate static string Shout(string text)\r\n\t{\r\n\t\treturn text.ToLowerInvariant();\r\n\t}\r\n", Case.Sensitive);
 	}
 
 	/// <summary>Naming a symbol rather than a position has to survive the same trip.</summary>
@@ -137,12 +135,12 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("PrefixLength", info.Name);
+		info.Name.ShouldBe("PrefixLength");
 
-		var span = Assert.Single(info.DeclarationSpans);
+		var span = info.DeclarationSpans.ShouldHaveSingleItem();
 
-		Assert.Equal(2, span.LineCount);
-		Assert.EndsWith("Greeter.cs", span.FilePath, StringComparison.OrdinalIgnoreCase);
+		span.LineCount.ShouldBe(2);
+		span.FilePath.ShouldEndWith("Greeter.cs", Case.Insensitive);
 	}
 
 	/// <summary>
@@ -167,19 +165,19 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		// The interface, the base and the override, plus the two call sites in the forwarder.
-		Assert.Equal(3, result.UpdatedDeclarations.Count);
-		Assert.Equal(3, result.UpdatedCallSites.Count);
+		result.UpdatedDeclarations.Count.ShouldBe(3);
+		result.UpdatedCallSites.Count.ShouldBe(3);
 
 		var text = await File.ReadAllTextAsync(
 			fixture.Path("Members", "Library", "Layers.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("public override string Notify(string text, bool urgent)", text, StringComparison.Ordinal);
-		Assert.Contains("notifier.Notify(message, false)", text, StringComparison.Ordinal);
+		text.ShouldContain("public override string Notify(string text, bool urgent)", Case.Sensitive);
+		text.ShouldContain("notifier.Notify(message, false)", Case.Sensitive);
 	}
 
 	/// <summary>Build freshness over the wire, so its one argument cannot drift either.</summary>
@@ -196,11 +194,11 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var project = Assert.Single(report.Projects);
+		var project = report.Projects.ShouldHaveSingleItem();
 
-		Assert.Equal("Core", project.Project);
-		Assert.True(project.Stale, "a fresh copy has no build output at all");
-		Assert.Equal(1, report.StaleCount);
+		project.Project.ShouldBe("Core");
+		project.Stale.ShouldBeTrue("a fresh copy has no build output at all");
+		report.StaleCount.ShouldBe(1);
 	}
 
 	/// <summary>
@@ -227,8 +225,8 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(written.Applied);
-		Assert.Empty(written.IntroducedDiagnostics);
+		written.Applied.ShouldBeTrue();
+		written.IntroducedDiagnostics.ShouldBeEmpty();
 
 		// And the tool of its own, which finds this one already in scope and says so.
 		var again = await manager.CallAsync<UsingResult>(
@@ -242,9 +240,9 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Empty(again.Added);
-		Assert.False(again.Applied, "the second call finds the import already there");
-		Assert.Contains(again.AlreadyInScope, reason => reason.Contains("already imported here", StringComparison.Ordinal));
+		again.Added.ShouldBeEmpty();
+		again.Applied.ShouldBeFalse("the second call finds the import already there");
+		again.AlreadyInScope.ShouldContain(reason => reason.Contains("already imported here", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -265,8 +263,8 @@ public sealed class BrokerForwardingTests
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(fixture.SolutionPath, result.Workspace, ignoreCase: true);
-		Assert.StartsWith("Simple-", result.WorkspaceKey, StringComparison.Ordinal);
+		result.Workspace.ShouldBe(fixture.SolutionPath, StringCompareShould.IgnoreCase);
+		result.WorkspaceKey.ShouldStartWith("Simple-", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -283,8 +281,8 @@ public sealed class BrokerForwardingTests
 		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 		var status = await manager.StatusOfAsync(worker, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(fixture.SolutionPath, status.Workspace, ignoreCase: true);
-		Assert.Equal(worker.Key, status.WorkspaceKey);
+		status.Workspace.ShouldBe(fixture.SolutionPath, StringCompareShould.IgnoreCase);
+		status.WorkspaceKey.ShouldBe(worker.Key);
 	}
 
 	/// <summary>
@@ -302,8 +300,8 @@ public sealed class BrokerForwardingTests
 
 		var after = await manager.RestartAsync(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
 
-		Assert.NotEqual(before.ProcessId, after.ProcessId);
-		Assert.Equal(key, after.Key);
+		after.ProcessId.ShouldNotBe(before.ProcessId);
+		after.Key.ShouldBe(key);
 	}
 
 	/// <summary>
@@ -342,9 +340,9 @@ public sealed class BrokerForwardingTests
 
 		var text = reply.RootElement.GetRawText();
 
-		Assert.Contains("arguments takes a list of strings", text, StringComparison.Ordinal);
-		Assert.Contains("a string was sent", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("System.String[]", text, StringComparison.Ordinal);
+		text.ShouldContain("arguments takes a list of strings", Case.Sensitive);
+		text.ShouldContain("a string was sent", Case.Sensitive);
+		text.ShouldNotContain("System.String[]", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -380,10 +378,9 @@ public sealed class BrokerForwardingTests
 			apply: true,
 			cancellationToken: cancellationToken);
 
-		Assert.True(renamed.Applied);
+		renamed.Applied.ShouldBeTrue();
 
-		Assert.Contains(
-			renamed.Notices,
+		renamed.Notices.ShouldContain(
 			notice => notice.Contains("Repo.Installer.slnx", StringComparison.Ordinal)
 				&& notice.Contains("also compiles", StringComparison.Ordinal));
 	}
@@ -419,18 +416,14 @@ public sealed class BrokerForwardingTests
 			namespaces: ["System.Text"],
 			cancellationToken: TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(added.Applied);
-		Assert.Equal(here.SolutionPath, added.Workspace, ignoreCase: true);
+		added.Applied.ShouldBeTrue();
+		added.Workspace.ShouldBe(here.SolutionPath, StringCompareShould.IgnoreCase);
 
-		Assert.Contains(
-			"System.Text",
-			await File.ReadAllTextAsync(here.Path("Simple", "Core", "Calculator.cs")),
-			StringComparison.Ordinal);
+		(await File.ReadAllTextAsync(here.Path("Simple", "Core", "Calculator.cs"))).ShouldContain(
+			"System.Text", Case.Sensitive);
 
-		Assert.DoesNotContain(
-			"System.Text",
-			await File.ReadAllTextAsync(elsewhere.Path("Simple", "Core", "Calculator.cs")),
-			StringComparison.Ordinal);
+		(await File.ReadAllTextAsync(elsewhere.Path("Simple", "Core", "Calculator.cs"))).ShouldNotContain(
+			"System.Text", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -444,15 +437,15 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var error = await Assert.ThrowsAnyAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
+		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
 			new Dictionary<string, object?> { ["filePath"] = Path.Combine("Core", "Calculator.cs") },
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken));
 
-		Assert.Contains("filePath", error.Message, StringComparison.Ordinal);
-		Assert.Contains("absolute", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("filePath", Case.Sensitive);
+		error.Message.ShouldContain("absolute", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -477,7 +470,7 @@ public sealed class BrokerForwardingTests
 			apply: false,
 			cancellationToken: TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(1, formatted.FilesInspected);
-		Assert.Equal(fixture.SolutionPath, formatted.Workspace, ignoreCase: true);
+		formatted.FilesInspected.ShouldBe(1);
+		formatted.Workspace.ShouldBe(fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 }

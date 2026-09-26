@@ -35,29 +35,28 @@ public sealed class LiveAppInspectionTests
 
 			// The report comes from a poll, so the first one is what is being waited for here.
 			var summary = await WaitForSummaryAsync(session, described => described.InfoAge is not null, cancellationToken);
-			Assert.NotNull(summary);
+			summary.ShouldNotBeNull();
 
-			Assert.Equal(LiveAppSessionState.Ready, summary!.State);
-			Assert.Equal(LiveExecutionState.Running, summary.Execution);
-			Assert.Null(summary.Stop);
+			summary!.State.ShouldBe(LiveAppSessionState.Ready);
+			summary.Execution.ShouldBe(LiveExecutionState.Running);
+			summary.Stop.ShouldBeNull();
 
 			// A console app is no XAML framework, and the reason names what was read to decide that.
-			Assert.Equal(XamlStack.Unknown, summary.XamlStack);
-			Assert.Contains("loaded modules", summary.XamlStackReason);
-			Assert.Equal(LiveXamlProvider.None, summary.XamlProvider);
+			summary.XamlStack.ShouldBe(XamlStack.Unknown);
+			summary.XamlStackReason.ShouldContain("loaded modules", Case.Sensitive);
+			summary.XamlProvider.ShouldBe(LiveXamlProvider.None);
 
 			// The log that explains this session, so a reader has somewhere to go.
-			Assert.NotNull(summary.HostLogPath);
-			Assert.EndsWith(".log", summary.HostLogPath);
+			summary.HostLogPath.ShouldNotBeNull();
+			summary.HostLogPath.ShouldEndWith(".log", Case.Sensitive);
 
 			// The probe throws every 200ms, so a heartbeat this stale means the event stream has died.
 			var heartbeat = await WaitForSummaryAsync(session, described => described.LastEventAge is not null, cancellationToken);
-			Assert.NotNull(heartbeat);
-			Assert.True(
-				heartbeat!.LastEventAge < TimeSpan.FromSeconds(30),
+			heartbeat.ShouldNotBeNull();
+			(heartbeat!.LastEventAge < TimeSpan.FromSeconds(30)).ShouldBeTrue(
 				$"the target last spoke {heartbeat.LastEventAge} ago");
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -84,16 +83,16 @@ public sealed class LiveAppInspectionTests
 
 			var summary = session.Describe();
 			var recorded = summary.Recent.FirstOrDefault(activity => activity.Operation == ToolNames.LiveAppSetBreakpoint);
-			Assert.NotNull(recorded);
-			Assert.Equal(ActivityOutcome.Succeeded, recorded!.Outcome);
+			recorded.ShouldNotBeNull();
+			recorded!.Outcome.ShouldBe(ActivityOutcome.Succeeded);
 
 			// The argument that says which call this was, rather than only which tool.
-			Assert.Contains("Program.Beat", recorded.Target);
+			recorded.Target!.ShouldContain("Program.Beat", Case.Sensitive);
 
 			var polls = summary.Recent.Concat(summary.Running).Where(activity => activity.Operation == ToolNames.LiveAppInfo);
-			Assert.Empty(polls);
+			polls.ShouldBeEmpty();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -124,36 +123,36 @@ public sealed class LiveAppInspectionTests
 
 			var breakpoint = await session.SetBreakpointAsync(
 				"DebugProbeTarget.Program.Inspect", autoContinueSeconds: null, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
 
 			var stop = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(stop);
-			Assert.NotNull(stop!.Variables);
+			stop.ShouldNotBeNull();
+			stop!.Variables.ShouldNotBeNull();
 
 			// The argument is named from metadata, as it always was.
 			var argument = stop.Variables!.FirstOrDefault(variable => variable.Name == "state");
-			Assert.NotNull(argument);
-			Assert.Equal("argument", argument!.Kind);
+			argument.ShouldNotBeNull();
+			argument!.Kind.ShouldBe("argument");
 
 			// The local is named from the PDB. Slot names are the fallback, so one appearing here is
 			// the reader having found no symbols rather than a different name.
 			var local = stop.Variables!.FirstOrDefault(variable => variable.Kind == "local");
-			Assert.NotNull(local);
-			Assert.Equal("innerCount", local!.Name);
-			Assert.Equal("int", local.TypeName);
+			local.ShouldNotBeNull();
+			local!.Name.ShouldBe("innerCount");
+			local.TypeName.ShouldBe("int");
 
 			// And the name resolves back, which is what makes it worth reporting.
 			var evaluated = await session.EvaluateAsync("innerCount", cancellationToken);
-			Assert.True(evaluated.Error is null, $"innerCount should evaluate; error: {evaluated.Error}");
-			Assert.Equal("int", evaluated.TypeName);
+			(evaluated.Error is null).ShouldBeTrue($"innerCount should evaluate; error: {evaluated.Error}");
+			evaluated.TypeName.ShouldBe("int");
 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
-			Assert.True(await session.ContinueAsync(cancellationToken));
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target is still running after being read");
+			(await session.ContinueAsync(cancellationToken)).ShouldBeTrue();
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target is still running after being read");
 		}
 		finally
 		{
@@ -185,34 +184,34 @@ public sealed class LiveAppInspectionTests
 
 			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
 
-			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);
-			Assert.NotNull(frames.Stop);
-			Assert.Equal(stop.Hit.Sequence, frames.Stop!.EventSequence);
-			Assert.True(frames.Frames.Count >= 2, $"expected Inspect and its caller, got {frames.Frames.Count} frame(s)");
+			frames.Execution.ShouldBe(LiveExecutionState.StoppedAtBreakpoint);
+			frames.Stop.ShouldNotBeNull();
+			frames.Stop!.EventSequence.ShouldBe(stop.Hit.Sequence);
+			(frames.Frames.Count >= 2).ShouldBeTrue($"expected Inspect and its caller, got {frames.Frames.Count} frame(s)");
 
 			var inspect = frames.Frames[0];
-			Assert.Equal(0, inspect.Index);
-			Assert.True(inspect.IsActive, "frame 0 of the held thread is the active frame");
-			Assert.Equal("DebugProbeTarget.Program.Inspect", inspect.MethodFullName);
-			Assert.Equal("DebugProbeTarget.dll", inspect.Module);
-			Assert.Equal(LiveSymbolState.Resolved, inspect.Symbols);
-			Assert.NotNull(inspect.Source);
-			Assert.EndsWith("Program.cs", inspect.Source!.File);
-			Assert.True(inspect.Source.Line > 0, "a resolved frame has a real line");
+			inspect.Index.ShouldBe(0);
+			inspect.IsActive.ShouldBeTrue("frame 0 of the held thread is the active frame");
+			inspect.MethodFullName.ShouldBe("DebugProbeTarget.Program.Inspect");
+			inspect.Module.ShouldBe("DebugProbeTarget.dll");
+			inspect.Symbols.ShouldBe(LiveSymbolState.Resolved);
+			inspect.Source.ShouldNotBeNull();
+			inspect.Source!.File.ShouldEndWith("Program.cs", Case.Sensitive);
+			(inspect.Source.Line > 0).ShouldBeTrue("a resolved frame has a real line");
 
 			// The caller, which is what makes a stack worth reading rather than one frame.
-			Assert.Equal("DebugProbeTarget.Program.Main", frames.Frames[1].MethodFullName);
-			Assert.False(frames.Frames[1].IsActive);
+			frames.Frames[1].MethodFullName.ShouldBe("DebugProbeTarget.Program.Main");
+			frames.Frames[1].IsActive.ShouldBeFalse();
 
 			// Paging is over the same walk, so an offset picks up where the first page's index left off.
 			var second = await session.ReadFramesAsync(null, 1, 1, cancellationToken);
-			Assert.Equal(1, second.Offset);
-			Assert.Equal(frames.Total, second.Total);
-			Assert.Equal("DebugProbeTarget.Program.Main", Assert.Single(second.Frames).MethodFullName);
+			second.Offset.ShouldBe(1);
+			second.Total.ShouldBe(frames.Total);
+			second.Frames.ShouldHaveSingleItem().MethodFullName.ShouldBe("DebugProbeTarget.Program.Main");
 
 			await session.RemoveBreakpointAsync(stop.BreakpointId, cancellationToken);
 			await session.ResumeAsync(cancellationToken);
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -238,52 +237,52 @@ public sealed class LiveAppInspectionTests
 			var stop = await StopOnInspectAsync(session, cancellationToken);
 
 			var frame = await session.ReadFrameVariablesAsync(0, null, cancellationToken);
-			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frame.Execution);
-			Assert.Equal("DebugProbeTarget.Program.Inspect", frame.MethodFullName);
-			Assert.Equal(LiveSymbolState.Resolved, frame.Symbols);
+			frame.Execution.ShouldBe(LiveExecutionState.StoppedAtBreakpoint);
+			frame.MethodFullName.ShouldBe("DebugProbeTarget.Program.Inspect");
+			frame.Symbols.ShouldBe(LiveSymbolState.Resolved);
 
 			var state = frame.Variables.First(variable => variable.Name == "state");
-			Assert.Equal("arg:0", state.Path);
-			Assert.True(state.HasChildren, "an object argument is expandable");
+			state.Path.ShouldBe("arg:0");
+			state.HasChildren.ShouldBeTrue("an object argument is expandable");
 
 			// A primitive local is not, which is what stops a tree offering an expander onto nothing.
 			var innerCount = frame.Variables.First(variable => variable.Name == "innerCount");
-			Assert.Equal("local:0", innerCount.Path);
-			Assert.False(innerCount.HasChildren);
+			innerCount.Path.ShouldBe("local:0");
+			innerCount.HasChildren.ShouldBeFalse();
 
 			// The object's own fields, read from memory. No property getter runs, so what is listed
 			// is what the object holds.
 			var fields = await session.ExpandValueAsync(state.Path, 0, null, cancellationToken);
-			Assert.Equal("DebugProbeTarget.ProbeState", fields.TypeName);
-			Assert.Contains(fields.Children, child => child.Name == "Count" && child.Kind == "field");
-			Assert.Contains(fields.Children, child => child.Name == "Label" && child.Value == "\"beat\"");
+			fields.TypeName.ShouldBe("DebugProbeTarget.ProbeState");
+			fields.Children.ShouldContain(child => child.Name == "Count" && child.Kind == "field");
+			fields.Children.ShouldContain(child => child.Name == "Label" && child.Value == "\"beat\"");
 
 			var marks = fields.Children.First(child => child.Name == "Marks");
-			Assert.Equal("arg:0.Marks", marks.Path);
-			Assert.True(marks.HasChildren, "a non-empty array is expandable");
+			marks.Path.ShouldBe("arg:0.Marks");
+			marks.HasChildren.ShouldBeTrue("a non-empty array is expandable");
 
 			// An array expands to elements, each addressed by index.
 			var elements = await session.ExpandValueAsync(marks.Path, 0, null, cancellationToken);
-			Assert.Equal(3, elements.Total);
-			Assert.False(elements.Truncated);
-			Assert.Equal(["[0]", "[1]", "[2]"], elements.Children.Select(element => element.Name));
-			Assert.Equal("8", elements.Children[1].Value);
-			Assert.Equal("arg:0.Marks[1]", elements.Children[1].Path);
+			elements.Total.ShouldBe(3);
+			elements.Truncated.ShouldBeFalse();
+			elements.Children.Select(element => element.Name).ShouldBe(["[0]", "[1]", "[2]"]);
+			elements.Children[1].Value.ShouldBe("8");
+			elements.Children[1].Path.ShouldBe("arg:0.Marks[1]");
 
 			// A path composed rather than echoed reaches the same value, which is the round trip the
 			// grammar exists for.
 			var nested = await session.ExpandValueAsync("arg:0.Inner", 0, null, cancellationToken);
-			Assert.Contains(nested.Children, child => child.Name == "Count" && child.Value == "-1");
+			nested.Children.ShouldContain(child => child.Name == "Count" && child.Value == "-1");
 
 			// And a step that resolves nothing names itself rather than reporting an empty value. The
 			// type is whatever the boundary converted it to; what matters is that the sentence survived.
-			var refusal = await Assert.ThrowsAnyAsync<Exception>(
+			var refusal = await Should.ThrowAsync<Exception>(
 				async () => await session.ExpandValueAsync("arg:0.Nope", 0, null, cancellationToken));
-			Assert.Contains("Nope", refusal.Message);
+			refusal.Message.ShouldContain("Nope", Case.Sensitive);
 
 			await session.RemoveBreakpointAsync(stop.BreakpointId, cancellationToken);
 			await session.ResumeAsync(cancellationToken);
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -314,40 +313,40 @@ public sealed class LiveAppInspectionTests
 
 			var breakpoint = await session.SetBreakpointAsync(
 				"DebugProbeTarget.Program.Inspect", autoContinueSeconds: 8, condition: null, cancellationToken);
-			Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
 
 			var hit = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(hit);
+			hit.ShouldNotBeNull();
 
 			var held = await session.HoldAsync(20, release: false, cancellationToken);
-			Assert.True(held.Applied);
-			Assert.NotNull(held.Stop);
-			Assert.Equal(LiveStopResume.HeldByOperator, held.Stop!.Resume);
+			held.Applied.ShouldBeTrue();
+			held.Stop.ShouldNotBeNull();
+			held.Stop!.Resume.ShouldBe(LiveStopResume.HeldByOperator);
 
 			// Well past the interval the breakpoint asked for, and still held.
 			await Task.Delay(TimeSpan.FromSeconds(11), cancellationToken);
 
 			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
-			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);
-			Assert.Equal(LiveStopResume.HeldByOperator, frames.Stop!.Resume);
+			frames.Execution.ShouldBe(LiveExecutionState.StoppedAtBreakpoint);
+			frames.Stop!.Resume.ShouldBe(LiveStopResume.HeldByOperator);
 
 			// Releasing gives the stop back to the timer, which then fires within its own interval.
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
 			var released = await session.HoldAsync(null, release: true, cancellationToken);
-			Assert.True(released.Applied);
+			released.Applied.ShouldBeTrue();
 
 			var resumed = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.SessionNotice && entry.Message.Contains("Auto-continued"),
 				cancellationToken,
 				startCursor: hit!.Sequence);
-			Assert.NotNull(resumed);
+			resumed.ShouldNotBeNull();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
-			Assert.False(child.HasExited, "the target is still running after being held and released");
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target is still running after being held and released");
 		}
 		finally
 		{
@@ -373,23 +372,23 @@ public sealed class LiveAppInspectionTests
 			var stop = await StopOnInspectAsync(session, cancellationToken);
 
 			var held = await session.HoldAsync(60, release: false, cancellationToken);
-			Assert.True(held.Applied);
+			held.Applied.ShouldBeTrue();
 
 			await session.RemoveBreakpointAsync(stop.BreakpointId, cancellationToken);
 			var resumed = await session.ResumeAsync(cancellationToken);
 
-			Assert.True(resumed.Continued);
-			Assert.NotNull(resumed.Detail);
-			Assert.Contains("hold", resumed.Detail!, StringComparison.OrdinalIgnoreCase);
+			resumed.Continued.ShouldBeTrue();
+			resumed.Detail.ShouldNotBeNull();
+			resumed.Detail!.ShouldContain("hold", Case.Insensitive);
 
 			// And the target really is running again, not merely reported as such.
 			var frames = await session.ReadFramesAsync(null, 0, null, cancellationToken);
-			Assert.Equal(LiveExecutionState.Running, frames.Execution);
-			Assert.Null(frames.Stop);
-			Assert.Empty(frames.Frames);
-			Assert.NotNull(frames.Detail);
+			frames.Execution.ShouldBe(LiveExecutionState.Running);
+			frames.Stop.ShouldBeNull();
+			frames.Frames.ShouldBeEmpty();
+			frames.Detail.ShouldNotBeNull();
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -414,28 +413,28 @@ public sealed class LiveAppInspectionTests
 			var session = await manager.StartAsync(Attach(child.Id), cancellationToken);
 
 			var running = await session.ReadThreadsAsync(cancellationToken);
-			Assert.Equal(LiveExecutionState.Running, running.Execution);
-			Assert.Empty(running.Threads);
-			Assert.NotNull(running.Detail);
+			running.Execution.ShouldBe(LiveExecutionState.Running);
+			running.Threads.ShouldBeEmpty();
+			running.Detail.ShouldNotBeNull();
 
 			var stop = await StopOnInspectAsync(session, cancellationToken);
 
 			var stopped = await session.ReadThreadsAsync(cancellationToken);
-			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, stopped.Execution);
-			Assert.NotEmpty(stopped.Threads);
+			stopped.Execution.ShouldBe(LiveExecutionState.StoppedAtBreakpoint);
+			stopped.Threads.ShouldNotBeEmpty();
 
 			// The held thread is first, and it is the one the stop names.
 			var first = stopped.Threads[0];
-			Assert.True(first.IsStopped, "the held thread leads the list");
-			Assert.Equal(stopped.Stop!.ThreadId, first.Id);
-			Assert.Equal("DebugProbeTarget.Program.Inspect", first.TopFrame);
+			first.IsStopped.ShouldBeTrue("the held thread leads the list");
+			((int?)first.Id).ShouldBe(stopped.Stop!.ThreadId);
+			first.TopFrame.ShouldBe("DebugProbeTarget.Program.Inspect");
 
 			// Only one thread is the held one, whatever else the runtime is running.
-			Assert.Single(stopped.Threads.Where(thread => thread.IsStopped));
+			stopped.Threads.Where(thread => thread.IsStopped).ShouldHaveSingleItem();
 
 			await session.RemoveBreakpointAsync(stop.BreakpointId, cancellationToken);
 			await session.ResumeAsync(cancellationToken);
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -454,13 +453,13 @@ public sealed class LiveAppInspectionTests
 	{
 		var breakpoint = await session.SetBreakpointAsync(
 			"DebugProbeTarget.Program.Inspect", autoContinueSeconds: null, condition: null, cancellationToken);
-		Assert.True(breakpoint.Bound, $"breakpoint should bind; detail: {breakpoint.Detail}");
+		breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
 
 		var hit = await WaitForEventAsync(
 			session,
 			entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 			cancellationToken);
-		Assert.NotNull(hit);
+		hit.ShouldNotBeNull();
 
 		return (hit!, breakpoint.Id);
 	}
@@ -487,17 +486,17 @@ public sealed class LiveAppInspectionTests
 			var found = await session.SearchMethodsAsync("Inspect", 30, cancellationToken);
 
 			var match = found.Matches.FirstOrDefault(entry => entry.DisplayName == "Program.Inspect");
-			Assert.True(match is not null, $"Inspect should be found; detail: {found.Detail}");
-			Assert.Equal("DebugProbeTarget!DebugProbeTarget.Program.Inspect", match!.Location);
-			Assert.Equal("DebugProbeTarget", match.Module);
-			Assert.Equal("(state)", match.Signature);
-			Assert.True(match.HasSymbols, "the probe is built here, so its symbols are here");
+			(match is not null).ShouldBeTrue($"Inspect should be found; detail: {found.Detail}");
+			match!.Location.ShouldBe("DebugProbeTarget!DebugProbeTarget.Program.Inspect");
+			match.Module.ShouldBe("DebugProbeTarget");
+			match.Signature.ShouldBe("(state)");
+			match.HasSymbols.ShouldBeTrue("the probe is built here, so its symbols are here");
 
 			// More than the probe's own assembly was read, which is what makes this a search over the
 			// target rather than over one file somebody already knew the name of.
-			Assert.True(found.ModulesSearched > 1, $"{found.ModulesSearched} modules were searched");
+			(found.ModulesSearched > 1).ShouldBeTrue($"{found.ModulesSearched} modules were searched");
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -529,9 +528,9 @@ public sealed class LiveAppInspectionTests
 			var source = await session.ReadMethodSourceAsync(
 				"DebugProbeTarget!DebugProbeTarget.Program.Inspect", cancellationToken);
 
-			Assert.Equal(LiveSymbolState.Resolved, source.Symbols);
-			Assert.EndsWith("Program.cs", source.File);
-			Assert.True(source.Lines.Count > 0, $"the probe's source is on this machine; detail: {source.Detail}");
+			source.Symbols.ShouldBe(LiveSymbolState.Resolved);
+			source.File.ShouldEndWith("Program.cs", Case.Sensitive);
+			(source.Lines.Count > 0).ShouldBeTrue($"the probe's source is on this machine; detail: {source.Detail}");
 
 			// The second statement of the body, which is not where the method starts -- so a
 			// breakpoint landing there cannot be the old method-entry behaviour wearing a new name.
@@ -540,33 +539,33 @@ public sealed class LiveAppInspectionTests
 				.First(entry => entry.Text.Contains("state.Count + innerCount", StringComparison.Ordinal));
 
 			var position = source.Positions.First(entry => entry.Line == wanted.Line);
-			Assert.True(position.IlOffset > 0, $"IL_{position.IlOffset:x4} is past the method's first instruction");
-			Assert.Equal("Program.Inspect", position.DisplayName);
+			(position.IlOffset > 0).ShouldBeTrue($"IL_{position.IlOffset:x4} is past the method's first instruction");
+			position.DisplayName.ShouldBe("Program.Inspect");
 
 			var breakpoint = await session.SetBreakpointAsync(
 				position.Location, autoContinueSeconds: null, condition: null, cancellationToken);
 
-			Assert.True(breakpoint.Bound, $"the picked position should bind; detail: {breakpoint.Detail}");
-			Assert.Equal(position.IlOffset, breakpoint.IlOffset);
-			Assert.NotNull(breakpoint.Source);
-			Assert.Equal(wanted.Line, breakpoint.Source!.Line);
+			breakpoint.Bound.ShouldBeTrue($"the picked position should bind; detail: {breakpoint.Detail}");
+			breakpoint.IlOffset.ShouldBe(position.IlOffset);
+			breakpoint.Source.ShouldNotBeNull();
+			breakpoint.Source!.Line.ShouldBe(wanted.Line);
 
 			var hit = await WaitForEventAsync(
 				session,
 				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
 				cancellationToken);
-			Assert.NotNull(hit);
+			hit.ShouldNotBeNull();
 
 			var frames = await session.ReadFramesAsync(null, 0, 2, cancellationToken);
-			Assert.Equal(LiveExecutionState.StoppedAtBreakpoint, frames.Execution);
-			Assert.NotEmpty(frames.Frames);
-			Assert.EndsWith("Program.Inspect", frames.Frames[0].MethodFullName);
-			Assert.NotNull(frames.Frames[0].Source);
-			Assert.Equal(wanted.Line, frames.Frames[0].Source!.Line);
+			frames.Execution.ShouldBe(LiveExecutionState.StoppedAtBreakpoint);
+			frames.Frames.ShouldNotBeEmpty();
+			frames.Frames[0].MethodFullName.ShouldEndWith("Program.Inspect", Case.Sensitive);
+			frames.Frames[0].Source.ShouldNotBeNull();
+			frames.Frames[0].Source!.Line.ShouldBe(wanted.Line);
 
 			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
-			Assert.True(await session.ContinueAsync(cancellationToken));
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await session.ContinueAsync(cancellationToken)).ShouldBeTrue();
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{
@@ -592,14 +591,14 @@ public sealed class LiveAppInspectionTests
 
 			var missing = await session.ReadMethodSourceAsync(
 				"DebugProbeTarget!DebugProbeTarget.Program.NotAMethod", cancellationToken);
-			Assert.Empty(missing.Lines);
-			Assert.Empty(missing.Positions);
-			Assert.Contains("declares no method", missing.Detail!);
+			missing.Lines.ShouldBeEmpty();
+			missing.Positions.ShouldBeEmpty();
+			missing.Detail!.ShouldContain("declares no method", Case.Sensitive);
 
 			var unloaded = await session.ReadMethodSourceAsync("Nowhere!Nowhere.Type.Method", cancellationToken);
-			Assert.Contains("No loaded module is named Nowhere", unloaded.Detail!);
+			unloaded.Detail!.ShouldContain("No loaded module is named Nowhere", Case.Sensitive);
 
-			Assert.True(await manager.CloseAsync(session.SessionId, cancellationToken));
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
 		finally
 		{

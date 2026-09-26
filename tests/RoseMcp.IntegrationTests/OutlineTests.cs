@@ -1,3 +1,5 @@
+using RoseMcp.TestSupport;
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -23,22 +25,24 @@ public sealed class OutlineTests
 			includeSignatures: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var type = Assert.Single(result.Types);
+		var type = result.Types.ShouldHaveSingleItem();
 
-		Assert.Equal("class", type.Kind);
-		Assert.Equal("Library", type.Namespace);
-		Assert.Equal("Says hello, at various lengths.", type.Summary);
+		type.Kind.ShouldBe("class");
+		type.Namespace.ShouldBe("Library");
+		type.Summary.ShouldBe("Says hello, at various lengths.");
 
 		// The compiler's signature, so an implementer can be written from this alone.
-		Assert.Contains(
-			type.Members,
+		type.Members.ShouldContain(
 			member => member.Signature == "string Library.Greeter.Greet(string name)");
 
-		Assert.Contains(type.Members, member => member.Name == "PrefixLength" && member.Kind == "Property");
-		Assert.Contains(type.Members, member => member.Name == "Shout" && member.Accessibility == "Private");
+		type.Members.ShouldContain(member => member.Name == "PrefixLength" && member.Kind == "Property");
+		type.Members.ShouldContain(member => member.Name == "Shout" && member.Accessibility == "Private");
 
 		// Each member says where it is, so the next call names a file without searching.
-		Assert.All(type.Members, member => Assert.NotNull(member.Location));
+		foreach (var member in type.Members)
+		{
+			member.Location.ShouldNotBeNull();
+		}
 	}
 
 	/// <summary>
@@ -63,15 +67,24 @@ public sealed class OutlineTests
 			includeSignatures: false,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var type = Assert.Single(result.Types);
+		var type = result.Types.ShouldHaveSingleItem();
 
 		// What is left is what a search through a large type needs: the names, and where they are.
-		Assert.Null(type.Summary);
-		Assert.All(type.Members, member => Assert.Null(member.Signature));
-		Assert.All(type.Members, member => Assert.Null(member.Summary));
-		Assert.Contains(type.Members, member => member.Name == "Greet");
-		Assert.All(type.Members, member => Assert.NotEmpty(member.Kind));
-		Assert.Contains(type.Members, member => member.Location is not null);
+		type.Summary.ShouldBeNull();
+		foreach (var member in type.Members)
+		{
+			member.Signature.ShouldBeNull();
+		}
+		foreach (var member in type.Members)
+		{
+			member.Summary.ShouldBeNull();
+		}
+		type.Members.ShouldContain(member => member.Name == "Greet");
+		foreach (var member in type.Members)
+		{
+			member.Kind.ShouldNotBeEmpty();
+		}
+		type.Members.Any(member => member.Location is not null).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -98,12 +111,11 @@ public sealed class OutlineTests
 
 		// PrefixLength rather than Greet: it is declared once, so the name identifies it whether or not
 		// the signature that would otherwise tell the overloads apart is in the answer.
-		var member = Assert.Single(
-			Assert.Single(result.Types).Members,
-			candidate => candidate.Name == "PrefixLength");
+		var member = result.Types.ShouldHaveSingleItem().Members.Where(
+			candidate => candidate.Name == "PrefixLength").ShouldHaveSingleItem();
 
-		Assert.Equal(signatures, member.Signature is not null);
-		Assert.Equal(documentation, member.Summary is not null);
+		(member.Signature is not null).ShouldBe(signatures);
+		(member.Summary is not null).ShouldBe(documentation);
 	}
 
 	/// <summary>
@@ -126,14 +138,14 @@ public sealed class OutlineTests
 			includeSignatures: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var type = Assert.Single(result.Types);
+		var type = result.Types.ShouldHaveSingleItem();
 
-		Assert.Equal("interface", type.Kind);
+		type.Kind.ShouldBe("interface");
 
-		var member = Assert.Single(type.Members);
+		var member = type.Members.ShouldHaveSingleItem();
 
-		Assert.True(member.IsAbstract);
-		Assert.Equal("double Library.IShape.Area()", member.Signature);
+		member.IsAbstract.ShouldBeTrue();
+		member.Signature.ShouldBe("double Library.IShape.Area()");
 	}
 
 	/// <summary>
@@ -156,8 +168,8 @@ public sealed class OutlineTests
 			includeSignatures: true,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(["Library.IShape", "Library.Colour", "Library.Empty"], result.Types.Select(type => type.Name));
-		Assert.Equal(["interface", "enum", "class"], result.Types.Select(type => type.Kind));
+		result.Types.Select(type => type.Name).ShouldBe(["Library.IShape", "Library.Colour", "Library.Empty"]);
+		result.Types.Select(type => type.Kind).ShouldBe(["interface", "enum", "class"]);
 	}
 
 	/// <summary>Naming both, or neither, is a choice the caller has to make rather than one to guess at.</summary>
@@ -172,7 +184,7 @@ public sealed class OutlineTests
 
 		var path = file is null ? null : fixture.Path("Members", "Library", file);
 
-		await Assert.ThrowsAsync<ArgumentException>(
+		await Should.ThrowAsync<ArgumentException>(
 			() => OutlineService.OutlineAsync(
 				snapshot,
 				type,
@@ -180,7 +192,7 @@ public sealed class OutlineTests
 				includeInherited: false,
 				includeDocumentation: true,
 				includeSignatures: true,
-				TestContext.Current!.Execution.CancellationToken));
+				TestContext.Current!.Execution.CancellationToken)).OfExactType();
 	}
 
 	/// <summary>
@@ -197,14 +209,14 @@ public sealed class OutlineTests
 
 		var result = ProjectGraphService.Describe(snapshot, project: null);
 
-		var core = Assert.Single(result.Projects, project => project.Name == "Core");
-		var app = Assert.Single(result.Projects, project => project.Name == "App");
+		var core = result.Projects.Where(project => project.Name == "Core").ShouldHaveSingleItem();
+		var app = result.Projects.Where(project => project.Name == "App").ShouldHaveSingleItem();
 
-		Assert.Equal(["App"], core.ReferencedBy);
-		Assert.Empty(core.References);
-		Assert.Equal(["Core"], app.References);
-		Assert.False(core.IsTestProject, "the library is not a test project");
-		Assert.True(core.DocumentCount > 0);
+		core.ReferencedBy.ShouldBe(["App"]);
+		core.References.ShouldBeEmpty();
+		app.References.ShouldBe(["Core"]);
+		core.IsTestProject.ShouldBeFalse("the library is not a test project");
+		(core.DocumentCount > 0).ShouldBeTrue();
 	}
 
 	[Test]
@@ -214,9 +226,9 @@ public sealed class OutlineTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var thrown = Assert.Throws<ArgumentException>(() => ProjectGraphService.Describe(snapshot, "Nowhere"));
+		var thrown = Should.Throw<ArgumentException>(() => ProjectGraphService.Describe(snapshot, "Nowhere")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("The solution has App, Core", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("The solution has App, Core", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -236,11 +248,11 @@ public sealed class OutlineTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var reference = Assert.Single(references.References);
+		var reference = references.References.ShouldHaveSingleItem();
 
-		Assert.Equal("Call", reference.ContainingMember);
-		Assert.Equal("Library", reference.Project);
-		Assert.False(reference.IsTestProject, "the reference is in the library rather than a test project");
+		reference.ContainingMember.ShouldBe("Call");
+		reference.Project.ShouldBe("Library");
+		reference.IsTestProject.ShouldBeFalse("the reference is in the library rather than a test project");
 	}
 
 	/// <summary>A type's own bases and interfaces, which were reported only for members.</summary>
@@ -256,6 +268,6 @@ public sealed class OutlineTests
 			new SymbolTarget { Symbol = "Shapes.Circle" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains(info.BaseDefinitions, super => super.Name == "IShape");
+		info.BaseDefinitions.ShouldContain(super => super.Name == "IShape");
 	}
 }

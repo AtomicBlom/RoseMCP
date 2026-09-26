@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.BrokerHarness;
 
@@ -40,19 +41,19 @@ public sealed class ReplacePatternTests
 			Rule("Assert.Contains($xs$, filter: $p$)", "$xs$.ShouldContain($p$)"),
 			Rule("Assert.Contains($item$, $xs$)", "$xs$.ShouldContain($item$)"));
 
-		Assert.False(result.Applied);
+		result.Applied.ShouldBeFalse();
 		// Rule 2 takes Equality's two plain calls and both calls in Skips. NoGlobal has no global alias
 		// for Assert, so no rule binds there without Xunit in usings, and its call is not counted at all.
-		Assert.Equal([1, 4, 1, 2, 1, 1, 2], result.Rules.Select(rule => rule.Matched));
-		Assert.Equal(1, result.Rules[3].Outranked);
-		Assert.Equal(12, result.SitesMatched);
+		result.Rules.Select(rule => rule.Matched).ShouldBe([1, 4, 1, 2, 1, 1, 2]);
+		result.Rules[3].Outranked.ShouldBe(1);
+		result.SitesMatched.ShouldBe(12);
 
 		// The precision Equal, the ignore-case Contains, DoesNotContain, Single and All: five calls into
 		// Assert, each named by the overload it calls so the gap in the catalog is listed, not guessed.
-		Assert.Equal(5, result.SitesUnmatched);
-		Assert.Contains(result.Unmatched, group => group.Method.Contains("Equal(double, double, int)", StringComparison.Ordinal));
-		Assert.Contains(result.Unmatched, group => group.Method.Contains(".Single", StringComparison.Ordinal));
-		Assert.Contains("Preview only; nothing was written to disk.", result.Notices);
+		result.SitesUnmatched.ShouldBe(5);
+		result.Unmatched.ShouldContain(group => group.Method.Contains("Equal(double, double, int)", StringComparison.Ordinal));
+		result.Unmatched.ShouldContain(group => group.Method.Contains(".Single", StringComparison.Ordinal));
+		result.Notices.ShouldContain("Preview only; nothing was written to disk.");
 	}
 
 	/// <summary>
@@ -72,33 +73,33 @@ public sealed class ReplacePatternTests
 			FilePaths = [fixture.Path("Assertions", "Tests")],
 		});
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(0, result.TotalErrorCount);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
 
 		var equality = await ReadAsync(fixture, "Tests", "Equality.cs");
 
-		Assert.Contains("count.ShouldBe(1);", equality, StringComparison.Ordinal);
-		Assert.Contains("count.ShouldBe(2);", equality, StringComparison.Ordinal);
-		Assert.Contains("text.ShouldBe(\"a\", StringCompareShould.IgnoreCase);", equality, StringComparison.Ordinal);
-		Assert.Contains("Assert.Equal(1.5, ratio, 3);", equality, StringComparison.Ordinal);
-		Assert.Contains("(count > 0).ShouldBeTrue();", equality, StringComparison.Ordinal);
-		Assert.Contains("(count > 1 && count < 5).ShouldBeFalse();", equality, StringComparison.Ordinal);
+		equality.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
+		equality.ShouldContain("count.ShouldBe(2);", Case.Sensitive);
+		equality.ShouldContain("text.ShouldBe(\"a\", StringCompareShould.IgnoreCase);", Case.Sensitive);
+		equality.ShouldContain("Assert.Equal(1.5, ratio, 3);", Case.Sensitive);
+		equality.ShouldContain("(count > 0).ShouldBeTrue();", Case.Sensitive);
+		equality.ShouldContain("(count > 1 && count < 5).ShouldBeFalse();", Case.Sensitive);
 
 		var strings = await ReadAsync(fixture, "Tests", "Strings.cs");
 
-		Assert.Contains("text.ShouldContain(\"a\", Case.Sensitive);", strings, StringComparison.Ordinal);
-		Assert.Contains("text.ShouldContain(\"b\", Case.Insensitive);", strings, StringComparison.Ordinal);
-		Assert.Contains("text.ShouldContain(\"c\", Case.Sensitive);", strings, StringComparison.Ordinal);
-		Assert.Contains("text.ShouldNotContain('\\r');", strings, StringComparison.Ordinal);
+		strings.ShouldContain("text.ShouldContain(\"a\", Case.Sensitive);", Case.Sensitive);
+		strings.ShouldContain("text.ShouldContain(\"b\", Case.Insensitive);", Case.Sensitive);
+		strings.ShouldContain("text.ShouldContain(\"c\", Case.Sensitive);", Case.Sensitive);
+		strings.ShouldContain("text.ShouldNotContain('\\r');", Case.Sensitive);
 
 		var collections = await ReadAsync(fixture, "Tests", "Collections.cs");
 
-		Assert.Contains("items.ShouldContain(3);", collections, StringComparison.Ordinal);
-		Assert.Contains("items.ShouldContain(item => item > 2);", collections, StringComparison.Ordinal);
-		Assert.Contains("var only = items.ShouldHaveSingleItem();", collections, StringComparison.Ordinal);
-		Assert.Contains("foreach (var item in items) { (item > 0).ShouldBeTrue(); }", collections, StringComparison.Ordinal);
+		collections.ShouldContain("items.ShouldContain(3);", Case.Sensitive);
+		collections.ShouldContain("items.ShouldContain(item => item > 2);", Case.Sensitive);
+		collections.ShouldContain("var only = items.ShouldHaveSingleItem();", Case.Sensitive);
+		collections.ShouldContain("foreach (var item in items) { (item > 0).ShouldBeTrue(); }", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -118,14 +119,14 @@ public sealed class ReplacePatternTests
 			FilePaths = [fixture.Path("Assertions", "Tests", "Skips.cs")],
 		});
 
-		var skipped = Assert.Single(result.Skipped);
+		var skipped = result.Skipped.ShouldHaveSingleItem();
 		var text = await ReadAsync(fixture, "Tests", "Skips.cs");
 
-		Assert.Equal((1, 1), (result.SitesRewritten, result.SitesSkipped));
-		Assert.StartsWith("CS", skipped.DiagnosticId, StringComparison.Ordinal);
-		Assert.Contains("\t\tAssert.Equal(1L, count);\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("\t\tcount.ShouldBe(2);\r\n", text, StringComparison.Ordinal);
-		Assert.Equal(0, result.TotalErrorCount);
+		((result.SitesRewritten, result.SitesSkipped)).ShouldBe((1, 1));
+		skipped.DiagnosticId.ShouldStartWith("CS", Case.Sensitive);
+		text.ShouldContain("\t\tAssert.Equal(1L, count);\r\n", Case.Sensitive);
+		text.ShouldContain("\t\tcount.ShouldBe(2);\r\n", Case.Sensitive);
+		result.TotalErrorCount.ShouldBe(0);
 	}
 
 	/// <summary>A namespace a replacement needs is imported where the file keeps its imports, and only there.</summary>
@@ -146,9 +147,9 @@ public sealed class ReplacePatternTests
 
 		var text = await ReadAsync(fixture, "NoGlobal", "Imports.cs");
 
-		Assert.Equal(0, result.TotalErrorCount);
-		Assert.StartsWith("using Shouldly;\r\nusing Xunit;\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("count.ShouldBe(1);", text, StringComparison.Ordinal);
+		result.TotalErrorCount.ShouldBe(0);
+		text.ShouldStartWith("using Shouldly;\r\nusing Xunit;\r\n", Case.Sensitive);
+		text.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
 	}
 
 	/// <summary>A preview builds and checks everything and writes nothing.</summary>
@@ -161,9 +162,9 @@ public sealed class ReplacePatternTests
 
 		var result = await PreviewAsync(session, [fixture.Path("Assertions", "Tests", "Equality.cs")], Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
 
-		Assert.False(result.Applied);
-		Assert.Contains("count.ShouldBe(1);", result.Diff, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Tests", "Equality.cs"));
+		result.Applied.ShouldBeFalse();
+		result.Diff.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
+		(await ReadAsync(fixture, "Tests", "Equality.cs")).ShouldBe(before);
 	}
 
 	/// <summary>A catalog for the fixture's shapes, specific before general.</summary>
@@ -194,10 +195,10 @@ public sealed class ReplacePatternTests
 		using var fixture = FixtureSolution.Copy("Assertions", "Assertions.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(() => PreviewAsync(session, Rule("Nowhere.Check($a$)", "$a$")));
+		var error = await Should.ThrowAsync<ArgumentException>(() => PreviewAsync(session, Rule("Nowhere.Check($a$)", "$a$"))).OfExactType();
 
-		Assert.StartsWith("No rule binds in any project in scope", error.Message, StringComparison.Ordinal);
-		Assert.Contains("Rule 1's find does not bind at `Nowhere.Check`", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("No rule binds in any project in scope", Case.Sensitive);
+		error.Message.ShouldContain("Rule 1's find does not bind at `Nowhere.Check`", Case.Sensitive);
 	}
 
 	/// <summary>A scope that names no file is refused, since a rewrite of nothing would read as one that found nothing to do.</summary>
@@ -207,10 +208,10 @@ public sealed class ReplacePatternTests
 		using var fixture = FixtureSolution.Copy("Assertions", "Assertions.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
-			() => PreviewAsync(session, [fixture.Path("Assertions", "Nowhere")], Rule("Assert.True($c$)", "$c$.ShouldBeTrue()")));
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => PreviewAsync(session, [fixture.Path("Assertions", "Nowhere")], Rule("Assert.True($c$)", "$c$.ShouldBeTrue()"))).OfExactType();
 
-		Assert.StartsWith("No C# file in this solution is at or under", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("No C# file in this solution is at or under", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -231,8 +232,8 @@ public sealed class ReplacePatternTests
 			workspace: fixture.SolutionPath,
 			cancellationToken: TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(3, result.Rules[0].Matched);
-		Assert.Equal(fixture.SolutionPath, result.Workspace, ignoreCase: true);
+		result.Rules[0].Matched.ShouldBe(3);
+		result.Workspace.ShouldBe(fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>A rule as the tool takes it.</summary>

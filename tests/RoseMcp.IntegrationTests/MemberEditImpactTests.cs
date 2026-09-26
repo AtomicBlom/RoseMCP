@@ -32,21 +32,21 @@ public sealed class MemberEditImpactTests
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name) => $\"{_prefix}, {name}.\";");
 
-		Assert.True(good.Verified);
-		Assert.Empty(good.IntroducedDiagnostics);
-		Assert.Equal(0, good.TotalErrorCount);
-		Assert.Contains("Library", good.ProjectsChecked);
+		good.Verified.ShouldBeTrue();
+		good.IntroducedDiagnostics.ShouldBeEmpty();
+		good.TotalErrorCount.ShouldBe(0);
+		good.ProjectsChecked.ShouldContain("Library");
 
 		var bad = await ReplaceAsync(
 			session,
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name) => _prefix.Missing(name);");
 
-		var introduced = Assert.Single(bad.IntroducedDiagnostics);
+		var introduced = bad.IntroducedDiagnostics.ShouldHaveSingleItem();
 
-		Assert.Equal("CS1061", introduced.Id);
-		Assert.EndsWith("Greeter.cs", introduced.FilePath, StringComparison.OrdinalIgnoreCase);
-		Assert.Equal(1, bad.TotalErrorCount);
+		introduced.Id.ShouldBe("CS1061");
+		introduced.FilePath.ShouldEndWith("Greeter.cs", Case.Insensitive);
+		bad.TotalErrorCount.ShouldBe(1);
 	}
 
 	/// <summary>
@@ -65,17 +65,16 @@ public sealed class MemberEditImpactTests
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name, bool loud) => loud ? name.ToUpperInvariant() : name;");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
-		var introduced = Assert.Single(result.IntroducedDiagnostics);
+		var introduced = result.IntroducedDiagnostics.ShouldHaveSingleItem();
 
-		Assert.Equal("CS1501", introduced.Id);
-		Assert.EndsWith("Caller.cs", introduced.FilePath, StringComparison.OrdinalIgnoreCase);
+		introduced.Id.ShouldBe("CS1501");
+		introduced.FilePath.ShouldEndWith("Caller.cs", Case.Insensitive);
 
 		// And the answer says how far it looked, since a project that only references this one was
 		// not compiled and could be broken too.
-		Assert.Contains(
-			result.Notices,
+		result.Notices.ShouldContain(
 			notice => notice.Contains("scope=solution", StringComparison.Ordinal));
 	}
 
@@ -95,13 +94,13 @@ public sealed class MemberEditImpactTests
 			Apply = false,
 		});
 
-		Assert.False(result.Applied, "a preview writes nothing");
-		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
-		Assert.Contains("Preview only", string.Join(" ", result.Notices), StringComparison.Ordinal);
+		result.Applied.ShouldBeFalse("a preview writes nothing");
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
+		string.Join(" ", result.Notices).ShouldContain("Preview only", Case.Sensitive);
 
 		// The diff and the breakage are the point of asking: both describe a change that did not happen.
-		Assert.Contains("bool loud", result.Diff, StringComparison.Ordinal);
-		Assert.Contains(result.IntroducedDiagnostics, diagnostic => diagnostic.Id == "CS1501");
+		result.Diff.ShouldContain("bool loud", Case.Sensitive);
+		result.IntroducedDiagnostics.ShouldContain(diagnostic => diagnostic.Id == "CS1501");
 	}
 
 	/// <summary>
@@ -122,10 +121,10 @@ public sealed class MemberEditImpactTests
 			Verify = false,
 		});
 
-		Assert.True(result.Applied);
-		Assert.False(result.Verified, "verify=false compiles nothing, and says so");
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Contains("Nothing was compiled", string.Join(" ", result.Notices), StringComparison.Ordinal);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeFalse("verify=false compiles nothing, and says so");
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		string.Join(" ", result.Notices).ShouldContain("Nothing was compiled", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -146,18 +145,17 @@ public sealed class MemberEditImpactTests
 			"Library.Prose",
 			"public static string Missing() => Absent.Name;"));
 
-		Assert.NotEmpty(broken.IntroducedDiagnostics);
+		broken.IntroducedDiagnostics.ShouldNotBeEmpty();
 
 		var result = await ReplaceAsync(
 			session,
 			"Library.Prose.Label",
 			"public static string Label()\n{\n\treturn \"count\";\n}");
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
-		Assert.Contains(
-			result.Notices,
+		result.Notices.ShouldContain(
 			notice => notice.Contains("were there before this edit", StringComparison.Ordinal)
 				&& notice.Contains("includeAnalyzers=true", StringComparison.Ordinal));
 	}
@@ -181,11 +179,10 @@ public sealed class MemberEditImpactTests
 			Code = "public static int Multiply(int left, int right, int scale) => left * right * scale;",
 		});
 
-		Assert.Contains("App", result.ProjectsChecked);
-		Assert.Contains(
-			result.IntroducedDiagnostics,
+		result.ProjectsChecked.ShouldContain("App");
+		result.IntroducedDiagnostics.ShouldContain(
 			entry => entry.FilePath!.EndsWith("Program.cs", StringComparison.OrdinalIgnoreCase));
-		Assert.Empty(result.DependentsNotChecked);
+		result.DependentsNotChecked.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -231,12 +228,12 @@ public sealed class MemberEditImpactTests
 			"Library.Imports.Formatted(double)",
 			"public static string Formatted(double value) => value.ToString();");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
-		Assert.Contains(result.IntroducedDiagnostics, entry => entry.Id == "IDE0005");
+		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "IDE0005");
 
 		// And the result says where they ran, so a caller can tell a clean answer from an unasked one.
-		Assert.Contains(result.Notices, notice => notice.Contains("Analyzers ran in Library", StringComparison.Ordinal));
+		result.Notices.ShouldContain(notice => notice.Contains("Analyzers ran in Library", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -258,9 +255,9 @@ public sealed class MemberEditImpactTests
 			VerifyScope = VerifyScope.File,
 		});
 
-		Assert.DoesNotContain("App", result.ProjectsChecked);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Contains("App", result.DependentsNotChecked);
+		result.ProjectsChecked.ShouldNotContain("App");
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.DependentsNotChecked.ShouldContain("App");
 	}
 
 	/// <summary>
@@ -281,8 +278,8 @@ public sealed class MemberEditImpactTests
 			Code = "private static int Twice(int value, int times) => value * times;",
 		});
 
-		Assert.Equal(["Core"], result.ProjectsChecked);
-		Assert.Empty(result.DependentsNotChecked);
+		result.ProjectsChecked.ShouldBe(["Core"]);
+		result.DependentsNotChecked.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -302,7 +299,7 @@ public sealed class MemberEditImpactTests
 			Code = "=> right * left;",
 		});
 
-		Assert.Equal(["Core"], result.ProjectsChecked);
+		result.ProjectsChecked.ShouldBe(["Core"]);
 	}
 
 	/// <summary>
@@ -321,11 +318,10 @@ public sealed class MemberEditImpactTests
 			Symbol = "Core.Calculator.Multiply",
 		});
 
-		Assert.True(result.Applied);
-		Assert.Contains("App", result.ProjectsChecked);
-		Assert.Contains(
-			result.IntroducedDiagnostics,
+		result.Applied.ShouldBeTrue();
+		result.ProjectsChecked.ShouldContain("App");
+		result.IntroducedDiagnostics.ShouldContain(
 			entry => entry.FilePath!.EndsWith("Program.cs", StringComparison.OrdinalIgnoreCase));
-		Assert.Empty(result.DependentsNotChecked);
+		result.DependentsNotChecked.ShouldBeEmpty();
 	}
 }

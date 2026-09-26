@@ -37,8 +37,7 @@ public sealed class ProbeAppCategoryTests
 	{
 		foreach (var type in TestClasses().Where(NeedsProbeApp))
 		{
-			Assert.True(
-				Categories(type).Contains(Excluded),
+			Categories(type).Contains(Excluded).ShouldBeTrue(
 				$"{type.Name} takes a probe app, so it needs [Category(\"{Excluded}\")]: without it CI "
 					+ "runs it on a runner that has no toolchain to serve it.");
 		}
@@ -53,8 +52,7 @@ public sealed class ProbeAppCategoryTests
 	{
 		foreach (var type in TestClasses().Where(type => !NeedsProbeApp(type)))
 		{
-			Assert.False(
-				Categories(type).Contains(Excluded),
+			Categories(type).Contains(Excluded).ShouldBeFalse(
 				$"{type.Name} drives a plain .NET process and is excluded from CI anyway. Take the "
 					+ $"[Category(\"{Excluded}\")] off, or give it the probe app it apparently needs.");
 		}
@@ -71,8 +69,7 @@ public sealed class ProbeAppCategoryTests
 		{
 			foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
 			{
-				Assert.False(
-					method.GetCustomAttributes<CategoryAttribute>().Any(category => category.Category == Excluded),
+				method.GetCustomAttributes<CategoryAttribute>().Any(category => category.Category == Excluded).ShouldBeFalse(
 					$"{type.Name}.{method.Name} is excluded from CI on a class that needs no probe app.");
 			}
 		}
@@ -89,8 +86,8 @@ public sealed class ProbeAppCategoryTests
 		var workflow = File.ReadAllText(
 			Path.Combine(RepositoryRoot(), ".github", "workflows", "ci.yml"));
 
-		Assert.Contains($"[Category!={Excluded}]", workflow, StringComparison.Ordinal);
-		Assert.DoesNotContain("[Category!=LiveApp]", workflow, StringComparison.Ordinal);
+		workflow.ShouldContain($"[Category!={Excluded}]", Case.Sensitive);
+		workflow.ShouldNotContain("[Category!=LiveApp]", Case.Sensitive);
 	}
 
 	/// <summary>Every test class in this assembly: anything declaring a <c>[Test]</c>.</summary>

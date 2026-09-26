@@ -1,4 +1,5 @@
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.MemberEdits;
 
@@ -31,14 +32,14 @@ public sealed class MemberEditTests
 
 		var before = await ReadAsync(fixture, "Greeter.cs");
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(() => ReplaceAsync(
+		var error = await Should.ThrowAsync<ArgumentException>(() => ReplaceAsync(
 			session,
 			"Library.Greeter.Greet(string)",
-			"public string Greet(string name)\n{\n\treturn name;\n"));
+			"public string Greet(string name)\n{\n\treturn name;\n")).OfExactType();
 
-		Assert.Contains("does not parse", error.Message, StringComparison.Ordinal);
-		Assert.Contains("line ", error.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+		error.Message.ShouldContain("does not parse", Case.Sensitive);
+		error.Message.ShouldContain("line ", Case.Sensitive);
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
 	/// <summary>
@@ -52,23 +53,23 @@ public sealed class MemberEditTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(() => ReplaceAsync(
+		var error = await Should.ThrowAsync<ArgumentException>(() => ReplaceAsync(
 			session,
 			"Library.Greeter.Greet",
-			"public string Greet(string name) => name;"));
+			"public string Greet(string name) => name;")).OfExactType();
 
-		Assert.Contains("matches 2 declarations", error.Message, StringComparison.Ordinal);
-		Assert.Contains("Greet(string name)", error.Message, StringComparison.Ordinal);
-		Assert.Contains("Greet(string title, string name)", error.Message, StringComparison.Ordinal);
-		Assert.Contains("parameter types", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("matches 2 declarations", Case.Sensitive);
+		error.Message.ShouldContain("Greet(string name)", Case.Sensitive);
+		error.Message.ShouldContain("Greet(string title, string name)", Case.Sensitive);
+		error.Message.ShouldContain("parameter types", Case.Sensitive);
 
 		var settled = await ReplaceAsync(
 			session,
 			"Library.Greeter.Greet(string, string)",
 			"public string Greet(string title, string name) => $\"{_prefix}, {title}. {name}.\";");
 
-		Assert.True(settled.Applied);
-		Assert.Equal("string Library.Greeter.Greet(string title, string name)", settled.Symbol);
+		settled.Applied.ShouldBeTrue();
+		settled.Symbol.ShouldBe("string Library.Greeter.Greet(string title, string name)");
 	}
 
 	/// <summary>
@@ -87,23 +88,23 @@ public sealed class MemberEditTests
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name) => name;");
 
-		Assert.Contains(kept.Notices, notice => notice.Contains("Kept the comment", StringComparison.Ordinal));
+		kept.Notices.ShouldContain(notice => notice.Contains("Kept the comment", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("\t/// <summary>The greeting for one name.</summary>\r\n\tpublic string Greet(string name) => name;", text, StringComparison.Ordinal);
+		text.ShouldContain("\t/// <summary>The greeting for one name.</summary>\r\n\tpublic string Greet(string name) => name;", Case.Sensitive);
 
 		var replaced = await ReplaceAsync(
 			session,
 			"Library.Greeter.Greet(string)",
 			"/// <summary>Now documented differently.</summary>\npublic string Greet(string name) => name.Trim();");
 
-		Assert.DoesNotContain(replaced.Notices, notice => notice.Contains("Kept the comment", StringComparison.Ordinal));
+		replaced.Notices.ShouldNotContain(notice => notice.Contains("Kept the comment", StringComparison.Ordinal));
 
 		text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("Now documented differently", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("The greeting for one name", text, StringComparison.Ordinal);
+		text.ShouldContain("Now documented differently", Case.Sensitive);
+		text.ShouldNotContain("The greeting for one name", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -119,22 +120,22 @@ public sealed class MemberEditTests
 		// Bare statements, with no braces of their own.
 		var statements = await EditAsync(session, Request(MemberEditKind.ReplaceBody, "Library.Greeter.Greet(string)", "return name.Trim();"));
 
-		Assert.True(statements.Applied);
-		Assert.Empty(statements.IntroducedDiagnostics);
+		statements.Applied.ShouldBeTrue();
+		statements.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("\tpublic string Greet(string name)\r\n\t{\r\n\t\treturn name.Trim();\r\n\t}\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("/// <summary>The greeting for one name.</summary>", text, StringComparison.Ordinal);
+		text.ShouldContain("\tpublic string Greet(string name)\r\n\t{\r\n\t\treturn name.Trim();\r\n\t}\r\n", Case.Sensitive);
+		text.ShouldContain("/// <summary>The greeting for one name.</summary>", Case.Sensitive);
 
 		// An expression body against a member that had a block: the signature is the same either way.
 		var arrow = await EditAsync(session, Request(MemberEditKind.ReplaceBody, "Library.Greeter.Shout(string)", "=> text.ToLowerInvariant();"));
 
-		Assert.True(arrow.Applied);
+		arrow.Applied.ShouldBeTrue();
 
 		text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("\tprivate static string Shout(string text) => text.ToLowerInvariant();\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("\tprivate static string Shout(string text) => text.ToLowerInvariant();\r\n", Case.Sensitive);
 	}
 
 	/// <summary>A member with more than one body is not guessed at.</summary>
@@ -144,12 +145,12 @@ public sealed class MemberEditTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(() => EditAsync(
-			session, Request(MemberEditKind.ReplaceBody, "Library.Greeter.Count", "=> 3;")));
+		var error = await Should.ThrowAsync<ArgumentException>(() => EditAsync(
+			session, Request(MemberEditKind.ReplaceBody, "Library.Greeter.Count", "=> 3;"))).OfExactType();
 
-		Assert.Contains("has no body", error.Message, StringComparison.Ordinal);
-		Assert.Contains("accessors", error.Message, StringComparison.Ordinal);
-		Assert.Contains("rose_replace_member", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("has no body", Case.Sensitive);
+		error.Message.ShouldContain("accessors", Case.Sensitive);
+		error.Message.ShouldContain("rose_replace_member", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -170,20 +171,18 @@ public sealed class MemberEditTests
 			After = "PrefixLength",
 		});
 
-		Assert.True(added.Applied);
-		Assert.Equal(["Loud", "Emphasise"], added.Members);
-		Assert.Empty(added.IntroducedDiagnostics);
+		added.Applied.ShouldBeTrue();
+		added.Members.ShouldBe(["Loud", "Emphasise"]);
+		added.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
 		// A blank line either side, tab-indented, and between PrefixLength and Count.
-		Assert.Contains(
+		text.ShouldContain(
 			"\tpublic int PrefixLength => _prefix.Length;\r\n"
 				+ "\r\n\t/// <summary>How loud to be.</summary>\r\n\tpublic bool Loud { get; set; }\r\n"
 				+ "\r\n\tpublic string Emphasise(string text) => Loud ? text.ToUpperInvariant() : text;\r\n"
-				+ "\r\n\tpublic int Count { get; set; }\r\n",
-			text,
-			StringComparison.Ordinal);
+				+ "\r\n\tpublic int Count { get; set; }\r\n", Case.Sensitive);
 
 		// And at the end, when nothing says otherwise.
 		await EditAsync(session, new MemberEditRequest
@@ -195,7 +194,7 @@ public sealed class MemberEditTests
 
 		text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.EndsWith("\r\n\tprivate const int Limit = 10;\r\n}\r\n", text, StringComparison.Ordinal);
+		text.ShouldEndWith("\r\n\tprivate const int Limit = 10;\r\n}\r\n", Case.Sensitive);
 	}
 
 	/// <summary>A type with no members at all is its own case, and the one most likely to land flush against a brace.</summary>
@@ -214,7 +213,7 @@ public sealed class MemberEditTests
 
 		var text = await ReadAsync(fixture, "Kinds.cs");
 
-		Assert.Contains("public sealed class Empty\r\n{\r\n\tpublic int Value => 1;\r\n}\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("public sealed class Empty\r\n{\r\n\tpublic int Value => 1;\r\n}\r\n", Case.Sensitive);
 	}
 
 	[Test]
@@ -223,15 +222,15 @@ public sealed class MemberEditTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(() => EditAsync(session, new MemberEditRequest
+		var error = await Should.ThrowAsync<ArgumentException>(() => EditAsync(session, new MemberEditRequest
 		{
 			Kind = MemberEditKind.Add,
 			Symbol = "Library.Greeter",
 			Code = "public int Count { get; set; }",
-		}));
+		})).OfExactType();
 
-		Assert.Contains("already declares Count", error.Message, StringComparison.Ordinal);
-		Assert.Contains("rose_replace_member", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("already declares Count", Case.Sensitive);
+		error.Message.ShouldContain("rose_replace_member", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -244,17 +243,17 @@ public sealed class MemberEditTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		var partial = await Assert.ThrowsAsync<ArgumentException>(() => EditAsync(session, new MemberEditRequest
+		var partial = await Should.ThrowAsync<ArgumentException>(() => EditAsync(session, new MemberEditRequest
 		{
 			Kind = MemberEditKind.Add,
 			Symbol = "Library.Split",
 			Code = "public int Third => 3;",
-		}));
+		})).OfExactType();
 
-		Assert.Contains("matches 2 declarations", partial.Message, StringComparison.Ordinal);
-		Assert.Contains("Split.cs", partial.Message, StringComparison.Ordinal);
-		Assert.Contains("SplitAgain.cs", partial.Message, StringComparison.Ordinal);
-		Assert.Contains("filePath", partial.Message, StringComparison.Ordinal);
+		partial.Message.ShouldContain("matches 2 declarations", Case.Sensitive);
+		partial.Message.ShouldContain("Split.cs", Case.Sensitive);
+		partial.Message.ShouldContain("SplitAgain.cs", Case.Sensitive);
+		partial.Message.ShouldContain("filePath", Case.Sensitive);
 
 		var settled = await EditAsync(session, new MemberEditRequest
 		{
@@ -264,9 +263,9 @@ public sealed class MemberEditTests
 			FilePath = fixture.Path("Members", "Library", "SplitAgain.cs"),
 		});
 
-		Assert.True(settled.Applied);
-		Assert.Contains("Third", await ReadAsync(fixture, "SplitAgain.cs"));
-		Assert.DoesNotContain("Third", await ReadAsync(fixture, "Split.cs"));
+		settled.Applied.ShouldBeTrue();
+		(await ReadAsync(fixture, "SplitAgain.cs")).ShouldContain("Third", Case.Sensitive);
+		(await ReadAsync(fixture, "Split.cs")).ShouldNotContain("Third", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -287,9 +286,9 @@ public sealed class MemberEditTests
 			Code = "Blue = 5",
 		});
 
-		Assert.True(appended.Applied);
-		Assert.Equal(["Blue"], appended.Members);
-		Assert.Empty(appended.IntroducedDiagnostics);
+		appended.Applied.ShouldBeTrue();
+		appended.Members.ShouldBe(["Blue"]);
+		appended.IntroducedDiagnostics.ShouldBeEmpty();
 
 		// In front of a value with an initialiser of its own, so nothing after it is renumbered.
 		var between = await EditAsync(session, new MemberEditRequest
@@ -300,15 +299,13 @@ public sealed class MemberEditTests
 			Code = "Yellow = 7,",
 		});
 
-		Assert.True(between.Applied);
-		Assert.Empty(between.IntroducedDiagnostics);
+		between.Applied.ShouldBeTrue();
+		between.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Kinds.cs");
 
-		Assert.Contains(
-			"{\r\n\tRed,\r\n\r\n\tGreen,\r\n\r\n\tYellow = 7,\r\n\r\n\tBlue = 5,\r\n}\r\n",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"{\r\n\tRed,\r\n\r\n\tGreen,\r\n\r\n\tYellow = 7,\r\n\r\n\tBlue = 5,\r\n}\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -328,8 +325,8 @@ public sealed class MemberEditTests
 			Code = "/// <summary>May run.</summary>\nExecute = 4",
 		});
 
-		Assert.True(appended.Applied);
-		Assert.Empty(appended.IntroducedDiagnostics);
+		appended.Applied.ShouldBeTrue();
+		appended.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var inserted = await EditAsync(session, new MemberEditRequest
 		{
@@ -339,21 +336,19 @@ public sealed class MemberEditTests
 			Code = "/// <summary>May read and write.</summary>\nReadWrite = Read | Write,",
 		});
 
-		Assert.True(inserted.Applied);
-		Assert.Empty(inserted.IntroducedDiagnostics);
+		inserted.Applied.ShouldBeTrue();
+		inserted.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Access.cs");
 
-		Assert.Contains(
+		text.ShouldContain(
 			"{\r\n"
 				+ "\t/// <summary>Nothing at all.</summary>\r\n\tNone = 0,\r\n"
 				+ "\t/// <summary>May read and write.</summary>\r\n\tReadWrite = Read | Write,\r\n"
 				+ "\t/// <summary>May read.</summary>\r\n\tRead = 1,\r\n"
 				+ "\t/// <summary>May write.</summary>\r\n\tWrite = 2,\r\n"
 				+ "\t/// <summary>May run.</summary>\r\n\tExecute = 4\r\n"
-				+ "}\r\n",
-			text,
-			StringComparison.Ordinal);
+				+ "}\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -378,34 +373,32 @@ public sealed class MemberEditTests
 			Code = code,
 		});
 
-		var name = await Assert.ThrowsAsync<ArgumentException>(() => Add("Green = 3"));
-		Assert.Contains("already declares Green", name.Message, StringComparison.Ordinal);
+		var name = await Should.ThrowAsync<ArgumentException>(() => Add("Green = 3")).OfExactType();
+		name.Message.ShouldContain("already declares Green", Case.Sensitive);
 
-		var anchor = await Assert.ThrowsAsync<ArgumentException>(() => Add("Blue = 9", after: "Purple"));
-		Assert.Contains("no value called 'Purple'", anchor.Message, StringComparison.Ordinal);
-		Assert.Contains("Red, Green", anchor.Message, StringComparison.Ordinal);
+		var anchor = await Should.ThrowAsync<ArgumentException>(() => Add("Blue = 9", after: "Purple")).OfExactType();
+		anchor.Message.ShouldContain("no value called 'Purple'", Case.Sensitive);
+		anchor.Message.ShouldContain("Red, Green", Case.Sensitive);
 
-		Assert.Equal(original, await ReadAsync(fixture, "Kinds.cs"));
+		(await ReadAsync(fixture, "Kinds.cs")).ShouldBe(original);
 
 		var alias = await Add("Crimson = Red");
 
-		Assert.True(alias.Applied);
-		Assert.DoesNotContain(alias.Notices, notice => notice.Contains("cannot be told apart", StringComparison.Ordinal));
+		alias.Applied.ShouldBeTrue();
+		alias.Notices.ShouldNotContain(notice => notice.Contains("cannot be told apart", StringComparison.Ordinal));
 
 		var value = await Add("Blue = 1");
 
-		Assert.True(value.Applied);
-		Assert.Contains(value.Notices, notice => notice.Contains("Blue is 1, which Green already is", StringComparison.Ordinal));
+		value.Applied.ShouldBeTrue();
+		value.Notices.ShouldContain(notice => notice.Contains("Blue is 1, which Green already is", StringComparison.Ordinal));
 
 		var renumbered = await Add("Purple", after: "Red");
 
-		Assert.True(renumbered.Applied);
-		Assert.Contains(renumbered.Notices, notice => notice.Contains("renumbers Green from 1 to 2", StringComparison.Ordinal));
+		renumbered.Applied.ShouldBeTrue();
+		renumbered.Notices.ShouldContain(notice => notice.Contains("renumbers Green from 1 to 2", StringComparison.Ordinal));
 
-		Assert.Contains(
-			"{\r\n\tRed,\r\n\r\n\tPurple,\r\n\r\n\tGreen,\r\n\r\n\tCrimson = Red,\r\n\r\n\tBlue = 1,\r\n}",
-			await ReadAsync(fixture, "Kinds.cs"),
-			StringComparison.Ordinal);
+		(await ReadAsync(fixture, "Kinds.cs")).ShouldContain(
+			"{\r\n\tRed,\r\n\r\n\tPurple,\r\n\r\n\tGreen,\r\n\r\n\tCrimson = Red,\r\n\r\n\tBlue = 1,\r\n}", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -429,24 +422,22 @@ public sealed class MemberEditTests
 
 		var medium = await Add("Medium = 0x08", after: "Low");
 
-		Assert.True(medium.Applied);
-		Assert.Empty(medium.IntroducedDiagnostics);
-		Assert.DoesNotContain(medium.Notices, notice => notice.Contains("renumbers", StringComparison.Ordinal));
+		medium.Applied.ShouldBeTrue();
+		medium.IntroducedDiagnostics.ShouldBeEmpty();
+		medium.Notices.ShouldNotContain(notice => notice.Contains("renumbers", StringComparison.Ordinal));
 
-		Assert.Contains(
-			"{\r\n\tLow = 0x01,\r\n\tMedium = 0x08,\r\n\tHigh = 1 << 4,\r\n\tHighest = byte.MaxValue,\r\n}",
-			await ReadAsync(fixture, "Priority.cs"),
-			StringComparison.Ordinal);
+		(await ReadAsync(fixture, "Priority.cs")).ShouldContain(
+			"{\r\n\tLow = 0x01,\r\n\tMedium = 0x08,\r\n\tHigh = 1 << 4,\r\n\tHighest = byte.MaxValue,\r\n}", Case.Sensitive);
 
 		var urgent = await Add("Urgent = 0x10");
 
-		Assert.True(urgent.Applied);
-		Assert.Contains(urgent.Notices, notice => notice.Contains("Urgent is 16, which High already is", StringComparison.Ordinal));
+		urgent.Applied.ShouldBeTrue();
+		urgent.Notices.ShouldContain(notice => notice.Contains("Urgent is 16, which High already is", StringComparison.Ordinal));
 
 		var over = await Add("Over = 0x100");
 
-		Assert.True(over.Applied);
-		Assert.Contains(over.IntroducedDiagnostics, diagnostic => diagnostic.Id == "CS0031");
+		over.Applied.ShouldBeTrue();
+		over.IntroducedDiagnostics.ShouldContain(diagnostic => diagnostic.Id == "CS0031");
 	}
 
 	/// <summary>
@@ -463,17 +454,17 @@ public sealed class MemberEditTests
 		// enough for that type to mean "no such name": 'Shout' is declared in this solution, just not
 		// at the address asked for, and a library member addressed that way is the common case rather
 		// than the exotic one.
-		var missing = await Assert.ThrowsAsync<SymbolNotFoundException>(() => ReplaceAsync(
-			session, "Library.Greeter.Salute", "public string Salute() => _prefix;"));
+		var missing = await Should.ThrowAsync<SymbolNotFoundException>(() => ReplaceAsync(
+			session, "Library.Greeter.Salute", "public string Salute() => _prefix;")).OfExactType();
 
-		Assert.Contains("Nothing in the solution is called 'Salute'", missing.Message, StringComparison.Ordinal);
-		Assert.Contains("rose_search_symbols", missing.Message, StringComparison.Ordinal);
+		missing.Message.ShouldContain("Nothing in the solution is called 'Salute'", Case.Sensitive);
+		missing.Message.ShouldContain("rose_search_symbols", Case.Sensitive);
 
-		var elsewhere = await Assert.ThrowsAsync<SymbolNotFoundException>(() => ReplaceAsync(
-			session, "Library.Caller.Shout(string)", "private static string Shout(string text) => text;"));
+		var elsewhere = await Should.ThrowAsync<SymbolNotFoundException>(() => ReplaceAsync(
+			session, "Library.Caller.Shout(string)", "private static string Shout(string text) => text;")).OfExactType();
 
-		Assert.Contains("Nothing is declared at 'Library.Caller.Shout(string)'", elsewhere.Message, StringComparison.Ordinal);
-		Assert.Contains("Library.Greeter.Shout", elsewhere.Message, StringComparison.Ordinal);
+		elsewhere.Message.ShouldContain("Nothing is declared at 'Library.Caller.Shout(string)'", Case.Sensitive);
+		elsewhere.Message.ShouldContain("Library.Greeter.Shout", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -493,21 +484,19 @@ public sealed class MemberEditTests
 			"Library.Greeter.Shout(string)",
 			"private static string Shout(string text)\n{\n\treturn text.ToUpperInvariant() + \"!\";\n}");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var after = await ReadAsync(fixture, "Greeter.cs");
 
 		// Comment above attribute above declaration, each on its own line at the file's indentation:
 		// the comment is content the caller did not supply, and the attribute is now the first token.
-		Assert.Contains(
-			"\t/// <summary>Louder.</summary>\r\n\t[Obsolete(\"Shout is going away.\")]\r\n\tprivate static string Shout(string text)",
-			after,
-			StringComparison.Ordinal);
+		after.ShouldContain(
+			"\t/// <summary>Louder.</summary>\r\n\t[Obsolete(\"Shout is going away.\")]\r\n\tprivate static string Shout(string text)", Case.Sensitive);
 
-		Assert.Contains("ToUpperInvariant() + \"!\"", after, StringComparison.Ordinal);
+		after.ShouldContain("ToUpperInvariant() + \"!\"", Case.Sensitive);
 
 		// Named rather than counted, so a caller can tell whether the one it cares about survived.
-		Assert.Contains(result.Notices, notice => notice.Contains("[Obsolete]", StringComparison.Ordinal));
+		result.Notices.ShouldContain(notice => notice.Contains("[Obsolete]", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -525,13 +514,13 @@ public sealed class MemberEditTests
 			"Library.Greeter.Shout(string)",
 			"[Obsolete(\"Use Announce instead.\")]\nprivate static string Shout(string text) => text.ToUpperInvariant();");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var after = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("[Obsolete(\"Use Announce instead.\")]", after, StringComparison.Ordinal);
-		Assert.DoesNotContain("Shout is going away.", after, StringComparison.Ordinal);
-		Assert.DoesNotContain(result.Notices, notice => notice.Contains("Kept [Obsolete]", StringComparison.Ordinal));
+		after.ShouldContain("[Obsolete(\"Use Announce instead.\")]", Case.Sensitive);
+		after.ShouldNotContain("Shout is going away.", Case.Sensitive);
+		result.Notices.ShouldNotContain(notice => notice.Contains("Kept [Obsolete]", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -579,13 +568,13 @@ public sealed class MemberEditTests
 			Code = "public byte[] Bytes() => Encoding.UTF8.GetBytes(_prefix);",
 		});
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Contains(result.Notices, notice => notice.Contains("imported System.Text", StringComparison.Ordinal));
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.Notices.ShouldContain(notice => notice.Contains("imported System.Text", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("using System.Text;", text, StringComparison.Ordinal);
+		text.ShouldContain("using System.Text;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -606,13 +595,12 @@ public sealed class MemberEditTests
 			Code = "public string Colour() => Palette.Name;",
 		});
 
-		Assert.Contains(
-			result.Notices,
+		result.Notices.ShouldContain(
 			notice => notice.Contains("Palette is in 2 namespaces", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.DoesNotContain("using Library.Left;", text, StringComparison.Ordinal);
+		text.ShouldNotContain("using Library.Left;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -632,22 +620,22 @@ public sealed class MemberEditTests
 			Symbol = "Library.Regioned.Thrice",
 		});
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Equal(["Thrice"], result.Members);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.Members.ShouldBe(["Thrice"]);
 
 		var text = await ReadAsync(fixture, "Regioned.cs");
 
-		Assert.DoesNotContain("Thrice", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("Trebles it", text, StringComparison.Ordinal);
-		Assert.Contains("Twice", text, StringComparison.Ordinal);
+		text.ShouldNotContain("Thrice", Case.Sensitive);
+		text.ShouldNotContain("Trebles it", Case.Sensitive);
+		text.ShouldContain("Twice", Case.Sensitive);
 
 		// The region survives, balanced. Cutting a line range takes one half of a pair and leaves the
 		// file with CS1024 or CS1028, which is the class of failure this exists to remove.
-		Assert.Contains("#region Helpers", text, StringComparison.Ordinal);
-		Assert.Contains("#endregion", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("\r\n\r\n\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("#region Helpers", Case.Sensitive);
+		text.ShouldContain("#endregion", Case.Sensitive);
+		text.ShouldNotContain("\r\n\r\n\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -662,15 +650,15 @@ public sealed class MemberEditTests
 
 		var before = await ReadAsync(fixture, "Greeter.cs");
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
+		var thrown = await Should.ThrowAsync<ArgumentException>(
 			() => EditAsync(session, new MemberEditRequest
 			{
 				Kind = MemberEditKind.Delete,
 				Symbol = "Library.Greeter.Greet",
-			}));
+			})).OfExactType();
 
-		Assert.Contains("matches 2 declarations", thrown.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await ReadAsync(fixture, "Greeter.cs"));
+		thrown.Message.ShouldContain("matches 2 declarations", Case.Sensitive);
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
 	/// <summary>The named overload goes and the other stays.</summary>
@@ -686,12 +674,12 @@ public sealed class MemberEditTests
 			Symbol = "Library.Greeter.Greet(string, string)",
 		});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.DoesNotContain("string title", text, StringComparison.Ordinal);
-		Assert.Contains("public string Greet(string name)", text, StringComparison.Ordinal);
+		text.ShouldNotContain("string title", Case.Sensitive);
+		text.ShouldContain("public string Greet(string name)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -710,13 +698,13 @@ public sealed class MemberEditTests
 			Symbol = "Library.IShape.Area",
 		});
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await ReadAsync(fixture, "Kinds.cs");
 
-		Assert.Contains("public interface IShape", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("double Area()", text, StringComparison.Ordinal);
+		text.ShouldContain("public interface IShape", Case.Sensitive);
+		text.ShouldNotContain("double Area()", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -745,10 +733,9 @@ public sealed class MemberEditTests
 			Code = "public Shouted? Loud() => null;",
 		});
 
-		Assert.Contains(result.IntroducedDiagnostics, entry => entry.Id == "CS0246");
+		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "CS0246");
 
-		Assert.Contains(
-			result.Notices,
+		result.Notices.ShouldContain(
 			notice => notice.Contains("Shouted", StringComparison.Ordinal)
 				&& notice.Contains("Library.Extras", StringComparison.Ordinal)
 				&& notice.Contains("did not resolve", StringComparison.Ordinal));

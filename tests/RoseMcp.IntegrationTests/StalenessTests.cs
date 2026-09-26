@@ -21,7 +21,7 @@ public sealed class StalenessTests
 		await using var scope = await OpenAsync("Simple", "Simple.sln");
 
 		var before = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
-		Assert.Empty(await ErrorsAsync(before));
+		(await ErrorsAsync(before)).ShouldBeEmpty();
 
 		// Edit behind the workspace's back, exactly as an external editor would.
 		var calculator = scope.Fixture.Path("Simple", "Core", "Calculator.cs");
@@ -32,8 +32,8 @@ public sealed class StalenessTests
 
 		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.NotEmpty(await ErrorsAsync(after));
-		Assert.True(after.Revision > before.Revision, "absorbing an external edit must advance the revision");
+		(await ErrorsAsync(after)).ShouldNotBeEmpty();
+		(after.Revision > before.Revision).ShouldBeTrue("absorbing an external edit must advance the revision");
 	}
 
 	/// <summary>
@@ -63,14 +63,14 @@ public sealed class StalenessTests
 			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(result.Applied);
-		Assert.True(result.ChangedFiles.Count > 1, "the rename has to write more than one file for this to be worth asserting");
+		result.Applied.ShouldBeTrue();
+		(result.ChangedFiles.Count > 1).ShouldBeTrue("the rename has to write more than one file for this to be worth asserting");
 
 		var settled = session.Revision;
 		var after = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.DoesNotContain(after.Notices, notice => notice.Contains("external file change", StringComparison.Ordinal));
-		Assert.Equal(settled, after.Revision);
+		after.Notices.ShouldNotContain(notice => notice.Contains("external file change", StringComparison.Ordinal));
+		after.Revision.ShouldBe(settled);
 	}
 
 	/// <summary>
@@ -113,12 +113,12 @@ public sealed class StalenessTests
 
 		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains(status.Notices, notice => notice.Contains("Absorbed", StringComparison.Ordinal));
-		Assert.DoesNotContain(status.DegradedReasons, reason => reason.Contains("Absorbed", StringComparison.Ordinal));
+		status.Notices.ShouldContain(notice => notice.Contains("Absorbed", StringComparison.Ordinal));
+		status.DegradedReasons.ShouldNotContain(reason => reason.Contains("Absorbed", StringComparison.Ordinal));
 
 		// And the two fields agree, which they could not before.
-		Assert.Empty(status.DegradedReasons);
-		Assert.Equal(WorkspaceState.Loaded, status.State);
+		status.DegradedReasons.ShouldBeEmpty();
+		status.State.ShouldBe(WorkspaceState.Loaded);
 	}
 
 	[Test]
@@ -131,8 +131,8 @@ public sealed class StalenessTests
 
 		// A sweep that finds nothing must not churn the revision, or callers can never tell
 		// whether two answers describe the same world.
-		Assert.Equal(first.Revision, second.Revision);
-		Assert.Same(first.Solution, second.Solution);
+		second.Revision.ShouldBe(first.Revision);
+		second.Solution.ShouldBeSameAs(first.Solution);
 	}
 
 	[Test]
@@ -141,14 +141,14 @@ public sealed class StalenessTests
 		await using var scope = await OpenAsync("Simple", "Simple.sln");
 
 		var before = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
-		Assert.Contains(before.Solution.Projects.SelectMany(project => project.Documents),
+		before.Solution.Projects.SelectMany(project => project.Documents).ShouldContain(
 			document => document.Name == "Calculator.cs");
 
 		File.Delete(scope.Fixture.Path("Simple", "Core", "Calculator.cs"));
 
 		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.DoesNotContain(after.Solution.Projects.SelectMany(project => project.Documents),
+		after.Solution.Projects.SelectMany(project => project.Documents).ShouldNotContain(
 			document => document.Name == "Calculator.cs");
 	}
 
@@ -174,11 +174,11 @@ public sealed class StalenessTests
 
 		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(after.Revision > before.Revision);
-		Assert.Contains(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		(after.Revision > before.Revision).ShouldBeTrue();
+		after.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
-		Assert.Contains("RELOADED", core.ParseOptions!.PreprocessorSymbolNames);
+		core.ParseOptions!.PreprocessorSymbolNames.ShouldContain("RELOADED");
 	}
 
 	/// <summary>
@@ -214,11 +214,11 @@ public sealed class StalenessTests
 
 		var after = await session.ReadAsync(token);
 
-		Assert.True(after.Revision > before.Revision);
-		Assert.Contains(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		(after.Revision > before.Revision).ShouldBeTrue();
+		after.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
-		Assert.Contains("IMPORTED", core.ParseOptions!.PreprocessorSymbolNames);
+		core.ParseOptions!.PreprocessorSymbolNames.ShouldContain("IMPORTED");
 	}
 
 	/// <summary>
@@ -247,11 +247,11 @@ public sealed class StalenessTests
 
 		var after = await session.ReadAsync(token);
 
-		Assert.True(after.Revision > before.Revision);
-		Assert.Contains(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		(after.Revision > before.Revision).ShouldBeTrue();
+		after.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
-		Assert.Contains("NESTED", core.ParseOptions!.PreprocessorSymbolNames);
+		core.ParseOptions!.PreprocessorSymbolNames.ShouldContain("NESTED");
 	}
 
 	/// <summary>
@@ -281,11 +281,11 @@ public sealed class StalenessTests
 
 		var after = await scope.Session.ReadAsync(token);
 
-		Assert.DoesNotContain(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
-		Assert.True(after.Revision > before.Revision);
+		after.Notices.ShouldNotContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		(after.Revision > before.Revision).ShouldBeTrue();
 
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
-		Assert.Equal(150, core.Documents.Count(document => document.Name.StartsWith("Generated", StringComparison.Ordinal)));
+		core.Documents.Count(document => document.Name.StartsWith("Generated", StringComparison.Ordinal)).ShouldBe(150);
 	}
 
 	/// <summary>
@@ -324,7 +324,7 @@ public sealed class StalenessTests
 
 		using (new FileStream(scope.Fixture.SolutionPath, FileMode.Open, FileAccess.Read, FileShare.None))
 		{
-			await Assert.ThrowsAnyAsync<IOException>(
+			await Should.ThrowAsync<IOException>(
 				() => scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken));
 		}
 
@@ -335,11 +335,11 @@ public sealed class StalenessTests
 			.Single(document => document.Name == "Calculator.cs");
 
 		var source = (await calculator.GetTextAsync(TestContext.Current!.Execution.CancellationToken)).ToString();
-		Assert.Contains("Tripled", source, StringComparison.Ordinal);
+		source.ShouldContain("Tripled", Case.Sensitive);
 
 		// And the structural half of the same sweep survived too.
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
-		Assert.Contains("RELOADED", core.ParseOptions!.PreprocessorSymbolNames);
+		core.ParseOptions!.PreprocessorSymbolNames.ShouldContain("RELOADED");
 	}
 
 	/// <summary>
@@ -372,14 +372,14 @@ public sealed class StalenessTests
 		await Task.WhenAll(mutation, read);
 
 		var snapshotAfter = await read;
-		Assert.True(snapshotAfter.Revision > await mutation);
+		(snapshotAfter.Revision > await mutation).ShouldBeTrue();
 
 		var calculator = snapshotAfter.Solution.Projects
 			.SelectMany(project => project.Documents)
 			.Single(document => document.Name == "Calculator.cs");
 
 		var source = (await calculator.GetTextAsync(TestContext.Current!.Execution.CancellationToken)).ToString();
-		Assert.DoesNotContain("Multiply", source, StringComparison.Ordinal);
+		source.ShouldNotContain("Multiply", Case.Sensitive);
 	}
 
 	private static async Task<IReadOnlyList<Diagnostic>> ErrorsAsync(WorkspaceSnapshot snapshot)

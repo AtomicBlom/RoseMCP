@@ -43,22 +43,21 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 			// Any XAML tool installs the toolbar, and the tree must not report it: it is RoseMCP's UI,
 			// not the app's. Read the tree first so the toolbar is up, then read it again and check.
 			var beforeToolbar = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.True(beforeToolbar.Detail is null, $"expected a tree, got detail: {beforeToolbar.Detail}");
+			(beforeToolbar.Detail is null).ShouldBeTrue($"expected a tree, got detail: {beforeToolbar.Detail}");
 
 			var withToolbar = await session.ReadXamlTreeAsync(cancellationToken);
-			Assert.DoesNotContain(withToolbar.Nodes, node => node.Name == "__RoseMcpOverlay");
-			Assert.Contains(withToolbar.Nodes, node => node.Name == "Caption");
+			withToolbar.Nodes.ShouldNotContain(node => node.Name == "__RoseMcpOverlay");
+			withToolbar.Nodes.ShouldContain(node => node.Name == "Caption");
 
 			// The provider confirms select mode armed, rather than the host assuming it.
 			// The framework's own hit test, which is the default and the only sane one: with
 			// includeAllElements a background-less Grid stretched over the window shadows every
 			// element the user can actually click.
 			var selectMode = await session.EnterXamlSelectModeAsync(includeAllElements: false, justMyXaml: true, cancellationToken);
-			Assert.True(
-				selectMode.Armed,
+			selectMode.Armed.ShouldBeTrue(
 				$"expected select mode to arm; got: {selectMode.Detail}");
-			Assert.True(selectMode.JustMyXaml);
-			Assert.Equal("select", selectMode.Mode);
+			selectMode.JustMyXaml.ShouldBeTrue();
+			selectMode.Mode.ShouldBe("select");
 
 			// Arming reports the preference it was actually given. It used to leave the field to the
 			// record's default of true, so arming with false answered true, and a caller comparing the
@@ -66,31 +65,31 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 			// field session hit exactly that and talked itself out of it with a plausible theory about
 			// arm-time preference versus what decided the pick -- which was not what the code did.
 			var withoutFilter = await session.EnterXamlSelectModeAsync(includeAllElements: false, justMyXaml: false, cancellationToken);
-			Assert.True(withoutFilter.Armed, $"expected select mode to arm; got: {withoutFilter.Detail}");
-			Assert.False(withoutFilter.JustMyXaml, "an unfiltered read reports no just-my-xaml filter");
+			withoutFilter.Armed.ShouldBeTrue($"expected select mode to arm; got: {withoutFilter.Detail}");
+			withoutFilter.JustMyXaml.ShouldBeFalse("an unfiltered read reports no just-my-xaml filter");
 
 			// And the toolbar agrees, because it is one switch rather than two pieces of state.
 			var afterDisabling = await session.ReadXamlSelectionAsync(cancellationToken);
-			Assert.False(afterDisabling.JustMyXaml, "disabling the filter turns it off");
+			afterDisabling.JustMyXaml.ShouldBeFalse("disabling the filter turns it off");
 
 			// Nothing picked yet: an empty selection that says so, safe to poll. Armed comes back from
 			// the toolbar's own state file, so this is the provider reporting, not the host remembering.
 			var selection = await session.ReadXamlSelectionAsync(cancellationToken);
-			Assert.False(selection.Selected, "select mode arms with nothing selected");
-			Assert.True(selection.Armed, $"expected the toolbar to report select mode armed; got: {selection.Detail}");
-			Assert.NotNull(selection.Detail);
+			selection.Selected.ShouldBeFalse("select mode arms with nothing selected");
+			selection.Armed.ShouldBeTrue($"expected the toolbar to report select mode armed; got: {selection.Detail}");
+			selection.Detail.ShouldNotBeNull();
 
 			// #45: the pick can be cleared, and clearing says which of "cleared" and "there was nothing
 			// selected" happened rather than treating both as success. Nothing has been picked here --
 			// a click is a human action and this suite does not drive the mouse on a live desktop -- so
 			// the second is the honest answer, and it is the one that used to be unreachable at all.
 			var cleared = await session.ClearXamlSelectionAsync(cancellationToken);
-			Assert.False(cleared.Selected, "deselecting clears the selection");
-			Assert.Contains("nothing", cleared.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+			cleared.Selected.ShouldBeFalse("deselecting clears the selection");
+			(cleared.Detail ?? string.Empty).ShouldContain("nothing", Case.Insensitive);
 
 			// And the toolbar is still there afterwards, because deselecting is not leaving.
 			var afterClearing = await session.ReadXamlSelectionAsync(cancellationToken);
-			Assert.False(afterClearing.Selected, "clearing again leaves nothing selected");
+			afterClearing.Selected.ShouldBeFalse("clearing again leaves nothing selected");
 
 			// Armed is app-wide state this test turned on, so this test turns it off. Clearing the
 			// pick does not disarm, because they are two pieces of state -- and until the shared app
@@ -99,8 +98,8 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 			// clicking Idle could lift.
 			var idle = await session.EnterXamlSelectModeAsync(
 				includeAllElements: false, justMyXaml: true, arm: false, cancellationToken);
-			Assert.False(idle.Armed, $"expected select mode to disarm; got: {idle.Detail}");
-			Assert.Equal("idle", idle.Mode);
+			idle.Armed.ShouldBeFalse($"expected select mode to disarm; got: {idle.Detail}");
+			idle.Mode.ShouldBe("idle");
 
 		}
 	}
@@ -138,43 +137,43 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
-			Assert.NotNull(pane);
+			pane.ShouldNotBeNull();
 
 			var rulers = await session.EnterXamlSelectModeAsync(
 				includeAllElements: false, justMyXaml: true, arm: true, cancellationToken, mode: "rulers");
 
-			Assert.True(rulers.Armed, $"expected rulers mode to arm; got: {rulers.Detail}");
-			Assert.Equal("rulers", rulers.Mode);
+			rulers.Armed.ShouldBeTrue($"expected rulers mode to arm; got: {rulers.Detail}");
+			rulers.Mode.ShouldBe("rulers");
 
 			// The toolbar agrees, because the mode is read back from the overlay rather than echoed
 			// from the request.
 			var armed = await session.ReadXamlSelectionAsync(cancellationToken);
-			Assert.Equal("rulers", armed.Mode);
-			Assert.True(armed.Armed);
+			armed.Mode.ShouldBe("rulers");
+			armed.Armed.ShouldBeTrue();
 
 			// Anchoring, which is what the bands are drawn around. By handle rather than by clicking,
 			// for the same reason #46 exists: a click is a human action. The mode survives it -- unlike
 			// select, where picking is the end of the mode -- because a sweep across an element's
 			// neighbours is the whole gesture.
 			var anchored = await session.SelectXamlElementAsync(pane!.Handle, cancellationToken);
-			Assert.True(anchored.Selected, $"expected an anchor; got: {anchored.Detail}");
-			Assert.Equal("Pane", anchored.Name);
-			Assert.Equal("rulers", anchored.Mode);
+			anchored.Selected.ShouldBeTrue($"expected an anchor; got: {anchored.Detail}");
+			anchored.Name.ShouldBe("Pane");
+			anchored.Mode.ShouldBe("rulers");
 
 			// Switching modes keeps the one capture layer that is already up, so arming select from
 			// here has to answer about a layer it did not insert.
 			var select = await session.EnterXamlSelectModeAsync(
 				includeAllElements: false, justMyXaml: true, arm: true, cancellationToken, mode: "select");
-			Assert.Equal("select", select.Mode);
-			Assert.True(select.Armed, $"expected select mode to arm over the layer already up; got: {select.Detail}");
+			select.Mode.ShouldBe("select");
+			select.Armed.ShouldBeTrue($"expected select mode to arm over the layer already up; got: {select.Detail}");
 
 			var cleared = await session.ClearXamlSelectionAsync(cancellationToken);
-			Assert.False(cleared.Selected, "deselecting clears the anchor");
+			cleared.Selected.ShouldBeFalse("deselecting clears the anchor");
 
 			var idle = await session.EnterXamlSelectModeAsync(
 				includeAllElements: false, justMyXaml: true, arm: false, cancellationToken);
-			Assert.False(idle.Armed, $"expected the overlay to go idle; got: {idle.Detail}");
-			Assert.Equal("idle", idle.Mode);
+			idle.Armed.ShouldBeFalse($"expected the overlay to go idle; got: {idle.Detail}");
+			idle.Mode.ShouldBe("idle");
 
 		}
 	}
@@ -205,34 +204,34 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 			// The handle comes from the tree, which is the whole route this exists to open.
 			var tree = await session.ReadXamlTreeAsync(cancellationToken);
 			var pane = tree.Nodes.FirstOrDefault(node => node.Name == "Pane");
-			Assert.NotNull(pane);
+			pane.ShouldNotBeNull();
 
 			var selected = await session.SelectXamlElementAsync(pane!.Handle, cancellationToken);
 
-			Assert.True(selected.Selected, $"expected a selection; got: {selected.Detail}");
-			Assert.Equal(pane.Handle, selected.Handle);
-			Assert.Equal("Pane", selected.Name);
+			selected.Selected.ShouldBeTrue($"expected a selection; got: {selected.Detail}");
+			selected.Handle.ShouldBe(pane.Handle);
+			selected.Name.ShouldBe("Pane");
 
 			// The stack is the element then its ancestors outwards, so a caller who took the handle the
 			// tree gave them can still reach the container they actually meant.
-			Assert.Contains(selected.Candidates, candidate => candidate.Name == "Panel");
-			Assert.Contains(selected.Candidates, candidate => candidate.Name == "RootGrid");
+			selected.Candidates.ShouldContain(candidate => candidate.Name == "Panel");
+			selected.Candidates.ShouldContain(candidate => candidate.Name == "RootGrid");
 
 			// It reads back through the same path a click produces, which is the point of writing the
 			// same files: one read path, whichever route made the selection.
 			var reread = await session.ReadXamlSelectionAsync(cancellationToken);
-			Assert.True(reread.Selected);
-			Assert.Equal(pane.Handle, reread.Handle);
+			reread.Selected.ShouldBeTrue();
+			reread.Handle.ShouldBe(pane.Handle);
 
 			// And the handle it hands back drives the rest of the surface without another round trip.
 			var properties = await session.ReadXamlPropertiesAsync(selected.Handle, includeDefaults: false, cancellationToken);
-			Assert.True(properties.Detail is null, $"expected properties, got detail: {properties.Detail}");
-			Assert.Contains(properties.Properties, property => property.Name == "CornerRadius");
+			(properties.Detail is null).ShouldBeTrue($"expected properties, got detail: {properties.Detail}");
+			properties.Properties.ShouldContain(property => property.Name == "CornerRadius");
 
 			// Clearing it works the same as for a click, because it is the same selection (#45).
 			var cleared = await session.ClearXamlSelectionAsync(cancellationToken);
-			Assert.False(cleared.Selected, "deselecting clears a selection made by handle");
-			Assert.Contains("cleared", cleared.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+			cleared.Selected.ShouldBeFalse("deselecting clears a selection made by handle");
+			(cleared.Detail ?? string.Empty).ShouldContain("cleared", Case.Insensitive);
 
 		}
 	}
@@ -260,8 +259,8 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 			// A handle nothing owns. The provider resolves it, finds nothing, and declines.
 			var selected = await session.SelectXamlElementAsync(1, cancellationToken);
 
-			Assert.False(selected.Selected, "a refused selection selects nothing");
-			Assert.NotNull(selected.Detail);
+			selected.Selected.ShouldBeFalse("a refused selection selects nothing");
+			selected.Detail.ShouldNotBeNull();
 
 		}
 	}
@@ -302,8 +301,8 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 			// a single read. Selecting it is the same call, because a select on something with no
 			// bounds is refused rather than half-applied.
 			var selected = await SelectTransientAsync(session, cancellationToken);
-			Assert.True(selected.Selected, $"expected to select Transient; got: {selected.Detail}");
-			Assert.Equal("Transient", selected.Name);
+			selected.Selected.ShouldBeTrue($"expected to select Transient; got: {selected.Detail}");
+			selected.Name.ShouldBe("Transient");
 
 			// Now wait for the app to take it away. The exception is the only channel out of the app,
 			// and the wait starts from the cursor the select handed back -- the position the pick was
@@ -317,15 +316,15 @@ public sealed class LiveAppUwpOverlayTests(UwpProbeApp probe)
 					&& (entry.ExceptionType?.Contains("RoseUwpTransientRemovedException") ?? false),
 				cancellationToken,
 				startCursor: selected.Cursor);
-			Assert.NotNull(removed);
+			removed.ShouldNotBeNull();
 
 			// The provider clears on the removal callback, which arrives on the app's UI thread as the
 			// removal happens -- so by the time the exception has been observed the work is done.
 			var after = await session.ReadXamlSelectionAsync(cancellationToken);
 
-			Assert.False(after.Selected, "an element leaving the tree clears the selection");
-			Assert.Equal(0ul, after.Handle);
-			Assert.Contains("removed from the visual tree", after.Detail ?? string.Empty, StringComparison.Ordinal);
+			after.Selected.ShouldBeFalse("an element leaving the tree clears the selection");
+			after.Handle.ShouldBe(0ul);
+			(after.Detail ?? string.Empty).ShouldContain("removed from the visual tree", Case.Sensitive);
 
 		}
 	}

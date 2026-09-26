@@ -14,25 +14,25 @@ namespace RoseMcp.Worker;
 public static class PatternReport
 {
 	/// <summary>How many skip or unmatched groups are listed; the rest are counted in a notice.</summary>
-	public const int Groups = 20;
+	public const int Groups = 12;
 
 	/// <summary>How many example locations a group carries.</summary>
 	public const int Examples = 2;
 
 	/// <summary>How many files are listed.</summary>
-	public const int FileRows = 50;
+	public const int FileRows = 20;
 
 	/// <summary>
 	/// How many of a rule's overloads are named. A library with span and memory forms of every method
 	/// gives one rule forty; the first few say which method it is, and the count says how far it reaches.
 	/// </summary>
-	public const int Overloads = 6;
+	public const int Overloads = 3;
 
 	/// <summary>How many of the most rewritten files are listed after the ones with something to look at.</summary>
-	public const int TopRewritten = 10;
+	public const int TopRewritten = 5;
 
 	/// <summary>How long a sample's before or after may run before it is cut.</summary>
-	public const int SampleCut = 120;
+	public const int SampleCut = 100;
 
 	/// <summary>How long a skip reason may run before it is cut: long enough for the compiler's message about one site.</summary>
 	public const int ReasonCut = 160;

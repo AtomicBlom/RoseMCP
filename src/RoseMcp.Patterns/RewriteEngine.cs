@@ -29,9 +29,6 @@ public static class RewriteEngine
 	/// </summary>
 	public static readonly SyntaxAnnotation Replaced = new("RoseMcp.Patterns.Replaced");
 
-	/// <summary>How many rounds of putting sites back before a tree still gaining errors is left alone.</summary>
-	private const int Rounds = 4;
-
 	/// <summary>Rewrites <paramref name="documents"/>, whose sites were scanned in <paramref name="compilation"/>.</summary>
 	/// <param name="compilation">The compilation the sites were matched in.</param>
 	/// <param name="documents">Each tree and the sites a scan found in it.</param>
@@ -40,11 +37,15 @@ public static class RewriteEngine
 	/// added import the compiler then reports unnecessary is taken out again.
 	/// </param>
 	/// <param name="cancellationToken">Stops between trees and between rounds.</param>
+	/// <param name="rounds">
+	/// How many rounds of putting sites back before a tree still gaining errors is left as it was.
+	/// </param>
 	public static IReadOnlyList<DocumentRewrite> Run(
 		CSharpCompilation compilation,
 		IReadOnlyList<DocumentSites> documents,
 		Func<SyntaxTree, CompilationUnitSyntax, CompilationUnitSyntax>? imports,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		int rounds = 4)
 	{
 		var plans = documents.Select(document => new Plan(document)).ToList();
 
@@ -53,7 +54,7 @@ public static class RewriteEngine
 			plan.Baseline = Errors(compilation.GetSemanticModel(plan.Document.Tree).GetDiagnostics(cancellationToken: cancellationToken));
 		}
 
-		for (var round = 1; round <= Rounds; round++)
+		for (var round = 1; round <= rounds; round++)
 		{
 			var current = Rewrite(compilation, plans, imports, cancellationToken);
 			var gained = false;
@@ -74,6 +75,7 @@ public static class RewriteEngine
 				}
 
 				gained |= fresh.Count > 0;
+				plan.Remaining = fresh.FirstOrDefault();
 
 				if (fresh.Count == 0 && imports is not null) plan.Unnecessary = UnnecessaryImports(plan, model, cancellationToken);
 			}
@@ -81,12 +83,13 @@ public static class RewriteEngine
 			if (!gained) return [.. plans.Select(plan => plan.Outcome())];
 		}
 
-		// Out of rounds: whatever still gains errors is left exactly as it was.
-		foreach (var plan in plans.Where(plan => plan.Active.Count > 0))
+		// Out of rounds: whatever still gains errors is left exactly as it was -- and only that. A file
+		// that converged keeps its rewrite; one that did not is no reason to take anyone else's.
+		foreach (var plan in plans.Where(plan => plan.Rewritten is not null && plan.Remaining is not null))
 		{
 			foreach (var index in plan.Active.ToList())
 			{
-				plan.Put(index, "RoseMcp", $"its file still did not compile after {Rounds} rounds of putting sites back, so none of it was written");
+				plan.Put(index, "RoseMcp", $"its file still did not compile after {rounds} rounds of putting sites back, so none of it was written; {Describe(plan.Remaining)}");
 			}
 		}
 
@@ -130,6 +133,16 @@ public static class RewriteEngine
 		}
 
 		return current;
+	}
+
+	/// <summary>An error as a reason names it: its id, its line in the rewritten file, and its message.</summary>
+	private static string Describe(Diagnostic? error)
+	{
+		if (error is null) return "the last round's errors were not recorded";
+
+		var line = error.Location.GetLineSpan().StartLinePosition.Line + 1;
+
+		return $"the last error left was {error.Id} at line {line} of the rewritten file: {error.GetMessage(System.Globalization.CultureInfo.InvariantCulture)}";
 	}
 
 	/// <summary>The sites an error is charged to, by the first of the traces that finds any.</summary>
@@ -247,6 +260,9 @@ public static class RewriteEngine
 		public IReadOnlyDictionary<int, string> Written { get; set; } = new Dictionary<int, string>();
 
 		public IReadOnlyList<string> Unnecessary { get; set; } = [];
+
+		/// <summary>The first error the last round left, for the reason given when the rounds run out.</summary>
+		public Diagnostic? Remaining { get; set; }
 
 		/// <summary>Puts a site back, keeping the first reason it was given.</summary>
 		public void Put(int index, string id, string reason)

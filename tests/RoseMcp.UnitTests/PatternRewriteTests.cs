@@ -159,6 +159,27 @@ public sealed class PatternRewriteTests
 		Assert.Contains("Assert.Contains(\"b\", \"abc\");", text, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// A file still gaining errors when the rounds run out is left as it was, and only that file: one
+	/// that converged keeps its rewrite. Reverting every file with sites left was how one stubborn file
+	/// took a whole project's rewrite with it.
+	/// </summary>
+	[Test]
+	public void A_file_out_of_rounds_does_not_take_another_files_rewrite()
+	{
+		var rewrites = RewriteEach(
+			1,
+			[
+				"using Shouldly; class A { void M(int count) { Assert.Equal(1L, count); Assert.Equal(2, count); } }",
+				"using Shouldly; class B { void M(int count) { Assert.Equal(3, count); } }",
+			],
+			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
+
+		Assert.Equal([SiteState.Skipped, SiteState.Skipped], rewrites[0].Sites.Select(site => site.State));
+		Assert.Equal(SiteState.Rewritten, Assert.Single(rewrites[1].Sites).State);
+		Assert.Contains("count.ShouldBe(3)", rewrites[1].Root!.ToFullString(), StringComparison.Ordinal);
+	}
+
 	/// <summary>Everything outside the sites is left byte for byte as it was.</summary>
 	[Test]
 	public void Leaves_everything_outside_the_sites_as_it_was()

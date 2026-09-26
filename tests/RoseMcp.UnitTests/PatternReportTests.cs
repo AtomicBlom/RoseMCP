@@ -42,7 +42,7 @@ public sealed class PatternReportTests
 		Assert.True(summary.Files.Count <= PatternReport.FileRows);
 		Assert.Equal(156, summary.FileCount);
 		Assert.Contains(summary.Notices, notice => notice.Contains(" more skipped groups, covering ", StringComparison.Ordinal));
-		Assert.Contains(summary.Notices, notice => notice.StartsWith("20 more unmatched groups", StringComparison.Ordinal));
+		Assert.Contains(summary.Notices, notice => notice.StartsWith($"{40 - PatternReport.Groups} more unmatched groups", StringComparison.Ordinal));
 
 		// Measured as the result goes out: the SDK's own options, which is what a caller is charged for.
 		var size = JsonSerializer.Serialize(summary, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length;

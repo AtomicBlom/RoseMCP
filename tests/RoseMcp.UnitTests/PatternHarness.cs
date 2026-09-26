@@ -138,6 +138,27 @@ internal static class PatternHarness
 	}
 
 	/// <summary>
+	/// Several sources rewritten together in one compilation, as a project's files are, with the engine
+	/// given <paramref name="rounds"/> rounds.
+	/// </summary>
+	internal static IReadOnlyList<DocumentRewrite> RewriteEach(int rounds, IReadOnlyList<string> sources, params RuleText[] rules)
+	{
+		var options = new CSharpParseOptions(LanguageVersion.Latest);
+		var trees = sources.Select((source, index) => CSharpSyntaxTree.ParseText((index == 0 ? Prelude : string.Empty) + source, options)).ToList();
+
+		var compilation = CSharpCompilation.Create(
+			"Patterns",
+			[CSharpSyntaxTree.ParseText(Stubs, options), .. trees],
+			Platform,
+			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+		var bound = RuleCatalog.Parse(rules).Bind(compilation);
+		var documents = trees.Select(tree => new DocumentSites(tree, bound.Scan(compilation.GetSemanticModel(tree)).Sites)).ToList();
+
+		return RewriteEngine.Run(compilation, documents, imports: null, CancellationToken.None, rounds);
+	}
+
+	/// <summary>
 	/// One site as a line a test can compare: the rule that won, the code it matched, and each capture.
 	/// </summary>
 	internal static string Describe(PatternSite site)

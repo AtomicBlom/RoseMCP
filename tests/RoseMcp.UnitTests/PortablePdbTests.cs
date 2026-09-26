@@ -50,8 +50,8 @@ public sealed class PortablePdbTests
 		outer.Locals.ShouldContain(local => local.Name == "outerTotal");
 		inner.Locals.ShouldContain(local => local.Name == "innerStep");
 
-		(inner.StartOffset > outer.StartOffset).ShouldBeTrue("the block's IL starts after the method's");
-		(inner.StartOffset + inner.Length <= outer.StartOffset + outer.Length).ShouldBeTrue(
+		inner.StartOffset.ShouldBeGreaterThan(outer.StartOffset, "the block's IL starts after the method's");
+		(inner.StartOffset + inner.Length).ShouldBeLessThanOrEqualTo(outer.StartOffset + outer.Length,
 			"the block's IL ends inside the method's");
 		outer.Covers(0).ShouldBeTrue("the method's own scope covers its first instruction");
 		inner.Covers(0).ShouldBeFalse("the block's scope does not");

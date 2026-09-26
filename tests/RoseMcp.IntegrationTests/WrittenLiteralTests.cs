@@ -293,12 +293,12 @@ public sealed class WrittenLiteralTests
 	{
 		var opened = text.IndexOf("\"\"\"\r\n", StringComparison.Ordinal);
 
-		(opened >= 0).ShouldBeTrue("The file holds no multi-line raw literal.");
+		opened.ShouldBeGreaterThanOrEqualTo(0, "The file holds no multi-line raw literal.");
 
 		var body = text[(opened + 5)..];
 		var closed = body.IndexOf("\"\"\"", StringComparison.Ordinal);
 
-		(closed >= 0).ShouldBeTrue("The literal is never closed.");
+		closed.ShouldBeGreaterThanOrEqualTo(0, "The literal is never closed.");
 
 		var lines = body[..closed].Split("\r\n");
 		var stripping = lines[^1];
@@ -318,11 +318,11 @@ public sealed class WrittenLiteralTests
 	{
 		var opened = text.IndexOf("\"\"\"\r\n", StringComparison.Ordinal);
 
-		(opened >= 0).ShouldBeTrue($"The file holds no multi-line raw literal: {text}");
+		opened.ShouldBeGreaterThanOrEqualTo(0, $"The file holds no multi-line raw literal: {text}");
 
 		var closed = text.IndexOf("\"\"\"", opened + 5, StringComparison.Ordinal);
 
-		(closed >= 0).ShouldBeTrue($"The literal is never closed: {text}");
+		closed.ShouldBeGreaterThanOrEqualTo(0, $"The literal is never closed: {text}");
 
 		return text[opened..(closed + 3)];
 	}

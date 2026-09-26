@@ -33,7 +33,7 @@ public sealed class StalenessTests
 		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		(await ErrorsAsync(after)).ShouldNotBeEmpty();
-		(after.Revision > before.Revision).ShouldBeTrue("absorbing an external edit must advance the revision");
+		after.Revision.ShouldBeGreaterThan(before.Revision, "absorbing an external edit must advance the revision");
 	}
 
 	/// <summary>
@@ -64,7 +64,7 @@ public sealed class StalenessTests
 			TestContext.Current!.Execution.CancellationToken);
 
 		result.Applied.ShouldBeTrue();
-		(result.ChangedFiles.Count > 1).ShouldBeTrue("the rename has to write more than one file for this to be worth asserting");
+		result.ChangedFiles.Count.ShouldBeGreaterThan(1, "the rename has to write more than one file for this to be worth asserting");
 
 		var settled = session.Revision;
 		var after = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
@@ -174,7 +174,7 @@ public sealed class StalenessTests
 
 		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		(after.Revision > before.Revision).ShouldBeTrue();
+		after.Revision.ShouldBeGreaterThan(before.Revision);
 		after.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
@@ -214,7 +214,7 @@ public sealed class StalenessTests
 
 		var after = await session.ReadAsync(token);
 
-		(after.Revision > before.Revision).ShouldBeTrue();
+		after.Revision.ShouldBeGreaterThan(before.Revision);
 		after.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
@@ -247,7 +247,7 @@ public sealed class StalenessTests
 
 		var after = await session.ReadAsync(token);
 
-		(after.Revision > before.Revision).ShouldBeTrue();
+		after.Revision.ShouldBeGreaterThan(before.Revision);
 		after.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
@@ -282,7 +282,7 @@ public sealed class StalenessTests
 		var after = await scope.Session.ReadAsync(token);
 
 		after.Notices.ShouldNotContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
-		(after.Revision > before.Revision).ShouldBeTrue();
+		after.Revision.ShouldBeGreaterThan(before.Revision);
 
 		var core = after.Solution.Projects.Single(candidate => candidate.Name == "Core");
 		core.Documents.Count(document => document.Name.StartsWith("Generated", StringComparison.Ordinal)).ShouldBe(150);
@@ -372,7 +372,7 @@ public sealed class StalenessTests
 		await Task.WhenAll(mutation, read);
 
 		var snapshotAfter = await read;
-		(snapshotAfter.Revision > await mutation).ShouldBeTrue();
+		snapshotAfter.Revision.ShouldBeGreaterThan(await mutation);
 
 		var calculator = snapshotAfter.Solution.Projects
 			.SelectMany(project => project.Documents)

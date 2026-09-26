@@ -40,7 +40,7 @@ public sealed class NewFileTests
 		var after = await scope.Session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		Documents(after).ShouldContain(name => name == "Doubler.cs");
-		(after.Revision > before.Revision).ShouldBeTrue("absorbing a new file must advance the revision");
+		after.Revision.ShouldBeGreaterThan(before.Revision, "absorbing a new file must advance the revision");
 		after.Notices.ShouldContain(notice => notice.Contains("Doubler.cs", StringComparison.Ordinal));
 		(await ErrorsAsync(after)).ShouldBeEmpty();
 	}

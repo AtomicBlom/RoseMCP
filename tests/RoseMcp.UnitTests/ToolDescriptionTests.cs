@@ -46,7 +46,7 @@ public sealed class ToolDescriptionTests
 		foreach (var (name, description) in Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly))
 		{
 			string.IsNullOrWhiteSpace(description).ShouldBeFalse($"{name} has no description");
-			(description.Length > 120).ShouldBeTrue($"{name} is described in {description.Length} characters");
+			description.Length.ShouldBeGreaterThan(120, $"{name} is described in {description.Length} characters");
 		}
 	}
 

@@ -27,7 +27,7 @@ public sealed class TestProjectDetectionTests
 
 		var recognised = assemblies.Where(TestProjects.Recognises).ToList();
 
-		(recognised.Count > 0).ShouldBeTrue(
+		recognised.Count.ShouldBeGreaterThan(0,
 			"no assembly beside this test is on TestProjects.Frameworks, so Rose would report its own test "
 				+ "projects as product code. Add the framework's assembly name to that list. Beside it: "
 				+ string.Join(", ", assemblies.Where(name => name.StartsWith("TUnit", StringComparison.OrdinalIgnoreCase)

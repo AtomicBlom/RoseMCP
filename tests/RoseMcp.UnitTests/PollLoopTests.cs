@@ -140,7 +140,7 @@ public sealed class PollLoopTests
 		await Until(() => Volatile.Read(ref runs) >= 3, "a throwing body stopped the loop");
 		loop.Stop();
 
-		(Volatile.Read(ref failures) >= 3).ShouldBeTrue("every failure was reported");
+		Volatile.Read(ref failures).ShouldBeGreaterThanOrEqualTo(3, "every failure was reported");
 	}
 
 	/// <summary>

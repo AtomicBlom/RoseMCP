@@ -78,7 +78,7 @@ public sealed class OperatorClientTests
 	[Test]
 	public void A_long_poll_is_budgeted_past_the_wait_it_asked_for()
 	{
-		(OperatorClient.PollBudget(30) > TimeSpan.FromSeconds(30)).ShouldBeTrue();
+		OperatorClient.PollBudget(30).ShouldBeGreaterThan(TimeSpan.FromSeconds(30));
 		OperatorClient.PollBudget(30).ShouldBe(TimeSpan.FromSeconds(30) + OperatorClient.PollMargin);
 
 		// A poll that waits for nothing still gets more than a quick call would need.

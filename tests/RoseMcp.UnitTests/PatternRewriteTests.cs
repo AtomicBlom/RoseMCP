@@ -234,4 +234,20 @@ public sealed class PatternRewriteTests
 
 		text.ShouldContain(Around, Case.Sensitive);
 	}
+
+	/// <summary>
+	/// A comparison rewritten into the assertion that names it. An operand that needs parentheses in its
+	/// new position gets them; one that does not, does not.
+	/// </summary>
+	[Test]
+	public void Rewrites_a_comparison_into_the_assertion_that_names_it()
+	{
+		var (text, _) = Rewrite(
+			"using Shouldly; class C { void M(int n, int m) { (n > 1).ShouldBeTrue(); (n + m > 1).ShouldBeTrue(); } }",
+			[Rule("($a$ > $b$).ShouldBeTrue()", "$a$.ShouldBeGreaterThan($b$)")],
+			["Shouldly"]);
+
+		text.ShouldContain("n.ShouldBeGreaterThan(1);", Case.Sensitive);
+		text.ShouldContain("(n + m).ShouldBeGreaterThan(1);", Case.Sensitive);
+	}
 }

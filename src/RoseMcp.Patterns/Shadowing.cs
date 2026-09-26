@@ -57,6 +57,8 @@ internal static class Shadowing
 			Equals(first.Value, second.Value) && SymbolEqualityComparer.Default.Equals(first.Type, second.Type),
 		(MemberNode first, MemberNode second) => SymbolEqualityComparer.Default.Equals(first.Member, second.Member),
 		(NotNode first, NotNode second) => Covers(first.Operand, second.Operand),
+		(BinaryNode first, BinaryNode second) =>
+			first.Operator == second.Operator && Covers(first.Left, second.Left) && Covers(first.Right, second.Right),
 		(LambdaNode, LambdaNode) => true,
 		(InvocationNode first, InvocationNode second) => second.Candidates.All(
 			candidate => first.Candidates.Any(wider => Covers(wider, candidate))),

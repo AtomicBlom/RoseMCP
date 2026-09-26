@@ -53,6 +53,21 @@ public sealed class PatternRewriteTests
 		Assert.Contains("count.ShouldBe(/* one */ 1)", text, StringComparison.Ordinal);
 	}
 
+	/// <summary>
+	/// A null-forgiving operator on an argument goes with the capture. The operator is not an operation,
+	/// so the argument can report only what is inside it; dropped, it writes back a nullable warning that
+	/// is an error wherever warnings are.
+	/// </summary>
+	[Test]
+	public void Keeps_a_null_forgiving_operator_on_a_capture()
+	{
+		var (text, _) = Rewrite(
+			"using Shouldly; class C { void M(string? text) { Assert.Contains(\"a\", text!); } }",
+			Rule("Assert.Contains($sub:string$, $s:string$)", "$s$.ShouldContain($sub$, Case.Sensitive)"));
+
+		Assert.Contains("text!.ShouldContain(\"a\", Case.Sensitive)", text, StringComparison.Ordinal);
+	}
+
 	/// <summary>A site inside another's capture is rewritten first, and the outer replacement takes the result.</summary>
 	[Test]
 	public void Composes_a_site_inside_another()

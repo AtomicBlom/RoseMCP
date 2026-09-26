@@ -1,7 +1,7 @@
 # Code is rewritten by what it binds to, not by how it is spelled
 
 **Decision.** `rose_replace_pattern` takes rules written as C# with placeholders -- `$x$` any
-expression, `$x:Type$` one convertible to a type, `$x:id$` an identifier, `$T$` a type argument --
+expression, `$x:Type$` one of that type or a subtype, `$x:id$` an identifier, `$T$` a type argument --
 and rewrites every call or statement a rule matches. A rule matches by the symbols the code binds
 to, compared on the operation tree, so a named or reordered argument, an alias, a `using static`
 and either form of an extension call all match the same rule without a rule for each.

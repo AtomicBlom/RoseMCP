@@ -24,6 +24,21 @@ public sealed class PatternMatchTests
 		Assert.Equal(["1: Assert.Equal(actual: x, expected: 1) [a=x, e=1]"], Sites(result));
 	}
 
+	/// <summary>
+	/// A typed placeholder takes what is that type, not what merely converts to it: a <c>bool</c> reaches
+	/// <c>True(bool?)</c> through a nullable conversion, and a rule for <c>bool?</c> is there to tell them apart.
+	/// </summary>
+	[Test]
+	public void A_typed_placeholder_does_not_take_what_only_converts_to_its_type()
+	{
+		var result = Scan(
+			"class C { void M(bool b, bool? maybe, List<int> xs) { Assert.True(b); Assert.True(maybe); Assert.NotNull(xs); } }",
+			Rule("Assert.True($c:bool?$)"),
+			Rule("Assert.NotNull($x:IEnumerable<int>$)"));
+
+		Assert.Equal(["1: Assert.True(maybe) [c=maybe]", "2: Assert.NotNull(xs) [x=xs]"], Sites(result));
+	}
+
 	/// <summary>A name in the find resolves as it would in the project, so the alias, the qualified name and a static import all reach it.</summary>
 	[Test]
 	[Arguments("Assert.Equal(1, x)")]

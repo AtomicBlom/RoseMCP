@@ -335,6 +335,11 @@ internal static class SiteScanner
 		/// type checked is the expression's own, not the one it is converted to at the site, so a
 		/// <c>char</c> does not satisfy <c>:string</c> for having been passed where an object goes; an
 		/// expression with no type of its own -- a lambda, a null -- is checked by what it converts to.
+		/// <para>
+		/// Meeting the type means being it, deriving from it, implementing it, or boxing to it. A nullable,
+		/// numeric or user-defined conversion does not count: those are how a rule for <c>bool?</c> would take
+		/// every <c>bool</c>, or <c>:long</c> every <c>int</c>, when the type was written to tell them apart.
+		/// </para>
 		/// </summary>
 		private bool Placeholder(PlaceholderNode placeholder, ExpressionSyntax syntax)
 		{
@@ -343,7 +348,12 @@ internal static class SiteScanner
 				var info = model.GetTypeInfo(syntax, cancellationToken);
 				var type = info.Type ?? info.ConvertedType;
 
-				if (type is null || !model.Compilation.ClassifyConversion(type, constraint).IsImplicit) return false;
+				if (type is null) return false;
+
+				var conversion = model.Compilation.ClassifyConversion(type, constraint);
+				var isHeldAsItself = conversion.IsIdentity || conversion.IsReference || conversion.IsBoxing;
+
+				if (!isHeldAsItself) return false;
 			}
 
 			_captures[placeholder.Name] = new Capture(placeholder.Name, PlaceholderKind.Expression, syntax, default);

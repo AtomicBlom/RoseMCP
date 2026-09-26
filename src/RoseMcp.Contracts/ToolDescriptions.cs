@@ -710,7 +710,7 @@ public static class ToolDescriptions
 
 	/// <summary>The placeholder grammar, which is carried here because a find is where it is written.</summary>
 	public const string PatternFindArgument =
-		"A call, or a call statement ending in ;. $x$ is any expression, $x:Type$ one convertible to Type, "
+		"A call, or a call statement ending in ;. $x$ is any expression, $x:Type$ one of Type or a subtype, "
 			+ "$x:id$ an identifier such as a lambda's parameter, $T$ a type argument. Naming an argument, as "
 			+ "filter: $p$, picks the overloads with that parameter.";
 

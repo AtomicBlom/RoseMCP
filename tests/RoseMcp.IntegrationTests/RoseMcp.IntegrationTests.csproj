@@ -13,6 +13,7 @@
     <PackageReference Include="TUnit.Core" />
     <PackageReference Include="TUnit.Engine" />
     <PackageReference Include="xunit.v3.assert" />
+    <PackageReference Include="Shouldly" />
 
     <!-- Solutions are loaded in this process, so it uses the SDK's MSBuild found at run time, exactly as
          the worker does. Without this, Roslyn's MSBuild workspace copies its own
@@ -41,6 +42,7 @@
     <!-- The assertion API by its own name, aliased rather than imported, because TUnit.Core also
          reaches an Assert and an unqualified one would be ambiguous in every file. -->
     <Using Include="Xunit.Assert" Alias="Assert" />
+    <Using Include="Shouldly" />
     <!-- These used to sit in the RoseMcp.Worker.Tests namespace, nested inside RoseMcp.Worker, so
          every worker type resolved without a using. The projects are named for what they test now,
          which costs that; a global using is the same reach without 28 files of noise. -->

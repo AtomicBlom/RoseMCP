@@ -75,6 +75,7 @@
          is deliberately absent: it declares an Assert of its own, and two of those in scope is an
          ambiguity in every file. -->
     <PackageVersion Include="xunit.v3.assert" Version="4.0.0" />
+    <PackageVersion Include="Shouldly" Version="4.3.0" />
 
   </ItemGroup>
 

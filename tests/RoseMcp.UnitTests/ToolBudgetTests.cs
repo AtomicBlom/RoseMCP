@@ -58,8 +58,8 @@ public sealed class ToolBudgetTests
 		{
 			var length = tool.Description?.Length ?? 0;
 
-			Assert.True(length <= PerTool, $"{tool.Name} is described in {length} characters");
-			Assert.True(length > 120, $"{tool.Name} is described in {length} characters, which cannot carry a reason");
+			(length <= PerTool).ShouldBeTrue($"{tool.Name} is described in {length} characters");
+			(length > 120).ShouldBeTrue($"{tool.Name} is described in {length} characters, which cannot carry a reason");
 		}
 	}
 
@@ -70,7 +70,7 @@ public sealed class ToolBudgetTests
 		{
 			foreach (var (name, length) in Arguments(tool))
 			{
-				Assert.True(length <= PerParameter, $"{tool.Name}'s {name} is described in {length} characters");
+				(length <= PerParameter).ShouldBeTrue($"{tool.Name}'s {name} is described in {length} characters");
 			}
 		}
 	}
@@ -84,7 +84,7 @@ public sealed class ToolBudgetTests
 	{
 		var total = Listed().Sum(tool => (tool.Description?.Length ?? 0) + tool.InputSchema.GetRawText().Length);
 
-		Assert.InRange(total, 1, ModelFacing);
+		total.ShouldBeInRange(1, ModelFacing);
 	}
 
 	/// <summary>Each argument's name and how long its help is, from the schema as it is sent.</summary>

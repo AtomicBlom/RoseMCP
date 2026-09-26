@@ -43,7 +43,7 @@ public sealed class XamlRequestKindTests
 	{
 		foreach (var (verb, mutates) in Verbs)
 		{
-			Assert.Equal(mutates, XamlRequestKind.Mutates(verb));
+			XamlRequestKind.Mutates(verb).ShouldBe(mutates);
 		}
 	}
 
@@ -62,7 +62,7 @@ public sealed class XamlRequestKindTests
 	[Arguments("apply\nSetProperty\tGrid[0]\tBackground", true)]
 	public void Arguments_do_not_change_the_verb(string request, bool mutates)
 	{
-		Assert.Equal(mutates, XamlRequestKind.Mutates(request));
+		XamlRequestKind.Mutates(request).ShouldBe(mutates);
 	}
 
 	/// <summary>
@@ -72,15 +72,15 @@ public sealed class XamlRequestKindTests
 	[Test]
 	public void A_verb_nobody_classified_is_treated_as_mutating()
 	{
-		Assert.True(XamlRequestKind.Mutates("scrollto 1234"));
-		Assert.True(XamlRequestKind.Mutates(string.Empty));
+		XamlRequestKind.Mutates("scrollto 1234").ShouldBeTrue();
+		XamlRequestKind.Mutates(string.Empty).ShouldBeTrue();
 	}
 
 	[Test]
 	public void Only_a_mutating_request_is_caveated()
 	{
-		Assert.Equal(string.Empty, XamlRequestKind.Caveat("tree"));
-		Assert.Contains(XamlRequestKind.MayStillLand, XamlRequestKind.Caveat("selecthandle 1234"));
+		XamlRequestKind.Caveat("tree").ShouldBe(string.Empty);
+		XamlRequestKind.Caveat("selecthandle 1234").ShouldContain(XamlRequestKind.MayStillLand, Case.Sensitive);
 	}
 
 	/// <summary>
@@ -101,11 +101,11 @@ public sealed class XamlRequestKindTests
 			.Select(match => match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value)
 			.ToHashSet(StringComparer.Ordinal);
 
-		Assert.NotEmpty(served);
+		served.ShouldNotBeEmpty();
 
 		// Joined rather than asserted empty so a failure names the verb instead of a count.
-		Assert.Equal(string.Empty, string.Join(", ", served.Where(verb => !Verbs.ContainsKey(verb)).Order()));
-		Assert.Equal(string.Empty, string.Join(", ", Verbs.Keys.Where(verb => !served.Contains(verb)).Order()));
+		string.Join(", ", served.Where(verb => !Verbs.ContainsKey(verb)).Order()).ShouldBe(string.Empty);
+		string.Join(", ", Verbs.Keys.Where(verb => !served.Contains(verb)).Order()).ShouldBe(string.Empty);
 	}
 
 	private static string RepositoryRoot()

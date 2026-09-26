@@ -28,8 +28,7 @@ public sealed class SolutionWatcherTests
 		await tree.RewriteAsync();
 		await Task.Delay(Settle, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(
-			tree.Watcher.Drain().Signal.HasFlag(WatchSignal.FileChanges),
+		tree.Watcher.Drain().Signal.HasFlag(WatchSignal.FileChanges).ShouldBeFalse(
 			"one NoteSelfWrite has to cover every event that one write raises");
 	}
 
@@ -45,8 +44,7 @@ public sealed class SolutionWatcherTests
 
 		await tree.RewriteAsync();
 
-		Assert.True(
-			await tree.WaitForFileChangeAsync(),
+		(await tree.WaitForFileChangeAsync()).ShouldBeTrue(
 			"an edit nobody announced is what the watcher exists to notice");
 	}
 
@@ -69,10 +67,10 @@ public sealed class SolutionWatcherTests
 		await Task.Delay(Settle, token);
 		var report = tree.Watcher.Drain();
 
-		Assert.True(report.HasFlag(WatchSignal.FileChanges), "the burst has to have been heard for the rest to mean anything");
-		Assert.False(report.HasFlag(WatchSignal.FullResyncRequired), "how many source files changed is never a reason to reload");
-		Assert.Empty(report.BuildFilesAppeared);
-		Assert.Empty(report.BuildFilesChanged);
+		report.HasFlag(WatchSignal.FileChanges).ShouldBeTrue("the burst has to have been heard for the rest to mean anything");
+		report.HasFlag(WatchSignal.FullResyncRequired).ShouldBeFalse("how many source files changed is never a reason to reload");
+		report.BuildFilesAppeared.ShouldBeEmpty();
+		report.BuildFilesChanged.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -91,15 +89,15 @@ public sealed class SolutionWatcherTests
 		await Task.Delay(Settle, token);
 
 		var first = tree.Watcher.Drain();
-		Assert.Contains(first.BuildFilesAppeared, path => path.EndsWith("Directory.Build.props", StringComparison.OrdinalIgnoreCase));
-		Assert.DoesNotContain(first.BuildFilesAppeared, path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+		first.BuildFilesAppeared.ShouldContain(path => path.EndsWith("Directory.Build.props", StringComparison.OrdinalIgnoreCase));
+		first.BuildFilesAppeared.ShouldNotContain(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
 
 		await File.WriteAllTextAsync(props, "<Project><PropertyGroup /></Project>", token);
 		await Task.Delay(Settle, token);
 
 		var second = tree.Watcher.Drain();
-		Assert.Contains(second.BuildFilesChanged, path => path.EndsWith("Directory.Build.props", StringComparison.OrdinalIgnoreCase));
-		Assert.Empty(second.BuildFilesAppeared);
+		second.BuildFilesChanged.ShouldContain(path => path.EndsWith("Directory.Build.props", StringComparison.OrdinalIgnoreCase));
+		second.BuildFilesAppeared.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -117,9 +115,9 @@ public sealed class SolutionWatcherTests
 
 		var report = tree.Watcher.Drain();
 
-		Assert.False(report.HasFlag(WatchSignal.FileChanges), "the git directory's own writes are not working-tree changes");
-		Assert.False(report.HasFlag(WatchSignal.FullResyncRequired));
-		Assert.False(report.HasFlag(WatchSignal.EventsLost));
+		report.HasFlag(WatchSignal.FileChanges).ShouldBeFalse("the git directory's own writes are not working-tree changes");
+		report.HasFlag(WatchSignal.FullResyncRequired).ShouldBeFalse();
+		report.HasFlag(WatchSignal.EventsLost).ShouldBeFalse();
 	}
 
 	/// <summary>A watched directory holding a solution file and one source file.</summary>

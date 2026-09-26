@@ -42,7 +42,7 @@ public sealed class LoggingTests : IDisposable
 	{
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
 
-		Assert.Equal(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Logs", "Worker"), directory);
+		directory.ShouldBe(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Logs", "Worker"));
 	}
 
 	/// <summary>
@@ -54,8 +54,8 @@ public sealed class LoggingTests : IDisposable
 	{
 		var run = Path.Combine(_root, "run");
 
-		Assert.Equal(Path.Combine(run, "LiveApp"), RoseLogFile.DirectoryFor("LiveApp", _root, run));
-		Assert.Equal(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Logs", "LiveApp"), RoseLogFile.DirectoryFor("LiveApp", _root, string.Empty));
+		RoseLogFile.DirectoryFor("LiveApp", _root, run).ShouldBe(Path.Combine(run, "LiveApp"));
+		RoseLogFile.DirectoryFor("LiveApp", _root, string.Empty).ShouldBe(Path.Combine(_root, "BinaryVibrance", "RoseMCP", "Logs", "LiveApp"));
 	}
 
 	[Test]
@@ -63,9 +63,9 @@ public sealed class LoggingTests : IDisposable
 	{
 		var encoded = RoseLogFile.EncodeSolutionPath(Rooted("Dev", "Personal", "RoseMCP", "RoseMcp.slnx"));
 
-		Assert.StartsWith("rosemcp.slnx-", encoded, StringComparison.Ordinal);
-		Assert.DoesNotContain(Path.DirectorySeparatorChar, encoded);
-		Assert.DoesNotContain(':', encoded);
+		encoded.ShouldStartWith("rosemcp.slnx-", Case.Sensitive);
+		encoded.ShouldNotContain(Path.DirectorySeparatorChar);
+		encoded.ShouldNotContain(':');
 	}
 
 	/// <summary>
@@ -78,7 +78,7 @@ public sealed class LoggingTests : IDisposable
 		var first = RoseLogFile.EncodeSolutionPath(Rooted("repo", "main", "A.slnx"));
 		var second = RoseLogFile.EncodeSolutionPath(Rooted("repo", "feature", "A.slnx"));
 
-		Assert.NotEqual(first, second);
+		second.ShouldNotBe(first);
 	}
 
 	/// <summary>
@@ -100,11 +100,11 @@ public sealed class LoggingTests : IDisposable
 
 		if (OperatingSystem.IsWindows())
 		{
-			Assert.Equal(upper, lower);
+			lower.ShouldBe(upper);
 			return;
 		}
 
-		Assert.NotEqual(upper, lower);
+		lower.ShouldNotBe(upper);
 	}
 
 	[Test]
@@ -116,9 +116,9 @@ public sealed class LoggingTests : IDisposable
 		var worker = RoseLogFile.Claim(directory, Rooted("repo", "A.slnx"), now);
 		var host = RoseLogFile.Claim(RoseLogFile.DirectoryFor("Tray", _root), null, now);
 
-		Assert.EndsWith("-20260901-143022.log", worker, StringComparison.Ordinal);
-		Assert.Contains("a.slnx-", Path.GetFileName(worker), StringComparison.Ordinal);
-		Assert.Equal("20260901-143022.log", Path.GetFileName(host));
+		worker.ShouldEndWith("-20260901-143022.log", Case.Sensitive);
+		Path.GetFileName(worker).ShouldContain("a.slnx-", Case.Sensitive);
+		Path.GetFileName(host).ShouldBe("20260901-143022.log");
 	}
 
 	/// <summary>
@@ -134,9 +134,9 @@ public sealed class LoggingTests : IDisposable
 		var first = RoseLogFile.Claim(directory, null, now);
 		var second = RoseLogFile.Claim(directory, null, now);
 
-		Assert.NotEqual(first, second);
-		Assert.Equal("20260901-143022.log", Path.GetFileName(first));
-		Assert.Equal("20260901-143022-2.log", Path.GetFileName(second));
+		second.ShouldNotBe(first);
+		Path.GetFileName(first).ShouldBe("20260901-143022.log");
+		Path.GetFileName(second).ShouldBe("20260901-143022-2.log");
 	}
 
 	[Test]
@@ -155,7 +155,7 @@ public sealed class LoggingTests : IDisposable
 		RoseLogFile.PruneSessions(directory, keep: 2);
 
 		var left = Directory.GetFiles(directory).Select(Path.GetFileName).Order().ToArray();
-		Assert.Equal(["20260901-120004.log", "20260901-120005.log"], left);
+		left.ShouldBe(["20260901-120004.log", "20260901-120005.log"]);
 	}
 
 	/// <summary>
@@ -181,8 +181,8 @@ public sealed class LoggingTests : IDisposable
 
 		RoseLogFile.PruneSessions(directory, keep: 1);
 
-		Assert.Equal(3, Directory.GetFiles(directory).Length);
-		Assert.False(File.Exists(older), "the older session's file was pruned");
+		Directory.GetFiles(directory).Length.ShouldBe(3);
+		File.Exists(older).ShouldBeFalse("the older session's file was pruned");
 	}
 
 	[Test]
@@ -197,7 +197,7 @@ public sealed class LoggingTests : IDisposable
 		var directory = RoseLogFile.DirectoryFor("Worker", _root);
 		var written = Directory.GetFiles(directory, "*.log").Select(File.ReadAllText);
 
-		Assert.Contains(written, text => text.Contains("a distinctive line", StringComparison.Ordinal));
+		written.ShouldContain(text => text.Contains("a distinctive line", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -232,7 +232,7 @@ public sealed class LoggingTests : IDisposable
 			Console.SetOut(original);
 		}
 
-		Assert.Equal(string.Empty, stdout.ToString());
+		stdout.ToString().ShouldBe(string.Empty);
 #pragma warning restore TUnit0055
 	}
 }

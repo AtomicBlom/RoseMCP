@@ -19,9 +19,9 @@ public sealed class RelayRetryPolicyTests
 	{
 		var policy = new RelayRetryPolicy();
 
-		Assert.False(policy.Known, "nothing is known before the tool list arrives");
-		Assert.False(policy.MayRetry("rose_outline"), "a read-only tool is not retried before the list arrives");
-		Assert.False(policy.MayRetry("rose_rename_symbol"), "a writing tool is not retried before the list arrives");
+		policy.Known.ShouldBeFalse("nothing is known before the tool list arrives");
+		policy.MayRetry("rose_outline").ShouldBeFalse("a read-only tool is not retried before the list arrives");
+		policy.MayRetry("rose_rename_symbol").ShouldBeFalse("a writing tool is not retried before the list arrives");
 	}
 
 	[Test]
@@ -31,9 +31,9 @@ public sealed class RelayRetryPolicyTests
 
 		policy.Learn([ReadOnly("rose_outline"), Writes("rose_rename_symbol")]);
 
-		Assert.True(policy.Known);
-		Assert.True(policy.MayRetry("rose_outline"));
-		Assert.False(policy.MayRetry("rose_rename_symbol"), "a writing tool is never retried");
+		policy.Known.ShouldBeTrue();
+		policy.MayRetry("rose_outline").ShouldBeTrue();
+		policy.MayRetry("rose_rename_symbol").ShouldBeFalse("a writing tool is never retried");
 	}
 
 	/// <summary>
@@ -48,8 +48,8 @@ public sealed class RelayRetryPolicyTests
 
 		policy.Learn([ReadOnly("rose_outline"), Named("rose_mystery")]);
 
-		Assert.False(policy.MayRetry("rose_mystery"), "a tool it was told nothing about is not retried");
-		Assert.False(policy.MayRetry("rose_never_heard_of_it"), "nor is any other tool it was told nothing about");
+		policy.MayRetry("rose_mystery").ShouldBeFalse("a tool it was told nothing about is not retried");
+		policy.MayRetry("rose_never_heard_of_it").ShouldBeFalse("nor is any other tool it was told nothing about");
 	}
 
 	/// <summary>
@@ -62,10 +62,10 @@ public sealed class RelayRetryPolicyTests
 		var policy = new RelayRetryPolicy();
 
 		policy.Learn([ReadOnly("rose_format")]);
-		Assert.True(policy.MayRetry("rose_format"));
+		policy.MayRetry("rose_format").ShouldBeTrue();
 
 		policy.Learn([Writes("rose_format")]);
-		Assert.False(policy.MayRetry("rose_format"), "a tool from the list it replaced is no longer retried");
+		policy.MayRetry("rose_format").ShouldBeFalse("a tool from the list it replaced is no longer retried");
 	}
 
 	private static Tool ReadOnly(string name) => Named(name, new ToolAnnotations { ReadOnlyHint = true });

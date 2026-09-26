@@ -25,9 +25,9 @@ public sealed class HostVersionTests
 	{
 		var version = HostVersion.Of(typeof(HostVersion).Assembly);
 
-		Assert.NotEqual("0.0.0", version);
-		Assert.NotEqual("0.1.0", version);
-		Assert.DoesNotContain("+", version, StringComparison.Ordinal);
+		version.ShouldNotBe("0.0.0");
+		version.ShouldNotBe("0.1.0");
+		version.ShouldNotContain("+", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -41,7 +41,7 @@ public sealed class HostVersionTests
 			.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
 			.InformationalVersion;
 
-		Assert.Equal(stamped.Split('+')[0], HostVersion.Of(typeof(HostVersion).Assembly));
+		HostVersion.Of(typeof(HostVersion).Assembly).ShouldBe(stamped.Split('+')[0]);
 	}
 
 	/// <summary>
@@ -55,7 +55,7 @@ public sealed class HostVersionTests
 	{
 		var same = HostVersion.Of(typeof(WorkspaceManager).Assembly);
 
-		Assert.Null(ChildHostVersion.Mismatch(same, @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly));
+		ChildHostVersion.Mismatch(same, @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -69,10 +69,10 @@ public sealed class HostVersionTests
 		var mismatch = ChildHostVersion.Mismatch(
 			"0.4.0", @"C:\rose\bin\Release\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly);
 
-		Assert.NotNull(mismatch);
-		Assert.Contains("0.4.0", mismatch!, StringComparison.Ordinal);
-		Assert.Contains(HostVersion.Of(typeof(WorkspaceManager).Assembly), mismatch, StringComparison.Ordinal);
-		Assert.Contains(@"C:\rose\bin\Release\RoseMcp.Worker.exe", mismatch, StringComparison.Ordinal);
+		mismatch.ShouldNotBeNull();
+		mismatch!.ShouldContain("0.4.0", Case.Sensitive);
+		mismatch.ShouldContain(HostVersion.Of(typeof(WorkspaceManager).Assembly), Case.Sensitive);
+		mismatch.ShouldContain(@"C:\rose\bin\Release\RoseMcp.Worker.exe", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -82,8 +82,8 @@ public sealed class HostVersionTests
 	[Test]
 	public void A_child_that_reports_no_version_is_not_taken_for_a_match()
 	{
-		Assert.NotNull(ChildHostVersion.Mismatch(null, @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly));
-		Assert.NotNull(ChildHostVersion.Mismatch("  ", @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly));
+		ChildHostVersion.Mismatch(null, @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly).ShouldNotBeNull();
+		ChildHostVersion.Mismatch("  ", @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly).ShouldNotBeNull();
 	}
 
 	/// <summary>
@@ -97,8 +97,8 @@ public sealed class HostVersionTests
 		{
 			var source = File.ReadAllText(Path.Combine(BrokerSource(), file));
 
-			Assert.Contains("ChildHostVersion.Mismatch", source, StringComparison.Ordinal);
-			Assert.Contains("ServerInfo?.Version", source, StringComparison.Ordinal);
+			source.ShouldContain("ChildHostVersion.Mismatch", Case.Sensitive);
+			source.ShouldContain("ServerInfo?.Version", Case.Sensitive);
 		}
 	}
 
@@ -117,7 +117,7 @@ public sealed class HostVersionTests
 			new AssemblyName("RoseMcp.NothingStampedThis"),
 			AssemblyBuilderAccess.Run);
 
-		Assert.Equal("0.0.0", HostVersion.Of(unstamped));
+		HostVersion.Of(unstamped).ShouldBe("0.0.0");
 	}
 
 	/// <summary>

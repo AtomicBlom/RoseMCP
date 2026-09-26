@@ -62,8 +62,7 @@ public sealed class ToolResultShapeTests
 	{
 		foreach (var (name, result) in WorkspaceScopedTools())
 		{
-			Assert.True(
-				typeof(WorkspaceScopedResult).IsAssignableFrom(result),
+			typeof(WorkspaceScopedResult).IsAssignableFrom(result).ShouldBeTrue(
 				$"{name} answers with {result.Name}, which does not derive from WorkspaceScopedResult, "
 					+ "so the broker cannot say which workspace answered.");
 		}
@@ -81,8 +80,7 @@ public sealed class ToolResultShapeTests
 		{
 			if (WithoutRevision.ContainsKey(result.Name)) continue;
 
-			Assert.True(
-				result.GetProperty("Revision", BindingFlags.Public | BindingFlags.Instance) is not null,
+			(result.GetProperty("Revision", BindingFlags.Public | BindingFlags.Instance) is not null).ShouldBeTrue(
 				$"{name} answers with {result.Name}, which carries no revision. Add one, or add the "
 					+ "type to WithoutRevision with the reason it is honest without one.");
 		}
@@ -99,8 +97,8 @@ public sealed class ToolResultShapeTests
 
 		foreach (var (name, reason) in WithoutRevision)
 		{
-			Assert.Contains(name, returned);
-			Assert.NotEmpty(reason);
+			returned.ShouldContain(name);
+			reason.ShouldNotBeEmpty();
 		}
 	}
 
@@ -117,11 +115,11 @@ public sealed class ToolResultShapeTests
 		var forward = typeof(WorkspaceManager)
 			.GetMethod(nameof(WorkspaceManager.CallAsync), BindingFlags.Public | BindingFlags.Instance);
 
-		Assert.NotNull(forward);
+		forward.ShouldNotBeNull();
 
 		var constraints = forward!.GetGenericArguments().Single().GetGenericParameterConstraints();
 
-		Assert.Contains(typeof(WorkspaceScopedResult), constraints);
+		constraints.ShouldContain(typeof(WorkspaceScopedResult));
 	}
 
 	/// <summary>
@@ -137,7 +135,7 @@ public sealed class ToolResultShapeTests
 			var byPrefix = ProcessScoped.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal));
 			var byType = declaring.Name == "LiveAppDebugTools";
 
-			Assert.Equal(byType, byPrefix);
+			byPrefix.ShouldBe(byType);
 		}
 	}
 

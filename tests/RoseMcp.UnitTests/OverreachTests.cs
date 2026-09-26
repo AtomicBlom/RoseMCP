@@ -17,8 +17,8 @@ public sealed class OverreachTests
 
 		var reach = Overreach.Of(Text(before), Text("first\nSECOND\nthird\n"), [Line(before, "second")]);
 
-		Assert.False(reach.Any);
-		Assert.Null(reach.Sentence("File.cs"));
+		reach.Any.ShouldBeFalse();
+		reach.Sentence("File.cs").ShouldBeNull();
 	}
 
 	[Test]
@@ -28,8 +28,8 @@ public sealed class OverreachTests
 
 		var reach = Overreach.Of(Text(before), Text("first\nSECOND\nTHIRD\nfourth\n"), [Line(before, "second")]);
 
-		Assert.Equal([3], reach.Lines);
-		Assert.Empty(reach.Insertions);
+		reach.Lines.ShouldBe([3]);
+		reach.Insertions.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -47,7 +47,7 @@ public sealed class OverreachTests
 
 		var reach = Overreach.Of(Text(before), Text(after), asked);
 
-		Assert.Equal([2], reach.Lines);
+		reach.Lines.ShouldBe([2]);
 	}
 
 	[Test]
@@ -57,7 +57,7 @@ public sealed class OverreachTests
 
 		var reach = Overreach.Of(Text(before), Text("first\nsecond\nadded\nthird\n"), [Line(before, "second")]);
 
-		Assert.False(reach.Any);
+		reach.Any.ShouldBeFalse();
 	}
 
 	[Test]
@@ -68,8 +68,8 @@ public sealed class OverreachTests
 		var reach = Overreach.Of(
 			Text(before), Text("first\nsecond\nthird\nfourth\nadded\nalso\nfifth\n"), [Line(before, "first")]);
 
-		Assert.Empty(reach.Lines);
-		Assert.Equal([(4, 2)], reach.Insertions);
+		reach.Lines.ShouldBeEmpty();
+		reach.Insertions.ShouldBe([(4, 2)]);
 	}
 
 	/// <summary>
@@ -86,8 +86,8 @@ public sealed class OverreachTests
 		var clean = Overreach.Of(Text(before), Text("{\n\tfirst();\n\tadded();\n}\n"), [place]);
 		var reflowed = Overreach.Of(Text(before), Text("{\n\t\tfirst();\n\tadded();\n}\n"), [place]);
 
-		Assert.False(clean.Any);
-		Assert.Equal([2], reflowed.Lines);
+		clean.Any.ShouldBeFalse();
+		reflowed.Lines.ShouldBe([2]);
 	}
 
 	/// <summary>
@@ -102,7 +102,7 @@ public sealed class OverreachTests
 
 		var reach = Overreach.Of(Text(before), Text("{\n\tFirst,\n\tSecond,\n\tThird\n}\n"), [place]);
 
-		Assert.False(reach.Any);
+		reach.Any.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -119,7 +119,7 @@ public sealed class OverreachTests
 		var reach = Overreach.Of(
 			Text(before), Text("class C\n{\n\tvoid A() { }\n\n\tvoid X() { }\n\n\tvoid B() { }\n}\n"), [place]);
 
-		Assert.False(reach.Any);
+		reach.Any.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -136,7 +136,7 @@ public sealed class OverreachTests
 
 		var reach = Overreach.Of(Text(before), Text("class C\n{\n\tvoid A() { }\n\n\tvoid D() { }\n}\n"), [member]);
 
-		Assert.False(reach.Any);
+		reach.Any.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -151,7 +151,7 @@ public sealed class OverreachTests
 		var reach = Overreach.Of(
 			Text(before), Text("using System;\n\nusing static System.Math;\n\nnamespace N;\n"), [Line(before, "using System;")]);
 
-		Assert.False(reach.Any);
+		reach.Any.ShouldBeFalse();
 	}
 
 	[Test]
@@ -159,7 +159,7 @@ public sealed class OverreachTests
 	{
 		var reach = Overreach.Of(Text("first\nsecond\n"), Text("first\nother\n"), []);
 
-		Assert.Equal([2], reach.Lines);
+		reach.Lines.ShouldBe([2]);
 	}
 
 	/// <summary>
@@ -171,7 +171,7 @@ public sealed class OverreachTests
 	{
 		var reach = Overreach.Of(Text("first\r\nsecond\r\n"), Text("first\nsecond\n"), []);
 
-		Assert.False(reach.Any);
+		reach.Any.ShouldBeFalse();
 	}
 
 	[Test]
@@ -181,10 +181,8 @@ public sealed class OverreachTests
 
 		var reach = Overreach.Of(Text(before), Text("1\n2\nC\nD\n5\n6\nG\n8\n9\nnew\nnewer\n"), []);
 
-		Assert.StartsWith(
-			"Greeter.cs: lines 3-4 and 7 changed and 2 lines went in after line 9.",
-			reach.Sentence("Greeter.cs"),
-			StringComparison.Ordinal);
+		reach.Sentence("Greeter.cs").ShouldStartWith(
+			"Greeter.cs: lines 3-4 and 7 changed and 2 lines went in after line 9.", Case.Sensitive);
 	}
 
 	[Test]
@@ -194,7 +192,7 @@ public sealed class OverreachTests
 
 		var reach = Overreach.Of(Text(before), Text("A\n2\nC\n4\nE\n6\nG\n8\nI\n10\nK\n12\n"), []);
 
-		Assert.StartsWith("Many.cs: lines 1, 3, 5, 7 and 2 more place(s) changed.", reach.Sentence("Many.cs"), StringComparison.Ordinal);
+		reach.Sentence("Many.cs").ShouldStartWith("Many.cs: lines 1, 3, 5, 7 and 2 more place(s) changed.", Case.Sensitive);
 	}
 
 	private static SourceText Text(string text) => SourceText.From(text);

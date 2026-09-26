@@ -26,7 +26,7 @@ public sealed class CallSiteBindingTests
 	{
 		var failures = CallSiteBinding.MappingFailures([@"C:\repo\Caller.cs"], [Error(id, @"C:\repo\Caller.cs")]);
 
-		Assert.Equal(id, Assert.Single(failures).Id);
+		failures.ShouldHaveSingleItem().Id.ShouldBe(id);
 	}
 
 	/// <summary>
@@ -39,7 +39,7 @@ public sealed class CallSiteBindingTests
 	{
 		var failures = CallSiteBinding.MappingFailures([@"C:\repo\Caller.cs"], [Error("CS0103", @"C:\repo\Caller.cs")]);
 
-		Assert.Empty(failures);
+		failures.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -51,7 +51,7 @@ public sealed class CallSiteBindingTests
 	{
 		var failures = CallSiteBinding.MappingFailures([@"C:\repo\Caller.cs"], [Error("CS1744", @"C:\repo\Other.cs")]);
 
-		Assert.Empty(failures);
+		failures.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -61,7 +61,7 @@ public sealed class CallSiteBindingTests
 	[Test]
 	public void Claims_nothing_when_it_rewrote_no_call_site()
 	{
-		Assert.Empty(CallSiteBinding.MappingFailures([], [Error("CS1744", @"C:\repo\Caller.cs")]));
+		CallSiteBinding.MappingFailures([], [Error("CS1744", @"C:\repo\Caller.cs")]).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -73,7 +73,7 @@ public sealed class CallSiteBindingTests
 	{
 		var failures = CallSiteBinding.MappingFailures([@"C:\repo\Caller.cs"], [Error("CS1744", @"c:\REPO\caller.cs")]);
 
-		Assert.Single(failures);
+		failures.ShouldHaveSingleItem();
 	}
 
 	private static DiagnosticEntry Error(string id, string filePath) => new()

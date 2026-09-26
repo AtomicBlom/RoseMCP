@@ -34,10 +34,10 @@ public sealed class BreakpointConditionTests
 	{
 		var condition = BreakpointCondition.Parse(text);
 
-		Assert.NotNull(condition);
-		Assert.Equal(variable, condition!.Variable);
-		Assert.Equal(op, condition.Operator);
-		Assert.Equal(literal, condition.Literal);
+		condition.ShouldNotBeNull();
+		condition!.Variable.ShouldBe(variable);
+		condition.Operator.ShouldBe(op);
+		condition.Literal.ShouldBe(literal);
 	}
 
 	[Test]
@@ -54,7 +54,7 @@ public sealed class BreakpointConditionTests
 	[Arguments("iteration >= 30", "30", true)]
 	[Arguments("iteration >= 30", "29", false)]
 	public void Compares_numbers_with_every_operator(string condition, string value, bool expected)
-		=> Assert.Equal(expected, Holds(condition, "iteration", value));
+		=> Holds(condition, "iteration", value).ShouldBe(expected);
 
 	/// <summary>
 	/// Numbers are compared as numbers, not as the text the debugger handed back. A string compare
@@ -63,8 +63,8 @@ public sealed class BreakpointConditionTests
 	[Test]
 	public void Compares_numbers_as_numbers_rather_than_text()
 	{
-		Assert.True(Holds("iteration > 9", "iteration", "30"));
-		Assert.False(Holds("iteration > 30", "iteration", "9"));
+		Holds("iteration > 9", "iteration", "30").ShouldBeTrue();
+		Holds("iteration > 30", "iteration", "9").ShouldBeFalse();
 	}
 
 	[Test]
@@ -72,7 +72,7 @@ public sealed class BreakpointConditionTests
 	[Arguments("ready == true", "false", false)]
 	[Arguments("ready != true", "false", true)]
 	public void Compares_booleans_by_value(string condition, string value, bool expected)
-		=> Assert.Equal(expected, Holds(condition, "ready", value));
+		=> Holds(condition, "ready", value).ShouldBe(expected);
 
 	/// <summary>
 	/// An ordering on a bool has no meaning, so it does not hold rather than guessing at one. It is
@@ -82,8 +82,8 @@ public sealed class BreakpointConditionTests
 	[Test]
 	public void Refuses_to_order_booleans()
 	{
-		Assert.False(Holds("ready > false", "ready", "true"));
-		Assert.False(Holds("ready < true", "ready", "false"));
+		Holds("ready > false", "ready", "true").ShouldBeFalse();
+		Holds("ready < true", "ready", "false").ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -96,11 +96,11 @@ public sealed class BreakpointConditionTests
 	[Arguments("label == \"beat\"", "tick", false)]
 	[Arguments("label != \"beat\"", "tick", true)]
 	public void Compares_strings_by_equality_through_one_layer_of_quotes(string condition, string value, bool expected)
-		=> Assert.Equal(expected, Holds(condition, "label", value));
+		=> Holds(condition, "label", value).ShouldBe(expected);
 
 	[Test]
 	public void Compares_strings_case_sensitively()
-		=> Assert.False(Holds("label == beat", "label", "Beat"));
+		=> Holds("label == beat", "label", "Beat").ShouldBeFalse();
 
 	/// <summary>
 	/// A variable the frame does not have evaluates false, so the breakpoint does not fire. The
@@ -110,14 +110,14 @@ public sealed class BreakpointConditionTests
 	[Test]
 	public void Does_not_hold_when_the_frame_has_no_such_variable()
 	{
-		Assert.False(Holds("missing == 1", "iteration", "1"));
-		Assert.False(BreakpointCondition.Parse("iteration == 1")!.Evaluate([]));
+		Holds("missing == 1", "iteration", "1").ShouldBeFalse();
+		BreakpointCondition.Parse("iteration == 1")!.Evaluate([]).ShouldBeFalse();
 	}
 
 	[Test]
 	public void Does_not_hold_when_the_variable_has_no_value()
-		=> Assert.False(BreakpointCondition.Parse("iteration == 1")!
-			.Evaluate([Local("iteration", null)]));
+		=> BreakpointCondition.Parse("iteration == 1")!
+			.Evaluate([Local("iteration", null)]).ShouldBeFalse();
 
 	/// <summary>No condition is not a malformed one: an unconditional breakpoint stops on every hit.</summary>
 	[Test]
@@ -125,7 +125,7 @@ public sealed class BreakpointConditionTests
 	[Arguments("")]
 	[Arguments("   ")]
 	public void Reads_nothing_as_no_condition(string? text)
-		=> Assert.Null(BreakpointCondition.Parse(text));
+		=> BreakpointCondition.Parse(text).ShouldBeNull();
 
 	/// <summary>
 	/// A condition that cannot be parsed is refused at the point it is set, rather than accepted and
@@ -138,9 +138,9 @@ public sealed class BreakpointConditionTests
 	[Arguments("iteration = 5")]
 	public void Refuses_a_condition_it_cannot_parse(string text)
 	{
-		var failure = Assert.Throws<ArgumentException>(() => BreakpointCondition.Parse(text));
+		var failure = Should.Throw<ArgumentException>(() => BreakpointCondition.Parse(text)).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains(text, failure.Message);
+		failure.Message.ShouldContain(text, Case.Sensitive);
 	}
 
 	[Test]
@@ -148,7 +148,7 @@ public sealed class BreakpointConditionTests
 	{
 		var condition = BreakpointCondition.Parse("  iteration   >=   30  ");
 
-		Assert.Equal("iteration", condition!.Variable);
-		Assert.Equal("30", condition.Literal);
+		condition!.Variable.ShouldBe("iteration");
+		condition.Literal.ShouldBe("30");
 	}
 }

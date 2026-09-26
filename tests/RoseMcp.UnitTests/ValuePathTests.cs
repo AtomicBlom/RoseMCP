@@ -22,9 +22,9 @@ public sealed class ValuePathTests
 	{
 		var parsed = ValuePath.Parse(path);
 
-		Assert.Equal(kind, parsed.Kind);
-		Assert.Equal(slot, parsed.Slot);
-		Assert.Empty(parsed.Steps);
+		parsed.Kind.ShouldBe(kind);
+		parsed.Slot.ShouldBe(slot);
+		parsed.Steps.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -36,11 +36,11 @@ public sealed class ValuePathTests
 	{
 		var parsed = ValuePath.Parse("state");
 
-		Assert.Equal(ValuePathRoot.Name, parsed.Kind);
-		Assert.Equal("state", parsed.Name);
+		parsed.Kind.ShouldBe(ValuePathRoot.Name);
+		parsed.Name.ShouldBe("state");
 
 		// "this" is a name like any other: it is what an instance method's argument 0 is called.
-		Assert.Equal("this", ValuePath.Parse("this").Name);
+		ValuePath.Parse("this").Name.ShouldBe("this");
 	}
 
 	[Test]
@@ -48,12 +48,12 @@ public sealed class ValuePathTests
 	{
 		var parsed = ValuePath.Parse("arg:0.Items[3].Name");
 
-		Assert.Equal(ValuePathRoot.Argument, parsed.Kind);
-		Assert.Equal(0, parsed.Slot);
-		Assert.Equal(3, parsed.Steps.Count);
-		Assert.Equal("Items", parsed.Steps[0].Field);
-		Assert.Equal(3, parsed.Steps[1].Index);
-		Assert.Equal("Name", parsed.Steps[2].Field);
+		parsed.Kind.ShouldBe(ValuePathRoot.Argument);
+		parsed.Slot.ShouldBe(0);
+		parsed.Steps.Count.ShouldBe(3);
+		parsed.Steps[0].Field.ShouldBe("Items");
+		parsed.Steps[1].Index.ShouldBe(3);
+		parsed.Steps[2].Field.ShouldBe("Name");
 	}
 
 	/// <summary>An index straight off the root, with no field between, is the ordinary array case.</summary>
@@ -62,15 +62,15 @@ public sealed class ValuePathTests
 	{
 		var parsed = ValuePath.Parse("local:1[0]");
 
-		Assert.Equal(ValuePathRoot.Local, parsed.Kind);
-		Assert.Equal(1, parsed.Slot);
-		Assert.Equal(0, Assert.Single(parsed.Steps).Index);
+		parsed.Kind.ShouldBe(ValuePathRoot.Local);
+		parsed.Slot.ShouldBe(1);
+		parsed.Steps.ShouldHaveSingleItem().Index.ShouldBe(0);
 	}
 
 	[Test]
 	public void Surrounding_space_is_not_part_of_the_path()
 	{
-		Assert.Equal(2, ValuePath.Parse("  arg:2  ").Slot);
+		ValuePath.Parse("  arg:2  ").Slot.ShouldBe(2);
 	}
 
 	/// <summary>
@@ -93,9 +93,9 @@ public sealed class ValuePathTests
 	[Arguments("arg:0]")]
 	public void A_path_that_cannot_be_read_is_refused(string path)
 	{
-		var refusal = Assert.Throws<ArgumentException>(() => ValuePath.Parse(path));
+		var refusal = Should.Throw<ArgumentException>(() => ValuePath.Parse(path)).ShouldBeOfType<ArgumentException>();
 
-		Assert.NotEmpty(refusal.Message);
+		refusal.Message.ShouldNotBeEmpty();
 	}
 
 	/// <summary>
@@ -107,13 +107,13 @@ public sealed class ValuePathTests
 	{
 		var path = ValuePath.Element(ValuePath.Field(ValuePath.Argument(1), "Inner"), 4);
 
-		Assert.Equal("arg:1.Inner[4]", path);
+		path.ShouldBe("arg:1.Inner[4]");
 
 		var parsed = ValuePath.Parse(path);
-		Assert.Equal(ValuePathRoot.Argument, parsed.Kind);
-		Assert.Equal(1, parsed.Slot);
-		Assert.Equal("Inner", parsed.Steps[0].Field);
-		Assert.Equal(4, parsed.Steps[1].Index);
+		parsed.Kind.ShouldBe(ValuePathRoot.Argument);
+		parsed.Slot.ShouldBe(1);
+		parsed.Steps[0].Field.ShouldBe("Inner");
+		parsed.Steps[1].Index.ShouldBe(4);
 	}
 
 	/// <summary>
@@ -123,7 +123,7 @@ public sealed class ValuePathTests
 	[Test]
 	public void A_slot_addresses_a_local_no_name_reaches()
 	{
-		Assert.Equal("local:3", ValuePath.Local(3));
-		Assert.Equal(3, ValuePath.Parse(ValuePath.Local(3)).Slot);
+		ValuePath.Local(3).ShouldBe("local:3");
+		ValuePath.Parse(ValuePath.Local(3)).Slot.ShouldBe(3);
 	}
 }

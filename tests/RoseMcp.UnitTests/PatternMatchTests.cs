@@ -21,7 +21,7 @@ public sealed class PatternMatchTests
 	{
 		var result = Scan("class C { void M(int x) { Assert.Equal(actual: x, expected: 1); } }", Rule("Assert.Equal($e$, $a$)"));
 
-		Assert.Equal(["1: Assert.Equal(actual: x, expected: 1) [a=x, e=1]"], Sites(result));
+		Sites(result).ShouldBe(["1: Assert.Equal(actual: x, expected: 1) [a=x, e=1]"]);
 	}
 
 	/// <summary>
@@ -36,7 +36,7 @@ public sealed class PatternMatchTests
 			Rule("Assert.True($c:bool?$)"),
 			Rule("Assert.NotNull($x:IEnumerable<int>$)"));
 
-		Assert.Equal(["1: Assert.True(maybe) [c=maybe]", "2: Assert.NotNull(xs) [x=xs]"], Sites(result));
+		Sites(result).ShouldBe(["1: Assert.True(maybe) [c=maybe]", "2: Assert.NotNull(xs) [x=xs]"]);
 	}
 
 	/// <summary>A name in the find resolves as it would in the project, so the alias, the qualified name and a static import all reach it.</summary>
@@ -48,7 +48,7 @@ public sealed class PatternMatchTests
 	{
 		var result = Scan($"using static Xunit.Assert; class C {{ void M(int x) {{ {call}; }} }}", Rule("Assert.Equal($e$, $a$)"));
 
-		Assert.Equal([$"1: {call} [a=x, e=1]"], Sites(result));
+		Sites(result).ShouldBe([$"1: {call} [a=x, e=1]"]);
 	}
 
 	/// <summary>A generic method matches for every type argument it is called with, since what is compared is its definition.</summary>
@@ -59,7 +59,7 @@ public sealed class PatternMatchTests
 			"class C { void M(int x, double d, List<int> xs) { Assert.Equal(1, x); Assert.Equal(1.5, d); Assert.Equal(xs, xs); } }",
 			Rule("Assert.Equal($e$, $a$)"));
 
-		Assert.Equal(3, result.Sites.Count);
+		result.Sites.Count.ShouldBe(3);
 	}
 
 	/// <summary>
@@ -71,8 +71,8 @@ public sealed class PatternMatchTests
 	{
 		var result = Scan("class C { void M(double d) { Assert.Equal(1.0, d, 3); } }", Rule("Assert.Equal($e$, $a$)"));
 
-		Assert.Empty(result.Sites);
-		Assert.Equal("Xunit.Assert.Equal(double, double, int)", Assert.Single(result.Unmatched).Method.ToString());
+		result.Sites.ShouldBeEmpty();
+		result.Unmatched.ShouldHaveSingleItem().Method.ToString().ShouldBe("Xunit.Assert.Equal(double, double, int)");
 	}
 
 	/// <summary>
@@ -89,7 +89,7 @@ public sealed class PatternMatchTests
 	{
 		var result = Scan($"class C {{ void M(string s) {{ {call}; }} }}", Rule("Assert.Equal($e$, $a$)"));
 
-		Assert.Equal(matches, result.Sites.Count == 1);
+		(result.Sites.Count == 1).ShouldBe(matches);
 	}
 
 	/// <summary>A constant in a find matches the same value of the same type, however the site spells or places it.</summary>
@@ -104,7 +104,7 @@ public sealed class PatternMatchTests
 			$"class C {{ void M(string s) {{ {call}; }} }}",
 			Rule("Assert.Equal($e:string$, $a:string$, ignoreCase: true)"));
 
-		Assert.Equal(matches, result.Sites.Count == 1);
+		(result.Sites.Count == 1).ShouldBe(matches);
 	}
 
 	/// <summary>
@@ -122,7 +122,7 @@ public sealed class PatternMatchTests
 			$"class C {{ void M(string s) {{ {call}; }} }}",
 			Rule("Assert.Contains($sub:string$, $s:string$, StringComparison.Ordinal)"));
 
-		Assert.Equal(matches, result.Sites.Count == 1);
+		(result.Sites.Count == 1).ShouldBe(matches);
 	}
 
 	/// <summary>
@@ -136,7 +136,7 @@ public sealed class PatternMatchTests
 			"class C { void M() { Assert.Contains('c', \"abc\"); Assert.Contains(\"b\", \"abc\"); } }",
 			Rule("Assert.Contains($sub:string$, $s:string$)"));
 
-		Assert.Equal(["1: Assert.Contains(\"b\", \"abc\") [s=\"abc\", sub=\"b\"]"], Sites(result));
+		Sites(result).ShouldBe(["1: Assert.Contains(\"b\", \"abc\") [s=\"abc\", sub=\"b\"]"]);
 	}
 
 	/// <summary>
@@ -151,8 +151,8 @@ public sealed class PatternMatchTests
 
 		var covered = Bind(Source, withStubs: true, rule).Bound[0].Methods.Select(method => method.ToString());
 
-		Assert.Contains("Xunit.Assert.Single<T>(System.Collections.Generic.IEnumerable<T>)", covered);
-		Assert.Single(Scan(Source, rule).Sites);
+		covered.ShouldContain("Xunit.Assert.Single<T>(System.Collections.Generic.IEnumerable<T>)");
+		Scan(Source, rule).Sites.ShouldHaveSingleItem();
 	}
 
 	/// <summary>
@@ -167,9 +167,8 @@ public sealed class PatternMatchTests
 			Rule("Assert.Contains($xs$, filter: $p$)"),
 			Rule("Assert.Contains($item$, $xs$)"));
 
-		Assert.Equal(
-			["1: Assert.Contains(xs, x => x > 1) [p=x => x > 1, xs=xs]", "2: Assert.Contains(1, xs) [item=1, xs=xs]"],
-			Sites(result));
+		Sites(result).ShouldBe(
+			["1: Assert.Contains(xs, x => x > 1) [p=x => x > 1, xs=xs]", "2: Assert.Contains(1, xs) [item=1, xs=xs]"]);
 	}
 
 	/// <summary>
@@ -179,12 +178,12 @@ public sealed class PatternMatchTests
 	[Test]
 	public void Refuses_a_rule_an_earlier_one_shadows()
 	{
-		var error = Assert.Throws<PatternException>(() => Scan(
+		var error = Should.Throw<PatternException>(() => Scan(
 			"class C { }",
 			Rule("Assert.Contains($xs$, $p$)"),
-			Rule("Assert.Contains($item$, $xs$)")));
+			Rule("Assert.Contains($item$, $xs$)"))).ShouldBeOfType<PatternException>();
 
-		Assert.StartsWith("Rule 2 can never match: rule 1 comes first", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("Rule 2 can never match: rule 1 comes first", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -199,17 +198,17 @@ public sealed class PatternMatchTests
 			Rule("Assert.True(!$c$)"),
 			Rule("Assert.True($c$)"));
 
-		Assert.Equal(["1: Assert.True(!(a && b)) [c=(a && b)]", "2: Assert.True(a) [c=a]"], Sites(result));
-		Assert.Equal([2], result.Sites[0].AlsoMatched);
+		Sites(result).ShouldBe(["1: Assert.True(!(a && b)) [c=(a && b)]", "2: Assert.True(a) [c=a]"]);
+		result.Sites[0].AlsoMatched.ShouldBe([2]);
 	}
 
 	/// <summary>The general rule first shadows the specific one, which is refused.</summary>
 	[Test]
 	public void A_general_rule_before_a_specific_one_is_refused()
 	{
-		var error = Assert.Throws<PatternException>(() => Scan("class C { }", Rule("Assert.True($c$)"), Rule("Assert.True(!$c$)")));
+		var error = Should.Throw<PatternException>(() => Scan("class C { }", Rule("Assert.True($c$)"), Rule("Assert.True(!$c$)"))).ShouldBeOfType<PatternException>();
 
-		Assert.Contains("Rule 2 can never match", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("Rule 2 can never match", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -223,7 +222,7 @@ public sealed class PatternMatchTests
 			"class C { void F() { } void M() { Assert.Throws<ArgumentException>(() => F()); Assert.Throws<ArgumentException>(\"p\", () => F()); } }",
 			Rule("Assert.Throws<$T$>($a$)"));
 
-		Assert.Equal(["1: Assert.Throws<ArgumentException>(() => F()) [T=ArgumentException, a=() => F()]"], Sites(result));
+		Sites(result).ShouldBe(["1: Assert.Throws<ArgumentException>(() => F()) [T=ArgumentException, a=() => F()]"]);
 	}
 
 	/// <summary>
@@ -235,8 +234,8 @@ public sealed class PatternMatchTests
 	{
 		var result = Scan("class C { void M(int x) { Assert.Equal<long>(1, x); } }", Rule("Assert.Equal($e$, $a$)"));
 
-		Assert.Empty(result.Sites);
-		Assert.Single(result.Unmatched);
+		result.Sites.ShouldBeEmpty();
+		result.Unmatched.ShouldHaveSingleItem();
 	}
 
 	/// <summary>
@@ -251,14 +250,13 @@ public sealed class PatternMatchTests
 			Rule("Assert.All($xs$, $x:id$ => $body$);"),
 			Rule("Assert.True($c$)"));
 
-		Assert.Equal(
+		Sites(result).ShouldBe(
 			[
 				"1: Assert.All(xs, item => Assert.True(item > 0)); [body=Assert.True(item > 0), x=item, xs=xs]",
 				"2: Assert.True(item > 0) [c=item > 0]",
 				"1: Assert.All(xs, item => { Assert.True(item > 1); }); [body={ Assert.True(item > 1); }, x=item, xs=xs]",
 				"2: Assert.True(item > 1) [c=item > 1]",
-			],
-			Sites(result));
+			]);
 	}
 
 	/// <summary>An async lambda is not captured, since a loop cannot hold an await it did not have.</summary>
@@ -269,7 +267,7 @@ public sealed class PatternMatchTests
 			"class C { void M(List<int> xs) { Assert.All(xs, async item => await System.Threading.Tasks.Task.Yield()); } }",
 			Rule("Assert.All($xs$, $x:id$ => $body$);"));
 
-		Assert.Empty(result.Sites);
+		result.Sites.ShouldBeEmpty();
 	}
 
 	/// <summary>An extension method matches in either form, with the receiver captured as its first argument.</summary>
@@ -281,7 +279,7 @@ public sealed class PatternMatchTests
 			[Rule("$a$.ShouldBe($e$)")],
 			["Checks"]);
 
-		Assert.Equal(["1: x.ShouldBe(1) [a=x, e=1]", "1: Checks.Extensions.ShouldBe(x, 2) [a=x, e=2]"], Sites(result));
+		Sites(result).ShouldBe(["1: x.ShouldBe(1) [a=x, e=1]", "1: Checks.Extensions.ShouldBe(x, 2) [a=x, e=2]"]);
 	}
 
 	/// <summary>Calls nest, and each is a site of its own.</summary>
@@ -293,7 +291,7 @@ public sealed class PatternMatchTests
 			Rule("Assert.Equal($e$, $a$)"),
 			Rule("Assert.Single($xs$)"));
 
-		Assert.Equal(["1: Assert.Equal(3, Assert.Single(xs)) [a=Assert.Single(xs), e=3]", "2: Assert.Single(xs) [xs=xs]"], Sites(result));
+		Sites(result).ShouldBe(["1: Assert.Equal(3, Assert.Single(xs)) [a=Assert.Single(xs), e=3]", "2: Assert.Single(xs) [xs=xs]"]);
 	}
 
 	/// <summary>
@@ -305,7 +303,7 @@ public sealed class PatternMatchTests
 	{
 		var result = Scan("class C { void M(int x) { Assert.Equal(1, x); Assert.Fail(\"no\"); } }", Rule("Assert.Equal($e$, $a$)"));
 
-		Assert.Equal("Xunit.Assert.Fail(string)", Assert.Single(result.Unmatched).Method.ToString());
+		result.Unmatched.ShouldHaveSingleItem().Method.ToString().ShouldBe("Xunit.Assert.Fail(string)");
 	}
 
 	/// <summary>A compilation without the names a rule uses leaves the rule unbound there, with the compiler's reason.</summary>
@@ -314,8 +312,8 @@ public sealed class PatternMatchTests
 	{
 		var bound = Bind("class C { }", withStubs: false, Rule("Assert.Equal($e$, $a$)"));
 
-		Assert.Empty(bound.Bound);
-		Assert.StartsWith("Rule 1's find does not bind at `Assert.Equal`, because", bound.Unbound[1], StringComparison.Ordinal);
+		bound.Bound.ShouldBeEmpty();
+		bound.Unbound[1].ShouldStartWith("Rule 1's find does not bind at `Assert.Equal`, because", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -330,6 +328,6 @@ public sealed class PatternMatchTests
 			[Rule("Assert.True($c$)")],
 			["Shouldly", "Nowhere.At.All", "static System.Math", "Text = System.Text"]);
 
-		Assert.Equal(["Shouldly", "static System.Math", "Text = System.Text"], bound.Usings);
+		bound.Usings.ShouldBe(["Shouldly", "static System.Math", "Text = System.Text"]);
 	}
 }

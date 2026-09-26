@@ -41,7 +41,7 @@ public sealed class PollLoopTests
 			await Task.Delay(10);
 		}
 
-		Assert.Fail($"waited {Ceiling.TotalSeconds:0}s and {what}");
+		throw new ShouldAssertException($"waited {Ceiling.TotalSeconds:0}s and {what}");
 	}
 
 	[Test]
@@ -85,7 +85,7 @@ public sealed class PollLoopTests
 
 		loop.Stop();
 
-		Assert.Same(starting, first);
+		first.ShouldBeSameAs(starting);
 	}
 
 	/// <summary>
@@ -117,7 +117,7 @@ public sealed class PollLoopTests
 		await Until(() => Volatile.Read(ref runs) >= 3, "the body ran fewer than three times");
 		loop.Stop();
 
-		Assert.False(overlapped, "the loop awaits the body, so two runs never overlap");
+		overlapped.ShouldBeFalse("the loop awaits the body, so two runs never overlap");
 	}
 
 	[Test]
@@ -140,7 +140,7 @@ public sealed class PollLoopTests
 		await Until(() => Volatile.Read(ref runs) >= 3, "a throwing body stopped the loop");
 		loop.Stop();
 
-		Assert.True(Volatile.Read(ref failures) >= 3, "every failure was reported");
+		(Volatile.Read(ref failures) >= 3).ShouldBeTrue("every failure was reported");
 	}
 
 	/// <summary>
@@ -199,7 +199,7 @@ public sealed class PollLoopTests
 		var settled = Volatile.Read(ref runs);
 		await Task.Delay(50);
 
-		Assert.Equal(settled, Volatile.Read(ref runs));
+		Volatile.Read(ref runs).ShouldBe(settled);
 	}
 
 	[Test]
@@ -212,7 +212,7 @@ public sealed class PollLoopTests
 
 		loop.Start();
 
-		Assert.True(loop.IsRunning);
+		loop.IsRunning.ShouldBeTrue();
 		loop.Stop();
 	}
 }

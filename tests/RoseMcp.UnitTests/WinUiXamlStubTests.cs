@@ -1,6 +1,5 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-
 using RoseMcp.XamlStubs;
 
 namespace RoseMcp.UnitTests;
@@ -72,8 +71,8 @@ public sealed class WinUiXamlStubTests
 
 		var choice = XamlDialectSelector.Select(Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework), [document!]);
 
-		Assert.Same(WindowsXamlDialect.WinUi, choice.Dialect);
-		Assert.False(choice.WasAmbiguous, "the dialect was not ambiguous");
+		choice.Dialect.ShouldBeSameAs(WindowsXamlDialect.WinUi);
+		choice.WasAmbiguous.ShouldBeFalse("the dialect was not ambiguous");
 	}
 
 	/// <summary>
@@ -97,29 +96,23 @@ public sealed class WinUiXamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class MainWindow { } }");
 
-		Assert.Null(emission.SkipReason);
+		emission.SkipReason.ShouldBeNull();
 
 		// Window is in Microsoft.UI.Xaml itself, so it is only found once the two Controls
 		// namespaces ahead of it in the precedence list have missed.
-		Assert.Contains(
-			"partial class MainWindow : global::Microsoft.UI.Xaml.Window",
-			emission.Source!,
-			StringComparison.Ordinal);
+		emission.Source!.ShouldContain(
+			"partial class MainWindow : global::Microsoft.UI.Xaml.Window", Case.Sensitive);
 
 		// Private, which is the Windows frameworks' default where WPF generates internal.
-		Assert.Contains(
-			"private global::Microsoft.UI.Xaml.Controls.Grid TitleBarArea;",
-			emission.Source!,
-			StringComparison.Ordinal);
+		emission.Source!.ShouldContain(
+			"private global::Microsoft.UI.Xaml.Controls.Grid TitleBarArea;", Case.Sensitive);
 
-		Assert.Contains(
-			"private global::Microsoft.UI.Xaml.Controls.ItemsRepeater Workspaces;",
-			emission.Source!,
-			StringComparison.Ordinal);
+		emission.Source!.ShouldContain(
+			"private global::Microsoft.UI.Xaml.Controls.ItemsRepeater Workspaces;", Case.Sensitive);
 
 		// using: is the Windows form of what WPF writes as clr-namespace:.
-		Assert.Contains("private global::H.NotifyIcon.TaskbarIcon Tray;", emission.Source!, StringComparison.Ordinal);
-		Assert.Empty(emission.UnresolvedTypes);
+		emission.Source!.ShouldContain("private global::H.NotifyIcon.TaskbarIcon Tray;", Case.Sensitive);
+		emission.UnresolvedTypes.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -143,12 +136,10 @@ public sealed class WinUiXamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class Probe { } }");
 
-		Assert.Contains(
-			"private global::Microsoft.UI.Xaml.Controls.UserControl ProbeRoot;",
-			emission.Source!,
-			StringComparison.Ordinal);
+		emission.Source!.ShouldContain(
+			"private global::Microsoft.UI.Xaml.Controls.UserControl ProbeRoot;", Case.Sensitive);
 
-		Assert.DoesNotContain("global::App.Probe ProbeRoot", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldNotContain("global::App.Probe ProbeRoot", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -167,12 +158,10 @@ public sealed class WinUiXamlStubTests
 			""",
 			"namespace App { partial class Widget { } }");
 
-		Assert.Contains("private bool _contentLoaded;", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("private bool _contentLoaded;", Case.Sensitive);
 
-		Assert.Contains(
-			"partial void UnloadObject(global::Microsoft.UI.Xaml.DependencyObject unloadableObject);",
-			emission.Source!,
-			StringComparison.Ordinal);
+		emission.Source!.ShouldContain(
+			"partial void UnloadObject(global::Microsoft.UI.Xaml.DependencyObject unloadableObject);", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -194,8 +183,8 @@ public sealed class WinUiXamlStubTests
 			""",
 			"namespace App { partial class Widget { public string Title => \"t\"; } }");
 
-		Assert.Contains("private interface IWidget_Bindings", withBind.Source!, StringComparison.Ordinal);
-		Assert.Contains("private IWidget_Bindings Bindings;", withBind.Source!, StringComparison.Ordinal);
+		withBind.Source!.ShouldContain("private interface IWidget_Bindings", Case.Sensitive);
+		withBind.Source!.ShouldContain("private IWidget_Bindings Bindings;", Case.Sensitive);
 
 		var without = Emit(
 			"""
@@ -207,7 +196,7 @@ public sealed class WinUiXamlStubTests
 			""",
 			"namespace App { partial class Widget { } }");
 
-		Assert.DoesNotContain("_Bindings", without.Source!, StringComparison.Ordinal);
+		without.Source!.ShouldNotContain("_Bindings", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -228,8 +217,8 @@ public sealed class WinUiXamlStubTests
 			"namespace App { partial class TrayApp { } }",
 			OutputKind.WindowsApplication);
 
-		Assert.Contains("static void Main", emission.Source!, StringComparison.Ordinal);
-		Assert.Contains("partial class TrayApp : global::Microsoft.UI.Xaml.Application", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("static void Main", Case.Sensitive);
+		emission.Source!.ShouldContain("partial class TrayApp : global::Microsoft.UI.Xaml.Application", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -277,18 +266,18 @@ public sealed class WinUiXamlStubTests
 			""";
 
 		var document = XamlDocumentReader.Read("MainWindow.xaml", markup);
-		Assert.NotNull(document);
+		document.ShouldNotBeNull();
 
 		var emission = XamlStubEmitter.Emit(
 			Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework, behind), WindowsXamlDialect.WinUi, document);
 
-		Assert.NotNull(emission.Source);
+		emission.Source.ShouldNotBeNull();
 
 		var complete = Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework, behind, emission.Source);
 
-		Assert.Empty(complete
+		complete
 			.GetDiagnostics(TestContext.Current!.Execution.CancellationToken)
-			.Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
+			.Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning).ShouldBeEmpty();
 	}
 
 	private static XamlStubEmission Emit(
@@ -298,7 +287,7 @@ public sealed class WinUiXamlStubTests
 	{
 		var document = XamlDocumentReader.Read("Widget.xaml", markup);
 
-		Assert.NotNull(document);
+		document.ShouldNotBeNull();
 
 		return XamlStubEmitter.Emit(
 			Compile(outputKind, FakeFramework, codeBehind), WindowsXamlDialect.WinUi, document);

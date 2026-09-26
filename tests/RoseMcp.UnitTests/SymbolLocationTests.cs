@@ -21,14 +21,14 @@ public sealed class SymbolLocationTests
 	public void A_bare_name_names_no_assembly_and_a_prefix_states_one()
 	{
 		var bare = SymbolLocation.Parse("MyApp.Ui.Widget.Refresh");
-		Assert.Null(bare.Assembly);
-		Assert.Equal("MyApp.Ui.Widget", bare.TypeName);
-		Assert.Equal("Refresh", bare.MethodName);
-		Assert.Null(bare.IlOffset);
+		bare.Assembly.ShouldBeNull();
+		bare.TypeName.ShouldBe("MyApp.Ui.Widget");
+		bare.MethodName.ShouldBe("Refresh");
+		bare.IlOffset.ShouldBeNull();
 
 		var stated = SymbolLocation.Parse("Widgets!MyApp.Ui.Widget.Refresh");
-		Assert.Equal("Widgets", stated.Assembly);
-		Assert.Equal("MyApp.Ui.Widget", stated.TypeName);
+		stated.Assembly.ShouldBe("Widgets");
+		stated.TypeName.ShouldBe("MyApp.Ui.Widget");
 	}
 
 	/// <summary>
@@ -41,14 +41,14 @@ public sealed class SymbolLocationTests
 	[Arguments("Widgets!MyApp.Widget.Refresh")]
 	public void An_assembly_file_name_is_taken_down_to_its_simple_name(string spec)
 	{
-		Assert.Equal("Widgets", SymbolLocation.Parse(spec).Assembly);
+		SymbolLocation.Parse(spec).Assembly.ShouldBe("Widgets");
 	}
 
 	/// <summary>A dotted assembly name must not have its last segment mistaken for an extension.</summary>
 	[Test]
 	public void A_dotted_assembly_name_keeps_all_of_itself()
 	{
-		Assert.Equal("MyApp.Core", SymbolLocation.Parse("MyApp.Core!MyApp.Widget.Refresh").Assembly);
+		SymbolLocation.Parse("MyApp.Core!MyApp.Widget.Refresh").Assembly.ShouldBe("MyApp.Core");
 	}
 
 	[Test]
@@ -56,10 +56,10 @@ public sealed class SymbolLocationTests
 	{
 		var picked = SymbolLocation.Parse("Widgets!MyApp.Widget.Refresh@IL_001f");
 
-		Assert.Equal(0x1f, picked.IlOffset);
-		Assert.Equal("MyApp.Widget", picked.TypeName);
-		Assert.Equal("Refresh", picked.MethodName);
-		Assert.Equal("Widgets", picked.Assembly);
+		picked.IlOffset.ShouldBe(0x1f);
+		picked.TypeName.ShouldBe("MyApp.Widget");
+		picked.MethodName.ShouldBe("Refresh");
+		picked.Assembly.ShouldBe("Widgets");
 	}
 
 	/// <summary>
@@ -79,9 +79,9 @@ public sealed class SymbolLocationTests
 	{
 		var parsed = SymbolLocation.Parse(spec);
 
-		Assert.Equal(typeName, parsed.TypeName);
-		Assert.Equal(methodName, parsed.MethodName);
-		Assert.Equal(ilOffset, parsed.IlOffset);
+		parsed.TypeName.ShouldBe(typeName);
+		parsed.MethodName.ShouldBe(methodName);
+		parsed.IlOffset.ShouldBe(ilOffset);
 	}
 
 	/// <summary>
@@ -93,9 +93,9 @@ public sealed class SymbolLocationTests
 	{
 		var parsed = SymbolLocation.Parse("Widgets!MyApp.Widget@IL_0001.Refresh");
 
-		Assert.Equal("MyApp.Widget@IL_0001", parsed.TypeName);
-		Assert.Equal("Refresh", parsed.MethodName);
-		Assert.Null(parsed.IlOffset);
+		parsed.TypeName.ShouldBe("MyApp.Widget@IL_0001");
+		parsed.MethodName.ShouldBe("Refresh");
+		parsed.IlOffset.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -109,7 +109,7 @@ public sealed class SymbolLocationTests
 	[Arguments("Widgets!MyApp.Widget.Refresh@IL_ 1")]
 	public void An_offset_that_does_not_read_is_refused(string spec)
 	{
-		Assert.Throws<ArgumentException>(() => SymbolLocation.Parse(spec));
+		Should.Throw<ArgumentException>(() => SymbolLocation.Parse(spec)).ShouldBeOfType<ArgumentException>();
 	}
 
 	/// <summary>
@@ -119,7 +119,7 @@ public sealed class SymbolLocationTests
 	[Test]
 	public void An_offset_that_is_not_a_position_is_refused()
 	{
-		Assert.Throws<ArgumentException>(() => SymbolLocation.Parse("Widgets!MyApp.Widget.Refresh@IL_ffffffff"));
+		Should.Throw<ArgumentException>(() => SymbolLocation.Parse("Widgets!MyApp.Widget.Refresh@IL_ffffffff")).ShouldBeOfType<ArgumentException>();
 	}
 
 	[Test]
@@ -129,6 +129,6 @@ public sealed class SymbolLocationTests
 	[Arguments("MyApp.Widget.")]
 	public void Something_that_is_not_a_location_is_refused(string spec)
 	{
-		Assert.Throws<ArgumentException>(() => SymbolLocation.Parse(spec));
+		Should.Throw<ArgumentException>(() => SymbolLocation.Parse(spec)).ShouldBeOfType<ArgumentException>();
 	}
 }

@@ -44,8 +44,8 @@ public sealed class RowsMergeTests
 
 		Merge(rows, (1, "one"), (2, "two"));
 
-		Assert.Equal([1, 2], rows.Select(row => row.Id));
-		Assert.Equal(["one", "two"], rows.Select(row => row.Label));
+		rows.Select(row => row.Id).ShouldBe([1, 2]);
+		rows.Select(row => row.Label).ShouldBe(["one", "two"]);
 	}
 
 	/// <summary>
@@ -63,9 +63,9 @@ public sealed class RowsMergeTests
 
 		Merge(rows, (1, "done"));
 
-		Assert.Same(original, rows[0]);
-		Assert.Equal("done", rows[0].Label);
-		Assert.True(rows[0].Expanded, "the row a reader had expanded is the same row afterwards");
+		rows[0].ShouldBeSameAs(original);
+		rows[0].Label.ShouldBe("done");
+		rows[0].Expanded.ShouldBeTrue("the row a reader had expanded is the same row afterwards");
 	}
 
 	[Test]
@@ -76,7 +76,7 @@ public sealed class RowsMergeTests
 
 		Merge(rows, (1, "one"), (3, "three"));
 
-		Assert.Equal([1, 3], rows.Select(row => row.Id));
+		rows.Select(row => row.Id).ShouldBe([1, 3]);
 	}
 
 	/// <summary>
@@ -91,7 +91,7 @@ public sealed class RowsMergeTests
 
 		Merge(rows, (1, "one"), (9, "nine"), (8, "eight"));
 
-		Assert.Equal([1, 9, 8], rows.Select(row => row.Id));
+		rows.Select(row => row.Id).ShouldBe([1, 9, 8]);
 	}
 
 	[Test]
@@ -102,6 +102,6 @@ public sealed class RowsMergeTests
 
 		Merge(rows);
 
-		Assert.Empty(rows);
+		rows.ShouldBeEmpty();
 	}
 }

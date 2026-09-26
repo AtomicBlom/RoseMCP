@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -16,7 +17,7 @@ public sealed class TestProjectDetectionTests
 	public void Recognises_the_framework_this_test_is_running_on()
 	{
 		var beside = Path.GetDirectoryName(typeof(TestProjectDetectionTests).Assembly.Location);
-		Assert.False(string.IsNullOrEmpty(beside), "the running test assembly should have a location on disk");
+		string.IsNullOrEmpty(beside).ShouldBeFalse("the running test assembly should have a location on disk");
 
 		var assemblies = Directory.EnumerateFiles(beside!, "*.dll")
 			.Select(Path.GetFileNameWithoutExtension)
@@ -26,8 +27,7 @@ public sealed class TestProjectDetectionTests
 
 		var recognised = assemblies.Where(TestProjects.Recognises).ToList();
 
-		Assert.True(
-			recognised.Count > 0,
+		(recognised.Count > 0).ShouldBeTrue(
 			"no assembly beside this test is on TestProjects.Frameworks, so Rose would report its own test "
 				+ "projects as product code. Add the framework's assembly name to that list. Beside it: "
 				+ string.Join(", ", assemblies.Where(name => name.StartsWith("TUnit", StringComparison.OrdinalIgnoreCase)
@@ -38,11 +38,11 @@ public sealed class TestProjectDetectionTests
 	[Test]
 	public void Does_not_mistake_an_ordinary_assembly_for_a_framework()
 	{
-		Assert.False(TestProjects.Recognises("RoseMcp.Broker"));
-		Assert.False(TestProjects.Recognises("System.Text.Json"));
+		TestProjects.Recognises("RoseMcp.Broker").ShouldBeFalse();
+		TestProjects.Recognises("System.Text.Json").ShouldBeFalse();
 
 		// Prefix-adjacent, so an accidental StartsWith would be caught here.
-		Assert.False(TestProjects.Recognises("TUnit.Core.Extras"));
-		Assert.False(TestProjects.Recognises("xunit.v3.assert.extras"));
+		TestProjects.Recognises("TUnit.Core.Extras").ShouldBeFalse();
+		TestProjects.Recognises("xunit.v3.assert.extras").ShouldBeFalse();
 	}
 }

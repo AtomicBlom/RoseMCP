@@ -18,11 +18,11 @@ public sealed class ThreadRowTests
 	{
 		var row = new ThreadRow(Thread(4128, ["Background", "WaitSleepJoin"], "MyApp.Worker.Pump"));
 
-		Assert.Equal(4128, row.Id);
-		Assert.Equal("4128", row.IdLabel);
-		Assert.Equal($"Background{Format.Separator}WaitSleepJoin", row.State);
-		Assert.True(row.HasState);
-		Assert.Equal("MyApp.Worker.Pump", row.TopFrame);
+		row.Id.ShouldBe(4128);
+		row.IdLabel.ShouldBe("4128");
+		row.State.ShouldBe($"Background{Format.Separator}WaitSleepJoin");
+		row.HasState.ShouldBeTrue();
+		row.TopFrame.ShouldBe("MyApp.Worker.Pump");
 	}
 
 	/// <summary>
@@ -35,7 +35,7 @@ public sealed class ThreadRowTests
 	{
 		var row = new ThreadRow(Thread(9004, ["Background"], topFrame: null));
 
-		Assert.Equal("no managed frame", row.TopFrame);
+		row.TopFrame.ShouldBe("no managed frame");
 	}
 
 	/// <summary>
@@ -47,16 +47,16 @@ public sealed class ThreadRowTests
 	{
 		var row = new ThreadRow(Thread(1, [], "MyApp.Program.Main"));
 
-		Assert.Equal(string.Empty, row.State);
-		Assert.False(row.HasState);
+		row.State.ShouldBe(string.Empty);
+		row.HasState.ShouldBeFalse();
 	}
 
 	/// <summary>The thread the stop is on is marked, because it is the one the stack pane is about.</summary>
 	[Test]
 	public void The_thread_the_stop_is_on_is_marked()
 	{
-		Assert.True(new ThreadRow(Thread(1, [], "MyApp.Program.Main", stopped: true)).IsStopped);
-		Assert.False(new ThreadRow(Thread(2, [], "MyApp.Worker.Pump")).IsStopped);
+		new ThreadRow(Thread(1, [], "MyApp.Program.Main", stopped: true)).IsStopped.ShouldBeTrue();
+		new ThreadRow(Thread(2, [], "MyApp.Worker.Pump")).IsStopped.ShouldBeFalse();
 	}
 
 	private static LiveThread Thread(

@@ -14,10 +14,10 @@ public sealed class PatternRuleTests
 	{
 		var rule = Parse("Assert.All($xs$, $x$ => $body$);", "foreach (var $x$ in $xs$) { $body$; }");
 
-		Assert.Equal(PlaceholderKind.Expression, rule.Find.Placeholders["xs"].Kind);
-		Assert.Equal(PlaceholderKind.Identifier, rule.Find.Placeholders["x"].Kind);
-		Assert.Equal(PlaceholderKind.Expression, rule.Find.Placeholders["body"].Kind);
-		Assert.True(rule.Find.IsStatement);
+		rule.Find.Placeholders["xs"].Kind.ShouldBe(PlaceholderKind.Expression);
+		rule.Find.Placeholders["x"].Kind.ShouldBe(PlaceholderKind.Identifier);
+		rule.Find.Placeholders["body"].Kind.ShouldBe(PlaceholderKind.Expression);
+		rule.Find.IsStatement.ShouldBeTrue();
 	}
 
 	/// <summary>A placeholder in a type-argument list is a type, and may be repeated in a replace.</summary>
@@ -26,8 +26,8 @@ public sealed class PatternRuleTests
 	{
 		var rule = Parse("Assert.Throws<$T$>($a$)", "Should.Throw<$T$>($a$).ShouldBeOfType<$T$>()");
 
-		Assert.Equal(PlaceholderKind.Type, rule.Find.Placeholders["T"].Kind);
-		Assert.Equal(PlaceholderKind.Type, rule.Replace.Placeholders["T"].Kind);
+		rule.Find.Placeholders["T"].Kind.ShouldBe(PlaceholderKind.Type);
+		rule.Replace.Placeholders["T"].Kind.ShouldBe(PlaceholderKind.Type);
 	}
 
 	/// <summary>A constraint is kept on the placeholder it narrows.</summary>
@@ -36,8 +36,8 @@ public sealed class PatternRuleTests
 	{
 		var rule = Parse("Assert.Contains($sub:string$, $s:string?$)", "$s$.ShouldContain($sub$)");
 
-		Assert.Equal("string", rule.Find.Placeholders["sub"].Constraint);
-		Assert.Equal("string?", rule.Find.Placeholders["s"].Constraint);
+		rule.Find.Placeholders["sub"].Constraint.ShouldBe("string");
+		rule.Find.Placeholders["s"].Constraint.ShouldBe("string?");
 	}
 
 	/// <summary>A dollar sign inside a string literal is part of the string, and not a placeholder.</summary>
@@ -46,7 +46,7 @@ public sealed class PatternRuleTests
 	{
 		var rule = Parse("Assert.Equal(\"$a$\", $b$)", "$b$.ShouldBe(\"$a$\")");
 
-		Assert.Equal(["b"], rule.Find.Placeholders.Keys);
+		rule.Find.Placeholders.Keys.ShouldBe(["b"]);
 	}
 
 	/// <summary>A replace may only use what its find captured, and the refusal names what it did capture.</summary>
@@ -55,7 +55,7 @@ public sealed class PatternRuleTests
 	{
 		var error = Refused("Assert.Equal($e$, $a$)", "$b$.ShouldBe($e$)");
 
-		Assert.Equal("Rule 1's replace uses $b$, which its find does not capture. Its find captures $e$, $a$.", error.Message);
+		error.Message.ShouldBe("Rule 1's replace uses $b$, which its find does not capture. Its find captures $e$, $a$.");
 	}
 
 	/// <summary>A parse error is reported at the column the caller wrote, not the column of the rewritten code.</summary>
@@ -64,8 +64,8 @@ public sealed class PatternRuleTests
 	{
 		var error = Refused("Assert.Equal($expected$, )", "null");
 
-		Assert.Contains("at column 26", error.Message, StringComparison.Ordinal);
-		Assert.Contains(PatternException.Grammar, error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("at column 26", Case.Sensitive);
+		error.Message.ShouldContain(PatternException.Grammar, Case.Sensitive);
 	}
 
 	/// <summary>A find is a call, or a call written as a statement.</summary>
@@ -77,7 +77,7 @@ public sealed class PatternRuleTests
 	{
 		var error = Refused(find, "null");
 
-		Assert.StartsWith("Rule 1's find has to be a call", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("Rule 1's find has to be a call", Case.Sensitive);
 	}
 
 	/// <summary>:id is for an identifier, and is refused where an expression goes.</summary>
@@ -86,7 +86,7 @@ public sealed class PatternRuleTests
 	{
 		var error = Refused("Assert.Equal($e:id$, $a$)", "null");
 
-		Assert.StartsWith("Rule 1's find writes $e:id$ where an expression goes", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("Rule 1's find writes $e:id$ where an expression goes", Case.Sensitive);
 	}
 
 	/// <summary>A constraint belongs in the find, which is the side that decides what matches.</summary>
@@ -95,7 +95,7 @@ public sealed class PatternRuleTests
 	{
 		var error = Refused("Assert.Equal($e$, $a$)", "$a:string$.ShouldBe($e$)");
 
-		Assert.StartsWith("Rule 1's replace constrains $a$", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("Rule 1's replace constrains $a$", Case.Sensitive);
 	}
 
 	/// <summary>An expression written twice in a replace would be evaluated twice.</summary>
@@ -104,7 +104,7 @@ public sealed class PatternRuleTests
 	{
 		var error = Refused("Assert.Equal($e$, $a$)", "$a$.ShouldBe($a$)");
 
-		Assert.StartsWith("Rule 1's replace writes $a$ 2 times", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("Rule 1's replace writes $a$ 2 times", Case.Sensitive);
 	}
 
 	/// <summary>A placeholder written twice in a find would have to mean "the same code twice", which a find cannot say.</summary>
@@ -113,7 +113,7 @@ public sealed class PatternRuleTests
 	{
 		var error = Refused("Assert.Equal($a$, $a$)", "null");
 
-		Assert.StartsWith("Rule 1's find writes $a$ more than once", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("Rule 1's find writes $a$ more than once", Case.Sensitive);
 	}
 
 	/// <summary>A placeholder that is never closed is named, with where it opens.</summary>
@@ -122,16 +122,16 @@ public sealed class PatternRuleTests
 	{
 		var error = Refused("Assert.Equal($e, $a$)", "null");
 
-		Assert.Contains("opens $e at column 14", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("opens $e at column 14", Case.Sensitive);
 	}
 
 	/// <summary>Usings are checked as the directives they will be.</summary>
 	[Test]
 	public void Refuses_a_using_that_is_not_a_directives_target()
 	{
-		var error = Assert.Throws<PatternException>(() => RuleCatalog.Parse([new RuleText("F($a$)", "G($a$)")], ["not a namespace!"]));
+		var error = Should.Throw<PatternException>(() => RuleCatalog.Parse([new RuleText("F($a$)", "G($a$)")], ["not a namespace!"])).ShouldBeOfType<PatternException>();
 
-		Assert.StartsWith("'not a namespace!' is not something a using directive can name", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldStartWith("'not a namespace!' is not something a using directive can name", Case.Sensitive);
 	}
 
 	/// <summary>The one rule of a single-rule catalog.</summary>
@@ -139,5 +139,5 @@ public sealed class PatternRuleTests
 
 	/// <summary>The refusal for a rule that cannot be used.</summary>
 	private static PatternException Refused(string find, string replace) =>
-		Assert.Throws<PatternException>(() => RuleCatalog.Parse([new RuleText(find, replace)]));
+		Should.Throw<PatternException>(() => RuleCatalog.Parse([new RuleText(find, replace)])).ShouldBeOfType<PatternException>();
 }

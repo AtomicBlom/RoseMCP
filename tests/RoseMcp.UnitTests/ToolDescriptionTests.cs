@@ -27,11 +27,11 @@ public sealed class ToolDescriptionTests
 
 		var shared = broker.Keys.Intersect(worker.Keys, StringComparer.Ordinal).ToArray();
 
-		Assert.NotEmpty(shared);
+		shared.ShouldNotBeEmpty();
 
 		foreach (var name in shared)
 		{
-			Assert.Equal(broker[name], worker[name]);
+			worker[name].ShouldBe(broker[name]);
 		}
 	}
 
@@ -45,8 +45,8 @@ public sealed class ToolDescriptionTests
 	{
 		foreach (var (name, description) in Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly))
 		{
-			Assert.False(string.IsNullOrWhiteSpace(description), $"{name} has no description");
-			Assert.True(description.Length > 120, $"{name} is described in {description.Length} characters");
+			string.IsNullOrWhiteSpace(description).ShouldBeFalse($"{name} has no description");
+			(description.Length > 120).ShouldBeTrue($"{name} is described in {description.Length} characters");
 		}
 	}
 
@@ -83,7 +83,7 @@ public sealed class ToolDescriptionTests
 	{
 		var descriptions = Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly);
 
-		Assert.Contains(expected, descriptions[tool], StringComparison.OrdinalIgnoreCase);
+		descriptions[tool].ShouldContain(expected, Case.Insensitive);
 	}
 
 	/// <summary>
@@ -96,8 +96,8 @@ public sealed class ToolDescriptionTests
 	{
 		var status = Describe(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly)[ToolNames.WorkspaceStatus];
 
-		Assert.Contains("configuration", status, StringComparison.OrdinalIgnoreCase);
-		Assert.Contains("degraded", status, StringComparison.OrdinalIgnoreCase);
+		status.ShouldContain("configuration", Case.Insensitive);
+		status.ShouldContain("degraded", Case.Insensitive);
 	}
 
 	/// <summary>
@@ -115,13 +115,13 @@ public sealed class ToolDescriptionTests
 
 		var shared = broker.Keys.Intersect(worker.Keys, StringComparer.Ordinal).ToArray();
 
-		Assert.NotEmpty(shared);
+		shared.ShouldNotBeEmpty();
 
 		// Compared as one string per tool rather than as two lists, so a failure names the tool and
 		// shows both argument lists rather than reporting that two arrays differ.
 		foreach (var name in shared)
 		{
-			Assert.Equal($"{name}: {string.Join(" | ", worker[name])}", $"{name}: {string.Join(" | ", broker[name])}");
+			$"{name}: {string.Join(" | ", broker[name])}".ShouldBe($"{name}: {string.Join(" | ", worker[name])}");
 		}
 	}
 
@@ -177,8 +177,7 @@ public sealed class ToolDescriptionTests
 	{
 		foreach (var (name, returnType) in ReturnTypes(typeof(RoseMcp.Broker.Tools.BrokerTools).Assembly))
 		{
-			Assert.False(
-				IsCollection(returnType),
+			IsCollection(returnType).ShouldBeFalse(
 				$"{name} returns {returnType.Name}, which serialises to a top-level array; "
 					+ "MCP requires structuredContent to be an object, so wrap it in a record with a named property");
 		}
@@ -190,7 +189,7 @@ public sealed class ToolDescriptionTests
 	{
 		foreach (var (name, returnType) in ReturnTypes(typeof(WorkspaceHost).Assembly))
 		{
-			Assert.False(IsCollection(returnType), $"{name} returns the collection {returnType.Name}");
+			IsCollection(returnType).ShouldBeFalse($"{name} returns the collection {returnType.Name}");
 		}
 	}
 

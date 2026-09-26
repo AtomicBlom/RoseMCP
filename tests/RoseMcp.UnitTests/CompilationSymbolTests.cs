@@ -33,13 +33,13 @@ public sealed class CompilationSymbolTests
 	{
 		var (declaring, asking, widget) = TwoCompilations();
 
-		Assert.False(CompilationSymbols.Holds(asking, widget));
+		CompilationSymbols.Holds(asking, widget).ShouldBeFalse();
 
-		var refusal = Assert.Throws<ArgumentException>(
-			() => asking.IsSymbolAccessibleWithin(widget, asking.Assembly));
+		var refusal = Should.Throw<ArgumentException>(
+			() => asking.IsSymbolAccessibleWithin(widget, asking.Assembly)).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("must be a symbol from this compilation", refusal.Message, StringComparison.Ordinal);
-		Assert.True(CompilationSymbols.Holds(declaring, widget));
+		refusal.Message.ShouldContain("must be a symbol from this compilation", Case.Sensitive);
+		CompilationSymbols.Holds(declaring, widget).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -53,10 +53,10 @@ public sealed class CompilationSymbolTests
 
 		var here = CompilationSymbols.AsSeenBy(asking, widget, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.NotNull(here);
-		Assert.Equal("Probe.Widget", here!.ToDisplayString());
-		Assert.True(CompilationSymbols.Holds(asking, here));
-		Assert.True(asking.IsSymbolAccessibleWithin(here, asking.Assembly));
+		here.ShouldNotBeNull();
+		here!.ToDisplayString().ShouldBe("Probe.Widget");
+		CompilationSymbols.Holds(asking, here).ShouldBeTrue();
+		asking.IsSymbolAccessibleWithin(here, asking.Assembly).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -70,8 +70,8 @@ public sealed class CompilationSymbolTests
 		var (_, _, widget) = TwoCompilations();
 		var stranger = Compile("Stranger", "namespace Other; public sealed class Thing;");
 
-		Assert.Null(CompilationSymbols.AsSeenBy(
-			stranger, widget, TestContext.Current!.Execution.CancellationToken));
+		CompilationSymbols.AsSeenBy(
+			stranger, widget, TestContext.Current!.Execution.CancellationToken).ShouldBeNull();
 	}
 
 	/// <summary>One the compilation already holds is handed back, without a symbol key being resolved.</summary>
@@ -80,9 +80,8 @@ public sealed class CompilationSymbolTests
 	{
 		var (declaring, _, widget) = TwoCompilations();
 
-		Assert.Same(
-			widget,
-			CompilationSymbols.AsSeenBy(declaring, widget, TestContext.Current!.Execution.CancellationToken));
+		CompilationSymbols.AsSeenBy(declaring, widget, TestContext.Current!.Execution.CancellationToken).ShouldBeSameAs(
+			widget);
 	}
 
 	/// <summary>
@@ -95,7 +94,7 @@ public sealed class CompilationSymbolTests
 
 		using var image = new MemoryStream();
 		var emitted = declaring.Emit(image);
-		Assert.True(emitted.Success, string.Join("; ", emitted.Diagnostics.Select(d => d.ToString())));
+		emitted.Success.ShouldBeTrue(string.Join("; ", emitted.Diagnostics.Select(d => d.ToString())));
 
 		var asking = Compile(
 			"Asking",
@@ -103,7 +102,7 @@ public sealed class CompilationSymbolTests
 			MetadataReference.CreateFromImage(image.ToArray()));
 
 		var widget = declaring.GetTypeByMetadataName("Probe.Widget");
-		Assert.NotNull(widget);
+		widget.ShouldNotBeNull();
 
 		return (declaring, asking, widget!);
 	}

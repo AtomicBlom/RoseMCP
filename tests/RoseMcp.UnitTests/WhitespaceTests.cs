@@ -29,8 +29,8 @@ public sealed class WhitespaceTests
 
 		var result = Apply(source, Strict);
 
-		Assert.DoesNotContain(Lf, StripCrlf(result), StringComparison.Ordinal);
-		Assert.EndsWith(Crlf, result, StringComparison.Ordinal);
+		StripCrlf(result).ShouldNotContain(Lf, Case.Sensitive);
+		result.ShouldEndWith(Crlf, Case.Sensitive);
 	}
 
 	[Test]
@@ -40,9 +40,9 @@ public sealed class WhitespaceTests
 
 		var result = Apply(source, Strict);
 
-		Assert.Contains("\tint Value;" + Crlf, result, StringComparison.Ordinal);
-		Assert.DoesNotContain("   " + Crlf, result, StringComparison.Ordinal);
-		Assert.EndsWith("}" + Crlf, result, StringComparison.Ordinal);
+		result.ShouldContain("\tint Value;" + Crlf, Case.Sensitive);
+		result.ShouldNotContain("   " + Crlf, Case.Sensitive);
+		result.ShouldEndWith("}" + Crlf, Case.Sensitive);
 	}
 
 	/// <summary>
@@ -64,12 +64,12 @@ public sealed class WhitespaceTests
 		var result = Apply(source, Strict);
 
 		// Its interior newlines are still bare, and the trailing spaces inside it are still there.
-		Assert.Contains("first  " + Lf, result, StringComparison.Ordinal);
-		Assert.Contains("second" + Lf, result, StringComparison.Ordinal);
+		result.ShouldContain("first  " + Lf, Case.Sensitive);
+		result.ShouldContain("second" + Lf, Case.Sensitive);
 
 		// While the code around it was normalised.
-		Assert.StartsWith("class C" + Crlf + "{" + Crlf, result, StringComparison.Ordinal);
-		Assert.EndsWith("}" + Crlf, result, StringComparison.Ordinal);
+		result.ShouldStartWith("class C" + Crlf + "{" + Crlf, Case.Sensitive);
+		result.ShouldEndWith("}" + Crlf, Case.Sensitive);
 	}
 
 	[Test]
@@ -79,7 +79,7 @@ public sealed class WhitespaceTests
 
 		var result = Apply(source, Strict);
 
-		Assert.Contains("first" + Lf + "second", result, StringComparison.Ordinal);
+		result.ShouldContain("first" + Lf + "second", Case.Sensitive);
 	}
 
 	[Test]
@@ -87,7 +87,7 @@ public sealed class WhitespaceTests
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tint Value;" + Crlf + "}" + Crlf;
 
-		Assert.Equal(source, Apply(source, Strict));
+		Apply(source, Strict).ShouldBe(source);
 	}
 
 	[Test]
@@ -98,7 +98,7 @@ public sealed class WhitespaceTests
 	{
 		// Which is the fallback when .editorconfig says nothing: matching the file is what keeps a
 		// format from showing up as a whole-file diff.
-		Assert.Equal(expected, Whitespace.Dominant(SourceText.From(source)));
+		Whitespace.Dominant(SourceText.From(source)).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -110,7 +110,7 @@ public sealed class WhitespaceTests
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Lf + "two\";" + Crlf + "}" + Crlf;
 
-		Assert.Equal([3], Disagreeing(source));
+		Disagreeing(source).ShouldBe([3]);
 	}
 
 	/// <summary>
@@ -125,7 +125,7 @@ public sealed class WhitespaceTests
 			+ "\tconst string Text = @\"one" + Crlf + "two" + Lf + "three" + Crlf + "four\";" + Crlf
 			+ "}" + Crlf;
 
-		Assert.Equal([3], Disagreeing(source));
+		Disagreeing(source).ShouldBe([3]);
 	}
 
 	[Test]
@@ -133,7 +133,7 @@ public sealed class WhitespaceTests
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Crlf + "two\";" + Crlf + "}" + Crlf;
 
-		Assert.Empty(Disagreeing(source));
+		Disagreeing(source).ShouldBeEmpty();
 	}
 
 	/// <summary>A single-line literal cannot hold a line ending, so it can never disagree about one.</summary>
@@ -142,7 +142,7 @@ public sealed class WhitespaceTests
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = \"one\";" + Crlf + "}" + Crlf;
 
-		Assert.Empty(Disagreeing(source));
+		Disagreeing(source).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -155,7 +155,7 @@ public sealed class WhitespaceTests
 	{
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string Text = @\"one" + Lf + "two\";" + Crlf + "}" + Crlf;
 
-		Assert.Empty(Disagreeing(source, SourceText.From(source).Lines[0].SpanIncludingLineBreak));
+		Disagreeing(source, SourceText.From(source).Lines[0].SpanIncludingLineBreak).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -184,11 +184,11 @@ public sealed class WhitespaceTests
 		var result = Apply(source, Strict);
 
 		// The two content lines keep their line feeds: those are what the string says.
-		Assert.Contains("\t\tone" + Lf + "\t\ttwo" + Lf, result, StringComparison.Ordinal);
+		result.ShouldContain("\t\tone" + Lf + "\t\ttwo" + Lf, Case.Sensitive);
 
 		// Both delimiter lines take the file's ending.
-		Assert.Contains("= \"\"\"" + Crlf, result, StringComparison.Ordinal);
-		Assert.Contains("\"\"\";" + Crlf, result, StringComparison.Ordinal);
+		result.ShouldContain("= \"\"\"" + Crlf, Case.Sensitive);
+		result.ShouldContain("\"\"\";" + Crlf, Case.Sensitive);
 	}
 
 	/// <summary>
@@ -206,7 +206,7 @@ public sealed class WhitespaceTests
 
 		var result = Apply(source, Strict);
 
-		Assert.Contains("@\"one" + Lf + "two\";", result, StringComparison.Ordinal);
+		result.ShouldContain("@\"one" + Lf + "two\";", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -222,10 +222,10 @@ public sealed class WhitespaceTests
 
 		var notice = Notice(source, "Described.cs");
 
-		Assert.NotNull(notice);
-		Assert.StartsWith("Described.cs: the multi-line string at line 3", notice, StringComparison.Ordinal);
-		Assert.Contains("line endings the file does not use", notice, StringComparison.Ordinal);
-		Assert.Contains("dotnet format will still ask for them", notice, StringComparison.Ordinal);
+		notice.ShouldNotBeNull();
+		notice.ShouldStartWith("Described.cs: the multi-line string at line 3", Case.Sensitive);
+		notice.ShouldContain("line endings the file does not use", Case.Sensitive);
+		notice.ShouldContain("dotnet format will still ask for them", Case.Sensitive);
 	}
 
 	/// <summary>Nothing to say about a file whose literals agree with it, so the notice means something.</summary>
@@ -235,7 +235,7 @@ public sealed class WhitespaceTests
 		var source = "class C" + Crlf + "{" + Crlf + "\tconst string T = \"\"\"" + Crlf
 			+ "first" + Crlf + "second" + Crlf + "\"\"\";" + Crlf + "}" + Crlf;
 
-		Assert.Null(Notice(source, "Agreed.cs"));
+		Notice(source, "Agreed.cs").ShouldBeNull();
 	}
 
 	private static IReadOnlyList<int> Disagreeing(string source, TextSpan? within = null)

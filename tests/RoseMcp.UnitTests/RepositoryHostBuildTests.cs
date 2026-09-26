@@ -43,8 +43,8 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		var perRid = StageHost(RuntimeInformation.RuntimeIdentifier, DateTime.UtcNow.AddHours(-3));
 		var plain = StageHost(null, DateTime.UtcNow);
 
-		Assert.Equal(plain, Resolve());
-		Assert.True(File.Exists(perRid), "the per-RID build is still there and was simply not chosen");
+		Resolve().ShouldBe(plain);
+		File.Exists(perRid).ShouldBeTrue("the per-RID build is still there and was simply not chosen");
 	}
 
 	/// <summary>
@@ -57,7 +57,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		StageHost(null, DateTime.UtcNow.AddHours(-3));
 		var perRid = StageHost(RuntimeInformation.RuntimeIdentifier, DateTime.UtcNow);
 
-		Assert.Equal(perRid, Resolve());
+		Resolve().ShouldBe(perRid);
 	}
 
 	/// <summary>
@@ -70,7 +70,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		var foreign = RuntimeInformation.RuntimeIdentifier == "win-x64" ? "win-arm64" : "win-x64";
 		StageHost(foreign, DateTime.UtcNow);
 
-		Assert.Throws<FileNotFoundException>(Resolve);
+		Should.Throw<FileNotFoundException>(Resolve).ShouldBeOfType<FileNotFoundException>();
 	}
 
 	/// <summary>
@@ -83,7 +83,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		StageHost(RuntimeInformation.RuntimeIdentifier, DateTime.UtcNow, configuration: "Release");
 		var debug = StageHost(RuntimeInformation.RuntimeIdentifier, DateTime.UtcNow.AddHours(-3));
 
-		Assert.Equal(debug, Resolve());
+		Resolve().ShouldBe(debug);
 	}
 
 	/// <summary>
@@ -98,9 +98,8 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		StageWorker(DateTime.UtcNow, configuration: "Release");
 		var debug = StageWorker(DateTime.UtcNow.AddHours(-3));
 
-		Assert.Equal(
-			debug,
-			WorkerLauncher.ResolveWorkerPath(new BrokerOptions(), BrokerDirectory, searchRepository: true));
+		WorkerLauncher.ResolveWorkerPath(new BrokerOptions(), BrokerDirectory, searchRepository: true).ShouldBe(
+			debug);
 	}
 
 	public void Dispose()

@@ -118,8 +118,7 @@ public sealed class ProducedFactTests
 		{
 			if (Unconsumed.ContainsKey(key)) continue;
 
-			Assert.True(
-				arguments.Contains(property, StringComparer.OrdinalIgnoreCase),
+			arguments.Contains(property, StringComparer.OrdinalIgnoreCase).ShouldBeTrue(
 				$"{key} is computed on every item and no argument accepts it. Add the argument, or "
 					+ "add the fact to Unconsumed with the reason nothing should.");
 		}
@@ -139,8 +138,7 @@ public sealed class ProducedFactTests
 		{
 			if (Unconsumed.ContainsKey(key)) continue;
 
-			Assert.True(
-				Regex.IsMatch(sources, $@"\b{Regex.Escape(property)}\b"),
+			Regex.IsMatch(sources, $@"\b{Regex.Escape(property)}\b").ShouldBeTrue(
 				$"{key} is computed for a window and no window names it. Show it, or add the fact "
 					+ "to Unconsumed with the reason it is for an agent only.");
 		}
@@ -158,8 +156,8 @@ public sealed class ProducedFactTests
 
 		foreach (var (key, reason) in Unconsumed)
 		{
-			Assert.Contains(key, known);
-			Assert.NotEmpty(reason);
+			known.ShouldContain(key);
+			reason.ShouldNotBeEmpty();
 		}
 	}
 

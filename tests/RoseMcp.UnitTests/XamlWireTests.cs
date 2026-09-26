@@ -40,10 +40,10 @@ public sealed class XamlWireTests
 	{
 		var escaped = XamlWire.Escape(value);
 
-		Assert.DoesNotContain('\t', escaped);
-		Assert.DoesNotContain('\n', escaped);
-		Assert.DoesNotContain('\r', escaped);
-		Assert.Equal(value, XamlWire.Unescape(escaped));
+		escaped.ShouldNotContain('\t');
+		escaped.ShouldNotContain('\n');
+		escaped.ShouldNotContain('\r');
+		XamlWire.Unescape(escaped).ShouldBe(value);
 	}
 
 	/// <summary>
@@ -63,10 +63,10 @@ public sealed class XamlWireTests
 		var message = string.Join('\n', commands.Select(fields => XamlWire.Row(fields)));
 		var read = message.Split('\n').Select(XamlWire.Fields).ToArray();
 
-		Assert.Equal(commands.Length, read.Length);
+		read.Length.ShouldBe(commands.Length);
 		for (var i = 0; i < commands.Length; i++)
 		{
-			Assert.Equal(commands[i], read[i]);
+			read[i].ShouldBe(commands[i]);
 		}
 	}
 
@@ -78,7 +78,7 @@ public sealed class XamlWireTests
 	[Test]
 	public void Two_rows_whose_fields_differ_only_in_where_a_tab_falls_are_different_rows()
 	{
-		Assert.NotEqual(XamlWire.Row("a\tb", "c"), XamlWire.Row("a", "b\tc"));
+		XamlWire.Row("a", "b\tc").ShouldNotBe(XamlWire.Row("a\tb", "c"));
 	}
 
 	[Test]
@@ -86,18 +86,18 @@ public sealed class XamlWireTests
 	{
 		var frame = XamlWire.Frame(42, "apply\nSetProperty\tone\nAddChild\ttwo");
 
-		Assert.True(XamlWire.TryReadFrame(frame, out var id, out var body));
-		Assert.Equal(42u, id);
-		Assert.Equal("apply\nSetProperty\tone\nAddChild\ttwo", body);
+		XamlWire.TryReadFrame(frame, out var id, out var body).ShouldBeTrue();
+		id.ShouldBe(42u);
+		body.ShouldBe("apply\nSetProperty\tone\nAddChild\ttwo");
 	}
 
 	/// <summary>A reply with an empty body is still a reply to its request, which is how "nothing" is said.</summary>
 	[Test]
 	public void An_empty_body_keeps_its_id()
 	{
-		Assert.True(XamlWire.TryReadFrame(XamlWire.Frame(7, string.Empty), out var id, out var body));
-		Assert.Equal(7u, id);
-		Assert.Equal(string.Empty, body);
+		XamlWire.TryReadFrame(XamlWire.Frame(7, string.Empty), out var id, out var body).ShouldBeTrue();
+		id.ShouldBe(7u);
+		body.ShouldBe(string.Empty);
 	}
 
 	[Test]
@@ -108,13 +108,13 @@ public sealed class XamlWireTests
 	[Arguments(" 1\ntree")]
 	public void Something_that_was_not_made_as_a_frame_is_not_read_as_one(string frame)
 	{
-		Assert.False(XamlWire.TryReadFrame(frame, out _, out _));
+		XamlWire.TryReadFrame(frame, out _, out _).ShouldBeFalse();
 	}
 
 	[Test]
 	public void The_greeting_a_provider_sends_is_accepted_with_the_key_its_session_issued()
 	{
-		Assert.Null(XamlWire.RefuseGreeting(XamlWire.Greeting("abc123"), "abc123"));
+		XamlWire.RefuseGreeting(XamlWire.Greeting("abc123"), "abc123").ShouldBeNull();
 	}
 
 	/// <summary>
@@ -126,9 +126,9 @@ public sealed class XamlWireTests
 	{
 		var refusal = XamlWire.RefuseGreeting(XamlWire.UnversionedGreeting, "abc123");
 
-		Assert.NotNull(refusal);
-		Assert.Contains("older than this host", refusal);
-		Assert.Contains("stale", refusal);
+		refusal.ShouldNotBeNull();
+		refusal.ShouldContain("older than this host", Case.Sensitive);
+		refusal.ShouldContain("stale", Case.Sensitive);
 	}
 
 	[Test]
@@ -136,9 +136,9 @@ public sealed class XamlWireTests
 	{
 		var refusal = XamlWire.RefuseGreeting($"{XamlWire.GreetingPrefix}{XamlWire.ProtocolVersion + 1}/abc123", "abc123");
 
-		Assert.NotNull(refusal);
-		Assert.Contains($"protocol {XamlWire.ProtocolVersion + 1}", refusal);
-		Assert.Contains($"speaks {XamlWire.ProtocolVersion}", refusal);
+		refusal.ShouldNotBeNull();
+		refusal.ShouldContain($"protocol {XamlWire.ProtocolVersion + 1}", Case.Sensitive);
+		refusal.ShouldContain($"speaks {XamlWire.ProtocolVersion}", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -150,14 +150,14 @@ public sealed class XamlWireTests
 	{
 		var refusal = XamlWire.RefuseGreeting(XamlWire.Greeting("someone-else"), "abc123");
 
-		Assert.NotNull(refusal);
-		Assert.Contains("key", refusal);
+		refusal.ShouldNotBeNull();
+		refusal.ShouldContain("key", Case.Sensitive);
 	}
 
 	[Test]
 	public void A_provider_given_no_key_is_refused_rather_than_accepted()
 	{
-		Assert.NotNull(XamlWire.RefuseGreeting(XamlWire.Greeting(string.Empty), "abc123"));
+		XamlWire.RefuseGreeting(XamlWire.Greeting(string.Empty), "abc123").ShouldNotBeNull();
 	}
 
 	/// <summary>Whatever reached the pipe first can send anything, so a refusal quotes only the start of it.</summary>
@@ -166,8 +166,8 @@ public sealed class XamlWireTests
 	{
 		var refusal = XamlWire.RefuseGreeting(new string('x', 5000), "abc123");
 
-		Assert.NotNull(refusal);
-		Assert.True(refusal.Length < 200, $"expected a short refusal, got {refusal.Length} characters");
+		refusal.ShouldNotBeNull();
+		(refusal.Length < 200).ShouldBeTrue($"expected a short refusal, got {refusal.Length} characters");
 	}
 
 	/// <summary>
@@ -181,10 +181,10 @@ public sealed class XamlWireTests
 		var channel = ProviderSource();
 
 		var declared = Regex.Match(channel, @"static constexpr int RoseTapProtocolVersion = (\d+);");
-		Assert.True(declared.Success, $"{ProviderChannel} no longer declares RoseTapProtocolVersion where this looks for it.");
-		Assert.Equal(XamlWire.ProtocolVersion, int.Parse(declared.Groups[1].Value));
+		declared.Success.ShouldBeTrue($"{ProviderChannel} no longer declares RoseTapProtocolVersion where this looks for it.");
+		int.Parse(declared.Groups[1].Value).ShouldBe(XamlWire.ProtocolVersion);
 
-		Assert.Contains($"\"{XamlWire.GreetingPrefix}\"", channel);
+		channel.ShouldContain($"\"{XamlWire.GreetingPrefix}\"", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -209,25 +209,25 @@ public sealed class XamlWireTests
 
 		foreach (var (raw, source, escaped) in table)
 		{
-			Assert.Equal(escaped, XamlWire.Escape(raw.ToString()));
-			Assert.Contains(source, escape);
+			XamlWire.Escape(raw.ToString()).ShouldBe(escaped);
+			escape.ShouldContain(source, Case.Sensitive);
 		}
 
-		Assert.Equal(table.Length, Regex.Matches(escape, @"case L'").Count);
+		Regex.Matches(escape, @"case L'").Count.ShouldBe(table.Length);
 
 		foreach (var letter in "trn")
 		{
-			Assert.Contains($"case L'{letter}': result += L'\\{letter}'; break;", unescape);
+			unescape.ShouldContain($"case L'{letter}': result += L'\\{letter}'; break;", Case.Sensitive);
 		}
 
-		Assert.Equal(3, Regex.Matches(unescape, @"case L'").Count);
+		Regex.Matches(unescape, @"case L'").Count.ShouldBe(3);
 	}
 
 	/// <summary>A function's text, from its signature to the next top-level declaration.</summary>
 	private static string Body(string source, string signature)
 	{
 		var start = source.IndexOf(signature, StringComparison.Ordinal);
-		Assert.True(start >= 0, $"{ProviderChannel} no longer has '{signature}'.");
+		(start >= 0).ShouldBeTrue($"{ProviderChannel} no longer has '{signature}'.");
 
 		var end = source.IndexOf("\nstatic ", start + signature.Length, StringComparison.Ordinal);
 		return end < 0 ? source[start..] : source[start..end];

@@ -19,7 +19,7 @@ public sealed class PatternRewriteTests
 			"using Shouldly; class C { void M(int count) { Assert.Equal(1, count); } }",
 			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
 
-		Assert.Contains("{ count.ShouldBe(1); }", text, StringComparison.Ordinal);
+		text.ShouldContain("{ count.ShouldBe(1); }", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -39,7 +39,7 @@ public sealed class PatternRewriteTests
 			$"using Shouldly; class A {{ public int B; public int C; }} class D {{ int F() => 0; void M(A? a, int? x, int y) {{ Assert.Equal<int?>(1, {actual}); }} }}",
 			Rule("Assert.Equal<$T$>($e$, $a$)", "$a$.ShouldBe($e$)"));
 
-		Assert.Contains(expected, text, StringComparison.Ordinal);
+		text.ShouldContain(expected, Case.Sensitive);
 	}
 
 	/// <summary>A comment inside a capture goes with it.</summary>
@@ -50,7 +50,7 @@ public sealed class PatternRewriteTests
 			"using Shouldly; class C { void M(int count) { Assert.Equal(/* one */ 1, count); } }",
 			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
 
-		Assert.Contains("count.ShouldBe(/* one */ 1)", text, StringComparison.Ordinal);
+		text.ShouldContain("count.ShouldBe(/* one */ 1)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -65,7 +65,7 @@ public sealed class PatternRewriteTests
 			"using Shouldly; class C { void M(string? text) { Assert.Contains(\"a\", text!); } }",
 			Rule("Assert.Contains($sub:string$, $s:string$)", "$s$.ShouldContain($sub$, Case.Sensitive)"));
 
-		Assert.Contains("text!.ShouldContain(\"a\", Case.Sensitive)", text, StringComparison.Ordinal);
+		text.ShouldContain("text!.ShouldContain(\"a\", Case.Sensitive)", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -79,7 +79,7 @@ public sealed class PatternRewriteTests
 			"using Shouldly; class C { void M(string s) {\n\t\tAssert.Contains(\n\t\t\t\"a\",\n\t\t\ts,\n\t\t\tStringComparison.Ordinal);\n\t} }",
 			Rule("Assert.Contains($sub:string$, $s:string$, StringComparison.Ordinal)", "$s$.ShouldContain($sub$, Case.Sensitive)"));
 
-		Assert.Contains("\t\ts.ShouldContain(\n\t\t\t\"a\", Case.Sensitive);", text, StringComparison.Ordinal);
+		text.ShouldContain("\t\ts.ShouldContain(\n\t\t\t\"a\", Case.Sensitive);", Case.Sensitive);
 	}
 
 	/// <summary>An argument that begins a line after the template's comma leaves no space at the end of the line before it.</summary>
@@ -90,7 +90,7 @@ public sealed class PatternRewriteTests
 			"class C { void M(List<int> xs) {\n\t\tAssert.Contains(1,\n\t\t\txs);\n\t} }",
 			Rule("Assert.Contains($item$, $xs$)", "Assert.Contains($item$, $xs$)"));
 
-		Assert.Contains("Assert.Contains(1,\n\t\t\txs);", text, StringComparison.Ordinal);
+		text.ShouldContain("Assert.Contains(1,\n\t\t\txs);", Case.Sensitive);
 	}
 
 	/// <summary>A site inside another's capture is rewritten first, and the outer replacement takes the result.</summary>
@@ -102,8 +102,11 @@ public sealed class PatternRewriteTests
 			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"),
 			Rule("Assert.Single($xs$)", "$xs$.ShouldHaveSingleItem()"));
 
-		Assert.Contains("xs.ShouldHaveSingleItem().ShouldBe(3)", text, StringComparison.Ordinal);
-		Assert.All(sites, site => Assert.Equal(SiteState.Rewritten, site.State));
+		text.ShouldContain("xs.ShouldHaveSingleItem().ShouldBe(3)", Case.Sensitive);
+		foreach (var site in sites)
+		{
+			site.State.ShouldBe(SiteState.Rewritten);
+		}
 	}
 
 	/// <summary>
@@ -118,7 +121,7 @@ public sealed class PatternRewriteTests
 			Rule("Assert.All($xs$, $x:id$ => $body$);", "foreach (var $x$ in $xs$) { $body$; }"),
 			Rule("Assert.True($c$)", "$c$.ShouldBeTrue()"));
 
-		Assert.Contains("foreach (var x in xs) { (x > 0).ShouldBeTrue(); }", text, StringComparison.Ordinal);
+		text.ShouldContain("foreach (var x in xs) { (x > 0).ShouldBeTrue(); }", Case.Sensitive);
 	}
 
 	/// <summary>A block body becomes the loop's own block, rather than a block inside one.</summary>
@@ -130,8 +133,8 @@ public sealed class PatternRewriteTests
 			Rule("Assert.All($xs$, $x:id$ => $body$);", "foreach (var $x$ in $xs$) { $body$; }"),
 			Rule("Assert.True($c$)", "$c$.ShouldBeTrue()"));
 
-		Assert.Contains("foreach (var x in xs) { (x > 1).ShouldBeTrue(); }", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("{ {", text, StringComparison.Ordinal);
+		text.ShouldContain("foreach (var x in xs) { (x > 1).ShouldBeTrue(); }", Case.Sensitive);
+		text.ShouldNotContain("{ {", Case.Sensitive);
 	}
 
 	/// <summary>A body that returns is refused: in a loop, the return would leave the method.</summary>
@@ -142,11 +145,11 @@ public sealed class PatternRewriteTests
 			"class C { void M(List<int> xs) { Assert.All(xs, x => { if (x > 0) return; Assert.Fail(\"no\"); }); } }",
 			Rule("Assert.All($xs$, $x:id$ => $body$);", "foreach (var $x$ in $xs$) { $body$; }"));
 
-		var site = Assert.Single(sites);
+		var site = sites.ShouldHaveSingleItem();
 
-		Assert.Equal(SiteState.Skipped, site.State);
-		Assert.Contains("returns", site.Reason, StringComparison.Ordinal);
-		Assert.Contains("Assert.All(xs, x =>", text, StringComparison.Ordinal);
+		site.State.ShouldBe(SiteState.Skipped);
+		site.Reason!.ShouldContain("returns", Case.Sensitive);
+		text.ShouldContain("Assert.All(xs, x =>", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -160,9 +163,9 @@ public sealed class PatternRewriteTests
 			"using Shouldly; class C { void M(int count) { Assert.Equal(1L, count); Assert.Equal(2, count); } }",
 			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
 
-		Assert.Equal([SiteState.Skipped, SiteState.Rewritten], sites.Select(site => site.State));
-		Assert.StartsWith("CS", sites[0].DiagnosticId, StringComparison.Ordinal);
-		Assert.Contains("Assert.Equal(1L, count); count.ShouldBe(2);", text, StringComparison.Ordinal);
+		sites.Select(site => site.State).ShouldBe([SiteState.Skipped, SiteState.Rewritten]);
+		sites[0].DiagnosticId.ShouldStartWith("CS", Case.Sensitive);
+		text.ShouldContain("Assert.Equal(1L, count); count.ShouldBe(2);", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -176,8 +179,8 @@ public sealed class PatternRewriteTests
 			"using Shouldly; class C { void M(List<int> xs) { var one = Assert.Single(xs); } }",
 			Rule("Assert.Single($xs$)", "$xs$.ShouldContain(1)"));
 
-		Assert.Equal(SiteState.Skipped, Assert.Single(sites).State);
-		Assert.Contains("var one = Assert.Single(xs);", text, StringComparison.Ordinal);
+		sites.ShouldHaveSingleItem().State.ShouldBe(SiteState.Skipped);
+		text.ShouldContain("var one = Assert.Single(xs);", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -193,10 +196,10 @@ public sealed class PatternRewriteTests
 			Rule("Assert.Contains($sub:string$, $s:string$)", "$s$.NoSuchMethod($sub$)"),
 			Rule("Assert.Contains($item$, $xs$)", "$xs$.ShouldContain($item$)"));
 
-		var site = Assert.Single(sites);
+		var site = sites.ShouldHaveSingleItem();
 
-		Assert.Equal((1, SiteState.Skipped), (site.Site.Rule.Number, site.State));
-		Assert.Contains("Assert.Contains(\"b\", \"abc\");", text, StringComparison.Ordinal);
+		((site.Site.Rule.Number, site.State)).ShouldBe((1, SiteState.Skipped));
+		text.ShouldContain("Assert.Contains(\"b\", \"abc\");", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -215,9 +218,9 @@ public sealed class PatternRewriteTests
 			],
 			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
 
-		Assert.Equal([SiteState.Skipped, SiteState.Skipped], rewrites[0].Sites.Select(site => site.State));
-		Assert.Equal(SiteState.Rewritten, Assert.Single(rewrites[1].Sites).State);
-		Assert.Contains("count.ShouldBe(3)", rewrites[1].Root!.ToFullString(), StringComparison.Ordinal);
+		rewrites[0].Sites.Select(site => site.State).ShouldBe([SiteState.Skipped, SiteState.Skipped]);
+		rewrites[1].Sites.ShouldHaveSingleItem().State.ShouldBe(SiteState.Rewritten);
+		rewrites[1].Root!.ToFullString().ShouldContain("count.ShouldBe(3)", Case.Sensitive);
 	}
 
 	/// <summary>Everything outside the sites is left byte for byte as it was.</summary>
@@ -229,6 +232,6 @@ public sealed class PatternRewriteTests
 			$"using Shouldly; class C {{ void M(int count) {{\n\t{Around}\n\tAssert.Equal(1, count); }} }}",
 			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
 
-		Assert.Contains(Around, text, StringComparison.Ordinal);
+		text.ShouldContain(Around, Case.Sensitive);
 	}
 }

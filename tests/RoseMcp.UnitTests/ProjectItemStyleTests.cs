@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -14,7 +15,7 @@ public sealed class ProjectItemStyleTests
 	[Arguments("""<Project><Import Sdk="Microsoft.NET.Sdk" Project="Sdk.props" /></Project>""")]
 	public void Reads_an_sdk_project_as_globbing_its_files(string project)
 	{
-		Assert.True(ProjectItemStyle.GlobsSourceFiles(project));
+		ProjectItemStyle.GlobsSourceFiles(project).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -35,7 +36,7 @@ public sealed class ProjectItemStyleTests
 			</Project>
 			""";
 
-		Assert.False(ProjectItemStyle.GlobsSourceFiles(project), "a legacy project lists its files rather than globbing them");
+		ProjectItemStyle.GlobsSourceFiles(project).ShouldBeFalse("a legacy project lists its files rather than globbing them");
 	}
 
 	/// <summary>
@@ -55,7 +56,7 @@ public sealed class ProjectItemStyleTests
 			</Project>
 			""";
 
-		Assert.False(ProjectItemStyle.GlobsSourceFiles(project), "a project that turns the globs off does not glob");
+		ProjectItemStyle.GlobsSourceFiles(project).ShouldBeFalse("a project that turns the globs off does not glob");
 	}
 
 	/// <summary>
@@ -69,6 +70,6 @@ public sealed class ProjectItemStyleTests
 	[Arguments("<Project><PropertyGroup></Project>")]
 	public void Assumes_the_default_when_it_cannot_tell(string project)
 	{
-		Assert.True(ProjectItemStyle.GlobsSourceFiles(project));
+		ProjectItemStyle.GlobsSourceFiles(project).ShouldBeTrue();
 	}
 }

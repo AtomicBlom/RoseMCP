@@ -25,7 +25,7 @@ public sealed class MethodDisplayNameTests
 	[Arguments("MyApp.Widget", "remove_Changed", "Widget.Changed (remove)")]
 	public void A_method_reads_as_a_person_wrote_it(string typeName, string methodName, string expected)
 	{
-		Assert.Equal(expected, MethodDisplayName.Of(typeName, methodName));
+		MethodDisplayName.Of(typeName, methodName).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -42,7 +42,7 @@ public sealed class MethodDisplayNameTests
 		string methodName,
 		string expected)
 	{
-		Assert.Equal(expected, MethodDisplayName.Of(typeName, methodName));
+		MethodDisplayName.Of(typeName, methodName).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -52,11 +52,11 @@ public sealed class MethodDisplayNameTests
 	[Test]
 	public void A_generated_method_is_not_something_to_search_by_name()
 	{
-		Assert.True(MethodDisplayName.IsCompilerGenerated("MyApp.Widget+<>c", "<Refresh>b__3_0"));
-		Assert.True(MethodDisplayName.IsCompilerGenerated("MyApp.Widget+<Refresh>d__3", "MoveNext"));
-		Assert.True(MethodDisplayName.IsCompilerGenerated("MyApp.Widget", "<Refresh>g__Inner|3_0"));
+		MethodDisplayName.IsCompilerGenerated("MyApp.Widget+<>c", "<Refresh>b__3_0").ShouldBeTrue();
+		MethodDisplayName.IsCompilerGenerated("MyApp.Widget+<Refresh>d__3", "MoveNext").ShouldBeTrue();
+		MethodDisplayName.IsCompilerGenerated("MyApp.Widget", "<Refresh>g__Inner|3_0").ShouldBeTrue();
 
-		Assert.False(MethodDisplayName.IsCompilerGenerated("MyApp.Widget", "Refresh"));
-		Assert.False(MethodDisplayName.IsCompilerGenerated("MyApp.Widget", "get_Title"));
+		MethodDisplayName.IsCompilerGenerated("MyApp.Widget", "Refresh").ShouldBeFalse();
+		MethodDisplayName.IsCompilerGenerated("MyApp.Widget", "get_Title").ShouldBeFalse();
 	}
 }

@@ -31,13 +31,13 @@ public sealed class DegradedReasonFoldingTests
 			Failure("Microsoft.Extensions.Logging.Generators.dll", "8.0.9.3103"),
 		]);
 
-		Assert.NotNull(reason);
-		Assert.StartsWith("3 analyzer assemblies failed to load", reason, StringComparison.Ordinal);
-		Assert.Contains("System.Text.Json.SourceGeneration.dll (x2)", reason, StringComparison.Ordinal);
+		reason.ShouldNotBeNull();
+		reason.ShouldStartWith("3 analyzer assemblies failed to load", Case.Sensitive);
+		reason.ShouldContain("System.Text.Json.SourceGeneration.dll (x2)", Case.Sensitive);
 
 		// One occurrence is named without a count: "(x1)" would be noise on the common case.
-		Assert.Contains("Microsoft.Extensions.Logging.Generators.dll", reason, StringComparison.Ordinal);
-		Assert.DoesNotContain("(x1)", reason, StringComparison.Ordinal);
+		reason.ShouldContain("Microsoft.Extensions.Logging.Generators.dll", Case.Sensitive);
+		reason.ShouldNotContain("(x1)", Case.Sensitive);
 	}
 
 	/// <summary>Nine failures are one reason, not nine. This is the whole point of the fold.</summary>
@@ -48,16 +48,16 @@ public sealed class DegradedReasonFoldingTests
 
 		var reason = AnalyzerReason(many);
 
-		Assert.NotNull(reason);
-		Assert.DoesNotContain(Environment.NewLine, reason, StringComparison.Ordinal);
+		reason.ShouldNotBeNull();
+		reason.ShouldNotContain(Environment.NewLine, Case.Sensitive);
 
 		// Named enough to act on, capped so the line cannot grow back into the list it replaced.
-		Assert.Contains("and 6 more", reason, StringComparison.Ordinal);
+		reason.ShouldContain("and 6 more", Case.Sensitive);
 	}
 
 	[Test]
 	public void Analyzer_reason_is_absent_when_every_assembly_loaded() =>
-		Assert.Null(AnalyzerReason([]));
+		AnalyzerReason([]).ShouldBeNull();
 
 	/// <summary>
 	/// The case that prompted all this: restore exits 0 having quietly skipped the projects it does
@@ -74,10 +74,10 @@ public sealed class DegradedReasonFoldingTests
 			Unrestored = ["Db.App.csproj", "Db.Shared.Controls.csproj", "Db.Controls.csproj", "Db.Diagnostics.csproj"],
 		});
 
-		Assert.NotNull(reason);
-		Assert.StartsWith("Restore reported success, but 4 projects have no restore output", reason, StringComparison.Ordinal);
-		Assert.Contains("Db.App.csproj", reason, StringComparison.Ordinal);
-		Assert.Contains("and 1 more", reason, StringComparison.Ordinal);
+		reason.ShouldNotBeNull();
+		reason.ShouldStartWith("Restore reported success, but 4 projects have no restore output", Case.Sensitive);
+		reason.ShouldContain("Db.App.csproj", Case.Sensitive);
+		reason.ShouldContain("and 1 more", Case.Sensitive);
 	}
 
 	/// <summary>--no-restore asks to skip the work, not to stop reporting what state that leaves.</summary>
@@ -91,17 +91,17 @@ public sealed class DegradedReasonFoldingTests
 			Unrestored = ["Db.App.csproj"],
 		});
 
-		Assert.NotNull(reason);
-		Assert.StartsWith("Restore did not run, and 1 project has no restore output", reason, StringComparison.Ordinal);
+		reason.ShouldNotBeNull();
+		reason.ShouldStartWith("Restore did not run, and 1 project has no restore output", Case.Sensitive);
 	}
 
 	[Test]
 	public void Unrestored_reason_is_absent_when_every_project_restored() =>
-		Assert.Null(UnrestoredReason(new RestoreReport { Ran = true, Reason = "Ran.", Succeeded = true }));
+		UnrestoredReason(new RestoreReport { Ran = true, Reason = "Ran.", Succeeded = true }).ShouldBeNull();
 
 	[Test]
 	public void Unrestored_reason_is_absent_when_restore_was_never_reported() =>
-		Assert.Null(UnrestoredReason(null));
+		UnrestoredReason(null).ShouldBeNull();
 
 	/// <summary>
 	/// Eight projects with unresolvable types are one reason naming eight projects. The types
@@ -111,18 +111,18 @@ public sealed class DegradedReasonFoldingTests
 	[Test]
 	public void Xaml_reason_folds_unresolved_types_across_projects()
 	{
-		var reason = Assert.Single(XamlReasons(
+		var reason = XamlReasons(
 		[
 			new XamlProjectReport("Db.App", Xaml(unresolved: ["AdvancedSettings: Expander", "PagesBox: NumberBox"])),
 			new XamlProjectReport("Db.Shared.Controls", Xaml(unresolved: ["Icon: DbFontIcon"])),
-		]));
+		]).ShouldHaveSingleItem();
 
-		Assert.StartsWith("3 named XAML elements across 2 projects", reason, StringComparison.Ordinal);
-		Assert.Contains("Db.App (2)", reason, StringComparison.Ordinal);
-		Assert.Contains("Db.Shared.Controls (1)", reason, StringComparison.Ordinal);
+		reason.ShouldStartWith("3 named XAML elements across 2 projects", Case.Sensitive);
+		reason.ShouldContain("Db.App (2)", Case.Sensitive);
+		reason.ShouldContain("Db.Shared.Controls (1)", Case.Sensitive);
 
 		// Points at the field that holds the detail rather than inlining it.
-		Assert.Contains("unresolvedXamlTypes", reason, StringComparison.Ordinal);
+		reason.ShouldContain("unresolvedXamlTypes", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -138,15 +138,15 @@ public sealed class DegradedReasonFoldingTests
 			new XamlProjectReport("Db.Legacy", Xaml(dialect: null, markupFiles: 4)),
 		]).ToArray();
 
-		Assert.Equal(2, reasons.Length);
-		Assert.Contains(reasons, line => line.Contains("no dialect", StringComparison.Ordinal));
-		Assert.Contains(reasons, line => line.Contains("will not bind", StringComparison.Ordinal));
+		reasons.Length.ShouldBe(2);
+		reasons.ShouldContain(line => line.Contains("no dialect", StringComparison.Ordinal));
+		reasons.ShouldContain(line => line.Contains("will not bind", StringComparison.Ordinal));
 	}
 
 	/// <summary>A solution whose XAML stubbed cleanly says nothing at all, and stays Loaded.</summary>
 	[Test]
 	public void Xaml_reasons_are_empty_when_every_stub_resolved() =>
-		Assert.Empty(XamlReasons([new XamlProjectReport("Db.App", Xaml())]));
+		XamlReasons([new XamlProjectReport("Db.App", Xaml())]).ShouldBeEmpty();
 
 	private static AnalyzerLoadFailure Failure(string assembly, string version) => new()
 	{

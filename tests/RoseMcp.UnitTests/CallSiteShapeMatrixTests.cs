@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -56,7 +57,7 @@ public sealed class CallSiteShapeMatrixTests
 	[Test]
 	public void Puts_a_new_argument_between_two_positional_ones()
 	{
-		Assert.Equal("""(a, "-", b)""", Rewrite(Calling("Target(a, b)"), Inserted, Dash));
+		Rewrite(Calling("Target(a, b)"), Inserted, Dash).ShouldBe("""(a, "-", b)""");
 	}
 
 	/// <summary>
@@ -74,9 +75,8 @@ public sealed class CallSiteShapeMatrixTests
 	[Test]
 	public void Keeps_the_names_a_call_site_wrote_for_parameters_it_still_has()
 	{
-		Assert.Equal(
-			"""(first: a, "-", second: b)""",
-			Rewrite(Calling("Target(first: a, second: b)"), Inserted, Dash));
+		Rewrite(Calling("Target(first: a, second: b)"), Inserted, Dash).ShouldBe(
+			"""(first: a, "-", second: b)""");
 	}
 
 	/// <summary>
@@ -86,7 +86,7 @@ public sealed class CallSiteShapeMatrixTests
 	[Test]
 	public void Rewrites_a_trailing_named_argument_beside_a_positional_one()
 	{
-		Assert.Equal("""(a, "-", second: b)""", Rewrite(Calling("Target(a, second: b)"), Inserted, Dash));
+		Rewrite(Calling("Target(a, second: b)"), Inserted, Dash).ShouldBe("""(a, "-", second: b)""");
 	}
 
 	/// <summary>
@@ -104,7 +104,7 @@ public sealed class CallSiteShapeMatrixTests
 	[Test]
 	public void Rewrites_a_named_argument_written_before_a_positional_one()
 	{
-		Assert.Equal("""(first: a, "-", b)""", Rewrite(Calling("Target(first: a, b)"), Inserted, Dash));
+		Rewrite(Calling("Target(first: a, b)"), Inserted, Dash).ShouldBe("""(first: a, "-", b)""");
 	}
 
 	/// <summary>An optional the call site said nothing about goes on saying nothing about it.</summary>
@@ -120,7 +120,7 @@ public sealed class CallSiteShapeMatrixTests
 			}
 			""";
 
-		Assert.Equal("""(a, "-")""", Rewrite(source, """string first, string separator, string second = "x" """, Dash));
+		Rewrite(source, """string first, string separator, string second = "x" """, Dash).ShouldBe("""(a, "-")""");
 	}
 
 	/// <summary>
@@ -139,7 +139,7 @@ public sealed class CallSiteShapeMatrixTests
 			}
 			""";
 
-		Assert.Equal("""(a, "-", b, c)""", Rewrite(source, "string first, string separator, params string[] rest", Dash));
+		Rewrite(source, "string first, string separator, params string[] rest", Dash).ShouldBe("""(a, "-", b, c)""");
 	}
 
 	/// <summary>
@@ -164,9 +164,8 @@ public sealed class CallSiteShapeMatrixTests
 			}
 			""";
 
-		Assert.Equal(
-			"""(a, "-", out var count, ref value, in size)""",
-			Rewrite(source, "string first, string separator, out int count, ref int value, in int size", Dash));
+		Rewrite(source, "string first, string separator, out int count, ref int value, in int size", Dash).ShouldBe(
+			"""(a, "-", out var count, ref value, in size)""");
 	}
 
 	/// <summary>
@@ -176,9 +175,8 @@ public sealed class CallSiteShapeMatrixTests
 	[Test]
 	public void Counts_the_receiver_of_an_extension_method_as_an_argument_that_is_not_there()
 	{
-		Assert.Equal(
-			"""("-", 4)""",
-			Rewrite(Extension("a.Target(4)"), "this string text, string separator, int width", Dash));
+		Rewrite(Extension("a.Target(4)"), "this string text, string separator, int width", Dash).ShouldBe(
+			"""("-", 4)""");
 	}
 
 	/// <summary>
@@ -188,9 +186,8 @@ public sealed class CallSiteShapeMatrixTests
 	[Test]
 	public void Rewrites_the_same_extension_method_called_as_a_static()
 	{
-		Assert.Equal(
-			"""(a, "-", 4)""",
-			Rewrite(Extension("Target(a, 4)"), "this string text, string separator, int width", Dash));
+		Rewrite(Extension("Target(a, 4)"), "this string text, string separator, int width", Dash).ShouldBe(
+			"""(a, "-", 4)""");
 	}
 
 	/// <summary>
@@ -212,7 +209,7 @@ public sealed class CallSiteShapeMatrixTests
 	[Test]
 	public void Keeps_the_wrapping_of_a_call_site_it_inserts_into()
 	{
-		Assert.Equal("(\n\t\ta,\n\t\t\"-\",\n\t\tb)", Rewrite(WrappedCall, Inserted, Dash));
+		Rewrite(WrappedCall, Inserted, Dash).ShouldBe("(\n\t\ta,\n\t\t\"-\",\n\t\tb)");
 	}
 
 	/// <summary>
@@ -233,7 +230,7 @@ public sealed class CallSiteShapeMatrixTests
 		// stays positional only while it would land in its own slot.
 		var wanted = "string first, string separator, string third = \"\", string second";
 
-		Assert.Equal("(\n\t\ta,\n\t\t\"-\",\n\t\tsecond: b)", Rewrite(WrappedCall, wanted, Dash));
+		Rewrite(WrappedCall, wanted, Dash).ShouldBe("(\n\t\ta,\n\t\t\"-\",\n\t\tsecond: b)");
 	}
 
 	/// <summary>
@@ -255,7 +252,7 @@ public sealed class CallSiteShapeMatrixTests
 			+ "\t\tsecond: b);\n"
 			+ "}\n";
 
-		Assert.Equal("(\n\t\tfirst: a,\n\t\t\"-\",\n\t\tsecond: b)", Rewrite(call, Inserted, Dash));
+		Rewrite(call, Inserted, Dash).ShouldBe("(\n\t\tfirst: a,\n\t\t\"-\",\n\t\tsecond: b)");
 	}
 
 	/// <summary>
@@ -278,9 +275,8 @@ public sealed class CallSiteShapeMatrixTests
 			}
 			""";
 
-		Assert.Equal(
-			Rewrite(Calling("Target(a, b)"), Inserted, Dash),
-			Rewrite(block, Inserted, Dash));
+		Rewrite(block, Inserted, Dash).ShouldBe(
+			Rewrite(Calling("Target(a, b)"), Inserted, Dash));
 	}
 
 	/// <summary>
@@ -302,7 +298,7 @@ public sealed class CallSiteShapeMatrixTests
 			}
 			""";
 
-		Assert.Equal("""(a, "-", b)""", Rewrite(source, Inserted, Dash));
+		Rewrite(source, Inserted, Dash).ShouldBe("""(a, "-", b)""");
 	}
 
 	/// <summary>The ordinary fixture: a two-parameter target, called once, as the case writes it.</summary>

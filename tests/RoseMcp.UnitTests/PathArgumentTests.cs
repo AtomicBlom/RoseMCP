@@ -35,9 +35,8 @@ public sealed class PathArgumentTests
 
 		using var origin = CallOrigin.Use(Absolute("checkouts", "worktree"));
 
-		Assert.Equal(
-			Absolute("checkouts", "worktree", "tests", "Widget.cs"),
-			paths.Of(Path.Combine("tests", "Widget.cs"))?.Value);
+		(paths.Of(Path.Combine("tests", "Widget.cs"))?.Value).ShouldBe(
+			Absolute("checkouts", "worktree", "tests", "Widget.cs"));
 	}
 
 	/// <summary>
@@ -48,9 +47,8 @@ public sealed class PathArgumentTests
 	[Test]
 	public void A_session_that_says_nothing_is_measured_from_the_brokers_own_directory()
 	{
-		Assert.Equal(
-			Absolute("checkouts", "main", "tests", "Widget.cs"),
-			Rooted(Absolute("checkouts", "main")).Of(Path.Combine("tests", "Widget.cs"))?.Value);
+		(Rooted(Absolute("checkouts", "main")).Of(Path.Combine("tests", "Widget.cs"))?.Value).ShouldBe(
+			Absolute("checkouts", "main", "tests", "Widget.cs"));
 	}
 
 	/// <summary>
@@ -64,7 +62,7 @@ public sealed class PathArgumentTests
 
 		using var origin = CallOrigin.Use(Absolute("checkouts", "worktree"));
 
-		Assert.Equal(Absolute("elsewhere", "Widget.cs"), paths.Of(Absolute("elsewhere", "Widget.cs"))?.Value);
+		(paths.Of(Absolute("elsewhere", "Widget.cs"))?.Value).ShouldBe(Absolute("elsewhere", "Widget.cs"));
 	}
 
 	/// <summary>An argument nobody supplied is not a path that failed to resolve.</summary>
@@ -73,9 +71,9 @@ public sealed class PathArgumentTests
 	{
 		var paths = Rooted(Absolute("checkouts", "main"));
 
-		Assert.Null(paths.Of(null));
-		Assert.Null(paths.Of("   "));
-		Assert.Empty(paths.Each(null));
+		paths.Of(null).ShouldBeNull();
+		paths.Of("   ").ShouldBeNull();
+		paths.Each(null).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -85,10 +83,10 @@ public sealed class PathArgumentTests
 	[Test]
 	public void A_path_cannot_be_rooted_without_a_base()
 	{
-		Assert.Throws<ArgumentException>(() => RootedPath.Absolute(Path.Combine("tests", "Widget.cs")));
+		Should.Throw<ArgumentException>(() => RootedPath.Absolute(Path.Combine("tests", "Widget.cs"))).ShouldBeOfType<ArgumentException>();
 
-		Assert.Throws<ArgumentException>(
-			() => RootedPath.From(Path.Combine("tests", "Widget.cs"), Path.Combine("somewhere", "relative")));
+		Should.Throw<ArgumentException>(
+			() => RootedPath.From(Path.Combine("tests", "Widget.cs"), Path.Combine("somewhere", "relative"))).ShouldBeOfType<ArgumentException>();
 	}
 
 	/// <summary>
@@ -103,20 +101,20 @@ public sealed class PathArgumentTests
 
 		var refusal = PathArguments.Relative(Arguments(("filePath", relative), ("symbol", "A.B")));
 
-		Assert.NotNull(refusal);
-		Assert.StartsWith("filePath has to be an absolute path", refusal, StringComparison.Ordinal);
-		Assert.Contains(relative, refusal!, StringComparison.Ordinal);
+		refusal.ShouldNotBeNull();
+		refusal.ShouldStartWith("filePath has to be an absolute path", Case.Sensitive);
+		refusal!.ShouldContain(relative, Case.Sensitive);
 	}
 
 	/// <summary>One list argument is one rule: rose_format sends several where every other tool sends one.</summary>
 	[Test]
 	public void A_host_refuses_a_relative_path_inside_a_list()
 	{
-		Assert.NotNull(PathArguments.Relative(
-			Arguments(("filePaths", new[] { Absolute("repo", "A.cs"), "B.cs" }))));
+		PathArguments.Relative(
+			Arguments(("filePaths", new[] { Absolute("repo", "A.cs"), "B.cs" }))).ShouldNotBeNull();
 
-		Assert.Null(PathArguments.Relative(
-			Arguments(("filePaths", new[] { Absolute("repo", "A.cs"), Absolute("repo", "B.cs") }))));
+		PathArguments.Relative(
+			Arguments(("filePaths", new[] { Absolute("repo", "A.cs"), Absolute("repo", "B.cs") }))).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -127,7 +125,7 @@ public sealed class PathArgumentTests
 	[Test]
 	public void An_argument_with_a_base_of_its_own_is_left_alone()
 	{
-		Assert.Null(PathArguments.Relative(Arguments(("symbol", "A.B"), ("targetPath", "Widget.cs"))));
+		PathArguments.Relative(Arguments(("symbol", "A.B"), ("targetPath", "Widget.cs"))).ShouldBeNull();
 	}
 
 	/// <summary>An absolute path on whichever platform is running: a drive root here, / elsewhere.</summary>

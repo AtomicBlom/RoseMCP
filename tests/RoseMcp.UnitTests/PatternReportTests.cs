@@ -37,17 +37,17 @@ public sealed class PatternReportTests
 
 		var summary = PatternReport.Build(50, Enumerable.Range(1, 50).ToDictionary(rule => rule, _ => (IReadOnlyList<string>)["Xunit.Assert.Equal<T>(T, T)"]), sites, misses, preview: true);
 
-		Assert.Equal(PatternReport.Groups, summary.Skipped.Count);
-		Assert.Equal(PatternReport.Groups, summary.Unmatched.Count);
-		Assert.True(summary.Files.Count <= PatternReport.FileRows);
-		Assert.Equal(156, summary.FileCount);
-		Assert.Contains(summary.Notices, notice => notice.Contains(" more skipped groups, covering ", StringComparison.Ordinal));
-		Assert.Contains(summary.Notices, notice => notice.StartsWith($"{40 - PatternReport.Groups} more unmatched groups", StringComparison.Ordinal));
+		summary.Skipped.Count.ShouldBe(PatternReport.Groups);
+		summary.Unmatched.Count.ShouldBe(PatternReport.Groups);
+		(summary.Files.Count <= PatternReport.FileRows).ShouldBeTrue();
+		summary.FileCount.ShouldBe(156);
+		summary.Notices.ShouldContain(notice => notice.Contains(" more skipped groups, covering ", StringComparison.Ordinal));
+		summary.Notices.ShouldContain(notice => notice.StartsWith($"{40 - PatternReport.Groups} more unmatched groups", StringComparison.Ordinal));
 
 		// Measured as the result goes out: the SDK's own options, which is what a caller is charged for.
 		var size = JsonSerializer.Serialize(summary, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length;
 
-		Assert.True(size < Ceiling, $"The summary is {size} characters of JSON");
+		(size < Ceiling).ShouldBeTrue($"The summary is {size} characters of JSON");
 	}
 
 	/// <summary>
@@ -66,10 +66,10 @@ public sealed class PatternReportTests
 
 		var summary = PatternReport.Build(3, new Dictionary<int, IReadOnlyList<string>>(), sites, [], preview: true);
 
-		Assert.Equal((3, 1, 1), (summary.Matched, summary.Rewritten, summary.SkippedCount));
-		Assert.Equal([2, 1, 0], summary.Rules.Select(rule => rule.Matched));
-		Assert.Equal(1, summary.Rules[2].Outranked);
-		Assert.Equal("b", summary.Rules[0].Sample?.After);
+		((summary.Matched, summary.Rewritten, summary.SkippedCount)).ShouldBe((3, 1, 1));
+		summary.Rules.Select(rule => rule.Matched).ShouldBe([2, 1, 0]);
+		summary.Rules[2].Outranked.ShouldBe(1);
+		(summary.Rules[0].Sample?.After).ShouldBe("b");
 	}
 
 	/// <summary>A file with something left in it comes before a file that was only rewritten.</summary>
@@ -85,8 +85,8 @@ public sealed class PatternReportTests
 
 		var summary = PatternReport.Build(1, new Dictionary<int, IReadOnlyList<string>>(), sites, [], preview: false);
 
-		Assert.Equal([@"C:\repo\File1.cs", @"C:\repo\File0.cs"], summary.Files.Select(file => file.FilePath));
-		Assert.Null(summary.Rules[0].Sample);
+		summary.Files.Select(file => file.FilePath).ShouldBe([@"C:\repo\File1.cs", @"C:\repo\File0.cs"]);
+		summary.Rules[0].Sample.ShouldBeNull();
 	}
 
 	/// <summary>A location in one of a few files.</summary>

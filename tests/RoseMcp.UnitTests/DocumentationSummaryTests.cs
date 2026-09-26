@@ -29,14 +29,13 @@ public sealed class DocumentationSummaryTests
 			public void Widget(int count) { }
 			""", out var kept);
 
-		Assert.True(kept);
-		Assert.Contains("What the widget is for.", result, StringComparison.Ordinal);
-		Assert.Contains("<param name=\"count\">How many.</param>", result, StringComparison.Ordinal);
+		kept.ShouldBeTrue();
+		result.ShouldContain("What the widget is for.", Case.Sensitive);
+		result.ShouldContain("<param name=\"count\">How many.</param>", Case.Sensitive);
 
 		// The old parameter documentation goes, because it names a parameter the member no longer has.
-		Assert.DoesNotContain("Old.", result, StringComparison.Ordinal);
-		Assert.True(
-			result.IndexOf("<summary>", StringComparison.Ordinal) < result.IndexOf("<param", StringComparison.Ordinal),
+		result.ShouldNotContain("Old.", Case.Sensitive);
+		(result.IndexOf("<summary>", StringComparison.Ordinal) < result.IndexOf("<param", StringComparison.Ordinal)).ShouldBeTrue(
 			"the summary comes first, where every documentation comment puts it");
 	}
 
@@ -48,8 +47,8 @@ public sealed class DocumentationSummaryTests
 			public void Widget(int size) { }
 			""", out var kept);
 
-		Assert.False(kept);
-		Assert.DoesNotContain("What the widget is for.", result, StringComparison.Ordinal);
+		kept.ShouldBeFalse();
+		result.ShouldNotContain("What the widget is for.", Case.Sensitive);
 	}
 
 	/// <summary><c>&lt;inheritdoc/&gt;</c> is the deliberate way to have no summary.</summary>
@@ -61,8 +60,8 @@ public sealed class DocumentationSummaryTests
 			public void Widget(int size) { }
 			""", out var kept);
 
-		Assert.False(kept);
-		Assert.DoesNotContain("What the widget is for.", result, StringComparison.Ordinal);
+		kept.ShouldBeFalse();
+		result.ShouldNotContain("What the widget is for.", Case.Sensitive);
 	}
 
 	/// <summary>The result has to parse back as one documentation comment, not as stray text.</summary>
@@ -78,10 +77,9 @@ public sealed class DocumentationSummaryTests
 			.Where(trivia => trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia))
 			.ToArray();
 
-		var comment = (DocumentationCommentTriviaSyntax)Assert.Single(parsed).GetStructure()!;
-		Assert.Equal(
-			["summary", "remarks"],
-			comment.Content.OfType<XmlElementSyntax>().Select(element => element.StartTag.Name.LocalName.Text));
+		var comment = (DocumentationCommentTriviaSyntax)parsed.ShouldHaveSingleItem().GetStructure()!;
+		comment.Content.OfType<XmlElementSyntax>().Select(element => element.StartTag.Name.LocalName.Text).ShouldBe(
+			["summary", "remarks"]);
 	}
 
 	private static string Kept(string replacement, out bool kept)

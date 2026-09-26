@@ -14,29 +14,21 @@ public sealed class XamlMaterialiserTests
 	{
 		var steps = XamlMaterialiser.Steps("""<Border Background="#FFFF0000" />""", "#Pair", 2);
 
-		Assert.Collection(
-			steps,
-			step =>
-			{
-				Assert.Equal(XamlStepKind.Create, step.Kind);
-				Assert.Equal("$0", step.Target);
-				Assert.Equal("Border", step.TypeName);
-			},
-			step =>
-			{
-				Assert.Equal(XamlStepKind.SetProperty, step.Kind);
-				Assert.Equal("$0", step.Target);
-				Assert.Equal("Background", step.Property);
-				Assert.Equal("#FFFF0000", step.Value);
-				Assert.Equal("Windows.UI.Xaml.Media.SolidColorBrush", step.ValueType);
-			},
-			step =>
-			{
-				Assert.Equal(XamlStepKind.AddChild, step.Kind);
-				Assert.Equal("#Pair", step.Target);
-				Assert.Equal("$0", step.Child);
-				Assert.Equal(2, step.Index);
-			});
+		steps.Select(step => step.Kind).ShouldBe([XamlStepKind.Create, XamlStepKind.SetProperty, XamlStepKind.AddChild]);
+
+		var (create, set, add) = (steps[0], steps[1], steps[2]);
+
+		create.Target.ShouldBe("$0");
+		create.TypeName.ShouldBe("Border");
+
+		set.Target.ShouldBe("$0");
+		set.Property.ShouldBe("Background");
+		set.Value.ShouldBe("#FFFF0000");
+		set.ValueType.ShouldBe("Windows.UI.Xaml.Media.SolidColorBrush");
+
+		add.Target.ShouldBe("#Pair");
+		add.Child.ShouldBe("$0");
+		add.Index.ShouldBe(2);
 	}
 
 	/// <summary>
@@ -53,17 +45,20 @@ public sealed class XamlMaterialiserTests
 			0).ToList();
 
 		var attach = steps[^1];
-		Assert.Equal(XamlStepKind.AddChild, attach.Kind);
-		Assert.Equal("#Pair", attach.Target);
-		Assert.Equal("$0", attach.Child);
+		attach.Kind.ShouldBe(XamlStepKind.AddChild);
+		attach.Target.ShouldBe("#Pair");
+		attach.Child.ShouldBe("$0");
 
 		// Nothing before it touches the app: every other step names a slot.
-		Assert.All(steps[..^1], step => Assert.StartsWith("$", step.Target, StringComparison.Ordinal));
+		foreach (var step in steps[..^1])
+		{
+			step.Target.ShouldStartWith("$", Case.Sensitive);
+		}
 
 		// And the child is in its parent before the parent goes anywhere.
 		var nested = steps.Single(step => step.Kind == XamlStepKind.AddChild && step.Target == "$0");
-		Assert.Equal("$1", nested.Child);
-		Assert.True(steps.IndexOf(nested) < steps.Count - 1, "the nested add must come before the attach");
+		nested.Child.ShouldBe("$1");
+		(steps.IndexOf(nested) < steps.Count - 1).ShouldBeTrue("the nested add must come before the attach");
 	}
 
 	[Test]
@@ -75,11 +70,11 @@ public sealed class XamlMaterialiserTests
 			0);
 
 		var created = steps.Where(step => step.Kind == XamlStepKind.Create).Select(step => step.Target).ToList();
-		Assert.Equal(["$0", "$1", "$2"], created);
+		created.ShouldBe(["$0", "$1", "$2"]);
 
 		// The two Borders go in at 0 and 1 under the panel, not both at 0.
 		var adds = steps.Where(step => step.Kind == XamlStepKind.AddChild && step.Target == "$0").ToList();
-		Assert.Equal([0, 1], adds.Select(step => step.Index));
+		adds.Select(step => step.Index).ShouldBe([0, 1]);
 	}
 
 	/// <summary>
@@ -94,8 +89,8 @@ public sealed class XamlMaterialiserTests
 			"#Pair",
 			0);
 
-		Assert.DoesNotContain(steps, step => step.TypeName is "Grid.RowDefinitions" or "RowDefinition");
-		Assert.Equal(["Grid", "Border"], steps.Where(step => step.Kind == XamlStepKind.Create).Select(step => step.TypeName));
+		steps.Any(step => step.TypeName is "Grid.RowDefinitions" or "RowDefinition").ShouldBeFalse();
+		steps.Where(step => step.Kind == XamlStepKind.Create).Select(step => step.TypeName).ShouldBe(["Grid", "Border"]);
 	}
 
 	/// <summary>
@@ -105,7 +100,7 @@ public sealed class XamlMaterialiserTests
 	[Test]
 	public void Notes_that_an_added_element_cannot_keep_its_name()
 	{
-		Assert.True(XamlMaterialiser.NamesAnything("""<Border xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Name="new" />"""));
-		Assert.False(XamlMaterialiser.NamesAnything("""<Border Padding="6" />"""), "markup with no x:Name names nothing");
+		XamlMaterialiser.NamesAnything("""<Border xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Name="new" />""").ShouldBeTrue();
+		XamlMaterialiser.NamesAnything("""<Border Padding="6" />""").ShouldBeFalse("markup with no x:Name names nothing");
 	}
 }

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 using RoseMcp.Ui.Core.Inspector;
 
 namespace RoseMcp.UnitTests;
@@ -30,8 +31,8 @@ public sealed class OperatorClientTests
 
 		await client.BreakpointsAsync("s1", TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("Bearer", handler.Last!.Headers.Authorization?.Scheme);
-		Assert.Equal("tok-1", handler.Last.Headers.Authorization?.Parameter);
+		(handler.Last!.Headers.Authorization?.Scheme).ShouldBe("Bearer");
+		(handler.Last.Headers.Authorization?.Parameter).ShouldBe("tok-1");
 	}
 
 	/// <summary>A client with no token sends none, rather than sending an empty one.</summary>
@@ -41,10 +42,10 @@ public sealed class OperatorClientTests
 		using var handler = new FakeHandler(_ => Json(new LiveBreakpointList()));
 		using var client = new OperatorClient(Tray, null, handler);
 
-		Assert.False(client.HasToken);
+		client.HasToken.ShouldBeFalse();
 		await client.BreakpointsAsync("s1", TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Null(handler.Last!.Headers.Authorization);
+		handler.Last!.Headers.Authorization.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -63,11 +64,11 @@ public sealed class OperatorClientTests
 			TestContext.Current!.Execution.CancellationToken);
 
 		var query = handler.Last!.RequestUri!.Query;
-		Assert.Contains("after=12", query);
-		Assert.Contains("limit=50", query);
-		Assert.Contains("waitSeconds=30", query);
-		Assert.Contains("kinds=BreakpointHit", query);
-		Assert.Contains("kinds=StepComplete", query);
+		query.ShouldContain("after=12", Case.Sensitive);
+		query.ShouldContain("limit=50", Case.Sensitive);
+		query.ShouldContain("waitSeconds=30", Case.Sensitive);
+		query.ShouldContain("kinds=BreakpointHit", Case.Sensitive);
+		query.ShouldContain("kinds=StepComplete", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -77,11 +78,11 @@ public sealed class OperatorClientTests
 	[Test]
 	public void A_long_poll_is_budgeted_past_the_wait_it_asked_for()
 	{
-		Assert.True(OperatorClient.PollBudget(30) > TimeSpan.FromSeconds(30));
-		Assert.Equal(TimeSpan.FromSeconds(30) + OperatorClient.PollMargin, OperatorClient.PollBudget(30));
+		(OperatorClient.PollBudget(30) > TimeSpan.FromSeconds(30)).ShouldBeTrue();
+		OperatorClient.PollBudget(30).ShouldBe(TimeSpan.FromSeconds(30) + OperatorClient.PollMargin);
 
 		// A poll that waits for nothing still gets more than a quick call would need.
-		Assert.Equal(OperatorClient.PollMargin, OperatorClient.PollBudget(0));
+		OperatorClient.PollBudget(0).ShouldBe(OperatorClient.PollMargin);
 	}
 
 	/// <summary>An enum in a request body goes as its name, which is what the host binds.</summary>
@@ -93,7 +94,7 @@ public sealed class OperatorClientTests
 
 		await client.StepAsync("s1", "over", TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("{\"mode\":\"over\"}", handler.LastBody);
+		handler.LastBody.ShouldBe("{\"mode\":\"over\"}");
 	}
 
 	/// <summary>A path's dots and brackets are escaped, since the grammar's separators are not the query's.</summary>
@@ -112,7 +113,7 @@ public sealed class OperatorClientTests
 
 		await client.ValueAsync("s1", "arg:0.Marks[1]", 0, null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("path=arg%3A0.Marks%5B1%5D", handler.Last!.RequestUri!.Query);
+		handler.Last!.RequestUri!.Query.ShouldContain("path=arg%3A0.Marks%5B1%5D", Case.Sensitive);
 	}
 
 	[Test]
@@ -121,12 +122,12 @@ public sealed class OperatorClientTests
 		using var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized));
 		using var client = new OperatorClient(Tray, "stale", handler);
 
-		var failure = await Assert.ThrowsAsync<OperatorException>(
-			async () => await client.SessionsAsync(TestContext.Current!.Execution.CancellationToken));
+		var failure = await Should.ThrowAsync<OperatorException>(
+			async () => await client.SessionsAsync(TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Equal(OperatorFailure.Unauthorized, failure.Failure);
-		Assert.Equal(HttpStatusCode.Unauthorized, failure.Status);
-		Assert.Equal(InspectorText.TokenRefused, failure.Message);
+		failure.Failure.ShouldBe(OperatorFailure.Unauthorized);
+		failure.Status.ShouldBe(HttpStatusCode.Unauthorized);
+		failure.Message.ShouldBe(InspectorText.TokenRefused);
 	}
 
 	[Test]
@@ -135,10 +136,10 @@ public sealed class OperatorClientTests
 		using var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
 		using var client = new OperatorClient(Tray, "tok-1", handler);
 
-		var failure = await Assert.ThrowsAsync<OperatorException>(
-			async () => await client.SessionAsync("gone", TestContext.Current!.Execution.CancellationToken));
+		var failure = await Should.ThrowAsync<OperatorException>(
+			async () => await client.SessionAsync("gone", TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Equal(OperatorFailure.NotFound, failure.Failure);
+		failure.Failure.ShouldBe(OperatorFailure.NotFound);
 	}
 
 	/// <summary>
@@ -154,11 +155,11 @@ public sealed class OperatorClientTests
 
 		using var client = new OperatorClient(Tray, "tok-1", handler);
 
-		var failure = await Assert.ThrowsAsync<OperatorException>(
-			async () => await client.FrameVariablesAsync("s1", 9, null, TestContext.Current!.Execution.CancellationToken));
+		var failure = await Should.ThrowAsync<OperatorException>(
+			async () => await client.FrameVariablesAsync("s1", 9, null, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Equal(OperatorFailure.Refused, failure.Failure);
-		Assert.Equal("Frame 9 is past the end of this thread's stack.", failure.Message);
+		failure.Failure.ShouldBe(OperatorFailure.Refused);
+		failure.Message.ShouldBe("Frame 9 is past the end of this thread's stack.");
 	}
 
 	/// <summary>Nothing listening is its own outcome, and the message says where it looked.</summary>
@@ -168,11 +169,11 @@ public sealed class OperatorClientTests
 		using var handler = new FakeHandler(_ => throw new HttpRequestException("refused"));
 		using var client = new OperatorClient(Tray, "tok-1", handler);
 
-		var failure = await Assert.ThrowsAsync<OperatorException>(
-			async () => await client.SessionsAsync(TestContext.Current!.Execution.CancellationToken));
+		var failure = await Should.ThrowAsync<OperatorException>(
+			async () => await client.SessionsAsync(TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Equal(OperatorFailure.Unreachable, failure.Failure);
-		Assert.Contains("127.0.0.1:5077", failure.Message);
+		failure.Failure.ShouldBe(OperatorFailure.Unreachable);
+		failure.Message.ShouldContain("127.0.0.1:5077", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -194,8 +195,8 @@ public sealed class OperatorClientTests
 		var reading = client.SessionsAsync(abandoned.Token);
 		await abandoned.CancelAsync();
 
-		await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await reading);
-		Assert.False(reading.IsFaulted, "a caller's own cancellation is a cancellation, not a fault");
+		await Should.ThrowAsync<OperationCanceledException>(async () => await reading);
+		reading.IsFaulted.ShouldBeFalse("a caller's own cancellation is a cancellation, not a fault");
 	}
 
 	private static readonly LiveDebugEventPage EmptyPage = new()

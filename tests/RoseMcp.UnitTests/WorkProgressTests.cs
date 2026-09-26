@@ -20,8 +20,8 @@ public sealed class WorkProgressTests
 		waiting.Report("Loading", 80);
 		working.Report("Analysing", 50);
 
-		Assert.Equal(40, sink.Values[0].Progress, 3);
-		Assert.Equal(70, sink.Values[1].Progress, 3);
+		sink.Values[0].Progress.ShouldBe(40, 0.0005);
+		sink.Values[1].Progress.ShouldBe(70, 0.0005);
 	}
 
 	/// <summary>
@@ -36,7 +36,7 @@ public sealed class WorkProgressTests
 
 		working.Report("Analysing", 50);
 
-		Assert.Equal(50, sink.Values[0].Progress, 3);
+		sink.Values[0].Progress.ShouldBe(50, 0.0005);
 	}
 
 	/// <summary>
@@ -52,9 +52,9 @@ public sealed class WorkProgressTests
 		progress.Report("Loading", 30);
 		progress.Report("Searching the solution");
 
-		Assert.Equal(100, sink.Values[0].Total);
-		Assert.Null(sink.Values[1].Total);
-		Assert.Equal(30, sink.Values[1].Progress, 3);
+		sink.Values[0].Total.ShouldBe(100);
+		sink.Values[1].Total.ShouldBeNull();
+		sink.Values[1].Progress.ShouldBe(30, 0.0005);
 	}
 
 	[Test]
@@ -64,9 +64,9 @@ public sealed class WorkProgressTests
 
 		captured.Slice(20, 60)!.Report("halfway", 50);
 
-		var report = Assert.Single(captured.Reports);
+		var report = captured.Reports.ShouldHaveSingleItem();
 
-		Assert.Equal(40, report.Percent);
+		report.Percent.ShouldBe(40);
 	}
 
 	[Test]
@@ -74,7 +74,7 @@ public sealed class WorkProgressTests
 	{
 		IWorkProgress? nobody = null;
 
-		Assert.Null(nobody.Slice(0, 50));
+		nobody.Slice(0, 50).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -92,10 +92,10 @@ public sealed class WorkProgressTests
 		var listener = new CapturingProgress();
 		using var following = shared.Follow(listener);
 
-		var caught = Assert.Single(listener.Reports);
+		var caught = listener.Reports.ShouldHaveSingleItem();
 
-		Assert.Equal("Loaded Core (1/2)", caught.Message);
-		Assert.Equal(30, caught.Percent);
+		caught.Message.ShouldBe("Loaded Core (1/2)");
+		caught.Percent.ShouldBe(30);
 	}
 
 	[Test]
@@ -108,7 +108,7 @@ public sealed class WorkProgressTests
 		using var following = shared.Follow(listener);
 
 		// An hour later, a call must not be told about the load it missed.
-		Assert.Empty(listener.Reports);
+		listener.Reports.ShouldBeEmpty();
 	}
 
 	[Test]
@@ -120,7 +120,7 @@ public sealed class WorkProgressTests
 		shared.Follow(listener).Dispose();
 		shared.Report("Reloading the solution", 10);
 
-		Assert.Empty(listener.Reports);
+		listener.Reports.ShouldBeEmpty();
 	}
 
 	private sealed class RecordingSink : IProgress<ProgressNotificationValue>
@@ -176,10 +176,9 @@ public sealed class WorkProgressTests
 
 		var percentages = listener.Reports.Select(report => report.Percent).ToList();
 
-		Assert.Contains(75d, percentages);
-		Assert.Contains(25d, percentages);
-		Assert.True(
-			percentages.IndexOf(75d) < percentages.IndexOf(25d),
+		percentages.ShouldContain(75d);
+		percentages.ShouldContain(25d);
+		(percentages.IndexOf(75d) < percentages.IndexOf(25d)).ShouldBeTrue(
 			"the reload's own scale must reach a listener that has already seen a higher percentage");
 	}
 }

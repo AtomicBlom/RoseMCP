@@ -138,3 +138,17 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   route to any of it: that lives in `Microsoft.CodeAnalysis.CSharp.Features`, which is not
   referenced, and what *is* registered for CS0103 offers to generate the missing member -- the
   wrong fix, confidently, for a name that exists already.
+- **A structural rewrite moves the caller's syntax; it never regenerates it.** What a
+  `rose_replace_pattern` placeholder captured is written back as the node it was, comments beside
+  it included, so a verbatim string, a cast or the spelling of a name arrives exactly as written.
+  Only the layout at its edges is dropped, because that described where it used to sit. Where a
+  capture becomes a receiver it is parenthesised unless it is a form that cannot need it, and a
+  conditional access always is: `a?.B.ShouldBe(1)` compiles and skips the assertion whenever `a` is
+  null. The formatter is given each replacement's own span, not its full span, since the indentation
+  in front of it is the caller's.
+- **A replacement that does not compile is never written.** Every replacement is compiled in
+  memory first; one that brings an error it did not have before is put back, with the compiler's
+  reason in the result, and never handed to a later rule -- that fall-through is how a string check
+  lands on a collection rule with its arguments reversed. A preview runs the same rounds, so its
+  list of skipped sites is the list an apply would skip. See
+  [the decision](../decisions/code-is-rewritten-by-what-it-binds-to.md).

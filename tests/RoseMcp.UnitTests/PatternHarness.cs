@@ -53,6 +53,23 @@ internal static class PatternHarness
 			}
 		}
 
+		namespace Shouldly
+		{
+			using System.Collections.Generic;
+
+			public enum Case { Sensitive, Insensitive }
+
+			public static class ShouldStubs
+			{
+				public static void ShouldBe<T>(this T actual, T expected) { }
+				public static void ShouldBeTrue(this bool actual) { }
+				public static void ShouldBeFalse(this bool actual) { }
+				public static void ShouldContain(this string actual, string expected, Case caseSensitivity = Case.Insensitive) { }
+				public static void ShouldContain<T>(this IEnumerable<T> actual, T expected) { }
+				public static T ShouldHaveSingleItem<T>(this IEnumerable<T> actual) => default!;
+			}
+		}
+
 		namespace Checks
 		{
 			public static class Extensions
@@ -104,6 +121,20 @@ internal static class PatternHarness
 		var (compilation, _) = Compile(source, withStubs);
 
 		return RuleCatalog.Parse(rules).Bind(compilation);
+	}
+
+	/// <summary>
+	/// <paramref name="source"/> rewritten by <paramref name="rules"/>, as text without the prelude, with
+	/// what became of each site.
+	/// </summary>
+	internal static (string Text, IReadOnlyList<SiteOutcome> Sites) Rewrite(string source, params RuleText[] rules)
+	{
+		var (compilation, tree) = Compile(source, withStubs: true);
+		var scan = RuleCatalog.Parse(rules).Bind(compilation).Scan(compilation.GetSemanticModel(tree));
+		var rewrite = RewriteEngine.Run(compilation, [new DocumentSites(tree, scan.Sites)], imports: null, CancellationToken.None)[0];
+		var text = (rewrite.Root ?? tree.GetRoot()).ToFullString();
+
+		return (text[Prelude.Length..], rewrite.Sites);
 	}
 
 	/// <summary>

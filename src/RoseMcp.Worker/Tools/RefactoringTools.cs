@@ -375,7 +375,7 @@ public sealed class RefactoringTools(
 		};
 
 		return await session.MutateAsync(
-			(snapshot, token) => ReplacePatternService.ReplaceAsync(snapshot, request, session.NoteSelfWrite, token, working),
+			(snapshot, token) => ReplacePatternService.ReplaceAsync(snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
 

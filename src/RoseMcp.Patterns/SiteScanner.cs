@@ -266,14 +266,30 @@ internal static class SiteScanner
 		/// <summary>
 		/// The expression an argument is written as: inside its argument syntax, or the receiver itself for
 		/// an extension method called on one. Null for a <c>ref</c> or <c>out</c> argument, which no find matches.
+		/// <para>
+		/// Widened outward through the caller's own parentheses, because an argument the compiler converts
+		/// can report the expression inside them as its syntax -- and the parentheses are the caller's, so a
+		/// capture that dropped them would write back something they did not.
+		/// </para>
 		/// </summary>
-		private static ExpressionSyntax? Written(IArgumentOperation argument) => argument.Syntax switch
+		private static ExpressionSyntax? Written(IArgumentOperation argument)
 		{
-			ArgumentSyntax written when written.RefKindKeyword.IsKind(SyntaxKind.None) => written.Expression,
-			ArgumentSyntax => null,
-			ExpressionSyntax receiver => receiver,
-			_ => null,
-		};
+			if (argument.Syntax is ArgumentSyntax written)
+			{
+				return written.RefKindKeyword.IsKind(SyntaxKind.None) ? written.Expression : null;
+			}
+
+			if (argument.Syntax is not ExpressionSyntax expression) return null;
+
+			while (expression.Parent is ParenthesizedExpressionSyntax parenthesized) expression = parenthesized;
+
+			return expression.Parent switch
+			{
+				ArgumentSyntax outer when outer.RefKindKeyword.IsKind(SyntaxKind.None) => outer.Expression,
+				ArgumentSyntax => null,
+				_ => expression,
+			};
+		}
 
 		/// <summary>Whether one part of a find matches the expression at the site.</summary>
 		private bool Expression(PatternNode node, ExpressionSyntax syntax, IOperation? operation)

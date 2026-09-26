@@ -1,0 +1,173 @@
+using RoseMcp.Patterns;
+
+using static RoseMcp.UnitTests.PatternHarness;
+
+namespace RoseMcp.UnitTests;
+
+/// <summary>
+/// What a replacement writes, and what it puts back: captures moved into the template as the caller
+/// wrote them, parentheses only where the new position needs them, nested sites composed, and every
+/// site whose replacement would not compile left exactly as it was.
+/// </summary>
+public sealed class PatternRewriteTests
+{
+	/// <summary>A capture moves into the template as the caller wrote it.</summary>
+	[Test]
+	public void Writes_each_capture_where_the_template_puts_it()
+	{
+		var (text, _) = Rewrite(
+			"using Shouldly; class C { void M(int count) { Assert.Equal(1, count); } }",
+			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
+
+		Assert.Contains("{ count.ShouldBe(1); }", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A capture that becomes a receiver is parenthesised unless it cannot need it. A conditional access
+	/// always is: without the parentheses the assertion joins the null check and silently does nothing.
+	/// </summary>
+	[Test]
+	[Arguments("a?.B", "(a?.B).ShouldBe(1)")]
+	[Arguments("x ?? 0", "(x ?? 0).ShouldBe(1)")]
+	[Arguments("-y", "(-y).ShouldBe(1)")]
+	[Arguments("a.C", "a.C.ShouldBe(1)")]
+	[Arguments("F()", "F().ShouldBe(1)")]
+	[Arguments("(y)", "(y).ShouldBe(1)")]
+	public void Parenthesises_a_receiver_only_where_it_is_needed(string actual, string expected)
+	{
+		var (text, _) = Rewrite(
+			$"using Shouldly; class A {{ public int B; public int C; }} class D {{ int F() => 0; void M(A? a, int? x, int y) {{ Assert.Equal<int?>(1, {actual}); }} }}",
+			Rule("Assert.Equal<$T$>($e$, $a$)", "$a$.ShouldBe($e$)"));
+
+		Assert.Contains(expected, text, StringComparison.Ordinal);
+	}
+
+	/// <summary>A comment inside a capture goes with it.</summary>
+	[Test]
+	public void Keeps_a_comment_inside_a_capture()
+	{
+		var (text, _) = Rewrite(
+			"using Shouldly; class C { void M(int count) { Assert.Equal(/* one */ 1, count); } }",
+			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
+
+		Assert.Contains("count.ShouldBe(/* one */ 1)", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>A site inside another's capture is rewritten first, and the outer replacement takes the result.</summary>
+	[Test]
+	public void Composes_a_site_inside_another()
+	{
+		var (text, sites) = Rewrite(
+			"using Shouldly; class C { void M(List<int> xs) { Assert.Equal(3, Assert.Single(xs)); } }",
+			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"),
+			Rule("Assert.Single($xs$)", "$xs$.ShouldHaveSingleItem()"));
+
+		Assert.Contains("xs.ShouldHaveSingleItem().ShouldBe(3)", text, StringComparison.Ordinal);
+		Assert.All(sites, site => Assert.Equal(SiteState.Rewritten, site.State));
+	}
+
+	/// <summary>
+	/// A statement rule writes a lambda's body into a loop, with the assertion inside it rewritten first
+	/// and parenthesised where it became a receiver.
+	/// </summary>
+	[Test]
+	public void Writes_a_lambda_body_into_a_loop()
+	{
+		var (text, _) = Rewrite(
+			"using Shouldly; class C { void M(List<int> xs) { Assert.All(xs, x => Assert.True(x > 0)); } }",
+			Rule("Assert.All($xs$, $x:id$ => $body$);", "foreach (var $x$ in $xs$) { $body$; }"),
+			Rule("Assert.True($c$)", "$c$.ShouldBeTrue()"));
+
+		Assert.Contains("foreach (var x in xs) { (x > 0).ShouldBeTrue(); }", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>A block body becomes the loop's own block, rather than a block inside one.</summary>
+	[Test]
+	public void A_block_body_becomes_the_loops_block()
+	{
+		var (text, _) = Rewrite(
+			"using Shouldly; class C { void M(List<int> xs) { Assert.All(xs, x => { Assert.True(x > 1); }); } }",
+			Rule("Assert.All($xs$, $x:id$ => $body$);", "foreach (var $x$ in $xs$) { $body$; }"),
+			Rule("Assert.True($c$)", "$c$.ShouldBeTrue()"));
+
+		Assert.Contains("foreach (var x in xs) { (x > 1).ShouldBeTrue(); }", text, StringComparison.Ordinal);
+		Assert.DoesNotContain("{ {", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>A body that returns is refused: in a loop, the return would leave the method.</summary>
+	[Test]
+	public void Refuses_a_body_that_returns()
+	{
+		var (text, sites) = Rewrite(
+			"class C { void M(List<int> xs) { Assert.All(xs, x => { if (x > 0) return; Assert.Fail(\"no\"); }); } }",
+			Rule("Assert.All($xs$, $x:id$ => $body$);", "foreach (var $x$ in $xs$) { $body$; }"));
+
+		var site = Assert.Single(sites);
+
+		Assert.Equal(SiteState.Skipped, site.State);
+		Assert.Contains("returns", site.Reason, StringComparison.Ordinal);
+		Assert.Contains("Assert.All(xs, x =>", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A replacement that does not compile at its site is put back with the compiler's reason, and a
+	/// site beside it in the same method is still written.
+	/// </summary>
+	[Test]
+	public void Puts_back_a_replacement_that_does_not_compile_and_keeps_its_neighbour()
+	{
+		var (text, sites) = Rewrite(
+			"using Shouldly; class C { void M(int count) { Assert.Equal(1L, count); Assert.Equal(2, count); } }",
+			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
+
+		Assert.Equal([SiteState.Skipped, SiteState.Rewritten], sites.Select(site => site.State));
+		Assert.StartsWith("CS", sites[0].DiagnosticId, StringComparison.Ordinal);
+		Assert.Contains("Assert.Equal(1L, count); count.ShouldBe(2);", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// An error the replacement causes in the rest of its statement is charged to it: a value that is
+	/// used, replaced by one that is not there.
+	/// </summary>
+	[Test]
+	public void Charges_an_error_in_the_same_statement_to_the_site_in_it()
+	{
+		var (text, sites) = Rewrite(
+			"using Shouldly; class C { void M(List<int> xs) { var one = Assert.Single(xs); } }",
+			Rule("Assert.Single($xs$)", "$xs$.ShouldContain(1)"));
+
+		Assert.Equal(SiteState.Skipped, Assert.Single(sites).State);
+		Assert.Contains("var one = Assert.Single(xs);", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// A site whose rule's replacement is put back does not fall through to a later rule that also
+	/// matches it. That fall-through is how a string check would land on the collection rule with its
+	/// arguments reversed.
+	/// </summary>
+	[Test]
+	public void A_site_put_back_does_not_fall_through_to_a_later_rule()
+	{
+		var (text, sites) = Rewrite(
+			"using Shouldly; class C { void M() { Assert.Contains(\"b\", \"abc\"); } }",
+			Rule("Assert.Contains($sub:string$, $s:string$)", "$s$.NoSuchMethod($sub$)"),
+			Rule("Assert.Contains($item$, $xs$)", "$xs$.ShouldContain($item$)"));
+
+		var site = Assert.Single(sites);
+
+		Assert.Equal((1, SiteState.Skipped), (site.Site.Rule.Number, site.State));
+		Assert.Contains("Assert.Contains(\"b\", \"abc\");", text, StringComparison.Ordinal);
+	}
+
+	/// <summary>Everything outside the sites is left byte for byte as it was.</summary>
+	[Test]
+	public void Leaves_everything_outside_the_sites_as_it_was()
+	{
+		const string Around = "// keep this\n\tint   spacing = 1 ;";
+		var (text, _) = Rewrite(
+			$"using Shouldly; class C {{ void M(int count) {{\n\t{Around}\n\tAssert.Equal(1, count); }} }}",
+			Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)"));
+
+		Assert.Contains(Around, text, StringComparison.Ordinal);
+	}
+}

@@ -58,8 +58,8 @@ public sealed class ToolBudgetTests
 		{
 			var length = tool.Description?.Length ?? 0;
 
-			(length <= PerTool).ShouldBeTrue($"{tool.Name} is described in {length} characters");
-			(length > 120).ShouldBeTrue($"{tool.Name} is described in {length} characters, which cannot carry a reason");
+			length.ShouldBeLessThanOrEqualTo(PerTool, $"{tool.Name} is described in {length} characters");
+			length.ShouldBeGreaterThan(120, $"{tool.Name} is described in {length} characters, which cannot carry a reason");
 		}
 	}
 
@@ -70,7 +70,7 @@ public sealed class ToolBudgetTests
 		{
 			foreach (var (name, length) in Arguments(tool))
 			{
-				(length <= PerParameter).ShouldBeTrue($"{tool.Name}'s {name} is described in {length} characters");
+				length.ShouldBeLessThanOrEqualTo(PerParameter, $"{tool.Name}'s {name} is described in {length} characters");
 			}
 		}
 	}

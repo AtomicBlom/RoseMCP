@@ -28,6 +28,16 @@ Two alternatives lost:
   static forms of an extension call -- would be a special case written by hand, and each missing
   one is a site that silently fails to match.
 
+**A comparison matches by its operator.** A find may compare, with `==`, `!=`, `<`, `<=`, `>` or
+`>=`, so `($a$ > $b$).ShouldBeTrue()` is a rule. The comparison is matched by operator kind in the
+target's operation tree, the same way a call is matched by its method group rather than one
+overload: a built-in `int` comparison, a user-defined `TimeSpan` one and a lifted nullable one all
+match, and a typed operand narrows it. An untyped placeholder written as an operand is not declared
+`object` in the scratch method, since `object > object` does not compile and the call around it would
+then have nothing to be looked up on; it is declared as a scratch class that defines every
+comparison. Any other operator is refused with a message that names it: no rule has needed one, and
+each would be another operator for the scratch class to declare and the matcher to compare.
+
 **What decides which overload a rule covers.** Its shape, never its placeholder types. A typed
 placeholder filters what a rule captures; it does not pick an overload, because picking would make
 `Single($xs:IEnumerable$)` bind to the non-generic `Single` and miss every `Single<T>` site. A rule

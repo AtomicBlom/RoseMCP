@@ -46,7 +46,7 @@ public sealed class ProgressReportingTests
 
 		// Restore, the design-time build and the generator pass all have to have happened for a
 		// load to be finished, so the last word cannot be an early phase.
-		(reports[^1].Percent >= 75).ShouldBeTrue($"the load finished at {reports[^1].Percent}");
+		reports[^1].Percent.ShouldNotBeNull().ShouldBeGreaterThanOrEqualTo(75, $"the load finished at {reports[^1].Percent}");
 	}
 
 	[Test]
@@ -91,7 +91,7 @@ public sealed class ProgressReportingTests
 			TimeSpan.FromMinutes(2));
 
 		load.Outcome.ShouldBe(ActivityOutcome.Succeeded);
-		(load.Elapsed > TimeSpan.Zero).ShouldBeTrue();
+		load.Elapsed.ShouldBeGreaterThan(TimeSpan.Zero);
 
 		// A message at all means a progress notification crossed the process boundary and was
 		// matched to the right activity.
@@ -113,7 +113,7 @@ public sealed class ProgressReportingTests
 		{
 			if (percent is not { } value) continue;
 
-			(value >= highest).ShouldBeTrue($"'{message}' reported {value} after {highest}");
+			value.ShouldBeGreaterThanOrEqualTo(highest, $"'{message}' reported {value} after {highest}");
 			highest = value;
 		}
 	}

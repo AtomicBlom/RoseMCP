@@ -124,7 +124,7 @@ public sealed class AddUsingTests
 		result.Applied.ShouldBeTrue();
 		result.Verified.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		(result.ResolvedDiagnosticCount > 0).ShouldBeTrue("the import is what made the file compile");
+		result.ResolvedDiagnosticCount.ShouldBeGreaterThan(0, "the import is what made the file compile");
 		result.TotalErrorCount.ShouldBe(0);
 	}
 
@@ -200,8 +200,8 @@ public sealed class AddUsingTests
 		var plain = text.IndexOf("using Library.Nested;", StringComparison.Ordinal);
 		var statics = text.IndexOf("using static System.Math;", StringComparison.Ordinal);
 
-		(plain > 0).ShouldBeTrue($"the import was not written at all: {text}");
-		(plain < statics).ShouldBeTrue($"a plain using landed below the static block: {text}");
+		plain.ShouldBeGreaterThan(0, $"the import was not written at all: {text}");
+		plain.ShouldBeLessThan(statics, $"a plain using landed below the static block: {text}");
 	}
 
 	/// <summary>
@@ -220,8 +220,7 @@ public sealed class AddUsingTests
 
 		var text = await ReadAsync(fixture, "Statics.cs");
 
-		(text.IndexOf("using System.Globalization;", StringComparison.Ordinal)
-				< text.IndexOf("using Library.Nested;", StringComparison.Ordinal)).ShouldBeTrue(
+		text.IndexOf("using System.Globalization;", StringComparison.Ordinal).ShouldBeLessThan(text.IndexOf("using Library.Nested;", StringComparison.Ordinal),
 			$"System did not come first: {text}");
 	}
 

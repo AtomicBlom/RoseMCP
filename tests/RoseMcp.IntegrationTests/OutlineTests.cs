@@ -216,7 +216,7 @@ public sealed class OutlineTests
 		core.References.ShouldBeEmpty();
 		app.References.ShouldBe(["Core"]);
 		core.IsTestProject.ShouldBeFalse("the library is not a test project");
-		(core.DocumentCount > 0).ShouldBeTrue();
+		core.DocumentCount.ShouldBeGreaterThan(0);
 	}
 
 	[Test]

@@ -160,7 +160,7 @@ public sealed class DeclarationEditTests
 		var comment = text.IndexOf("<summary>The greeting for one name", StringComparison.Ordinal);
 		var attribute = text.IndexOf("[Obsolete", StringComparison.Ordinal);
 
-		(comment < attribute).ShouldBeTrue();
+		comment.ShouldBeLessThan(attribute);
 	}
 
 	/// <summary>

@@ -129,7 +129,7 @@ public sealed class MethodSearchTests
 		var found = MethodSearch.Search([fixture.ModulePath], "Refresh", 1);
 
 		found.Matches.ShouldHaveSingleItem().MethodName.ShouldBe("Refresh");
-		(found.Total > 1).ShouldBeTrue($"more than one method matched, and {found.Total} were counted");
+		found.Total.ShouldBeGreaterThan(1, $"more than one method matched, and {found.Total} were counted");
 	}
 
 	/// <summary>

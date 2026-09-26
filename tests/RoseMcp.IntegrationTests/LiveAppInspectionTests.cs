@@ -53,7 +53,7 @@ public sealed class LiveAppInspectionTests
 			// The probe throws every 200ms, so a heartbeat this stale means the event stream has died.
 			var heartbeat = await WaitForSummaryAsync(session, described => described.LastEventAge is not null, cancellationToken);
 			heartbeat.ShouldNotBeNull();
-			(heartbeat!.LastEventAge < TimeSpan.FromSeconds(30)).ShouldBeTrue(
+			heartbeat!.LastEventAge.ShouldNotBeNull().ShouldBeLessThan(TimeSpan.FromSeconds(30),
 				$"the target last spoke {heartbeat.LastEventAge} ago");
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
@@ -187,7 +187,7 @@ public sealed class LiveAppInspectionTests
 			frames.Execution.ShouldBe(LiveExecutionState.StoppedAtBreakpoint);
 			frames.Stop.ShouldNotBeNull();
 			frames.Stop!.EventSequence.ShouldBe(stop.Hit.Sequence);
-			(frames.Frames.Count >= 2).ShouldBeTrue($"expected Inspect and its caller, got {frames.Frames.Count} frame(s)");
+			frames.Frames.Count.ShouldBeGreaterThanOrEqualTo(2, $"expected Inspect and its caller, got {frames.Frames.Count} frame(s)");
 
 			var inspect = frames.Frames[0];
 			inspect.Index.ShouldBe(0);
@@ -197,7 +197,7 @@ public sealed class LiveAppInspectionTests
 			inspect.Symbols.ShouldBe(LiveSymbolState.Resolved);
 			inspect.Source.ShouldNotBeNull();
 			inspect.Source!.File.ShouldEndWith("Program.cs", Case.Sensitive);
-			(inspect.Source.Line > 0).ShouldBeTrue("a resolved frame has a real line");
+			inspect.Source.Line.ShouldBeGreaterThan(0, "a resolved frame has a real line");
 
 			// The caller, which is what makes a stack worth reading rather than one frame.
 			frames.Frames[1].MethodFullName.ShouldBe("DebugProbeTarget.Program.Main");
@@ -494,7 +494,7 @@ public sealed class LiveAppInspectionTests
 
 			// More than the probe's own assembly was read, which is what makes this a search over the
 			// target rather than over one file somebody already knew the name of.
-			(found.ModulesSearched > 1).ShouldBeTrue($"{found.ModulesSearched} modules were searched");
+			found.ModulesSearched.ShouldBeGreaterThan(1, $"{found.ModulesSearched} modules were searched");
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
@@ -530,7 +530,7 @@ public sealed class LiveAppInspectionTests
 
 			source.Symbols.ShouldBe(LiveSymbolState.Resolved);
 			source.File.ShouldEndWith("Program.cs", Case.Sensitive);
-			(source.Lines.Count > 0).ShouldBeTrue($"the probe's source is on this machine; detail: {source.Detail}");
+			source.Lines.Count.ShouldBeGreaterThan(0, $"the probe's source is on this machine; detail: {source.Detail}");
 
 			// The second statement of the body, which is not where the method starts -- so a
 			// breakpoint landing there cannot be the old method-entry behaviour wearing a new name.
@@ -539,7 +539,7 @@ public sealed class LiveAppInspectionTests
 				.First(entry => entry.Text.Contains("state.Count + innerCount", StringComparison.Ordinal));
 
 			var position = source.Positions.First(entry => entry.Line == wanted.Line);
-			(position.IlOffset > 0).ShouldBeTrue($"IL_{position.IlOffset:x4} is past the method's first instruction");
+			position.IlOffset.ShouldBeGreaterThan(0, $"IL_{position.IlOffset:x4} is past the method's first instruction");
 			position.DisplayName.ShouldBe("Program.Inspect");
 
 			var breakpoint = await session.SetBreakpointAsync(

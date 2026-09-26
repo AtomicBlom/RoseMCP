@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace RoseMcp.Patterns;
 
@@ -28,6 +29,25 @@ internal static class PatternBinder
 {
 	/// <summary>The scratch class's name: one no project declares, in the global namespace so global usings reach it.</summary>
 	private const string ScratchClass = "__RoseMcpPatterns";
+
+	/// <summary>
+	/// The type an untyped placeholder is given where it is compared, declaring every comparison a find can
+	/// write. As <c>object</c>, <c>$a$ &gt; $b$</c> would not compile, the call around it would have no
+	/// receiver type, and the rule would be refused for a method it names correctly. A class, so that no
+	/// lifted nullable operator competes with the ones it declares.
+	/// </summary>
+	private const string OperandClass = "__RoseMcpOperand";
+
+	/// <summary>The comparisons a find can write, as the operator each one is in the target's operation tree.</summary>
+	internal static readonly IReadOnlyDictionary<SyntaxKind, BinaryOperatorKind> Comparisons = new Dictionary<SyntaxKind, BinaryOperatorKind>
+	{
+		[SyntaxKind.EqualsExpression] = BinaryOperatorKind.Equals,
+		[SyntaxKind.NotEqualsExpression] = BinaryOperatorKind.NotEquals,
+		[SyntaxKind.LessThanExpression] = BinaryOperatorKind.LessThan,
+		[SyntaxKind.LessThanOrEqualExpression] = BinaryOperatorKind.LessThanOrEqual,
+		[SyntaxKind.GreaterThanExpression] = BinaryOperatorKind.GreaterThan,
+		[SyntaxKind.GreaterThanOrEqualExpression] = BinaryOperatorKind.GreaterThanOrEqual,
+	};
 
 	/// <summary>
 	/// Every rule of <paramref name="rules"/> bound in <paramref name="target"/>, or the reason a rule
@@ -83,15 +103,22 @@ internal static class PatternBinder
 		foreach (var directive in rules.Usings) source.Append("using ").Append(directive).AppendLine(";");
 
 		source.Append("internal static class ").AppendLine(ScratchClass).AppendLine("{");
+		source.Append(Operand());
 
 		foreach (var rule in rules.Rules)
 		{
 			var placeholders = rule.Find.Placeholders.Values;
 			var types = placeholders.Where(placeholder => placeholder.Kind == PlaceholderKind.Type).ToList();
+			var compared = Compared(rule.Find.Root);
 
 			var parameters = placeholders
 				.Where(placeholder => placeholder.Kind == PlaceholderKind.Expression)
-				.Select(placeholder => $"{placeholder.Constraint ?? "object"} {PatternLexer.Prefix}{placeholder.Name}");
+				.Select(placeholder =>
+				{
+					var type = placeholder.Constraint ?? (compared.Contains(placeholder.Name) ? OperandClass : "object");
+
+					return $"{type} {PatternLexer.Prefix}{placeholder.Name}";
+				});
 
 			source.Append("\tprivate static void ").Append(MethodName(rule));
 
@@ -106,6 +133,52 @@ internal static class PatternBinder
 		}
 
 		return source.AppendLine("}").ToString();
+	}
+
+	/// <summary>The placeholders a find writes directly as an operand of a comparison.</summary>
+	private static HashSet<string> Compared(SyntaxNode root)
+	{
+		var operands = root.DescendantNodes()
+			.OfType<BinaryExpressionSyntax>()
+			.Where(binary => Comparisons.ContainsKey(binary.Kind()))
+			.SelectMany(binary => new[] { binary.Left, binary.Right });
+
+		var names = new HashSet<string>(StringComparer.Ordinal);
+
+		foreach (var operand in operands)
+		{
+			var bare = operand;
+			while (bare is ParenthesizedExpressionSyntax parenthesized) bare = parenthesized.Expression;
+
+			if (bare is IdentifierNameSyntax identifier && Pattern.IsPlaceholder(identifier.Identifier, out var name)) names.Add(name);
+		}
+
+		return names;
+	}
+
+	/// <summary>
+	/// The operand class's source: each comparison against another operand and against anything at all,
+	/// in both orders, so an untyped placeholder compares with a constant, a member or another placeholder.
+	/// </summary>
+	private static string Operand()
+	{
+		var source = new StringBuilder();
+
+		source.Append("\tprivate sealed class ").AppendLine(OperandClass).AppendLine("\t{");
+
+		foreach (var comparison in new[] { "==", "!=", "<", "<=", ">", ">=" })
+		{
+			foreach (var (left, right) in new[] { (OperandClass, OperandClass), (OperandClass, "object"), ("object", OperandClass) })
+			{
+				source.Append("\t\tpublic static bool operator ").Append(comparison)
+					.Append('(').Append(left).Append(" left, ").Append(right).AppendLine(" right) => true;");
+			}
+		}
+
+		source.AppendLine("\t\tpublic override bool Equals(object other) => false;");
+		source.AppendLine("\t\tpublic override int GetHashCode() => 0;");
+
+		return source.AppendLine("\t}").ToString();
 	}
 
 	/// <summary>A rule that does not bind in this compilation, carrying the reason as its message.</summary>
@@ -127,11 +200,21 @@ internal static class PatternBinder
 				throw Unsupported(call);
 			}
 
+			var receiverSyntax = (call.Expression as MemberAccessExpressionSyntax)?.Expression;
 			var group = Group(call, name);
 
-			if (group.Count == 0) throw Unbound(call.Expression, $"no method named {name.Identifier.ValueText} is in scope");
+			if (group.Count == 0)
+			{
+				// A receiver that is more than a name and does not bind leaves the method nothing to be looked
+				// up on. Binding it says what is wrong with it; saying the method is missing would send the
+				// reader after a name that was right.
+				var isComputed = receiverSyntax is not null and not (SimpleNameSyntax or MemberAccessExpressionSyntax);
 
-			var receiverSyntax = (call.Expression as MemberAccessExpressionSyntax)?.Expression;
+				if (isComputed) Expression(receiverSyntax!);
+
+				throw Unbound(call.Expression, $"no method named {name.Identifier.ValueText} is in scope");
+			}
+
 			var receiver = receiverSyntax is null || IsTypeOrNamespace(receiverSyntax) ? null : Expression(receiverSyntax);
 
 			var typeArguments = name is GenericNameSyntax generic
@@ -205,6 +288,10 @@ internal static class PatternBinder
 					return Lambda(lambda);
 				case InvocationExpressionSyntax call:
 					return Invocation(call);
+				case BinaryExpressionSyntax binary when Comparisons.TryGetValue(binary.Kind(), out var comparison):
+					return new BinaryNode(comparison, Expression(binary.Left), Expression(binary.Right));
+				case BinaryExpressionSyntax:
+					throw Unsupported(syntax);
 			}
 
 			var constant = model.GetConstantValue(syntax, cancellationToken);
@@ -391,8 +478,8 @@ internal static class PatternBinder
 		/// <summary>A part of a find that is not one of the constructs a find is built from.</summary>
 		private PatternException Unsupported(SyntaxNode syntax) => new(
 			$"{rule.Find.Where} uses `{Written(syntax)}`, which a find cannot match. A find is built from calls, "
-			+ "placeholders, constants, static fields and properties, `!`, and lambdas written `$x$ => $body$`. "
-			+ PatternException.Grammar);
+			+ "placeholders, constants, static fields and properties, `!`, the comparisons == != < <= > >=, and lambdas "
+			+ "written `$x$ => $body$`. " + PatternException.Grammar);
 
 		/// <summary>A node of the scratch source as the caller wrote it, with each placeholder back in dollar signs.</summary>
 		private string Written(SyntaxNode syntax)

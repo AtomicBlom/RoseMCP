@@ -56,7 +56,7 @@ public sealed class LiveAppUwpReadTests(UwpProbeApp probe)
 			// Paging: a limited page carries at most that many nodes, and Total says how many matched.
 			var firstPage = await session.ReadXamlTreeAsync(root: null, offset: 0, limit: 2, cancellationToken);
 			firstPage.Nodes.Count.ShouldBe(2);
-			(firstPage.Total > 2).ShouldBeTrue($"expected more than a page of nodes; total {firstPage.Total}");
+			firstPage.Total.ShouldBeGreaterThan(2, $"expected more than a page of nodes; total {firstPage.Total}");
 
 			// The three spellings of one element all reach it. The address is the one that matters: it is
 			// what an element with no x:Name has instead, which is everything inside a control template,
@@ -121,7 +121,7 @@ public sealed class LiveAppUwpReadTests(UwpProbeApp probe)
 
 			var withDefaults = await session.ReadXamlPropertiesAsync(rootGrid.Handle, includeDefaults: true, cancellationToken);
 			withDefaults.Properties.ShouldContain(property => property.Provenance == "Default");
-			(withDefaults.Count > properties.Count).ShouldBeTrue();
+			withDefaults.Count.ShouldBeGreaterThan(properties.Count);
 
 			// A concrete string value comes through: the caption's Text is exactly what the XAML sets.
 			var captionProperties = await session.ReadXamlPropertiesAsync(caption!.Handle, includeDefaults: false, cancellationToken);
@@ -320,7 +320,7 @@ public sealed class LiveAppUwpReadTests(UwpProbeApp probe)
 			{
 				second.ShouldContain(name);
 			}
-			(second.Count > first.Count).ShouldBeTrue($"expected the second read to grow, got {second.Count}");
+			second.Count.ShouldBeGreaterThan(first.Count, $"expected the second read to grow, got {second.Count}");
 
 			// And the additions are indistinguishable by provenance, which is the finding that
 			// decided against filtering. If this ever fails because an addition arrives as something

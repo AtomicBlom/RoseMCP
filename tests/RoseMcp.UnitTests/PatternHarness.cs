@@ -123,6 +123,14 @@ internal static class PatternHarness
 		return RuleCatalog.Parse(rules).Bind(compilation);
 	}
 
+	/// <summary>The same, bound against the stubs with namespaces the patterns are written against.</summary>
+	internal static BoundCatalog Bind(string source, IReadOnlyList<RuleText> rules, IReadOnlyList<string> usings)
+	{
+		var (compilation, _) = Compile(source, withStubs: true);
+
+		return RuleCatalog.Parse(rules, usings).Bind(compilation);
+	}
+
 	/// <summary>
 	/// <paramref name="source"/> rewritten by <paramref name="rules"/>, as text without the prelude, with
 	/// what became of each site.

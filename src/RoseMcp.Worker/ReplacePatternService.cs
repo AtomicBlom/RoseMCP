@@ -104,7 +104,7 @@ public static class ReplacePatternService
 
 			if (matched.Count == 0) continue;
 
-			var rewrites = RewriteEngine.Run(compilation, matched, Importer(project, compilation, catalog.Usings, cancellationToken), cancellationToken);
+			var rewrites = RewriteEngine.Run(compilation, matched, Importer(project, compilation, bound.Usings, cancellationToken), cancellationToken);
 
 			foreach (var rewrite in rewrites)
 			{

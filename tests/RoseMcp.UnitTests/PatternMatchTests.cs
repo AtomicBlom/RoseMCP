@@ -302,4 +302,19 @@ public sealed class PatternMatchTests
 		Assert.Empty(bound.Bound);
 		Assert.StartsWith("Rule 1's find does not bind at `Assert.Equal`, because", bound.Unbound[1], StringComparison.Ordinal);
 	}
+
+	/// <summary>
+	/// A using the compilation cannot resolve is not one a rewrite there can use, so a project that cannot
+	/// see a catalog's namespace is not handed it to import; the forms a directive can take all resolve.
+	/// </summary>
+	[Test]
+	public void Keeps_only_the_usings_a_compilation_resolves()
+	{
+		var bound = Bind(
+			"class C { }",
+			[Rule("Assert.True($c$)")],
+			["Shouldly", "Nowhere.At.All", "static System.Math", "Text = System.Text"]);
+
+		Assert.Equal(["Shouldly", "static System.Math", "Text = System.Text"], bound.Usings);
+	}
 }

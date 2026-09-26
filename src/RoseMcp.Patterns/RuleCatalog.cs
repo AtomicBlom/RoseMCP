@@ -88,6 +88,7 @@ public sealed class BoundCatalog
 		Compilation = compilation;
 		Bound = bound;
 		Unbound = unbound;
+		Usings = [.. rules.Usings.Where(Resolves)];
 	}
 
 	/// <summary>The rules this was bound from.</summary>
@@ -101,6 +102,29 @@ public sealed class BoundCatalog
 
 	/// <summary>Why each rule that does not bind here does not, by rule number.</summary>
 	public IReadOnlyDictionary<int, string> Unbound { get; }
+
+	/// <summary>
+	/// The catalog's usings whose target this compilation has. A catalog is written against every project
+	/// in scope, and a namespace one project cannot see is not one a rewrite there can use: importing it
+	/// anyway is CS0234 on a line outside every site, which puts every site in the file back.
+	/// </summary>
+	public IReadOnlyList<string> Usings { get; }
+
+	/// <summary>
+	/// Whether the directive's namespace, type or alias target binds in <see cref="Compilation"/>, from the
+	/// top of a file, where a using directive would go.
+	/// </summary>
+	private bool Resolves(string directive)
+	{
+		if (Compilation.SyntaxTrees.FirstOrDefault() is not { } tree) return false;
+
+		var target = SyntaxFactory.ParseCompilationUnit($"using {directive};").Usings[0].NamespaceOrType;
+		var symbol = Compilation.GetSemanticModel(tree)
+			.GetSpeculativeSymbolInfo(0, target, SpeculativeBindingOption.BindAsTypeOrNamespace)
+			.Symbol;
+
+		return symbol is not null;
+	}
 
 	/// <summary>
 	/// Every site in <paramref name="model"/>'s tree that a rule matches, and every call into the same

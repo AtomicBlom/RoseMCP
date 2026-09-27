@@ -140,6 +140,59 @@ public sealed class OverreachTests
 	}
 
 	/// <summary>
+	/// A documented member added in front of another documented member. Both begin with the same
+	/// <c>/// &lt;summary&gt;</c> line, so the diff pairs the old one with the new member's and shows the
+	/// insertion a line further down than it went -- past a line that is not blank, so the allowance for
+	/// blank lines does not reach it. Where the diff draws an insertion among identical lines says nothing
+	/// about what the edit did, whichever lines they are.
+	/// </summary>
+	[Test]
+	public void Reaches_an_insertion_the_diff_slides_past_lines_it_begins_with()
+	{
+		var before = "class C\n{\n\tvoid A() { }\n\n\t/// <summary>B.</summary>\n\t/// <remarks/>\n\tvoid B() { }\n}\n";
+		var place = new TextSpan(before.IndexOf("\n\n", StringComparison.Ordinal) + 1, 0);
+		var after = "class C\n{\n\tvoid A() { }\n\n\t/// <summary>B.</summary>\n\t/// <remarks/>\n\tvoid X() { }\n\n"
+			+ "\t/// <summary>B.</summary>\n\t/// <remarks/>\n\tvoid B() { }\n}\n";
+
+		var reach = Overreach.Of(Text(before), Text(after), [place]);
+
+		reach.Any.ShouldBeFalse();
+	}
+
+	/// <summary>
+	/// The same slide the other way: a documented member deleted in front of another, where the diff keeps
+	/// the deleted member's comment lines and takes the survivor's instead.
+	/// </summary>
+	[Test]
+	public void Reaches_a_deletion_the_diff_slides_past_lines_it_begins_with()
+	{
+		var before = "class C\n{\n\tvoid A() { }\n\n\t/// <summary>B.</summary>\n\tvoid X() { }\n\n"
+			+ "\t/// <summary>B.</summary>\n\tvoid B() { }\n}\n";
+		var member = TextSpan.FromBounds(
+			before.IndexOf("\n\n", StringComparison.Ordinal) + 1,
+			before.IndexOf("\n\n\t/// <summary>B.</summary>\n\tvoid B", StringComparison.Ordinal) + 1);
+
+		var reach = Overreach.Of(
+			Text(before), Text("class C\n{\n\tvoid A() { }\n\n\t/// <summary>B.</summary>\n\tvoid B() { }\n}\n"), [member]);
+
+		reach.Any.ShouldBeFalse();
+	}
+
+	/// <summary>
+	/// What the slide must not excuse: an insertion that can only be drawn against lines nothing asked
+	/// for is still named, however many identical lines it could slide across.
+	/// </summary>
+	[Test]
+	public void Still_names_an_insertion_no_slide_brings_to_what_was_asked()
+	{
+		var before = "first\nsame\nsame\nlast\nasked\n";
+
+		var reach = Overreach.Of(Text(before), Text("first\nsame\nsame\nsame\nlast\nasked\n"), [Line(before, "asked")]);
+
+		reach.Insertions.ShouldBe([(3, 1)]);
+	}
+
+	/// <summary>
 	/// A new group of imports goes in after a blank line of its own, so the diff shows it on the far side
 	/// of the blank line that separated the imports from the namespace.
 	/// </summary>

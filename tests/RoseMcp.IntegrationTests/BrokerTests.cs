@@ -304,9 +304,9 @@ public sealed class BrokerTests
 		summary.ProcessId.ShouldNotBe(Environment.ProcessId);
 
 		// A Roslyn host is never this small; a zero here would mean we sampled the wrong thing.
-		(summary.WorkingSetBytes > 1_000_000).ShouldBeTrue($"working set was {summary.WorkingSetBytes}");
-		(summary.ManagedHeapBytes > 0).ShouldBeTrue();
-		(summary.Uptime > TimeSpan.Zero).ShouldBeTrue();
+		summary.WorkingSetBytes.ShouldNotBeNull().ShouldBeGreaterThan(1_000_000, $"working set was {summary.WorkingSetBytes}");
+		summary.ManagedHeapBytes.ShouldNotBeNull().ShouldBeGreaterThan(0);
+		summary.Uptime.ShouldBeGreaterThan(TimeSpan.Zero);
 	}
 
 	/// <summary>
@@ -365,7 +365,7 @@ public sealed class BrokerTests
 		loaded.ProjectCount.ShouldBe(2);
 		loaded.FailedProjects.ShouldBeEmpty();
 		loaded.DegradedReasons.ShouldBeEmpty();
-		(loaded.LoadSeconds > 0).ShouldBeTrue();
+		loaded.LoadSeconds.ShouldNotBeNull().ShouldBeGreaterThan(0);
 	}
 
 	/// <summary>Waits for something to show up, since the load is followed on another thread.</summary>

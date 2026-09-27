@@ -189,7 +189,7 @@ public sealed class LiveAppSessionTests
 
 			// The probe throws twice a second, so an answer that took anything like the full thirty
 			// seconds came from the deadline rather than from the event.
-			(clock.Elapsed < TimeSpan.FromSeconds(20)).ShouldBeTrue(
+			clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20),
 				$"the wait should have been woken by the event, not the timeout; it took {clock.Elapsed}");
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
@@ -227,7 +227,7 @@ public sealed class LiveAppSessionTests
 			waited.State.ShouldBe(LiveAppSessionState.Ready);
 
 			// It waited rather than answering at once, which is what makes the empty answer meaningful.
-			(clock.Elapsed >= TimeSpan.FromSeconds(1.5)).ShouldBeTrue($"expected it to wait; it took {clock.Elapsed}");
+			clock.Elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(1.5), $"expected it to wait; it took {clock.Elapsed}");
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}
@@ -567,7 +567,7 @@ public sealed class LiveAppSessionTests
 
 			var session = await manager.StartAsync(target, cancellationToken);
 			var summary = session.Describe();
-			(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
+			summary.State.ShouldBe(LiveAppSessionState.Ready,
 				$"expected Ready, got {summary.State}: {summary.Detail} (host arch {summary.Architecture}, host pid {summary.HostProcessId})");
 			summary.Architecture.ShouldBe(TargetArchitecture.X64);
 
@@ -631,7 +631,7 @@ public sealed class LiveAppSessionTests
 			var session = await manager.StartAsync(target, cancellationToken);
 			var summary = session.Describe();
 
-			(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
+			summary.State.ShouldBe(LiveAppSessionState.Ready,
 				$"expected Ready, got {summary.State}: {summary.Detail} (host arch {summary.Architecture}, host pid {summary.HostProcessId})");
 
 			summary.Architecture.ShouldBe(TargetArchitecture.X86);

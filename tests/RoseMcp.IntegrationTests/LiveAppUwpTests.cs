@@ -46,7 +46,7 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 
 			var session = await manager.StartAsync(target, cancellationToken);
 			var summary = session.Describe();
-			(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
+			summary.State.ShouldBe(LiveAppSessionState.Ready,
 				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 			summary.Architecture.ShouldBe(TargetArchitecture.X64);
 
@@ -91,7 +91,7 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 
 			var session = await manager.StartAsync(target, cancellationToken);
 			var summary = session.Describe();
-			(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
+			summary.State.ShouldBe(LiveAppSessionState.Ready,
 				$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 			// The startup exception fires inside OnLaunched, before the timer's first tick; only a
@@ -317,7 +317,7 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 			var alone = await session.ReadXamlTreeAsync(cancellationToken);
 			(alone.Detail is null).ShouldBeTrue($"expected a tree, got detail: {alone.Detail}");
 			var expected = Stable(alone);
-			(expected > 1).ShouldBeTrue($"the probe should have more than one element, got {expected}");
+			expected.ShouldBeGreaterThan(1, $"the probe should have more than one element, got {expected}");
 			var caption = alone.Nodes.First(node => node.Name == "Caption");
 
 			for (var attempt = 0; attempt < 5; attempt++)
@@ -420,7 +420,7 @@ public sealed class LiveAppUwpTests(UwpProbeApp probe)
 
 			// The number that matters: refused rather than waited out. The endpoint's own bound is twenty
 			// seconds, so anything in that region means the guard did not fire and the old failure is back.
-			(refused.Elapsed < TimeSpan.FromSeconds(5)).ShouldBeTrue(
+			refused.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
 				$"expected an immediate refusal, not a wait for the endpoint; took {refused.Elapsed.TotalSeconds:0.0}s");
 
 			// And the guard is not a one-way door: resumed, the same read works.

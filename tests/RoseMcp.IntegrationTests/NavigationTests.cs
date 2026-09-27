@@ -295,7 +295,7 @@ public sealed class NavigationTests
 		{
 			location.ContainingMember.ShouldNotBeNull();
 		}
-		(Size(plain) < Size(full)).ShouldBeTrue();
+		Size(plain).ShouldBeLessThan(Size(full));
 
 		var counted = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, definitionsOnly: true);
@@ -304,7 +304,7 @@ public sealed class NavigationTests
 		counted.Definitions.ShouldNotBeEmpty();
 		counted.TotalCount.ShouldBe(full.TotalCount);
 		counted.Truncated.ShouldBeTrue();
-		(Size(counted) < Size(plain)).ShouldBeTrue();
+		Size(counted).ShouldBeLessThan(Size(plain));
 
 		var scoped = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core");

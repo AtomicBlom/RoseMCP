@@ -29,7 +29,7 @@ public sealed class WorkspaceStatusTests
 		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
 		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
 
-		(status.LoadSeconds > 0).ShouldBeTrue("a load that took no time did not happen");
+		status.LoadSeconds.ShouldBeGreaterThan(0, "a load that took no time did not happen");
 		status.Restore.ShouldNotBeNull();
 	}
 

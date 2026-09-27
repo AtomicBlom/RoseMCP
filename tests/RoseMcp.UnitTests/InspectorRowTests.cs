@@ -43,7 +43,7 @@ public sealed class InspectorRowTests
 		{
 			var label = EventRow.Label(kind);
 			label.ShouldNotBeEmpty();
-			(label.Length <= 12).ShouldBeTrue($"'{label}' is too long for a pill");
+			label.Length.ShouldBeLessThanOrEqualTo(12, $"'{label}' is too long for a pill");
 		}
 	}
 

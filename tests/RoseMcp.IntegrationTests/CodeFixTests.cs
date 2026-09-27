@@ -32,7 +32,7 @@ public sealed class CodeFixTests
 
 		var result = await ApplyAsync(session, "CA1822", path);
 
-		(result.Occurrences >= 1).ShouldBeTrue($"CA1822 was not reported: {string.Join(" ", result.Notices)}");
+		result.Occurrences.ShouldBeGreaterThanOrEqualTo(1, $"CA1822 was not reported: {string.Join(" ", result.Notices)}");
 		result.Applied.ShouldBeTrue(string.Join(" ", result.Notices));
 		result.FixTitle.ShouldNotBeEmpty();
 
@@ -97,7 +97,7 @@ public sealed class CodeFixTests
 		fix.ShouldNotBeNull();
 		fix.FixTitles.ShouldNotBeEmpty();
 		fix.SupportsFixAll.ShouldBeTrue();
-		(fix.Line > 0).ShouldBeTrue();
+		fix.Line.ShouldBeGreaterThan(0);
 	}
 
 	/// <summary>

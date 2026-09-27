@@ -12,7 +12,7 @@ namespace RoseMcp.Patterns;
 public sealed class PatternException : ArgumentException
 {
 	/// <summary>The placeholder grammar in one sentence, for the messages that need to restate it.</summary>
-	public const string Grammar = "Placeholders are $name$ for any expression, $name:Type$ for one convertible to Type, "
+	public const string Grammar = "Placeholders are $name$ for any expression, $name:Type$ for one of that type or a subtype, "
 		+ "$name:id$ for an identifier such as a lambda's parameter, and $T$ where a type argument goes.";
 
 	/// <summary>A rule refused for the reason <paramref name="message"/> gives.</summary>

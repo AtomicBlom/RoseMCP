@@ -712,7 +712,7 @@ public static class ToolDescriptions
 	public const string PatternFindArgument =
 		"A call, or a call statement ending in ;. $x$ is any expression, $x:Type$ one of Type or a subtype, "
 			+ "$x:id$ an identifier such as a lambda's parameter, $T$ a type argument. Naming an argument, as "
-			+ "filter: $p$, picks the overloads with that parameter.";
+			+ "filter: $p$, picks the overloads with that parameter. Comparisons, as ($a$ > $b$), match by operator.";
 
 	public const string PatternReplaceArgument =
 		"C# using the placeholders the find captured. Each keeps the text it matched.";

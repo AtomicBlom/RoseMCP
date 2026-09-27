@@ -315,7 +315,7 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 			"<Grid Background=\"#FF00FFFF\"><Rectangle Fill=\"#FFFF00FF\" Width=\"10\" Height=\"10\" /></Grid>";
 
 		var start = oldXaml.IndexOf(SecondBorder, StringComparison.Ordinal);
-		(start >= 0).ShouldBeTrue("the probe markup no longer holds the second unnamed Border");
+		start.ShouldBeGreaterThanOrEqualTo(0, "the probe markup no longer holds the second unnamed Border");
 		var close = oldXaml.IndexOf("</Border>", start, StringComparison.Ordinal) + "</Border>".Length;
 
 		var newXaml = oldXaml
@@ -561,7 +561,7 @@ public sealed class LiveAppUwpEditTests(UwpProbeApp probe)
 			" | ",
 			applied.Results.Select(result => $"{result.Kind} '{result.Property}' on {result.Target}: {result.Status}"));
 
-		(applied.Results.Count == 0).ShouldBeTrue(
+		applied.Results.Count.ShouldBe(0,
 			$"a template resource has no live edit to report, and this reported: {reported}");
 
 		var notes = string.Join(" | ", applied.Notes);

@@ -110,7 +110,7 @@ public sealed class LiveAppDebugTests
 
 			// The two things that make a filter usable rather than a trap: it says how much it passed
 			// over, and paging with its cursor moves forward instead of re-reading forever.
-			(hitsOnly.Skipped > 0).ShouldBeTrue("the filter should report the events it passed over");
+			hitsOnly.Skipped.ShouldBeGreaterThan(0, "the filter should report the events it passed over");
 
 			var lastRead = hitsOnly.Events[^1].Sequence;
 
@@ -119,7 +119,7 @@ public sealed class LiveAppDebugTests
 			// about what the target emitted in the last millisecond rather than about the contract.
 			// Asserting strictly greater is asserting that the last event examined was skipped, which is
 			// a coin toss against a target emitting continuously, and says nothing about paging.
-			(hitsOnly.NextCursor >= lastRead).ShouldBeTrue(
+			hitsOnly.NextCursor.ShouldBeGreaterThanOrEqualTo(lastRead,
 				$"the filtered cursor ({hitsOnly.NextCursor}) should be at or past the last event it returned ({lastRead})");
 
 			var nextPage = await session.ReadEventsAsync(hitsOnly.NextCursor, ["BreakpointHit"], limit: 500, cancellationToken);
@@ -541,11 +541,11 @@ public sealed class LiveAppDebugTests
 			// And each counted its own hits: the tracepoint logged the entry it is on, the breakpoint
 			// took the one inside.
 			var traced = await session.ListTracepointsAsync(cancellationToken);
-			(traced.Tracepoints.ShouldHaveSingleItem().HitCount > 0).ShouldBeTrue(
+			traced.Tracepoints.ShouldHaveSingleItem().HitCount.ShouldBeGreaterThan(0,
 				"the tracepoint should have counted the hit at the method's entry");
 
 			var stopping = await session.ListBreakpointsAsync(cancellationToken);
-			(stopping.Breakpoints.ShouldHaveSingleItem().HitCount > 0).ShouldBeTrue(
+			stopping.Breakpoints.ShouldHaveSingleItem().HitCount.ShouldBeGreaterThan(0,
 				"the breakpoint should have counted the hit at its own offset");
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
@@ -727,7 +727,7 @@ public sealed class LiveAppDebugTests
 			capped.Error.ShouldBeNull();
 			capped.TypeName.ShouldBe("string");
 			capped.FullLength.ShouldNotBeNull();
-			(capped.FullLength > 400).ShouldBeTrue($"the probe's URL should be past the cap; it is {capped.FullLength}");
+			capped.FullLength.ShouldNotBeNull().ShouldBeGreaterThan(400, $"the probe's URL should be past the cap; it is {capped.FullLength}");
 			capped.Value!.ShouldEndWith("…\"", Case.Sensitive);
 			capped.Value!.ShouldNotContain("end=TAIL", Case.Sensitive);
 

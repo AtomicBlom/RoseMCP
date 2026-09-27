@@ -35,7 +35,7 @@ public sealed class DocumentationSummaryTests
 
 		// The old parameter documentation goes, because it names a parameter the member no longer has.
 		result.ShouldNotContain("Old.", Case.Sensitive);
-		(result.IndexOf("<summary>", StringComparison.Ordinal) < result.IndexOf("<param", StringComparison.Ordinal)).ShouldBeTrue(
+		result.IndexOf("<summary>", StringComparison.Ordinal).ShouldBeLessThan(result.IndexOf("<param", StringComparison.Ordinal),
 			"the summary comes first, where every documentation comment puts it");
 	}
 

@@ -129,7 +129,7 @@ public sealed class ImplementationTests
 		var text = File.ReadAllText(path);
 		var index = text.IndexOf(needle, StringComparison.Ordinal);
 
-		(index >= 0).ShouldBeTrue($"'{needle}' is not in {Path.GetFileName(path)}");
+		index.ShouldBeGreaterThanOrEqualTo(0, $"'{needle}' is not in {Path.GetFileName(path)}");
 
 		var before = text[..index];
 		var lastBreak = before.LastIndexOf('\n');

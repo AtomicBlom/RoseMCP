@@ -71,7 +71,7 @@ public sealed class ResultBudgetTests
 			TestContext.Current!.Execution.CancellationToken);
 
 		var members = outline.Types.Sum(type => type.Members.Count);
-		(members > 0).ShouldBeTrue("the fixture type should have members to measure");
+		members.ShouldBeGreaterThan(0, "the fixture type should have members to measure");
 
 		AssertWithin(
 			PerOutlinedMember,
@@ -87,7 +87,7 @@ public sealed class ResultBudgetTests
 			includePreviews: false);
 
 		var hits = references.References.Count + references.Definitions.Count;
-		(hits > 0).ShouldBeTrue("the fixture should have references to measure");
+		hits.ShouldBeGreaterThan(0, "the fixture should have references to measure");
 
 		AssertWithin(
 			PerReference,
@@ -132,7 +132,7 @@ public sealed class ResultBudgetTests
 	{
 		var each = size / items;
 
-		(each <= budget).ShouldBeTrue(
+		each.ShouldBeLessThanOrEqualTo(budget,
 			$"{shape} costs {each} bytes against a budget of {budget} ({size} bytes over {items} items). "
 				+ "Lower the budget if this is a result being shrunk; otherwise the shape has grown.");
 	}

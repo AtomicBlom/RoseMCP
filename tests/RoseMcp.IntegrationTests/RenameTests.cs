@@ -78,7 +78,7 @@ public sealed class RenameTests
 		await RenameAsync(session, fixture, "Product");
 		var after = (await session.ReadAsync(TestContext.Current!.Execution.CancellationToken)).Revision;
 
-		(after > before).ShouldBeTrue();
+		after.ShouldBeGreaterThan(before);
 	}
 
 	/// <summary>

@@ -39,7 +39,7 @@ public sealed class PatternReportTests
 
 		summary.Skipped.Count.ShouldBe(PatternReport.Groups);
 		summary.Unmatched.Count.ShouldBe(PatternReport.Groups);
-		(summary.Files.Count <= PatternReport.FileRows).ShouldBeTrue();
+		summary.Files.Count.ShouldBeLessThanOrEqualTo(PatternReport.FileRows);
 		summary.FileCount.ShouldBe(156);
 		summary.Notices.ShouldContain(notice => notice.Contains(" more skipped groups, covering ", StringComparison.Ordinal));
 		summary.Notices.ShouldContain(notice => notice.StartsWith($"{40 - PatternReport.Groups} more unmatched groups", StringComparison.Ordinal));
@@ -47,7 +47,7 @@ public sealed class PatternReportTests
 		// Measured as the result goes out: the SDK's own options, which is what a caller is charged for.
 		var size = JsonSerializer.Serialize(summary, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length;
 
-		(size < Ceiling).ShouldBeTrue($"The summary is {size} characters of JSON");
+		size.ShouldBeLessThan(Ceiling, $"The summary is {size} characters of JSON");
 	}
 
 	/// <summary>

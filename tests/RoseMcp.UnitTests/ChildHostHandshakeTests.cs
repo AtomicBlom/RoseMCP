@@ -18,8 +18,8 @@ public sealed class ChildHostHandshakeTests
 	{
 		var options = ChildHostHandshake.Options(TimeSpan.FromMinutes(3));
 
-		Assert.Equal(Timeout.InfiniteTimeSpan, options.DiscoverProbeTimeout);
-		Assert.Equal(TimeSpan.FromMinutes(3), options.InitializationTimeout);
+		options.DiscoverProbeTimeout.ShouldBe(Timeout.InfiniteTimeSpan);
+		options.InitializationTimeout.ShouldBe(TimeSpan.FromMinutes(3));
 	}
 
 	/// <summary>A live-app host's session, which keeps the SDK's budget and still never times out the probe.</summary>
@@ -28,7 +28,7 @@ public sealed class ChildHostHandshakeTests
 	{
 		var options = ChildHostHandshake.Options();
 
-		Assert.Equal(Timeout.InfiniteTimeSpan, options.DiscoverProbeTimeout);
-		Assert.Equal(new ModelContextProtocol.Client.McpClientOptions().InitializationTimeout, options.InitializationTimeout);
+		options.DiscoverProbeTimeout.ShouldBe(Timeout.InfiniteTimeSpan);
+		options.InitializationTimeout.ShouldBe(new ModelContextProtocol.Client.McpClientOptions().InitializationTimeout);
 	}
 }

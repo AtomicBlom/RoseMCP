@@ -339,8 +339,7 @@ public sealed class AddFileTests
 			fixture.Path("Members", "Library", "Ordered.cs"),
 			TestContext.Current!.Execution.CancellationToken);
 
-		(text.IndexOf("using System.Globalization;", StringComparison.Ordinal)
-				< text.IndexOf("using Library.Nested;", StringComparison.Ordinal)).ShouldBeTrue(
+		text.IndexOf("using System.Globalization;", StringComparison.Ordinal).ShouldBeLessThan(text.IndexOf("using Library.Nested;", StringComparison.Ordinal),
 			$"System did not come first: {text}");
 	}
 

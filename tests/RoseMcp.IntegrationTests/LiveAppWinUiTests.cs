@@ -48,7 +48,7 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 
 		var session = await manager.StartAsync(target, cancellationToken);
 		var summary = session.Describe();
-		(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
+		summary.State.ShouldBe(LiveAppSessionState.Ready,
 			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 		var marker = await WaitForEventAsync(
@@ -90,7 +90,7 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 
 		var session = await manager.StartAsync(target, cancellationToken);
 		var summary = session.Describe();
-		(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
+		summary.State.ShouldBe(LiveAppSessionState.Ready,
 			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 		var marker = await WaitForEventAsync(
@@ -136,7 +136,7 @@ public sealed class LiveAppWinUiTests(WinUiProbeApp winui)
 
 		var session = await manager.StartAsync(target, cancellationToken);
 		var summary = session.Describe();
-		(summary.State == LiveAppSessionState.Ready).ShouldBeTrue(
+		summary.State.ShouldBe(LiveAppSessionState.Ready,
 			$"expected Ready, got {summary.State}: {summary.Detail} (arch {summary.Architecture})");
 
 		// Well into running, so an empty tree cannot be an app that has not built one yet.

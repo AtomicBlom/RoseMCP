@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace RoseMcp.Patterns;
 
@@ -29,6 +30,16 @@ internal sealed record MemberNode(ISymbol Member) : PatternNode;
 /// <summary>A logical not of something else the pattern says.</summary>
 /// <param name="Operand">What is negated.</param>
 internal sealed record NotNode(PatternNode Operand) : PatternNode;
+
+/// <summary>
+/// A comparison of two things the pattern says: <c>$a$ &gt; $b$</c>. A target matches when it applies the
+/// same operator, built in or user-defined, to operands that match -- so one rule covers an
+/// <c>int</c>, a <c>TimeSpan</c> and a nullable comparison alike, and a typed placeholder is what narrows it.
+/// </summary>
+/// <param name="Operator">The comparison.</param>
+/// <param name="Left">What the pattern says the left operand is.</param>
+/// <param name="Right">What the pattern says the right operand is.</param>
+internal sealed record BinaryNode(BinaryOperatorKind Operator, PatternNode Left, PatternNode Right) : PatternNode;
 
 /// <summary>A lambda with one parameter, both captured: <c>$x$ => $body$</c>.</summary>
 /// <param name="Parameter">The placeholder that captures the parameter's identifier.</param>

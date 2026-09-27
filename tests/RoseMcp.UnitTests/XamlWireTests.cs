@@ -167,7 +167,7 @@ public sealed class XamlWireTests
 		var refusal = XamlWire.RefuseGreeting(new string('x', 5000), "abc123");
 
 		refusal.ShouldNotBeNull();
-		(refusal.Length < 200).ShouldBeTrue($"expected a short refusal, got {refusal.Length} characters");
+		refusal.Length.ShouldBeLessThan(200, $"expected a short refusal, got {refusal.Length} characters");
 	}
 
 	/// <summary>
@@ -227,7 +227,7 @@ public sealed class XamlWireTests
 	private static string Body(string source, string signature)
 	{
 		var start = source.IndexOf(signature, StringComparison.Ordinal);
-		(start >= 0).ShouldBeTrue($"{ProviderChannel} no longer has '{signature}'.");
+		start.ShouldBeGreaterThanOrEqualTo(0, $"{ProviderChannel} no longer has '{signature}'.");
 
 		var end = source.IndexOf("\nstatic ", start + signature.Length, StringComparison.Ordinal);
 		return end < 0 ? source[start..] : source[start..end];

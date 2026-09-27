@@ -58,7 +58,7 @@ public sealed class XamlMaterialiserTests
 		// And the child is in its parent before the parent goes anywhere.
 		var nested = steps.Single(step => step.Kind == XamlStepKind.AddChild && step.Target == "$0");
 		nested.Child.ShouldBe("$1");
-		(steps.IndexOf(nested) < steps.Count - 1).ShouldBeTrue("the nested add must come before the attach");
+		steps.IndexOf(nested).ShouldBeLessThan(steps.Count - 1, "the nested add must come before the attach");
 	}
 
 	[Test]

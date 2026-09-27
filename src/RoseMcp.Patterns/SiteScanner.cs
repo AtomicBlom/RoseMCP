@@ -306,6 +306,8 @@ internal static class SiteScanner
 					return Invocation(call, syntax, operation);
 				case NotNode not:
 					return Not(not, syntax, operation);
+				case BinaryNode binary:
+					return Binary(binary, syntax, operation);
 				case LambdaNode lambda:
 					return Lambda(lambda, syntax);
 				case ConstantNode constant:
@@ -370,6 +372,23 @@ internal static class SiteScanner
 
 			return unary is { OperatorKind: UnaryOperatorKind.Not, OperatorMethod: null }
 				&& Expression(node.Operand, prefix.Operand, unary.Operand);
+		}
+
+		/// <summary>
+		/// Whether the site applies the find's comparison to operands the find's operands match. The operator
+		/// is compared by kind rather than by method, so a user-defined <c>TimeSpan</c> comparison and a lifted
+		/// nullable one match the same rule as an <c>int</c>; a typed placeholder is what tells them apart.
+		/// </summary>
+		private bool Binary(BinaryNode node, ExpressionSyntax syntax, IOperation? operation)
+		{
+			if (Bare(syntax) is not BinaryExpressionSyntax binary) return false;
+
+			var comparison = (Unwrapped(operation) ?? model.GetOperation(binary, cancellationToken)) as IBinaryOperation;
+
+			return comparison is not null
+				&& comparison.OperatorKind == node.Operator
+				&& Expression(node.Left, binary.Left, comparison.LeftOperand)
+				&& Expression(node.Right, binary.Right, comparison.RightOperand);
 		}
 
 		/// <summary>Captures a lambda of one parameter that is not async: the parameter's identifier, and its body.</summary>

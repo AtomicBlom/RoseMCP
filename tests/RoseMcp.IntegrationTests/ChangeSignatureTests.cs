@@ -190,7 +190,7 @@ public sealed class ChangeSignatureTests
 		// Leaving it alone is what makes it compile: the parameter it was written for now exists.
 		result.Verified.ShouldBeTrue();
 		result.IntroducedDiagnostics.ShouldBeEmpty();
-		(result.ResolvedDiagnosticCount > 0).ShouldBeTrue("expected the call site's error to go away");
+		result.ResolvedDiagnosticCount.ShouldBeGreaterThan(0, "expected the call site's error to go away");
 	}
 
 	/// <summary>

@@ -66,7 +66,7 @@ public sealed class DiagnosticsTests
 		await service.AnalyseAsync(snapshot, new DiagnosticsRequest(), TestContext.Current!.Execution.CancellationToken);
 
 		var afterFirst = service.CompilationsAnalysed;
-		(afterFirst > 0).ShouldBeTrue("the first pass must actually analyse something");
+		afterFirst.ShouldBeGreaterThan(0, "the first pass must actually analyse something");
 
 		for (var i = 0; i < 3; i++)
 		{
@@ -103,7 +103,7 @@ public sealed class DiagnosticsTests
 			new DiagnosticsRequest(),
 			TestContext.Current!.Execution.CancellationToken);
 
-		(service.CompilationsAnalysed > afterFirst).ShouldBeTrue("an edit must invalidate the cache");
+		service.CompilationsAnalysed.ShouldBeGreaterThan(afterFirst, "an edit must invalidate the cache");
 	}
 
 	/// <summary>

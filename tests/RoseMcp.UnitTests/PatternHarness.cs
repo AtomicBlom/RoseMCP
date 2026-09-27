@@ -63,6 +63,8 @@ internal static class PatternHarness
 			{
 				public static void ShouldBe<T>(this T actual, T expected) { }
 				public static void ShouldBeTrue(this bool actual) { }
+				public static void ShouldBeTrue(this bool actual, string? customMessage) { }
+				public static void ShouldBeGreaterThan<T>(this T actual, T expected) where T : System.IComparable<T> { }
 				public static void ShouldBeFalse(this bool actual) { }
 				public static void ShouldContain(this string actual, string expected, Case caseSensitivity = Case.Insensitive) { }
 				public static void ShouldContain<T>(this IEnumerable<T> actual, T expected) { }
@@ -135,10 +137,14 @@ internal static class PatternHarness
 	/// <paramref name="source"/> rewritten by <paramref name="rules"/>, as text without the prelude, with
 	/// what became of each site.
 	/// </summary>
-	internal static (string Text, IReadOnlyList<SiteOutcome> Sites) Rewrite(string source, params RuleText[] rules)
+	internal static (string Text, IReadOnlyList<SiteOutcome> Sites) Rewrite(string source, params RuleText[] rules) =>
+		Rewrite(source, rules, []);
+
+	/// <summary>The same, with namespaces the patterns are written against.</summary>
+	internal static (string Text, IReadOnlyList<SiteOutcome> Sites) Rewrite(string source, IReadOnlyList<RuleText> rules, IReadOnlyList<string> usings)
 	{
 		var (compilation, tree) = Compile(source, withStubs: true);
-		var scan = RuleCatalog.Parse(rules).Bind(compilation).Scan(compilation.GetSemanticModel(tree));
+		var scan = RuleCatalog.Parse(rules, usings).Bind(compilation).Scan(compilation.GetSemanticModel(tree));
 		var rewrite = RewriteEngine.Run(compilation, [new DocumentSites(tree, scan.Sites)], imports: null, CancellationToken.None)[0];
 		var text = (rewrite.Root ?? tree.GetRoot()).ToFullString();
 

@@ -330,4 +330,70 @@ public sealed class PatternMatchTests
 
 		bound.Usings.ShouldBe(["Shouldly", "static System.Math", "Text = System.Text"]);
 	}
+
+	/// <summary>
+	/// A comparison in a find binds with untyped operands, and matches a site by its operator: the call around
+	/// it is found, which it could not be if the operands were compiled as <c>object</c>.
+	/// </summary>
+	[Test]
+	public void Matches_a_comparison_by_its_operator()
+	{
+		var result = Scan(
+			"using Shouldly; class C { void M(int n) { (n > 1).ShouldBeTrue(); (n >= 1).ShouldBeTrue(); (1 > n).ShouldBeTrue(); } }",
+			[Rule("($a$ > $b$).ShouldBeTrue()")],
+			["Shouldly"]);
+
+		Sites(result).ShouldBe(["1: (n > 1).ShouldBeTrue() [a=n, b=1]", "1: (1 > n).ShouldBeTrue() [a=1, b=n]"]);
+	}
+
+	/// <summary>A user-defined comparison matches the same rule as a built-in one, since it is the same operator.</summary>
+	[Test]
+	public void Matches_a_user_defined_comparison_as_the_same_operator()
+	{
+		var result = Scan(
+			"using Shouldly; class C { void M(TimeSpan span) { (span < TimeSpan.FromSeconds(1)).ShouldBeTrue(); } }",
+			[Rule("($a$ < $b$).ShouldBeTrue()")],
+			["Shouldly"]);
+
+		Sites(result).ShouldBe(["1: (span < TimeSpan.FromSeconds(1)).ShouldBeTrue() [a=span, b=TimeSpan.FromSeconds(1)]"]);
+	}
+
+	/// <summary>A typed operand narrows a comparison the way it narrows an argument: by the operand's own type.</summary>
+	[Test]
+	public void Narrows_a_comparison_by_a_typed_operand()
+	{
+		var result = Scan(
+			"using Shouldly; class C { void M(int n, long l) { (n > 1).ShouldBeTrue(); (l > 1).ShouldBeTrue(); } }",
+			[Rule("($a:int$ > $b$).ShouldBeTrue()")],
+			["Shouldly"]);
+
+		Sites(result).ShouldBe(["1: (n > 1).ShouldBeTrue() [a=n, b=1]"]);
+	}
+
+	/// <summary>
+	/// An operator a find cannot match is named as the thing to change, rather than reported as the method
+	/// around it being missing, which would send the reader after a name that was right.
+	/// </summary>
+	[Test]
+	public void Refuses_an_operator_a_find_cannot_match_by_naming_it()
+	{
+		var refusal = Should.Throw<PatternException>(
+			() => Bind("class C { }", [Rule("($a$ + $b$).ShouldBeTrue()")], ["Shouldly"]));
+
+		refusal.Message.ShouldContain("uses `$a$ + $b$`, which a find cannot match", Case.Sensitive);
+		refusal.Message.ShouldNotContain("no method named", Case.Sensitive);
+	}
+
+	/// <summary>A comparison rule that an earlier, wider one covers can never match, and is refused.</summary>
+	[Test]
+	public void Refuses_a_comparison_an_earlier_rule_covers()
+	{
+		var refusal = Should.Throw<PatternException>(
+			() => Bind(
+				"class C { }",
+				[Rule("($a$ > $b$).ShouldBeTrue()"), Rule("($a:int$ > $b$).ShouldBeTrue()")],
+				["Shouldly"]));
+
+		refusal.Message.ShouldStartWith("Rule 2 can never match: rule 1 comes first", Case.Sensitive);
+	}
 }

@@ -178,7 +178,7 @@ public sealed class WorkProgressTests
 
 		percentages.ShouldContain(75d);
 		percentages.ShouldContain(25d);
-		(percentages.IndexOf(75d) < percentages.IndexOf(25d)).ShouldBeTrue(
+		percentages.IndexOf(75d).ShouldBeLessThan(percentages.IndexOf(25d),
 			"the reload's own scale must reach a listener that has already seen a higher percentage");
 	}
 }

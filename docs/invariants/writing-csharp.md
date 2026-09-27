@@ -17,6 +17,20 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   span when the caller wrote one member rather than a file: a repository whose endings are already
   inconsistent would otherwise have every line rewritten by a one-member change, which buries the
   edit in a diff nobody can review.
+- **A file's layout is decided once per write, from the file as it was, and the formatter is told
+  it.** When each pass worked a file's indentation and ending out for itself, the answers disagreed,
+  on lines nothing asked to change:
+  - Roslyn's formatter, told nothing, sets the whitespace in front of the token after what it formats
+    with its own four spaces. So an edit in a tab-indented file with no .editorconfig re-indented the
+    member after it.
+  - A new file took the ending of the code the caller sent, which is LF whatever the repository uses.
+
+  `Whitespace.RulesForAsync` reads what the repository declares: an .editorconfig covering the file,
+  from Roslyn or from disk where the project was never given one, then .gitattributes for the
+  ending. Otherwise it reads what the file already does or, for a new file, what the files nearest
+  it do. It never reads the payload. Every pass takes that one value: `FormattingOptionsAsync` fills
+  in the formatter's options wherever Roslyn wasn't told, and the text pass uses the same rules. See
+  [the decision](../decisions/a-files-layout-comes-from-what-declares-it-then-from-the-file.md).
 - **A change a diff cannot show is said in words.** A unified diff compares the content of lines,
   and a terminator is not content -- so rewriting a file's endings produces no hunk at all. That is
   the change `rose_format` is called for most often, in exactly the repositories where it matters:
@@ -40,8 +54,11 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   - An anchor asks for each token it matched, so a comment between two of them is not the caller's.
   - An insertion asks for the place it goes.
 
-  Blank lines beside what was asked go with it, because a diff pairs identical blank lines
-  arbitrarily. It is a sentence rather than a refusal, because a line can change harmlessly, such as
+  A diff pairs identical lines arbitrarily, so where it puts a run isn't always where the edit put
+  it. A run that went in or came out with nothing in its place is asked for if any place it slides
+  to is, since a documented member added in front of another begins with the same `/// <summary>`.
+  Blank lines beside what was asked go with it for the same reason. It is a sentence rather than a
+  refusal, because a line can change harmlessly, such as
   trailing whitespace trimmed where the file asks for it, and only the caller holding the diff can
   tell that from a reflow. It says nothing about what happens inside the spans: a replacement
   written at the wrong depth is still the replacement the caller asked for.

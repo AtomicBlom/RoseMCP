@@ -221,7 +221,8 @@ public static class MoveMemberService
 			if (group.Key is null || current.GetDocument(group.Key) is not { } document) continue;
 
 			asked = asked.And(document, await EditImports.RegionAsync(document, cancellationToken));
-			current = await ResolvedImports.ApplyAsync(current, document.Id, [name], cancellationToken);
+			var rules = await Whitespace.RulesForAsync(document, cancellationToken);
+			current = await ResolvedImports.ApplyAsync(current, document.Id, [name], rules, cancellationToken);
 		}
 
 		return (current, asked);
@@ -274,9 +275,10 @@ public static class MoveMemberService
 		}
 
 		var text = await document.GetTextAsync(cancellationToken);
+		var rules = await Whitespace.RulesForAsync(target.Document, cancellationToken);
 		var indent = type.Members.Count > 0
-			? IndentAt(text, type.Members[0].SpanStart)
-			: IndentAt(text, type.SpanStart) + "\t";
+			? Whitespace.IndentAt(text, type.Members[0].SpanStart)
+			: Whitespace.IndentAt(text, type.SpanStart) + rules.IndentUnit;
 
 		// The line breaks above the declaration come off; the indentation of its first line does not.
 		// That indentation is the baseline every wrapped line is measured against, and taking it away
@@ -287,9 +289,8 @@ public static class MoveMemberService
 			MemberSyntax.KeywordOf(type),
 			document.Project.ParseOptions,
 			indent,
-			Whitespace.Dominant(text),
-			count => notices.Add(MemberSyntax.RewrittenEndings(
-				count, LineEndings.Name(Whitespace.Dominant(text)))),
+			rules.LineEnding,
+			count => notices.Add(MemberEditService.RewrittenEndings(count, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		if (moved.Count != 1) throw new InvalidOperationException("The member being moved parsed as more than one.");
@@ -303,7 +304,7 @@ public static class MoveMemberService
 			moved[0],
 			blankBefore: type.Members.Count > 0,
 			blankAfter: false,
-			Whitespace.Dominant(text),
+			rules.LineEnding,
 			indent,
 			marker)));
 
@@ -312,7 +313,7 @@ public static class MoveMemberService
 		notices.Add($"Moved to the end of {target.Symbol.Name}; place it with rose_delete_member and "
 			+ "rose_add_member if it belongs somewhere else in the type.");
 
-		return await FormatAsync(written, document.Id, marker, cancellationToken);
+		return await FormatAsync(written, document.Id, marker, rules, cancellationToken);
 	}
 
 	/// <summary>
@@ -377,11 +378,13 @@ public static class MoveMemberService
 		Solution solution,
 		DocumentId id,
 		SyntaxAnnotation marker,
+		WhitespaceRules rules,
 		CancellationToken cancellationToken)
 	{
 		if (solution.GetDocument(id) is not { } document) return solution;
 
-		var formatted = await Formatter.FormatAsync(document, marker, cancellationToken: cancellationToken);
+		var options = await Whitespace.FormattingOptionsAsync(document, rules, cancellationToken);
+		var formatted = await Formatter.FormatAsync(document, marker, options, cancellationToken);
 
 		var root = await formatted.GetSyntaxRootAsync(cancellationToken);
 		var tree = await formatted.GetSyntaxTreeAsync(cancellationToken);
@@ -389,7 +392,6 @@ public static class MoveMemberService
 
 		if (root is null || tree is null) return formatted.Project.Solution;
 
-		var rules = Whitespace.RulesFor(formatted.Project, tree, text);
 		var nodes = root.GetAnnotatedNodes(marker).ToArray();
 
 		var spans = nodes.Length == 0
@@ -403,13 +405,6 @@ public static class MoveMemberService
 		SyntaxFactory.ParseExpression($"{target.Symbol.Name}.{member}");
 
 	private static string TargetPath(TypeTarget target) => target.Document.FilePath ?? string.Empty;
-
-	private static string IndentAt(Microsoft.CodeAnalysis.Text.SourceText text, int position)
-	{
-		var line = text.Lines.GetLineFromPosition(position).ToString();
-
-		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
-	}
 
 	/// <summary>
 	/// What a move has to say that no other writing tool does. Everything about the write and the

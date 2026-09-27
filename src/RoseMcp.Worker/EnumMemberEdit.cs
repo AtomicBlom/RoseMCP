@@ -43,15 +43,12 @@ internal static class EnumMemberEdit
 		var document = target.Document;
 
 		var text = await document.GetTextAsync(cancellationToken);
-		var tree = await document.GetSyntaxTreeAsync(cancellationToken)
-			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} is not a C# source file.");
-
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
+		var rules = await Whitespace.RulesForAsync(document, cancellationToken);
 		var lineEnding = rules.LineEnding;
 
 		var indent = @enum.Members.Count > 0
-			? MemberEditService.IndentAt(text, @enum.Members[0].SpanStart)
-			: MemberEditService.IndentAt(text, @enum.SpanStart) + rules.IndentUnit;
+			? Whitespace.IndentAt(text, @enum.Members[0].SpanStart)
+			: Whitespace.IndentAt(text, @enum.SpanStart) + rules.IndentUnit;
 
 		var parsed = MemberSyntax.Parse(
 			request.Code,
@@ -59,7 +56,7 @@ internal static class EnumMemberEdit
 			document.Project.ParseOptions,
 			indent,
 			lineEnding,
-			count => notices.Add(MemberEditService.RewrittenEndings(count, text)),
+			count => notices.Add(MemberEditService.RewrittenEndings(count, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		var adding = parsed.Cast<EnumMemberDeclarationSyntax>().Select(WithSeparatorTrivia).ToArray();
@@ -93,7 +90,8 @@ internal static class EnumMemberEdit
 			target.Signature,
 			[.. adding.Select(member => member.Identifier.Text)],
 			target.Symbol,
-			[new TextSpan(InsertionPoint(@enum, index), 0)]);
+			[new TextSpan(InsertionPoint(@enum, index), 0)],
+			rules);
 	}
 
 	/// <summary>

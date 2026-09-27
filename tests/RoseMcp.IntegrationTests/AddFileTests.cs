@@ -39,6 +39,64 @@ public sealed class AddFileTests
 	}
 
 	/// <summary>
+	/// A repository that settles its endings in .gitattributes and says nothing of them in .editorconfig. The
+	/// new file's lines end the way git writes them, whatever the code arrived with -- and whatever the files
+	/// beside it hold, which here is CRLF, so it is visibly the attributes that decided.
+	/// </summary>
+	[Test]
+	public async Task Ends_a_new_file_s_lines_as_gitattributes_says_where_no_editorconfig_does()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		Directory.CreateDirectory(Path.Combine(fixture.Root, ".git"));
+		await File.WriteAllTextAsync(
+			Path.Combine(fixture.Root, ".gitattributes"), "*.cs text eol=lf\n", TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Simple", "Core", "Shape.cs");
+		var result = await AddAsync(session, path, "namespace Core;\r\n\r\npublic sealed class Shape\r\n{\r\n    public int Sides => 3;\r\n}\r\n");
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		// The indentation is the files' beside it, since nothing declares that either.
+		text.ShouldNotContain("\r", Case.Sensitive);
+		text.ShouldContain("\n\tpublic int Sides => 3;\n", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// An .editorconfig the workspace was never given: the design-time build lists only the ones above a file
+	/// it compiles, so one in a folder that held no source when the workspace loaded is unknown to Roslyn. It
+	/// is the one dotnet format will read, so a new file there follows it rather than Roslyn's defaults or the
+	/// tabs and CRLF of the files beside it.
+	/// </summary>
+	[Test]
+	public async Task Follows_an_editorconfig_the_workspace_was_never_given()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var directory = fixture.Path("Simple", "Core", "Shapes");
+		Directory.CreateDirectory(directory);
+		await File.WriteAllTextAsync(
+			Path.Combine(directory, ".editorconfig"),
+			"[*.cs]\nindent_style = space\nindent_size = 2\nend_of_line = lf\n",
+			TestContext.Current!.Execution.CancellationToken);
+
+		var path = Path.Combine(directory, "Square.cs");
+		var result = await AddAsync(session, path, "namespace Core.Shapes;\n\npublic sealed class Square\n{\n\tpublic int Sides => 4;\n}\n");
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldNotContain("\r", Case.Sensitive);
+		text.ShouldContain("\n  public int Sides => 4;\n", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// A whole file the caller supplies keeps the layout they gave it, except where a rule the
 	/// repository enforces applies. Blank lines between using groups, between members and inside a
 	/// body are structure a reader put there on purpose; a wrapped chain is a line-length decision

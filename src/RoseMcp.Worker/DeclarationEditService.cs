@@ -150,10 +150,11 @@ public static class DeclarationEditService
 
 		var document = target.Document;
 		var text = await document.GetTextAsync(cancellationToken);
+		var rules = await Whitespace.RulesForAsync(document, cancellationToken);
 
 		var context = new Context(
-			IndentAt(text, target.Declaration.SpanStart),
-			Whitespace.Dominant(text),
+			Whitespace.IndentAt(text, target.Declaration.SpanStart),
+			rules.LineEnding,
 			document.Project.ParseOptions);
 
 		progress?.Report("Rewriting the declaration", 30);
@@ -167,7 +168,7 @@ public static class DeclarationEditService
 		var edited = document.Project.Solution.WithDocumentSyntaxRoot(
 			document.Id, root.ReplaceNode(target.Declaration, rewritten));
 
-		var finished = await FinishAsync(edited, document.Id, marker, cancellationToken);
+		var finished = await FinishAsync(edited, document.Id, marker, rules, cancellationToken);
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 60);
 
@@ -219,12 +220,14 @@ public static class DeclarationEditService
 		Solution edited,
 		DocumentId id,
 		SyntaxAnnotation marker,
+		WhitespaceRules rules,
 		CancellationToken cancellationToken)
 	{
 		var document = edited.GetDocument(id)
 			?? throw new InvalidOperationException("The document being written left the solution mid-edit.");
 
-		var formatted = await Formatter.FormatAsync(document, marker, cancellationToken: cancellationToken);
+		var options = await Whitespace.FormattingOptionsAsync(document, rules, cancellationToken);
+		var formatted = await Formatter.FormatAsync(document, marker, options, cancellationToken);
 
 		var root = await formatted.GetSyntaxRootAsync(cancellationToken);
 		var tree = await formatted.GetSyntaxTreeAsync(cancellationToken);
@@ -236,7 +239,6 @@ public static class DeclarationEditService
 		}
 
 		var nodes = root.GetAnnotatedNodes(marker).ToArray();
-		var rules = Whitespace.RulesFor(formatted.Project, tree, text);
 
 		var spans = nodes.Length == 0
 			? null
@@ -272,13 +274,6 @@ public static class DeclarationEditService
 
 	private static int LineOf(DeclarationTarget target) =>
 		target.Declaration.SyntaxTree.GetLineSpan(target.Declaration.Span).StartLinePosition.Line + 1;
-
-	private static string IndentAt(SourceText text, int position)
-	{
-		var line = text.Lines.GetLineFromPosition(position).ToString();
-
-		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
-	}
 
 	/// <summary>What the file decides about how a written line should look.</summary>
 	private readonly record struct Context(string Indent, string LineEnding, ParseOptions? ParseOptions);

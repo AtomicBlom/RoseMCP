@@ -118,6 +118,12 @@ public sealed class OperatorApiTests
 					Endpoint = new Uri(broker.Url("/")),
 					AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {Token}" },
 				}),
+
+				// A server/discover probe the client gives up on itself falls back to initialize with the probe's
+				// protocol version still in the http header, and the broker refuses the mismatch -- which a full
+				// suite's load reaches inside the probe's five seconds. The broker's own children are held to the
+				// same rule.
+				new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan },
 				cancellationToken: cancellationToken);
 
 			var attached = await agent.CallToolAsync(

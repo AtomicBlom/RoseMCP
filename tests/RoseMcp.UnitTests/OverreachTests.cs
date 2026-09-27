@@ -140,6 +140,62 @@ public sealed class OverreachTests
 	}
 
 	/// <summary>
+	/// A documented member put in front of another begins with the same line as the member it pushes
+	/// down, and the line map pairs the two: the insertion is reported a line lower, inside a
+	/// documentation comment the edit never touched. It is the same text wherever the run sits, so it is
+	/// the place it slides back to that the edit asked for.
+	/// </summary>
+	[Test]
+	public void Reaches_an_insertion_across_a_line_identical_to_its_last()
+	{
+		var before = "class C\n{\n\tint A { get; }\n\n\t/// <summary>\n\t/// B.\n\t/// </summary>\n\tvoid B() { }\n}\n";
+		var place = new TextSpan(before.IndexOf("\n\n", StringComparison.Ordinal) + 1, 0);
+
+		var after = "class C\n{\n\tint A { get; }\n\n\t/// <summary>\n\t/// X.\n\t/// </summary>\n\tvoid X() { }\n\n"
+			+ "\t/// <summary>\n\t/// B.\n\t/// </summary>\n\tvoid B() { }\n}\n";
+
+		var reach = Overreach.Of(Text(before), Text(after), [place]);
+
+		reach.Any.ShouldBeFalse();
+	}
+
+	/// <summary>
+	/// The same pairing from the other side: deleting a documented member from in front of another leaves
+	/// one of their two identical first lines, and the line map keeps the first -- so the deletion is
+	/// reported as the next member's, a line further down than anything the edit took out.
+	/// </summary>
+	[Test]
+	public void Reaches_a_deletion_across_a_line_identical_to_its_far_end()
+	{
+		var before = "class C\n{\n\tint A { get; }\n\n\t/// <summary>\n\t/// B.\n\t/// </summary>\n\tvoid B() { }\n\n"
+			+ "\t/// <summary>\n\t/// D.\n\t/// </summary>\n\tvoid D() { }\n}\n";
+
+		var member = TextSpan.FromBounds(
+			before.IndexOf("\n\n", StringComparison.Ordinal) + 1,
+			before.IndexOf("void B() { }\n", StringComparison.Ordinal) + "void B() { }\n".Length);
+
+		var after = "class C\n{\n\tint A { get; }\n\n\t/// <summary>\n\t/// D.\n\t/// </summary>\n\tvoid D() { }\n}\n";
+
+		var reach = Overreach.Of(Text(before), Text(after), [member]);
+
+		reach.Any.ShouldBeFalse();
+	}
+
+	/// <summary>
+	/// Sliding is not a licence. A run that went in beside identical lines far from anything asked is
+	/// still named, wherever it slides to.
+	/// </summary>
+	[Test]
+	public void Names_an_insertion_that_slides_nowhere_asked()
+	{
+		var before = "first\nsecond\n\n\nthird\nfourth\n";
+
+		var reach = Overreach.Of(Text(before), Text("first\nsecond\n\n\n\nthird\nfourth\n"), [Line(before, "fourth")]);
+
+		reach.Insertions.ShouldNotBeEmpty();
+	}
+
+	/// <summary>
 	/// A new group of imports goes in after a blank line of its own, so the diff shows it on the far side
 	/// of the blank line that separated the imports from the namespace.
 	/// </summary>

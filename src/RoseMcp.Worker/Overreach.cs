@@ -23,10 +23,16 @@ namespace RoseMcp.Worker;
 /// </para>
 /// <para>
 /// Lines that went in are asked for when they sit beside a line that was, or go where an empty span put
-/// them. Lines that came out are named one by one, and what replaced them is not counted again. Blank
-/// lines beside what was asked go with it, both ways: which of two identical blank lines a diff calls
-/// the old one is arbitrary, so an edit that adds or drops the blank line between itself and a
-/// neighbour is the same edit whichever one the diff picks.
+/// them. Lines that came out are named one by one, and what replaced them is not counted again.
+/// </para>
+/// <para>
+/// Where a diff puts a run of lines is not always where the edit put it, and the difference is never
+/// the edit's. A run that went in or came out with nothing in its place can slide past lines identical
+/// to its own first or last, leaving the same text wherever it sits, so it is asked for if any place it
+/// slides to is. Blank lines beside what was asked go with it as well, both ways, which covers the lines
+/// an edit rewrote: which of two identical blank lines a diff calls the old one is arbitrary, so an edit
+/// that adds or drops the blank line between itself and a neighbour is the same edit whichever one the
+/// diff picks.
 /// </para>
 /// </summary>
 public sealed class Overreach
@@ -64,6 +70,8 @@ public sealed class Overreach
 		var map = TextMovement.LineMap(before, after);
 		var lines = before.Lines;
 		var count = lines.Count;
+		var then = LinesOf(before);
+		var now = LinesOf(after);
 
 		var askedLines = new bool[count];
 		var askedGaps = new bool[count + 1];
@@ -115,15 +123,26 @@ public sealed class Overreach
 			var removed = Enumerable.Range(previousOld + 1, old - previousOld - 1).ToArray();
 			var added = nextNew - previousNew - 1;
 
-			overreaching.AddRange(removed.Where(line => !near[line]).Select(line => line + 1));
+			// A removal with nothing in its place could have come from anywhere it slides to, so it is
+			// charged with the place that reaches least. One that was replaced is where the diff says.
+			var unasked = added == 0 && removed.Length > 0
+				? SlidOut(then, removed[0], removed.Length)
+					.Select(start => Enumerable.Range(start, removed.Length).Where(line => !near[line]).ToArray())
+					.MinBy(reached => reached.Length)!
+				: [.. removed.Where(line => !near[line])];
+
+			overreaching.AddRange(unasked.Select(line => line + 1));
 
 			// A hunk that removed lines rewrote them, and the lines that went in are what they became: the
 			// removed ones are named above wherever nothing asked for them, and counting what replaced them
 			// as well would say the same change twice. Only lines that went in with nothing going out are an
-			// insertion in their own right.
-			var intoAskedGap = Enumerable.Range(previousOld + 1, old - previousOld).Any(gap => insertable[gap]);
+			// insertion in their own right, and one of those is asked for if any gap it slides to is.
+			if (added > 0 && removed.Length == 0)
+			{
+				var inserted = now[(previousNew + 1)..nextNew];
 
-			if (added > 0 && removed.Length == 0 && !intoAskedGap) insertions.Add((previousOld + 1, added));
+				if (!SlidIn(then, inserted, old).Any(gap => insertable[gap])) insertions.Add((previousOld + 1, added));
+			}
 
 			previousOld = old;
 			previousNew = nextNew;
@@ -242,6 +261,57 @@ public sealed class Overreach
 
 		return near;
 	}
+
+	/// <summary>
+	/// The gaps a run of inserted lines could equally have gone into: the one the diff put it in, and
+	/// every gap it slides to past an old line identical to the run's own first or last line.
+	/// <para>
+	/// A run slides because the text that results is the same wherever it sits among identical lines,
+	/// and which of those places a diff reports is a property of the diff rather than of the edit. A
+	/// documented member put in front of another begins with the same <c>/// &lt;summary&gt;</c> as the
+	/// member it pushes down, and a diff that pairs the two reports the insertion a line lower, inside a
+	/// documentation comment the edit never touched.
+	/// </para>
+	/// </summary>
+	private static IEnumerable<int> SlidIn(string[] old, string[] inserted, int gap)
+	{
+		yield return gap;
+
+		for (var step = 0; gap + step < old.Length && inserted[step % inserted.Length] == old[gap + step]; step++)
+		{
+			yield return gap + step + 1;
+		}
+
+		for (var step = 0; gap - step > 0 && inserted[^(step % inserted.Length + 1)] == old[gap - step - 1]; step++)
+		{
+			yield return gap - step - 1;
+		}
+	}
+
+	/// <summary>
+	/// Where a run of removed lines could equally have come from, as the first line of each place: where the
+	/// diff says, and every place it slides to past a line identical to the one at its far end. The same
+	/// ambiguity as <see cref="SlidIn"/>, from the other side: deleting a documented member from in front
+	/// of another leaves one <c>/// &lt;summary&gt;</c> where there were two, and either could be the one
+	/// that went.
+	/// </summary>
+	private static IEnumerable<int> SlidOut(string[] old, int start, int length)
+	{
+		yield return start;
+
+		for (var step = 0; start + length + step < old.Length && old[start + step] == old[start + length + step]; step++)
+		{
+			yield return start + step + 1;
+		}
+
+		for (var step = 0; start - step > 0 && old[start - step - 1] == old[start + length - step - 1]; step++)
+		{
+			yield return start - step - 1;
+		}
+	}
+
+	/// <summary>Each line's text without its break, which is what the line map pairs lines by.</summary>
+	private static string[] LinesOf(SourceText text) => [.. text.Lines.Select(line => line.ToString())];
 
 	/// <summary>Consecutive line numbers as ranges, in order.</summary>
 	private static (int From, int To)[] Ranges(IReadOnlyList<int> lines)

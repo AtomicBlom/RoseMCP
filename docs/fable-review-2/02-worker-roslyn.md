@@ -33,11 +33,10 @@ shapes. The **editing stack was fragile for a structural reason** rather than a 
 pipeline (locate, rewrite, imports, format, whitespace, write, verify, resolve imports, report) existing
 as a convention copied into six services. **That half is fixed** — `EditPipeline` owns the sequence
 (WRK-01, PRs #275 #276 #278), and closing it turned up four tools reporting a project clean while the
-caller's own errors sat in it. **The text tier is untouched and is now the whole of the problem**:
+caller's own errors sat in it. **The text tier is now the whole of the problem**:
 `BodyEdit` splicing strings by token span, `ChangeSignatureService` discarding the declaration's own
-separators, `AddFileService` prepending imports as text, `DocComment` sniffing the first character, four
-identical `IndentAt` helpers and two answers to "what is this file's line ending". All six open fidelity
-bugs (#195, #197, #199, #200, #217, #218) live there, and card 8 is exactly as large as it was. Symbol
+separators, `AddFileService` prepending imports as text, `DocComment` sniffing the first character. All
+five open fidelity bugs (#195, #197, #199, #200, #217) live there. Symbol
 addressing has one lossy primary resolver and a more complete fallback that is reached only on one
 exception type, which is why a positional record property is unreachable by name from every tool
 (reproduced live; broader than #233 describes). ~~The Degraded status on this repository is a Rose defect
@@ -135,8 +134,7 @@ conventions.
   arguments), #197 (`Separated(built, primary ? wanted : own)` throws the file's own layout away for
   the one declaration the caller named), #200 (`Build` never meets the file's own `using` block, while
   `UsingDirectives.Ensure` exists and is what `rose_add_using` uses), #199 (a comment arriving with
-  `///` starts with `/`, so it is wrapped in `<summary>` and prefixed again), #218 (`RulesFor` with no
-  analyzer config falls through to four spaces and `Dominant(text)` of the caller's own LF payload).
+  `///` starts with `/`, so it is wrapped in `<summary>` and prefixed again).
   `MemberSyntax` then carries five string re-indenters (`Shift`, `Reindented`, `Arranged`, `Placed`
   via `BodyEdit`, `Written`/`MixedIndentation` heuristics) whose job is to reconcile the caller's
   coordinate system with the file's before the formatter runs.
@@ -529,9 +527,8 @@ degraded. Each analyzer directory has a context of its own.
    at commit, as a compare-and-swap on the revision; services lose the call and cannot forget it. Falls
    out of WRK-10.
 3. **Rule today:** whatever writes C# ends formatted, indented for where it goes, with the file's
-   endings, and reports what a diff cannot show. **Mechanism:** the pipeline type of WRK-01 with the
-   `Placement` value of WRK-03; a service implements only `Rewrite`, so it has no access to text,
-   `IndentAt`, or `Whitespace.Dominant`. Delete the four `IndentAt`s so there is nothing to copy.
+   endings, and reports what a diff cannot show. **Mechanism:** the pipeline type of WRK-01; a service
+   implements only `Rewrite`, so it has no access to text, `IndentAt`, or `Whitespace.Dominant`.
 4. **Rule today:** an error says what went wrong; refusals carry advice. **Mechanism:** a `Refusal`
    exception hierarchy plus a banned-API analyzer (`BannedSymbols.txt` in the worker project) that
    forbids `new ArgumentException(...)`/`new InvalidOperationException(...)` outside it; the boundary

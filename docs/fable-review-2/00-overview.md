@@ -85,8 +85,7 @@ explains most of the 150 findings, and the card list below is organised around i
 reasoning in the "X, because Y" shape the conventions ask for. Three reviewers said explicitly that a
 refactor which loses the comments loses the design.
 
-Against that: five independent answers to "what is this file's indent and line ending" (WRK-03), three
-copies of `ToolErrorReporting` (BRK-06, AGT-19), two classes that are the same class twice (UIP-09),
+Against that: three copies of `ToolErrorReporting` (BRK-06, AGT-19), two classes that are the same class twice (UIP-09),
 tool-layer boilerplate beside two helpers that already wrap it (WRK-23), and a comment debt of 43
 history clauses and 153 issue tags, 47 of the 49 issues named being closed (UIP-23). That debt was
 reported as growing and is now merely large: a per-file baseline means it can only shrink, and the

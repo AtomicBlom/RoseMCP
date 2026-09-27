@@ -21,10 +21,45 @@ public sealed class GitDirectory
 {
 	private const string GitFileMarker = "gitdir:";
 
-	private GitDirectory(string fullPath) => FullPath = Path.GetFullPath(fullPath);
+	private GitDirectory(string fullPath, string workTree)
+	{
+		FullPath = Path.GetFullPath(fullPath);
+		WorkTree = Path.GetFullPath(workTree);
+	}
 
 	/// <summary>The absolute path of the directory holding HEAD, the index and the refs.</summary>
 	public string FullPath { get; }
+
+	/// <summary>
+	/// The directory the checkout's files are in: the one <c>.git</c> was found in, whose
+	/// <c>.gitattributes</c> is the repository's top level.
+	/// </summary>
+	public string WorkTree { get; }
+
+	/// <summary>
+	/// The git directory every worktree of the repository shares, which is where <c>info/attributes</c>
+	/// lives. A linked worktree's own git directory names it in a <c>commondir</c> file, as a path that
+	/// is usually relative to itself; any other git directory is its own common one.
+	/// </summary>
+	public string CommonDirectory()
+	{
+		string named;
+
+		try
+		{
+			named = File.ReadAllText(Path.Combine(FullPath, "commondir")).Trim();
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			return FullPath;
+		}
+
+		if (named.Length == 0) return FullPath;
+
+		var resolved = Path.GetFullPath(Path.Combine(FullPath, named));
+
+		return Directory.Exists(resolved) ? resolved : FullPath;
+	}
 
 	/// <summary>
 	/// The git directory covering <paramref name="start"/>, or null outside a repository.
@@ -43,10 +78,10 @@ public sealed class GitDirectory
 		{
 			var candidate = Path.Combine(directory.FullName, ".git");
 
-			if (Directory.Exists(candidate)) return new GitDirectory(candidate);
+			if (Directory.Exists(candidate)) return new GitDirectory(candidate, directory.FullName);
 			if (File.Exists(candidate) && Linked(candidate, directory.FullName) is { } linked)
 			{
-				return new GitDirectory(linked);
+				return new GitDirectory(linked, directory.FullName);
 			}
 
 			directory = directory.Parent;

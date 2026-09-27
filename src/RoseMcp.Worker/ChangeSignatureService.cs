@@ -56,13 +56,13 @@ public static class ChangeSignatureService
 
 		var primary = target.Declaration;
 		var text = await target.Document.GetTextAsync(cancellationToken);
-		var indent = IndentAt(text, primary.SpanStart);
+		var indent = Whitespace.IndentAt(text, primary.SpanStart);
 
 		var wanted = MemberSyntax.ParseParameters(
 			request.Parameters,
 			target.Document.Project.ParseOptions,
 			indent,
-			Whitespace.RulesFor(target.Document.Project, primary.SyntaxTree, text).IndentUnit);
+			(await Whitespace.RulesForAsync(target.Document, cancellationToken)).IndentUnit);
 		var plan = ParameterPlan.For(parameters.Parameters, wanted);
 
 		if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);
@@ -431,7 +431,9 @@ public static class ChangeSignatureService
 				documentation.Add(document.FilePath ?? document.Name);
 			}
 
-			solution = await NormalisedAsync(solution, item.Id, updated, marker, cancellationToken);
+			var rules = await Whitespace.RulesForAsync(document, cancellationToken);
+
+			solution = await NormalisedAsync(solution, item.Id, updated, marker, rules, cancellationToken);
 		}
 
 		return new Applied(solution, rewritten, refused, documentation);
@@ -452,6 +454,7 @@ public static class ChangeSignatureService
 		DocumentId id,
 		SyntaxNode updated,
 		SyntaxAnnotation marker,
+		WhitespaceRules rules,
 		CancellationToken cancellationToken)
 	{
 		solution = solution.WithDocumentSyntaxRoot(id, updated);
@@ -467,7 +470,6 @@ public static class ChangeSignatureService
 		var spans = root.GetAnnotatedNodes(marker).Select(node => node.FullSpan).ToArray();
 		if (spans.Length == 0) return solution;
 
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
 		var final = Whitespace.Apply(root, text, rules, spans);
 
 		if (document.FilePath is not { Length: > 0 } path) return solution.WithDocumentText(id, final);
@@ -845,13 +847,6 @@ public static class ChangeSignatureService
 		}
 
 		return count;
-	}
-
-	private static string IndentAt(SourceText text, int position)
-	{
-		var line = text.Lines.GetLineFromPosition(position).ToString();
-
-		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
 	}
 
 	/// <summary>Everything one document has to have done to it.</summary>

@@ -123,23 +123,26 @@ public static class ResolvedImports
 	/// <param name="solution">The solution as the edit leaves it.</param>
 	/// <param name="id">The document to import into.</param>
 	/// <param name="namespaces">Namespaces to ensure, each already known to have one answer.</param>
+	/// <param name="rules">
+	/// The document's layout, read from it before the edit, so an import is written in the ending the
+	/// rest of the edit was.
+	/// </param>
 	/// <param name="cancellationToken">Cancels the scope lookups.</param>
 	public static async Task<Solution> ApplyAsync(
 		Solution solution,
 		DocumentId id,
 		IReadOnlyList<string> namespaces,
+		WhitespaceRules rules,
 		CancellationToken cancellationToken)
 	{
 		if (namespaces.Count == 0 || solution.GetDocument(id) is not { } document) return solution;
 
 		var model = await document.GetSemanticModelAsync(cancellationToken);
 		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
-		var text = await document.GetTextAsync(cancellationToken);
 
 		if (model is null || tree is null) return solution;
 		if (await document.GetSyntaxRootAsync(cancellationToken) is not CompilationUnitSyntax root) return solution;
 
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
 		var style = UsingStyle.For(document.Project, tree, root, rules.LineEnding);
 
 		var insertion = UsingDirectives.Ensure(root, model, namespaces, style, cancellationToken);

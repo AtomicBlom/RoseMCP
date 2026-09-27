@@ -3,7 +3,8 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Formatting;
+using Microsoft.CodeAnalysis.Options;
 using Microsoft.CodeAnalysis.Text;
 
 namespace RoseMcp.Worker;
@@ -15,6 +16,12 @@ namespace RoseMcp.Worker;
 /// in a repository that escalates IDE0055. They are applied over the text rather than through the
 /// syntax tree because that is the only way to reach a line the formatter had no reason to reindent.
 /// </para>
+/// <para>
+/// It is also where a file's layout is decided, once per write and for both passes: what the repository
+/// declares -- an .editorconfig, then for the ending its .gitattributes -- and otherwise what the file
+/// already does. Deciding it here rather than beside each pass is what stops the formatter and the text
+/// pass giving one file two answers.
+/// </para>
 /// </summary>
 public static class Whitespace
 {
@@ -22,18 +29,99 @@ public static class Whitespace
 	public const string Lf = "\n";
 	public const string Cr = "\r";
 
-	/// <summary>What .editorconfig asks of this file, falling back to what the file already does.</summary>
-	public static WhitespaceRules RulesFor(Project project, SyntaxTree tree, SourceText text)
+	/// <summary>
+	/// The layout <paramref name="document"/> is written in, read from it as it stands before anything is
+	/// written to it.
+	/// <para>
+	/// What the repository declares comes first: an .editorconfig covering the file, then for the line
+	/// ending its .gitattributes, since once git is told how a checkout's lines end it writes every file
+	/// that way. Where neither says, the file's own text does -- the ending most of its lines use and the
+	/// way its lines are indented -- and for a file with nothing to read, the files nearest it. Roslyn's
+	/// defaults only when all of those are silent.
+	/// </para>
+	/// <para>
+	/// Asked of the file as it was rather than as an edit leaves it, because what a caller writes is not
+	/// the repository: a forty-line member composed with bare LFs, written into a ten-line CRLF file, would
+	/// otherwise decide that the file is LF.
+	/// </para>
+	/// </summary>
+	public static async Task<WhitespaceRules> RulesForAsync(Document document, CancellationToken cancellationToken)
 	{
-		var options = project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GetOptions(tree);
+		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
+		var text = await document.GetTextAsync(cancellationToken);
+		var root = await document.GetSyntaxRootAsync(cancellationToken);
 
-		return new WhitespaceRules
-		{
-			LineEnding = Ending(options) ?? Dominant(text),
-			TrimTrailingWhitespace = Flag(options, "trim_trailing_whitespace") ?? false,
-			InsertFinalNewline = Flag(options, "insert_final_newline") ?? false,
-			IndentUnit = Indent(options),
-		};
+		return await ResolveAsync(document.Project, document.FilePath, tree, Observe(root, text), cancellationToken);
+	}
+
+	/// <summary>
+	/// The layout a file that does not exist yet takes at <paramref name="path"/> in
+	/// <paramref name="project"/>: what the repository declares for the path, then what
+	/// <paramref name="from"/> does where the file is made out of another one, then the files nearest it.
+	/// <para>
+	/// Never the code a caller supplied for it. That is the file's text rather than the repository's, and
+	/// composed for a JSON argument it is LF whatever the repository uses -- so a new file written in its
+	/// endings is the one file in a CRLF checkout that is not.
+	/// </para>
+	/// </summary>
+	public static async Task<WhitespaceRules> RulesForNewAsync(
+		Project project,
+		string path,
+		Document? from,
+		CancellationToken cancellationToken)
+	{
+		var observed = from is null
+			? default
+			: Observe(await from.GetSyntaxRootAsync(cancellationToken), await from.GetTextAsync(cancellationToken));
+
+		return await ResolveAsync(project, path, tree: null, observed, cancellationToken);
+	}
+
+	/// <summary>
+	/// What the formatter needs to lay <paramref name="document"/> out as <paramref name="rules"/> say: the
+	/// document's own options, with each of the four a layout decides filled in where Roslyn was told
+	/// nothing about it.
+	/// <para>
+	/// Roslyn's formatter reads .editorconfig and nothing else, so in a file no .editorconfig speaks for it
+	/// indents with four spaces and ends lines with the platform's ending. It applies that to the whitespace
+	/// in front of the token after whatever it formats as well as to what was written, so a member edited in
+	/// a file indented with tabs comes back with the member after it indented with spaces -- a line nothing
+	/// asked to change. Only the gaps are filled, because where Roslyn was told, it read the same
+	/// .editorconfig the rules did and knows its own reading of it best.
+	/// </para>
+	/// </summary>
+	public static async Task<OptionSet> FormattingOptionsAsync(
+		Document document,
+		WhitespaceRules rules,
+		CancellationToken cancellationToken)
+	{
+		OptionSet options = await document.GetOptionsAsync(cancellationToken);
+
+		if (await document.GetSyntaxTreeAsync(cancellationToken) is not { } tree) return options;
+
+		var told = document.Project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GetOptions(tree);
+		var language = document.Project.Language;
+		var tabs = rules.IndentUnit == "\t";
+
+		bool Untold(string key) => !told.TryGetValue(key, out _);
+
+		if (Untold("indent_style")) options = options.WithChangedOption(FormattingOptions.UseTabs, language, tabs);
+		if (Untold("indent_size")) options = options.WithChangedOption(FormattingOptions.IndentationSize, language, rules.IndentSize);
+		if (Untold("tab_width")) options = options.WithChangedOption(FormattingOptions.TabSize, language, rules.IndentSize);
+		if (Untold("end_of_line")) options = options.WithChangedOption(FormattingOptions.NewLine, language, rules.LineEnding);
+
+		return options;
+	}
+
+	/// <summary>
+	/// The indentation the line at <paramref name="position"/> starts with, which is what code written
+	/// into that place has to line up with.
+	/// </summary>
+	internal static string IndentAt(SourceText text, int position)
+	{
+		var line = text.Lines.GetLineFromPosition(position).ToString();
+
+		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
 	}
 
 	/// <summary>
@@ -114,11 +202,10 @@ public static class Whitespace
 	public static string Dominant(SourceText text) => Dominant(text.ToString());
 
 	/// <summary>
-	/// The line ending most of <paramref name="source"/> uses, for when .editorconfig does not say.
-	/// Taken as text rather than as a document, so a payload that is not a file yet can be asked the
-	/// same question.
+	/// The line ending most of <paramref name="source"/> uses, or null where it has no line break to read
+	/// one from. A tie goes to CRLF, then LF.
 	/// </summary>
-	public static string Dominant(string source)
+	public static string? EndingOf(string source)
 	{
 		var crlf = 0;
 		var lf = 0;
@@ -147,8 +234,16 @@ public static class Whitespace
 		if (crlf >= lf && crlf >= cr && crlf > 0) return Crlf;
 		if (lf >= cr && lf > 0) return Lf;
 
-		return cr > 0 ? Cr : Environment.NewLine;
+		return cr > 0 ? Cr : null;
 	}
+
+	/// <summary>
+	/// The line ending most of <paramref name="source"/> uses, and the platform's where it has none.
+	/// Taken as text rather than as a document, so a payload that is not a file yet can be asked the
+	/// same question -- which is the question to ask when matching text in it, and never when choosing
+	/// the ending to write, which is the file's layout's to decide.
+	/// </summary>
+	public static string Dominant(string source) => EndingOf(source) ?? Environment.NewLine;
 
 	/// <summary>
 	/// The lines that multi-line literals holding a line ending the rules do not ask for begin on.
@@ -319,9 +414,242 @@ public static class Whitespace
 	private static bool EndsWithBreak(StringBuilder builder) =>
 		builder[^1] is '\n' or '\r';
 
-	private static string? Ending(AnalyzerConfigOptions options)
+	/// <summary>
+	/// How many files beside a new one are read for its layout: enough that one odd file cannot decide for
+	/// a directory, and few enough that starting a file does not read a project.
+	/// </summary>
+	private const int NeighboursRead = 5;
+
+	/// <summary>The .editorconfig keys a layout is made of, which are all a layout reads.</summary>
+	private static readonly string[] LayoutKeys =
+	[
+		"end_of_line",
+		"indent_style",
+		"indent_size",
+		"tab_width",
+		"trim_trailing_whitespace",
+		"insert_final_newline",
+	];
+
+	private static readonly char[] Separators = ['\\', '/'];
+
+	/// <summary>
+	/// The layout of the file at <paramref name="path"/>, from what declares one and then from
+	/// <paramref name="own"/>, which is what the file itself shows. Only a rooted path is asked of the disk
+	/// or of git, since a relative one would be measured from wherever this process happens to be.
+	/// </summary>
+	private static async Task<WhitespaceRules> ResolveAsync(
+		Project project,
+		string? path,
+		SyntaxTree? tree,
+		Observation own,
+		CancellationToken cancellationToken)
 	{
-		if (!options.TryGetValue("end_of_line", out var value)) return null;
+		var rooted = path is { Length: > 0 } && Path.IsPathRooted(path) ? path : null;
+		var declared = Declared(project, rooted, tree);
+
+		// Read only when the file itself has nothing to say, which for a file that exists is almost never.
+		var neighbours = new Lazy<Task<Observation>>(() =>
+			rooted is null ? Task.FromResult(default(Observation)) : NeighboursAsync(project, rooted, cancellationToken));
+
+		var ending = await EndingAsync(declared, rooted, own, neighbours);
+		var indent = await IndentationAsync(declared, own, neighbours);
+
+		return new WhitespaceRules
+		{
+			LineEnding = ending.Value,
+			LineEndingFrom = ending.From,
+			IndentUnit = indent.Value.Unit,
+			IndentSize = indent.Value.Size,
+			IndentFrom = indent.From,
+			TrimTrailingWhitespace = Flag(declared, "trim_trailing_whitespace") ?? false,
+			InsertFinalNewline = Flag(declared, "insert_final_newline") ?? false,
+		};
+	}
+
+	private static async Task<(string Value, LayoutSource From)> EndingAsync(
+		IReadOnlyDictionary<string, string> declared,
+		string? path,
+		Observation own,
+		Lazy<Task<Observation>> neighbours)
+	{
+		if (Ending(declared) is { } configured) return (configured, LayoutSource.EditorConfig);
+		if (path is not null && GitAttributes.LineEndingFor(path) is { } attributed) return (attributed, LayoutSource.GitAttributes);
+		if (own.Ending is { } found) return (found, LayoutSource.File);
+		if ((await neighbours.Value).Ending is { } near) return (near, LayoutSource.Neighbours);
+
+		return (Environment.NewLine, LayoutSource.Default);
+	}
+
+	private static async Task<(Indentation Value, LayoutSource From)> IndentationAsync(
+		IReadOnlyDictionary<string, string> declared,
+		Observation own,
+		Lazy<Task<Observation>> neighbours)
+	{
+		if (Indent(declared) is { } configured) return (configured, LayoutSource.EditorConfig);
+		if (own.Indent is { } found) return (found, LayoutSource.File);
+		if ((await neighbours.Value).Indent is { } near) return (near, LayoutSource.Neighbours);
+
+		return (new Indentation("    ", 4), LayoutSource.Default);
+	}
+
+	/// <summary>
+	/// What .editorconfig says about the file: Roslyn's reading of the files the project was given, and,
+	/// where it was given none covering this path, the files on disk -- which is the difference between a
+	/// project the design-time build has described and one it has not yet.
+	/// </summary>
+	private static IReadOnlyDictionary<string, string> Declared(Project project, string? path, SyntaxTree? tree)
+	{
+		// A tree the project has never seen is answered by its path, which is all a file not yet written has.
+		var asked = tree ?? (path is null ? null : CSharpSyntaxTree.ParseText(string.Empty, path: path));
+		var given = asked is null ? null : project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GetOptions(asked);
+		var declared = new Dictionary<string, string>(StringComparer.Ordinal);
+
+		foreach (var key in LayoutKeys)
+		{
+			if (given is not null && given.TryGetValue(key, out var value)) declared[key] = value;
+		}
+
+		if (path is null || EditorConfigFiles.Given(project, path)) return declared;
+
+		var onDisk = EditorConfigFiles.For(path);
+
+		foreach (var key in LayoutKeys)
+		{
+			if (!declared.ContainsKey(key) && onDisk.TryGetValue(key, out var value)) declared[key] = value;
+		}
+
+		return declared;
+	}
+
+	/// <summary>What a file's text says of its own layout.</summary>
+	private static Observation Observe(SyntaxNode? root, SourceText text) => new(EndingOf(text.ToString()), IndentOf(root, text));
+
+	/// <summary>
+	/// How a file indents, read off its lines: with a tab where more of its indented lines begin with one,
+	/// and otherwise with the step its space-indented lines most often go in by. Null where no line is
+	/// indented, or as many begin with a tab as with a space.
+	/// <para>
+	/// A line inside a multi-line literal is left out, since its whitespace is a string's rather than the
+	/// file's. A line wrapped to line up under the one above goes in by an odd number of spaces, and is
+	/// outvoted by the lines that go in a level at a time.
+	/// </para>
+	/// </summary>
+	private static Indentation? IndentOf(SyntaxNode? root, SourceText text)
+	{
+		var literals = root is null ? [] : MultiLineLiterals(root, text);
+		var steps = new int[9];
+		var tabs = 0;
+		var spaces = 0;
+		var previous = 0;
+
+		foreach (var line in text.Lines)
+		{
+			var content = text.ToString(line.Span);
+
+			if (string.IsNullOrWhiteSpace(content)) continue;
+			if (literals.Any(span => span.Start < line.Start && line.Start < span.End)) continue;
+
+			if (content[0] == '\t')
+			{
+				tabs++;
+				continue;
+			}
+
+			var width = content.Length - content.TrimStart(' ').Length;
+			var step = width - previous;
+
+			previous = width;
+
+			if (width == 0) continue;
+
+			spaces++;
+
+			if (step is > 1 and < 9) steps[step]++;
+		}
+
+		if (tabs == spaces) return null;
+		if (tabs > spaces) return new Indentation("\t", 4);
+
+		var size = steps.Max() == 0 ? 4 : Array.IndexOf(steps, steps.Max());
+
+		return new Indentation(new string(' ', size), size);
+	}
+
+	/// <summary>
+	/// What the files nearest <paramref name="path"/> in its project do, for a file with nothing of its own
+	/// to read: the ending and the indentation most of them use, the nearest breaking a tie. Files the build
+	/// or a designer writes are left out, since how a generator lays out its output says nothing about the
+	/// repository.
+	/// </summary>
+	private static async Task<Observation> NeighboursAsync(Project project, string path, CancellationToken cancellationToken)
+	{
+		var directory = Path.GetDirectoryName(path) ?? string.Empty;
+
+		var nearest = project.Documents
+			.Where(document => document.FilePath is { } file && !SamePath(file, path) && !Generated(file))
+			.OrderByDescending(document => Shared(directory, Path.GetDirectoryName(document.FilePath!) ?? string.Empty))
+			.ThenBy(document => document.FilePath, StringComparer.OrdinalIgnoreCase)
+			.Take(NeighboursRead)
+			.ToArray();
+
+		var endings = new List<string>();
+		var indents = new List<Indentation>();
+
+		foreach (var document in nearest)
+		{
+			var seen = Observe(
+				await document.GetSyntaxRootAsync(cancellationToken),
+				await document.GetTextAsync(cancellationToken));
+
+			if (seen.Ending is { } ending) endings.Add(ending);
+			if (seen.Indent is { } indent) indents.Add(indent);
+		}
+
+		return new Observation(Most(endings), Most(indents));
+	}
+
+	/// <summary>The value most of <paramref name="values"/> are, the earliest breaking a tie.</summary>
+	private static T? Most<T>(IReadOnlyList<T> values)
+		where T : class =>
+		values.GroupBy(value => value).OrderByDescending(group => group.Count()).FirstOrDefault()?.Key;
+
+	/// <summary>How many directories two paths share from the top, which is how near two files are.</summary>
+	private static int Shared(string directory, string other)
+	{
+		var left = directory.Split(Separators, StringSplitOptions.RemoveEmptyEntries);
+		var right = other.Split(Separators, StringSplitOptions.RemoveEmptyEntries);
+		var shared = 0;
+
+		while (shared < left.Length && shared < right.Length
+			&& string.Equals(left[shared], right[shared], StringComparison.OrdinalIgnoreCase))
+		{
+			shared++;
+		}
+
+		return shared;
+	}
+
+	/// <summary>Whether a file is one the build or a designer writes rather than a person.</summary>
+	private static bool Generated(string file)
+	{
+		var name = Path.GetFileName(file);
+
+		var isOutput = file.Split(Separators).Any(segment =>
+			segment.Equals("obj", StringComparison.OrdinalIgnoreCase) || segment.Equals("bin", StringComparison.OrdinalIgnoreCase));
+
+		return isOutput
+			|| name.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)
+			|| name.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase)
+			|| name.EndsWith(".designer.cs", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static bool SamePath(string left, string right) =>
+		string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+
+	private static string? Ending(IReadOnlyDictionary<string, string> declared)
+	{
+		if (!declared.TryGetValue("end_of_line", out var value)) return null;
 
 		return value.Trim().ToLowerInvariant() switch
 		{
@@ -332,31 +660,38 @@ public static class Whitespace
 		};
 	}
 
-	private static bool? Flag(AnalyzerConfigOptions options, string key)
+	private static bool? Flag(IReadOnlyDictionary<string, string> declared, string key)
 	{
-		if (!options.TryGetValue(key, out var value)) return null;
+		if (!declared.TryGetValue(key, out var value)) return null;
 
 		return bool.TryParse(value.Trim(), out var parsed) ? parsed : null;
 	}
 
 	/// <summary>
-	/// One level of indentation: a tab, or as many spaces as indent_size asks for. Four spaces when
-	/// the file says nothing, which is the language's own default and so the likeliest thing a file
-	/// with no .editorconfig already uses.
+	/// How .editorconfig says to indent, or null where it says nothing. indent_style decides between a tab
+	/// and spaces and indent_size how many columns a level is; an indent_size with no indent_style means
+	/// spaces, which is how Roslyn's formatter reads it, since spaces are its own default.
 	/// </summary>
-	private static string Indent(AnalyzerConfigOptions options)
+	private static Indentation? Indent(IReadOnlyDictionary<string, string> declared)
 	{
-		var tabs = options.TryGetValue("indent_style", out var style)
-			&& style.Trim().Equals("tab", StringComparison.OrdinalIgnoreCase);
+		var style = declared.TryGetValue("indent_style", out var written) ? written.Trim().ToLowerInvariant() : null;
+		var size = Columns(declared, "indent_size");
 
-		if (tabs) return "\t";
+		if (style == "tab") return new Indentation("\t", size ?? Columns(declared, "tab_width") ?? 4);
+		if (style == "space" || size is not null) return new Indentation(new string(' ', size ?? 4), size ?? 4);
 
-		var width = options.TryGetValue("indent_size", out var size)
-			&& int.TryParse(size.Trim(), out var parsed)
-			&& parsed is > 0 and <= 16
-				? parsed
-				: 4;
-
-		return new string(' ', width);
+		return null;
 	}
+
+	/// <summary>A width .editorconfig gives, or null where it gives none a formatter could use.</summary>
+	private static int? Columns(IReadOnlyDictionary<string, string> declared, string key) =>
+		declared.TryGetValue(key, out var value) && int.TryParse(value.Trim(), out var columns) && columns is > 0 and <= 16
+			? columns
+			: null;
+
+	/// <summary>What a file's text says of its own layout, each part null where the text has nothing to go on.</summary>
+	private readonly record struct Observation(string? Ending, Indentation? Indent);
+
+	/// <summary>One level of indentation: what is written, and how many columns it is.</summary>
+	private sealed record Indentation(string Unit, int Size);
 }

@@ -182,12 +182,13 @@ public sealed class OverreachReportTests
 	}
 
 	/// <summary>
-	/// A body edit in a solution with no .editorconfig anywhere above it. The formatter falls back to its
-	/// own four spaces in a file indented with tabs, and reaches the indentation in front of the next
-	/// member as well as the one it wrote -- so a member the edit never named is re-indented (#218).
+	/// A body edit in a solution with no .editorconfig anywhere above it. Roslyn's formatter defaults to four
+	/// spaces, and it sets the indentation in front of the next member as well as the code it wrote -- so told
+	/// nothing, it re-indented a member in this tab-indented file that the edit never named. Told the file's own
+	/// layout, it leaves the neighbour where it was, and there is nothing for the result to name.
 	/// </summary>
 	[Test]
-	public async Task Names_the_neighbour_a_body_edit_reindented_where_nothing_says_how_to_indent()
+	public async Task Leaves_the_neighbour_of_a_body_edit_indented_as_the_file_is_where_nothing_says_how()
 	{
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -197,8 +198,10 @@ public sealed class OverreachReportTests
 		var text = await File.ReadAllTextAsync(
 			fixture.Path("Simple", "Core", "Calculator.cs"), TestContext.Current!.Execution.CancellationToken);
 
-		text.ShouldContain("\r\n    private static int Twice", Case.Sensitive);
-		Reached(result.Notices, "Calculator.cs").ShouldStartWith("Calculator.cs: line 9 changed.", Case.Sensitive);
+		text.ShouldContain("\r\n\tpublic static int Multiply(int left, int right) => right * left;\r\n", Case.Sensitive);
+		text.ShouldContain("\r\n\tprivate static int Twice", Case.Sensitive);
+		text.ShouldNotContain("    ", Case.Sensitive);
+		Reached(result.Notices, "Calculator.cs").ShouldBeNull();
 	}
 
 	/// <summary>

@@ -46,12 +46,10 @@ internal static class EditImports
 		var document = written.Document;
 		var model = await document.GetSemanticModelAsync(cancellationToken);
 		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
-		var text = await document.GetTextAsync(cancellationToken);
 
 		if (model is null || tree is null) return written;
 
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
-		var style = UsingStyle.For(document.Project, tree, root, rules.LineEnding);
+		var style = UsingStyle.For(document.Project, tree, root, written.Rules.LineEnding);
 
 		var insertion = UsingDirectives.Ensure(root, model, request.Usings, style, cancellationToken);
 
@@ -105,7 +103,7 @@ internal static class EditImports
 
 		if (!imports.AnythingToAdd) return (solution, imports);
 
-		var added = await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, cancellationToken);
+		var added = await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, written.Rules, cancellationToken);
 
 		return (added, imports);
 	}

@@ -104,7 +104,13 @@ public static class ReplacePatternService
 
 			if (matched.Count == 0) continue;
 
-			var rewrites = RewriteEngine.Run(compilation, matched, Importer(project, compilation, bound.Usings, cancellationToken), cancellationToken);
+			// Each file's layout, read before anything is rewritten, for the imports the rewrite adds and for
+			// the formatting after it.
+			var layouts = new Dictionary<SyntaxTree, WhitespaceRules>();
+
+			foreach (var (tree, document) in documentOf) layouts[tree] = await Whitespace.RulesForAsync(document, cancellationToken);
+
+			var rewrites = RewriteEngine.Run(compilation, matched, Importer(project, compilation, bound.Usings, layouts, cancellationToken), cancellationToken);
 
 			foreach (var rewrite in rewrites)
 			{
@@ -132,7 +138,7 @@ public static class ReplacePatternService
 				var original = (CompilationUnitSyntax)await rewrite.Original.GetRootAsync(cancellationToken);
 				var written = rewrite.Sites.Where(outcome => outcome.State == SiteState.Rewritten).Select(outcome => outcome.Site.Node.FullSpan);
 
-				solution = await FormattedAsync(solution, document.Id, rewrite.Root, cancellationToken);
+				solution = await FormattedAsync(solution, document.Id, rewrite.Root, layouts[rewrite.Original], cancellationToken);
 				asked = asked.And(document, written.Append(UsingDirectives.Region(original)));
 				changedProjects.Add(project.Name);
 			}
@@ -216,15 +222,14 @@ public static class ReplacePatternService
 		Project project,
 		CSharpCompilation compilation,
 		IReadOnlyList<string> usings,
+		IReadOnlyDictionary<SyntaxTree, WhitespaceRules> layouts,
 		CancellationToken cancellationToken)
 	{
 		if (usings.Count == 0) return null;
 
 		return (tree, rewritten) =>
 		{
-			var text = tree.GetText(cancellationToken);
-			var rules = Whitespace.RulesFor(project, tree, text);
-			var style = UsingStyle.For(project, tree, (CompilationUnitSyntax)tree.GetRoot(cancellationToken), rules.LineEnding);
+			var style = UsingStyle.For(project, tree, (CompilationUnitSyntax)tree.GetRoot(cancellationToken), layouts[tree].LineEnding);
 
 			return UsingDirectives.Ensure(rewritten, compilation.GetSemanticModel(tree), usings, style, cancellationToken).Root;
 		};
@@ -235,17 +240,18 @@ public static class ReplacePatternService
 	/// formatter over each replacement, then the whitespace it leaves alone over the same spans, the
 	/// same text written to every document linked to the file.
 	/// </summary>
-	private static async Task<Solution> FormattedAsync(Solution solution, DocumentId id, SyntaxNode rewritten, CancellationToken cancellationToken)
+	private static async Task<Solution> FormattedAsync(Solution solution, DocumentId id, SyntaxNode rewritten, WhitespaceRules rules, CancellationToken cancellationToken)
 	{
 		solution = solution.WithDocumentSyntaxRoot(id, rewritten);
 
 		if (solution.GetDocument(id) is not { } document) return solution;
 
-		// Each replacement's own span, not its full span: the indentation in front of it is the caller's,
-		// and a formatter given the full span re-indents the line to its defaults where a repository has
-		// no .editorconfig to say otherwise.
+		// Each replacement's own span, not its full span: the indentation in front of it belongs to the line
+		// the site sat on, which the rewrite did not write, and a formatter given the full span re-indents
+		// that line as well.
 		var written = (await document.GetSyntaxRootAsync(cancellationToken))!.GetAnnotatedNodes(RewriteEngine.Replaced).Select(node => node.Span);
-		var formatted = await Formatter.FormatAsync(document, written, cancellationToken: cancellationToken);
+		var options = await Whitespace.FormattingOptionsAsync(document, rules, cancellationToken);
+		var formatted = await Formatter.FormatAsync(document, written, options, cancellationToken);
 		var root = await formatted.GetSyntaxRootAsync(cancellationToken);
 		var tree = await formatted.GetSyntaxTreeAsync(cancellationToken);
 		var text = await formatted.GetTextAsync(cancellationToken);
@@ -253,7 +259,7 @@ public static class ReplacePatternService
 		if (root is null || tree is null) return formatted.Project.Solution;
 
 		var spans = root.GetAnnotatedNodes(RewriteEngine.Replaced).Select(node => node.FullSpan).ToArray();
-		var final = Whitespace.Apply(root, text, Whitespace.RulesFor(formatted.Project, tree, text), spans);
+		var final = Whitespace.Apply(root, text, rules, spans);
 
 		solution = formatted.Project.Solution;
 

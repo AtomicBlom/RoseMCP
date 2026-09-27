@@ -135,6 +135,41 @@ public sealed class FormatServiceTests
 	}
 
 	/// <summary>
+	/// With no .editorconfig anywhere, a tab-indented file is checked against the tabs it already uses rather
+	/// than re-indented into Roslyn's four spaces -- and the result says so, because dotnet format has no such
+	/// fallback. It would re-indent the file, and a bare "already formatted" is then the answer CI contradicts.
+	/// </summary>
+	[Test]
+	public async Task Says_when_nothing_declares_the_indentation_it_checked_against()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Simple", "Core", "Calculator.cs");
+		var before = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		var result = await FormatAsync(session, [path]);
+		var notices = string.Join(" ", result.Notices);
+
+		result.ChangedFiles.ShouldBeEmpty();
+		notices.ShouldContain("Calculator.cs: no .editorconfig says how to indent", Case.Sensitive);
+		notices.ShouldContain("the tabs already there", Case.Sensitive);
+		(await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken)).ShouldBe(before);
+	}
+
+	/// <summary>Where an .editorconfig does say, dotnet format and this agree, and there is nothing to add.</summary>
+	[Test]
+	public async Task Says_nothing_about_indentation_an_editorconfig_declares()
+	{
+		using var fixture = Prepare(out var path);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await FormatAsync(session, [path]);
+
+		string.Join(" ", result.Notices).ShouldNotContain("no .editorconfig says how to indent", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// The change this tool is called for most often is the one a diff cannot render.
 	/// <para>
 	/// A unified diff compares the content of lines, and a terminator is not content -- so rewriting

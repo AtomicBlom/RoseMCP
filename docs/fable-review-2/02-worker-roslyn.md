@@ -158,31 +158,10 @@ conventions.
   token's depth relative to the inserted node's first token. One implementation, applied to member,
   body, parameter list, attribute and doc comment alike.
 
-### WRK-03 Five independent answers to "what is this file's indent and line ending"
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `IndentAt` at `MemberEditService.cs:791`, `DeclarationEditService.cs:248`,
-  `ChangeSignatureService.cs:838`, `MoveMemberService.cs:382`; `BodyEdit.IndentOf:489`;
-  `MoveTypeService.LineEnding`; `Whitespace.Dominant(text)` used as the ending at
-  `MemberEditService.cs:158,313,916`, `DeclarationEditService.cs:153`, `MoveMemberService.cs:276,278,292`,
-  `BodyEdit.cs:161`, while `rules.LineEnding` (editorconfig first) is used at `MemberEditService.cs:434`,
-  `EnumMemberEdit.cs:49`, `AddUsingService.cs:45`, `EditImports.cs:53`, `ResolvedImports.cs:143`;
-  `MoveMemberService.cs:265` hardcodes `"\t"` as the indent unit
-- **Untouched by card 9**, and the split-outs made it slightly wider: `EnumMemberEdit` and `EditImports`
-  each took a copy of the `rules.LineEnding` policy with them. Four byte-identical `IndentAt` methods,
-  still four.
-- **What:** Four byte-identical `IndentAt` methods; two line-ending policies inside one service
-  (`ReplaceAsync` obeys the file's dominant ending, `AddAsync` obeys `.editorconfig`); a third policy
-  in `MoveTypeService` that reads line 0 only; and a spaces repository receives a tab from
-  `rose_move_member` because the indent unit is a literal rather than `rules.IndentUnit`.
-  `rose_find_references` on `Whitespace.RulesFor` shows 15 call sites across 9 methods, each building
-  its own `WhitespaceRules` for the same document.
-- **Why it matters:** `end_of_line = crlf` in `.editorconfig` on a mixed-ending file is honoured by
-  `rose_add_member` and ignored by `rose_replace_member`. Nothing reports the disagreement because both
-  outcomes pass `dotnet format` on a consistent file and fail it on an inconsistent one.
-- **Suggested change:** One `Placement` value (indent, indent unit, line ending, `WhitespaceRules`)
-  computed once per edit by `Whitespace.PlacementAt(Document, position)`, passed down the pipeline
-  from WRK-01. Delete the four `IndentAt`s and `MoveTypeService.LineEnding`.
+### ~~WRK-03 Five independent answers to "what is this file's indent and line ending"~~
+**#361.** Each writing tool worked out a file's indentation and line ending for itself, and the answers
+disagreed with one another and with .editorconfig. A write decides one layout per file, and every pass
+takes it, the formatter included.
 
 ### WRK-04 Two symbol resolvers, and the primary one is lossy
 - **Severity:** High
@@ -424,28 +403,11 @@ degraded. Each analyzer directory has a context of its own.
   `AnalyzerReferences.Generators(reference, language, onFailure)`; one `UnresolvedNames` type with the
   three sets named for what they mean; delete the dead parameters.
 
-### WRK-19 `Whitespace.RulesFor` falls back to Roslyn defaults and to the payload's own ending, then `rose_format` certifies the result
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `Whitespace.cs:26-37` (`Dominant(text)` fallback), `:348-361` (four spaces when nothing
-  says), `FormatService.cs:104-114`
-- **What:** With no `AnalyzerConfigOptions` for the document -- a project whose design-time build did
-  not attach `.editorconfig`, or a document in a project new to the workspace -- the indent is four
-  spaces and the ending is whatever the *payload* mostly uses, which for a new file is the caller's
-  LF. `rose_format` then reports "Every file was already formatted" against the same empty rules
-  (#218). #316 closed one way into that state, a tracked `.editorconfig` that vanished and returned
-  unnoticed, by reloading when it comes back. The fallback itself is untouched and #218 is open.
-  It reaches past the edit, too, and not only in new files. The formatter sets the whitespace in
-  front of the next token, so in a tab-indented file with nothing saying otherwise, a member edit
-  re-indents the member after it to four spaces and a deletion re-indents the whole type. #333's
-  guard found it on the existing edit tests, and `OverreachReportTests` pins it.
-- **Why it matters:** The writing tool and the checking tool agree with each other and disagree with
-  `dotnet format`, and the caller has done everything the documentation asked.
-- **Suggested change:** Fall back in order: analyzer config; a sibling `.cs` document in the same
-  project (`Dominant` of *its* text, indent read from *its* first indented line); the nearest
-  `.editorconfig` on disk parsed with `Microsoft.CodeAnalysis.AnalyzerConfig.Parse` (public). Never
-  read the ending of a new file from its own payload. When every source is silent, say so in a notice
-  instead of "already formatted".
+### ~~WRK-19 `Whitespace.RulesFor` falls back to Roslyn defaults and to the payload's own ending, then `rose_format` certifies the result~~
+**#361.** Where Roslyn had no .editorconfig for a file, a write used four spaces and the payload's own
+ending. That re-indented neighbours and put LF into CRLF repositories, and the format check agreed. The
+layout comes from what declares it, on disk or in .gitattributes, or else from the file or the files
+beside it, and the format check says when nothing declared the indentation it checked against.
 
 ### WRK-20 Status and generated-code lookups run every project's generators
 - **Severity:** Medium

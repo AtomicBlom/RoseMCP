@@ -247,6 +247,45 @@ public sealed class BodyEditTests
 	}
 
 	/// <summary>
+	/// A match that takes whole comments along with the code under them cuts no delimiter, whatever it
+	/// crosses: every one it replaces is in find. It is how a comment and the statement it describes are
+	/// rewritten together, which is the commonest reason to touch a comment at all -- a single line, a
+	/// run of them, or a run from its second line.
+	/// </summary>
+	[Test]
+	[Arguments(
+		"{\r\n\t// Takes one.\r\n\tTake(1);\r\n\treturn;\r\n}",
+		"// Takes one.\n\tTake(1);",
+		"// Takes two.\n\tTake(2);",
+		"{\r\n\t// Takes two.\r\n\tTake(2);\r\n\treturn;\r\n}")]
+	[Arguments(
+		"{\r\n\t// Rule one\r\n\t// and two.\r\n\tTake(1);\r\n\treturn;\r\n}",
+		"// Rule one\n\t// and two.\n\tTake(1);",
+		"// Rule three.\n\tTake(3);",
+		"{\r\n\t// Rule three.\r\n\tTake(3);\r\n\treturn;\r\n}")]
+	[Arguments(
+		"{\r\n\t// Rule one\r\n\t// and two.\r\n\tTake(1);\r\n\treturn;\r\n}",
+		"// and two.\n\tTake(1);",
+		"Take(2);",
+		"{\r\n\t// Rule one\r\n\tTake(2);\r\n\treturn;\r\n}")]
+	public void Rewrites_whole_comments_with_the_code_under_them(string body, string find, string replace, string expected)
+	{
+		BodyEdit.Anchored(body, find, replace, includeTrivia: true).ShouldBe(expected);
+	}
+
+	/// <summary>
+	/// The same for a literal: taken whole, from its opening quote, with the code after it, is code the
+	/// caller wrote out delimiter and all.
+	/// </summary>
+	[Test]
+	public void Rewrites_a_whole_literal_with_the_code_after_it()
+	{
+		var body = BodyEdit.Anchored("{\r\n\treturn \"total\";\r\n}", "\"total\";", "\"count\";", includeTrivia: true);
+
+		body.ShouldBe("{\r\n\treturn \"count\";\r\n}");
+	}
+
+	/// <summary>
 	/// A replacement whose lines are written partly flush and partly at the destination's own
 	/// indentation has no reading that is right for all of them, and the fragment rule correctly
 	/// declines to call it written-for-the-destination -- so the flush reading is used and every line

@@ -103,9 +103,9 @@ public sealed class MemberEditBodyTests
 				Kind = MemberEditKind.ReplaceBody,
 				Symbol = "Library.Prose.Label",
 
-				// The closing quote and the semicolon after it: half inside the literal, half code.
-				Find = "\"total\";",
-				Replace = "\"count\";",
+				// The word, its closing quote and the semicolon after it: half inside the literal, half code.
+				Find = "total\";",
+				Replace = "count\";",
 				IncludeTrivia = true,
 			})).OfExactType();
 

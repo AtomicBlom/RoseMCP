@@ -147,9 +147,9 @@ public static class ToolDescriptions
 			+ "which is what a search through a large type needs.";
 
 	public const string IncludeTriviaArgument =
-		"Match find against the body's text rather than its tokens, so it can lie inside a // comment or "
-			+ "a string. Spacing then matters and the replacement is written exactly as given. A match "
-			+ "half inside a comment or string and half in the code is refused.";
+		"Match the body's text, not its tokens, so find can lie inside a // comment or string, or take "
+			+ "whole comments with the code under them. Spacing matters; replace is written as given. A match "
+			+ "cutting into a comment or string and on into code is refused.";
 
 	public const string AttributeParameterArgument =
 		"Put the attribute on this parameter of the named member, by name, rather than on the member "

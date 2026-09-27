@@ -140,19 +140,19 @@ public sealed class OverreachTests
 	}
 
 	/// <summary>
-	/// A documented member put in front of another begins with the same line as the member it pushes
-	/// down, and the line map pairs the two: the insertion is reported a line lower, inside a
-	/// documentation comment the edit never touched. It is the same text wherever the run sits, so it is
-	/// the place it slides back to that the edit asked for.
+	/// A documented member added in front of another documented member. Both begin with the same
+	/// <c>/// &lt;summary&gt;</c> line, so the diff pairs the old one with the new member's and shows the
+	/// insertion a line further down than it went -- past a line that is not blank, so the allowance for
+	/// blank lines does not reach it. Where the diff draws an insertion among identical lines says nothing
+	/// about what the edit did, whichever lines they are.
 	/// </summary>
 	[Test]
-	public void Reaches_an_insertion_across_a_line_identical_to_its_last()
+	public void Reaches_an_insertion_the_diff_slides_past_lines_it_begins_with()
 	{
-		var before = "class C\n{\n\tint A { get; }\n\n\t/// <summary>\n\t/// B.\n\t/// </summary>\n\tvoid B() { }\n}\n";
+		var before = "class C\n{\n\tvoid A() { }\n\n\t/// <summary>B.</summary>\n\t/// <remarks/>\n\tvoid B() { }\n}\n";
 		var place = new TextSpan(before.IndexOf("\n\n", StringComparison.Ordinal) + 1, 0);
-
-		var after = "class C\n{\n\tint A { get; }\n\n\t/// <summary>\n\t/// X.\n\t/// </summary>\n\tvoid X() { }\n\n"
-			+ "\t/// <summary>\n\t/// B.\n\t/// </summary>\n\tvoid B() { }\n}\n";
+		var after = "class C\n{\n\tvoid A() { }\n\n\t/// <summary>B.</summary>\n\t/// <remarks/>\n\tvoid X() { }\n\n"
+			+ "\t/// <summary>B.</summary>\n\t/// <remarks/>\n\tvoid B() { }\n}\n";
 
 		var reach = Overreach.Of(Text(before), Text(after), [place]);
 
@@ -160,39 +160,36 @@ public sealed class OverreachTests
 	}
 
 	/// <summary>
-	/// The same pairing from the other side: deleting a documented member from in front of another leaves
-	/// one of their two identical first lines, and the line map keeps the first -- so the deletion is
-	/// reported as the next member's, a line further down than anything the edit took out.
+	/// The same slide the other way: a documented member deleted in front of another, where the diff keeps
+	/// the deleted member's comment lines and takes the survivor's instead.
 	/// </summary>
 	[Test]
-	public void Reaches_a_deletion_across_a_line_identical_to_its_far_end()
+	public void Reaches_a_deletion_the_diff_slides_past_lines_it_begins_with()
 	{
-		var before = "class C\n{\n\tint A { get; }\n\n\t/// <summary>\n\t/// B.\n\t/// </summary>\n\tvoid B() { }\n\n"
-			+ "\t/// <summary>\n\t/// D.\n\t/// </summary>\n\tvoid D() { }\n}\n";
-
+		var before = "class C\n{\n\tvoid A() { }\n\n\t/// <summary>B.</summary>\n\tvoid X() { }\n\n"
+			+ "\t/// <summary>B.</summary>\n\tvoid B() { }\n}\n";
 		var member = TextSpan.FromBounds(
 			before.IndexOf("\n\n", StringComparison.Ordinal) + 1,
-			before.IndexOf("void B() { }\n", StringComparison.Ordinal) + "void B() { }\n".Length);
+			before.IndexOf("\n\n\t/// <summary>B.</summary>\n\tvoid B", StringComparison.Ordinal) + 1);
 
-		var after = "class C\n{\n\tint A { get; }\n\n\t/// <summary>\n\t/// D.\n\t/// </summary>\n\tvoid D() { }\n}\n";
-
-		var reach = Overreach.Of(Text(before), Text(after), [member]);
+		var reach = Overreach.Of(
+			Text(before), Text("class C\n{\n\tvoid A() { }\n\n\t/// <summary>B.</summary>\n\tvoid B() { }\n}\n"), [member]);
 
 		reach.Any.ShouldBeFalse();
 	}
 
 	/// <summary>
-	/// Sliding is not a licence. A run that went in beside identical lines far from anything asked is
-	/// still named, wherever it slides to.
+	/// What the slide must not excuse: an insertion that can only be drawn against lines nothing asked
+	/// for is still named, however many identical lines it could slide across.
 	/// </summary>
 	[Test]
-	public void Names_an_insertion_that_slides_nowhere_asked()
+	public void Still_names_an_insertion_no_slide_brings_to_what_was_asked()
 	{
-		var before = "first\nsecond\n\n\nthird\nfourth\n";
+		var before = "first\nsame\nsame\nlast\nasked\n";
 
-		var reach = Overreach.Of(Text(before), Text("first\nsecond\n\n\n\nthird\nfourth\n"), [Line(before, "fourth")]);
+		var reach = Overreach.Of(Text(before), Text("first\nsame\nsame\nsame\nlast\nasked\n"), [Line(before, "asked")]);
 
-		reach.Insertions.ShouldNotBeEmpty();
+		reach.Insertions.ShouldBe([(3, 1)]);
 	}
 
 	/// <summary>

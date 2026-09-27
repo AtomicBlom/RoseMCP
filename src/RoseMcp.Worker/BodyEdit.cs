@@ -254,13 +254,21 @@ public static class BodyEdit
 	}
 
 	/// <summary>
-	/// Refuses a match that covers part of a comment or a string and part of the code around it.
+	/// Refuses a match that cuts a comment or a string in two and takes part of the code around it.
 	/// <para>
 	/// Such a match is always a mistake and never a cheap one: replacing it rewrites a delimiter, so
 	/// what comes out is either unparseable -- caught, but after the caller has been told the anchor
 	/// was found -- or parses as something else entirely, with the rest of the body swallowed into a
-	/// string. Contained in one comment or one literal, or clear of every one of them, are the two
-	/// shapes that mean what the caller thinks they mean.
+	/// string. Contained in one comment or one literal, or with neither end inside one, are the shapes
+	/// that mean what the caller thinks they mean.
+	/// </para>
+	/// <para>
+	/// The second of those takes whole comments and literals along with the code around them, which is
+	/// how a comment and the statement it describes are rewritten in one edit -- the commonest reason to
+	/// touch a comment at all. Every delimiter such a match replaces is one the caller wrote in find, so
+	/// nothing is rewritten that they did not see. What decides it is where each end falls against one
+	/// comment line or one literal, not against a run of <c>//</c> lines: an end on the <c>//</c> of a
+	/// run's second line cuts nothing.
 	/// </para>
 	/// <para>
 	/// A match inside a run of <c>//</c> lines that crosses a line also crosses the delimiter of every
@@ -277,24 +285,21 @@ public static class BodyEdit
 	{
 		var end = start + length;
 
-		foreach (var (from, to, what, lineComments) in Protected(body))
+		bool Cuts(TextSpan piece) => (piece.Start < start && start < piece.End) || (piece.Start < end && end < piece.End);
+
+		var cut = Protected(body).FirstOrDefault(text => text.Pieces.Any(Cuts));
+		if (cut is null) return;
+
+		var contained = start >= cut.From && end <= cut.To;
+		if (!contained)
 		{
-			var overlaps = start < to && from < end;
-			if (!overlaps) continue;
-
-			var contained = start >= from && end <= to;
-			if (!contained)
-			{
-				throw new ArgumentException(
-					$"The match covers part of {what} and part of the code around it, so replacing it would rewrite a "
-						+ "delimiter rather than the text inside one. Anchor entirely inside it, or entirely outside it.");
-			}
-
-			var crossesLines = body.AsSpan(start, length).Contains('\n');
-			if (lineComments && crossesLines) RequireCommentLines(replacement);
-
-			return;
+			throw new ArgumentException(
+				$"The match covers part of {cut.What} and part of the code around it, so replacing it would rewrite a "
+					+ "delimiter rather than the text inside one. Anchor entirely inside it, or take the whole of it.");
 		}
+
+		var crossesLines = body.AsSpan(start, length).Contains('\n');
+		if (cut.LineComments && crossesLines) RequireCommentLines(replacement);
 	}
 
 	/// <summary>
@@ -316,27 +321,27 @@ public static class BodyEdit
 	}
 
 	/// <summary>
-	/// The spans of the body whose content is text rather than code: every comment, and every string
+	/// The stretches of the body whose content is text rather than code: every comment, and every string
 	/// or character literal including the pieces of an interpolated one.
 	/// <para>
-	/// A run of <c>//</c> comments on consecutive lines is one span rather than one per line, and is
+	/// A run of <c>//</c> comments on consecutive lines is one stretch rather than one per line, and is
 	/// marked as such. Roslyn makes each line its own trivia, but to anybody reading the file the run is
-	/// one comment, and a comment several lines long is the ordinary shape of one here -- so a span per
+	/// one comment, and a comment several lines long is the ordinary shape of one here -- so a stretch per
 	/// line put every match crossing a line across a delimiter, refused it, and advised anchoring inside
 	/// the comment, which no such match can do. A blank line ends a run, and so does a token or any other
 	/// trivia, because those separate two comments for a reader as well.
 	/// </para>
 	/// </summary>
-	private static List<(int From, int To, string What, bool LineComments)> Protected(string body)
+	private static List<TextStretch> Protected(string body)
 	{
-		var spans = new List<(int From, int To, string What, bool LineComments)>();
-		(int From, int To)? run = null;
+		var stretches = new List<TextStretch>();
+		var run = new List<TextSpan>();
 		var breaks = 0;
 
 		void Close()
 		{
-			if (run is { } ended) spans.Add((ended.From, ended.To, "a comment", true));
-			run = null;
+			if (run.Count > 0) stretches.Add(new TextStretch(run[0].Start, run[^1].End, "a comment", true, [.. run]));
+			run.Clear();
 		}
 
 		void Take(SyntaxTriviaList trivia)
@@ -345,10 +350,10 @@ public static class BodyEdit
 			{
 				if (piece.IsKind(SyntaxKind.SingleLineCommentTrivia))
 				{
-					var continues = run is not null && breaks == 1;
+					var continues = run.Count > 0 && breaks == 1;
 					if (!continues) Close();
 
-					run = (run?.From ?? piece.SpanStart, piece.Span.End);
+					run.Add(piece.Span);
 					breaks = 0;
 					continue;
 				}
@@ -362,7 +367,7 @@ public static class BodyEdit
 				}
 
 				Close();
-				if (MemberSyntax.IsComment(piece)) spans.Add((piece.SpanStart, piece.Span.End, "a comment", false));
+				if (MemberSyntax.IsComment(piece)) stretches.Add(TextStretch.Of(piece.Span, "a comment"));
 			}
 		}
 
@@ -380,14 +385,30 @@ public static class BodyEdit
 				or SyntaxKind.CharacterLiteralToken
 				or SyntaxKind.InterpolatedStringTextToken;
 
-			if (literal) spans.Add((token.SpanStart, token.Span.End, "a string", false));
+			if (literal) stretches.Add(TextStretch.Of(token.Span, "a string"));
 
 			Take(token.TrailingTrivia);
 		}
 
 		Close();
 
-		return spans;
+		return stretches;
+	}
+
+	/// <summary>
+	/// A stretch of the body whose content is text rather than code, and the pieces it is made of: the
+	/// one comment or literal it is, or each line of a run of <c>//</c> comments. A match may end on the
+	/// edge of any piece without cutting anything, which is why the pieces are kept beside the whole.
+	/// </summary>
+	/// <param name="From">Where the stretch starts.</param>
+	/// <param name="To">Where it ends.</param>
+	/// <param name="What">What it is, for a refusal to name.</param>
+	/// <param name="LineComments">That it is a run of <c>//</c> lines, whose delimiters a replacement has to keep.</param>
+	/// <param name="Pieces">The comments or the literal it is made of.</param>
+	private sealed record TextStretch(int From, int To, string What, bool LineComments, IReadOnlyList<TextSpan> Pieces)
+	{
+		/// <summary>A stretch that is one comment or one literal.</summary>
+		public static TextStretch Of(TextSpan span, string what) => new(span.Start, span.End, what, false, [span]);
 	}
 
 	/// <summary>

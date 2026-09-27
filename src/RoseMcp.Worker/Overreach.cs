@@ -28,6 +28,13 @@ namespace RoseMcp.Worker;
 /// the old one is arbitrary, so an edit that adds or drops the blank line between itself and a
 /// neighbour is the same edit whichever one the diff picks.
 /// </para>
+/// <para>
+/// The same is true of identical lines that are not blank. A run of lines that went in or came out with
+/// nothing replacing them, beside a line the same as one at its far end, can be drawn in several places
+/// that are all the same edit, and the diff picks whichever it paired first -- so the run is asked for
+/// when any of those places is. A documented member added or deleted in front of another documented
+/// member is the ordinary case: both begin with the same <c>/// &lt;summary&gt;</c> line.
+/// </para>
 /// </summary>
 public sealed class Overreach
 {
@@ -115,7 +122,9 @@ public sealed class Overreach
 			var removed = Enumerable.Range(previousOld + 1, old - previousOld - 1).ToArray();
 			var added = nextNew - previousNew - 1;
 
-			overreaching.AddRange(removed.Where(line => !near[line]).Select(line => line + 1));
+			var slidToAsked = removed.Length > 0 && added == 0 && RemovalSlides(removed[0], removed[^1], previousNew, map, lines, near);
+
+			if (!slidToAsked) overreaching.AddRange(removed.Where(line => !near[line]).Select(line => line + 1));
 
 			// A hunk that removed lines rewrote them, and the lines that went in are what they became: the
 			// removed ones are named above wherever nothing asked for them, and counting what replaced them
@@ -123,13 +132,85 @@ public sealed class Overreach
 			// insertion in their own right.
 			var intoAskedGap = Enumerable.Range(previousOld + 1, old - previousOld).Any(gap => insertable[gap]);
 
-			if (added > 0 && removed.Length == 0 && !intoAskedGap) insertions.Add((previousOld + 1, added));
+			var unasked = added > 0 && removed.Length == 0 && !intoAskedGap
+				&& !InsertionSlides(old, previousNew + 1, nextNew - 1, map, after.Lines, insertable);
+
+			if (unasked) insertions.Add((previousOld + 1, added));
 
 			previousOld = old;
 			previousNew = nextNew;
 		}
 
 		return new Overreach(overreaching, insertions);
+	}
+
+	/// <summary>
+	/// Whether lines that went in at <paramref name="gap"/> could as well be drawn at a gap that takes an
+	/// insertion.
+	/// <para>
+	/// A diff draws a run of new lines among identical ones wherever it paired them first, and it pairs a
+	/// file's matching opening lines before anything else -- so a member that begins with the same
+	/// <c>/// &lt;summary&gt;</c> line as the one it goes in front of is always drawn a line further down
+	/// than it went, past a line nothing asked for. Every position the run can slide to is the same edit:
+	/// one step up is possible when the line above the run is the run's own last line, one step down when
+	/// the line below it is the run's first.
+	/// </para>
+	/// </summary>
+	/// <param name="gap">The gap in the old file the run is drawn at.</param>
+	/// <param name="first">The run's first line in the new file.</param>
+	/// <param name="last">The run's last line in the new file.</param>
+	/// <param name="map">Where each old line went.</param>
+	/// <param name="updated">The lines of the new file.</param>
+	/// <param name="insertable">Which gaps take an insertion.</param>
+	private static bool InsertionSlides(int gap, int first, int last, int?[] map, TextLineCollection updated, bool[] insertable)
+	{
+		string Line(int index) => updated[index].ToString();
+
+		for (var step = 1; gap - step >= 0 && map[gap - step] == first - step; step++)
+		{
+			if (Line(first - step) != Line(last - step + 1)) break;
+			if (insertable[gap - step]) return true;
+		}
+
+		for (var step = 1; gap + step - 1 < map.Length && map[gap + step - 1] == last + step; step++)
+		{
+			if (Line(last + step) != Line(first + step - 1)) break;
+			if (insertable[gap + step]) return true;
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// Whether the run of old lines from <paramref name="first"/> to <paramref name="last"/>, which went
+	/// with nothing replacing them, could as well be drawn as lines that were all asked for: the same slide
+	/// as <see cref="InsertionSlides"/>, for a member deleted in front of one that begins the way it did.
+	/// </summary>
+	/// <param name="first">The run's first line in the old file.</param>
+	/// <param name="last">The run's last line in the old file.</param>
+	/// <param name="previousNew">The line of the new file the run follows, or -1 at the top.</param>
+	/// <param name="map">Where each old line went.</param>
+	/// <param name="lines">The lines of the old file.</param>
+	/// <param name="near">Which old lines were asked for, blank lines beside them included.</param>
+	private static bool RemovalSlides(int first, int last, int previousNew, int?[] map, TextLineCollection lines, bool[] near)
+	{
+		string Line(int index) => lines[index].ToString();
+
+		bool Asked(int from) => Enumerable.Range(from, last - first + 1).All(line => near[line]);
+
+		for (var step = 1; first - step >= 0 && map[first - step] == previousNew - step + 1; step++)
+		{
+			if (Line(first - step) != Line(last - step + 1)) break;
+			if (Asked(first - step)) return true;
+		}
+
+		for (var step = 1; last + step < map.Length && map[last + step] == previousNew + step; step++)
+		{
+			if (Line(last + step) != Line(first + step - 1)) break;
+			if (Asked(first + step)) return true;
+		}
+
+		return false;
 	}
 
 	/// <summary>

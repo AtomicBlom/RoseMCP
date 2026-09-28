@@ -37,6 +37,7 @@ so the final pull request copies this list rather than reconstructing it.
 | #334 | #342, #344 |
 | #340 | #356 |
 | #341 | #352 |
+| #359 | #366 |
 
 **Confirm before naming:** #335 is #218's shape, a project new to the workspace formatted without its
 `.editorconfig`, and #361's reading of the `.editorconfig` on disk should cover it.

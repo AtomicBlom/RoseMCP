@@ -39,6 +39,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 9 | WRK-01 | #275, #276, #278 |
 | 8 (part) | AGT-17 (the overreach half) | #333 |
 | 8 (part) | WRK-03, WRK-19 | #361 |
+| 1c, 1d | filed after the review | #366 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
 **Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, all
@@ -46,9 +47,9 @@ seven of tier 1's original wrong-answer cards, one of tier 2's three refactors, 
 findings -- including **the debugger core and the write pipeline**, which were the two
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
-**Tier 1's original seven cards are done, and two wrong answers filed since reopen it** as **1c**
-and **1d**, which by tier order come before the rest of card 8. Card 8 is two slices in (#333,
-#361), and its next slice is #331 and #332. Card 1 opened the gate on **11b** and **11c**.
+**Tier 1 is done in full**, including the two wrong answers filed after the review (#366). Next is
+the rest of **card 8**, two slices in (#333, #361), whose next slice is #331 and #332. Card 1
+opened the gate on **11b** and **11c**.
 
 Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
 are listed after tier 6, so none of them is re-derived from scratch.
@@ -319,8 +320,8 @@ These produce confident wrong results today. Everything else is cost.
 | ~~5~~ | **#323.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
 | ~~6~~ | **#306.** One compilation was asked about another's symbol, so resolving a name and every write that worked out its own imports failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is asked about. | WRK-06 | — | — |
 | ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory. | WRK-08 | — | — |
-| 1c | **`rose_move_member` can leave the member declared in both types and report a clean move**, which is the one outcome its description says it exists to prevent. It qualifies the call sites first, then looks the declaration up by its span from before that rewrite; a call site above the declaration in its own file moves the span, the lookup finds nothing, and the removal returns the solution unchanged without saying so. It compiles, because the two types differ, so verification and the overreach sentence both pass it. The insertion finds its target type the same way. Find both through an annotation, and make a failed lookup an error. | new | #359 | S |
-| 1d | **`rose_diagnostics` answered for a file new to the project with the diagnostics from before an edit**, while saying it had absorbed the change: a snapshot older than disk, from the read barrier. An already-tracked file behaves. The issue suspects the path that adds a file which appeared on disk, counting a later edit as absorbed without re-reading its text. Filed before #299 fixed a neighbouring staleness, so reproduce it first; if it is gone, close the issue and strike this row. | new | #267 | S-M |
+| ~~1c~~ | **#366.** A move could leave the member declared in both types and report success, because it looked the declaration up where it stood before the call sites were rewritten. Both ends of a move are found by what they were marked with, and one that cannot be found is an error. | — | — | — |
+| ~~1d~~ | **#366.** Diagnostics seemed stale for a file new to the project. It was a body-only edit served from cache, which #299 had already fixed. | — | — | — |
 
 ### Tier 2 — the three structural refactors
 

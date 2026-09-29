@@ -89,6 +89,14 @@ public sealed partial class MainWindow : Window
 	private readonly string _endpoint;
 	private bool _exiting;
 
+	/// <summary>
+	/// Set when Windows refused a change to the startup registration, and cleared by the next menu
+	/// refresh, which is the one that says so. Held rather than written onto the item because every
+	/// refresh rewrites that item's text, and the refresh before the next showing is exactly when the
+	/// news has to survive.
+	/// </summary>
+	private bool _startupRefused;
+
 	public MainWindow()
 	{
 		InitializeComponent();
@@ -106,7 +114,8 @@ public sealed partial class MainWindow : Window
 
 		AppWindow.Closing += OnClosing;
 
-		ShowCommand = new ShowWindowCommand(this);
+		ShowCommand = new MenuCommand(Show);
+		WireTrayMenu();
 
 		// A crash that was contained still happened, and this window is the only place a person
 		// would see it. The log has it either way.
@@ -141,6 +150,53 @@ public sealed partial class MainWindow : Window
 	public ICommand ShowCommand { get; }
 
 	private WorkspaceManager Manager => _app.Services.GetRequiredService<WorkspaceManager>();
+
+	/// <summary>
+	/// Gives every tray menu item a command, and the icon a right-click command that brings the
+	/// menu up to date before it is shown.
+	/// <para>
+	/// The icon never shows its flyout. It builds a native popup menu from it on each right click and
+	/// runs the chosen item's <c>Command</c>, so a <c>Click</c> handler on a tray item is never called
+	/// and the item does nothing, silently. The right-click command runs on the same message, before
+	/// the popup is built, which is what makes it the tray's <c>Opening</c>.
+	/// </para>
+	/// <para>
+	/// Each command is queued rather than run in place, so the icon has finished with its own menu
+	/// before Exit disposes it.
+	/// </para>
+	/// </summary>
+	private void WireTrayMenu()
+	{
+		Tray.RightClickCommand = new MenuCommand(PrepareTrayMenu);
+
+		Wire(TrayShow, OnShow);
+		Wire(TrayUpdate, OnOpenRelease);
+		Wire(TrayStartWithWindows, OnToggleStartWithWindows);
+		Wire(TrayOpenInspector, OnOpenInspector);
+		Wire(TrayShowInspectorOnAttach, OnToggleShowInspectorOnAttach);
+		Wire(TrayCopyInspectorCommand, OnCopyInspectorCommand);
+		Wire(TrayOpenLogs, OnOpenLogs);
+		Wire(TrayCloseAll, OnCloseAll);
+		Wire(TrayExit, OnExit);
+
+		void Wire(MenuFlyoutItem item, RoutedEventHandler handler) =>
+			item.Command = new MenuCommand(() => DispatcherQueue.TryEnqueue(() => handler(item, new RoutedEventArgs())));
+	}
+
+	/// <summary>
+	/// Brings the tray menu up to date before the icon copies it. Visibility is not copied, so the
+	/// update item is taken out of the menu rather than collapsed, and put back when there is one.
+	/// </summary>
+	private void PrepareTrayMenu()
+	{
+		RefreshMenus();
+
+		var wanted = TrayUpdate.Visibility == Visibility.Visible;
+		var present = TrayMenu.Items.Contains(TrayUpdate);
+
+		if (wanted && !present) TrayMenu.Items.Insert(TrayMenu.Items.IndexOf(TrayShow) + 1, TrayUpdate);
+		if (!wanted && present) TrayMenu.Items.Remove(TrayUpdate);
+	}
 
 	/// <summary>
 	/// Puts the shared icon on the window and its art on the marks inside it, then the tray icon,
@@ -558,7 +614,13 @@ public sealed partial class MainWindow : Window
 	/// app, and the inspector can be installed or not. So both are read when the menu opens rather
 	/// than cached.
 	/// </summary>
-	private void OnMenuOpening(object sender, object e)
+	private void OnMenuOpening(object sender, object e) => RefreshMenus();
+
+	/// <summary>
+	/// Reads the machine's answers onto both menus' items: the window's as its flyout opens, the
+	/// tray's as it is right-clicked.
+	/// </summary>
+	private void RefreshMenus()
 	{
 		// Read on opening rather than pushed when a check completes: the menu is the only place this
 		// shows, so there is nothing to update while it is closed, and a poll that finished hours ago
@@ -575,6 +637,8 @@ public sealed partial class MainWindow : Window
 
 		var enabled = StartupRegistration.IsEnabled;
 		var elsewhere = StartupRegistration.PointsElsewhere;
+		var refused = _startupRefused;
+		_startupRefused = false;
 
 		foreach (var item in (ToggleMenuFlyoutItem?[])[TrayStartWithWindows, WindowStartWithWindows])
 		{
@@ -584,7 +648,9 @@ public sealed partial class MainWindow : Window
 
 			// An install that has moved: Windows still starts the old copy, so saying "off" would be
 			// a lie and saying "on" would point at the wrong exe.
-			item.Text = elsewhere ? "Start with Windows (registered elsewhere)" : "Start with Windows";
+			item.Text = refused ? "Start with Windows (Windows refused)"
+				: elsewhere ? "Start with Windows (registered elsewhere)"
+				: "Start with Windows";
 		}
 
 		// An item that opens nothing is worse than one that says why. The inspector is optional, and
@@ -619,10 +685,14 @@ public sealed partial class MainWindow : Window
 	/// that did not land shows as a toggle that did not move. A checkbox claiming a preference the
 	/// next attach will not honour is worse than one that visibly refused.
 	/// </para>
+	/// <para>
+	/// The wanted state is the opposite of the file's rather than the item's, because the tray's
+	/// native menu never flips the item it was copied from.
+	/// </para>
 	/// </summary>
 	private void OnToggleShowInspectorOnAttach(object sender, RoutedEventArgs e)
 	{
-		var wanted = sender is ToggleMenuFlyoutItem { IsChecked: true };
+		var wanted = !RoseSettingsFile.Read().ShowInspectorOnAttach;
 
 		if (!RoseSettingsFile.Write(RoseSettingsFile.Read() with { ShowInspectorOnAttach = wanted }))
 		{
@@ -647,12 +717,8 @@ public sealed partial class MainWindow : Window
 
 		// A toggle that silently does nothing is worse than one that is not offered, and the menu is
 		// the only surface certain to be visible here -- this is reachable from the tray with the
-		// window hidden -- so the menu carries the news. Reset when the menu next opens.
-		if (sender is ToggleMenuFlyoutItem item)
-		{
-			item.IsChecked = StartupRegistration.IsEnabled;
-			item.Text = "Start with Windows (Windows refused)";
-		}
+		// window hidden -- so the next menu to open carries the news, once.
+		_startupRefused = true;
 	}
 
 	private void OnCopyEndpoint(object sender, RoutedEventArgs e) => Copy(_endpoint, EndpointCopyGlyph);
@@ -745,12 +811,17 @@ public sealed partial class MainWindow : Window
 		}
 	}
 
-	private sealed class ShowWindowCommand(MainWindow window) : ICommand
+	/// <summary>
+	/// An action as a command, for the tray icon, which invokes commands and never raises a click.
+	/// Always executable: the native menu takes an item's enabled state from <c>IsEnabled</c>, not
+	/// from here.
+	/// </summary>
+	private sealed class MenuCommand(Action execute) : ICommand
 	{
 		public event EventHandler? CanExecuteChanged { add { } remove { } }
 
 		public bool CanExecute(object? parameter) => true;
 
-		public void Execute(object? parameter) => window.Show();
+		public void Execute(object? parameter) => execute();
 	}
 }

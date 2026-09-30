@@ -4,43 +4,23 @@ Review of RoseMCP as of 2026-09-16, at 446 commits. The output divides the work 
 
 ## How this review gets implemented
 
-`feature/fable-review` is the integration branch and carries these documents.
+The work is tracked as the [Fable review 2 milestone](https://github.com/AtomicBlom/RoseMCP/milestone/6):
+one issue per open card, the issues each card closes as its sub-issues, and an issue for each
+decision still owed. The milestone's description is the map. These documents are the evidence the
+issues link to.
 
-- Each piece of work **branches off `feature/fable-review`** and **pull-requests back into it**, not
-  into `main`. So the review and the work that answers it stay together, and a card can be reviewed
-  against the finding that asked for it.
-- When the review has been worked through, **one final pull request takes `feature/fable-review`
-  into `main`**. GitHub acts on `Closes #N` only in a pull request into the default branch, so an
-  issue a card fixes stays open until then, and the final pull request has to name every one of them.
-- Work proceeds **tier by tier, in the order the card list in [`00-overview.md`](00-overview.md)
-  sets out**, starting with tier 1. The tiers are ordered by value per unit of effort, and tier 2
-  and tier 6 each have prerequisites named in their own rows.
+- Each piece of work **branches off `main`** and **pull-requests into it**, with a `Closes #N` for
+  each issue it fixes, so the pull request closes its own issues when it merges.
+- Work proceeds **tier by tier, in the order the milestone sets out**. The tiers are ordered by
+  value per unit of effort, and tier 6 waits on the write-pipeline work.
+- When every other issue in the milestone is closed or declined, **#415 retires this folder**:
+  whatever still argues for the design moves into `docs/decisions/`, `docs/invariants/` or the code,
+  and one pull request deletes the rest.
 
 A card that turns out to be wrong is worth more than a card that is merely done: amend the finding
 in its file in the same pull request, the way USE-08 was amended when the magnifier's real reason
 came to light. The findings are a snapshot of what eight reviewers could see from the code, and the
 person implementing one knows more than the reviewer did.
-
-### Issues the final pull request closes
-
-Fixed on this branch and still open, because only the pull request into `main` can close them. A
-pull request that fixes an issue adds it here in the same commit, whether or not a card named it,
-so the final pull request copies this list rather than reconstructing it.
-
-| Issue | Fixed in |
-|---|---|
-| #121, #212 | #306 |
-| #214 | #305 |
-| #218 | #361 |
-| #320 | #321 |
-| #325 | #348 |
-| #334 | #342, #344 |
-| #340 | #356 |
-| #341 | #352 |
-| #359 | #366 |
-
-**Confirm before naming:** #335 is #218's shape, a project new to the workspace formatted without its
-`.editorconfig`, and #361's reading of the `.editorconfig` on disk should cover it.
 
 ### These documents shrink as the work lands
 
@@ -81,7 +61,7 @@ name in it, the sentence was describing the implementation rather than the state
   section. The strengths are the part worth keeping longest, because they say what a later refactor
   must not break.
 - **When every tier is closed**, `docs/fable-review-2/` should hold little more than this README, and
-  the final pull request into `main` deletes it. What survives is in the code, in the tests, in
+  #415 deletes it. What survives is in the code, in the tests, in
   `docs/decisions/` and in `docs/invariants/`, which is where it can be maintained.
 
 Findings that are deliberately not being done are the exception: keep those in full, with a line

@@ -234,11 +234,15 @@ public sealed class MemberSyntaxTests
 	/// code arrives as a JSON argument, which carries no carriage return, so keeping what arrived keeps
 	/// an artefact of the transport -- and produces a file dotnet format rejects while no build says
 	/// anything.
+	/// <para>
+	/// Only the ending between <c>first</c> and <c>second</c> is reported. The other three are layout,
+	/// or the two a raw literal drops from its value beside its delimiters.
+	/// </para>
 	/// </summary>
 	[Test]
 	public void Rewrites_a_lone_line_feed_to_the_destination_ending()
 	{
-		var rewritten = 0;
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
 
 		var members = MemberSyntax.Parse(
 			"public const string Text = \"\"\"\nfirst\nsecond\n\"\"\";\n",
@@ -246,12 +250,12 @@ public sealed class MemberSyntaxTests
 			options: null,
 			indent: "\t",
 			lineEnding: "\r\n",
-			rewritten: count => rewritten = count);
+			rewritten: literals => rewritten = literals);
 
 		var written = members.ShouldHaveSingleItem().ToFullString();
 
 		written.ShouldContain("\"\"\"\r\n\tfirst\r\n\tsecond\r\n\t\"\"\"", Case.Sensitive);
-		rewritten.ShouldBe(4);
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(0, 1));
 	}
 
 	/// <summary>
@@ -261,7 +265,7 @@ public sealed class MemberSyntaxTests
 	[Test]
 	public void Keeps_a_carriage_return_the_caller_supplied()
 	{
-		var rewritten = 0;
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
 
 		MemberSyntax.Parse(
 			"public const string Text = \"\"\"\r\nfirst\r\n\"\"\";\r\n",
@@ -269,9 +273,174 @@ public sealed class MemberSyntaxTests
 			options: null,
 			indent: "\t",
 			lineEnding: "\n",
-			rewritten: count => rewritten = count);
+			rewritten: literals => rewritten = literals);
 
-		rewritten.ShouldBe(0);
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// Code holding no multi-line literal still has every ending rewritten, which is what keeps the file
+	/// passing dotnet format, and nothing is said about it: outside a literal an ending is layout, and a
+	/// sentence on every payload is one a caller learns to skim.
+	/// </summary>
+	[Test]
+	public void Rewrites_the_endings_of_code_without_a_literal_and_says_nothing()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var members = MemberSyntax.Parse(
+			"public string Name()\n{\n\tvar text = \"one line\";\n\treturn text;\n}\n",
+			"class",
+			options: null,
+			indent: "\t",
+			lineEnding: "\r\n",
+			rewritten: literals => rewritten = literals);
+
+		var written = members.ShouldHaveSingleItem().ToFullString();
+
+		written.ShouldContain("public string Name()\r\n\t{\r\n", Case.Sensitive);
+		written.ShouldContain("\r\n\t\treturn", Case.Sensitive);
+		// Trimmed, since the ending after the last line is the parse wrapper's and the member's own
+		// preparation gives it the file's.
+		written.TrimEnd().Replace("\r\n", string.Empty, StringComparison.Ordinal).ShouldNotContain("\n", Case.Sensitive, "Every ending comes out as the file's.");
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// A verbatim literal's endings are all its value, and it is named by the line it opens on, counted
+	/// the way the caller counts the code they sent.
+	/// </summary>
+	[Test]
+	public void Names_the_line_a_verbatim_literal_opens_on()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		MemberSyntax.Parse(
+			"public string Text()\n{\n\tvar count = 1;\n\tvar text = @\"one\ntwo\nthree\";\n\treturn text;\n}\n",
+			"class",
+			options: null,
+			indent: "\t",
+			lineEnding: "\r\n",
+			rewritten: literals => rewritten = literals);
+
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(3, 2));
+	}
+
+	/// <summary>
+	/// A raw literal holding one line has no ending in its value: the compiler drops the one after its
+	/// opening delimiter and the one in front of its closing delimiter's line. Rewriting those changes
+	/// nothing the program says, so nothing is said.
+	/// </summary>
+	[Test]
+	public void Says_nothing_about_a_raw_literal_holding_one_line()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var members = MemberSyntax.Parse(
+			"public const string Text = \"\"\"\nonly\n\"\"\";\n",
+			"class",
+			options: null,
+			lineEnding: "\r\n",
+			rewritten: literals => rewritten = literals);
+
+		members.ShouldHaveSingleItem().ToFullString().ShouldContain("\"\"\"\r\nonly\r\n\"\"\"", Case.Sensitive);
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// An interpolation hole spread over lines is code, so its endings are layout like any other. A
+	/// literal whose only endings besides its delimiters' are inside a hole changed no text.
+	/// </summary>
+	[Test]
+	public void Says_nothing_about_endings_inside_an_interpolation_hole()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		MemberSyntax.Parse(
+			"public string Text(int x) => $\"\"\"\n\ta {x\n\t\t+ 1} b\n\t\"\"\";\n",
+			"class",
+			options: null,
+			lineEnding: "\r\n",
+			rewritten: literals => rewritten = literals);
+
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>The same literal with an ending in its own text is a changed string, and is named.</summary>
+	[Test]
+	public void Names_an_interpolated_literal_whose_text_holds_an_ending()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		MemberSyntax.Parse(
+			"public string Text(int x) => $\"\"\"\n\ta {x\n\t\t+ 1} b\n\tc\n\t\"\"\";\n",
+			"class",
+			options: null,
+			lineEnding: "\r\n",
+			rewritten: literals => rewritten = literals);
+
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(0, 1));
+	}
+
+	/// <summary>
+	/// Literals on one line are never named, because they hold no ending; every multi-line one is, each
+	/// on its own line.
+	/// </summary>
+	[Test]
+	public void Names_each_multi_line_literal_and_no_single_line_one()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		MemberSyntax.Parse(
+			"public string A => \"one line\";\n\npublic string B => @\"one\ntwo\";\n\npublic string C => @\"three\nfour\";\n",
+			"class",
+			options: null,
+			lineEnding: "\r\n",
+			rewritten: literals => rewritten = literals);
+
+		rewritten.ShouldNotBeNull().ShouldBe(
+			[new MemberSyntax.RewrittenLiteral(2, 1), new MemberSyntax.RewrittenLiteral(5, 1)]);
+
+		MemberSyntax.RewrittenEndings(rewritten, "CRLF")
+			.ShouldContain("inside the multi-line string literals on lines 3 and 6 of the code supplied", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A body replacement joins the copied signature to the caller's body on the signature's last line,
+	/// so the ending that line comes out with is the caller's. A verbatim literal opening there takes the
+	/// file's ending with every other one in it, rather than keeping its first as it arrived.
+	/// </summary>
+	[Test]
+	public void Rewrites_the_ending_of_the_line_a_body_joins_its_signature_on()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var members = MemberSyntax.Parse(
+			"public string Text() => @\"one\ntwo\nthree\";",
+			"class",
+			options: null,
+			indent: "\t",
+			lineEnding: "\r\n",
+			rewritten: literals => rewritten = literals,
+			copied: "public string Text()");
+
+		members.ShouldHaveSingleItem().ToFullString().ShouldContain("@\"one\r\ntwo\r\nthree\"", Case.Sensitive);
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(0, 2));
+	}
+
+	/// <summary>
+	/// The sentence names the literal's line from one and keeps the escape hatch, and says nothing about
+	/// what a bare LF is, which only needed saying while it was said on every payload.
+	/// </summary>
+	[Test]
+	public void Says_where_the_rewritten_literal_is()
+	{
+		var notice = MemberSyntax.RewrittenEndings([new MemberSyntax.RewrittenLiteral(3, 2)], "CRLF");
+
+		notice.ShouldBe(
+			"Rewrote 2 line ending(s) to CRLF, the ending this file uses, inside the multi-line string literal on "
+				+ "line 4 of the code supplied, which changes its value. Write one CR LF anywhere in the code to keep "
+				+ "every ending exactly as it arrived.");
 	}
 
 	/// <summary>

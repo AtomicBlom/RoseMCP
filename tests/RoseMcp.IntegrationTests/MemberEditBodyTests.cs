@@ -216,6 +216,60 @@ public sealed class MemberEditBodyTests
 		(trimmed > 0 && trimmed < returned).ShouldBeTrue();
 	}
 
+	/// <summary>
+	/// A whole body is parsed behind the signature it was copied from and inside braces it never had,
+	/// so a line counted in what is parsed is one the caller never wrote. The literal is named on its
+	/// line in the body they sent, blank line above it included.
+	/// </summary>
+	[Test]
+	public async Task Names_a_rewritten_literal_on_its_line_in_the_body_supplied()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Code = "\nvar greeting = text.Trim();\nvar banner = @\"one\ntwo\";\nreturn banner + greeting;",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldContain(
+			notice => notice.StartsWith("Rewrote 1 line ending(s) to CRLF", StringComparison.Ordinal)
+				&& notice.Contains("literal on line 3 of the code supplied", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("@\"one\r\ntwo\"", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Inserted code lands among statements it did not write, and the literal it carries is still named
+	/// on its line in what was sent -- while the statements around it, all on one line each, have their
+	/// endings rewritten without a word.
+	/// </summary>
+	[Test]
+	public async Task Names_a_rewritten_literal_on_its_line_in_the_code_inserted()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Position = BodyPosition.End,
+			Code = "text = text.Trim();\ntext += @\"one\ntwo\";",
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		var rewrote = result.Notices.Where(notice => notice.StartsWith("Rewrote", StringComparison.Ordinal)).ToArray();
+
+		rewrote.ShouldHaveSingleItem().ShouldContain("literal on line 2 of the code supplied", Case.Sensitive);
+	}
+
 	/// <summary>An expression body has no statement list, and the refusal says what to pass instead.</summary>
 	[Test]
 	public async Task Refuses_to_insert_into_an_expression_body()

@@ -119,24 +119,25 @@ public sealed class BodyEditTests
 	/// <para>
 	/// A needle whose every ending is a bare LF is normalised to the body's, which is the same rule
 	/// every other supplied payload goes through -- the LF is an artefact of composing a string, not a
-	/// decision.
+	/// decision. The replacement's ending lands inside a literal that opened before it, so it is named
+	/// by the replacement's first line, which is where the caller's text is inside it.
 	/// </para>
 	/// </summary>
 	[Test]
 	public void Matches_a_line_feed_needle_against_a_carriage_return_body()
 	{
-		var rewritten = 0;
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
 
 		var body = BodyEdit.Anchored(
 			"{\r\n\tvar text = \"\"\"\r\n\t\tfirst\r\n\t\tsecond\r\n\t\t\"\"\";\r\n}",
 			"first\n\t\tsecond",
 			"first\n\t\tthird",
 			includeTrivia: true,
-			count => rewritten = count);
+			literals => rewritten = literals);
 
 		body.ShouldContain("\t\tfirst\r\n\t\tthird\r\n", Case.Sensitive);
 		body.ShouldNotContain("second", Case.Sensitive);
-		rewritten.ShouldBe(1);
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(0, 1));
 	}
 
 	/// <summary>
@@ -149,20 +150,60 @@ public sealed class BodyEditTests
 	[Test]
 	public void Reaches_a_line_feed_literal_inside_a_carriage_return_body()
 	{
-		var rewritten = 0;
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
 
 		var body = BodyEdit.Anchored(
 			"{\r\n\tvar text = \"\"\"\r\n\t\tfirst\nsecond\n\t\t\"\"\";\r\n}",
 			"first\nsecond",
 			"first\nthird",
 			includeTrivia: true,
-			count => rewritten = count);
+			literals => rewritten = literals);
 
 		body.ShouldContain("first\nthird\n", Case.Sensitive);
 		body.ShouldNotContain("second", Case.Sensitive);
 
 		// Nothing was rewritten, so nothing is claimed: the caller's endings were taken literally.
-		rewritten.ShouldBe(0);
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// Endings rewritten inside a comment are layout, as they are anywhere outside a literal, so the
+	/// replacement takes the body's endings and nothing is said about it.
+	/// </summary>
+	[Test]
+	public void Says_nothing_about_endings_rewritten_inside_a_comment()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var body = BodyEdit.Anchored(
+			"{\r\n\t// one\r\n\t// two\r\n\treturn 1;\r\n}",
+			"// one\n\t// two",
+			"// uno\n\t// dos",
+			includeTrivia: true,
+			literals => rewritten = literals);
+
+		body.ShouldContain("// uno\r\n\t// dos\r\n", Case.Sensitive);
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// A replacement that carries a literal of its own names it by the line of the replacement it opens
+	/// on, and counts only the endings inside it: the one after the literal is code.
+	/// </summary>
+	[Test]
+	public void Names_a_literal_the_replacement_carries_on_its_own_line()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var body = BodyEdit.Anchored(
+			"{\r\n\tvar a = 1;\r\n\treturn a;\r\n}",
+			"var a = 1;\n\treturn a;",
+			"var a = 1;\n\tvar b = @\"x\ny\";\n\treturn a;",
+			includeTrivia: true,
+			literals => rewritten = literals);
+
+		body.ShouldContain("@\"x\r\ny\"", Case.Sensitive);
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(1, 1));
 	}
 
 	/// <summary>

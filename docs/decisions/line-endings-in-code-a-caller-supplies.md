@@ -25,8 +25,23 @@ reliable signal that it is not. That gives the rule an escape hatch with no new 
 tools: to put a bare LF inside a literal in a CRLF file, write the rest of the code with CRLF, and
 nothing is touched.
 
-**It is reported.** The result says how many endings were rewritten. This changes what a string
-says, and a unified diff cannot show it, so silence is not available.
+**It is reported where it changes a value, and only there.** Inside a multi-line literal a
+rewritten ending changes what the string says, and a unified diff cannot show it, so silence is not
+available: the result names each such literal by the line it is on in the code the caller sent,
+and counts the endings. Everywhere else an ending is layout, and making it the file's is what the
+whitespace pass does to every line it writes -- so saying so on every payload, which ends lines on
+every payload, said nothing a caller could act on and taught them to skim the channel that carries
+the notices that matter. What counts as inside is the value, not the delimiters: a raw literal drops
+the break after its opening delimiter and the one in front of its closing line, and a break inside
+an interpolation hole is code, so rewriting any of those is not reported either.
+
+The line is the caller's, not the file's and not that of whatever was parsed. A body is parsed
+behind a signature copied out of the file, sometimes inside braces the caller never wrote, and a
+find-and-replace or an insertion puts the caller's text among statements that were already there,
+so each counts from where the caller's own text begins. A literal the file already held, whose
+endings change because it went through the same pass -- a moved member, or the part of a body the
+caller did not write -- is named by its line in the member instead, with no escape hatch, since
+there is no code argument to write a CR LF into.
 
 **Raw literals also move with their surroundings.** A raw string literal's value is what remains
 after the closing delimiter's indentation is stripped from every line, so shifting the content and

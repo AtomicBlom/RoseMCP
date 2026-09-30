@@ -54,8 +54,10 @@ public static class BodyEdit
 	/// Match the body's text rather than its tokens, so a match may lie inside a comment or a string.
 	/// </param>
 	/// <param name="rewritten">
-	/// How many of the replacement's line endings were given the body's, so a caller can say so. It is a
-	/// change to what a literal says, and it must not be silent.
+	/// The literals whose values changed when the replacement's line endings were given the body's, each
+	/// on the line of the replacement it first appears on, so a caller can say so: that is a change to
+	/// what a string says, and it must not be silent. Called only when there is one, since an ending
+	/// rewritten outside a literal is layout.
 	/// </param>
 	/// <param name="mixed">
 	/// That the replacement's own lines disagree about which baseline they were written at, so the
@@ -74,7 +76,7 @@ public static class BodyEdit
 		string find,
 		string replace,
 		bool includeTrivia = false,
-		Action<int>? rewritten = null,
+		Action<IReadOnlyList<MemberSyntax.RewrittenLiteral>>? rewritten = null,
 		Action<string>? mixed = null,
 		Action<TextSpan>? matched = null)
 	{
@@ -158,8 +160,18 @@ public static class BodyEdit
 	/// read as transport artefacts in one half they are in both, and if they were taken literally then
 	/// they are taken literally in both.
 	/// </para>
+	/// <para>
+	/// What is reported of that is decided on the body as it will be written, since a replacement is
+	/// as often the words inside a string already in the file as code carrying a literal of its own:
+	/// only the endings that land inside a literal's value changed a string, and the rest are layout.
+	/// </para>
 	/// </summary>
-	private static string InText(string body, string find, string replace, Action<int>? rewritten, Action<TextSpan>? matched)
+	private static string InText(
+		string body,
+		string find,
+		string replace,
+		Action<IReadOnlyList<MemberSyntax.RewrittenLiteral>>? rewritten,
+		Action<TextSpan>? matched)
 	{
 		var needle = find;
 		var written = replace;
@@ -206,13 +218,21 @@ public static class BodyEdit
 
 		matched?.Invoke(new TextSpan(start, needle.Length));
 
-		if (changed > 0) rewritten?.Invoke(changed);
-
 		// Spliced with none of the re-indentation the token path applies. The point of this path is the
 		// text inside a comment or a literal, where leading whitespace is content: a raw literal's
 		// indentation decides how much is stripped from its value, and reflowing a comment is a change
 		// nobody asked for.
-		return string.Concat(body.AsSpan(0, start), written, body.AsSpan(start + needle.Length));
+		var spliced = string.Concat(body.AsSpan(0, start), written, body.AsSpan(start + needle.Length));
+
+		if (changed == 0) return spliced;
+
+		// Every ending the replacement carries was rewritten, so the literals holding any of them are the
+		// strings that changed.
+		var literals = MemberSyntax.LiteralsHolding(spliced, new TextSpan(start, written.Length));
+
+		if (literals.Count > 0) rewritten?.Invoke(literals);
+
+		return spliced;
 	}
 
 	/// <summary>Where <paramref name="needle"/> appears in <paramref name="body"/>, exactly.</summary>
@@ -420,17 +440,24 @@ public static class BodyEdit
 	/// <param name="code">The statements to insert.</param>
 	/// <param name="atStart">True for the top of the block, false for the end.</param>
 	/// <param name="notices">Where an insertion point worth explaining is recorded.</param>
+	/// <param name="placed">
+	/// Where the inserted code begins in what comes back, so a line inside it can be named in the
+	/// caller's own terms.
+	/// </param>
 	public static string Inserted(
 		MemberDeclarationSyntax declaration,
 		BlockSyntax block,
 		string code,
 		bool atStart,
-		List<string> notices)
+		List<string> notices,
+		out int placed)
 	{
 		_ = declaration;
 
 		var statements = block.Statements;
 		var written = code.Trim();
+
+		placed = 0;
 
 		if (written.Length == 0) throw new ArgumentException("No code was supplied, so there is nothing to insert.");
 
@@ -446,7 +473,12 @@ public static class BodyEdit
 		// wants and what they would have written by hand.
 		var last = statements[^1];
 
-		if (!IsJump(last)) return $"{existing}\n\n{written}";
+		if (!IsJump(last))
+		{
+			placed = existing.Length + 2;
+
+			return $"{existing}\n\n{written}";
+		}
 
 		notices.Add($"Inserted before the closing {Keyword(last)}, since anything after it is unreachable.");
 
@@ -455,6 +487,8 @@ public static class BodyEdit
 			.ToArray();
 
 		var head = above.Length == 0 ? string.Empty : string.Join("\n", above) + "\n\n";
+
+		placed = head.Length;
 
 		return $"{head}{written}\n\n{last.ToFullString().Trim()}";
 	}

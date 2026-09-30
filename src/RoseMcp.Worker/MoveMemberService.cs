@@ -365,7 +365,7 @@ public static class MoveMemberService
 			document.Project.ParseOptions,
 			indent,
 			rules.LineEnding,
-			count => notices.Add(MemberEditService.RewrittenEndings(count, rules)),
+			literals => notices.Add(MemberSyntax.RewrittenMemberEndings(literals, LineEndings.Name(rules.LineEnding))),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		if (moved.Count != 1) throw new InvalidOperationException("The member being moved parsed as more than one.");

@@ -61,8 +61,8 @@ public sealed class XamlStackModulesTests
 	{
 		var (stack, evidence) = XamlStackModules.Identify(ModernUwp);
 
-		Assert.Equal(XamlStack.Uwp, stack);
-		Assert.Equal(["Windows.UI.Xaml.dll"], evidence);
+		stack.ShouldBe(XamlStack.Uwp);
+		evidence.ShouldBe(["Windows.UI.Xaml.dll"]);
 	}
 
 	/// <summary>
@@ -78,8 +78,8 @@ public sealed class XamlStackModulesTests
 	{
 		var (stack, evidence) = XamlStackModules.Identify(["ntdll.dll", "Microsoft.Windows.UI.Xaml.dll"]);
 
-		Assert.Equal(XamlStack.Unknown, stack);
-		Assert.Empty(evidence);
+		stack.ShouldBe(XamlStack.Unknown);
+		evidence.ShouldBeEmpty();
 	}
 
 	[Test]
@@ -87,8 +87,8 @@ public sealed class XamlStackModulesTests
 	{
 		var (stack, evidence) = XamlStackModules.Identify(ClassicUwp);
 
-		Assert.Equal(XamlStack.Uwp, stack);
-		Assert.Equal(["Windows.UI.Xaml.dll"], evidence);
+		stack.ShouldBe(XamlStack.Uwp);
+		evidence.ShouldBe(["Windows.UI.Xaml.dll"]);
 	}
 
 	[Test]
@@ -96,8 +96,8 @@ public sealed class XamlStackModulesTests
 	{
 		var (stack, evidence) = XamlStackModules.Identify(WinUi3);
 
-		Assert.Equal(XamlStack.WinUi, stack);
-		Assert.Contains("Microsoft.WinUI.dll", evidence);
+		stack.ShouldBe(XamlStack.WinUi);
+		evidence.ShouldContain("Microsoft.WinUI.dll");
 	}
 
 	/// <summary>
@@ -114,8 +114,8 @@ public sealed class XamlStackModulesTests
 
 		var (stack, evidence) = XamlStackModules.Identify(modules);
 
-		Assert.Equal(XamlStack.Uwp, stack);
-		Assert.Equal(["Windows.UI.Xaml.dll"], evidence);
+		stack.ShouldBe(XamlStack.Uwp);
+		evidence.ShouldBe(["Windows.UI.Xaml.dll"]);
 	}
 
 	[Test]
@@ -123,8 +123,8 @@ public sealed class XamlStackModulesTests
 	{
 		var (stack, evidence) = XamlStackModules.Identify(["clr.dll", "PresentationFramework.dll", "PresentationCore.dll"]);
 
-		Assert.Equal(XamlStack.Wpf, stack);
-		Assert.Equal(["PresentationFramework.dll"], evidence);
+		stack.ShouldBe(XamlStack.Wpf);
+		evidence.ShouldBe(["PresentationFramework.dll"]);
 	}
 
 	/// <summary>
@@ -136,8 +136,8 @@ public sealed class XamlStackModulesTests
 	{
 		var (stack, evidence) = XamlStackModules.Identify(["ntdll.dll", "kernel32.dll", "coreclr.dll"]);
 
-		Assert.Equal(XamlStack.Unknown, stack);
-		Assert.Empty(evidence);
+		stack.ShouldBe(XamlStack.Unknown);
+		evidence.ShouldBeEmpty();
 	}
 
 	/// <summary>Module names come off the OS with whatever casing it used; matching cannot depend on it.</summary>
@@ -146,7 +146,7 @@ public sealed class XamlStackModulesTests
 	{
 		var (stack, _) = XamlStackModules.Identify(["WINDOWS.UI.XAML.DLL"]);
 
-		Assert.Equal(XamlStack.Uwp, stack);
+		stack.ShouldBe(XamlStack.Uwp);
 	}
 
 	/// <summary>
@@ -159,7 +159,7 @@ public sealed class XamlStackModulesTests
 	{
 		var (stack, evidence) = XamlStackModules.Identify([]);
 
-		Assert.Equal(XamlStack.Unknown, stack);
-		Assert.Empty(evidence);
+		stack.ShouldBe(XamlStack.Unknown);
+		evidence.ShouldBeEmpty();
 	}
 }

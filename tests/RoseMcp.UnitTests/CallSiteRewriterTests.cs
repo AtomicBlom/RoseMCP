@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -31,8 +32,8 @@ public sealed class CallSiteRewriterTests
 			}
 			""";
 
-		Assert.Null(CallSites.Rewrite(source, "string source, int? within = null", out var refusal));
-		Assert.Contains("does not compile as it stands", refusal, StringComparison.Ordinal);
+		CallSites.Rewrite(source, "string source, int? within = null", out var refusal).ShouldBeNull();
+		refusal.ShouldContain("does not compile as it stands", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -52,7 +53,7 @@ public sealed class CallSiteRewriterTests
 			}
 			""";
 
-		Assert.Equal("(name)", CallSites.Rewrite(source, "string name"));
+		CallSites.Rewrite(source, "string name").ShouldBe("(name)");
 	}
 
 	/// <summary>The ordinary case: a call site that says nothing about the new optional is left as it is.</summary>
@@ -68,7 +69,7 @@ public sealed class CallSiteRewriterTests
 			}
 			""";
 
-		Assert.Equal("(source)", CallSites.Rewrite(source, "string source, int? within = null"));
+		CallSites.Rewrite(source, "string source, int? within = null").ShouldBe("(source)");
 	}
 
 	/// <summary>
@@ -87,7 +88,7 @@ public sealed class CallSiteRewriterTests
 			}
 			""";
 
-		Assert.Null(CallSites.Rewrite(source, "string source, int? within = null"));
+		CallSites.Rewrite(source, "string source, int? within = null").ShouldBeNull();
 	}
 
 	/// <summary>
@@ -106,7 +107,7 @@ public sealed class CallSiteRewriterTests
 			}
 			""";
 
-		Assert.Equal("(format, a, b, c)", CallSites.Rewrite(source, "string format, params object[] args"));
+		CallSites.Rewrite(source, "string format, params object[] args").ShouldBe("(format, a, b, c)");
 	}
 
 	/// <summary>
@@ -139,11 +140,10 @@ public sealed class CallSiteRewriterTests
 			}
 			""";
 
-		Assert.Equal(
-			"""(a, "-", last: c)""",
-			CallSites.Rewrite(
+		CallSites.Rewrite(
 				source,
 				"""string first, string separator, string second = "x", string third = "y" """,
-				"separator=\"-\""));
+				"separator=\"-\"").ShouldBe(
+			"""(a, "-", last: c)""");
 	}
 }

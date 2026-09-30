@@ -24,7 +24,7 @@ public sealed class MethodQueryTests
 		string query,
 		int expected)
 	{
-		Assert.Equal(expected, MethodQuery.Rank(typeName, methodName, query));
+		MethodQuery.Rank(typeName, methodName, query).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -34,19 +34,19 @@ public sealed class MethodQueryTests
 	[Test]
 	public void The_pieces_of_a_query_match_in_order()
 	{
-		Assert.Equal(0, MethodQuery.Rank("MyApp.Ui.Widget", "Refresh", "Widget.Refresh"));
-		Assert.Equal(0, MethodQuery.Rank("MyApp.Ui.Widget", "Refresh", "Ui.Widget.Refresh"));
+		MethodQuery.Rank("MyApp.Ui.Widget", "Refresh", "Widget.Refresh").ShouldBe(0);
+		MethodQuery.Rank("MyApp.Ui.Widget", "Refresh", "Ui.Widget.Refresh").ShouldBe(0);
 
 		// Out of order is not a match: the order is the only thing separating a qualified query from
 		// a bag of letters, and without it Widget.Refresh would find Refresher.Widget.
-		Assert.Null(MethodQuery.Rank("MyApp.Ui.Widget", "Refresh", "Refresh.Widget"));
+		MethodQuery.Rank("MyApp.Ui.Widget", "Refresh", "Refresh.Widget").ShouldBeNull();
 	}
 
 	/// <summary>A trailing dot is what somebody has typed on the way to the next piece, not a filter.</summary>
 	[Test]
 	public void A_trailing_dot_changes_nothing()
 	{
-		Assert.Equal(MethodQuery.Rank("MyApp.Widget", "Refresh", "Widget"), MethodQuery.Rank("MyApp.Widget", "Refresh", "Widget."));
+		MethodQuery.Rank("MyApp.Widget", "Refresh", "Widget.").ShouldBe(MethodQuery.Rank("MyApp.Widget", "Refresh", "Widget"));
 	}
 
 	[Test]
@@ -57,14 +57,14 @@ public sealed class MethodQueryTests
 	[Arguments(".")]
 	public void Nothing_worth_searching_for_is_refused(string? query)
 	{
-		Assert.False(MethodQuery.IsWorthSearching(query));
+		MethodQuery.IsWorthSearching(query).ShouldBeFalse();
 	}
 
 	[Test]
 	public void Two_characters_are_enough_to_search_for()
 	{
-		Assert.True(MethodQuery.IsWorthSearching("Re"));
-		Assert.True(MethodQuery.IsWorthSearching("Widget.Refresh"));
+		MethodQuery.IsWorthSearching("Re").ShouldBeTrue();
+		MethodQuery.IsWorthSearching("Widget.Refresh").ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -75,7 +75,7 @@ public sealed class MethodQueryTests
 	[Test]
 	public void A_query_that_matches_nothing_ranks_nothing()
 	{
-		Assert.Null(MethodQuery.Rank("MyApp.Widget", "Refresh", "Sprocket"));
-		Assert.Null(MethodQuery.Rank("MyApp.Widget", "Refresh", ""));
+		MethodQuery.Rank("MyApp.Widget", "Refresh", "Sprocket").ShouldBeNull();
+		MethodQuery.Rank("MyApp.Widget", "Refresh", "").ShouldBeNull();
 	}
 }

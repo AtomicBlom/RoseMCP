@@ -3,6 +3,8 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
+using RoseMcp.TestSupport;
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -22,11 +24,11 @@ public sealed class SolutionWriterTests
 
 		var after = before.AddDocument(DocumentId.CreateNewId(project.Id), "Added.cs", "class Added;", filePath: "Added.cs");
 
-		var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => SolutionWriter.ApplyAsync(before, after, write: true, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken));
+		var failure = await Should.ThrowAsync<InvalidOperationException>(
+			() => SolutionWriter.ApplyAsync(before, after, write: true, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("Added.cs", failure.Message, StringComparison.Ordinal);
-		Assert.Contains("relative path", failure.Message, StringComparison.Ordinal);
+		failure.Message.ShouldContain("Added.cs", Case.Sensitive);
+		failure.Message.ShouldContain("relative path", Case.Sensitive);
 	}
 
 	[Test]
@@ -39,10 +41,10 @@ public sealed class SolutionWriterTests
 
 		var after = before.WithDocumentText(documentId, SourceText.From("class Existing { }"));
 
-		var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-			() => SolutionWriter.ApplyAsync(before, after, write: true, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken));
+		var failure = await Should.ThrowAsync<InvalidOperationException>(
+			() => SolutionWriter.ApplyAsync(before, after, write: true, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("Existing.cs", failure.Message, StringComparison.Ordinal);
+		failure.Message.ShouldContain("Existing.cs", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -58,8 +60,8 @@ public sealed class SolutionWriterTests
 
 		var after = before.AddDocument(DocumentId.CreateNewId(project.Id), "Added.cs", "class Added;", filePath: "Added.cs");
 
-		await Assert.ThrowsAsync<InvalidOperationException>(
-			() => SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken));
+		await Should.ThrowAsync<InvalidOperationException>(
+			() => SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 	}
 
 	[Test]
@@ -74,8 +76,8 @@ public sealed class SolutionWriterTests
 
 		var outcome = await SolutionWriter.ApplyAsync(before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal([path], outcome.ChangedFiles);
-		Assert.False(File.Exists(path), "rendering the diff writes nothing");
+		outcome.ChangedFiles.ShouldBe([path]);
+		File.Exists(path).ShouldBeFalse("rendering the diff writes nothing");
 	}
 
 	/// <summary>
@@ -103,8 +105,8 @@ public sealed class SolutionWriterTests
 		var outcome = await SolutionWriter.ApplyAsync(
 			before, after, write: false, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal([path], outcome.ChangedFiles);
-		Assert.Equal(1, CountOf(outcome.Diff, "+++ "));
+		outcome.ChangedFiles.ShouldBe([path]);
+		CountOf(outcome.Diff, "+++ ").ShouldBe(1);
 	}
 
 	private static int CountOf(string text, string value) =>
@@ -123,8 +125,8 @@ public sealed class SolutionWriterTests
 
 		await WriteAndReadBackAsync(path, Encoding.UTF8, "class Marked { }");
 
-		Assert.True(StartsWithMark(path), "the file arrived with a mark and has to keep it");
-		Assert.Equal("class Marked { }", await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken));
+		StartsWithMark(path).ShouldBeTrue("the file arrived with a mark and has to keep it");
+		(await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken)).ShouldBe("class Marked { }");
 	}
 
 	/// <summary>
@@ -139,7 +141,7 @@ public sealed class SolutionWriterTests
 
 		await WriteAndReadBackAsync(path, SourceEncoding.Utf8WithoutMark, "class Bare { }");
 
-		Assert.False(StartsWithMark(path), "nothing gave this file a mark to keep");
+		StartsWithMark(path).ShouldBeFalse("nothing gave this file a mark to keep");
 	}
 
 	/// <summary>
@@ -162,7 +164,7 @@ public sealed class SolutionWriterTests
 		await SolutionWriter.ApplyAsync(
 			before, after, write: true, noteSelfWrite: null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(StartsWithMark(path));
+		StartsWithMark(path).ShouldBeFalse();
 	}
 
 	/// <summary>

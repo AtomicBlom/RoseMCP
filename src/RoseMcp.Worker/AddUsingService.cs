@@ -34,14 +34,13 @@ public static class AddUsingService
 		var root = await document.GetSyntaxRootAsync(cancellationToken);
 		var model = await document.GetSemanticModelAsync(cancellationToken);
 		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
-		var text = await document.GetTextAsync(cancellationToken);
 
 		if (root is not CompilationUnitSyntax unit || model is null || tree is null)
 		{
 			throw new InvalidOperationException($"{Path.GetFileName(request.FilePath)} is not a C# source file.");
 		}
 
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
+		var rules = await Whitespace.RulesForAsync(document, cancellationToken);
 		var style = UsingStyle.For(document.Project, tree, unit, rules.LineEnding);
 
 		progress?.Report("Working out which are already in scope", 20);
@@ -54,7 +53,7 @@ public static class AddUsingService
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 55);
 
-		await edit.WriteAsync(solution, cancellationToken);
+		await edit.WriteAsync(solution, Asked.Nothing.And(document, UsingDirectives.Region(unit)), cancellationToken);
 
 		if (request.Verify && edit.Changed) progress?.Report("Compiling to see what the import did", 75);
 

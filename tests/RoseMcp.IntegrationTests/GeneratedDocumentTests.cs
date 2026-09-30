@@ -1,3 +1,5 @@
+using RoseMcp.TestSupport;
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -17,22 +19,21 @@ public sealed class GeneratedDocumentTests
 
 		var list = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(
-			["GreetableAttribute.g.cs", "Widget.Greeting.g.cs"],
-			list.Documents.Select(document => document.HintName).Order());
+		list.Documents.Select(document => document.HintName).Order().ShouldBe(
+			["GreetableAttribute.g.cs", "Widget.Greeting.g.cs"]);
 
 		// Nothing was written to disk; the only way to see this code is through the compilation.
-		Assert.All(
-			list.Documents,
-			document => Assert.False(
-				File.Exists(document.FilePath),
-				"generated code has no file on disk to open"));
+		foreach (var document in list.Documents)
+		{
+			File.Exists(document.FilePath).ShouldBeFalse(
+						"generated code has no file on disk to open");
+		}
 
 		var content = await GeneratedDocumentService.ReadAsync(
 			snapshot, "Widget.Greeting.g.cs", null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("public string Greet()", content.Text, StringComparison.Ordinal);
-		Assert.Contains("from a source generator", content.Text, StringComparison.Ordinal);
+		content.Text.ShouldContain("public string Greet()", Case.Sensitive);
+		content.Text.ShouldContain("from a source generator", Case.Sensitive);
 	}
 
 	[Test]
@@ -49,7 +50,7 @@ public sealed class GeneratedDocumentTests
 			null,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("Hello,", before.Text, StringComparison.Ordinal);
+		before.Text.ShouldContain("Hello,", Case.Sensitive);
 
 		// Change the attribute argument the generator reads, out of band.
 		var widget = fixture.Path("WithGenerator", "Consumer", "Widget.cs");
@@ -64,7 +65,7 @@ public sealed class GeneratedDocumentTests
 			null,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("Goodbye,", after.Text, StringComparison.Ordinal);
+		after.Text.ShouldContain("Goodbye,", Case.Sensitive);
 	}
 
 	[Test]
@@ -76,11 +77,11 @@ public sealed class GeneratedDocumentTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var error = await Assert.ThrowsAsync<ArgumentException>(
-			() => GeneratedDocumentService.ReadAsync(snapshot, "Nope.g.cs", null, TestContext.Current!.Execution.CancellationToken));
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => GeneratedDocumentService.ReadAsync(snapshot, "Nope.g.cs", null, TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
 		// A bare "not found" would leave the caller guessing at the naming convention.
-		Assert.Contains("Widget.Greeting.g.cs", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("Widget.Greeting.g.cs", Case.Sensitive);
 	}
 
 	[Test]
@@ -93,7 +94,7 @@ public sealed class GeneratedDocumentTests
 
 		var list = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Empty(list.Documents);
-		Assert.Contains(list.Notices, notice => notice.Contains("rose_workspace_status", StringComparison.Ordinal));
+		list.Documents.ShouldBeEmpty();
+		list.Notices.ShouldContain(notice => notice.Contains("rose_workspace_status", StringComparison.Ordinal));
 	}
 }

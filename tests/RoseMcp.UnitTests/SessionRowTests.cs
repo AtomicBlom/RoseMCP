@@ -59,11 +59,11 @@ public sealed class SessionRowTests
 	{
 		var row = new SessionRow(Session());
 
-		Assert.Equal("Running", row.StateLabel);
-		Assert.True(row.IsHealthy);
-		Assert.False(row.IsStopped);
-		Assert.Equal(string.Empty, row.ExecutionLabel);
-		Assert.Equal(string.Empty, row.ResumeLabel);
+		row.StateLabel.ShouldBe("Running");
+		row.IsHealthy.ShouldBeTrue();
+		row.IsStopped.ShouldBeFalse();
+		row.ExecutionLabel.ShouldBe(string.Empty);
+		row.ResumeLabel.ShouldBe(string.Empty);
 	}
 
 	/// <summary>
@@ -76,11 +76,11 @@ public sealed class SessionRowTests
 	{
 		var row = new SessionRow(Session(stop: Stop()));
 
-		Assert.Equal("Stopped", row.StateLabel);
-		Assert.True(row.IsCaution);
-		Assert.True(row.IsStopped);
-		Assert.Equal(57, row.StopSequence);
-		Assert.Equal("breakpoint bp-3 on thread 12", row.ExecutionLabel);
+		row.StateLabel.ShouldBe("Stopped");
+		row.IsCaution.ShouldBeTrue();
+		row.IsStopped.ShouldBeTrue();
+		row.StopSequence.ShouldBe(57);
+		row.ExecutionLabel.ShouldBe("breakpoint bp-3 on thread 12");
 	}
 
 	/// <summary>A step is a stop with no breakpoint, and says so rather than leaving a gap.</summary>
@@ -89,7 +89,7 @@ public sealed class SessionRowTests
 	{
 		var row = new SessionRow(Session(stop: Stop(LiveExecutionState.StoppedAtStep, breakpointId: null)));
 
-		Assert.Equal("a step on thread 12", row.ExecutionLabel);
+		row.ExecutionLabel.ShouldBe("a step on thread 12");
 	}
 
 	[Test]
@@ -97,7 +97,7 @@ public sealed class SessionRowTests
 	[Arguments(LiveAppSessionState.Faulted, "Faulted")]
 	[Arguments(LiveAppSessionState.Ended, "Ended")]
 	public void Reads_each_lifecycle_state(LiveAppSessionState state, string expected) =>
-		Assert.Equal(expected, new SessionRow(Session(state)).StateLabel);
+		new SessionRow(Session(state)).StateLabel.ShouldBe(expected);
 
 	/// <summary>
 	/// The two frameworks with a diagnostics tap get a surface; the others are told why they do not.
@@ -111,22 +111,22 @@ public sealed class SessionRowTests
 	[Arguments(XamlStack.Wpf, false)]
 	[Arguments(XamlStack.Unknown, false)]
 	public void Offers_a_visual_tree_only_where_there_is_a_tap(XamlStack stack, bool expected) =>
-		Assert.Equal(expected, new SessionRow(Session(stack: stack)).HasXaml);
+		new SessionRow(Session(stack: stack)).HasXaml.ShouldBe(expected);
 
 	[Test]
 	public void Names_the_framework_and_whether_a_read_is_cheap()
 	{
 		var resident = new SessionRow(Session(stack: XamlStack.WinUi, provider: LiveXamlProvider.Resident));
-		Assert.Contains("WinUI 3", resident.XamlFact);
-		Assert.Contains("provider resident", resident.XamlFact);
+		resident.XamlFact.ShouldContain("WinUI 3", Case.Sensitive);
+		resident.XamlFact.ShouldContain("provider resident", Case.Sensitive);
 
 		var cold = new SessionRow(Session(stack: XamlStack.Uwp));
-		Assert.Contains("UWP", cold.XamlFact);
-		Assert.Contains("not injected yet", cold.XamlFact);
+		cold.XamlFact.ShouldContain("UWP", Case.Sensitive);
+		cold.XamlFact.ShouldContain("not injected yet", Case.Sensitive);
 
 		// A provider that has gone is a channel failing quietly, and the next read pays an injection.
 		var lost = new SessionRow(Session(stack: XamlStack.Uwp, provider: LiveXamlProvider.Lost));
-		Assert.Contains("injects again", lost.XamlFact);
+		lost.XamlFact.ShouldContain("injects again", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -138,9 +138,9 @@ public sealed class SessionRowTests
 	{
 		var row = new SessionRow(Session(stack: XamlStack.Wpf, reason: "it has loaded PresentationFramework.dll"));
 
-		Assert.Contains("WPF", row.XamlFact);
-		Assert.Contains("PresentationFramework.dll", row.XamlFact);
-		Assert.Contains("Only UWP and WinUI", row.XamlFact);
+		row.XamlFact.ShouldContain("WPF", Case.Sensitive);
+		row.XamlFact.ShouldContain("PresentationFramework.dll", Case.Sensitive);
+		row.XamlFact.ShouldContain("Only UWP and WinUI", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -150,19 +150,19 @@ public sealed class SessionRowTests
 	[Test]
 	public void Distinguishes_no_events_from_a_recent_one()
 	{
-		Assert.Equal("no events yet", new SessionRow(Session()).Heartbeat);
-		Assert.Contains("0.4s ago", new SessionRow(Session(lastEventAge: TimeSpan.FromMilliseconds(420))).Heartbeat);
+		new SessionRow(Session()).Heartbeat.ShouldBe("no events yet");
+		new SessionRow(Session(lastEventAge: TimeSpan.FromMilliseconds(420))).Heartbeat.ShouldContain("0.4s ago", Case.Sensitive);
 	}
 
 	[Test]
 	public void Says_who_will_resume_a_stopped_target()
 	{
 		var auto = new SessionRow(Session(stop: Stop()));
-		Assert.Contains("auto-continues in", auto.ResumeLabel);
+		auto.ResumeLabel.ShouldContain("auto-continues in", Case.Sensitive);
 
 		var held = new SessionRow(Session(stop: Stop(resume: LiveStopResume.HeldByOperator)));
-		Assert.Contains("held for you", held.ResumeLabel);
-		Assert.True(held.IsHeld);
+		held.ResumeLabel.ShouldContain("held for you", Case.Sensitive);
+		held.IsHeld.ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -177,7 +177,7 @@ public sealed class SessionRowTests
 
 		row.Tick(read.AddSeconds(45));
 
-		Assert.Contains("45s ago", row.Heartbeat);
+		row.Heartbeat.ShouldContain("45s ago", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -203,10 +203,10 @@ public sealed class SessionRowTests
 			],
 		};
 
-		Assert.True(SessionRow.AppliedXaml(before, after));
+		SessionRow.AppliedXaml(before, after).ShouldBeTrue();
 
 		// And not twice: the same completed call seen again is not a second apply.
-		Assert.False(SessionRow.AppliedXaml(after, after));
+		SessionRow.AppliedXaml(after, after).ShouldBeFalse();
 	}
 
 	[Test]
@@ -229,7 +229,7 @@ public sealed class SessionRowTests
 			],
 		};
 
-		Assert.False(SessionRow.AppliedXaml(before, after), "a failed apply moved nothing");
+		SessionRow.AppliedXaml(before, after).ShouldBeFalse("a failed apply moved nothing");
 	}
 
 	[Test]
@@ -237,9 +237,9 @@ public sealed class SessionRowTests
 	{
 		var facts = new SessionRow(Session()).Facts;
 
-		Assert.Contains("pid 9191", facts);
-		Assert.Contains("host 4242", facts);
-		Assert.Contains("x64", facts);
-		Assert.Contains("up 3m", facts);
+		facts.ShouldContain("pid 9191", Case.Sensitive);
+		facts.ShouldContain("host 4242", Case.Sensitive);
+		facts.ShouldContain("x64", Case.Sensitive);
+		facts.ShouldContain("up 3m", Case.Sensitive);
 	}
 }

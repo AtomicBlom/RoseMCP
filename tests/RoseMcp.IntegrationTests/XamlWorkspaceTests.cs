@@ -22,7 +22,7 @@ public sealed class XamlWorkspaceTests
 		var diagnostics = await DiagnoseAsync(session);
 
 		// Without the stub, this project has an unresolved InitializeComponent and an unknown Save.
-		Assert.Empty(diagnostics.Diagnostics);
+		diagnostics.Diagnostics.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -39,17 +39,17 @@ public sealed class XamlWorkspaceTests
 		var generated = await GeneratedDocumentService.ListAsync(
 			snapshot, null, TestContext.Current!.Execution.CancellationToken);
 
-		var stub = Assert.Single(generated.Documents, document =>
-			document.HintName.Contains("xamlstub", StringComparison.OrdinalIgnoreCase));
+		var stub = generated.Documents.Where(document =>
+			document.HintName.Contains("xamlstub", StringComparison.OrdinalIgnoreCase)).ShouldHaveSingleItem();
 
-		Assert.Contains("Widget", stub.HintName, StringComparison.Ordinal);
-		Assert.False(File.Exists(fixture.Path("XamlStub", "Ui", "Widget.xamlstub.g.cs")));
+		stub.HintName.ShouldContain("Widget", Case.Sensitive);
+		File.Exists(fixture.Path("XamlStub", "Ui", "Widget.xamlstub.g.cs")).ShouldBeFalse();
 
 		var content = await GeneratedDocumentService.ReadAsync(
 			snapshot, stub.HintName, null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("partial class Widget : global::Windows.UI.Xaml.Controls.UserControl", content.Text, StringComparison.Ordinal);
-		Assert.Contains("private global::Windows.UI.Xaml.Controls.Button Save;", content.Text, StringComparison.Ordinal);
+		content.Text.ShouldContain("partial class Widget : global::Windows.UI.Xaml.Controls.UserControl", Case.Sensitive);
+		content.Text.ShouldContain("private global::Windows.UI.Xaml.Controls.Button Save;", Case.Sensitive);
 	}
 
 	[Test]
@@ -65,13 +65,13 @@ public sealed class XamlWorkspaceTests
 		var project = snapshot.Solution.Projects.Single(candidate => candidate.Name.StartsWith("Ui", StringComparison.Ordinal));
 		var report = await XamlStubReportReader.ReadAsync(project, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.NotNull(report);
-		Assert.Equal("UWP", report.Dialect);
-		Assert.False(report.DialectAmbiguous, "the dialect was not ambiguous");
-		Assert.Contains("Windows.UI.Xaml.Controls.Control", report.DialectReason, StringComparison.Ordinal);
-		Assert.Equal(1, report.MarkupFileCount);
-		Assert.Equal(1, report.StubbedClassCount);
-		Assert.Empty(report.UnresolvedTypes);
+		report.ShouldNotBeNull();
+		report.Dialect.ShouldBe("UWP");
+		report.DialectAmbiguous.ShouldBeFalse("the dialect was not ambiguous");
+		report.DialectReason.ShouldContain("Windows.UI.Xaml.Controls.Control", Case.Sensitive);
+		report.MarkupFileCount.ShouldBe(1);
+		report.StubbedClassCount.ShouldBe(1);
+		report.UnresolvedTypes.ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -99,13 +99,13 @@ public sealed class XamlWorkspaceTests
 		var generated = await GeneratedDocumentService.ListAsync(
 			snapshot, null, TestContext.Current!.Execution.CancellationToken);
 
-		var stub = Assert.Single(generated.Documents, document =>
-			document.HintName.Contains("xamlstub", StringComparison.OrdinalIgnoreCase));
+		var stub = generated.Documents.Where(document =>
+			document.HintName.Contains("xamlstub", StringComparison.OrdinalIgnoreCase)).ShouldHaveSingleItem();
 
 		var content = await GeneratedDocumentService.ReadAsync(
 			snapshot, stub.HintName, null, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("Button Cancel;", content.Text, StringComparison.Ordinal);
+		content.Text.ShouldContain("Button Cancel;", Case.Sensitive);
 	}
 
 	[Test]
@@ -126,8 +126,8 @@ public sealed class XamlWorkspaceTests
 		{
 			var project = load.Solution.Projects.Single();
 
-			Assert.Empty(project.AdditionalDocuments);
-			Assert.Empty(await project.GetSourceGeneratedDocumentsAsync(TestContext.Current!.Execution.CancellationToken));
+			project.AdditionalDocuments.ShouldBeEmpty();
+			(await project.GetSourceGeneratedDocumentsAsync(TestContext.Current!.Execution.CancellationToken)).ShouldBeEmpty();
 		}
 		finally
 		{
@@ -162,16 +162,16 @@ public sealed class XamlWorkspaceTests
 		await host.StartAsync(TestContext.Current!.Execution.CancellationToken);
 
 		var status = await host.GetStatusAsync(TestContext.Current!.Execution.CancellationToken);
-		var project = Assert.Single(status.Projects);
+		var project = status.Projects.ShouldHaveSingleItem();
 
-		Assert.Equal(1, project.XamlMarkupCount);
-		Assert.Equal(1, project.XamlStubbedCount);
-		Assert.Equal("UWP", project.XamlDialect);
-		Assert.Empty(project.UnresolvedXamlTypes);
+		project.XamlMarkupCount.ShouldBe(1);
+		project.XamlStubbedCount.ShouldBe(1);
+		project.XamlDialect.ShouldBe("UWP");
+		project.UnresolvedXamlTypes.ShouldBeEmpty();
 
 		// Stubbing successfully is not a reason to call the workspace degraded.
-		Assert.Empty(status.DegradedReasons);
-		Assert.Equal(WorkspaceState.Loaded, status.State);
+		status.DegradedReasons.ShouldBeEmpty();
+		status.State.ShouldBe(WorkspaceState.Loaded);
 	}
 
 	/// <summary>
@@ -199,8 +199,8 @@ public sealed class XamlWorkspaceTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("Greeter.Greet", references.Symbol, StringComparison.Ordinal);
-		Assert.Contains(references.References, reference => reference.Line == 21);
+		references.Symbol.ShouldContain("Greeter.Greet", Case.Sensitive);
+		references.References.ShouldContain(reference => reference.Line == 21);
 	}
 
 	/// <summary>The other tool that reaches the same index, by the same route.</summary>
@@ -217,7 +217,7 @@ public sealed class XamlWorkspaceTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains(implementations.Matches, match => match.Signature.Contains("Greeter.Greet", StringComparison.Ordinal));
+		implementations.Matches.ShouldContain(match => match.Signature.Contains("Greeter.Greet", StringComparison.Ordinal));
 	}
 
 	private static async Task<DiagnosticsResult> DiagnoseAsync(WorkspaceSession session)
@@ -251,8 +251,7 @@ public sealed class XamlWorkspaceTests
 		var worker = typeof(SolutionLoader).Assembly.Location;
 		var generator = Path.Combine(Path.GetDirectoryName(worker)!, "RoseMcp.XamlStubs.dll");
 
-		Assert.True(
-			File.Exists(generator),
+		File.Exists(generator).ShouldBeTrue(
 			$"the worker loads the stub generator from its own directory, and {generator} is not there");
 	}
 }

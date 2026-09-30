@@ -22,11 +22,11 @@ public sealed class ToolArgumentShapeTests
 			Schema("""{"arguments":{"type":["array","null"],"items":{"type":"string"}},"symbol":{"type":"string"}}"""),
 			Arguments("""{"symbol":"A.B","arguments":"count=1"}"""));
 
-		Assert.NotNull(message);
-		Assert.StartsWith("arguments takes a list of strings", message, StringComparison.Ordinal);
-		Assert.Contains("a string was sent", message!, StringComparison.Ordinal);
-		Assert.Contains("[\"one\", \"two\"]", message, StringComparison.Ordinal);
-		Assert.DoesNotContain("System.String", message, StringComparison.Ordinal);
+		message.ShouldNotBeNull();
+		message.ShouldStartWith("arguments takes a list of strings", Case.Sensitive);
+		message!.ShouldContain("a string was sent", Case.Sensitive);
+		message.ShouldContain("[\"one\", \"two\"]", Case.Sensitive);
+		message.ShouldNotContain("System.String", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -41,9 +41,9 @@ public sealed class ToolArgumentShapeTests
 			Schema("""{"apply":{"type":"boolean"}}"""),
 			Arguments("""{"apply":"yes"}"""));
 
-		Assert.NotNull(message);
-		Assert.StartsWith("apply takes a boolean", message, StringComparison.Ordinal);
-		Assert.Contains("true or false", message!, StringComparison.Ordinal);
+		message.ShouldNotBeNull();
+		message.ShouldStartWith("apply takes a boolean", Case.Sensitive);
+		message!.ShouldContain("true or false", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -53,9 +53,9 @@ public sealed class ToolArgumentShapeTests
 	[Test]
 	public void Says_nothing_about_a_null_sent_for_a_nullable_argument()
 	{
-		Assert.Null(ToolArgumentShape.Mismatch(
+		ToolArgumentShape.Mismatch(
 			Schema("""{"workspace":{"type":["string","null"]}}"""),
-			Arguments("""{"workspace":null}""")));
+			Arguments("""{"workspace":null}""")).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -66,9 +66,9 @@ public sealed class ToolArgumentShapeTests
 	[Test]
 	public void Says_nothing_when_every_argument_matches()
 	{
-		Assert.Null(ToolArgumentShape.Mismatch(
+		ToolArgumentShape.Mismatch(
 			Schema("""{"symbol":{"type":"string"},"usings":{"type":["array","null"],"items":{"type":"string"}}}"""),
-			Arguments("""{"symbol":"A.B","usings":["System.Text"]}""")));
+			Arguments("""{"symbol":"A.B","usings":["System.Text"]}""")).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -78,13 +78,13 @@ public sealed class ToolArgumentShapeTests
 	[Test]
 	public void Says_nothing_about_what_the_schema_does_not_declare()
 	{
-		Assert.Null(ToolArgumentShape.Mismatch(
+		ToolArgumentShape.Mismatch(
 			Schema("""{"symbol":{"type":"string"}}"""),
-			Arguments("""{"unknown":42}""")));
+			Arguments("""{"unknown":42}""")).ShouldBeNull();
 
-		Assert.Null(ToolArgumentShape.Mismatch(
+		ToolArgumentShape.Mismatch(
 			JsonDocument.Parse("""{"type":"object"}""").RootElement,
-			Arguments("""{"symbol":42}""")));
+			Arguments("""{"symbol":42}""")).ShouldBeNull();
 	}
 
 	private static JsonElement Schema(string properties) =>

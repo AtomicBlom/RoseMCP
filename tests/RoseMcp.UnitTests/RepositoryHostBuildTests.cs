@@ -43,8 +43,8 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		var perRid = StageHost(RuntimeInformation.RuntimeIdentifier, DateTime.UtcNow.AddHours(-3));
 		var plain = StageHost(null, DateTime.UtcNow);
 
-		Assert.Equal(plain, Resolve());
-		Assert.True(File.Exists(perRid), "the per-RID build is still there and was simply not chosen");
+		Resolve().ShouldBe(plain);
+		File.Exists(perRid).ShouldBeTrue("the per-RID build is still there and was simply not chosen");
 	}
 
 	/// <summary>
@@ -57,7 +57,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		StageHost(null, DateTime.UtcNow.AddHours(-3));
 		var perRid = StageHost(RuntimeInformation.RuntimeIdentifier, DateTime.UtcNow);
 
-		Assert.Equal(perRid, Resolve());
+		Resolve().ShouldBe(perRid);
 	}
 
 	/// <summary>
@@ -70,7 +70,7 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		var foreign = RuntimeInformation.RuntimeIdentifier == "win-x64" ? "win-arm64" : "win-x64";
 		StageHost(foreign, DateTime.UtcNow);
 
-		Assert.Throws<FileNotFoundException>(Resolve);
+		Should.Throw<FileNotFoundException>(Resolve).ShouldBeOfType<FileNotFoundException>();
 	}
 
 	/// <summary>
@@ -83,7 +83,23 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		StageHost(RuntimeInformation.RuntimeIdentifier, DateTime.UtcNow, configuration: "Release");
 		var debug = StageHost(RuntimeInformation.RuntimeIdentifier, DateTime.UtcNow.AddHours(-3));
 
-		Assert.Equal(debug, Resolve());
+		Resolve().ShouldBe(debug);
+	}
+
+	/// <summary>
+	/// And the worker gets the same policy, which it did not have. Every Roslyn test drives a worker,
+	/// so a Release publish left in bin answering for a Debug run means a suite that proves nothing
+	/// about the change under test -- the same failure the live-app resolver already prevented, one
+	/// launcher over.
+	/// </summary>
+	[Test]
+	public void A_worker_of_another_configuration_is_not_used_either()
+	{
+		StageWorker(DateTime.UtcNow, configuration: "Release");
+		var debug = StageWorker(DateTime.UtcNow.AddHours(-3));
+
+		WorkerLauncher.ResolveWorkerPath(new BrokerOptions(), BrokerDirectory, searchRepository: true).ShouldBe(
+			debug);
 	}
 
 	public void Dispose()
@@ -113,6 +129,24 @@ public sealed class RepositoryHostBuildTests : IDisposable
 		Directory.CreateDirectory(directory);
 
 		var path = Path.Combine(directory, LiveAppHostLauncher.ExecutableName);
+		File.WriteAllBytes(path, []);
+		File.SetLastWriteTimeUtc(path, writtenUtc);
+
+		return path;
+	}
+
+	/// <summary>
+	/// A worker build, which has no per-RID shape to stage: it runs in the broker's own
+	/// architecture, so configuration and recency are the whole of the question.
+	/// </summary>
+	private string StageWorker(DateTime writtenUtc, string configuration = "Debug")
+	{
+		var directory = Directory.CreateDirectory(
+			Path.Combine(_root, "src", "RoseMcp.Worker", "bin", configuration, "net10.0"));
+
+		var name = OperatingSystem.IsWindows() ? "RoseMcp.Worker.exe" : "RoseMcp.Worker";
+		var path = Path.Combine(directory.FullName, name);
+
 		File.WriteAllBytes(path, []);
 		File.SetLastWriteTimeUtc(path, writtenUtc);
 

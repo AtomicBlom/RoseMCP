@@ -125,6 +125,7 @@ loaded solution, and every tool refuses code that does not parse before any file
 | `rose_set_attribute` | Adds or changes an attribute | Writes the file declaring it |
 | `rose_add_using` | Adds an import | Writes the named file |
 | `rose_change_signature` | Changes a member's parameters with its overrides, implementations and call sites | Writes every document in the solution those touch |
+| `rose_replace_pattern` | Rewrites every call or statement a rule matches, by what it binds to | Writes every document in scope with a match -- the whole solution unless `filePaths` narrows it; `apply: false` returns the summary instead |
 | `rose_rename_symbol` | Renames a symbol and its references | Writes every document in the solution that names it; reports XAML mentions and changes none |
 | `rose_move_member` | Moves a member between types, with its call sites | Writes the documents involved |
 | `rose_move_type_to_file` | Moves a type to a file of its own | Writes the source file and the new one |

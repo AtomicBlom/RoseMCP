@@ -1,6 +1,3 @@
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
-
 using RoseMcp.Broker;
 using RoseMcp.TestSupport;
 
@@ -28,9 +25,9 @@ public sealed class WorkspaceRoutingTests
 		using var repository = new SeveralSolutions();
 		var manager = Manager(rootedAt: repository.Root);
 
-		var routed = manager.WorkspaceFor(WorkspaceHints.From(repository.Second));
+		var routed = manager.WorkspaceFor(WorkspaceHints.From(RootedPath.Absolute(repository.Second)));
 
-		Assert.Equal(repository.Second, routed, ignoreCase: true);
+		routed.ShouldBe(repository.Second, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -43,9 +40,9 @@ public sealed class WorkspaceRoutingTests
 		using var repository = new SeveralSolutions();
 		var manager = Manager(rootedAt: repository.Root);
 
-		var error = Assert.Throws<AmbiguousSolutionException>(() => manager.WorkspaceFor(WorkspaceHints.None));
+		var error = Should.Throw<AmbiguousSolutionException>(() => manager.WorkspaceFor(WorkspaceHints.None)).ShouldBeOfType<AmbiguousSolutionException>();
 
-		Assert.Equal(3, error.Candidates.Count);
+		error.Candidates.Count.ShouldBe(3);
 	}
 
 	/// <summary>
@@ -60,25 +57,53 @@ public sealed class WorkspaceRoutingTests
 		var manager = Manager(rootedAt: repository.Root);
 
 		var routed = manager.WorkspaceFor(
-			WorkspaceHints.From(null, Path.Combine(repository.Root, "Second", "Thing.cs")));
+			WorkspaceHints.From(null, RootedPath.Absolute(Path.Combine(repository.Root, "Second", "Thing.cs"))));
 
-		Assert.Equal(repository.Second, routed, ignoreCase: true);
+		routed.ShouldBe(repository.Second, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
 	/// Not every hint is a path. rose_diagnostics takes a <c>target</c> that is a file under document
-	/// scope and a project name under project scope, and resolving "Second" as a path would make it
-	/// relative to the process directory -- answering from whichever solution is sitting there.
+	/// scope and a project name under project scope, and a name that describes nothing where the
+	/// caller is standing says nothing about which workspace they meant.
 	/// </summary>
 	[Test]
 	public void A_hint_that_names_nothing_on_disk_is_passed_over()
 	{
 		using var repository = new SeveralSolutions();
 		var manager = Manager(rootedAt: repository.Root);
+		var paths = Paths(rootedAt: repository.Root);
 
-		// "Second" is a project name here, not a path.
-		Assert.Throws<AmbiguousSolutionException>(
-			() => manager.WorkspaceFor(WorkspaceHints.From(null, "Second")));
+		// A project name with no folder of its own, which is the ordinary shape: the project is named
+		// for what it does and lives beside its siblings.
+		Should.Throw<AmbiguousSolutionException>(
+			() => manager.WorkspaceFor(WorkspaceHints.From(null, paths.Of("Second.Core")))).ShouldBeOfType<AmbiguousSolutionException>();
+	}
+
+	/// <summary>
+	/// The failure this card was cut for. Six worktrees of one repository hold the same relative
+	/// paths, so a relative hint measured from anywhere but the calling session names a real file in
+	/// the wrong checkout, resolves by containment, and wins the ranking outright -- and the write
+	/// that follows is invisible to the working copy the session can see.
+	/// </summary>
+	[Test]
+	public void A_relative_path_resolves_in_the_checkout_the_call_came_from()
+	{
+		using var main = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var worktree = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var elsewhere = Path.GetDirectoryName(main.SolutionPath)!;
+		var here = Path.GetDirectoryName(worktree.SolutionPath)!;
+
+		// The broker is sitting in one checkout and the session is calling from the other.
+		var manager = Manager(rootedAt: elsewhere);
+		var paths = Paths(rootedAt: elsewhere);
+
+		using var origin = CallOrigin.Use(here);
+
+		var routed = manager.WorkspaceFor(WorkspaceHints.From(null, paths.Of(Path.Combine("Core", "Calculator.cs"))));
+
+		routed.ShouldBe(worktree.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -91,8 +116,8 @@ public sealed class WorkspaceRoutingTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		var manager = Manager(rootedAt: Path.GetDirectoryName(fixture.SolutionPath)!);
 
-		Assert.Equal(
-			fixture.SolutionPath, manager.WorkspaceFor(WorkspaceHints.None), ignoreCase: true);
+		manager.WorkspaceFor(WorkspaceHints.None).ShouldBe(
+			fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -107,8 +132,8 @@ public sealed class WorkspaceRoutingTests
 
 		using var origin = CallOrigin.Use(Path.GetDirectoryName(fixture.SolutionPath)!);
 
-		Assert.Equal(
-			fixture.SolutionPath, manager.WorkspaceFor(WorkspaceHints.None), ignoreCase: true);
+		manager.WorkspaceFor(WorkspaceHints.None).ShouldBe(
+			fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -121,16 +146,16 @@ public sealed class WorkspaceRoutingTests
 		using var repository = new SeveralSolutions();
 		var manager = Manager(rootedAt: NowhereDirectory.Path());
 
-		var error = Assert.Throws<AmbiguousSolutionException>(
-			() => manager.WorkspaceFor(WorkspaceHints.From(null, repository.Root)));
+		var error = Should.Throw<AmbiguousSolutionException>(
+			() => manager.WorkspaceFor(WorkspaceHints.From(null, RootedPath.Absolute(repository.Root)))).ShouldBeOfType<AmbiguousSolutionException>();
 
-		Assert.Equal(repository.Root, error.Directory, ignoreCase: true);
+		error.Directory.ShouldBe(repository.Root, StringCompareShould.IgnoreCase);
 	}
 
-	private static WorkspaceManager Manager(string rootedAt) => new(
-		Options.Create(new BrokerOptions { DefaultWorkspaceRoot = rootedAt }),
-		NullLoggerFactory.Instance,
-		NullLogger<WorkspaceManager>.Instance);
+	private static WorkspaceManager Manager(string rootedAt) => BrokerHarness.CreateManager(rootedAt);
+
+	/// <summary>What a tool uses to make its path arguments absolute, rooted where the manager is.</summary>
+	private static CallerPaths Paths(string rootedAt) => BrokerHarness.CreatePaths(rootedAt);
 
 	/// <summary>
 	/// A root holding three solutions, none of which encloses the root itself -- the shape of a real

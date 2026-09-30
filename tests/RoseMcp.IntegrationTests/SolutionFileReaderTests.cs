@@ -13,9 +13,15 @@ public sealed class SolutionFileReaderTests : IDisposable
 
 		var projects = SolutionFileReader.ReadProjectPaths(fixture.SolutionPath);
 
-		Assert.Equal(["App.csproj", "Core.csproj"], projects.Select(Path.GetFileName).Order());
-		Assert.All(projects, path => Assert.True(Path.IsPathFullyQualified(path)));
-		Assert.All(projects, path => Assert.True(File.Exists(path)));
+		projects.Select(Path.GetFileName).Order().ShouldBe(["App.csproj", "Core.csproj"]);
+		foreach (var path in projects)
+		{
+			Path.IsPathFullyQualified(path).ShouldBeTrue();
+		}
+		foreach (var path in projects)
+		{
+			File.Exists(path).ShouldBeTrue();
+		}
 	}
 
 	[Test]
@@ -25,8 +31,11 @@ public sealed class SolutionFileReaderTests : IDisposable
 
 		var projects = SolutionFileReader.ReadProjectPaths(fixture.SolutionPath);
 
-		Assert.Equal(["Consumer.csproj", "Gen.csproj"], projects.Select(Path.GetFileName).Order());
-		Assert.All(projects, path => Assert.True(File.Exists(path)));
+		projects.Select(Path.GetFileName).Order().ShouldBe(["Consumer.csproj", "Gen.csproj"]);
+		foreach (var path in projects)
+		{
+			File.Exists(path).ShouldBeTrue();
+		}
 	}
 
 	[Test]
@@ -50,8 +59,8 @@ public sealed class SolutionFileReaderTests : IDisposable
 
 		var configurations = SolutionFileReader.ReadConfigurations(path);
 
-		Assert.Equal(["Debug-2024", "Release"], configurations.Configurations);
-		Assert.Equal(["x64"], configurations.Platforms);
+		configurations.Configurations.ShouldBe(["Debug-2024", "Release"]);
+		configurations.Platforms.ShouldBe(["x64"]);
 	}
 
 	[Test]
@@ -75,11 +84,11 @@ public sealed class SolutionFileReaderTests : IDisposable
 
 		var configurations = SolutionFileReader.ReadConfigurations(path);
 
-		Assert.Equal(["Debug", "Release"], configurations.Configurations);
+		configurations.Configurations.ShouldBe(["Debug", "Release"]);
 
 		// Spelled as MSBuild spells the property, not as the solution file spells it. Passing a
 		// project "Any CPU" with the space moves its output to bin\Any CPU\.
-		Assert.Equal(["x64", "AnyCPU"], configurations.Platforms);
+		configurations.Platforms.ShouldBe(["x64", "AnyCPU"]);
 	}
 
 	[Test]
@@ -96,8 +105,8 @@ public sealed class SolutionFileReaderTests : IDisposable
 
 		var configurations = SolutionFileReader.ReadConfigurations(path);
 
-		Assert.Equal(["Release", "Debug-2024", "Debug-2025"], configurations.Configurations);
-		Assert.Equal(["x64"], configurations.Platforms);
+		configurations.Configurations.ShouldBe(["Release", "Debug-2024", "Debug-2025"]);
+		configurations.Platforms.ShouldBe(["x64"]);
 	}
 
 	[Test]
@@ -105,7 +114,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
 
-		Assert.True(SolutionFileReader.ReadConfigurations(fixture.SolutionPath).IsEmpty);
+		SolutionFileReader.ReadConfigurations(fixture.SolutionPath).IsEmpty.ShouldBeTrue();
 	}
 
 	[Test]
@@ -116,7 +125,7 @@ public sealed class SolutionFileReaderTests : IDisposable
 
 		var projects = SolutionFileReader.ReadProjectPaths(project);
 
-		Assert.Equal([project], projects);
+		projects.ShouldBe([project]);
 	}
 
 	public void Dispose() => _temporary.Delete(recursive: true);

@@ -75,7 +75,9 @@ public static class MemberEditService
 
 		progress?.Report(request.Apply ? "Writing the file" : "Building the diff", 55);
 
-		await edit.WriteAsync(finished.Solution, cancellationToken);
+		var asked = Asked.Nothing.And(written.Document, imported.Asked);
+
+		await edit.WriteAsync(finished.Solution, asked, cancellationToken);
 
 		var path = written.Document.FilePath!;
 		var scope = EditVerification.ScopeFor(edit.Solution, path, written.Reaches, request.VerifyScope);
@@ -97,7 +99,9 @@ public static class MemberEditService
 			var (resolved, imports) = await EditImports.ForUnresolvedAsync(
 				snapshot, edit.Solution, written, path, edit.Verification.Introduced, cancellationToken);
 
-			await edit.RewriteAsync(resolved, path, scope, cancellationToken);
+			var importing = asked.And(written.Document, await EditImports.RegionAsync(written.Document, cancellationToken));
+
+			await edit.RewriteAsync(resolved, importing, path, scope, cancellationToken);
 
 			// After the second compile, which is the first moment it can be said whether each import
 			// resolved the error it was fetched for rather than only which namespace it named.
@@ -149,14 +153,15 @@ public static class MemberEditService
 		GuardSharedDeclaration(target);
 
 		var text = await target.Document.GetTextAsync(cancellationToken);
+		var rules = await Whitespace.RulesForAsync(target.Document, cancellationToken);
 
 		var parsed = MemberSyntax.Parse(
 			request.Code,
 			KeywordAround(target.Declaration),
 			target.Document.Project.ParseOptions,
-			IndentAt(text, target.Declaration.SpanStart),
-			Whitespace.Dominant(text),
-			count => notices.Add(RewrittenEndings(count, text)),
+			Whitespace.IndentAt(text, target.Declaration.SpanStart),
+			rules.LineEnding,
+			count => notices.Add(RewrittenEndings(count, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		if (parsed.Count != 1)
@@ -175,7 +180,9 @@ public static class MemberEditService
 			marker,
 			target.Signature,
 			[.. NamesOf(parsed[0])],
-			target.Symbol);
+			target.Symbol,
+			[target.Declaration.FullSpan],
+			rules);
 	}
 
 	/// <summary>
@@ -210,6 +217,7 @@ public static class MemberEditService
 		}
 
 		var root = await RootOf(target.Document, cancellationToken);
+		var rules = await Whitespace.RulesForAsync(target.Document, cancellationToken);
 
 		var without = parent.RemoveNode(
 			target.Declaration,
@@ -226,7 +234,9 @@ public static class MemberEditService
 			marker,
 			target.Signature,
 			[NameOfDeclaration(target.Declaration)],
-			target.Symbol);
+			target.Symbol,
+			[target.Declaration.FullSpan],
+			rules);
 	}
 
 	/// <summary>The name a removed declaration went by, for reporting what was taken out.</summary>
@@ -261,7 +271,7 @@ public static class MemberEditService
 		}
 
 		var text = await target.Document.GetTextAsync(cancellationToken);
-		var indent = IndentAt(text, declaration.SpanStart);
+		var indent = Whitespace.IndentAt(text, declaration.SpanStart);
 
 		// Joined by a single space, with whatever separated the old signature from its old body
 		// dropped. The two are not interchangeable: a block body sat on the next line, so keeping
@@ -275,7 +285,8 @@ public static class MemberEditService
 		// formatter has no rule about where a wrapped list sits, so nothing downstream puts it back.
 		// The signature then drifts on a change that promised to touch only the body.
 		var head = indent + text.ToString(TextSpan.FromBounds(declaration.SpanStart, bodyStart)).TrimEnd();
-		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, notices);
+		var asked = new List<TextSpan>();
+		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, notices, asked);
 
 		// The head is named as copied, which exempts it from the re-indentation the body needs. The
 		// two halves arrive in different coordinate systems -- the signature indented for the file it
@@ -303,15 +314,15 @@ public static class MemberEditService
 		// its lines belong one level in from the member: what precedes them is a brace or an arrow on
 		// the signature's own line, not a line of their own to take a level from. Roslyn's formatter
 		// puts a block's braces back where .editorconfig wants them and has no rule for an arrow.
-		var rules = Whitespace.RulesFor(target.Document.Project, declaration.SyntaxTree, text);
+		var rules = await Whitespace.RulesForAsync(target.Document, cancellationToken);
 
 		var parsed = MemberSyntax.Parse(
 			rebuilt,
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
 			fromTheFile ? indent : indent + rules.IndentUnit,
-			Whitespace.Dominant(text),
-			count => notices.Add(RewrittenEndings(count, text)),
+			rules.LineEnding,
+			count => notices.Add(RewrittenEndings(count, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)),
 			copied: head,
 			baseline: fromTheFile ? indent : null);
@@ -338,15 +349,21 @@ public static class MemberEditService
 			marker,
 			target.Signature,
 			[.. NamesOf(declaration)],
-			Reaches: null);
+			Reaches: null,
+			asked,
+			rules);
 	}
 
 	/// <summary>
-	/// The body to write, from whichever of the three payloads the caller sent.
+	/// The body to write, from whichever of the three payloads the caller sent, and into
+	/// <paramref name="asked"/> the part of the file that payload asks to change.
 	/// <para>
 	/// Three because re-emitting a sixty-line body to change one line is what sends a caller back to a
 	/// text anchor: the granularity is right and the payload is expensive. All three end here, as a
-	/// whole body, so what reaches disk has been parsed and formatted either way.
+	/// whole body, so what reaches disk has been parsed and formatted either way -- which is why what
+	/// each one asked for has to be said separately. A whole body asks for the body; an anchor asks for
+	/// the tokens it matched and not for the statements around them; an insertion asks for the place it
+	/// goes and not for the statements already there.
 	/// </para>
 	/// </summary>
 	private static string BodyFor(
@@ -355,7 +372,8 @@ public static class MemberEditService
 		SourceText text,
 		int bodyStart,
 		MemberEditRequest request,
-		List<string> notices)
+		List<string> notices,
+		List<TextSpan> asked)
 	{
 		var payloads = (request.Code.Length > 0 ? 1 : 0)
 			+ (request.Find is { Length: > 0 } ? 1 : 0)
@@ -386,15 +404,48 @@ public static class MemberEditService
 				find,
 				request.Replace ?? string.Empty,
 				request.IncludeTrivia,
-				count => notices.Add(RewrittenEndings(count, text)),
-				notices.Add);
+				count => notices.Add(MemberSyntax.RewrittenEndings(count, LineEndings.Name(Whitespace.Dominant(body)))),
+				notices.Add,
+				span => asked.Add(new TextSpan(bodyStart + span.Start, span.Length)));
 		}
 
-		if (request.Position is not { } position) return request.Code;
+		if (request.Position is not { } position)
+		{
+			asked.Add(WholeBody(declaration, bodyStart, request.Code));
+
+			return request.Code;
+		}
 
 		if (BodyBlock(declaration) is not { } block) throw BodyEdit.NoStatements(signature);
 
-		return BodyEdit.Inserted(declaration, block, request.Code, position == BodyPosition.Start, notices);
+		var atStart = position == BodyPosition.Start;
+
+		asked.Add(new TextSpan(BodyEdit.InsertionPoint(block, atStart), 0));
+
+		return BodyEdit.Inserted(declaration, block, request.Code, atStart, notices);
+	}
+
+	/// <summary>
+	/// What writing a whole body asks to change: the body, and the end of the signature as well when the
+	/// body changes shape.
+	/// <para>
+	/// An arrow goes on the line the signature ends on and a block's brace below it, so trading one for
+	/// the other rewrites that line by definition. Keeping the shape does not: a value pulled up onto
+	/// the line its declaration ends on, or an arrow drawn up after it, is a change nobody asked for.
+	/// </para>
+	/// </summary>
+	private static TextSpan WholeBody(MemberDeclarationSyntax declaration, int bodyStart, string code)
+	{
+		var arrowNow = declaration is BaseMethodDeclarationSyntax { ExpressionBody: not null }
+			or PropertyDeclarationSyntax { ExpressionBody: not null }
+			or IndexerDeclarationSyntax { ExpressionBody: not null };
+
+		var arrowAfter = code.TrimStart().StartsWith("=>", StringComparison.Ordinal);
+		var reshaped = !IsInitialiser(declaration) && arrowNow != arrowAfter;
+
+		var from = reshaped ? declaration.FindToken(bodyStart).GetPreviousToken().Span.End : bodyStart;
+
+		return TextSpan.FromBounds(from, declaration.Span.End);
 	}
 
 	/// <summary>The block a member is written with, or null where it has an expression body instead.</summary>
@@ -427,10 +478,7 @@ public static class MemberEditService
 		var document = target.Document;
 
 		var text = await document.GetTextAsync(cancellationToken);
-		var tree = await document.GetSyntaxTreeAsync(cancellationToken)
-			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} is not a C# source file.");
-
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
+		var rules = await Whitespace.RulesForAsync(document, cancellationToken);
 		var lineEnding = rules.LineEnding;
 
 		var parsed = MemberSyntax.Parse(
@@ -439,7 +487,7 @@ public static class MemberEditService
 			document.Project.ParseOptions,
 			IndentFor(type, text, rules),
 			lineEnding,
-			count => notices.Add(RewrittenEndings(count, text)),
+			count => notices.Add(RewrittenEndings(count, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		GuardDuplicates(type, parsed);
@@ -473,7 +521,9 @@ public static class MemberEditService
 			marker,
 			target.Signature,
 			[.. parsed.SelectMany(NamesOf)],
-			target.Symbol);
+			target.Symbol,
+			[new TextSpan(InsertionPoint(type, index), 0)],
+			rules);
 	}
 
 	/// <summary>
@@ -490,7 +540,8 @@ public static class MemberEditService
 		// Pointed at the written spans alone. The formatter honours .editorconfig but reindents
 		// whatever it is given, so pointing it at the whole file would turn a one-member change into
 		// a whole-file diff in any repository not already formatted to its own rules.
-		var formatted = await Formatter.FormatAsync(document, written.Marker, cancellationToken: cancellationToken);
+		var options = await Whitespace.FormattingOptionsAsync(document, written.Rules, cancellationToken);
+		var formatted = await Formatter.FormatAsync(document, written.Marker, options, cancellationToken);
 
 		var root = await formatted.GetSyntaxRootAsync(cancellationToken);
 		var tree = await formatted.GetSyntaxTreeAsync(cancellationToken);
@@ -516,7 +567,7 @@ public static class MemberEditService
 		// line endings but cannot move a line: a line is a line either way.
 		var line = text.Lines.GetLineFromPosition(nodes.Min(node => node.SpanStart)).LineNumber + 1;
 
-		var rules = Whitespace.RulesFor(formatted.Project, tree, text);
+		var rules = written.Rules;
 		var final = Whitespace.Apply(root, text, rules, [span]);
 
 		// Every project holding this file gets the same text. A linked document left on the old text
@@ -668,6 +719,16 @@ public static class MemberEditService
 		return type.Members.Count;
 	}
 
+	/// <summary>
+	/// Where members inserted at <paramref name="index"/> go, which is all an addition asks to change:
+	/// in front of the member they push down, after the last one, or inside the braces of a type that
+	/// has none.
+	/// </summary>
+	private static int InsertionPoint(TypeDeclarationSyntax type, int index) =>
+		index < type.Members.Count ? type.Members[index].FullSpan.Start
+			: type.Members.Count > 0 ? type.Members[^1].FullSpan.End
+			: type.OpenBraceToken.FullSpan.End;
+
 	private static int AnchorIndex(TypeDeclarationSyntax type, string name)
 	{
 		for (var index = 0; index < type.Members.Count; index++)
@@ -793,24 +854,13 @@ public static class MemberEditService
 		declaration.Parent is BaseTypeDeclarationSyntax container ? MemberSyntax.KeywordOf(container) : "class";
 
 	/// <summary>
-	/// The indentation the line at <paramref name="position"/> starts with, which is what a
-	/// declaration written into that place has to line up with.
-	/// </summary>
-	internal static string IndentAt(SourceText text, int position)
-	{
-		var line = text.Lines.GetLineFromPosition(position).ToString();
-
-		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
-	}
-
-	/// <summary>
 	/// Where a new member's lines belong: level with the members already there, or one level in from
 	/// the container when there are none to copy.
 	/// </summary>
 	private static string IndentFor(TypeDeclarationSyntax type, SourceText text, WhitespaceRules rules) =>
 		type.Members.Count > 0
-			? IndentAt(text, type.Members[0].SpanStart)
-			: IndentAt(text, type.SpanStart) + rules.IndentUnit;
+			? Whitespace.IndentAt(text, type.Members[0].SpanStart)
+			: Whitespace.IndentAt(text, type.SpanStart) + rules.IndentUnit;
 
 	/// <summary>
 	/// Warns about a multi-line string in the written code whose line endings are not the file's.
@@ -905,14 +955,19 @@ public static class MemberEditService
 		await document.GetSyntaxRootAsync(cancellationToken)
 			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} is not a C# source file.");
 
-	/// <summary>The edit, ready to be formatted: which document, the new root, and what to call it.</summary>
+	/// <summary>
+	/// The edit, ready to be formatted: which document, the new root, what to call it, and the spans of
+	/// the document as it was that the edit was asked to change.
+	/// </summary>
 	internal sealed record Written(
 		Document Document,
 		SyntaxNode Root,
 		SyntaxAnnotation Marker,
 		string Symbol,
 		IReadOnlyList<string> Members,
-		ISymbol? Reaches);
+		ISymbol? Reaches,
+		IReadOnlyList<TextSpan> Asked,
+		WhitespaceRules Rules);
 
 	private sealed record Finished(Solution Solution, int Line, IReadOnlyList<string> Notices);
 
@@ -920,6 +975,6 @@ public static class MemberEditService
 	/// Says that line endings in the supplied code were changed, because a diff cannot: a terminator
 	/// is not line content, and inside a literal it is part of what the string says.
 	/// </summary>
-	internal static string RewrittenEndings(int count, SourceText text) =>
-		MemberSyntax.RewrittenEndings(count, LineEndings.Name(Whitespace.Dominant(text)));
+	internal static string RewrittenEndings(int count, WhitespaceRules rules) =>
+		MemberSyntax.RewrittenEndings(count, LineEndings.Name(rules.LineEnding));
 }

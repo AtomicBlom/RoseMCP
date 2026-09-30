@@ -16,27 +16,24 @@ public sealed class PausedSessionTests
 	[Test]
 	public void A_paused_target_says_so_rather_than_calling_itself_a_step()
 	{
-		Assert.Equal(
-			"paused on thread 4128",
-			SessionRow.DescribeExecution(Stopped(LiveExecutionState.PausedByOperator, threadId: 4128)));
+		SessionRow.DescribeExecution(Stopped(LiveExecutionState.PausedByOperator, threadId: 4128)).ShouldBe(
+			"paused on thread 4128");
 
-		Assert.Equal(
-			"a step on thread 4128",
-			SessionRow.DescribeExecution(Stopped(LiveExecutionState.StoppedAtStep, threadId: 4128)));
+		SessionRow.DescribeExecution(Stopped(LiveExecutionState.StoppedAtStep, threadId: 4128)).ShouldBe(
+			"a step on thread 4128");
 	}
 
 	/// <summary>A breakpoint is named, because its id is what a reader removes or moves.</summary>
 	[Test]
 	public void A_breakpoint_still_names_itself()
 	{
-		Assert.Equal(
-			"breakpoint bp-3 on thread 4128",
-			SessionRow.DescribeExecution(Stopped(LiveExecutionState.StoppedAtBreakpoint, 4128, "bp-3")));
+		SessionRow.DescribeExecution(Stopped(LiveExecutionState.StoppedAtBreakpoint, 4128, "bp-3")).ShouldBe(
+			"breakpoint bp-3 on thread 4128");
 	}
 
 	[Test]
 	public void A_running_target_has_nothing_to_say_about_a_stop() =>
-		Assert.Equal(string.Empty, SessionRow.DescribeExecution(Summary(null)));
+		SessionRow.DescribeExecution(Summary(null)).ShouldBe(string.Empty);
 
 	private static LiveAppSessionSummary Stopped(LiveExecutionState state, int? threadId, string? breakpointId = null) =>
 		Summary(new LiveStop

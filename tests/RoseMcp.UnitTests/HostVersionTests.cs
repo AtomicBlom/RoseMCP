@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 
+using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
 namespace RoseMcp.UnitTests;
@@ -24,9 +25,9 @@ public sealed class HostVersionTests
 	{
 		var version = HostVersion.Of(typeof(HostVersion).Assembly);
 
-		Assert.NotEqual("0.0.0", version);
-		Assert.NotEqual("0.1.0", version);
-		Assert.DoesNotContain("+", version, StringComparison.Ordinal);
+		version.ShouldNotBe("0.0.0");
+		version.ShouldNotBe("0.1.0");
+		version.ShouldNotContain("+", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -40,7 +41,65 @@ public sealed class HostVersionTests
 			.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
 			.InformationalVersion;
 
-		Assert.Equal(stamped.Split('+')[0], HostVersion.Of(typeof(HostVersion).Assembly));
+		HostVersion.Of(typeof(HostVersion).Assembly).ShouldBe(stamped.Split('+')[0]);
+	}
+
+	/// <summary>
+	/// The version a child reports is compared against the parent's, which is what makes computing
+	/// it worth doing at all. Four hosts reported one and nothing read any of them, so a child from
+	/// a stale <c>bin</c> answered as whatever it was and the mismatch surfaced as a missing field
+	/// or an unknown tool.
+	/// </summary>
+	[Test]
+	public void A_child_of_the_same_build_is_not_worth_saying_anything_about()
+	{
+		var same = HostVersion.Of(typeof(WorkspaceManager).Assembly);
+
+		ChildHostVersion.Mismatch(same, @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly).ShouldBeNull();
+	}
+
+	/// <summary>
+	/// And a different one is reported with both numbers and the path it came from. The path is the
+	/// actionable half: the cause is nearly always a stale build output or an environment variable
+	/// pointing at one, and neither is visible from the symptom.
+	/// </summary>
+	[Test]
+	public void A_child_of_another_build_is_named_with_both_versions_and_its_path()
+	{
+		var mismatch = ChildHostVersion.Mismatch(
+			"0.4.0", @"C:\rose\bin\Release\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly);
+
+		mismatch.ShouldNotBeNull();
+		mismatch!.ShouldContain("0.4.0", Case.Sensitive);
+		mismatch.ShouldContain(HostVersion.Of(typeof(WorkspaceManager).Assembly), Case.Sensitive);
+		mismatch.ShouldContain(@"C:\rose\bin\Release\RoseMcp.Worker.exe", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A child that reports nothing is as much a stranger as one reporting a different number, and
+	/// silence is the easier of the two to misread as agreement.
+	/// </summary>
+	[Test]
+	public void A_child_that_reports_no_version_is_not_taken_for_a_match()
+	{
+		ChildHostVersion.Mismatch(null, @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly).ShouldNotBeNull();
+		ChildHostVersion.Mismatch("  ", @"C:\rose\RoseMcp.Worker.exe", typeof(WorkspaceManager).Assembly).ShouldNotBeNull();
+	}
+
+	/// <summary>
+	/// And that both hops actually ask. A pure comparison nothing calls is the very shape this card
+	/// exists to close, so the two places that launch a child are checked for the call by name.
+	/// </summary>
+	[Test]
+	public void Both_hops_that_launch_a_child_compare_its_version()
+	{
+		foreach (var file in new[] { "WorkspaceWorker.cs", "LiveAppSession.cs" })
+		{
+			var source = File.ReadAllText(Path.Combine(BrokerSource(), file));
+
+			source.ShouldContain("ChildHostVersion.Mismatch", Case.Sensitive);
+			source.ShouldContain("ServerInfo?.Version", Case.Sensitive);
+		}
 	}
 
 	/// <summary>
@@ -58,6 +117,23 @@ public sealed class HostVersionTests
 			new AssemblyName("RoseMcp.NothingStampedThis"),
 			AssemblyBuilderAccess.Run);
 
-		Assert.Equal("0.0.0", HostVersion.Of(unstamped));
+		HostVersion.Of(unstamped).ShouldBe("0.0.0");
+	}
+
+	/// <summary>
+	/// The broker's own sources, found by walking up to the solution rather than copied into the
+	/// build output, so the test reads what a person edits.
+	/// </summary>
+	private static string BrokerSource()
+	{
+		for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+		{
+			if (File.Exists(Path.Combine(directory.FullName, "RoseMcp.slnx")))
+			{
+				return Path.Combine(directory.FullName, "src", "RoseMcp.Broker");
+			}
+		}
+
+		throw new InvalidOperationException($"No RoseMcp.slnx above {AppContext.BaseDirectory}.");
 	}
 }

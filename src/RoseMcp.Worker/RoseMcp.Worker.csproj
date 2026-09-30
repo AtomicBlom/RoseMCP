@@ -24,6 +24,9 @@
     <ProjectReference Include="..\RoseMcp.Contracts\RoseMcp.Contracts.csproj" />
     <ProjectReference Include="..\RoseMcp.Solutions\RoseMcp.Solutions.csproj" />
     <ProjectReference Include="..\RoseMcp.Logging\RoseMcp.Logging.csproj" />
+    <!-- Compiled against as a library here, unlike the generator below: the worker drives the matcher
+         over the compilations it already holds. It is analyzer-shaped so that it can also load as one. -->
+    <ProjectReference Include="..\RoseMcp.Patterns\RoseMcp.Patterns.csproj" />
     <!-- Not used as a library: this is the generator assembly, loaded at runtime as an
          AnalyzerFileReference from beside the worker. The reference is here so it builds first and
          lands in the output; only its const strings are compiled in. -->

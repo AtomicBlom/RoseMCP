@@ -18,10 +18,13 @@ public sealed class SourceViewTests
 	{
 		var view = SourceView.Build(Method(["{", "// a comment", "}"], firstLine: 10));
 
-		Assert.Equal(3, view.Count);
-		Assert.All(view, row => Assert.False(row.IsBreakable));
-		Assert.Equal([10, 11, 12], view.Select(row => row.Line));
-		Assert.Equal("// a comment", view[1].Text);
+		view.Count.ShouldBe(3);
+		foreach (var row in view)
+		{
+			row.IsBreakable.ShouldBeFalse();
+		}
+		view.Select(row => row.Line).ShouldBe([10, 11, 12]);
+		view[1].Text.ShouldBe("// a comment");
 	}
 
 	/// <summary>
@@ -38,11 +41,11 @@ public sealed class SourceViewTests
 			At(4, "Widget.Refresh", "App!Widget.Refresh@IL_0014", 0x14),
 			At(4, "Widget.Refresh", "App!Widget.Refresh@IL_0009", 9)));
 
-		var row = Assert.Single(view);
-		Assert.True(row.IsBreakable);
-		Assert.Equal("App!Widget.Refresh@IL_0009", row.Location);
-		Assert.Equal("IL_0009", row.OffsetLabel);
-		Assert.False(row.IsContinuation);
+		var row = view.ShouldHaveSingleItem();
+		row.IsBreakable.ShouldBeTrue();
+		row.Location.ShouldBe("App!Widget.Refresh@IL_0009");
+		row.OffsetLabel.ShouldBe("IL_0009");
+		row.IsContinuation.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -61,23 +64,23 @@ public sealed class SourceViewTests
 
 		var view = SourceView.Build(source);
 
-		Assert.Equal(2, view.Count);
+		view.Count.ShouldBe(2);
 
 		// The code is written once, on the row carrying the line number, and is not named: it is the
 		// method in front of the reader, and saying so on every line is noise.
-		Assert.Equal("var names = items.Select(item => item.Name);", view[0].Text);
-		Assert.Equal("7", view[0].LineLabel);
-		Assert.Equal("App!Widget.Refresh@IL_0011", view[0].Location);
-		Assert.False(view[0].HasNote);
+		view[0].Text.ShouldBe("var names = items.Select(item => item.Name);");
+		view[0].LineLabel.ShouldBe("7");
+		view[0].Location.ShouldBe("App!Widget.Refresh@IL_0011");
+		view[0].HasNote.ShouldBeFalse();
 
 		// And the second place to stop is a row of its own, named, because it is somewhere else.
-		Assert.True(view[1].IsContinuation);
-		Assert.Empty(view[1].Text);
-		Assert.Empty(view[1].LineLabel);
-		Assert.Equal(7, view[1].Line);
-		Assert.Equal("App!Widget+<>c.<Refresh>b__3_0@IL_0000", view[1].Location);
-		Assert.Equal("Widget.Refresh (lambda)", view[1].Note);
-		Assert.True(view[1].HasNote);
+		view[1].IsContinuation.ShouldBeTrue();
+		view[1].Text.ShouldBeEmpty();
+		view[1].LineLabel.ShouldBeEmpty();
+		view[1].Line.ShouldBe(7);
+		view[1].Location.ShouldBe("App!Widget+<>c.<Refresh>b__3_0@IL_0000");
+		view[1].Note.ShouldBe("Widget.Refresh (lambda)");
+		view[1].HasNote.ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -89,7 +92,7 @@ public sealed class SourceViewTests
 	{
 		var view = SourceView.Build(Method(["a", "b", "c"], firstLine: 99));
 
-		Assert.Equal([" 99", "100", "101"], view.Select(row => row.LineLabel));
+		view.Select(row => row.LineLabel).ShouldBe([" 99", "100", "101"]);
 	}
 
 	/// <summary>
@@ -100,7 +103,7 @@ public sealed class SourceViewTests
 	[Test]
 	public void A_method_with_no_text_builds_no_rows()
 	{
-		Assert.Empty(SourceView.Build(Method([], firstLine: 0)));
+		SourceView.Build(Method([], firstLine: 0)).ShouldBeEmpty();
 	}
 
 	private static LiveMethodPosition At(int line, string owner, string location, int ilOffset) => new()

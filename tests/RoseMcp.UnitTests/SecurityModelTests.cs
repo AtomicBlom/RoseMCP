@@ -23,7 +23,7 @@ public sealed class SecurityModelTests
 
 		foreach (var name in Advertised())
 		{
-			Assert.Contains($"`{name}`", document, StringComparison.Ordinal);
+			document.ShouldContain($"`{name}`", Case.Sensitive);
 		}
 	}
 

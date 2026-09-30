@@ -3,7 +3,6 @@ using System.Net.Http.Headers;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
-
 using RoseMcp.Ui.Core.Updates;
 
 namespace RoseMcp.UnitTests;
@@ -30,10 +29,10 @@ public sealed class UpdateCheckTests
 
 		var status = await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(status.IsUpdateAvailable);
-		Assert.Equal("0.4.0", status.LatestVersion);
-		Assert.Equal("https://example.invalid/0.4.0", status.ReleaseUrl);
-		Assert.Null(status.Problem);
+		status.IsUpdateAvailable.ShouldBeTrue();
+		status.LatestVersion.ShouldBe("0.4.0");
+		status.ReleaseUrl.ShouldBe("https://example.invalid/0.4.0");
+		status.Problem.ShouldBeNull();
 	}
 
 	[Test]
@@ -44,8 +43,8 @@ public sealed class UpdateCheckTests
 
 		var status = await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(status.IsUpdateAvailable);
-		Assert.Null(status.Problem);
+		status.IsUpdateAvailable.ShouldBeFalse();
+		status.Problem.ShouldBeNull();
 	}
 
 	/// <summary>A build ahead of the latest release is not offered a downgrade.</summary>
@@ -57,7 +56,7 @@ public sealed class UpdateCheckTests
 
 		var status = await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(status.IsUpdateAvailable);
+		status.IsUpdateAvailable.ShouldBeFalse();
 	}
 
 	/// <summary>GitHub answers 403 to a request with no User-Agent, and that reads as a permission problem.</summary>
@@ -69,7 +68,7 @@ public sealed class UpdateCheckTests
 
 		await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("RoseMCP", handler.Last!.Headers.UserAgent.ToString(), StringComparison.Ordinal);
+		handler.Last!.Headers.UserAgent.ToString().ShouldContain("RoseMCP", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -84,7 +83,7 @@ public sealed class UpdateCheckTests
 
 		await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("1.1.1-alpha.0.9", handler.Last!.Headers.UserAgent.ToString(), StringComparison.Ordinal);
+		handler.Last!.Headers.UserAgent.ToString().ShouldContain("1.1.1-alpha.0.9", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -110,9 +109,9 @@ public sealed class UpdateCheckTests
 		await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 		var second = await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("\"abc\"", handler.Last!.Headers.IfNoneMatch.ToString());
-		Assert.True(second.IsUpdateAvailable);
-		Assert.Equal("0.4.0", second.LatestVersion);
+		handler.Last!.Headers.IfNoneMatch.ToString().ShouldBe("\"abc\"");
+		second.IsUpdateAvailable.ShouldBeTrue();
+		second.LatestVersion.ShouldBe("0.4.0");
 	}
 
 	[Test]
@@ -125,9 +124,9 @@ public sealed class UpdateCheckTests
 
 		var status = await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(status.IsUpdateAvailable);
-		Assert.NotNull(status.Problem);
-		Assert.Contains("rate limiting", status.Problem!, StringComparison.Ordinal);
+		status.IsUpdateAvailable.ShouldBeFalse();
+		status.Problem.ShouldNotBeNull();
+		status.Problem!.ShouldContain("rate limiting", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -142,8 +141,8 @@ public sealed class UpdateCheckTests
 
 		var status = await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(status.IsUpdateAvailable);
-		Assert.Contains("Could not reach GitHub", status.Problem!, StringComparison.Ordinal);
+		status.IsUpdateAvailable.ShouldBeFalse();
+		status.Problem!.ShouldContain("Could not reach GitHub", Case.Sensitive);
 	}
 
 	[Test]
@@ -154,7 +153,7 @@ public sealed class UpdateCheckTests
 
 		var status = await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("503", status.Problem!, StringComparison.Ordinal);
+		status.Problem!.ShouldContain("503", Case.Sensitive);
 	}
 
 	/// <summary>Assuming newer would put a notice on screen that no upgrade could ever clear.</summary>
@@ -166,8 +165,8 @@ public sealed class UpdateCheckTests
 
 		var status = await check.CheckAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(status.IsUpdateAvailable);
-		Assert.Contains("nightly", status.Problem!, StringComparison.Ordinal);
+		status.IsUpdateAvailable.ShouldBeFalse();
+		status.Problem!.ShouldContain("nightly", Case.Sensitive);
 	}
 
 	[Test]
@@ -176,7 +175,7 @@ public sealed class UpdateCheckTests
 		using var handler = new FakeHandler(_ => Json("{}"));
 		using var check = new UpdateCheck("0.3.0", Endpoint, handler);
 
-		Assert.NotNull((await check.CheckAsync(TestContext.Current!.Execution.CancellationToken)).Problem);
+		(await check.CheckAsync(TestContext.Current!.Execution.CancellationToken)).Problem.ShouldNotBeNull();
 	}
 
 	[Test]
@@ -185,7 +184,7 @@ public sealed class UpdateCheckTests
 		using var handler = new FakeHandler(_ => Json("this is not json"));
 		using var check = new UpdateCheck("0.3.0", Endpoint, handler);
 
-		Assert.NotNull((await check.CheckAsync(TestContext.Current!.Execution.CancellationToken)).Problem);
+		(await check.CheckAsync(TestContext.Current!.Execution.CancellationToken)).Problem.ShouldNotBeNull();
 	}
 
 	/// <summary>
@@ -197,13 +196,13 @@ public sealed class UpdateCheckTests
 	{
 		var assembly = typeof(UpdateCheckTests).Assembly;
 
-		Assert.False(UpdateCheckPolicy.EnabledFor(assembly, null));
-		Assert.True(UpdateCheckPolicy.EnabledFor(assembly, "1"));
-		Assert.True(UpdateCheckPolicy.EnabledFor(assembly, "true"));
-		Assert.False(UpdateCheckPolicy.EnabledFor(assembly, "0"));
+		UpdateCheckPolicy.EnabledFor(assembly, null).ShouldBeFalse();
+		UpdateCheckPolicy.EnabledFor(assembly, "1").ShouldBeTrue();
+		UpdateCheckPolicy.EnabledFor(assembly, "true").ShouldBeTrue();
+		UpdateCheckPolicy.EnabledFor(assembly, "0").ShouldBeFalse();
 
 		// Something neither on nor off leaves the build's own answer alone rather than guessing.
-		Assert.False(UpdateCheckPolicy.EnabledFor(assembly, "perhaps"));
+		UpdateCheckPolicy.EnabledFor(assembly, "perhaps").ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -220,11 +219,11 @@ public sealed class UpdateCheckTests
 		var stamped = Stamped("true");
 		var unstamped = Stamped(null);
 
-		Assert.True(UpdateCheckPolicy.EnabledFor(stamped, null));
-		Assert.False(UpdateCheckPolicy.EnabledFor(unstamped, null));
+		UpdateCheckPolicy.EnabledFor(stamped, null).ShouldBeTrue();
+		UpdateCheckPolicy.EnabledFor(unstamped, null).ShouldBeFalse();
 
 		// And a build with it on can still be told to be quiet.
-		Assert.False(UpdateCheckPolicy.EnabledFor(stamped, "off"));
+		UpdateCheckPolicy.EnabledFor(stamped, "off").ShouldBeFalse();
 	}
 
 	private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)

@@ -23,7 +23,7 @@ public sealed class TypeOwnersTests
 
 		var owners = TypeOwners.Of([misleading.ModulePath, declaring.ModulePath], "Product.Core.Widget", assembly: null);
 
-		Assert.Equal(new[] { declaring.ModulePath }, owners);
+		owners.ShouldBe(new[] { declaring.ModulePath });
 	}
 
 	/// <summary>A nested type is spelled with a plus, as metadata spells it, and found only under that spelling.</summary>
@@ -32,8 +32,8 @@ public sealed class TypeOwnersTests
 	{
 		using var declaring = CompiledModule.Of(ProductCore, "Pc.Core");
 
-		Assert.Single(TypeOwners.Of([declaring.ModulePath], "Product.Core.Widget+Part", assembly: null));
-		Assert.Empty(TypeOwners.Of([declaring.ModulePath], "Product.Core.Part", assembly: null));
+		TypeOwners.Of([declaring.ModulePath], "Product.Core.Widget+Part", assembly: null).ShouldHaveSingleItem();
+		TypeOwners.Of([declaring.ModulePath], "Product.Core.Part", assembly: null).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -47,11 +47,11 @@ public sealed class TypeOwnersTests
 		using var second = CompiledModule.Of(ProductCore, "Pc.Legacy");
 
 		var owners = TypeOwners.Of([first.ModulePath, second.ModulePath], "Product.Core.Widget", assembly: null);
-		Assert.Equal(new[] { first.ModulePath, second.ModulePath }, owners);
+		owners.ShouldBe(new[] { first.ModulePath, second.ModulePath });
 
 		var sentence = TypeOwners.Ambiguity("Product.Core.Widget", owners, "Product.Core.Widget.Refresh");
-		Assert.Contains("Pc.Core.dll, Pc.Legacy.dll", sentence);
-		Assert.Contains("Pc.Core!Product.Core.Widget.Refresh", sentence);
+		sentence.ShouldContain("Pc.Core.dll, Pc.Legacy.dll", Case.Sensitive);
+		sentence.ShouldContain("Pc.Core!Product.Core.Widget.Refresh", Case.Sensitive);
 	}
 
 	/// <summary>A stated assembly keeps only modules of that name, matched without regard to case.</summary>
@@ -63,7 +63,7 @@ public sealed class TypeOwnersTests
 
 		var owners = TypeOwners.Of([first.ModulePath, second.ModulePath], "Product.Core.Widget", assembly: "pc.legacy");
 
-		Assert.Equal(new[] { second.ModulePath }, owners);
+		owners.ShouldBe(new[] { second.ModulePath });
 	}
 
 	/// <summary>
@@ -78,6 +78,6 @@ public sealed class TypeOwnersTests
 
 		var owners = TypeOwners.Of([missing, declaring.ModulePath], "Product.Core.Widget", assembly: null);
 
-		Assert.Equal(new[] { declaring.ModulePath }, owners);
+		owners.ShouldBe(new[] { declaring.ModulePath });
 	}
 }

@@ -23,8 +23,27 @@ internal static class BrokerHarness
 {
 	internal static WorkspaceManager CreateManager(
 		string? defaultRoot = null,
-		TimeSpan? workerHandshakeTimeout = null) => new(
-		Options.Create(new BrokerOptions
+		TimeSpan? workerHandshakeTimeout = null)
+	{
+		var options = Configured(defaultRoot, workerHandshakeTimeout);
+
+		return new(
+			options,
+			new CallerPaths(options),
+			NullLoggerFactory.Instance,
+			NullLogger<WorkspaceManager>.Instance);
+	}
+
+	/// <summary>
+	/// What a tool takes beside the manager to make its path arguments absolute. Rooted the same way,
+	/// because a tool measuring a relative path from somewhere its manager does not route from is an
+	/// arrangement the registration cannot produce.
+	/// </summary>
+	internal static CallerPaths CreatePaths(string? defaultRoot = null) => new(Configured(defaultRoot));
+
+	private static IOptions<BrokerOptions> Configured(
+		string? defaultRoot,
+		TimeSpan? workerHandshakeTimeout = null) => Options.Create(new BrokerOptions
 		{
 			// Somewhere with no solution, unless a test is specifically exercising discovery. It used
 			// to say %TEMP%, which is not that -- a developer's temp collects stray .csproj files, and
@@ -33,8 +52,5 @@ internal static class BrokerHarness
 			// from here, it has to mean what it says.
 			DefaultWorkspaceRoot = defaultRoot ?? NowhereDirectory.Path(),
 			WorkerHandshakeTimeout = workerHandshakeTimeout ?? new BrokerOptions().WorkerHandshakeTimeout,
-		}),
-		NullLoggerFactory.Instance,
-		NullLogger<WorkspaceManager>.Instance);
-
+		});
 }

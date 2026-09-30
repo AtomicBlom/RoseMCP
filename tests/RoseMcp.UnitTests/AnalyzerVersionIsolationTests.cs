@@ -56,8 +56,8 @@ public sealed class AnalyzerVersionIsolationTests
 			// Loading the analyzer is not the discriminator -- two identities can sit in one context
 			// perfectly well. Calling through to the dependency is, because that is what makes the
 			// runtime resolve Support by name and version.
-			Assert.Equal("1.0.0.0", Call(one));
-			Assert.Equal("2.0.0.0", Call(two));
+			Call(one).ShouldBe("1.0.0.0");
+			Call(two).ShouldBe("2.0.0.0");
 		}
 		finally
 		{
@@ -128,8 +128,7 @@ public sealed class AnalyzerVersionIsolationTests
 
 		EmitResult result = compilation.Emit(path);
 
-		Assert.True(
-			result.Success,
+		result.Success.ShouldBeTrue(
 			$"Could not emit {assemblyName} {version}: {string.Join("; ", result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error))}");
 	}
 

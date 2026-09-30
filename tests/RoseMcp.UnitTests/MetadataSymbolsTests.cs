@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.UnitTests;
 
@@ -38,13 +39,13 @@ public sealed class MetadataSymbolsTests
 	{
 		using var workspace = Workspace(out var solution);
 
-		var failure = await Assert.ThrowsAsync<ArgumentException>(
-			() => MetadataSymbols.FindAsync(solution, SymbolAddress.Parse("Shop.Till.Ring"), Token));
+		var failure = await Should.ThrowAsync<ArgumentException>(
+			() => MetadataSymbols.FindAsync(solution, SymbolAddress.Parse("Shop.Till.Ring"), Token)).OfExactType();
 
-		Assert.Contains("2 different symbols", failure.Message, StringComparison.Ordinal);
-		Assert.Contains("Shop.Till.Ring(string)", failure.Message, StringComparison.Ordinal);
-		Assert.Contains("Shop.Till.Ring(string, int)", failure.Message, StringComparison.Ordinal);
-		Assert.Contains("Qualify it further", failure.Message, StringComparison.Ordinal);
+		failure.Message.ShouldContain("2 different symbols", Case.Sensitive);
+		failure.Message.ShouldContain("Shop.Till.Ring(string)", Case.Sensitive);
+		failure.Message.ShouldContain("Shop.Till.Ring(string, int)", Case.Sensitive);
+		failure.Message.ShouldContain("Qualify it further", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -60,8 +61,8 @@ public sealed class MetadataSymbolsTests
 
 		var found = await MetadataSymbols.FindAsync(solution, SymbolAddress.Parse(address), Token);
 
-		Assert.NotNull(found);
-		Assert.Equal("Ring", found.Name);
+		found.ShouldNotBeNull();
+		found.Name.ShouldBe("Ring");
 	}
 
 	/// <summary>A name matching exactly one member still resolves, refusal or no refusal.</summary>
@@ -72,8 +73,8 @@ public sealed class MetadataSymbolsTests
 
 		var found = await MetadataSymbols.FindAsync(solution, SymbolAddress.Parse("Shop.Till.Wrap"), Token);
 
-		Assert.NotNull(found);
-		Assert.Equal("Wrap", found.Name);
+		found.ShouldNotBeNull();
+		found.Name.ShouldBe("Wrap");
 	}
 
 	/// <summary>
@@ -85,12 +86,12 @@ public sealed class MetadataSymbolsTests
 	{
 		using var workspace = Workspace(out var solution);
 
-		var failure = await Assert.ThrowsAsync<ArgumentException>(
+		var failure = await Should.ThrowAsync<ArgumentException>(
 			() => MetadataSymbols.FindAsync(
-				solution, SymbolAddress.Parse("System.IO.File.WriteAllTextAsync"), Token));
+				solution, SymbolAddress.Parse("System.IO.File.WriteAllTextAsync"), Token)).OfExactType();
 
-		Assert.Contains("different symbols", failure.Message, StringComparison.Ordinal);
-		Assert.Contains("System.IO.File.WriteAllTextAsync(string, string", failure.Message, StringComparison.Ordinal);
+		failure.Message.ShouldContain("different symbols", Case.Sensitive);
+		failure.Message.ShouldContain("System.IO.File.WriteAllTextAsync(string, string", Case.Sensitive);
 	}
 
 	private static CancellationToken Token => TestContext.Current!.Execution.CancellationToken;

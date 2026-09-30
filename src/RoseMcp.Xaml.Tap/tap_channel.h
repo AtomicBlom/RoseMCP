@@ -1,7 +1,9 @@
 #pragma once
 
-// The provider's channel to the host: the work folder, the generation stamp, the log, and the
-// escaping and tokenising that keep a work-folder file one line of fixed columns.
+// The provider's channel to the host: the work folder, the log, the pipe and its framing, and the
+// escaping and tokenising that keep every field of a row on its row. This is the provider's half of
+// the wire contract the host keeps in RoseMcp.Contracts/XamlWire.cs, and the two have to agree
+// exactly -- RoseTapProtocolVersion is what says they are the same contract.
 //
 // Framework-free on purpose, and that is the whole value of the layer. No xamlOM, no WinRT
 // projection, nothing Windows-XAML about it -- so this is what a provider for a stack with no COM
@@ -38,6 +40,17 @@ static std::wstring g_workDir;
 // against a host that did not, which is what keeps an older host working while the two channels
 // overlap.
 static std::wstring g_pipeName;
+
+// The key the host issued this provider, which the greeting presents. The pipe grants every
+// packaged app on the machine, so reaching it proves nothing; presenting this proves the provider is
+// the one that session injected.
+static std::wstring g_pipeNonce;
+
+// The version of the wire contract this provider speaks, which it greets with. The same number as
+// XamlWire.ProtocolVersion on the host, and a unit test there reads this line to hold the two in step:
+// the host refuses a provider that greets with any other, because a stale copy reading rows it was not
+// written for answers with data rather than with an error.
+static constexpr int RoseTapProtocolVersion = 2;
 
 static std::mutex g_logMutex;
 
@@ -155,7 +168,11 @@ static void ConnectPipe()
 	}
 
 	Log(L"pipe: connected to " + path);
-	if (!WriteFrame("hello from the provider")) Log(L"pipe: connected but could not write the greeting");
+
+	// The protocol this provider speaks and the key its session issued. The host reads nothing else
+	// from a provider until this is right, so a stale copy is refused by name rather than read.
+	const std::string greeting = "RoseTap/" + std::to_string(RoseTapProtocolVersion) + "/" + Utf8(g_pipeNonce);
+	if (!WriteFrame(greeting)) Log(L"pipe: connected but could not write the greeting");
 }
 
 static std::wstring FromUtf8(const std::string& text)
@@ -206,8 +223,25 @@ static bool ReadFrame(std::string& payload)
 	return length == 0 || ReadExactly(payload.data(), length);
 }
 
-// A tab or newline in a type or name would break the row-per-element snapshot; keep every field on
-// one line and reversible.
+// A request is its id, a newline, then the request itself, and the reply goes back under the same id.
+// The id is what tells the host whose reply it is: this provider serves on the UI thread, which the
+// host cannot cancel, so a request it gave up on is still answered -- later, and ahead of the reply to
+// whatever it asked next. Echoed as the text it arrived as, since only the host compares it.
+static bool SplitRequest(const std::string& payload, std::string& id, std::string& request)
+{
+	const size_t newline = payload.find('\n');
+	if (newline == std::string::npos || newline == 0) return false;
+
+	id = payload.substr(0, newline);
+	if (id.find_first_not_of("0123456789") != std::string::npos) return false;
+
+	request = payload.substr(newline + 1);
+	return true;
+}
+
+// Every field that can hold text is escaped as it is written and unescaped as it is read, in both
+// directions, so the only raw tabs in a row separate its fields and the only raw newlines in a
+// message separate its rows. A value is the user's own markup and holds either as readily as a name.
 static std::wstring Escape(const wchar_t* text)
 {
 	std::wstring result;
@@ -221,6 +255,36 @@ static std::wstring Escape(const wchar_t* text)
 			case L'\n': result += L"\\n"; break;
 			case L'\\': result += L"\\\\"; break;
 			default: result += *c; break;
+		}
+	}
+
+	return result;
+}
+
+// A field as it was before Escape. A backslash before any other character stands for that
+// character, and one at the very end is kept, exactly as XamlWire.Unescape reads it on the host.
+static std::wstring Unescape(const std::wstring& field)
+{
+	if (field.find(L'\\') == std::wstring::npos) return field;
+
+	std::wstring result;
+	result.reserve(field.size());
+	for (size_t i = 0; i < field.size(); ++i)
+	{
+		if (field[i] == L'\\' && i + 1 < field.size())
+		{
+			const wchar_t next = field[++i];
+			switch (next)
+			{
+				case L't': result += L'\t'; break;
+				case L'r': result += L'\r'; break;
+				case L'n': result += L'\n'; break;
+				default: result += next; break;
+			}
+		}
+		else
+		{
+			result += field[i];
 		}
 	}
 
@@ -245,23 +309,22 @@ struct Command
 	unsigned int index = 0;
 };
 
-// One command per line, seven tab-separated fields. Shared by both channels, so a command means the
-// same thing whichever way it arrived.
+// One command per line, seven tab-separated fields, each unescaped as it is taken off the line -- a
+// value the host escaped is only the user's value again once it has been.
 //
 // Short lines are padded rather than refused: a command that names fewer fields than the longest one
 // needs is ordinary, and the missing ones are legitimately empty.
 static std::vector<Command> ParseCommands(const std::vector<std::wstring>& lines)
 {
 	std::vector<Command> commands;
-	for (std::wstring line : lines)
+	for (const std::wstring& line : lines)
 	{
-		if (!line.empty() && line.back() == L'\r') line.pop_back();
 		if (line.empty()) continue;
 
 		std::vector<std::wstring> fields;
 		std::wstringstream stream(line);
 		std::wstring field;
-		while (std::getline(stream, field, L'\t')) fields.push_back(field);
+		while (std::getline(stream, field, L'\t')) fields.push_back(Unescape(field));
 		fields.resize(7);
 		commands.push_back({
 			fields[0], fields[1], fields[2], fields[3], fields[4], fields[5],

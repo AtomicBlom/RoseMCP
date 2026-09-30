@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 
 using RoseMcp.Contracts;
 using RoseMcp.XamlDiff;
@@ -17,8 +16,9 @@ namespace RoseMcp.LiveApp.Xaml;
 /// pipe.
 /// </para>
 /// <para>
-/// Every field arrives escaped, because a value can hold a tab or a newline and the protocol is
-/// delimited by both.
+/// Every row is made with <see cref="XamlWire.Row"/> and taken apart with <see cref="XamlWire.Fields"/>,
+/// in both directions, because a value can hold a tab or a newline and the protocol is delimited by
+/// both. No field here is joined or split any other way.
 /// </para>
 /// </summary>
 internal static class XamlProviderWire
@@ -43,15 +43,16 @@ internal static class XamlProviderWire
 	/// without every command having to carry every field.
 	/// </summary>
 	internal static string Line(string op, string target, string property, string valueType, string value, string arg, int index) =>
-		string.Join('\t', op, target, property, valueType, value, arg, index.ToString(CultureInfo.InvariantCulture));
+		XamlWire.Row(op, target, property, valueType, value, arg, index.ToString(CultureInfo.InvariantCulture));
 
 	/// <summary>
 	/// How a command's result is found again. The arg is part of it: without it, one slot given two
 	/// children produces two rows keyed identically, and the second child's outcome silently replaces
-	/// the first's.
+	/// the first's. Made as a row, so a field holding a tab cannot make two different commands' keys
+	/// the same string.
 	/// </summary>
 	internal static string Key(string op, string target, string property, string arg) =>
-		string.Join('\t', op, target, property, arg);
+		XamlWire.Row(op, target, property, arg);
 
 	/// <summary>The command for one build step, with the key its result will come back under.</summary>
 	internal static (string Line, string Key) Command(XamlStep step) => step.Kind switch
@@ -107,7 +108,7 @@ internal static class XamlProviderWire
 	/// </summary>
 	private static string Describe(string key)
 	{
-		var fields = key.Split('\t');
+		var fields = XamlWire.Fields(key);
 		if (fields.Length < 4) return key;
 
 		var subject = fields[2].Length > 0 ? fields[2] : fields[3];
@@ -121,13 +122,12 @@ internal static class XamlProviderWire
 		{
 			if (line.Length == 0) continue;
 
-			var fields = line.Split('\t');
-			if (fields.Length < 4) continue;
+			var fields = XamlWire.Fields(line);
+			if (fields.Length < 5) continue;
 
 			// Keyed exactly the way the command was sent -- op, target, property, arg -- so each result can
-			// be found again. The arg comes after the status and may be missing from an older provider's row.
-			var arg = fields.Length > 4 ? Unescape(fields[4]) : string.Empty;
-			statuses[Key(fields[0], Unescape(fields[1]), Unescape(fields[2]), arg)] = fields[3];
+			// be found again. The status sits between the property and the arg.
+			statuses[Key(fields[0], fields[1], fields[2], fields[4])] = fields[3];
 		}
 
 		return statuses;
@@ -140,28 +140,24 @@ internal static class XamlProviderWire
 		{
 			if (line.Length == 0) continue;
 
-			var fields = line.Split('\t');
-			if (fields.Length < 5) continue;
+			var fields = XamlWire.Fields(line);
+			if (fields.Length < 9) continue;
 			if (!ulong.TryParse(fields[0], out var handle) || !ulong.TryParse(fields[1], out var parent) || !int.TryParse(fields[2], out var childIndex))
 			{
 				continue;
 			}
 
-			var name = Unescape(fields[4]);
-			var declaredIn = fields.Length > 5 ? Unescape(fields[5]) : string.Empty;
-			var declaredAt = fields.Length > 6 && int.TryParse(fields[6], out var parsedLine) ? parsedLine : 0;
-
-			// A provider older than this host writes no ninth column. Read as "no address" rather than as
-			// a bad row: the provider is staged from the install beside us, so the two ship together, but a
-			// stale copy left behind in a sandbox would otherwise take the whole tree down with it.
-			var address = fields.Length > 8 ? Unescape(fields[8]) : string.Empty;
+			var name = fields[4];
+			var declaredIn = fields[5];
+			var declaredAt = int.TryParse(fields[6], out var parsedLine) ? parsedLine : 0;
+			var address = fields[8];
 
 			nodes.Add(new LiveXamlNode
 			{
 				Handle = handle,
 				Parent = parent,
 				ChildIndex = childIndex,
-				TypeName = Unescape(fields[3]),
+				TypeName = fields[3],
 				Name = string.IsNullOrEmpty(name) ? null : name,
 				File = string.IsNullOrEmpty(declaredIn) ? null : declaredIn,
 				Line = declaredAt > 0 ? declaredAt : null,
@@ -184,30 +180,26 @@ internal static class XamlProviderWire
 		{
 			if (line.Length == 0) continue;
 
-			var fields = line.Split('\t');
+			var fields = XamlWire.Fields(line);
 			if (fields[0] == "E" && fields.Length >= 5)
 			{
-				typeName = EmptyToNull(Unescape(fields[1]));
-				elementFile = EmptyToNull(Unescape(fields[2]));
+				typeName = EmptyToNull(fields[1]);
+				elementFile = EmptyToNull(fields[2]);
 				elementLine = ParsePositive(fields[3]);
 				elementColumn = ParsePositive(fields[4]);
 			}
-			else if (fields[0] == "P" && fields.Length >= 10)
+			else if (fields[0] == "P" && fields.Length >= 11)
 			{
 				var isNull = fields[9] == "1";
-
-				// Length-checked rather than assumed: an older provider staged in a recycled sandbox
-				// folder writes ten columns, and the row is still worth reading without the eleventh.
-				var unrenderable = fields.Length > 10 && fields[10] == "1";
 				properties.Add(new LiveXamlProperty
 				{
-					Name = Unescape(fields[1]),
-					Value = isNull ? null : Unescape(fields[2]),
-					ValueUnavailable = unrenderable,
-					ValueType = EmptyToNull(Unescape(fields[3])),
-					DeclaringType = EmptyToNull(Unescape(fields[4])),
+					Name = fields[1],
+					Value = isNull ? null : fields[2],
+					ValueUnavailable = fields[10] == "1",
+					ValueType = EmptyToNull(fields[3]),
+					DeclaringType = EmptyToNull(fields[4]),
 					Provenance = fields[5],
-					SourceFile = EmptyToNull(Unescape(fields[6])),
+					SourceFile = EmptyToNull(fields[6]),
 					SourceLine = ParsePositive(fields[7]),
 					SourceColumn = ParsePositive(fields[8]),
 				});
@@ -228,32 +220,4 @@ internal static class XamlProviderWire
 	internal static string? EmptyToNull(string value) => string.IsNullOrEmpty(value) ? null : value;
 
 	private static int? ParsePositive(string field) => int.TryParse(field, out var value) && value > 0 ? value : null;
-
-	internal static string Unescape(string field)
-	{
-		if (field.IndexOf('\\') < 0) return field;
-
-		var builder = new StringBuilder(field.Length);
-		for (var i = 0; i < field.Length; i++)
-		{
-			if (field[i] == '\\' && i + 1 < field.Length)
-			{
-				var next = field[++i];
-				builder.Append(next switch
-				{
-					't' => '\t',
-					'r' => '\r',
-					'n' => '\n',
-					'\\' => '\\',
-					_ => next,
-				});
-			}
-			else
-			{
-				builder.Append(field[i]);
-			}
-		}
-
-		return builder.ToString();
-	}
 }

@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -19,7 +20,7 @@ public sealed class TargetFrameworkSymbolTests
 	[Arguments("netstandard2.0", "NETSTANDARD", "NETSTANDARD2_0", "NETSTANDARD1_0_OR_GREATER")]
 	[Arguments("netcoreapp3.1", "NETCOREAPP", "NETCOREAPP3_1", "NETCOREAPP3_1_OR_GREATER")]
 	public void Reads_the_target_out_of_the_symbols(string expected, params string[] symbols) =>
-		Assert.Equal(expected, TargetFrameworkSymbols.Infer(symbols));
+		TargetFrameworkSymbols.Infer(symbols).ShouldBe(expected);
 
 	/// <summary>
 	/// The _OR_GREATER symbols name every target below this one as well, so taking any of them would
@@ -30,7 +31,7 @@ public sealed class TargetFrameworkSymbolTests
 	{
 		var symbols = new[] { "NET", "NETCOREAPP", "NET5_0_OR_GREATER", "NET6_0_OR_GREATER", "NET10_0" };
 
-		Assert.Equal("net10.0", TargetFrameworkSymbols.Infer(symbols));
+		TargetFrameworkSymbols.Infer(symbols).ShouldBe("net10.0");
 	}
 
 	/// <summary>
@@ -45,13 +46,13 @@ public sealed class TargetFrameworkSymbolTests
 	[Arguments("DEBUG")]
 	[Arguments("TRACE")]
 	public void Says_nothing_for_a_symbol_that_names_no_target(string symbol) =>
-		Assert.Null(TargetFrameworkSymbols.Infer([symbol]));
+		TargetFrameworkSymbols.Infer([symbol]).ShouldBeNull();
 
 	[Test]
 	public void Says_nothing_when_there_are_no_symbols_at_all()
 	{
-		Assert.Null(TargetFrameworkSymbols.Infer(null));
-		Assert.Null(TargetFrameworkSymbols.Infer([]));
+		TargetFrameworkSymbols.Infer(null).ShouldBeNull();
+		TargetFrameworkSymbols.Infer([]).ShouldBeNull();
 	}
 
 	/// <summary>A project's own conditional symbols must not be mistaken for a framework.</summary>
@@ -60,6 +61,6 @@ public sealed class TargetFrameworkSymbolTests
 	{
 		var symbols = new[] { "REVIT2024", "INTERNAL_BUILD", "NETFRAMEWORK", "NET48" };
 
-		Assert.Equal("net48", TargetFrameworkSymbols.Infer(symbols));
+		TargetFrameworkSymbols.Infer(symbols).ShouldBe("net48");
 	}
 }

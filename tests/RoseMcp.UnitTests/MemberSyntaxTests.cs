@@ -16,9 +16,9 @@ public sealed class MemberSyntaxTests
 	{
 		var members = Parse("public int Count { get; set; }\n\npublic void Reset() => Count = 0;");
 
-		Assert.Equal(2, members.Count);
-		Assert.IsType<PropertyDeclarationSyntax>(members[0]);
-		Assert.IsType<MethodDeclarationSyntax>(members[1]);
+		members.Count.ShouldBe(2);
+		members[0].ShouldBeOfType<PropertyDeclarationSyntax>();
+		members[1].ShouldBeOfType<MethodDeclarationSyntax>();
 	}
 
 	/// <summary>
@@ -29,27 +29,27 @@ public sealed class MemberSyntaxTests
 	[Test]
 	public void Refuses_code_that_would_land_outside_the_member()
 	{
-		var error = Assert.Throws<ArgumentException>(() => Parse("public void M() { } } public class Escaped {"));
+		var error = Should.Throw<ArgumentException>(() => Parse("public void M() { } } public class Escaped {")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("closes more braces", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("closes more braces", Case.Sensitive);
 	}
 
 	/// <summary>An unbalanced brace on its own is a parse error, and reported as one.</summary>
 	[Test]
 	public void Refuses_a_stray_closing_brace()
 	{
-		var error = Assert.Throws<ArgumentException>(() => Parse("public void M()\n{\n}\n}"));
+		var error = Should.Throw<ArgumentException>(() => Parse("public void M()\n{\n}\n}")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("does not parse", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("does not parse", Case.Sensitive);
 	}
 
 	[Test]
 	public void Refuses_a_brace_that_is_never_closed_and_says_where()
 	{
-		var error = Assert.Throws<ArgumentException>(() => Parse("public void M()\n{\n\tif (true)\n\t{\n"));
+		var error = Should.Throw<ArgumentException>(() => Parse("public void M()\n{\n\tif (true)\n\t{\n")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("does not parse", error.Message, StringComparison.Ordinal);
-		Assert.Contains("line ", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("does not parse", Case.Sensitive);
+		error.Message.ShouldContain("line ", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -59,9 +59,9 @@ public sealed class MemberSyntaxTests
 	[Test]
 	public void Refuses_source_with_escapes_left_in_it()
 	{
-		var error = Assert.Throws<ArgumentException>(() => Parse("public string M() => \\$\"{Value}\";"));
+		var error = Should.Throw<ArgumentException>(() => Parse("public string M() => \\$\"{Value}\";")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("does not parse", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("does not parse", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -71,9 +71,9 @@ public sealed class MemberSyntaxTests
 	[Test]
 	public void Says_that_a_using_directive_is_not_a_member()
 	{
-		var error = Assert.Throws<ArgumentException>(() => Parse("using System.Text;\n\npublic void M() { }"));
+		var error = Should.Throw<ArgumentException>(() => Parse("using System.Text;\n\npublic void M() { }")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("using directive", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("using directive", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -83,16 +83,16 @@ public sealed class MemberSyntaxTests
 	[Test]
 	public void Refuses_a_comment_that_would_be_dropped()
 	{
-		var error = Assert.Throws<ArgumentException>(() => Parse("public void M() { }\n\n// and another thing"));
+		var error = Should.Throw<ArgumentException>(() => Parse("public void M() { }\n\n// and another thing")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("belongs to no member", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("belongs to no member", Case.Sensitive);
 	}
 
 	[Test]
 	public void Refuses_code_that_declares_nothing()
 	{
-		Assert.Throws<ArgumentException>(() => Parse("// just a comment"));
-		Assert.Throws<ArgumentException>(() => Parse("   "));
+		Should.Throw<ArgumentException>(() => Parse("// just a comment")).ShouldBeOfType<ArgumentException>();
+		Should.Throw<ArgumentException>(() => Parse("   ")).ShouldBeOfType<ArgumentException>();
 	}
 
 	/// <summary>
@@ -104,8 +104,8 @@ public sealed class MemberSyntaxTests
 	{
 		var members = Parse("/// <summary>Counts.</summary>\npublic int Count { get; set; }");
 
-		Assert.Single(members);
-		Assert.Contains(members[0].GetLeadingTrivia(), MemberSyntax.IsComment);
+		members.ShouldHaveSingleItem();
+		members[0].GetLeadingTrivia().Any(MemberSyntax.IsComment).ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -120,7 +120,7 @@ public sealed class MemberSyntaxTests
 	[Arguments("record", "public int Y { get; init; }")]
 	public void Parses_a_member_in_the_container_it_belongs_to(string keyword, string code)
 	{
-		Assert.Single(MemberSyntax.Parse(code, keyword, null));
+		MemberSyntax.Parse(code, keyword, null).ShouldHaveSingleItem();
 	}
 
 	/// <summary>
@@ -130,7 +130,7 @@ public sealed class MemberSyntaxTests
 	[Test]
 	public void Refuses_an_enum_member_offered_to_a_class()
 	{
-		Assert.Throws<ArgumentException>(() => Parse("Blue = 3"));
+		Should.Throw<ArgumentException>(() => Parse("Blue = 3")).ShouldBeOfType<ArgumentException>();
 	}
 
 	[Test]
@@ -145,7 +145,7 @@ public sealed class MemberSyntaxTests
 		var unit = (CompilationUnitSyntax)tree.GetRoot(TestContext.Current!.Execution.CancellationToken);
 		var type = (BaseTypeDeclarationSyntax)unit.Members[0];
 
-		Assert.Equal(expected, MemberSyntax.KeywordOf(type));
+		MemberSyntax.KeywordOf(type).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -164,13 +164,13 @@ public sealed class MemberSyntaxTests
 			null,
 			"\t");
 
-		var text = Assert.Single(members).ToFullString();
+		var text = members.ShouldHaveSingleItem().ToFullString();
 
 		// A member at one tab wraps its parameters at two and holds its body at two.
-		Assert.Contains("\n\t\tint count,", text, StringComparison.Ordinal);
-		Assert.Contains("\n\t\tstring name)", text, StringComparison.Ordinal);
-		Assert.Contains("\n\t{", text, StringComparison.Ordinal);
-		Assert.Contains("\n\t\tSend(count);", text, StringComparison.Ordinal);
+		text.ShouldContain("\n\t\tint count,", Case.Sensitive);
+		text.ShouldContain("\n\t\tstring name)", Case.Sensitive);
+		text.ShouldContain("\n\t{", Case.Sensitive);
+		text.ShouldContain("\n\t\tSend(count);", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -187,9 +187,8 @@ public sealed class MemberSyntaxTests
 		var preIndented = MemberSyntax.Parse(
 			"\tpublic void Write(\n\t\tint count)\n\t{\n\t\tSend(count);\n\t}", "class", null, "\t");
 
-		Assert.Equal(
-			Assert.Single(atColumnZero).ToFullString(),
-			Assert.Single(preIndented).ToFullString());
+		preIndented.ShouldHaveSingleItem().ToFullString().ShouldBe(
+			atColumnZero.ShouldHaveSingleItem().ToFullString());
 	}
 
 	/// <summary>
@@ -206,10 +205,10 @@ public sealed class MemberSyntaxTests
 			null,
 			"\t");
 
-		var text = Assert.Single(members).ToFullString();
+		var text = members.ShouldHaveSingleItem().ToFullString();
 
-		Assert.Contains("\n\t\tstring first,", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("\n\t\t\tstring first,", text, StringComparison.Ordinal);
+		text.ShouldContain("\n\t\tstring first,", Case.Sensitive);
+		text.ShouldNotContain("\n\t\t\tstring first,", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -222,9 +221,9 @@ public sealed class MemberSyntaxTests
 		var members = MemberSyntax.Parse(
 			"public string Text() => @\"\nkeep me here\n\";", "class", null, "\t");
 
-		var text = Assert.Single(members).ToFullString();
+		var text = members.ShouldHaveSingleItem().ToFullString();
 
-		Assert.Contains("\nkeep me here\n", text, StringComparison.Ordinal);
+		text.ShouldContain("\nkeep me here\n", Case.Sensitive);
 	}
 
 	private static IReadOnlyList<MemberDeclarationSyntax> Parse(string code) =>
@@ -249,10 +248,10 @@ public sealed class MemberSyntaxTests
 			lineEnding: "\r\n",
 			rewritten: count => rewritten = count);
 
-		var written = Assert.Single(members).ToFullString();
+		var written = members.ShouldHaveSingleItem().ToFullString();
 
-		Assert.Contains("\"\"\"\r\n\tfirst\r\n\tsecond\r\n\t\"\"\"", written, StringComparison.Ordinal);
-		Assert.Equal(4, rewritten);
+		written.ShouldContain("\"\"\"\r\n\tfirst\r\n\tsecond\r\n\t\"\"\"", Case.Sensitive);
+		rewritten.ShouldBe(4);
 	}
 
 	/// <summary>
@@ -272,7 +271,7 @@ public sealed class MemberSyntaxTests
 			lineEnding: "\n",
 			rewritten: count => rewritten = count);
 
-		Assert.Equal(0, rewritten);
+		rewritten.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -289,10 +288,10 @@ public sealed class MemberSyntaxTests
 			options: null,
 			indent: "\t\t");
 
-		var written = Assert.Single(members).ToFullString();
+		var written = members.ShouldHaveSingleItem().ToFullString();
 
-		Assert.Contains("\t\tfirst", written, StringComparison.Ordinal);
-		Assert.Contains("\t\t\"\"\"", written, StringComparison.Ordinal);
+		written.ShouldContain("\t\tfirst", Case.Sensitive);
+		written.ShouldContain("\t\t\"\"\"", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -310,10 +309,10 @@ public sealed class MemberSyntaxTests
 			options: null,
 			indent: "\t\t");
 
-		var written = Assert.Single(members).ToFullString();
+		var written = members.ShouldHaveSingleItem().ToFullString();
 
-		Assert.Contains("\t\tfirst\n\n\t\tsecond", written, StringComparison.Ordinal);
-		Assert.DoesNotContain("first\n\t\t\n", written, StringComparison.Ordinal);
+		written.ShouldContain("\t\tfirst\n\n\t\tsecond", Case.Sensitive);
+		written.ShouldNotContain("first\n\t\t\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -333,7 +332,7 @@ public sealed class MemberSyntaxTests
 			reindented: count => moved = count);
 
 		// first, second, and the closing delimiter. The blank line stayed where it was.
-		Assert.Equal(3, moved);
+		moved.ShouldBe(3);
 	}
 
 	/// <summary>A literal already at the destination's indentation moved nothing, and says nothing.</summary>
@@ -351,7 +350,7 @@ public sealed class MemberSyntaxTests
 			indent: "\t\t",
 			reindented: count => moved = count);
 
-		Assert.Equal(-1, moved);
+		moved.ShouldBe(-1);
 	}
 
 	/// <summary>
@@ -367,8 +366,8 @@ public sealed class MemberSyntaxTests
 			options: null,
 			indent: "\t\t");
 
-		var written = Assert.Single(members).ToFullString();
+		var written = members.ShouldHaveSingleItem().ToFullString();
 
-		Assert.Contains("\nsecond\"", written, StringComparison.Ordinal);
+		written.ShouldContain("\nsecond\"", Case.Sensitive);
 	}
 }

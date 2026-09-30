@@ -34,8 +34,8 @@ public sealed class XamlReferenceTests
 	{
 		var mentions = XamlReferenceScanner.InText("Widget.xaml", Markup, name).ToArray();
 
-		Assert.NotEmpty(mentions);
-		Assert.Contains(mentions, mention => mention.Kind == expectedKind);
+		mentions.ShouldNotBeEmpty();
+		mentions.ShouldContain(mention => mention.Kind == expectedKind);
 	}
 
 	/// <summary>
@@ -47,15 +47,18 @@ public sealed class XamlReferenceTests
 	{
 		var mentions = XamlReferenceScanner.InText("Widget.xaml", Markup, "Title").ToArray();
 
-		Assert.Equal(2, mentions.Length);
-		Assert.All(mentions, mention => Assert.Equal("binding", mention.Kind));
-		Assert.DoesNotContain(mentions, mention => mention.Text.Contains("<!--", StringComparison.Ordinal));
+		mentions.Length.ShouldBe(2);
+		foreach (var mention in mentions)
+		{
+			mention.Kind.ShouldBe("binding");
+		}
+		mentions.ShouldNotContain(mention => mention.Text.Contains("<!--", StringComparison.Ordinal));
 	}
 
 	[Test]
 	public void Finds_nothing_for_a_name_the_markup_never_mentions()
 	{
-		Assert.Empty(XamlReferenceScanner.InText("Widget.xaml", Markup, "Absent"));
+		XamlReferenceScanner.InText("Widget.xaml", Markup, "Absent").ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -85,12 +88,12 @@ public sealed class XamlReferenceTests
 			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal("Widget", result.OldName);
+		result.OldName.ShouldBe("Widget");
 
-		var mention = Assert.Single(result.XamlMentions);
+		var mention = result.XamlMentions.ShouldHaveSingleItem();
 
-		Assert.EndsWith("Widget.xaml", mention.FilePath, StringComparison.OrdinalIgnoreCase);
-		Assert.Contains("x:Class", mention.Text, StringComparison.Ordinal);
-		Assert.Contains("markup mention", string.Join(" ", result.Notices), StringComparison.Ordinal);
+		mention.FilePath.ShouldEndWith("Widget.xaml", Case.Insensitive);
+		mention.Text.ShouldContain("x:Class", Case.Sensitive);
+		string.Join(" ", result.Notices).ShouldContain("markup mention", Case.Sensitive);
 	}
 }

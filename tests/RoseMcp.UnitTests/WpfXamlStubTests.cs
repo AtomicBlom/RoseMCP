@@ -1,6 +1,5 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-
 using RoseMcp.XamlStubs;
 
 namespace RoseMcp.UnitTests;
@@ -67,17 +66,17 @@ public sealed class WpfXamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class ShellView { } }");
 
-		Assert.Null(emission.SkipReason);
-		Assert.Contains("partial class ShellView : global::System.Windows.Window", emission.Source!, StringComparison.Ordinal);
+		emission.SkipReason.ShouldBeNull();
+		emission.Source!.ShouldContain("partial class ShellView : global::System.Windows.Window", Case.Sensitive);
 
 		// Internal is WPF's default, where the Windows frameworks use private. Emitting private here
 		// turns a working reference from another class into CS0122.
-		Assert.Contains("internal global::System.Windows.Controls.Image LoginImage;", emission.Source!, StringComparison.Ordinal);
-		Assert.Contains("internal global::System.Windows.Controls.ContentControl ActiveItem;", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("internal global::System.Windows.Controls.Image LoginImage;", Case.Sensitive);
+		emission.Source!.ShouldContain("internal global::System.Windows.Controls.ContentControl ActiveItem;", Case.Sensitive);
 
 		// clr-namespace: is WPF's form of the same thing UWP writes as using:, assembly= and all.
-		Assert.Contains("internal global::House.Views.Crumb Crumb;", emission.Source!, StringComparison.Ordinal);
-		Assert.Empty(emission.UnresolvedTypes);
+		emission.Source!.ShouldContain("internal global::House.Views.Crumb Crumb;", Case.Sensitive);
+		emission.UnresolvedTypes.ShouldBeEmpty();
 	}
 
 	[Test]
@@ -100,15 +99,11 @@ public sealed class WpfXamlStubTests
 
 		// Both were reached through a namespace that is not the first candidate, which is what the
 		// dialect's ordering is for. A property element is not a type and contributes no field.
-		Assert.Contains(
-			"internal global::System.Windows.Controls.Primitives.Popup ExclusionPopup;",
-			emission.Source!,
-			StringComparison.Ordinal);
+		emission.Source!.ShouldContain(
+			"internal global::System.Windows.Controls.Primitives.Popup ExclusionPopup;", Case.Sensitive);
 
-		Assert.Contains(
-			"internal global::System.Windows.Media.RotateTransform DontFreeze;",
-			emission.Source!,
-			StringComparison.Ordinal);
+		emission.Source!.ShouldContain(
+			"internal global::System.Windows.Media.RotateTransform DontFreeze;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -137,12 +132,10 @@ public sealed class WpfXamlStubTests
 
 		var emission = Emit(markup, behind);
 
-		Assert.Contains(
-			"internal global::App.ProjectSelectionView ProjectSelectionRoot;",
-			emission.Source!,
-			StringComparison.Ordinal);
+		emission.Source!.ShouldContain(
+			"internal global::App.ProjectSelectionView ProjectSelectionRoot;", Case.Sensitive);
 
-		Assert.DoesNotContain("UserControl ProjectSelectionRoot", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldNotContain("UserControl ProjectSelectionRoot", Case.Sensitive);
 	}
 
 	[Test]
@@ -158,7 +151,7 @@ public sealed class WpfXamlStubTests
 
 		var emission = Emit(markup, "namespace App { partial class Widget { } }");
 
-		Assert.Contains("public global::System.Windows.Controls.Button Shared;", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("public global::System.Windows.Controls.Button Shared;", Case.Sensitive);
 	}
 
 	[Test]
@@ -183,10 +176,10 @@ public sealed class WpfXamlStubTests
 
 		var emission = Emit(markup, behind, OutputKind.WindowsApplication);
 
-		Assert.Contains("static void Main", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldContain("static void Main", Case.Sensitive);
 
 		// The code-behind already declares the base, and a second one would be CS0263.
-		Assert.DoesNotContain(": global::System.Windows.Application", emission.Source!, StringComparison.Ordinal);
+		emission.Source!.ShouldNotContain(": global::System.Windows.Application", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -231,16 +224,16 @@ public sealed class WpfXamlStubTests
 			""";
 
 		var document = XamlDocumentReader.Read("ShellView.xaml", markup);
-		Assert.NotNull(document);
+		document.ShouldNotBeNull();
 
 		var emission = XamlStubEmitter.Emit(
 			Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework, behind), WpfXamlDialect.Instance, document);
 
-		Assert.NotNull(emission.Source);
+		emission.Source.ShouldNotBeNull();
 
 		var complete = Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework, behind, emission.Source);
 
-		Assert.Empty(complete.GetDiagnostics(TestContext.Current!.Execution.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
+		complete.GetDiagnostics(TestContext.Current!.Execution.CancellationToken).Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -275,20 +268,20 @@ public sealed class WpfXamlStubTests
 			""";
 
 		var document = XamlDocumentReader.Read("ShellView.xaml", markup);
-		Assert.NotNull(document);
+		document.ShouldNotBeNull();
 
 		var emission = XamlStubEmitter.Emit(
 			Compile(LanguageVersion.CSharp7_3, FakeFramework, behind), WpfXamlDialect.Instance, document);
 
-		Assert.NotNull(emission.Source);
-		Assert.DoesNotContain("#nullable", emission.Source, StringComparison.Ordinal);
+		emission.Source.ShouldNotBeNull();
+		emission.Source.ShouldNotContain("#nullable", Case.Sensitive);
 
 		// And it still has to compile, which is the assertion that would have caught this.
 		var complete = Compile(LanguageVersion.CSharp7_3, FakeFramework, behind, emission.Source);
 
-		Assert.Empty(complete
+		complete
 			.GetDiagnostics(TestContext.Current!.Execution.CancellationToken)
-			.Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning));
+			.Where(diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning).ShouldBeEmpty();
 	}
 
 	[Test]
@@ -303,8 +296,8 @@ public sealed class WpfXamlStubTests
 		var choice = XamlDialectSelector.Select(
 			Compile(OutputKind.DynamicallyLinkedLibrary, FakeFramework), [document!]);
 
-		Assert.Same(WpfXamlDialect.Instance, choice.Dialect);
-		Assert.False(choice.WasAmbiguous, "the dialect was not ambiguous");
+		choice.Dialect.ShouldBeSameAs(WpfXamlDialect.Instance);
+		choice.WasAmbiguous.ShouldBeFalse("the dialect was not ambiguous");
 	}
 
 	private static XamlStubEmission Emit(
@@ -314,7 +307,7 @@ public sealed class WpfXamlStubTests
 	{
 		var document = XamlDocumentReader.Read("Widget.xaml", markup);
 
-		Assert.NotNull(document);
+		document.ShouldNotBeNull();
 
 		return XamlStubEmitter.Emit(
 			Compile(outputKind, FakeFramework, codeBehind), WpfXamlDialect.Instance, document);

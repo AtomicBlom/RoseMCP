@@ -35,9 +35,9 @@ public sealed class SourceEncodingTests
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name) => $\"{_prefix}, {name}!\";");
 
-		Assert.True(edited.Applied);
-		Assert.True(StartsWithMark(path), "the file was written with a mark and has to keep it");
-		Assert.Contains("=> $\"{_prefix}, {name}!\"", await File.ReadAllTextAsync(path, Token), StringComparison.Ordinal);
+		edited.Applied.ShouldBeTrue();
+		StartsWithMark(path).ShouldBeTrue("the file was written with a mark and has to keep it");
+		(await File.ReadAllTextAsync(path, Token)).ShouldContain("=> $\"{_prefix}, {name}!\"", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -59,8 +59,8 @@ public sealed class SourceEncodingTests
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name) => name;");
 
-		Assert.True(edited.Applied);
-		Assert.False(StartsWithMark(path), "nothing gave this file a mark to keep");
+		edited.Applied.ShouldBeTrue();
+		StartsWithMark(path).ShouldBeFalse("nothing gave this file a mark to keep");
 	}
 
 	/// <summary>
@@ -84,9 +84,9 @@ public sealed class SourceEncodingTests
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name) => name;");
 
-		Assert.True(edited.Applied);
-		Assert.True(StartsWithMark(path));
-		Assert.Contains("public int Total", await File.ReadAllTextAsync(path, Token), StringComparison.Ordinal);
+		edited.Applied.ShouldBeTrue();
+		StartsWithMark(path).ShouldBeTrue();
+		(await File.ReadAllTextAsync(path, Token)).ShouldContain("public int Total", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -114,8 +114,8 @@ public sealed class SourceEncodingTests
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name) => name;");
 
-		Assert.True(edited.Applied);
-		Assert.False(StartsWithMark(path), "re-reading a file off disk is no reason to mark it");
+		edited.Applied.ShouldBeTrue();
+		StartsWithMark(path).ShouldBeFalse("re-reading a file off disk is no reason to mark it");
 	}
 
 	/// <summary>
@@ -138,9 +138,9 @@ public sealed class SourceEncodingTests
 			(snapshot, token) => MoveTypeService.MoveAsync(snapshot, request, session.NoteSelfWrite, token),
 			Token);
 
-		Assert.True(moved.Applied);
-		Assert.True(StartsWithMark(source), "the file the type left keeps its mark");
-		Assert.True(StartsWithMark(moved.TargetPath!), "the file the type landed in is the same file's encoding");
+		moved.Applied.ShouldBeTrue();
+		StartsWithMark(source).ShouldBeTrue("the file the type left keeps its mark");
+		StartsWithMark(moved.TargetPath!).ShouldBeTrue("the file the type landed in is the same file's encoding");
 	}
 
 	private static CancellationToken Token => TestContext.Current!.Execution.CancellationToken;

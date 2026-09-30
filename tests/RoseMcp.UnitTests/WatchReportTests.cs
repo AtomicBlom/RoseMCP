@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>Two drains taken either side of a wait for git, read as one.</summary>
@@ -15,8 +16,8 @@ public sealed class WatchReportTests
 
 		var combined = first.Then(later);
 
-		Assert.False(combined.HasFlag(WatchSignal.GitOperationInFlight));
-		Assert.True(combined.HasFlag(WatchSignal.FileChanges), "what was heard before the wait still happened");
+		combined.HasFlag(WatchSignal.GitOperationInFlight).ShouldBeFalse();
+		combined.HasFlag(WatchSignal.FileChanges).ShouldBeTrue("what was heard before the wait still happened");
 	}
 
 	/// <summary>
@@ -40,8 +41,8 @@ public sealed class WatchReportTests
 
 		var combined = first.Then(later);
 
-		Assert.Equal(2, combined.BuildFilesAppeared.Count);
-		Assert.Single(combined.BuildFilesChanged);
-		Assert.True(combined.HasFlag(WatchSignal.EventsLost));
+		combined.BuildFilesAppeared.Count.ShouldBe(2);
+		combined.BuildFilesChanged.ShouldHaveSingleItem();
+		combined.HasFlag(WatchSignal.EventsLost).ShouldBeTrue();
 	}
 }

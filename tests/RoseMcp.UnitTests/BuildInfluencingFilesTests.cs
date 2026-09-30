@@ -26,7 +26,7 @@ public sealed class BuildInfluencingFilesTests
 	[Arguments("/repo/src/App/packages.config")]
 	public void A_project_solution_import_or_named_build_file_is_a_build_file(string path)
 	{
-		Assert.True(BuildInfluencingFiles.IsBuildFile(path), $"{path} decides how a project evaluates");
+		BuildInfluencingFiles.IsBuildFile(path).ShouldBeTrue($"{path} decides how a project evaluates");
 	}
 
 	/// <summary>
@@ -40,7 +40,7 @@ public sealed class BuildInfluencingFilesTests
 	[Arguments("/repo/src/App/README.md")]
 	public void A_source_or_data_file_is_not_a_build_file(string path)
 	{
-		Assert.False(BuildInfluencingFiles.IsBuildFile(path), $"{path} is found by a read without the watcher");
+		BuildInfluencingFiles.IsBuildFile(path).ShouldBeFalse($"{path} is found by a read without the watcher");
 	}
 
 	/// <summary>
@@ -50,9 +50,9 @@ public sealed class BuildInfluencingFilesTests
 	[Test]
 	public void Only_props_and_targets_are_importable()
 	{
-		Assert.True(BuildInfluencingFiles.IsImportable("/repo/build/Common.props"));
-		Assert.True(BuildInfluencingFiles.IsImportable("/repo/Directory.Build.TARGETS"));
-		Assert.False(BuildInfluencingFiles.IsImportable("/repo/src/App/App.csproj"));
-		Assert.False(BuildInfluencingFiles.IsImportable("/repo/global.json"));
+		BuildInfluencingFiles.IsImportable("/repo/build/Common.props").ShouldBeTrue();
+		BuildInfluencingFiles.IsImportable("/repo/Directory.Build.TARGETS").ShouldBeTrue();
+		BuildInfluencingFiles.IsImportable("/repo/src/App/App.csproj").ShouldBeFalse();
+		BuildInfluencingFiles.IsImportable("/repo/global.json").ShouldBeFalse();
 	}
 }

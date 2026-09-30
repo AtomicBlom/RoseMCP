@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -44,8 +45,8 @@ public sealed class ResilienceTests
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var onMain = await SourceOfAsync(session, "Calculator.cs");
-		Assert.Contains("Multiply", onMain, StringComparison.Ordinal);
-		Assert.DoesNotContain("Subtract", onMain, StringComparison.Ordinal);
+		onMain.ShouldContain("Multiply", Case.Sensitive);
+		onMain.ShouldNotContain("Subtract", Case.Sensitive);
 
 		// Switch branches entirely behind the workspace's back.
 		Git(fixture.Root, "checkout", "-q", "other");
@@ -55,11 +56,11 @@ public sealed class ResilienceTests
 		await Task.Delay(TimeSpan.FromSeconds(1), token);
 
 		var switched = await session.ReadAsync(token);
-		Assert.DoesNotContain(switched.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		switched.Notices.ShouldNotContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 
 		var onOther = await SourceOfAsync(session, "Calculator.cs");
-		Assert.Contains("Subtract", onOther, StringComparison.Ordinal);
-		Assert.DoesNotContain("Multiply", onOther, StringComparison.Ordinal);
+		onOther.ShouldContain("Subtract", Case.Sensitive);
+		onOther.ShouldNotContain("Multiply", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -99,13 +100,13 @@ public sealed class ResilienceTests
 		await using var session = await TestSession.OpenAsync(fixture);
 
 		var before = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
-		Assert.DoesNotContain(before.Solution.Projects, project => project.Name == "Extra");
+		before.Solution.Projects.ShouldNotContain(project => project.Name == "Extra");
 
 		Git(fixture.Root, "checkout", "-q", "extra");
 
 		var after = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
-		Assert.Contains(after.Solution.Projects, project => project.Name == "Extra");
-		Assert.Contains(after.Notices, notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
+		after.Solution.Projects.ShouldContain(project => project.Name == "Extra");
+		after.Notices.ShouldContain(notice => notice.Contains("reloaded", StringComparison.OrdinalIgnoreCase));
 	}
 
 	/// <summary>
@@ -126,19 +127,19 @@ public sealed class ResilienceTests
 
 		var whileMissing = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(whileMissing.Stale);
-		Assert.False(session.Unloaded, "the session stays loaded while the solution is missing");
-		Assert.NotEmpty(whileMissing.Solution.Projects);
-		Assert.Contains(whileMissing.Notices, notice => notice.Contains("missing", StringComparison.OrdinalIgnoreCase));
+		whileMissing.Stale.ShouldBeTrue();
+		session.Unloaded.ShouldBeFalse("the session stays loaded while the solution is missing");
+		whileMissing.Solution.Projects.ShouldNotBeEmpty();
+		whileMissing.Notices.ShouldContain(notice => notice.Contains("missing", StringComparison.OrdinalIgnoreCase));
 
 		// Put it back inside the grace period; nothing should have been torn down.
 		await File.WriteAllTextAsync(solution, saved, TestContext.Current!.Execution.CancellationToken);
 
 		var recovered = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		Assert.False(recovered.Stale, "the snapshot is current again once the solution is back");
-		Assert.False(session.Unloaded, "the session stayed loaded throughout");
-		Assert.NotEmpty(recovered.Solution.Projects);
+		recovered.Stale.ShouldBeFalse("the snapshot is current again once the solution is back");
+		session.Unloaded.ShouldBeFalse("the session stayed loaded throughout");
+		recovered.Solution.Projects.ShouldNotBeEmpty();
 	}
 
 	[Test]
@@ -152,18 +153,18 @@ public sealed class ResilienceTests
 		File.Delete(fixture.SolutionPath);
 
 		// First read starts the grace timer and is served stale.
-		Assert.True((await session.ReadAsync(TestContext.Current!.Execution.CancellationToken)).Stale);
+		(await session.ReadAsync(TestContext.Current!.Execution.CancellationToken)).Stale.ShouldBeTrue();
 
 		await Task.Delay(TimeSpan.FromMilliseconds(400), TestContext.Current!.Execution.CancellationToken);
 
-		var unloaded = await Assert.ThrowsAsync<SolutionUnloadedException>(
-			() => session.ReadAsync(TestContext.Current!.Execution.CancellationToken));
+		var unloaded = await Should.ThrowAsync<SolutionUnloadedException>(
+			() => session.ReadAsync(TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Equal(fixture.SolutionPath, unloaded.SolutionPath);
-		Assert.True(session.Unloaded);
+		unloaded.SolutionPath.ShouldBe(fixture.SolutionPath);
+		session.Unloaded.ShouldBeTrue();
 
 		// The error has to name the path, not just say something went wrong.
-		Assert.Contains(fixture.SolutionPath, unloaded.Message, StringComparison.Ordinal);
+		unloaded.Message.ShouldContain(fixture.SolutionPath, Case.Sensitive);
 	}
 
 	private static async Task<string> SourceOfAsync(WorkspaceSession session, string documentName)

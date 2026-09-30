@@ -539,15 +539,13 @@ public sealed class UwpProbeApp : IAsyncDisposable
 					includeAllElements: false, justMyXaml: true, arm: false, bounded.Token);
 			}
 
-			Assert.False(
-				left.Selected,
+			left.Selected.ShouldBeFalse(
 				$"this test left {left.Name ?? left.Address ?? "an element"} selected. A phase B test holds the "
 					+ "whole app, so it has to hand it back unselected. This check runs in the turn's disposal, "
 					+ "so read the test's own last assertion first: a failure there leaves the app exactly like "
 					+ "this, and the message you are reading has replaced it.");
 
-			Assert.False(
-				left.Armed,
+			left.Armed.ShouldBeFalse(
 				$"this test left the overlay in {left.Mode} mode, which captures the pointer, so the app "
 					+ "cannot be clicked. Disarm it before the test ends.");
 		}

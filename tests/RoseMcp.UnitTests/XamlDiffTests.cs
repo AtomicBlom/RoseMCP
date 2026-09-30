@@ -20,19 +20,19 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF000000\" /></Grid>",
 			$"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF0000FF\" /></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.SetProperty, edit.Kind);
-		Assert.Equal("#pane", edit.Target);
-		Assert.Equal("Background", edit.Property);
-		Assert.Equal("#FF0000FF", edit.Value);
-		Assert.Equal("Windows.UI.Xaml.Media.SolidColorBrush", edit.ValueType);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.SetProperty);
+		edit.Target.ShouldBe("#pane");
+		edit.Property.ShouldBe("Background");
+		edit.Value.ShouldBe("#FF0000FF");
+		edit.ValueType.ShouldBe("Windows.UI.Xaml.Media.SolidColorBrush");
 	}
 
 	[Test]
 	public void An_unchanged_tree_produces_no_edits()
 	{
 		var xaml = $"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF000000\" Opacity=\"1\" /></Grid>";
-		Assert.Empty(Compute(xaml, xaml));
+		Compute(xaml, xaml).ShouldBeEmpty();
 	}
 
 	[Test]
@@ -42,12 +42,12 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns}><Border Width=\"10\" /></Grid>",
 			$"<Grid {Ns}><Border Width=\"20\" /></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.SetProperty, edit.Kind);
-		Assert.Equal("Grid[0]/Border[0]", edit.Target);
-		Assert.Equal("Width", edit.Property);
-		Assert.Equal("20", edit.Value);
-		Assert.Equal("Windows.Foundation.Double", edit.ValueType);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.SetProperty);
+		edit.Target.ShouldBe("Grid[0]/Border[0]");
+		edit.Property.ShouldBe("Width");
+		edit.Value.ShouldBe("20");
+		edit.ValueType.ShouldBe("Windows.Foundation.Double");
 	}
 
 	/// <summary>
@@ -67,11 +67,11 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><SolidColorBrush x:Key=\"Accent\" Color=\"#FFFF0000\" /></Grid.Resources></Grid>",
 			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><SolidColorBrush x:Key=\"Accent\" Color=\"#FF00FF00\" /></Grid.Resources></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.SetResource, edit.Kind);
-		Assert.Equal("#root", edit.Target);
-		Assert.Equal("Accent", edit.Property);
-		Assert.Contains("#FF00FF00", edit.Payload);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.SetResource);
+		edit.Target.ShouldBe("#root");
+		edit.Property.ShouldBe("Accent");
+		edit.Payload!.ShouldContain("#FF00FF00", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -91,9 +91,9 @@ public sealed class XamlDiffTests
 				+ "<SolidColorBrush x:Key=\"A\" Color=\"#FF0000FF\" />"
 				+ "</Grid.Resources></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal("A", edit.Property);
-		Assert.Contains("#FF0000FF", edit.Payload);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Property.ShouldBe("A");
+		edit.Payload!.ShouldContain("#FF0000FF", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -112,9 +112,9 @@ public sealed class XamlDiffTests
 				+ "<SolidColorBrush x:Key=\"Accent\" Color=\"#FF00FF00\" />"
 				+ "</ResourceDictionary></Grid.Resources></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.SetResource, edit.Kind);
-		Assert.Equal("Accent", edit.Property);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.SetResource);
+		edit.Property.ShouldBe("Accent");
 	}
 
 	/// <summary>Adding and removing a resource are said rather than attempted, since neither applies yet.</summary>
@@ -125,15 +125,15 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources /></Grid>",
 			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><SolidColorBrush x:Key=\"New\" Color=\"#FF000000\" /></Grid.Resources></Grid>");
 
-		Assert.Empty(added.Edits);
-		Assert.Contains(added.Notes, note => note.Contains("'New'", StringComparison.Ordinal) && note.Contains("is new", StringComparison.Ordinal));
+		added.Edits.ShouldBeEmpty();
+		added.Notes.ShouldContain(note => note.Contains("'New'", StringComparison.Ordinal) && note.Contains("is new", StringComparison.Ordinal));
 
 		var removed = Diff(
 			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources><SolidColorBrush x:Key=\"Gone\" Color=\"#FF000000\" /></Grid.Resources></Grid>",
 			$"<Grid {Ns} x:Name=\"root\"><Grid.Resources /></Grid>");
 
-		Assert.Empty(removed.Edits);
-		Assert.Contains(removed.Notes, note => note.Contains("'Gone'", StringComparison.Ordinal));
+		removed.Edits.ShouldBeEmpty();
+		removed.Notes.ShouldContain(note => note.Contains("'Gone'", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -164,11 +164,11 @@ public sealed class XamlDiffTests
 				+ $"<{type} x:Key=\"Item\"{attributes}><Border Width=\"20\" /></{type}>"
 				+ "</Grid.Resources></Grid>");
 
-		Assert.Empty(result.Edits);
+		result.Edits.ShouldBeEmpty();
 
-		var note = Assert.Single(result.Notes);
-		Assert.Contains("Item", note);
-		Assert.Contains(type, note);
+		var note = result.Notes.ShouldHaveSingleItem();
+		note.ShouldContain("Item", Case.Sensitive);
+		note.ShouldContain(type, Case.Sensitive);
 	}
 
 	/// <summary>
@@ -186,9 +186,9 @@ public sealed class XamlDiffTests
 				+ "<Border x:Key=\"Chip\" Width=\"20\" />"
 				+ "</Grid.Resources></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.SetResource, edit.Kind);
-		Assert.Equal("Chip", edit.Property);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.SetResource);
+		edit.Property.ShouldBe("Chip");
 	}
 
 	/// <summary>
@@ -203,10 +203,10 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns} x:Name=\"root\"><Grid.RowDefinitions><RowDefinition /></Grid.RowDefinitions></Grid>",
 			$"<Grid {Ns} x:Name=\"root\"><Grid.RowDefinitions><RowDefinition /></Grid.RowDefinitions><Border /></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.AddChild, edit.Kind);
-		Assert.Equal("#root", edit.Target);
-		Assert.Equal(0, edit.Index);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.AddChild);
+		edit.Target.ShouldBe("#root");
+		edit.Index.ShouldBe(0);
 	}
 
 	/// <summary>
@@ -221,8 +221,8 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns} x:Name=\"root\"><Grid.RowDefinitions><RowDefinition Height=\"10\" /></Grid.RowDefinitions></Grid>",
 			$"<Grid {Ns} x:Name=\"root\"><Grid.RowDefinitions><RowDefinition Height=\"20\" /></Grid.RowDefinitions></Grid>");
 
-		Assert.Empty(result.Edits);
-		Assert.Contains(result.Notes, note => note.Contains("Grid.RowDefinitions", StringComparison.Ordinal));
+		result.Edits.ShouldBeEmpty();
+		result.Notes.ShouldContain(note => note.Contains("Grid.RowDefinitions", StringComparison.Ordinal));
 	}
 
 	[Test]
@@ -237,8 +237,8 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns} xmlns:local=\"using:App\"><local:Border Opacity=\"1\" /><Border Opacity=\"1\" /></Grid>",
 			$"<Grid {Ns} xmlns:local=\"using:App\"><local:Border Opacity=\"0.5\" /><Border Opacity=\"0.25\" /></Grid>");
 
-		Assert.Equal(2, edits.Count);
-		Assert.Equal(2, edits.Select(edit => edit.Target).Distinct().Count());
+		edits.Count.ShouldBe(2);
+		edits.Select(edit => edit.Target).Distinct().Count().ShouldBe(2);
 	}
 
 	[Test]
@@ -248,8 +248,8 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns}><StackPanel x:Name=\"panel\"><Border Opacity=\"1\" /></StackPanel></Grid>",
 			$"<Grid {Ns}><StackPanel x:Name=\"panel\"><Border Opacity=\"0.5\" /></StackPanel></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal("#panel/Border[0]", edit.Target);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Target.ShouldBe("#panel/Border[0]");
 	}
 
 	[Test]
@@ -259,10 +259,10 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns}><Border x:Name=\"pane\" Background=\"#FF000000\" /></Grid>",
 			$"<Grid {Ns}><Border x:Name=\"pane\" /></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.ClearProperty, edit.Kind);
-		Assert.Equal("#pane", edit.Target);
-		Assert.Equal("Background", edit.Property);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.ClearProperty);
+		edit.Target.ShouldBe("#pane");
+		edit.Property.ShouldBe("Background");
 	}
 
 	[Test]
@@ -272,10 +272,10 @@ public sealed class XamlDiffTests
 			$"<Grid {Ns}><Border x:Name=\"pane\" Grid.Row=\"0\" /></Grid>",
 			$"<Grid {Ns}><Border x:Name=\"pane\" Grid.Row=\"2\" /></Grid>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.SetProperty, edit.Kind);
-		Assert.Equal("Grid.Row", edit.Property);
-		Assert.Equal("2", edit.Value);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.SetProperty);
+		edit.Property.ShouldBe("Grid.Row");
+		edit.Value.ShouldBe("2");
 	}
 
 	[Test]
@@ -285,11 +285,11 @@ public sealed class XamlDiffTests
 			$"<StackPanel {Ns}><Border x:Name=\"a\" /></StackPanel>",
 			$"<StackPanel {Ns}><Border x:Name=\"a\" /><Button x:Name=\"b\" Content=\"Go\" /></StackPanel>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.AddChild, edit.Kind);
-		Assert.Equal(1, edit.Index);
-		Assert.Contains("Button", edit.Payload);
-		Assert.Contains("Go", edit.Payload);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.AddChild);
+		edit.Index.ShouldBe(1);
+		edit.Payload!.ShouldContain("Button", Case.Sensitive);
+		edit.Payload!.ShouldContain("Go", Case.Sensitive);
 	}
 
 	[Test]
@@ -299,9 +299,9 @@ public sealed class XamlDiffTests
 			$"<StackPanel {Ns}><Border x:Name=\"a\" /><Button x:Name=\"b\" /></StackPanel>",
 			$"<StackPanel {Ns}><Border x:Name=\"a\" /></StackPanel>");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal(XamlEditKind.RemoveChild, edit.Kind);
-		Assert.Equal("#b", edit.Target);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Kind.ShouldBe(XamlEditKind.RemoveChild);
+		edit.Target.ShouldBe("#b");
 	}
 
 	/// <summary>
@@ -320,11 +320,13 @@ public sealed class XamlDiffTests
 			$"<StackPanel {Ns}><Border /><Border /></StackPanel>",
 			$"<StackPanel {Ns}></StackPanel>");
 
-		Assert.Equal(2, edits.Count);
-		Assert.All(edits, edit => Assert.Equal(XamlEditKind.RemoveChild, edit.Kind));
-		Assert.Equal(
-			["StackPanel[0]/Border[1]", "StackPanel[0]/Border[0]"],
-			edits.Select(edit => edit.Target));
+		edits.Count.ShouldBe(2);
+		foreach (var edit in edits)
+		{
+			edit.Kind.ShouldBe(XamlEditKind.RemoveChild);
+		}
+		edits.Select(edit => edit.Target).ShouldBe(
+			["StackPanel[0]/Border[1]", "StackPanel[0]/Border[0]"]);
 	}
 
 
@@ -343,10 +345,10 @@ public sealed class XamlDiffTests
 			$"<Border {Ns} x:Name=\"pane\" CornerRadius=\"8\" />",
 			$"<Border {Ns} x:Name=\"pane\" CornerRadius=\"0\" />");
 
-		var edit = Assert.Single(edits);
-		Assert.Equal("CornerRadius", edit.Property);
-		Assert.Equal("0", edit.Value);
-		Assert.Equal("Windows.UI.Xaml.CornerRadius", edit.ValueType);
+		var edit = edits.ShouldHaveSingleItem();
+		edit.Property.ShouldBe("CornerRadius");
+		edit.Value.ShouldBe("0");
+		edit.ValueType.ShouldBe("Windows.UI.Xaml.CornerRadius");
 	}
 
 	/// <summary>
@@ -361,7 +363,7 @@ public sealed class XamlDiffTests
 			$"<Border {Ns} x:Name=\"pane\" Opacity=\"1\" />",
 			$"<Border {Ns} x:Name=\"pane\" Opacity=\"0.5\" />");
 
-		Assert.Equal("Windows.Foundation.Double", Assert.Single(edits).ValueType);
+		edits.ShouldHaveSingleItem().ValueType.ShouldBe("Windows.Foundation.Double");
 	}
 
 	[Test]
@@ -371,7 +373,7 @@ public sealed class XamlDiffTests
 			$"<Border {Ns} x:Name=\"pane\" CornerRadius=\"8,8,0,0\" />",
 			$"<Border {Ns} x:Name=\"pane\" CornerRadius=\"0,0,8,8\" />");
 
-		Assert.Equal("Windows.UI.Xaml.CornerRadius", Assert.Single(edits).ValueType);
+		edits.ShouldHaveSingleItem().ValueType.ShouldBe("Windows.UI.Xaml.CornerRadius");
 	}
 
 	/// <summary>
@@ -383,11 +385,11 @@ public sealed class XamlDiffTests
 	[Test]
 	public void Reports_markup_it_cannot_parse_with_the_parsers_own_reason()
 	{
-		Assert.True(XamlDiff.XamlDiff.Parses($"<Border {Ns} x:Name=\"pane\" />", out var fine));
-		Assert.Null(fine);
+		XamlDiff.XamlDiff.Parses($"<Border {Ns} x:Name=\"pane\" />", out var fine).ShouldBeTrue();
+		fine.ShouldBeNull();
 
-		Assert.False(XamlDiff.XamlDiff.Parses($"<Border {Ns} x:Name=\"pane\">", out var reason));
-		Assert.False(string.IsNullOrWhiteSpace(reason), "the reason is the parser's own words rather than empty");
+		XamlDiff.XamlDiff.Parses($"<Border {Ns} x:Name=\"pane\">", out var reason).ShouldBeFalse();
+		string.IsNullOrWhiteSpace(reason).ShouldBeFalse("the reason is the parser's own words rather than empty");
 	}
 
 	private static IReadOnlyList<XamlEdit> Compute(string oldXaml, string newXaml)

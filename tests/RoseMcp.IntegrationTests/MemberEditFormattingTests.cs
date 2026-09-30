@@ -31,16 +31,16 @@ public sealed class MemberEditFormattingTests
 			"Library.Greeter.Greet(string)",
 			"public string Greet(string name)\n{\n    return $\"{_prefix} there, {name}!\";\n}");
 
-		Assert.True(result.Applied);
-		Assert.Equal("string Library.Greeter.Greet(string name)", result.Symbol);
-		Assert.Equal(["Greet"], result.Members);
+		result.Applied.ShouldBeTrue();
+		result.Symbol.ShouldBe("string Library.Greeter.Greet(string name)");
+		result.Members.ShouldBe(["Greet"]);
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("\t\treturn $\"{_prefix} there, {name}!\";\r\n", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("    return", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("\n", text.Replace("\r\n", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
-		Assert.EndsWith("}\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("\t\treturn $\"{_prefix} there, {name}!\";\r\n", Case.Sensitive);
+		text.ShouldNotContain("    return", Case.Sensitive);
+		text.Replace("\r\n", string.Empty, StringComparison.Ordinal).ShouldNotContain("\n", Case.Sensitive);
+		text.ShouldEndWith("}\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -68,10 +68,8 @@ public sealed class MemberEditFormattingTests
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
 		// One tab for the member, two for the parameters it wrapped onto their own lines.
-		Assert.Contains(
-			"\tpublic string Greet(\r\n\t\tstring title,\r\n\t\tstring name)\r\n\t{\r\n",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\tpublic string Greet(\r\n\t\tstring title,\r\n\t\tstring name)\r\n\t{\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -108,10 +106,8 @@ public sealed class MemberEditFormattingTests
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
 		// One tab for the member, two for the parameters it wrapped onto their own lines.
-		Assert.Contains(
-			"\tpublic string Wrapped(\r\n\t\tstring first,\r\n\t\tstring second) => first + second;",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\tpublic string Wrapped(\r\n\t\tstring first,\r\n\t\tstring second) => first + second;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -146,10 +142,8 @@ public sealed class MemberEditFormattingTests
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
 		// Two tabs for the statement, three for the lines it wraps onto.
-		Assert.Contains(
-			"\t\treturn first\r\n\t\t\t+ second\r\n\t\t\t+ third;",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\t\treturn first\r\n\t\t\t+ second\r\n\t\t\t+ third;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -173,10 +167,8 @@ public sealed class MemberEditFormattingTests
 
 		var text = await ReadAsync(fixture, "Arrowed.cs");
 
-		Assert.Contains(
-			"\tpublic static string Describe(string first, string second) =>\r\n\t\tfirst + \" and \" + second;",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\tpublic static string Describe(string first, string second) =>\r\n\t\tfirst + \" and \" + second;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -198,10 +190,8 @@ public sealed class MemberEditFormattingTests
 
 		var text = await ReadAsync(fixture, "Arrowed.cs");
 
-		Assert.Contains(
-			"\tpublic static string Describe(string first, string second) =>\r\n\t\tfirst + \" and \" + second;",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\tpublic static string Describe(string first, string second) =>\r\n\t\tfirst + \" and \" + second;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -225,10 +215,8 @@ public sealed class MemberEditFormattingTests
 		var text = await ReadAsync(fixture, "Arrowed.cs");
 
 		// Two tabs for the body's first line, three for the lines it wraps onto.
-		Assert.Contains(
-			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \"; \" + third;",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\t\tfirst\r\n\t\t\t+ \", \" + second\r\n\t\t\t+ \"; \" + third;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -249,10 +237,8 @@ public sealed class MemberEditFormattingTests
 
 		var text = await ReadAsync(fixture, "Arrowed.cs");
 
-		Assert.Contains(
-			"\tpublic static string Joined(string first, string second) =>\r\n\t\tfirst + second;",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\tpublic static string Joined(string first, string second) =>\r\n\t\tfirst + second;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -277,7 +263,7 @@ public sealed class MemberEditFormattingTests
 
 		// The line the literal holds is not indented with the member. Its endings are the file's,
 		// because the code arrived carrying none of its own.
-		Assert.Contains("@\"\r\nflush left on purpose\r\n\";", text, StringComparison.Ordinal);
+		text.ShouldContain("@\"\r\nflush left on purpose\r\n\";", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -303,14 +289,13 @@ public sealed class MemberEditFormattingTests
 			Code = "public string Bare() => @\"\nline one\nline two\n\";",
 		});
 
-		Assert.Contains(
-			bare.Notices,
+		bare.Notices.ShouldContain(
 			notice => notice.Contains("Rewrote", StringComparison.Ordinal)
 				&& notice.Contains("line ending(s) in the code supplied", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
-		Assert.Contains("@\"\r\nline one\r\nline two\r\n\";", text, StringComparison.Ordinal);
+		text.ShouldContain("@\"\r\nline one\r\nline two\r\n\";", Case.Sensitive);
 
 		// Supplied with the file's own endings, there is nothing to rewrite and nothing to say.
 		var matching = await EditAsync(session, new MemberEditRequest
@@ -320,8 +305,7 @@ public sealed class MemberEditFormattingTests
 			Code = "public string Matching() => @\"\r\nline one\r\nline two\r\n\";",
 		});
 
-		Assert.DoesNotContain(
-			matching.Notices,
+		matching.Notices.ShouldNotContain(
 			notice => notice.Contains("line ending(s) in the code supplied", StringComparison.Ordinal));
 	}
 
@@ -350,20 +334,20 @@ public sealed class MemberEditFormattingTests
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
 		// The member that was written obeys .editorconfig ...
-		Assert.Contains("\t/// <summary>The greeting for one name.</summary>\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("\t\treturn name.Trim();\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("\t/// <summary>The greeting for one name.</summary>\r\n", Case.Sensitive);
+		text.ShouldContain("\t\treturn name.Trim();\r\n", Case.Sensitive);
 
 		// ... and every member that was not is still exactly as it was found, bare newlines and all.
-		Assert.Contains("private readonly string _prefix = \"Hello\";\n", text, StringComparison.Ordinal);
-		Assert.Contains("public int PrefixLength => _prefix.Length;\n", text, StringComparison.Ordinal);
-		Assert.Contains("return text.ToUpperInvariant();\n", text, StringComparison.Ordinal);
-		Assert.EndsWith("}\n", text, StringComparison.Ordinal);
+		text.ShouldContain("private readonly string _prefix = \"Hello\";\n", Case.Sensitive);
+		text.ShouldContain("public int PrefixLength => _prefix.Length;\n", Case.Sensitive);
+		text.ShouldContain("return text.ToUpperInvariant();\n", Case.Sensitive);
+		text.ShouldEndWith("}\n", Case.Sensitive);
 
 		// Most of the file is untouched: only the written member and the lines it adjoins were
 		// rewritten, which is what keeps a one-member change reviewable.
 		var normalised = text.Split("\r\n").Length - 1;
 
-		Assert.InRange(normalised, 6, 10);
+		normalised.ShouldBeInRange(6, 10);
 	}
 
 	/// <summary>
@@ -385,14 +369,12 @@ public sealed class MemberEditFormattingTests
 			session,
 			Request(MemberEditKind.ReplaceBody, "Library.Wrapped.Join", "return string.Concat(first, second, third);"));
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
-		Assert.Contains(
-			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third)\r\n",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second,\r\n\t\tstring third)\r\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -422,14 +404,12 @@ public sealed class MemberEditFormattingTests
 
 		var result = await EditAsync(session, Request(MemberEditKind.ReplaceBody, "Library.Wrapped.Join", code));
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
-		Assert.Contains(
-			"\t{\r\n\t\treturn string.Concat(\r\n\t\t\tfirst,\r\n\t\t\tsecond,\r\n\t\t\tthird);\r\n\t}",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\t{\r\n\t\treturn string.Concat(\r\n\t\t\tfirst,\r\n\t\t\tsecond,\r\n\t\t\tthird);\r\n\t}", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -461,14 +441,12 @@ public sealed class MemberEditFormattingTests
 				Replace = replace,
 			});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
-		Assert.Contains(
-			"\t{\r\n\t\treturn string.Concat(\r\n\t\t\tfirst,\r\n\t\t\tsecond,\r\n\t\t\tthird);\r\n\t}",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\t{\r\n\t\treturn string.Concat(\r\n\t\t\tfirst,\r\n\t\t\tsecond,\r\n\t\t\tthird);\r\n\t}", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -494,10 +472,10 @@ public sealed class MemberEditFormattingTests
 				Replace = replace,
 			});
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
-		Assert.Contains("@\"one\r\ntwo\";", text, StringComparison.Ordinal);
+		text.ShouldContain("@\"one\r\ntwo\";", Case.Sensitive);
 	}
 }

@@ -7,6 +7,7 @@
       <Platform Project="x64" />
     </Project>
     <Project Path="src/RoseMcp.Logging/RoseMcp.Logging.csproj" />
+    <Project Path="src/RoseMcp.Patterns/RoseMcp.Patterns.csproj" />
     <Project Path="src/RoseMcp.Server/RoseMcp.Server.csproj" />
     <Project Path="src/RoseMcp.Settings/RoseMcp.Settings.csproj" />
     <Project Path="src/RoseMcp.Solutions/RoseMcp.Solutions.csproj" />

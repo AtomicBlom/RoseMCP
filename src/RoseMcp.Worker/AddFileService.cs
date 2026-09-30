@@ -64,7 +64,10 @@ public static class AddFileService
 		var added = snapshot.Solution.AddDocument(
 			id, Path.GetFileName(path), SourceText.From(built), Folders(project, path), path);
 
-		var solution = await FormatAsync(added, id, cancellationToken);
+		// From the repository and the files around the new one, never from the code: composed for a tool
+		// argument, that is LF whatever the repository uses.
+		var rules = await Whitespace.RulesForNewAsync(project, path, from: null, cancellationToken);
+		var solution = await FormatAsync(added, id, rules, cancellationToken);
 
 		var imports = ResolvedImports.Imports.None;
 
@@ -73,12 +76,13 @@ public static class AddFileService
 			progress?.Report("Working out which namespaces the code needs", 45);
 
 			(solution, imports) = await WithImportsAsync(
-				diagnostics, snapshot.Solution, solution, id, path, cancellationToken);
+				diagnostics, snapshot.Solution, solution, id, path, rules, cancellationToken);
 		}
 
 		progress?.Report(request.Apply ? "Writing to disk" : "Building the diff", 70);
 
-		await edit.WriteAsync(solution, cancellationToken);
+		// A file that is not there yet, so nothing already there was asked to change.
+		await edit.WriteAsync(solution, Asked.Nothing, cancellationToken);
 
 		if (request.Verify) progress?.Report("Compiling to see what the file did", 80);
 
@@ -89,7 +93,7 @@ public static class AddFileService
 
 		// Read off the solution the file was written from, so a literal is named against the line it
 		// ends up on rather than the line the caller wrote it at.
-		var literalEndings = await LiteralEndingsAsync(solution, id, cancellationToken);
+		var literalEndings = await LiteralEndingsAsync(solution, id, rules, cancellationToken);
 
 		// After the verification, which is the first moment it can be said whether each import resolved
 		// the error it was fetched for rather than only which namespace it named.
@@ -97,6 +101,9 @@ public static class AddFileService
 			solution, imports, edit.Verification.Introduced, path, cancellationToken);
 
 		notices.AddRange(Notices(request, imports, globs, project, literalEndings));
+
+		if (DefaultLayout(rules, Path.GetFileName(path)) is { } defaulted) notices.Add(defaulted);
+
 		notices.AddRange(edit.Report());
 
 		var result = new AddFileResult
@@ -352,12 +359,13 @@ public static class AddFileService
 	}
 
 	/// <summary>The two formatting passes, over the whole file, since the whole file is new.</summary>
-	private static async Task<Solution> FormatAsync(Solution solution, DocumentId id, CancellationToken cancellationToken)
+	private static async Task<Solution> FormatAsync(Solution solution, DocumentId id, WhitespaceRules rules, CancellationToken cancellationToken)
 	{
 		var document = solution.GetDocument(id)
 			?? throw new InvalidOperationException("The document being written left the solution mid-edit.");
 
-		var formatted = await Formatter.FormatAsync(document, cancellationToken: cancellationToken);
+		var options = await Whitespace.FormattingOptionsAsync(document, rules, cancellationToken);
+		var formatted = await Formatter.FormatAsync(document, options, cancellationToken);
 
 		var root = await formatted.GetSyntaxRootAsync(cancellationToken);
 		var tree = await formatted.GetSyntaxTreeAsync(cancellationToken);
@@ -367,8 +375,6 @@ public static class AddFileService
 		{
 			throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} is not a C# source file.");
 		}
-
-		var rules = Whitespace.RulesFor(formatted.Project, tree, text);
 
 		return formatted.WithText(Whitespace.Apply(root, text, rules)).Project.Solution;
 	}
@@ -383,6 +389,7 @@ public static class AddFileService
 		Solution after,
 		DocumentId id,
 		string path,
+		WhitespaceRules rules,
 		CancellationToken cancellationToken)
 	{
 		var project = after.GetDocument(id)?.Project.Name;
@@ -400,7 +407,7 @@ public static class AddFileService
 
 		if (!imports.AnythingToAdd) return (after, imports);
 
-		var added = await ResolvedImports.ApplyAsync(after, id, imports.Namespaces, cancellationToken);
+		var added = await ResolvedImports.ApplyAsync(after, id, imports.Namespaces, rules, cancellationToken);
 
 		return (added, imports);
 	}
@@ -420,6 +427,7 @@ public static class AddFileService
 	private static async Task<string?> LiteralEndingsAsync(
 		Solution solution,
 		DocumentId id,
+		WhitespaceRules rules,
 		CancellationToken cancellationToken)
 	{
 		if (solution.GetDocument(id) is not { } document) return null;
@@ -431,7 +439,31 @@ public static class AddFileService
 
 		var text = await document.GetTextAsync(cancellationToken);
 
-		return Whitespace.LiteralEndingNotice(root, text, Whitespace.RulesFor(document.Project, tree, text), document.Name);
+		return Whitespace.LiteralEndingNotice(root, text, rules, document.Name);
+	}
+
+	/// <summary>
+	/// What to say when nothing decided part of the new file's layout -- no .editorconfig reaching it, no
+	/// eol in the repository's attributes, no file beside it to follow -- so Roslyn's defaults did, or null
+	/// where something decided all of it. The defaults are a guess about a repository that said nothing,
+	/// and the cheapest moment to correct one is before the files that follow take the first one's lead.
+	/// </summary>
+	private static string? DefaultLayout(WhitespaceRules rules, string name)
+	{
+		var indent = rules.IndentFrom == LayoutSource.Default;
+		var ending = rules.LineEndingFrom == LayoutSource.Default;
+
+		if (!indent && !ending) return null;
+
+		var what = (indent, ending) switch
+		{
+			(true, true) => $"four spaces and {LineEndings.Name(rules.LineEnding)}",
+			(true, false) => "four spaces",
+			_ => LineEndings.Name(rules.LineEnding),
+		};
+
+		return $"{name} was written with {what}, which are Roslyn's defaults: nothing declares how files here are laid "
+			+ "out and no file beside it shows a way. An .editorconfig saying so settles it for this file and every one after.";
 	}
 
 	private static async Task<string> ProjectTextAsync(Project project, CancellationToken cancellationToken)

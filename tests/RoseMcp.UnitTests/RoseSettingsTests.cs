@@ -23,7 +23,7 @@ public sealed class RoseSettingsTests
 	{
 		var path = RoseSettingsFile.PathFor(@"D:\local");
 
-		Assert.Equal(Path.Combine(@"D:\local", "BinaryVibrance", "RoseMCP", "settings.json"), path);
+		path.ShouldBe(Path.Combine(@"D:\local", "BinaryVibrance", "RoseMCP", "settings.json"));
 	}
 
 	/// <summary>
@@ -37,7 +37,7 @@ public sealed class RoseSettingsTests
 
 		var settings = RoseSettingsFile.Read(home.Path);
 
-		Assert.False(settings.ShowInspectorOnAttach);
+		settings.ShowInspectorOnAttach.ShouldBeFalse();
 	}
 
 	[Test]
@@ -45,11 +45,11 @@ public sealed class RoseSettingsTests
 	{
 		using var home = new TemporaryHome();
 
-		Assert.True(RoseSettingsFile.Write(new RoseSettings { ShowInspectorOnAttach = true }, home.Path));
-		Assert.True(RoseSettingsFile.Read(home.Path).ShowInspectorOnAttach);
+		RoseSettingsFile.Write(new RoseSettings { ShowInspectorOnAttach = true }, home.Path).ShouldBeTrue();
+		RoseSettingsFile.Read(home.Path).ShowInspectorOnAttach.ShouldBeTrue();
 
-		Assert.True(RoseSettingsFile.Write(new RoseSettings { ShowInspectorOnAttach = false }, home.Path));
-		Assert.False(RoseSettingsFile.Read(home.Path).ShowInspectorOnAttach);
+		RoseSettingsFile.Write(new RoseSettings { ShowInspectorOnAttach = false }, home.Path).ShouldBeTrue();
+		RoseSettingsFile.Read(home.Path).ShowInspectorOnAttach.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -66,7 +66,7 @@ public sealed class RoseSettingsTests
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 		File.WriteAllText(path, "{ this is not json");
 
-		Assert.False(RoseSettingsFile.Read(home.Path).ShowInspectorOnAttach);
+		RoseSettingsFile.Read(home.Path).ShowInspectorOnAttach.ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -81,8 +81,8 @@ public sealed class RoseSettingsTests
 
 		var written = File.ReadAllText(RoseSettingsFile.PathFor(home.Path));
 
-		Assert.Contains("showInspectorOnAttach", written);
-		Assert.Contains("true", written);
+		written.ShouldContain("showInspectorOnAttach", Case.Sensitive);
+		written.ShouldContain("true", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -102,7 +102,7 @@ public sealed class RoseSettingsTests
 		bool preferred,
 		bool expected)
 	{
-		Assert.Equal(expected, InspectorRequest.Wanted(asked, new RoseSettings { ShowInspectorOnAttach = preferred }));
+		InspectorRequest.Wanted(asked, new RoseSettings { ShowInspectorOnAttach = preferred }).ShouldBe(expected);
 	}
 
 	/// <summary>
@@ -114,10 +114,10 @@ public sealed class RoseSettingsTests
 	{
 		var presenter = NoInspector.WithoutAnEndpoint;
 
-		Assert.False(presenter.CanShow);
-		Assert.NotNull(presenter.Obstacle);
-		Assert.Contains("stdio", presenter.Obstacle);
-		Assert.Equal(presenter.Obstacle, presenter.Show("s1", 4242));
+		presenter.CanShow.ShouldBeFalse();
+		presenter.Obstacle.ShouldNotBeNull();
+		presenter.Obstacle.ShouldContain("stdio", Case.Sensitive);
+		presenter.Show("s1", 4242).ShouldBe(presenter.Obstacle);
 	}
 
 	/// <summary>A local-app-data folder of this test's own, removed afterwards.</summary>

@@ -29,6 +29,7 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.Broker` | `WorkspaceManager`, worker supervision, the tool layer, the activity log, and `AddRoseMcpBroker()`. One registration path, used by both hosts. |
 | `RoseMcp.Server` | Console host. `--transport stdio` (default) or `--transport http`. |
 | `RoseMcp.Worker` | Owns exactly one `MSBuildWorkspace`. All Roslyn work happens here. |
+| `RoseMcp.Patterns` | Structural search and replace: a rule's find bound in a project's own compilation and matched on the operation tree. References `Microsoft.CodeAnalysis.CSharp` and nothing from Workspaces, so it can run wherever a `Compilation` does, an analyzer included. See [the decision](docs/decisions/code-is-rewritten-by-what-it-binds-to.md). |
 | `RoseMcp.XamlStubs` | The XAML stub generator, loaded by the worker as an analyzer assembly rather than referenced as a library. |
 | `RoseMcp.XamlDiff` | Takes markup apart for the live-edit path. Plain `net10.0`, so a test can see inside it. |
 | `RoseMcp.LiveApp` | The live-app host: one ICorDebug session and one XAML diagnostics session, for one debugged process. |
@@ -40,12 +41,13 @@ client --stdio--> RoseMcp.Server --http--> RoseMcp.Tray --> the tray's workers
 | `RoseMcp.Inspector` | WinUI 3 window for one debugged process. A **client** of the broker over the http operator API, owning no session of its own, because a process has one debugger. See [the decision](docs/decisions/the-inspector-is-a-client-of-the-broker.md). |
 
 Logic goes in `Contracts` only when a test needs it and the host that owns it cannot be referenced.
-`XamlStackModules`, `ToolArgumentShape`, `XamlProviderPath`, `ValuePath`, `SymbolLocation`,
-`HostVersion`, `BreakpointCondition` and `LogMessageTemplate` are the whole list, each a pure
-function over strings or JSON with the host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable
-only as a child process, so a rule living beside its host is a rule no test can see. It is not a
-licence for behaviour: anything holding state, touching Roslyn, or knowing what a tool does belongs
-in the host.
+`XamlStackModules`, `ToolArgumentShape`, `PathArguments`, `XamlProviderPath`, `ValuePath`,
+`SymbolLocation`, `HostVersion`, `BreakpointCondition`, `LogMessageTemplate`, `XamlRequestKind`,
+`SandboxSweep` and `XamlWire` are the whole list, each a pure function over strings or JSON with the
+host's own facts passed in. Three of the launchable hosts are `net10.0-windows` or reachable only as a
+child process, so a rule living beside its host is a rule the unit suite cannot see -- and one kept
+`internal` there is a rule no test can see at all. It is not a licence for behaviour: anything holding
+state, touching Roslyn, or knowing what a tool does belongs in the host.
 
 The worker is a separate process because analyzer and generator assemblies cannot be unloaded
 once loaded, MSBuild resolution is per-process, and killing a worker is the only reliable way to
@@ -84,7 +86,7 @@ touch and read that file first.
 | [analyzers-and-generators.md](docs/invariants/analyzers-and-generators.md) | analyzer loading, `RoseMcp.XamlStubs`, anything handing Roslyn an `AnalyzerReference` |
 | [xaml-live-edit.md](docs/invariants/xaml-live-edit.md) | `rose_xaml_*`, `src/RoseMcp.XamlDiff/`, the apply path in `src/RoseMcp.LiveApp/Xaml/` |
 | [tap-tiers.md](docs/invariants/tap-tiers.md) | a new file under `src/RoseMcp.Xaml.Tap/`, moving code between them, either provider's include order |
-| [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, injection, anything that advises the visual tree |
+| [xaml-tap-lifecycle.md](docs/invariants/xaml-tap-lifecycle.md) | `tap_object.h`, the pipe's wire format (`tap_channel.h`, `XamlWire`), injection, anything that advises the visual tree |
 | [overlay.md](docs/invariants/overlay.md) | `tap_overlay.h`, `tap_measure.h` |
 | [hosts-and-deploy.md](docs/invariants/hosts-and-deploy.md) | `XamlStackModules`, architecture detection, `XamlProviderSession`, `tools/deploy.ps1`, what an install carries |
 | [live-app-tests.md](docs/invariants/live-app-tests.md) | any live-app test or fixture |
@@ -162,6 +164,12 @@ live-app suite in `LiveAppSessionTests`. `RoseMcp.TestSupport` holds the doubles
 test where its cost puts it: a test that needs a `FixtureSolution` or a `TestSession` is an
 integration test however small it looks.
 
+`RoseMcp.IntegrationTests.Windows` is the third, and the one easy to forget: the only test project
+with a compile reference on `RoseMcp.LiveApp`, so it is where the host's public types are driven
+directly -- the XAML pipe against a fake provider in the test process, which is the only way to make
+a provider answer late or greet as a stale copy. It runs in seconds, on Windows only. A change to the
+live-app host has not been tested until it has run too.
+
 `dotnet test` needs the `global.json` opt-in already in the repo: TUnit runs on
 Microsoft.Testing.Platform, and the .NET 10 SDK no longer bridges that through VSTest -- without the
 opt-in it refuses outright, naming the VSTest target.
@@ -175,6 +183,7 @@ generator and the project file in turn. The banner-suppressing equivalent is `--
 
 ```
 ./tests/RoseMcp.UnitTests/bin/Debug/net10.0/RoseMcp.UnitTests.exe
+./tests/RoseMcp.IntegrationTests.Windows/bin/Debug/net10.0-windows/RoseMcp.IntegrationTests.Windows.exe
 ./tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/RoseMcp.IntegrationTests.exe --treenode-filter '/*/*/RenameTests/*'
 ```
 
@@ -186,6 +195,14 @@ says on stderr which process holds the machine and where it was started from. Th
 by the OS however the holder dies, so there is never a stale one to clear. A `RoseMcp.LiveApp` build
 fails while a suite runs for the same reason -- it holds the assemblies the build copies -- so wait
 for the holder either way.
+
+**A failing integration test hands you its logs.** Every Rose process the suite starts logs under
+`tests/RoseMcp.IntegrationTests/bin/Debug/net10.0/TestResults/logs/<run>` rather than the machine's
+own folder (`ROSEMCP_LOG_ROOT`), nothing prunes it during the run, and a test that fails, times out
+or is cancelled lists and attaches every log written while it ran -- the tap logs of live sandboxes
+included. CI uploads the lot as `integration-evidence` when the job fails. Read them before
+concluding anything: a failure that appears only under load is still a failure, because a developer
+running several apps and taps at once is under load.
 
 Run a worker standalone against a fixture -- the fastest way to debug Roslyn behaviour without
 the broker in the way:
@@ -271,6 +288,13 @@ Enforced by `.editorconfig` where the analyzer can express them, by review where
     together: `taps are never unadvised (#68), so this must be idempotent`. A closed issue's number
     is a tag: drop it and keep the explanation. If the explanation cannot stand without the number,
     rewrite it until it can.
+  - **`tools/Check-Comments.ps1` enforces the three of these that a grep can settle**, and CI runs
+    it. Its header records which phrases earn a rule and which were measured and rejected: `no
+    longer`, `lands in` and `today` are overwhelmingly timeless description in this repository --
+    a target that is no longer running, a step that lands in a new stop -- so they remain a matter
+    for review rather than a rule that would fire mostly on correct comments. The debt that exists
+    is a per-file baseline that may only go down, so a cleanup is recorded and a new violation
+    fails the build.
   - **Measurements stay only when the code depends on the number** -- a timing behind a constant, a
     count that made something a lock rather than a documented limitation. "It was measured" with no
     number is a claim, and a number with no decision hanging on it is a story. Customer paths and

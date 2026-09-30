@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace RoseMcp.Worker;
 
@@ -42,15 +43,12 @@ internal static class EnumMemberEdit
 		var document = target.Document;
 
 		var text = await document.GetTextAsync(cancellationToken);
-		var tree = await document.GetSyntaxTreeAsync(cancellationToken)
-			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} is not a C# source file.");
-
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
+		var rules = await Whitespace.RulesForAsync(document, cancellationToken);
 		var lineEnding = rules.LineEnding;
 
 		var indent = @enum.Members.Count > 0
-			? MemberEditService.IndentAt(text, @enum.Members[0].SpanStart)
-			: MemberEditService.IndentAt(text, @enum.SpanStart) + rules.IndentUnit;
+			? Whitespace.IndentAt(text, @enum.Members[0].SpanStart)
+			: Whitespace.IndentAt(text, @enum.SpanStart) + rules.IndentUnit;
 
 		var parsed = MemberSyntax.Parse(
 			request.Code,
@@ -58,7 +56,7 @@ internal static class EnumMemberEdit
 			document.Project.ParseOptions,
 			indent,
 			lineEnding,
-			count => notices.Add(MemberEditService.RewrittenEndings(count, text)),
+			count => notices.Add(MemberEditService.RewrittenEndings(count, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		var adding = parsed.Cast<EnumMemberDeclarationSyntax>().Select(WithSeparatorTrivia).ToArray();
@@ -91,7 +89,9 @@ internal static class EnumMemberEdit
 			marker,
 			target.Signature,
 			[.. adding.Select(member => member.Identifier.Text)],
-			target.Symbol);
+			target.Symbol,
+			[new TextSpan(InsertionPoint(@enum, index), 0)],
+			rules);
 	}
 
 	/// <summary>
@@ -203,6 +203,16 @@ internal static class EnumMemberEdit
 
 		return request.After is { Length: > 0 } ? found + 1 : found;
 	}
+
+	/// <summary>
+	/// Where values inserted at <paramref name="index"/> go, which is all an addition asks to change.
+	/// After a value it is the end of that value, whose line is asked for as well: an item that had no
+	/// comma gains one when something follows it.
+	/// </summary>
+	private static int InsertionPoint(EnumDeclarationSyntax @enum, int index) =>
+		index > 0 ? @enum.Members[index - 1].Span.End
+			: @enum.Members.Count > 0 ? @enum.Members[0].FullSpan.Start
+			: @enum.OpenBraceToken.FullSpan.End;
 
 	/// <summary>
 	/// Says when an addition changes what an existing value is, or gives a new one a value another

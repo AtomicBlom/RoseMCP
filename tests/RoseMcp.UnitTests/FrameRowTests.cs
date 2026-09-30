@@ -29,10 +29,10 @@ public sealed class FrameRowTests
 			},
 			ilOffset: 20));
 
-		Assert.Equal("MyApp.Widget.Refresh", row.Method);
-		Assert.Equal("Widget.cs:42 · IL_0014", row.Where);
-		Assert.True(row.HasWhere);
-		Assert.Equal(42, row.Line);
+		row.Method.ShouldBe("MyApp.Widget.Refresh");
+		row.Where.ShouldBe("Widget.cs:42 · IL_0014");
+		row.HasWhere.ShouldBeTrue();
+		row.Line.ShouldBe(42);
 	}
 
 	/// <summary>
@@ -44,9 +44,9 @@ public sealed class FrameRowTests
 	{
 		var row = new FrameRow(Frame("System.Threading.Monitor.Wait", ilOffset: 0, symbols: LiveSymbolState.NoSymbols));
 
-		Assert.Equal("IL_0000", row.Where);
-		Assert.Null(row.Line);
-		Assert.Equal("no symbols for this module", row.Note);
+		row.Where.ShouldBe("IL_0000");
+		row.Line.ShouldBeNull();
+		row.Note.ShouldBe("no symbols for this module");
 	}
 
 	/// <summary>
@@ -58,8 +58,8 @@ public sealed class FrameRowTests
 	{
 		var row = new FrameRow(Frame(method: null));
 
-		Assert.Equal("(a frame metadata could not name)", row.Method);
-		Assert.Null(row.Location);
+		row.Method.ShouldBe("(a frame metadata could not name)");
+		row.Location.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -72,7 +72,7 @@ public sealed class FrameRowTests
 	{
 		var row = new FrameRow(Frame("MyApp.Widget..ctor", location: "MyApp!MyApp.Widget..ctor"));
 
-		Assert.Equal("MyApp!MyApp.Widget..ctor", row.Location);
+		row.Location.ShouldBe("MyApp!MyApp.Widget..ctor");
 	}
 
 	[Test]
@@ -80,8 +80,8 @@ public sealed class FrameRowTests
 	{
 		var row = new FrameRow(Frame("MyApp.Program.Main", skippedBefore: 3));
 
-		Assert.Equal("3 frames below this one could not be read", row.Note);
-		Assert.True(row.HasNote);
+		row.Note.ShouldBe("3 frames below this one could not be read");
+		row.HasNote.ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -97,9 +97,8 @@ public sealed class FrameRowTests
 			mapping: LiveIlMapping.Approximate,
 			symbols: LiveSymbolState.SymbolsMismatched));
 
-		Assert.Equal(
-			"1 frame below this one could not be read · mapping: approximate · symbols belong to another build of this module",
-			row.Note);
+		row.Note.ShouldBe(
+			"1 frame below this one could not be read · mapping: approximate · symbols belong to another build of this module");
 	}
 
 	/// <summary>
@@ -111,8 +110,8 @@ public sealed class FrameRowTests
 	{
 		var row = new FrameRow(Frame("MyApp.Widget.Refresh", symbols: LiveSymbolState.NoSequencePoint));
 
-		Assert.Equal(string.Empty, row.Note);
-		Assert.False(row.HasNote);
+		row.Note.ShouldBe(string.Empty);
+		row.HasNote.ShouldBeFalse();
 	}
 
 	private static LiveStackFrame Frame(

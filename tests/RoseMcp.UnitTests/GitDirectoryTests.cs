@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -20,8 +21,8 @@ public sealed class GitDirectoryTests
 	{
 		using var checkout = Checkout.Ordinary();
 
-		Assert.False(checkout.Git.Contains(Path.Combine(checkout.Root, ".gitignore")));
-		Assert.True(checkout.Git.Contains(checkout.InGitDirectory("HEAD")));
+		checkout.Git.Contains(Path.Combine(checkout.Root, ".gitignore")).ShouldBeFalse();
+		checkout.Git.Contains(checkout.InGitDirectory("HEAD")).ShouldBeTrue();
 	}
 
 	[Test]
@@ -31,8 +32,8 @@ public sealed class GitDirectoryTests
 
 		var found = GitDirectory.Find(Path.Combine(checkout.Root, "src"));
 
-		Assert.NotNull(found);
-		Assert.Equal(Path.Combine(checkout.Root, ".git"), found.FullPath);
+		found.ShouldNotBeNull();
+		found.FullPath.ShouldBe(Path.Combine(checkout.Root, ".git"));
 	}
 
 	/// <summary>
@@ -48,8 +49,8 @@ public sealed class GitDirectoryTests
 
 		var found = GitDirectory.Find(worktree);
 
-		Assert.NotNull(found);
-		Assert.Equal(linked, found.FullPath);
+		found.ShouldNotBeNull();
+		found.FullPath.ShouldBe(linked);
 	}
 
 	/// <summary>
@@ -70,8 +71,8 @@ public sealed class GitDirectoryTests
 
 		var found = GitDirectory.Find(worktree);
 
-		Assert.NotNull(found);
-		Assert.Equal(linked, found.FullPath);
+		found.ShouldNotBeNull();
+		found.FullPath.ShouldBe(linked);
 	}
 
 	/// <summary>
@@ -86,7 +87,7 @@ public sealed class GitDirectoryTests
 
 		try
 		{
-			Assert.NotEqual(Path.Combine(root.FullName, ".git"), GitDirectory.Find(root.FullName)?.FullPath);
+			(GitDirectory.Find(root.FullName)?.FullPath).ShouldNotBe(Path.Combine(root.FullName, ".git"));
 		}
 		finally
 		{
@@ -104,7 +105,7 @@ public sealed class GitDirectoryTests
 		using var checkout = Checkout.Ordinary();
 		File.WriteAllText(checkout.InGitDirectory("index.lock"), "");
 
-		Assert.True(checkout.Git.OperationInFlight());
+		checkout.Git.OperationInFlight().ShouldBeTrue();
 	}
 
 	/// <summary>
@@ -121,7 +122,7 @@ public sealed class GitDirectoryTests
 		using var checkout = Checkout.Ordinary();
 		File.WriteAllText(checkout.InGitDirectory(marker), "464bce08e0dc4806d80c0f1a918aba7fee578338\n");
 
-		Assert.False(checkout.Git.OperationInFlight(), $"{marker} is a state git can leave behind, not a write in progress");
+		checkout.Git.OperationInFlight().ShouldBeFalse($"{marker} is a state git can leave behind, not a write in progress");
 	}
 
 	/// <summary>A staged directory layout that goes away with the test.</summary>

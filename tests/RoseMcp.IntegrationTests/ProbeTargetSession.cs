@@ -185,7 +185,7 @@ internal static class ProbeTargetSession
 	{
 		if (hasLaunched)
 		{
-			Assert.Fail($"{reason} It came up earlier in this run, so this is a failure rather than a limit of this machine.");
+			throw new ShouldAssertException($"{reason} It came up earlier in this run, so this is a failure rather than a limit of this machine.");
 		}
 
 		Skip.Test(reason);

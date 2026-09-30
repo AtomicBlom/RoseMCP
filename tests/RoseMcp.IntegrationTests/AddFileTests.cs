@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
 
@@ -21,20 +22,78 @@ public sealed class AddFileTests
 
 		var result = await AddAsync(session, path, "public sealed class Badge\n{\n    public string Text => \"hi\";\n}");
 
-		Assert.True(result.Applied);
-		Assert.Equal("Library", result.Project);
-		Assert.Equal("Library.Nested", result.Namespace);
-		Assert.Equal(["Badge"], result.Types);
-		Assert.True(result.InTheBuild);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.Project.ShouldBe("Library");
+		result.Namespace.ShouldBe("Library.Nested");
+		result.Types.ShouldBe(["Badge"]);
+		result.InTheBuild.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		// The file's conventions, not the caller's: tabs where four spaces arrived, CRLF where bare
 		// newlines did, and a file-scoped namespace.
-		Assert.Contains("namespace Library.Nested;\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("\tpublic string Text => \"hi\";\r\n", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("    ", text, StringComparison.Ordinal);
+		text.ShouldContain("namespace Library.Nested;\r\n", Case.Sensitive);
+		text.ShouldContain("\tpublic string Text => \"hi\";\r\n", Case.Sensitive);
+		text.ShouldNotContain("    ", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A repository that settles its endings in .gitattributes and says nothing of them in .editorconfig. The
+	/// new file's lines end the way git writes them, whatever the code arrived with -- and whatever the files
+	/// beside it hold, which here is CRLF, so it is visibly the attributes that decided.
+	/// </summary>
+	[Test]
+	public async Task Ends_a_new_file_s_lines_as_gitattributes_says_where_no_editorconfig_does()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		Directory.CreateDirectory(Path.Combine(fixture.Root, ".git"));
+		await File.WriteAllTextAsync(
+			Path.Combine(fixture.Root, ".gitattributes"), "*.cs text eol=lf\n", TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Simple", "Core", "Shape.cs");
+		var result = await AddAsync(session, path, "namespace Core;\r\n\r\npublic sealed class Shape\r\n{\r\n    public int Sides => 3;\r\n}\r\n");
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		// The indentation is the files' beside it, since nothing declares that either.
+		text.ShouldNotContain("\r", Case.Sensitive);
+		text.ShouldContain("\n\tpublic int Sides => 3;\n", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// An .editorconfig the workspace was never given: the design-time build lists only the ones above a file
+	/// it compiles, so one in a folder that held no source when the workspace loaded is unknown to Roslyn. It
+	/// is the one dotnet format will read, so a new file there follows it rather than Roslyn's defaults or the
+	/// tabs and CRLF of the files beside it.
+	/// </summary>
+	[Test]
+	public async Task Follows_an_editorconfig_the_workspace_was_never_given()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var directory = fixture.Path("Simple", "Core", "Shapes");
+		Directory.CreateDirectory(directory);
+		await File.WriteAllTextAsync(
+			Path.Combine(directory, ".editorconfig"),
+			"[*.cs]\nindent_style = space\nindent_size = 2\nend_of_line = lf\n",
+			TestContext.Current!.Execution.CancellationToken);
+
+		var path = Path.Combine(directory, "Square.cs");
+		var result = await AddAsync(session, path, "namespace Core.Shapes;\n\npublic sealed class Square\n{\n\tpublic int Sides => 4;\n}\n");
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldNotContain("\r", Case.Sensitive);
+		text.ShouldContain("\n  public int Sides => 4;\n", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -86,28 +145,26 @@ public sealed class AddFileTests
 				+ "\tpublic static string Describe() => nameof(Kept);\n"
 				+ "}\n");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
 		// The blank line between the two using groups, and the one below the namespace.
-		Assert.Contains("using System;\r\n\r\nusing System.Linq;\r\n", text, StringComparison.Ordinal);
-		Assert.Contains("namespace Library;\r\n\r\n/// <summary>Kept as written.</summary>", text, StringComparison.Ordinal);
+		text.ShouldContain("using System;\r\n\r\nusing System.Linq;\r\n", Case.Sensitive);
+		text.ShouldContain("namespace Library;\r\n\r\n/// <summary>Kept as written.</summary>", Case.Sensitive);
 
 		// The documentation tag as written, not respaced around the equals sign.
-		Assert.Contains("<param name=\"values\">", text, StringComparison.Ordinal);
+		text.ShouldContain("<param name=\"values\">", Case.Sensitive);
 
 		// The braces the caller wrote, and the blank line after them.
-		Assert.Contains("\t\tif (values is null)\r\n\t\t{\r\n\t\t\treturn 0;\r\n\t\t}\r\n\r\n", text, StringComparison.Ordinal);
+		text.ShouldContain("\t\tif (values is null)\r\n\t\t{\r\n\t\t\treturn 0;\r\n\t\t}\r\n\r\n", Case.Sensitive);
 
 		// The chain still wrapped, one call to a line.
-		Assert.Contains(
-			"\t\treturn values\r\n\t\t\t.Where(value => value > 0)\r\n\t\t\t.Select(value => value * 2)\r\n\t\t\t.Count();",
-			text,
-			StringComparison.Ordinal);
+		text.ShouldContain(
+			"\t\treturn values\r\n\t\t\t.Where(value => value > 0)\r\n\t\t\t.Select(value => value * 2)\r\n\t\t\t.Count();", Case.Sensitive);
 
 		// And the blank line between the two members.
-		Assert.Contains("\t}\r\n\r\n\tpublic static string Describe()", text, StringComparison.Ordinal);
+		text.ShouldContain("\t}\r\n\r\n\tpublic static string Describe()", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -125,9 +182,8 @@ public sealed class AddFileTests
 
 		var result = await AddAsync(session, path, "namespace Library;\n\npublic sealed class Token;");
 
-		Assert.Equal("Library", result.Namespace);
-		Assert.Contains(
-			result.Notices,
+		result.Namespace.ShouldBe("Library");
+		result.Notices.ShouldContain(
 			notice => notice.Contains("the folder implies Library.Nested", StringComparison.Ordinal));
 	}
 
@@ -149,13 +205,13 @@ public sealed class AddFileTests
 			path,
 			"public static class Encoder\n{\n    public static byte[] Bytes(string text) => Encoding.UTF8.GetBytes(text);\n}");
 
-		Assert.True(result.Applied);
-		Assert.Empty(result.IntroducedDiagnostics);
-		Assert.Contains(result.ImportsAdded, line => line.Contains("System.Text", StringComparison.Ordinal));
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.ImportsAdded.ShouldContain(line => line.Contains("System.Text", StringComparison.Ordinal));
 
 		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Contains("using System.Text;", text, StringComparison.Ordinal);
+		text.ShouldContain("using System.Text;", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -177,14 +233,13 @@ public sealed class AddFileTests
 			path,
 			"public static class Painter\n{\n    public static string Chosen() => Palette.Name;\n}");
 
-		Assert.Contains(
-			result.ImportsAmbiguous,
+		result.ImportsAmbiguous.ShouldContain(
 			line => line.Contains("Palette is in 2 namespaces", StringComparison.Ordinal));
 
 		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
-		Assert.DoesNotContain("using Library.Left;", text, StringComparison.Ordinal);
-		Assert.DoesNotContain("using Library.Right;", text, StringComparison.Ordinal);
+		text.ShouldNotContain("using Library.Left;", Case.Sensitive);
+		text.ShouldNotContain("using Library.Right;", Case.Sensitive);
 	}
 
 	[Test]
@@ -196,11 +251,11 @@ public sealed class AddFileTests
 		var path = fixture.Path("Members", "Library", "Greeter.cs");
 		var before = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => AddAsync(session, path, "public sealed class Other;"));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => AddAsync(session, path, "public sealed class Other;")).OfExactType();
 
-		Assert.Contains("already in the solution", thrown.Message, StringComparison.Ordinal);
-		Assert.Equal(before, await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken));
+		thrown.Message.ShouldContain("already in the solution", Case.Sensitive);
+		(await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken)).ShouldBe(before);
 	}
 
 	/// <summary>
@@ -215,11 +270,11 @@ public sealed class AddFileTests
 
 		var path = fixture.Path("Members", "Library", "Broken.cs");
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => AddAsync(session, path, "public sealed class Broken { public void M() { "));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => AddAsync(session, path, "public sealed class Broken { public void M() { ")).OfExactType();
 
-		Assert.Contains("does not parse", thrown.Message, StringComparison.Ordinal);
-		Assert.False(File.Exists(path), "a refusal writes nothing");
+		thrown.Message.ShouldContain("does not parse", Case.Sensitive);
+		File.Exists(path).ShouldBeFalse("a refusal writes nothing");
 	}
 
 	/// <summary>
@@ -234,10 +289,10 @@ public sealed class AddFileTests
 
 		var path = Path.Combine(fixture.Path("Members"), "Loose.cs");
 
-		var thrown = await Assert.ThrowsAsync<ArgumentException>(
-			() => AddAsync(session, path, "public sealed class Loose;"));
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => AddAsync(session, path, "public sealed class Loose;")).OfExactType();
 
-		Assert.Contains("not inside any project's directory", thrown.Message, StringComparison.Ordinal);
+		thrown.Message.ShouldContain("not inside any project's directory", Case.Sensitive);
 	}
 
 	/// <summary>A preview writes nothing and still answers the question a preview is asking.</summary>
@@ -251,9 +306,9 @@ public sealed class AddFileTests
 
 		var result = await AddAsync(session, path, "public sealed class Preview;", apply: false);
 
-		Assert.False(result.Applied, "a preview says what it would do without doing it");
-		Assert.NotEmpty(result.Diff);
-		Assert.False(File.Exists(path), "a preview leaves no file behind");
+		result.Applied.ShouldBeFalse("a preview says what it would do without doing it");
+		result.Diff.ShouldNotBeEmpty();
+		File.Exists(path).ShouldBeFalse("a preview leaves no file behind");
 	}
 
 	/// <summary>
@@ -278,17 +333,16 @@ public sealed class AddFileTests
 			fixture.Path("Members", "Library", "Described.cs"),
 			"public static class Described\r\n{\r\n\tpublic const string Text = \"\"\"\nfirst\nsecond\n\"\"\";\r\n}\r\n");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await File.ReadAllTextAsync(
 			fixture.Path("Members", "Library", "Described.cs"),
 			TestContext.Current!.Execution.CancellationToken);
 
 		// Kept, which is the invariant the notice exists to explain rather than to fix.
-		Assert.Contains("first\nsecond\n", text, StringComparison.Ordinal);
+		text.ShouldContain("first\nsecond\n", Case.Sensitive);
 
-		Assert.Contains(
-			result.Notices,
+		result.Notices.ShouldContain(
 			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal)
 				&& notice.Contains("dotnet format will still ask for them", StringComparison.Ordinal));
 	}
@@ -305,10 +359,9 @@ public sealed class AddFileTests
 			fixture.Path("Members", "Library", "Agreed.cs"),
 			"public static class Agreed\r\n{\r\n\tpublic const string Text = \"\"\"\r\n\t\tfirst\r\n\t\tsecond\r\n\t\t\"\"\";\r\n}\r\n");
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
-		Assert.DoesNotContain(
-			result.Notices,
+		result.Notices.ShouldNotContain(
 			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
 	}
 
@@ -338,15 +391,13 @@ public sealed class AddFileTests
 				snapshot, diagnostics, request, session.NoteSelfWrite, token),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(result.Applied);
+		result.Applied.ShouldBeTrue();
 
 		var text = await File.ReadAllTextAsync(
 			fixture.Path("Members", "Library", "Ordered.cs"),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.True(
-			text.IndexOf("using System.Globalization;", StringComparison.Ordinal)
-				< text.IndexOf("using Library.Nested;", StringComparison.Ordinal),
+		text.IndexOf("using System.Globalization;", StringComparison.Ordinal).ShouldBeLessThan(text.IndexOf("using Library.Nested;", StringComparison.Ordinal),
 			$"System did not come first: {text}");
 	}
 
@@ -382,20 +433,20 @@ public sealed class AddFileTests
 			session,
 			MemberEdits.Request(MemberEditKind.Add, "Library.Prose", "public static string Missing() => Absent.Name;"));
 
-		Assert.NotEmpty(broken.IntroducedDiagnostics);
+		broken.IntroducedDiagnostics.ShouldNotBeEmpty();
 
 		var result = await AddAsync(
 			session,
 			fixture.Path("Members", "Library", "Added.cs"),
 			"namespace Library;\n\npublic static class Added\n{\n\tpublic static string Name() => \"added\";\n}\n");
 
-		Assert.True(result.Applied);
-		Assert.True(result.Verified);
-		Assert.Empty(result.IntroducedDiagnostics);
+		result.Applied.ShouldBeTrue();
+		result.Verified.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
 
 		var said = string.Join(" ", result.Notices);
 
-		Assert.DoesNotContain("compiles clean", said, StringComparison.Ordinal);
-		Assert.Contains("were there before this edit", said, StringComparison.Ordinal);
+		said.ShouldNotContain("compiles clean", Case.Sensitive);
+		said.ShouldContain("were there before this edit", Case.Sensitive);
 	}
 }

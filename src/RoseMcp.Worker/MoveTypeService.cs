@@ -54,9 +54,13 @@ public static class MoveTypeService
 		var region = Region(text, moving);
 		GuardDirectives(text, region, moving, sourcePath);
 
-		var lineEnding = LineEnding(text);
-		var targetText = BuildTarget(text, moving, region, lineEnding);
-		var remainingText = BuildRemainder(text, region, lineEnding);
+		// Each half in the layout its own path gives it: the source keeps its file's, and the new file takes
+		// what its path declares, and otherwise the layout of the file it came out of.
+		var sourceRules = await Whitespace.RulesForAsync(document, cancellationToken);
+		var targetRules = await Whitespace.RulesForNewAsync(document.Project, targetPath, from: document, cancellationToken);
+
+		var targetText = BuildTarget(text, moving, region, targetRules.LineEnding);
+		var remainingText = BuildRemainder(text, region, sourceRules.LineEnding);
 
 		// Both halves keep the encoding of the file they came out of: the type moves, and a byte
 		// order mark is not something the move is entitled to add or take away from either side.
@@ -366,25 +370,6 @@ public static class MoveTypeService
 	}
 
 	private static bool IsBlank(string line) => line.Trim().Length == 0;
-
-	/// <summary>
-	/// Whatever the file already uses. Writing a CRLF repository's files with bare newlines is the
-	/// kind of change that turns a one-line diff into a whole-file one.
-	/// </summary>
-	private static string LineEnding(SourceText text)
-	{
-		if (text.Lines.Count == 0) return Environment.NewLine;
-
-		var first = text.Lines[0];
-		var breakLength = first.SpanIncludingLineBreak.Length - first.Span.Length;
-
-		return breakLength switch
-		{
-			2 => "\r\n",
-			1 => text.ToString(new TextSpan(first.End, 1)),
-			_ => Environment.NewLine,
-		};
-	}
 
 	private static IReadOnlyList<string> Notices(
 		WorkspaceSnapshot snapshot,

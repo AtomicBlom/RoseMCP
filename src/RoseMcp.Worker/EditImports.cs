@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 using RoseMcp.Contracts;
 
@@ -45,12 +46,10 @@ internal static class EditImports
 		var document = written.Document;
 		var model = await document.GetSemanticModelAsync(cancellationToken);
 		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
-		var text = await document.GetTextAsync(cancellationToken);
 
 		if (model is null || tree is null) return written;
 
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
-		var style = UsingStyle.For(document.Project, tree, root, rules.LineEnding);
+		var style = UsingStyle.For(document.Project, tree, root, written.Rules.LineEnding);
 
 		var insertion = UsingDirectives.Ensure(root, model, request.Usings, style, cancellationToken);
 
@@ -64,7 +63,13 @@ internal static class EditImports
 			notices.Add($"Did not import {covered}.");
 		}
 
-		return written with { Root = insertion.Root };
+		if (insertion.Added.Count == 0) return written with { Root = insertion.Root };
+
+		return written with
+		{
+			Root = insertion.Root,
+			Asked = [.. written.Asked, await RegionAsync(document, cancellationToken)],
+		};
 	}
 
 	/// <summary>
@@ -98,8 +103,17 @@ internal static class EditImports
 
 		if (!imports.AnythingToAdd) return (solution, imports);
 
-		var added = await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, cancellationToken);
+		var added = await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, written.Rules, cancellationToken);
 
 		return (added, imports);
 	}
+
+	/// <summary>
+	/// Where imports go in <paramref name="document"/> as it stood before the edit, which is what adding
+	/// one asks to change.
+	/// </summary>
+	internal static async Task<TextSpan> RegionAsync(Document document, CancellationToken cancellationToken) =>
+		await document.GetSyntaxRootAsync(cancellationToken) is CompilationUnitSyntax root
+			? UsingDirectives.Region(root)
+			: new TextSpan(0, 0);
 }

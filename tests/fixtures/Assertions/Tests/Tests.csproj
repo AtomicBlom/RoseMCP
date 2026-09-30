@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- The real assertion libraries, at the versions the repository's own suites move between, so
+       what rose_replace_pattern does to real metadata is tested here rather than against stubs. -->
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.assert" Version="4.0.0" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+  </ItemGroup>
+
+  <!-- As the repository's test projects have them: the assertion class by an alias, and Shouldly
+       imported before any rewrite, so a replacement binds with no per-file using. -->
+  <ItemGroup>
+    <Using Include="Xunit.Assert" Alias="Assert" />
+    <Using Include="Shouldly" />
+  </ItemGroup>
+
+</Project>

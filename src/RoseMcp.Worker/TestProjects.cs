@@ -30,8 +30,8 @@ public static class TestProjects
 		"xunit.assert",
 
 		// The assertion assembly on its own counts, because a runner and an assertion library are
-		// separable: this repository runs TUnit and asserts with xunit, so a project can carry either
-		// name without the other.
+		// separable: a project can run TUnit and assert with xunit, so it can carry either name without
+		// the other.
 		"xunit.v3.assert",
 		"TUnit.Core",
 		"nunit.framework",

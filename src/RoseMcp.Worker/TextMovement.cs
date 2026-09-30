@@ -80,7 +80,7 @@ public sealed class TextMovement
 	/// and the quadratic part stays cheap on a file of any length.
 	/// </para>
 	/// </summary>
-	private static int?[] LineMap(SourceText before, SourceText after)
+	internal static int?[] LineMap(SourceText before, SourceText after)
 	{
 		var old = Lines(before);
 		var updated = Lines(after);

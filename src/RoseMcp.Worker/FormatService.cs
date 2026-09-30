@@ -33,6 +33,7 @@ public static class FormatService
 		var notices = new List<string>(snapshot.Notices);
 		var formatted = new List<DocumentId>();
 		var missing = new List<string>();
+		var layouts = new Dictionary<DocumentId, WhitespaceRules>();
 
 		for (var index = 0; index < request.FilePaths.Count; index++)
 		{
@@ -55,7 +56,14 @@ public static class FormatService
 			var document = solution.GetDocument(located.Id);
 			if (document is null) continue;
 
-			solution = await FormatDocumentAsync(document, cancellationToken);
+			// Read from the file as this call found it, so formatting it twice in one call, or once more after
+			// the usings come out, asks the same question of the same text.
+			var rules = layouts.GetValueOrDefault(located.Id)
+				?? await Whitespace.RulesForAsync(snapshot.Solution.GetDocument(located.Id) ?? document, cancellationToken);
+
+			layouts[located.Id] = rules;
+
+			solution = await FormatDocumentAsync(document, rules, cancellationToken);
 			formatted.Add(located.Id);
 		}
 
@@ -77,7 +85,7 @@ public static class FormatService
 			{
 				if (solution.GetDocument(documentId) is { } document)
 				{
-					solution = await FormatDocumentAsync(document, cancellationToken);
+					solution = await FormatDocumentAsync(document, layouts[documentId], cancellationToken);
 				}
 			}
 
@@ -86,9 +94,10 @@ public static class FormatService
 
 		// Read off the final text, so a literal the passes above left alone is reported once, against
 		// the line it ends up on rather than the line it started at.
-		var literalEndings = await LiteralEndingNoticesAsync(solution, formatted, cancellationToken);
+		var literalEndings = await LiteralEndingNoticesAsync(solution, formatted, layouts, cancellationToken);
 
 		notices.AddRange(literalEndings);
+		notices.AddRange(UndeclaredIndentation(solution, formatted, layouts));
 
 		progress?.Report(request.Apply ? "Writing the changed files" : "Building the diff", 95);
 
@@ -129,21 +138,22 @@ public static class FormatService
 	}
 
 	/// <summary>
-	/// Roslyn's formatter first, then the whitespace it does not own. Both are needed: the formatter
-	/// reindents and moves braces according to .editorconfig but only rewrites the trivia it has
+	/// Roslyn's formatter first, then the whitespace it does not own, both to <paramref name="rules"/>.
+	/// Both are needed: the formatter reindents and moves braces but only rewrites the trivia it has
 	/// reason to touch, which leaves every line it did not visit with whatever ending it arrived with.
 	/// </summary>
-	private static async Task<Solution> FormatDocumentAsync(Document document, CancellationToken cancellationToken)
+	private static async Task<Solution> FormatDocumentAsync(
+		Document document,
+		WhitespaceRules rules,
+		CancellationToken cancellationToken)
 	{
-		var reformatted = await Formatter.FormatAsync(document, cancellationToken: cancellationToken);
+		var options = await Whitespace.FormattingOptionsAsync(document, rules, cancellationToken);
+		var reformatted = await Formatter.FormatAsync(document, options, cancellationToken);
 
 		var root = await reformatted.GetSyntaxRootAsync(cancellationToken);
 		var text = await reformatted.GetTextAsync(cancellationToken);
-		var tree = await reformatted.GetSyntaxTreeAsync(cancellationToken);
 
-		if (root is null || tree is null) return reformatted.Project.Solution;
-
-		var rules = Whitespace.RulesFor(reformatted.Project, tree, text);
+		if (root is null) return reformatted.Project.Solution;
 
 		return reformatted.Project.Solution.WithDocumentText(reformatted.Id, Whitespace.Apply(root, text, rules));
 	}
@@ -167,6 +177,7 @@ public static class FormatService
 	private static async Task<IReadOnlyList<string>> LiteralEndingNoticesAsync(
 		Solution solution,
 		IReadOnlyList<DocumentId> documentIds,
+		IReadOnlyDictionary<DocumentId, WhitespaceRules> layouts,
 		CancellationToken cancellationToken)
 	{
 		var notices = new List<string>();
@@ -183,11 +194,50 @@ public static class FormatService
 			if (root is null || tree is null) continue;
 
 			var text = await document.GetTextAsync(cancellationToken);
-			var rules = Whitespace.RulesFor(document.Project, tree, text);
+			var rules = layouts[documentId];
 
 			if (Whitespace.LiteralEndingNotice(root, text, rules, document.Name) is { } notice) notices.Add(notice);
 		}
 
 		return notices;
+	}
+
+	/// <summary>
+	/// What to say about files no .editorconfig says how to indent, where what they were checked against
+	/// is not the four spaces <c>dotnet format</c> would use.
+	/// <para>
+	/// Nothing declaring an indentation, this keeps a file indented the way it already is, which is what
+	/// stops a format from re-indenting a file into a convention nobody chose. <c>dotnet format</c> has no
+	/// such fallback: it reads .editorconfig alone and, finding nothing there, indents with Roslyn's four
+	/// spaces. Saying only that a file was already formatted would then be true of what this checked and
+	/// contradicted by the check CI runs, which is the answer a caller cannot tell from a correct one.
+	/// </para>
+	/// </summary>
+	private static IEnumerable<string> UndeclaredIndentation(
+		Solution solution,
+		IReadOnlyList<DocumentId> documentIds,
+		IReadOnlyDictionary<DocumentId, WhitespaceRules> layouts)
+	{
+		var undeclared = documentIds
+			.Distinct()
+			.Select(id => (Name: solution.GetDocument(id)?.Name, Rules: layouts[id]))
+			.Where(file => file.Name is not null
+				&& file.Rules.IndentFrom is LayoutSource.File or LayoutSource.Neighbours
+				&& file.Rules.IndentUnit != "    ")
+			.GroupBy(file => (file.Rules.IndentUnit, file.Rules.IndentFrom));
+
+		foreach (var group in undeclared)
+		{
+			var names = group.Select(file => file.Name!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+			var named = names.Length <= 3 ? string.Join(", ", names) : $"{string.Join(", ", names.Take(3))} and {names.Length - 3} more";
+			var unit = group.Key.IndentUnit == "\t" ? "tabs" : $"{group.Key.IndentUnit.Length} spaces";
+
+			var where = group.Key.IndentFrom == LayoutSource.File
+				? $"the {unit} already there"
+				: $"the {unit} the files beside them use";
+
+			yield return $"{named}: no .editorconfig says how to indent, so this checked against {where}. dotnet format "
+				+ "reads only .editorconfig and would want four spaces; an indent_style there settles it for both.";
+		}
 	}
 }

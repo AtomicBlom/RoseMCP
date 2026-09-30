@@ -66,6 +66,7 @@ public static class ServiceCollectionExtensions
 		  rose_move_member; split a file: rose_move_type_to_file
 		- imports: pass usings on any write, or rose_add_using for code that arrived another way;
 		  which namespace a name needs: rose_resolve_name
+		- one mechanical change at every call a pattern matches: rose_replace_pattern
 		- analyzer fixes: rose_list_code_fixes then rose_apply_code_fix; formatting: rose_format
 		- what depends on what: rose_project_graph; is bin/ this code: rose_build_freshness
 		- source-generated code is not on disk at all: rose_list_generated_documents,
@@ -73,15 +74,15 @@ public static class ServiceCollectionExtensions
 
 		Every write is addressed by name rather than by line, parsed before the file is opened,
 		formatted to the repository's own .editorconfig, then compiled -- so the result says what the
-		edit broke and there is no build in the loop. Grep matches comments, strings and same-named
-		identifiers, and misses overrides and interface implementations.
+		edit broke and there is no build in the loop. Grep matches comments and strings, and misses
+		overrides and implementations.
 
-		No setup call: every tool finds the enclosing solution from a path or the working directory.
-		The first call loads it -- seconds usually, minutes for a very large one, which
-		rose_workspace_open starts early and returns without waiting for. Every result names the
-		workspace that answered and carries a revision, and a directory holding several solutions
-		refuses and lists them rather than guessing. Edits by other tools are absorbed on the next
-		call; only a rebuilt analyzer or generator needs rose_workspace_reload. If answers look
+		No setup call: every tool finds the enclosing solution from a path or your session's directory,
+		which a relative path is measured from too. The first call loads it; rose_workspace_open starts
+		a large one early without waiting. Every
+		result names the workspace that answered and carries a revision, and a directory holding several
+		solutions refuses and lists them rather than guessing. Edits by other tools are absorbed on the
+		next call; only a rebuilt analyzer or generator needs rose_workspace_reload. If answers look
 		wrong, ask rose_workspace_status -- thousands of errors about System.Object means the
 		solution loaded under an MSBuild configuration it does not declare.
 		""";
@@ -117,6 +118,10 @@ public static class ServiceCollectionExtensions
 		Action<BrokerOptions>? configure = null)
 	{
 		if (configure is not null) services.Configure(configure);
+
+		// Stateless, and a singleton only so the options are read once. Every tool that takes a path
+		// argument takes this too, because a path is not resolvable without it.
+		services.AddSingleton<CallerPaths>();
 
 		// Singleton, so every session shares one set of workers. In http mode that is what lets a
 		// reconnecting client reattach to an already-loaded solution rather than reload it.
@@ -233,7 +238,12 @@ public static class ServiceCollectionExtensions
 	{
 		if (parameters?.Meta?[CallOrigin.MetaKey] is not JsonValue value) return null;
 
-		return value.TryGetValue(out string? directory) && Directory.Exists(directory) ? directory : null;
+		if (!value.TryGetValue(out string? directory) || string.IsNullOrWhiteSpace(directory)) return null;
+
+		// Fully qualified as well as real, because this is the base every relative path argument is
+		// measured from: a relative origin would be measured from the broker again, which is the thing
+		// sending it is for.
+		return Path.IsPathFullyQualified(directory) && Directory.Exists(directory) ? directory : null;
 	}
 
 	/// <summary>

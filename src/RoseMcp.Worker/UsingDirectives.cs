@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace RoseMcp.Worker;
 
@@ -70,6 +71,22 @@ public static class UsingDirectives
 		}
 
 		return new UsingInsertion { Root = current, Added = added, AlreadyInScope = covered };
+	}
+
+	/// <summary>
+	/// The part of <paramref name="root"/> that importing into it changes: the directives already
+	/// there, or the place in front of what follows them where <see cref="Ensure"/> writes the first
+	/// one when there are none.
+	/// </summary>
+	public static TextSpan Region(CompilationUnitSyntax root)
+	{
+		if (root.Usings.Count > 0) return TextSpan.FromBounds(root.Usings[0].SpanStart, root.Usings[^1].FullSpan.End);
+
+		var following = root.AttributeLists.FirstOrDefault()?.SpanStart
+			?? root.Members.FirstOrDefault()?.SpanStart
+			?? root.EndOfFileToken.SpanStart;
+
+		return new TextSpan(following, 0);
 	}
 
 	/// <summary>

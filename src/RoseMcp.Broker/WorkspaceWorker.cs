@@ -66,6 +66,13 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	public DateTime StartedUtc { get; }
 
 	/// <summary>
+	/// What is wrong with this worker being a different build from the broker, or null where it is
+	/// the same one. Held rather than only logged, because the party who needs it is the agent whose
+	/// next confusing answer it explains, and a log line reaches nobody mid-session.
+	/// </summary>
+	public string? VersionMismatch { get; init; }
+
+	/// <summary>
 	/// The worker's process id, learned on connect. Held so memory can be sampled from outside
 	/// the process, which keeps working when the worker itself has stopped answering.
 	/// </summary>
@@ -110,6 +117,27 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		}
 	}
 
+	/// <summary>
+	/// Where a worker stands: an empty folder of Rose's own under the temp directory, made if it is not
+	/// there. Anywhere but the solution's directory, because Windows holds a process's working
+	/// directory open against deletion, a worktree's solution sits at its root, and a worker stays warm
+	/// for the life of the broker -- so a worker standing in its solution's directory makes the worktree
+	/// impossible to remove until the broker goes, and the error names "another process" rather than
+	/// Rose.
+	/// <para>
+	/// A folder of its own rather than the temp directory itself, because the current directory is on
+	/// the DLL search path and the temp directory is where other programs leave DLLs. Nothing in the
+	/// worker reads its working directory: the SDK is chosen, and restore is run, by passing the
+	/// solution's directory explicitly, and the solution path arrives absolute.
+	/// </para>
+	/// </summary>
+	private static string WorkerDirectory()
+	{
+		var directory = Path.Combine(Path.GetTempPath(), "RoseMcpWorker");
+		Directory.CreateDirectory(directory);
+		return directory;
+	}
+
 	public static async Task<WorkspaceWorker> StartAsync(
 		string solutionPath,
 		string workerPath,
@@ -120,6 +148,15 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		WorkspaceBuildOverrides? build = null)
 	{
 		var logger = loggerFactory.CreateLogger<WorkspaceWorker>();
+
+		// The worker stands somewhere other than the solution's directory (see WorkerDirectory), so a
+		// relative path would be resolved against the wrong base. The broker resolves every path before
+		// it gets here; this is where that stops being an assumption.
+		if (!Path.IsPathFullyQualified(solutionPath))
+		{
+			throw new ArgumentException(
+				$"A worker needs an absolute solution path, and was given '{solutionPath}'.", nameof(solutionPath));
+		}
 
 		var arguments = new List<string> { "--solution", solutionPath };
 		if (options.NoRestore) arguments.Add("--no-restore");
@@ -153,7 +190,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				// Task Manager's Details tab shows this, which is how a human works out which of
 				// several identical worker processes belongs to which solution.
 				Name = $"rose-worker {Path.GetFileNameWithoutExtension(solutionPath)}",
-				WorkingDirectory = Path.GetDirectoryName(solutionPath),
+				WorkingDirectory = WorkerDirectory(),
 			},
 			loggerFactory);
 
@@ -163,11 +200,18 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		// cold worker loses to its own design-time build when several start at once.
 		var client = await McpClient.CreateAsync(
 			transport,
-			new McpClientOptions { InitializationTimeout = options.WorkerHandshakeTimeout },
+			ChildHostHandshake.Options(options.WorkerHandshakeTimeout),
 			loggerFactory,
 			cancellationToken);
 
-		var worker = new WorkspaceWorker(solutionPath, client, activities, logger);
+		var worker = new WorkspaceWorker(solutionPath, client, activities, logger)
+		{
+			VersionMismatch = ChildHostVersion.Mismatch(
+				client.ServerInfo?.Version, workerPath, typeof(WorkspaceWorker).Assembly),
+		};
+
+		if (worker.VersionMismatch is not null) logger.LogWarning("{Mismatch}", worker.VersionMismatch);
+
 		await worker.RefreshProcessInfoAsync(cancellationToken);
 		worker.BeginLoading();
 
@@ -369,7 +413,9 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				? []
 				: [.. status.Projects.Where(project => !project.LoadedSuccessfully).Select(project => project.Name)],
 			DegradedReasons = status?.DegradedReasons ?? (_loadFailure is null ? [] : [_loadFailure]),
-			Notices = status?.Notices ?? [],
+			Notices = VersionMismatch is null
+				? status?.Notices ?? []
+				: [.. status?.Notices ?? [], VersionMismatch],
 			LoadSeconds = LoadDuration?.TotalSeconds,
 			Running = _activities.Running(SolutionPath),
 			Recent = _activities.Recent(SolutionPath),

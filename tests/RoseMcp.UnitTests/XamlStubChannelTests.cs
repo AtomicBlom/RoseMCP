@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -20,12 +21,12 @@ public sealed class XamlStubChannelTests
 	[Test]
 	public void The_generator_and_the_reader_agree_on_the_document_name()
 	{
-		Assert.Equal(XamlStubs.XamlStubReportChannel.HintName, Contracts.XamlStubReportChannel.HintName);
+		Contracts.XamlStubReportChannel.HintName.ShouldBe(XamlStubs.XamlStubReportChannel.HintName);
 	}
 
 	[Test]
 	public void The_generator_and_the_reader_agree_on_the_marker()
 	{
-		Assert.Equal(XamlStubs.XamlStubReportChannel.Marker, Contracts.XamlStubReportChannel.Marker);
+		Contracts.XamlStubReportChannel.Marker.ShouldBe(XamlStubs.XamlStubReportChannel.Marker);
 	}
 }

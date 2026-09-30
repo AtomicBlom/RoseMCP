@@ -90,6 +90,22 @@ Read before changing `rose_xaml_*`, `src/RoseMcp.XamlDiff/`, or the apply path i
   itself would deadlock under a `SemaphoreSlim` and pass under `System.Threading.Lock`. Do not
   conclude from a passing concurrency test that the lock is unnecessary -- the silent failure
   appeared once in ten, and the test was confirmed to fail with the locks removed.
+- **A bound on a provider request bounds the waiting, not the request.** The frame is in the pipe
+  before the wait starts, the provider serves every verb on the app's UI thread through
+  `RoseTapRunOnUiThread`, and nothing on the host side can cancel work already handed to that
+  thread. So a mutating verb the host has given up on can still run, and a later read can observe
+  it -- which is "the tool reported failure and did the thing anyway", the class of wrong answer
+  this product exists against, and the caller least equipped to notice is an agent. A timed-out
+  request therefore says so: `XamlRequestKind` decides from the verb whether the app can still
+  change, and `XamlChannelBounds.Unanswered` cannot compose a message without being told which
+  request it is about. The list it keeps is of *reads*, so a verb nobody classified is warned about
+  rather than silently trusted, and a unit test holds it against the provider's own dispatch.
+  <br>
+  What is not done, deliberately, is making the request cancellable. Each reply echoes its
+  request's id, so a late one is dropped by who it belongs to rather than read as the answer to the
+  next question; stopping the request itself would take an `abandon` the provider checks before
+  dispatching to the UI thread, which is work on a hazard nothing has been observed to hit -- a late
+  reply is logged as it is dropped, and none is in any kept log.
 - **It is a live edit, not a hot reload, and the word is doing work.** Every edit is a property set or
   an `AddChild` against the element objects that exist at that instant; the app's compiled markup is
   untouched, so anything that rebuilds that part of the UI produces the original. "Reload" would

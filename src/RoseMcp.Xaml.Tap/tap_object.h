@@ -102,9 +102,9 @@ public:
 		std::wstring data(initData, SysStringLen(initData));
 		SysFreeString(initData);
 
-		// "<work dir>|<pipe name>", the pipe name optional while the two channels overlap (#50).
-		// Split on '|' because it cannot occur in a Windows path, so the work dir cannot contain one
-		// and an older host that sends no pipe name still parses as exactly itself.
+		// "<work dir>|<pipe name>|<key>". Split on '|' because it cannot occur in a Windows path, so the
+		// work dir cannot contain one. The key is what the greeting presents; a provider given none
+		// greets with an empty one, and the host refuses it by saying so rather than by timing out.
 		const size_t bar = data.find(L'|');
 		if (bar == std::wstring::npos)
 		{
@@ -113,7 +113,10 @@ public:
 		else
 		{
 			g_workDir = data.substr(0, bar);
-			g_pipeName = data.substr(bar + 1);
+
+			const size_t second = data.find(L'|', bar + 1);
+			g_pipeName = data.substr(bar + 1, second == std::wstring::npos ? std::wstring::npos : second - bar - 1);
+			g_pipeNonce = second == std::wstring::npos ? std::wstring() : data.substr(second + 1);
 		}
 
 		// The UI thread, taken from the diagnostics site rather than from whichever thread we happen
@@ -387,7 +390,7 @@ public:
 			return EndSession() ? std::string("released") : std::string("already released");
 		}
 
-		Log(L"pipe: no handler for '" + request + L"', falling back to the files");
+		Log(L"pipe: no handler for '" + request + L"'; answering empty");
 		return std::string();
 	}
 
@@ -584,6 +587,17 @@ static void PipeReaderLoop()
 	std::string payload;
 	while (ReadFrame(payload))
 	{
+		// A frame with no id cannot be answered under one, so it is answered empty, which is how every
+		// host reads "not served here". Nothing this provider's host sends is shaped like that.
+		std::string id;
+		std::string request;
+		if (!SplitRequest(payload, id, request))
+		{
+			Log(L"pipe: a request arrived without an id; answering empty");
+			if (!WriteFrame(std::string())) break;
+			continue;
+		}
+
 		RoseTap* serving = nullptr;
 		{
 			std::lock_guard<std::mutex> guard(g_activeMutex);
@@ -599,7 +613,7 @@ static void PipeReaderLoop()
 			// request would take the target down rather than come back as a failed one.
 			try
 			{
-				reply = serving->Serve(FromUtf8(payload));
+				reply = serving->Serve(FromUtf8(request));
 			}
 			catch (...)
 			{
@@ -610,7 +624,7 @@ static void PipeReaderLoop()
 			serving->Release();
 		}
 
-		if (!WriteFrame(reply)) break;
+		if (!WriteFrame(id + "\n" + reply)) break;
 	}
 
 	// The handle goes with the loop and the flag goes back down, which is what lets a later

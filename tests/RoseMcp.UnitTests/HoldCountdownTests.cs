@@ -18,13 +18,13 @@ public sealed class HoldCountdownTests
 	[Test]
 	public void A_stop_on_its_safety_timer_says_when_it_lets_go()
 	{
-		Assert.Equal("auto-continues in 12s", HoldCountdown.Describe(held: false, TimeSpan.FromSeconds(12)));
+		HoldCountdown.Describe(held: false, TimeSpan.FromSeconds(12)).ShouldBe("auto-continues in 12s");
 	}
 
 	[Test]
 	public void A_stop_somebody_is_holding_says_so_and_for_how_long()
 	{
-		Assert.Equal($"held for you{Format.Separator}47s left", HoldCountdown.Describe(held: true, TimeSpan.FromSeconds(47)));
+		HoldCountdown.Describe(held: true, TimeSpan.FromSeconds(47)).ShouldBe($"held for you{Format.Separator}47s left");
 	}
 
 	/// <summary>
@@ -34,7 +34,7 @@ public sealed class HoldCountdownTests
 	[Test]
 	public void A_deadline_already_past_reads_as_now()
 	{
-		Assert.Equal($"held for you{Format.Separator}now left", HoldCountdown.Describe(held: true, TimeSpan.FromSeconds(-5)));
+		HoldCountdown.Describe(held: true, TimeSpan.FromSeconds(-5)).ShouldBe($"held for you{Format.Separator}now left");
 	}
 
 	[Test]
@@ -44,6 +44,6 @@ public sealed class HoldCountdownTests
 	[Arguments(-1, true)]
 	public void A_hold_is_renewed_before_it_runs_out(int secondsLeft, bool expected)
 	{
-		Assert.Equal(expected, HoldCountdown.ShouldRenew(Now.AddSeconds(secondsLeft), Now));
+		HoldCountdown.ShouldRenew(Now.AddSeconds(secondsLeft), Now).ShouldBe(expected);
 	}
 }

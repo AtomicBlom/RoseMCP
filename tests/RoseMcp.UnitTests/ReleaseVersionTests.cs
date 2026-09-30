@@ -20,10 +20,10 @@ public sealed class ReleaseVersionTests
 	[Arguments("2", 2, 0, 0)]
 	public void Parses_a_tag_with_or_without_its_prefix(string text, int major, int minor, int patch)
 	{
-		Assert.True(ReleaseVersion.TryParse(text, out var version));
-		Assert.Equal(major, version.Major);
-		Assert.Equal(minor, version.Minor);
-		Assert.Equal(patch, version.Patch);
+		ReleaseVersion.TryParse(text, out var version).ShouldBeTrue();
+		version.Major.ShouldBe(major);
+		version.Minor.ShouldBe(minor);
+		version.Patch.ShouldBe(patch);
 	}
 
 	/// <summary>
@@ -33,10 +33,10 @@ public sealed class ReleaseVersionTests
 	[Test]
 	public void Discards_build_metadata_because_it_takes_no_part_in_precedence()
 	{
-		Assert.True(ReleaseVersion.TryParse("1.1.1+1a2b3c4", out var stamped));
-		Assert.True(ReleaseVersion.TryParse("1.1.1", out var plain));
+		ReleaseVersion.TryParse("1.1.1+1a2b3c4", out var stamped).ShouldBeTrue();
+		ReleaseVersion.TryParse("1.1.1", out var plain).ShouldBeTrue();
 
-		Assert.Equal(0, ReleaseVersion.Compare(stamped, plain));
+		ReleaseVersion.Compare(stamped, plain).ShouldBe(0);
 	}
 
 	[Test]
@@ -48,7 +48,7 @@ public sealed class ReleaseVersionTests
 	[Arguments("nightly")]
 	public void Refuses_what_it_cannot_compare(string text)
 	{
-		Assert.False(ReleaseVersion.TryParse(text, out _));
+		ReleaseVersion.TryParse(text, out _).ShouldBeFalse();
 	}
 
 	[Test]
@@ -58,8 +58,8 @@ public sealed class ReleaseVersionTests
 	[Arguments("0.9.9", "1.0.0")]
 	public void Orders_by_number_before_anything_else(string older, string newer)
 	{
-		Assert.True(Older(older, newer));
-		Assert.False(Older(newer, older));
+		Older(older, newer).ShouldBeTrue();
+		Older(newer, older).ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -69,8 +69,8 @@ public sealed class ReleaseVersionTests
 	[Test]
 	public void A_release_outranks_its_own_release_candidate()
 	{
-		Assert.True(Older("0.3.0-rc.1", "0.3.0"));
-		Assert.False(Older("0.3.0", "0.3.0-rc.1"));
+		Older("0.3.0-rc.1", "0.3.0").ShouldBeTrue();
+		Older("0.3.0", "0.3.0-rc.1").ShouldBeFalse();
 	}
 
 	[Test]
@@ -80,29 +80,29 @@ public sealed class ReleaseVersionTests
 	[Arguments("0.3.0-rc.1", "0.3.0-rc.1.1")]
 	public void Orders_prereleases_among_themselves(string older, string newer)
 	{
-		Assert.True(Older(older, newer));
-		Assert.False(Older(newer, older));
+		Older(older, newer).ShouldBeTrue();
+		Older(newer, older).ShouldBeFalse();
 	}
 
 	/// <summary>Semver's own rule, and not what sorting the identifiers as text would do.</summary>
 	[Test]
 	public void A_numeric_identifier_ranks_below_an_alphanumeric_one()
 	{
-		Assert.True(Older("1.0.0-alpha.1", "1.0.0-alpha.beta"));
+		Older("1.0.0-alpha.1", "1.0.0-alpha.beta").ShouldBeTrue();
 	}
 
 	/// <summary>"10" sorts before "9" as text, which would stop offering rc.10 to anybody on rc.9.</summary>
 	[Test]
 	public void Numeric_identifiers_compare_as_numbers_rather_than_text()
 	{
-		Assert.True(Older("1.0.0-rc.9", "1.0.0-rc.10"));
+		Older("1.0.0-rc.9", "1.0.0-rc.10").ShouldBeTrue();
 	}
 
 	[Test]
 	public void The_same_version_is_not_an_upgrade()
 	{
-		Assert.False(Older("1.2.3", "1.2.3"));
-		Assert.False(Older("1.2.3-rc.1", "1.2.3-rc.1"));
+		Older("1.2.3", "1.2.3").ShouldBeFalse();
+		Older("1.2.3-rc.1", "1.2.3-rc.1").ShouldBeFalse();
 	}
 
 	/// <summary>
@@ -113,8 +113,8 @@ public sealed class ReleaseVersionTests
 	[Test]
 	public void A_development_build_reads_as_older_than_the_release_it_anticipates()
 	{
-		Assert.False(Older("1.1.1-alpha.0.9", "1.1.0"));
-		Assert.True(Older("1.1.1-alpha.0.9", "1.1.1"));
+		Older("1.1.1-alpha.0.9", "1.1.0").ShouldBeFalse();
+		Older("1.1.1-alpha.0.9", "1.1.1").ShouldBeTrue();
 	}
 
 	private static bool Older(string left, string right)

@@ -37,7 +37,7 @@ public sealed class SequencePointsTests
 	{
 		var points = new[] { At(0, 10), At(7, 20), At(14, 30) };
 
-		Assert.Equal(expectedLine, SequencePoints.Nearest(points, ilOffset)?.Line);
+		(SequencePoints.Nearest(points, ilOffset)?.Line).ShouldBe(expectedLine);
 	}
 
 	/// <summary>
@@ -49,8 +49,8 @@ public sealed class SequencePointsTests
 	{
 		var points = new[] { At(5, 10) };
 
-		Assert.Null(SequencePoints.Nearest(points, 4));
-		Assert.Null(SequencePoints.Nearest([], 0));
+		SequencePoints.Nearest(points, 4).ShouldBeNull();
+		SequencePoints.Nearest([], 0).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -63,10 +63,10 @@ public sealed class SequencePointsTests
 	{
 		var points = new[] { At(0, 10), Hidden(6), At(20, 30) };
 
-		Assert.Equal(10, SequencePoints.Nearest(points, 5)?.Line);
-		Assert.Null(SequencePoints.Nearest(points, 6));
-		Assert.Null(SequencePoints.Nearest(points, 19));
-		Assert.Equal(30, SequencePoints.Nearest(points, 20)?.Line);
+		(SequencePoints.Nearest(points, 5)?.Line).ShouldBe(10);
+		SequencePoints.Nearest(points, 6).ShouldBeNull();
+		SequencePoints.Nearest(points, 19).ShouldBeNull();
+		(SequencePoints.Nearest(points, 20)?.Line).ShouldBe(30);
 	}
 
 	/// <summary>The whole position is carried through, not only the line: a statement wrapped over
@@ -83,8 +83,8 @@ public sealed class SequencePointsTests
 
 		var found = SequencePoints.Nearest([point], 4);
 
-		Assert.NotNull(found);
-		Assert.Equal(@"D:\build\P.cs", found!.File);
-		Assert.Equal((11, 9, 13, 42), (found.Line, found.Column, found.EndLine, found.EndColumn));
+		found.ShouldNotBeNull();
+		found!.File.ShouldBe(@"D:\build\P.cs");
+		((found.Line, found.Column, found.EndLine, found.EndColumn)).ShouldBe((11, 9, 13, 42));
 	}
 }

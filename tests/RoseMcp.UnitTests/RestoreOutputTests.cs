@@ -37,7 +37,7 @@ public sealed class RestoreOutputTests
 			File.SetLastWriteTimeUtc(project.Assets, DateTime.UtcNow.AddHours(-1));
 			File.SetLastWriteTimeUtc(ambient, DateTime.UtcNow);
 
-			Assert.False(HasNoRestoreOutput(project.File));
+			HasNoRestoreOutput(project.File).ShouldBeFalse();
 		}
 		finally
 		{
@@ -57,7 +57,7 @@ public sealed class RestoreOutputTests
 		{
 			var project = StageProject(root, "Legacy", assets: null);
 
-			Assert.True(HasNoRestoreOutput(project.File));
+			HasNoRestoreOutput(project.File).ShouldBeTrue();
 		}
 		finally
 		{
@@ -75,7 +75,7 @@ public sealed class RestoreOutputTests
 			Directory.CreateDirectory(Path.GetDirectoryName(project)!);
 			File.WriteAllText(project, "<Project />");
 
-			Assert.True(HasNoRestoreOutput(project));
+			HasNoRestoreOutput(project).ShouldBeTrue();
 		}
 		finally
 		{
@@ -95,7 +95,7 @@ public sealed class RestoreOutputTests
 		{
 			var project = StageProject(root, "Broken", assets: "{}", cache: Cache(success: false));
 
-			Assert.True(HasNoRestoreOutput(project.File));
+			HasNoRestoreOutput(project.File).ShouldBeTrue();
 		}
 		finally
 		{
@@ -120,7 +120,7 @@ public sealed class RestoreOutputTests
 		{
 			var project = StageProject(root, "Odd", assets: "{}", cache: cache);
 
-			Assert.False(HasNoRestoreOutput(project.File));
+			HasNoRestoreOutput(project.File).ShouldBeFalse();
 		}
 		finally
 		{
@@ -141,11 +141,11 @@ public sealed class RestoreOutputTests
 		{
 			var project = StageProject(root, "Addin", assets: "{}", cache: Cache(success: true), below: "2027");
 
-			Assert.False(HasNoRestoreOutput(project.File));
+			HasNoRestoreOutput(project.File).ShouldBeFalse();
 
 			File.WriteAllText(project.Cache!, Cache(success: false));
 
-			Assert.True(HasNoRestoreOutput(project.File));
+			HasNoRestoreOutput(project.File).ShouldBeTrue();
 		}
 		finally
 		{
@@ -167,7 +167,7 @@ public sealed class RestoreOutputTests
 			var project = StageProject(root, "Addin", assets: "{}", cache: Cache(success: false), below: "2026");
 			StageAssets(Path.Combine(root.FullName, "Addin", "obj", "2027"), assets: "{}", cache: Cache(success: true));
 
-			Assert.False(HasNoRestoreOutput(project.File));
+			HasNoRestoreOutput(project.File).ShouldBeFalse();
 		}
 		finally
 		{

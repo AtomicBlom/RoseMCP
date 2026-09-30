@@ -19,8 +19,8 @@ public sealed class ImportDirectiveTests
 	{
 		var import = ImportDirective.Parse(requested);
 
-		Assert.Equal(ImportKind.Namespace, import.Kind);
-		Assert.Equal("System.Text", import.Text);
+		import.Kind.ShouldBe(ImportKind.Namespace);
+		import.Text.ShouldBe("System.Text");
 	}
 
 	[Test]
@@ -31,9 +31,9 @@ public sealed class ImportDirectiveTests
 	{
 		var import = ImportDirective.Parse(requested);
 
-		Assert.Equal(ImportKind.Static, import.Kind);
-		Assert.Equal("System.Math", import.Target);
-		Assert.Equal("static System.Math", import.Text);
+		import.Kind.ShouldBe(ImportKind.Static);
+		import.Target.ShouldBe("System.Math");
+		import.Text.ShouldBe("static System.Math");
 	}
 
 	[Test]
@@ -41,10 +41,10 @@ public sealed class ImportDirectiveTests
 	{
 		var import = ImportDirective.Parse("using Json = System.Text.Json;");
 
-		Assert.Equal(ImportKind.Alias, import.Kind);
-		Assert.Equal("Json", import.Alias);
-		Assert.Equal("System.Text.Json", import.Target);
-		Assert.Equal("Json = System.Text.Json", import.Text);
+		import.Kind.ShouldBe(ImportKind.Alias);
+		import.Alias.ShouldBe("Json");
+		import.Target.ShouldBe("System.Text.Json");
+		import.Text.ShouldBe("Json = System.Text.Json");
 	}
 
 	/// <summary>
@@ -59,18 +59,18 @@ public sealed class ImportDirectiveTests
 	[Arguments("class Imported { }")]
 	public void Refuses_what_is_not_exactly_one_import(string requested)
 	{
-		var error = Assert.Throws<ArgumentException>(() => ImportDirective.Parse(requested));
+		var error = Should.Throw<ArgumentException>(() => ImportDirective.Parse(requested)).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains($"'{requested}' is not an import", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain($"'{requested}' is not an import", Case.Sensitive);
 	}
 
 	/// <summary>A global using belongs to the project, and writing one into an arbitrary file hides it there.</summary>
 	[Test]
 	public void Refuses_a_global_using()
 	{
-		var error = Assert.Throws<ArgumentException>(() => ImportDirective.Parse("global using System.Text;"));
+		var error = Should.Throw<ArgumentException>(() => ImportDirective.Parse("global using System.Text;")).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains("is a global using", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain("is a global using", Case.Sensitive);
 	}
 
 	[Test]
@@ -79,7 +79,7 @@ public sealed class ImportDirectiveTests
 	[Arguments("Json=System.Text.Json", "using Json = System.Text.Json;\n")]
 	public void Writes_the_directive_it_read(string requested, string written)
 	{
-		Assert.Equal(written, ImportDirective.Parse(requested).ToSyntax("\n").ToFullString());
+		ImportDirective.Parse(requested).ToSyntax("\n").ToFullString().ShouldBe(written);
 	}
 
 	/// <summary>
@@ -91,9 +91,9 @@ public sealed class ImportDirectiveTests
 	{
 		var unit = SyntaxFactory.ParseCompilationUnit("using static  System.Math;\nusing System;\nglobal using X = System;\n");
 
-		Assert.Equal("static System.Math", ImportDirective.From(unit.Usings[0]).Text);
-		Assert.Equal("System", ImportDirective.From(unit.Usings[1]).Text);
-		Assert.Equal("X = System", ImportDirective.From(unit.Usings[2]).Text);
-		Assert.True(ImportDirective.From(unit.Usings[2]).Global);
+		ImportDirective.From(unit.Usings[0]).Text.ShouldBe("static System.Math");
+		ImportDirective.From(unit.Usings[1]).Text.ShouldBe("System");
+		ImportDirective.From(unit.Usings[2]).Text.ShouldBe("X = System");
+		ImportDirective.From(unit.Usings[2]).Global.ShouldBeTrue();
 	}
 }

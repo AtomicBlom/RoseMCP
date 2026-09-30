@@ -26,9 +26,9 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "Encoding", InLibrary(fixture, "Greeter.cs"));
 
-		Assert.Equal("Encoding", result.Name);
-		Assert.Equal("System.Text", result.Import);
-		Assert.Contains(result.Candidates, candidate => candidate.Symbol == "System.Text.Encoding");
+		result.Name.ShouldBe("Encoding");
+		result.Import.ShouldBe("System.Text");
+		result.Candidates.ShouldContain(candidate => candidate.Symbol == "System.Text.Encoding");
 	}
 
 	/// <summary>
@@ -43,13 +43,12 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "Palette", InLibrary(fixture, "Greeter.cs"));
 
-		Assert.Null(result.Import);
-		Assert.Equal(2, result.Candidates.Count);
-		Assert.Equal(
-			["Library.Left", "Library.Right"],
-			result.Candidates.Select(candidate => candidate.Namespace).Order(StringComparer.Ordinal));
+		result.Import.ShouldBeNull();
+		result.Candidates.Count.ShouldBe(2);
+		result.Candidates.Select(candidate => candidate.Namespace).Order(StringComparer.Ordinal).ShouldBe(
+			["Library.Left", "Library.Right"]);
 
-		Assert.Contains(result.Notices, notice => notice.Contains("Pick one", StringComparison.Ordinal));
+		result.Notices.ShouldContain(notice => notice.Contains("Pick one", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -64,8 +63,8 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "Encoding.UTF8", InLibrary(fixture, "Greeter.cs"));
 
-		Assert.Equal("Encoding", result.Name);
-		Assert.Equal("System.Text", result.Import);
+		result.Name.ShouldBe("Encoding");
+		result.Import.ShouldBe("System.Text");
 	}
 
 	/// <summary>
@@ -80,9 +79,9 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "CultureInfo", InLibrary(fixture, "Imports.cs"));
 
-		Assert.Null(result.Import);
-		Assert.Contains(result.Candidates, candidate => candidate.AlreadyInScope == "already imported here");
-		Assert.Contains(result.Notices, notice => notice.Contains("in scope already", StringComparison.Ordinal));
+		result.Import.ShouldBeNull();
+		result.Candidates.ShouldContain(candidate => candidate.AlreadyInScope == "already imported here");
+		result.Notices.ShouldContain(notice => notice.Contains("in scope already", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -97,9 +96,8 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "List", InLibrary(fixture, "Greeter.cs"));
 
-		Assert.Null(result.Import);
-		Assert.Contains(
-			result.Candidates,
+		result.Import.ShouldBeNull();
+		result.Candidates.ShouldContain(
 			candidate => candidate.Namespace == "System.Collections.Generic"
 				&& candidate.AlreadyInScope == "in scope already, from a global or implicit using");
 	}
@@ -116,9 +114,9 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "Shouted", InLibrary(fixture, "Greeter.cs"));
 
-		Assert.Equal("Library.Extras", result.Import);
-		Assert.Contains(result.Candidates, candidate => candidate.Kind == "ExtensionMethod");
-		Assert.Contains(result.Notices, notice => notice.Contains("extension methods", StringComparison.Ordinal));
+		result.Import.ShouldBe("Library.Extras");
+		result.Candidates.ShouldContain(candidate => candidate.Kind == "ExtensionMethod");
+		result.Notices.ShouldContain(notice => notice.Contains("extension methods", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -134,14 +132,14 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "Inner", InLibrary(fixture, "Greeter.cs"));
 
-		Assert.Null(result.Import);
+		result.Import.ShouldBeNull();
 
-		var candidate = Assert.Single(result.Candidates);
+		var candidate = result.Candidates.ShouldHaveSingleItem();
 
-		Assert.Equal("Library.Deep", candidate.Namespace);
-		Assert.NotNull(candidate.Caveat);
-		Assert.Contains("nested in Outer", candidate.Caveat, StringComparison.Ordinal);
-		Assert.Contains("write Outer.Inner", candidate.Caveat, StringComparison.Ordinal);
+		candidate.Namespace.ShouldBe("Library.Deep");
+		candidate.Caveat.ShouldNotBeNull();
+		candidate.Caveat.ShouldContain("nested in Outer", Case.Sensitive);
+		candidate.Caveat.ShouldContain("write Outer.Inner", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -156,13 +154,13 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "Outer<string>", InLibrary(fixture, "Greeter.cs"));
 
-		Assert.Null(result.Import);
+		result.Import.ShouldBeNull();
 
-		var candidate = Assert.Single(result.Candidates);
+		var candidate = result.Candidates.ShouldHaveSingleItem();
 
-		Assert.Equal(0, candidate.Arity);
-		Assert.NotNull(candidate.Caveat);
-		Assert.Contains("takes 0 type argument(s), and the name was used with 1", candidate.Caveat, StringComparison.Ordinal);
+		candidate.Arity.ShouldBe(0);
+		candidate.Caveat.ShouldNotBeNull();
+		candidate.Caveat.ShouldContain("takes 0 type argument(s), and the name was used with 1", Case.Sensitive);
 	}
 
 	/// <summary>Nothing of that name anywhere is a real answer, and a different one from "pick a namespace".</summary>
@@ -174,9 +172,9 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "Nonexistent", InLibrary(fixture, "Greeter.cs"));
 
-		Assert.Null(result.Import);
-		Assert.Empty(result.Candidates);
-		Assert.Contains(result.Notices, notice => notice.Contains("not written yet", StringComparison.Ordinal));
+		result.Import.ShouldBeNull();
+		result.Candidates.ShouldBeEmpty();
+		result.Notices.ShouldContain(notice => notice.Contains("not written yet", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -191,13 +189,13 @@ public sealed class ResolveNameTests
 
 		var result = await ResolveAsync(session, "Announcer", fixture.Path("Simple", "Core", "Calculator.cs"));
 
-		Assert.Null(result.Import);
+		result.Import.ShouldBeNull();
 
-		var candidate = Assert.Single(result.Candidates);
+		var candidate = result.Candidates.ShouldHaveSingleItem();
 
-		Assert.NotNull(candidate.Caveat);
-		Assert.Contains("which Core does not reference", candidate.Caveat, StringComparison.Ordinal);
-		Assert.Contains("add the project reference first", candidate.Caveat, StringComparison.Ordinal);
+		candidate.Caveat.ShouldNotBeNull();
+		candidate.Caveat.ShouldContain("which Core does not reference", Case.Sensitive);
+		candidate.Caveat.ShouldContain("add the project reference first", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -219,10 +217,9 @@ public sealed class ResolveNameTests
 			ResolveUsings = false,
 		});
 
-		Assert.True(result.Applied);
-		Assert.Contains(result.IntroducedDiagnostics, entry => entry.Id == "CS0103");
-		Assert.Contains(
-			result.Notices,
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "CS0103");
+		result.Notices.ShouldContain(
 			notice => notice.Contains("System.Text.Encoding", StringComparison.Ordinal)
 				&& notice.Contains("usings: [\"System.Text\"]", StringComparison.Ordinal));
 	}
@@ -241,12 +238,11 @@ public sealed class ResolveNameTests
 			Code = "public string Painted() => Palette.Name;",
 		});
 
-		Assert.Contains(
-			result.Notices,
+		result.Notices.ShouldContain(
 			notice => notice.Contains("Palette is in 2 namespaces", StringComparison.Ordinal)
 				&& notice.Contains("Library.Left", StringComparison.Ordinal));
 
-		Assert.DoesNotContain(result.Notices, notice => notice.Contains("pass usings:", StringComparison.Ordinal));
+		result.Notices.ShouldNotContain(notice => notice.Contains("pass usings:", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -277,9 +273,9 @@ public sealed class ResolveNameTests
 
 		// Two fixers claim CS0103 -- generate variable and generate method -- and neither offers
 		// anything here, which used to drop it out of both lists and out of the answer altogether.
-		Assert.Contains("CS0103", list.UnfixableIds);
-		Assert.DoesNotContain(list.Fixes, fix => fix.DiagnosticId == "CS0103");
-		Assert.Contains(list.Notices, notice => notice.Contains("rose_resolve_name", StringComparison.Ordinal));
+		list.UnfixableIds.ShouldContain("CS0103");
+		list.Fixes.ShouldNotContain(fix => fix.DiagnosticId == "CS0103");
+		list.Notices.ShouldContain(notice => notice.Contains("rose_resolve_name", StringComparison.Ordinal));
 	}
 
 	private static string InLibrary(FixtureSolution fixture, string file) =>

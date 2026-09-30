@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -21,12 +22,12 @@ public sealed class LoadDiagnosticSummaryTests
 			("Failure", Complaint(@"D:\repo\C\C.csproj", "https://feed/index.json")),
 		]);
 
-		var line = Assert.Single(folded);
+		var line = folded.ShouldHaveSingleItem();
 
-		Assert.StartsWith("(x3,", line, StringComparison.Ordinal);
+		line.ShouldStartWith("(x3,", Case.Sensitive);
 
 		// The example kept is a real one, verbatim, rather than a message with the paths blanked out.
-		Assert.Contains(@"D:\repo\A\A.csproj", line, StringComparison.Ordinal);
+		line.ShouldContain(@"D:\repo\A\A.csproj", Case.Sensitive);
 	}
 
 	/// <summary>The URL varies too, and it varies independently of the file.</summary>
@@ -39,7 +40,7 @@ public sealed class LoadDiagnosticSummaryTests
 			("Failure", Complaint(@"D:\repo\A\A.csproj", "https://two/index.json")),
 		]);
 
-		Assert.Single(folded);
+		folded.ShouldHaveSingleItem();
 	}
 
 	/// <summary>
@@ -55,7 +56,7 @@ public sealed class LoadDiagnosticSummaryTests
 			("Failure", @"The imported project 'D:\repo\A\Missing.targets' was not found."),
 		]);
 
-		Assert.Equal(2, folded.Count);
+		folded.Count.ShouldBe(2);
 	}
 
 	/// <summary>Kind is part of the identity: the same text as a warning and as a failure is two facts.</summary>
@@ -68,7 +69,7 @@ public sealed class LoadDiagnosticSummaryTests
 			("Warning", "Something went wrong."),
 		]);
 
-		Assert.Equal(2, folded.Count);
+		folded.Count.ShouldBe(2);
 	}
 
 	/// <summary>
@@ -86,8 +87,8 @@ public sealed class LoadDiagnosticSummaryTests
 			("Failure", Complaint(@"D:\repo\B\B.csproj", "https://feed/index.json")),
 		]);
 
-		Assert.Equal(2, folded.Count);
-		Assert.Contains("Found project reference", folded[0], StringComparison.Ordinal);
+		folded.Count.ShouldBe(2);
+		folded[0].ShouldContain("Found project reference", Case.Sensitive);
 	}
 
 	/// <summary>A message that occurs once reads exactly as it did before any of this existed.</summary>
@@ -96,13 +97,13 @@ public sealed class LoadDiagnosticSummaryTests
 	{
 		var folded = LoadDiagnosticSummary.Fold([("Warning", "A lone complaint.")]);
 
-		Assert.Equal("[Warning] A lone complaint.", Assert.Single(folded));
+		folded.ShouldHaveSingleItem().ShouldBe("[Warning] A lone complaint.");
 	}
 
 	[Test]
 	public void Says_nothing_about_nothing()
 	{
-		Assert.Empty(LoadDiagnosticSummary.Fold([]));
+		LoadDiagnosticSummary.Fold([]).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -118,7 +119,7 @@ public sealed class LoadDiagnosticSummaryTests
 			("Warning", "The either/neither setting is ignored."),
 		]);
 
-		Assert.Equal(2, folded.Count);
+		folded.Count.ShouldBe(2);
 	}
 
 	/// <summary>Posix paths fold too, so this reads the same on Linux as it does here.</summary>
@@ -131,7 +132,7 @@ public sealed class LoadDiagnosticSummaryTests
 			("Failure", "Msbuild failed when processing the file '/home/me/repo/B/B.csproj'."),
 		]);
 
-		Assert.Single(folded);
+		folded.ShouldHaveSingleItem();
 	}
 
 	[Test]
@@ -143,8 +144,8 @@ public sealed class LoadDiagnosticSummaryTests
 
 		var folded = LoadDiagnosticSummary.Fold(many);
 
-		Assert.Equal(41, folded.Count);
-		Assert.Contains("5 further distinct diagnostic(s)", folded[^1], StringComparison.Ordinal);
+		folded.Count.ShouldBe(41);
+		folded[^1].ShouldContain("5 further distinct diagnostic(s)", Case.Sensitive);
 	}
 
 	private static string Complaint(string path, string url) => string.Format(null, Audit, path, url);

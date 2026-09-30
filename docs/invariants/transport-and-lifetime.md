@@ -41,6 +41,16 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   never reveals. Send the cancellation *before* abandoning the wait: over http the request is a
   streaming POST, and tearing it down three milliseconds early was enough for the far side to treat
   the request as merely gone, never cancel its own token, and finish the work anyway.
+- **A child's handshake never times out its `server/discover` probe on its own.** The SDK probes
+  with `server/discover` and falls back to `initialize` after `DiscoverProbeTimeout`, and over stdio
+  that timeout reaches the send, which writes a message and its newline as separate cancellable
+  writes. Cancelled between them, the probe leaves its JSON on the child's stdin without a newline;
+  the fallback `initialize` is appended, the child rejects the joined line, and the broker waits out
+  the full handshake budget for a child that is alive and never received anything it could parse. A
+  busy test run's thread pool delays a write past the five-second default. Every client the broker
+  opens on a child takes its options from `ChildHostHandshake`, which leaves the probe bounded by the
+  handshake budget alone -- the children ship with the broker and answer `server/discover`, so the
+  fallback could only ever be reached by accident.
 - **Progress can arrive out of order over http, and no queue here can fix it.** The SDK dispatches
   notification handlers concurrently on an SSE transport, so a four-project status was seen
   arriving 50, 75, 0, 25 -- already unordered before any of our code sees it, and MCP progress

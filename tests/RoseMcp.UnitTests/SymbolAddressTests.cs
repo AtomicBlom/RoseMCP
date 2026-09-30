@@ -16,9 +16,9 @@ public sealed class SymbolAddressTests
 	{
 		var address = SymbolAddress.Parse("RoseMcp.Broker.LiveAppSession.ReadEventsAsync");
 
-		Assert.Equal("ReadEventsAsync", address.Name);
-		Assert.Equal(["RoseMcp", "Broker", "LiveAppSession", "ReadEventsAsync"], address.Path);
-		Assert.Null(address.Parameters);
+		address.Name.ShouldBe("ReadEventsAsync");
+		address.Path.ShouldBe(["RoseMcp", "Broker", "LiveAppSession", "ReadEventsAsync"]);
+		address.Parameters.ShouldBeNull();
 	}
 
 	[Test]
@@ -26,8 +26,8 @@ public sealed class SymbolAddressTests
 	{
 		var address = SymbolAddress.Parse("ReadEventsAsync");
 
-		Assert.Equal("ReadEventsAsync", address.Name);
-		Assert.Equal(["ReadEventsAsync"], address.Path);
+		address.Name.ShouldBe("ReadEventsAsync");
+		address.Path.ShouldBe(["ReadEventsAsync"]);
 	}
 
 	/// <summary>
@@ -40,7 +40,7 @@ public sealed class SymbolAddressTests
 	[Arguments("Shop.Till.Ring", "Shop.Till.Ring(string, int)")]
 	[Arguments("Shop.Till.Wrap", "Shop.Till.Wrap()")]
 	public void Spells_an_address_a_caller_can_write(string name, string expected) =>
-		Assert.Equal(expected, SymbolAddress.Of(Symbol(name)));
+		SymbolAddress.Of(Symbol(name)).ShouldBe(expected);
 
 	/// <summary>
 	/// And it goes back in: the address this spells is one <see cref="SymbolAddress.Parse"/> reads and
@@ -59,8 +59,8 @@ public sealed class SymbolAddressTests
 		var symbol = Symbol(name);
 		var address = SymbolAddress.Of(symbol);
 
-		Assert.NotNull(address);
-		Assert.True(SymbolAddress.Parse(address).Matches(symbol), $"'{address}' does not match the symbol it came from");
+		address.ShouldNotBeNull();
+		SymbolAddress.Parse(address).Matches(symbol).ShouldBeTrue($"'{address}' does not match the symbol it came from");
 	}
 
 	/// <summary>
@@ -73,7 +73,7 @@ public sealed class SymbolAddressTests
 	{
 		var method = (IMethodSymbol)Symbol("Shop.Till.Ring");
 
-		Assert.Null(SymbolAddress.Of(method.Parameters[0]));
+		SymbolAddress.Of(method.Parameters[0]).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -107,7 +107,7 @@ public sealed class SymbolAddressTests
 			candidate => candidate == name.Split('.')[^1],
 			SymbolFilter.TypeAndMember).ToArray();
 
-		Assert.Single(found);
+		found.ShouldHaveSingleItem();
 
 		return found[0];
 	}
@@ -124,8 +124,8 @@ public sealed class SymbolAddressTests
 	{
 		var address = SymbolAddress.Parse(requested);
 
-		Assert.Equal("Add", address.Name);
-		Assert.DoesNotContain("<", string.Join(".", address.Path), StringComparison.Ordinal);
+		address.Name.ShouldBe("Add");
+		string.Join(".", address.Path).ShouldNotContain("<", Case.Sensitive);
 	}
 
 	[Test]
@@ -133,9 +133,9 @@ public sealed class SymbolAddressTests
 	{
 		var address = SymbolAddress.Parse("Log.Write(string, int)");
 
-		Assert.Equal("Write", address.Name);
-		Assert.Equal(["Log", "Write"], address.Path);
-		Assert.Equal(["string", "int"], address.Parameters);
+		address.Name.ShouldBe("Write");
+		address.Path.ShouldBe(["Log", "Write"]);
+		address.Parameters.ShouldBe(["string", "int"]);
 	}
 
 	/// <summary>
@@ -147,7 +147,7 @@ public sealed class SymbolAddressTests
 	{
 		var address = SymbolAddress.Parse("Log.Write(Func<int, string>, IReadOnlyList<int[]>)");
 
-		Assert.Equal(["Func<int, string>", "IReadOnlyList<int[]>"], address.Parameters);
+		address.Parameters.ShouldBe(["Func<int, string>", "IReadOnlyList<int[]>"]);
 	}
 
 	/// <summary>
@@ -157,14 +157,14 @@ public sealed class SymbolAddressTests
 	[Test]
 	public void Tells_no_parameters_apart_from_no_parameter_list()
 	{
-		Assert.Empty(SymbolAddress.Parse("Session.Close()").Parameters!);
-		Assert.Null(SymbolAddress.Parse("Session.Close").Parameters);
+		SymbolAddress.Parse("Session.Close()").Parameters!.ShouldBeEmpty();
+		SymbolAddress.Parse("Session.Close").Parameters.ShouldBeNull();
 	}
 
 	[Test]
 	public void Drops_a_global_alias()
 	{
-		Assert.Equal(["RoseMcp", "Worker", "Whitespace"], SymbolAddress.Parse("global::RoseMcp.Worker.Whitespace").Path);
+		SymbolAddress.Parse("global::RoseMcp.Worker.Whitespace").Path.ShouldBe(["RoseMcp", "Worker", "Whitespace"]);
 	}
 
 	[Test]
@@ -173,13 +173,13 @@ public sealed class SymbolAddressTests
 	[Arguments(".")]
 	public void Refuses_a_name_that_names_nothing(string requested)
 	{
-		Assert.Throws<ArgumentException>(() => SymbolAddress.Parse(requested));
+		Should.Throw<ArgumentException>(() => SymbolAddress.Parse(requested)).ShouldBeOfType<ArgumentException>();
 	}
 
 	[Test]
 	public void Refuses_a_parameter_list_that_was_never_opened()
 	{
-		Assert.Throws<ArgumentException>(() => SymbolAddress.Parse("Log.Write string)"));
+		Should.Throw<ArgumentException>(() => SymbolAddress.Parse("Log.Write string)")).ShouldBeOfType<ArgumentException>();
 	}
 
 	/// <summary>
@@ -193,9 +193,9 @@ public sealed class SymbolAddressTests
 	{
 		var address = SymbolAddress.Parse(requested);
 
-		Assert.Equal(ConstructorKind.Instance, address.Constructor);
-		Assert.Equal("Whitespace", address.Name);
-		Assert.Equal(["RoseMcp", "Worker", "Whitespace"], address.Path);
+		address.Constructor.ShouldBe(ConstructorKind.Instance);
+		address.Name.ShouldBe("Whitespace");
+		address.Path.ShouldBe(["RoseMcp", "Worker", "Whitespace"]);
 	}
 
 	[Test]
@@ -203,8 +203,8 @@ public sealed class SymbolAddressTests
 	{
 		var address = SymbolAddress.Parse("RoseMcp.Worker.Whitespace..cctor");
 
-		Assert.Equal(ConstructorKind.Static, address.Constructor);
-		Assert.Equal("Whitespace", address.Name);
+		address.Constructor.ShouldBe(ConstructorKind.Static);
+		address.Name.ShouldBe("Whitespace");
 	}
 
 	/// <summary>
@@ -216,9 +216,9 @@ public sealed class SymbolAddressTests
 	{
 		var address = SymbolAddress.Parse("LiveAppSessionTests.LiveAppSessionTests(UwpProbeApp, WinUiProbeApp)");
 
-		Assert.Equal(ConstructorKind.Instance, address.Constructor);
-		Assert.Equal("LiveAppSessionTests", address.Name);
-		Assert.Equal(["UwpProbeApp", "WinUiProbeApp"], address.Parameters);
+		address.Constructor.ShouldBe(ConstructorKind.Instance);
+		address.Name.ShouldBe("LiveAppSessionTests");
+		address.Parameters.ShouldBe(["UwpProbeApp", "WinUiProbeApp"]);
 	}
 
 	/// <summary>
@@ -231,12 +231,12 @@ public sealed class SymbolAddressTests
 	[Arguments("Whitespace.Whitespace.Shift")]
 	public void Leaves_an_ordinary_member_alone(string requested)
 	{
-		Assert.Equal(ConstructorKind.None, SymbolAddress.Parse(requested).Constructor);
+		SymbolAddress.Parse(requested).Constructor.ShouldBe(ConstructorKind.None);
 	}
 
 	[Test]
 	public void Refuses_a_constructor_with_no_type()
 	{
-		Assert.Throws<ArgumentException>(() => SymbolAddress.Parse("..ctor"));
+		Should.Throw<ArgumentException>(() => SymbolAddress.Parse("..ctor")).ShouldBeOfType<ArgumentException>();
 	}
 }

@@ -22,14 +22,14 @@ public sealed class AnalyzerLockTests
 		fixture.Build("WithGenerator", "Gen", "Gen.csproj");
 
 		var generatorAssembly = fixture.Path("WithGenerator", "Gen", "bin", "Debug", "netstandard2.0", "Gen.dll");
-		Assert.True(File.Exists(generatorAssembly));
+		File.Exists(generatorAssembly).ShouldBeTrue();
 
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		// Forces the generators to load and run. Nothing is locked until this happens.
 		var generated = await GeneratedDocumentService.ListAsync(snapshot, null, TestContext.Current!.Execution.CancellationToken);
-		Assert.Equal(2, generated.Documents.Count);
+		generated.Documents.Count.ShouldBe(2);
 
 		// Exactly what MSBuild's Copy task needs to do to refresh bin.
 		AssertWritable(generatorAssembly);
@@ -72,16 +72,15 @@ public sealed class AnalyzerLockTests
 
 		using var workspace = load.Workspace;
 
-		Assert.Contains(analyzerLoader.LoadFailures, failure => failure.Assembly.Contains("Gen.dll", StringComparison.Ordinal));
+		analyzerLoader.LoadFailures.ShouldContain(failure => failure.Assembly.Contains("Gen.dll", StringComparison.Ordinal));
 
 		// The half that matters to a caller: the failure reaches the report rather than stopping at the
 		// loader, and takes the workspace out of Loaded with it.
-		Assert.Contains(
-			load.Report.DegradedReasons,
+		load.Report.DegradedReasons.ShouldContain(
 			reason => reason.Contains("Gen.dll", StringComparison.Ordinal)
 				&& reason.Contains("failed to load", StringComparison.Ordinal));
 
-		Assert.Equal(WorkspaceState.Degraded, load.Report.State);
+		load.Report.State.ShouldBe(WorkspaceState.Degraded);
 	}
 
 	private static void AssertWritable(string path)
@@ -92,7 +91,7 @@ public sealed class AnalyzerLockTests
 		}
 		catch (IOException exception)
 		{
-			Assert.Fail($"{Path.GetFileName(path)} is locked, so rebuilding it would fail with MSB3021: {exception.Message}");
+			throw new ShouldAssertException($"{Path.GetFileName(path)} is locked, so rebuilding it would fail with MSB3021: {exception.Message}");
 		}
 	}
 }

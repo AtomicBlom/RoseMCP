@@ -2,6 +2,27 @@
 
 Read before adding or changing a test in `LiveAppSessionTests` or a live-app fixture.
 
+**What CI runs is decided by what a test needs, and the need is the fixture it takes.** A class that
+asks for a probe app in its constructor wants a C++ toolset, the Windows App SDK, developer mode and
+a machine-wide package registration, so it carries `[Category("ProbeApp")]` and the hosted runner
+skips it -- and an absent toolchain there answers by skipping, which reads as a pass, so excluding
+the class is what says the coverage is not there. Everything else in this half drives
+`DebugProbeTarget`, an ordinary .NET child process, and a hosted Windows runner attaches a real
+ICorDebug session to one without complaint. Thirty-three debugger tests run there on that basis,
+eleven of which proved it by running for weeks after a file split dropped their category.
+
+**Nothing in that half is allowed to skip, and CI carries what it takes not to.** A runner has no
+x86 .NET runtime of its own, so `Attaches_to_an_x86_target` builds a host and a target that cannot
+start and reports the exit code -- which reads as a pass. The workflow installs one and points
+`DOTNET_ROOT_X86` at it instead, for half a minute a run. The rule that makes that worth doing is
+the one above: a skip is how a capability stops being tested while the build stays green, so the
+answer to one is a runtime, a toolchain or an exclusion that says out loud what is not covered --
+never a skip left in place. A new skip appearing in this job is a real gap, not weather.
+
+Do not apply the category by hand in either direction. `ProbeAppCategoryTests` decides from the
+constructor and fails both ways, because a probe-app test without it is a red build on a runner that
+could never have served it, and a debugger test wearing it is coverage nobody knows they have lost.
+
 The live-app tests are the expensive part, and they are phased by what each one can share (D33, D35).
 A launch of the UWP probe costs about 6.5 seconds and the XAML work in a test costs about 1.2, so the
 question that decides the suite's growth is what a *new* test costs. Three ways to ask for the app,

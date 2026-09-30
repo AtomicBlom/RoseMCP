@@ -16,11 +16,11 @@ public sealed class InspectorOptionsTests
 	{
 		var options = InspectorOptions.Parse([]);
 
-		Assert.Equal("127.0.0.1", options.Host);
-		Assert.Equal(5077, options.Port);
-		Assert.Null(options.Token);
-		Assert.Null(options.SessionId);
-		Assert.Equal("http://127.0.0.1:5077/", options.BaseAddress.ToString());
+		options.Host.ShouldBe("127.0.0.1");
+		options.Port.ShouldBe(5077);
+		options.Token.ShouldBeNull();
+		options.SessionId.ShouldBeNull();
+		options.BaseAddress.ToString().ShouldBe("http://127.0.0.1:5077/");
 	}
 
 	[Test]
@@ -28,10 +28,10 @@ public sealed class InspectorOptionsTests
 	{
 		var options = InspectorOptions.Parse(["--port", "6100", "--token", "abc123", "--session", "a1b2c3d4"]);
 
-		Assert.Equal(6100, options.Port);
-		Assert.Equal("abc123", options.Token);
-		Assert.Equal("a1b2c3d4", options.SessionId);
-		Assert.Equal("http://127.0.0.1:6100/", options.BaseAddress.ToString());
+		options.Port.ShouldBe(6100);
+		options.Token.ShouldBe("abc123");
+		options.SessionId.ShouldBe("a1b2c3d4");
+		options.BaseAddress.ToString().ShouldBe("http://127.0.0.1:6100/");
 	}
 
 	/// <summary>
@@ -43,7 +43,7 @@ public sealed class InspectorOptionsTests
 	{
 		var options = InspectorOptions.Parse(["--port", "5077"]);
 
-		Assert.Null(options.Token);
+		options.Token.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -55,18 +55,16 @@ public sealed class InspectorOptionsTests
 	public void The_instance_key_is_the_process_being_debugged()
 	{
 		var byProcess = InspectorOptions.Parse(["--session", "s1", "--target-pid", "4242"]);
-		Assert.Equal(4242, byProcess.TargetProcessId);
-		Assert.Equal("RoseMcp.Inspector:pid:4242", byProcess.InstanceKey);
+		byProcess.TargetProcessId.ShouldBe(4242);
+		byProcess.InstanceKey.ShouldBe("RoseMcp.Inspector:pid:4242");
 
 		// Two sessions over one process are one window, which is the whole point of keying on it.
-		Assert.Equal(
-			byProcess.InstanceKey,
-			InspectorOptions.Parse(["--session", "s2", "--target-pid", "4242"]).InstanceKey);
+		InspectorOptions.Parse(["--session", "s2", "--target-pid", "4242"]).InstanceKey.ShouldBe(
+			byProcess.InstanceKey);
 
 		// Two processes are two windows.
-		Assert.NotEqual(
-			byProcess.InstanceKey,
-			InspectorOptions.Parse(["--session", "s1", "--target-pid", "77"]).InstanceKey);
+		InspectorOptions.Parse(["--session", "s1", "--target-pid", "77"]).InstanceKey.ShouldNotBe(
+			byProcess.InstanceKey);
 	}
 
 	/// <summary>
@@ -76,15 +74,15 @@ public sealed class InspectorOptionsTests
 	[Test]
 	public void Without_a_process_the_key_falls_back()
 	{
-		Assert.Equal("RoseMcp.Inspector:session:s1", InspectorOptions.Parse(["--session", "s1"]).InstanceKey);
-		Assert.Equal("RoseMcp.Inspector", InspectorOptions.Parse([]).InstanceKey);
+		InspectorOptions.Parse(["--session", "s1"]).InstanceKey.ShouldBe("RoseMcp.Inspector:session:s1");
+		InspectorOptions.Parse([]).InstanceKey.ShouldBe("RoseMcp.Inspector");
 	}
 
 	[Test]
 	public void A_target_pid_that_is_not_a_number_is_refused()
 	{
-		Assert.Throws<ArgumentException>(() => InspectorOptions.Parse(["--target-pid", "many"]));
-		Assert.Throws<ArgumentException>(() => InspectorOptions.Parse(["--target-pid"]));
+		Should.Throw<ArgumentException>(() => InspectorOptions.Parse(["--target-pid", "many"])).ShouldBeOfType<ArgumentException>();
+		Should.Throw<ArgumentException>(() => InspectorOptions.Parse(["--target-pid"])).ShouldBeOfType<ArgumentException>();
 	}
 
 	[Test]
@@ -95,12 +93,12 @@ public sealed class InspectorOptionsTests
 	[Arguments("--host")]
 	public void A_switch_that_cannot_be_honoured_is_refused(string argument)
 	{
-		Assert.Throws<ArgumentException>(() => InspectorOptions.Parse([argument]));
+		Should.Throw<ArgumentException>(() => InspectorOptions.Parse([argument])).ShouldBeOfType<ArgumentException>();
 	}
 
 	[Test]
 	public void A_port_that_is_not_a_number_is_refused()
 	{
-		Assert.Throws<ArgumentException>(() => InspectorOptions.Parse(["--port", "http"]));
+		Should.Throw<ArgumentException>(() => InspectorOptions.Parse(["--port", "http"])).ShouldBeOfType<ArgumentException>();
 	}
 }

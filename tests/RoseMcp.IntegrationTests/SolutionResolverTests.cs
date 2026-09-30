@@ -16,7 +16,7 @@ public sealed class SolutionResolverTests
 
 		var resolved = SolutionResolver.Resolve(fixture.Path("Simple", "Core", "Calculator.cs"));
 
-		Assert.Equal(fixture.SolutionPath, resolved, ignoreCase: true);
+		resolved.ShouldBe(fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	[Test]
@@ -26,7 +26,7 @@ public sealed class SolutionResolverTests
 
 		var resolved = SolutionResolver.Resolve(fixture.Path("Simple", "App"));
 
-		Assert.Equal(fixture.SolutionPath, resolved, ignoreCase: true);
+		resolved.ShouldBe(fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	[Test]
@@ -34,7 +34,7 @@ public sealed class SolutionResolverTests
 	{
 		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
 
-		Assert.Equal(fixture.SolutionPath, SolutionResolver.Resolve(fixture.SolutionPath), ignoreCase: true);
+		SolutionResolver.Resolve(fixture.SolutionPath).ShouldBe(fixture.SolutionPath, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>A project with no solution above it is still perfectly loadable.</summary>
@@ -51,8 +51,8 @@ public sealed class SolutionResolverTests
 
 		try
 		{
-			Assert.Equal(project, SolutionResolver.Resolve(project), ignoreCase: true);
-			Assert.Equal(project, SolutionResolver.Resolve(Path.Combine(projectDirectory, "Thing.cs")), ignoreCase: true);
+			SolutionResolver.Resolve(project).ShouldBe(project, StringCompareShould.IgnoreCase);
+			SolutionResolver.Resolve(Path.Combine(projectDirectory, "Thing.cs")).ShouldBe(project, StringCompareShould.IgnoreCase);
 		}
 		finally
 		{
@@ -63,9 +63,9 @@ public sealed class SolutionResolverTests
 	[Test]
 	public void Says_what_to_pass_when_nothing_can_be_resolved()
 	{
-		var error = Assert.Throws<ArgumentException>(() => SolutionResolver.Resolve(NowhereDirectory.Path()));
+		var error = Should.Throw<ArgumentException>(() => SolutionResolver.Resolve(NowhereDirectory.Path())).ShouldBeOfType<ArgumentException>();
 
-		Assert.Contains(".sln", error.Message, StringComparison.Ordinal);
+		error.Message.ShouldContain(".sln", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -80,7 +80,7 @@ public sealed class SolutionResolverTests
 
 		var resolved = SolutionResolver.Resolve(Path.Combine(repository.Root, "Wizard", "Thing.cs"));
 
-		Assert.Equal(repository.Main, resolved, ignoreCase: true);
+		resolved.ShouldBe(repository.Main, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>Containment works from a directory inside the project, not just from a file in it.</summary>
@@ -91,7 +91,7 @@ public sealed class SolutionResolverTests
 
 		var resolved = SolutionResolver.Resolve(Path.Combine(repository.Root, "Gather"));
 
-		Assert.Equal(repository.Installer, resolved, ignoreCase: true);
+		resolved.ShouldBe(repository.Installer, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -103,13 +103,13 @@ public sealed class SolutionResolverTests
 	{
 		using var repository = new TwoSolutionRepository();
 
-		var error = Assert.Throws<AmbiguousSolutionException>(
-			() => SolutionResolver.Resolve(repository.Root));
+		var error = Should.Throw<AmbiguousSolutionException>(
+			() => SolutionResolver.Resolve(repository.Root)).ShouldBeOfType<AmbiguousSolutionException>();
 
-		Assert.Contains(Path.GetFileName(repository.Main), error.Message, StringComparison.Ordinal);
-		Assert.Contains(Path.GetFileName(repository.Installer), error.Message, StringComparison.Ordinal);
-		Assert.Contains("rosemcp.json", error.Message, StringComparison.Ordinal);
-		Assert.Equal(2, error.Candidates.Count);
+		error.Message.ShouldContain(Path.GetFileName(repository.Main), Case.Sensitive);
+		error.Message.ShouldContain(Path.GetFileName(repository.Installer), Case.Sensitive);
+		error.Message.ShouldContain("rosemcp.json", Case.Sensitive);
+		error.Candidates.Count.ShouldBe(2);
 	}
 
 	[Test]
@@ -118,7 +118,7 @@ public sealed class SolutionResolverTests
 		using var repository = new TwoSolutionRepository();
 		repository.Pin(Path.GetFileName(repository.Main));
 
-		Assert.Equal(repository.Main, SolutionResolver.Resolve(repository.Root), ignoreCase: true);
+		SolutionResolver.Resolve(repository.Root).ShouldBe(repository.Main, StringCompareShould.IgnoreCase);
 	}
 
 	/// <summary>
@@ -141,8 +141,8 @@ public sealed class SolutionResolverTests
 
 		var choice = SolutionResolver.Choose(Path.Combine(repository.Root, "Wizard", "Thing.cs"));
 
-		Assert.Equal(repository.Main, choice.SolutionPath, ignoreCase: true);
-		Assert.Contains("compiles", choice.Reason, StringComparison.Ordinal);
+		choice.SolutionPath.ShouldBe(repository.Main, StringCompareShould.IgnoreCase);
+		choice.Reason.ShouldContain("compiles", Case.Sensitive);
 	}
 
 	/// <summary>A pin naming something that is not there must not stop the repository working.</summary>
@@ -152,7 +152,7 @@ public sealed class SolutionResolverTests
 		using var repository = new TwoSolutionRepository();
 		repository.Pin("Gone.slnx");
 
-		Assert.Throws<AmbiguousSolutionException>(() => SolutionResolver.Resolve(repository.Root));
+		Should.Throw<AmbiguousSolutionException>(() => SolutionResolver.Resolve(repository.Root)).ShouldBeOfType<AmbiguousSolutionException>();
 	}
 
 	[Test]
@@ -162,9 +162,9 @@ public sealed class SolutionResolverTests
 
 		var choice = SolutionResolver.Choose(Path.Combine(repository.Root, "Wizard", "Thing.cs"));
 
-		Assert.True(choice.WasContested);
-		Assert.Equal(2, choice.Candidates.Count);
-		Assert.Contains("compiles", choice.Reason, StringComparison.Ordinal);
+		choice.WasContested.ShouldBeTrue();
+		choice.Candidates.Count.ShouldBe(2);
+		choice.Reason.ShouldContain("compiles", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -180,9 +180,9 @@ public sealed class SolutionResolverTests
 
 		var overlaps = SolutionResolver.SiblingsSharing(repository.Main, [changed]);
 
-		var overlap = Assert.Single(overlaps);
-		Assert.Equal(repository.Installer, overlap.SolutionPath, ignoreCase: true);
-		Assert.Equal(1, overlap.SharedFileCount);
+		var overlap = overlaps.ShouldHaveSingleItem();
+		overlap.SolutionPath.ShouldBe(repository.Installer, StringCompareShould.IgnoreCase);
+		overlap.SharedFileCount.ShouldBe(1);
 	}
 
 	[Test]
@@ -191,7 +191,7 @@ public sealed class SolutionResolverTests
 		using var repository = new TwoSolutionRepository();
 		var changed = Path.Combine(repository.Root, "Wizard", "Thing.cs");
 
-		Assert.Empty(SolutionResolver.SiblingsSharing(repository.Main, [changed]));
+		SolutionResolver.SiblingsSharing(repository.Main, [changed]).ShouldBeEmpty();
 	}
 
 	[Test]
@@ -201,7 +201,7 @@ public sealed class SolutionResolverTests
 
 		var choice = SolutionResolver.Choose(fixture.Path("Simple", "Core", "Calculator.cs"));
 
-		Assert.False(choice.WasContested, "one candidate is no contest");
+		choice.WasContested.ShouldBeFalse("one candidate is no contest");
 	}
 
 	/// <summary>

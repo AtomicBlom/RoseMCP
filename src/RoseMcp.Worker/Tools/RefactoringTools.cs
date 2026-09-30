@@ -339,6 +339,47 @@ public sealed class RefactoringTools(
 	}
 
 	[McpServerTool(
+		Name = ToolNames.ReplacePattern,
+		Title = "Rewrite a code pattern everywhere",
+		ReadOnly = false,
+		Destructive = true,
+		Idempotent = false,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.ReplacePattern)]
+	public async Task<PatternRewriteResult> ReplacePatternAsync(
+		IProgress<ProgressNotificationValue> progress,
+		[Description(ToolDescriptions.RulesArgument)] PatternRule[] rules,
+		[Description(ToolDescriptions.PatternUsingsArgument)] string[]? usings = null,
+		[Description(ToolDescriptions.PatternFilePathsArgument)] string[]? filePaths = null,
+		[Description(ToolDescriptions.PatternApplyArgument)] bool apply = true,
+		[Description(ToolDescriptions.VerifyArgument)] bool verify = true,
+		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
+		CancellationToken cancellationToken = default)
+	{
+		// A mass rewrite binds its rules in every project in scope and scans every document, so the
+		// wait is worth reporting as it goes.
+		var (waiting, working) = WorkProgress.Split(progress);
+		using var following = sharedWork.Follow(waiting);
+
+		var session = await host.SessionAsync();
+
+		var request = new ReplacePatternRequest
+		{
+			Rules = rules,
+			Usings = usings ?? [],
+			FilePaths = filePaths ?? [],
+			Apply = apply,
+			Verify = verify,
+			ExpectedRevision = expectedRevision,
+		};
+
+		return await session.MutateAsync(
+			(snapshot, token) => ReplacePatternService.ReplaceAsync(snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+			cancellationToken);
+	}
+
+	[McpServerTool(
 		Name = ToolNames.AddUsing,
 		Title = "Import a namespace into a file",
 		ReadOnly = false,

@@ -17,6 +17,20 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   span when the caller wrote one member rather than a file: a repository whose endings are already
   inconsistent would otherwise have every line rewritten by a one-member change, which buries the
   edit in a diff nobody can review.
+- **A file's layout is decided once per write, from the file as it was, and the formatter is told
+  it.** When each pass worked a file's indentation and ending out for itself, the answers disagreed,
+  on lines nothing asked to change:
+  - Roslyn's formatter, told nothing, sets the whitespace in front of the token after what it formats
+    with its own four spaces. So an edit in a tab-indented file with no .editorconfig re-indented the
+    member after it.
+  - A new file took the ending of the code the caller sent, which is LF whatever the repository uses.
+
+  `Whitespace.RulesForAsync` reads what the repository declares: an .editorconfig covering the file,
+  from Roslyn or from disk where the project was never given one, then .gitattributes for the
+  ending. Otherwise it reads what the file already does or, for a new file, what the files nearest
+  it do. It never reads the payload. Every pass takes that one value: `FormattingOptionsAsync` fills
+  in the formatter's options wherever Roslyn wasn't told, and the text pass uses the same rules. See
+  [the decision](../decisions/a-files-layout-comes-from-what-declares-it-then-from-the-file.md).
 - **A change a diff cannot show is said in words.** A unified diff compares the content of lines,
   and a terminator is not content -- so rewriting a file's endings produces no hunk at all. That is
   the change `rose_format` is called for most often, in exactly the repositories where it matters:
@@ -25,6 +39,29 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   call that did nothing. So `SolutionWriter` counts the lines that moved and every writing tool
   passes the sentence on, rather than the alternatives: a whole-file hunk nobody can read, or
   inventing a hunk header that is not a patch.
+- **A write names every line it changed that nothing it was asked to do reaches.** Layout the
+  formatter has no rule about is layout nothing checks. A body reflowed by an insertion, a value
+  pulled up onto its declaration's line, a comment dropped from between two matched statements: each
+  compiles, passes `dotnet format` and reports success. A caller who can find any of it only by
+  reading the file back has no reason left to use a tool rather than a text edit. So
+  `EditPipeline.WriteAsync` takes an `Asked`, the spans of each file as it was that the request
+  reaches. `Overreach` diffs the lines and names every one that changed outside those spans, first
+  among what the result says. The spans are declared by the tool that makes the edit, where the
+  rewrite is worked out, rather than inferred from what changed, because a span drawn to fit the
+  change would cover the damage it exists to find. Each is as narrow as the request:
+  - A whole body asks for the body, and for the end of the signature only when an arrow trades
+    places with a block.
+  - An anchor asks for each token it matched, so a comment between two of them is not the caller's.
+  - An insertion asks for the place it goes.
+
+  A diff pairs identical lines arbitrarily, so where it puts a run isn't always where the edit put
+  it. A run that went in or came out with nothing in its place is asked for if any place it slides
+  to is, since a documented member added in front of another begins with the same `/// <summary>`.
+  Blank lines beside what was asked go with it for the same reason. It is a sentence rather than a
+  refusal, because a line can change harmlessly, such as
+  trailing whitespace trimmed where the file asks for it, and only the caller holding the diff can
+  tell that from a reflow. It says nothing about what happens inside the spans: a replacement
+  written at the wrong depth is still the replacement the caller asked for.
 - **A file goes back in the encoding it arrived in.** A byte order mark is part of the file, and the
   two calls that look like the obvious way to do this get it wrong in opposite directions.
   `File.WriteAllText` is UTF-8 *without* a mark whatever the file was, so a rewrite routed through it
@@ -51,6 +88,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   which is how a text edit path produces an anchor found in the wrong place. Where a name matches
   more than one declaration it refuses and lists them, because writing correct code into the wrong
   overload is the only failure with no symptom at all.
+- **A write made in rounds finds what it marked, not where it was.** A tool that rewrites one part of
+  a file and then another cannot look the second up by its span from before the first. Qualifying a
+  call above a declaration moves the declaration, and a lookup that finds nothing and carries on
+  leaves a move's source in place: the member declared in both types, in code that compiles because
+  the types differ, so neither verification nor the overreach sentence says a word. So
+  `MoveMemberService` annotates the declaration and the type it goes into before anything is
+  rewritten, finds both by annotation afterwards, and treats a mark it cannot find as an error rather
+  than returning the solution unchanged.
 - **Written code is indented for where it goes, because the formatter only does half of it.** Roslyn
   reindents statements and moves braces -- rules it has -- so a line wrapped by hand *inside a body*
   comes out right. A wrapped parameter list is layout it has no rule about, so it keeps whatever
@@ -118,3 +163,17 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   route to any of it: that lives in `Microsoft.CodeAnalysis.CSharp.Features`, which is not
   referenced, and what *is* registered for CS0103 offers to generate the missing member -- the
   wrong fix, confidently, for a name that exists already.
+- **A structural rewrite moves the caller's syntax; it never regenerates it.** What a
+  `rose_replace_pattern` placeholder captured is written back as the node it was, comments beside
+  it included, so a verbatim string, a cast or the spelling of a name arrives exactly as written.
+  Only the layout at its edges is dropped, because that described where it used to sit. Where a
+  capture becomes a receiver it is parenthesised unless it is a form that cannot need it, and a
+  conditional access always is: `a?.B.ShouldBe(1)` compiles and skips the assertion whenever `a` is
+  null. The formatter is given each replacement's own span, not its full span, since the indentation
+  in front of it is the caller's.
+- **A replacement that does not compile is never written.** Every replacement is compiled in
+  memory first; one that brings an error it did not have before is put back, with the compiler's
+  reason in the result, and never handed to a later rule -- that fall-through is how a string check
+  lands on a collection rule with its arguments reversed. A preview runs the same rounds, so its
+  list of skipped sites is the list an apply would skip. See
+  [the decision](../decisions/code-is-rewritten-by-what-it-binds-to.md).

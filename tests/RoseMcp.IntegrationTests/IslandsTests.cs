@@ -1,3 +1,5 @@
+using RoseMcp.TestSupport;
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -23,29 +25,35 @@ public sealed class IslandsTests
 			filePath: null,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var type = Assert.Single(result.Types);
+		var type = result.Types.ShouldHaveSingleItem();
 
-		Assert.Equal("TwoJobs", type.Name);
-		Assert.Equal("Library", type.Namespace);
-		Assert.Equal(2, type.Islands.Count);
-		Assert.All(type.Islands, island => Assert.Equal("state", island.Kind));
+		type.Name.ShouldBe("TwoJobs");
+		type.Namespace.ShouldBe("Library");
+		type.Islands.Count.ShouldBe(2);
+		foreach (var island in type.Islands)
+		{
+			island.Kind.ShouldBe("state");
+		}
 
 		var delivery = type.Islands.Single(island => island.Members.Contains("Accept"));
-		Assert.Equal(["Accept", "Deliver", "Delivered", "Pending"], delivery.Members);
+		delivery.Members.ShouldBe(["Accept", "Deliver", "Delivered", "Pending"]);
 
 		// The state it would take with it, which is what makes this an extraction rather than a move.
-		Assert.Equal(["_delivered", "_inbox"], delivery.Fields);
+		delivery.Fields.ShouldBe(["_delivered", "_inbox"]);
 
 		var failures = type.Islands.Single(island => island.Members.Contains("Fail"));
-		Assert.Equal(["Fail", "Failures", "Retries", "Retry"], failures.Members);
-		Assert.Equal(["_errors", "_retries"], failures.Fields);
+		failures.Members.ShouldBe(["Fail", "Failures", "Retries", "Retry"]);
+		failures.Fields.ShouldBe(["_errors", "_retries"]);
 
 		// Nothing is read widely enough to be the type's spine, which is the other half of the finding:
 		// there is no shared state holding the two halves together.
-		Assert.Empty(type.Spine);
+		type.Spine.ShouldBeEmpty();
 
 		// A state island has no single door, so nothing claims to own it.
-		Assert.All(type.Islands, island => Assert.Null(island.Owner));
+		foreach (var island in type.Islands)
+		{
+			island.Owner.ShouldBeNull();
+		}
 	}
 
 	/// <summary>
@@ -66,19 +74,22 @@ public sealed class IslandsTests
 			filePath: null,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var type = Assert.Single(result.Types);
-		var island = Assert.Single(type.Islands);
+		var type = result.Types.ShouldHaveSingleItem();
+		var island = type.Islands.ShouldHaveSingleItem();
 
-		Assert.Equal("reach", island.Kind);
-		Assert.Equal("Render", island.Owner);
-		Assert.Equal(["Pad", "Render", "Trim", "Wrap"], island.Members);
+		island.Kind.ShouldBe("reach");
+		island.Owner.ShouldBe("Render");
+		island.Members.ShouldBe(["Pad", "Render", "Trim", "Wrap"]);
 
 		// Render reaches Indent, and so does Plain. A helper two doors reach belongs to neither, and
 		// taking it would break the one left behind.
-		Assert.DoesNotContain("Indent", island.Members);
+		island.Members.ShouldNotContain("Indent");
 
 		// Line ranges, because collecting members scattered through a file is the part that costs.
-		Assert.All(island.Spans, span => Assert.Matches(@"^\d+-\d+$", span));
+		foreach (var span in island.Spans)
+		{
+			span.ShouldMatch(@"^\d+-\d+$");
+		}
 	}
 
 	/// <summary>
@@ -98,14 +109,14 @@ public sealed class IslandsTests
 			filePath: null,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var type = Assert.Single(result.Types);
+		var type = result.Types.ShouldHaveSingleItem();
 
-		Assert.Empty(type.Islands);
-		Assert.Equal(["_lines"], type.Spine);
-		Assert.Equal(4, type.Members);
+		type.Islands.ShouldBeEmpty();
+		type.Spine.ShouldBe(["_lines"]);
+		type.Members.ShouldBe(4);
 
 		// Said out loud, because an empty list reads the same as a question that failed to run.
-		Assert.Contains(result.Notices, notice => notice.Contains("holds together", StringComparison.Ordinal));
+		result.Notices.ShouldContain(notice => notice.Contains("holds together", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -126,21 +137,24 @@ public sealed class IslandsTests
 			filePath: null,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var type = Assert.Single(result.Types);
+		var type = result.Types.ShouldHaveSingleItem();
 
-		Assert.Equal(2, type.Islands.Count);
+		type.Islands.Count.ShouldBe(2);
 
 		var whole = type.Islands.Single(island => island.Owner == "Publish");
 		var part = type.Islands.Single(island => island.Owner == "Envelope");
 
-		Assert.Equal(["Body", "Envelope", "Footer", "Header", "Publish", "Sign", "Stamp"], whole.Members);
-		Assert.Equal(["Body", "Envelope", "Footer", "Header", "Stamp"], part.Members);
+		whole.Members.ShouldBe(["Body", "Envelope", "Footer", "Header", "Publish", "Sign", "Stamp"]);
+		part.Members.ShouldBe(["Body", "Envelope", "Footer", "Header", "Stamp"]);
 
 		// The outer one is inside nothing, and the inner one names what it is inside rather than
 		// leaving the reader to compare two lists.
-		Assert.Null(whole.Within);
-		Assert.Equal("Publish", part.Within);
-		Assert.All(part.Members, member => Assert.Contains(member, whole.Members));
+		whole.Within.ShouldBeNull();
+		part.Within.ShouldBe("Publish");
+		foreach (var member in part.Members)
+		{
+			whole.Members.ShouldContain(member);
+		}
 	}
 
 	/// <summary>A path answers for every type the file declares, the same way an outline does.</summary>
@@ -157,7 +171,7 @@ public sealed class IslandsTests
 			fixture.Path("Members", "Library", "Islands.cs"),
 			TestContext.Current!.Execution.CancellationToken);
 
-		Assert.Equal(["TwoJobs", "OneDoor", "Cohesive", "Layered"], result.Types.Select(one => one.Name));
+		result.Types.Select(one => one.Name).ShouldBe(["TwoJobs", "OneDoor", "Cohesive", "Layered"]);
 	}
 
 	/// <summary>
@@ -170,12 +184,12 @@ public sealed class IslandsTests
 		await using var session = await TestSession.OpenAsync(fixture);
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		var refusal = await Assert.ThrowsAsync<ArgumentException>(() => IslandService.IslandsAsync(
+		var refusal = await Should.ThrowAsync<ArgumentException>(() => IslandService.IslandsAsync(
 			snapshot,
 			type: null,
 			filePath: null,
-			TestContext.Current!.Execution.CancellationToken));
+			TestContext.Current!.Execution.CancellationToken)).OfExactType();
 
-		Assert.Contains("Namespace.Type", refusal.Message, StringComparison.Ordinal);
+		refusal.Message.ShouldContain("Namespace.Type", Case.Sensitive);
 	}
 }

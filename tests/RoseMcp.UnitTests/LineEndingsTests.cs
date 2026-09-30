@@ -1,3 +1,4 @@
+
 namespace RoseMcp.UnitTests;
 
 /// <summary>
@@ -12,9 +13,9 @@ public sealed class LineEndingsTests
 	{
 		var changed = LineEndings.Changed("one\ntwo\nthree\n", "one\r\ntwo\r\nthree\r\n");
 
-		Assert.NotNull(changed);
-		Assert.Equal(3, changed.Value.Lines);
-		Assert.Equal("CRLF", changed.Value.To);
+		changed.ShouldNotBeNull();
+		changed.Value.Lines.ShouldBe(3);
+		changed.Value.To.ShouldBe("CRLF");
 	}
 
 	/// <summary>The whole point of the return being nullable: no change is not a change of zero.</summary>
@@ -23,7 +24,7 @@ public sealed class LineEndingsTests
 	[Arguments("one\ntwo\n", "one\ntwo\n")]
 	[Arguments("", "")]
 	public void Says_nothing_where_the_terminators_are_the_same(string before, string after) =>
-		Assert.Null(LineEndings.Changed(before, after));
+		LineEndings.Changed(before, after).ShouldBeNull();
 
 	/// <summary>
 	/// Content changing on its own is the case the diff already covers, and reporting it here would
@@ -32,7 +33,7 @@ public sealed class LineEndingsTests
 	[Test]
 	public void Says_nothing_where_only_the_content_changed()
 	{
-		Assert.Null(LineEndings.Changed("one\r\ntwo\r\n", "one\r\nTWO\r\n"));
+		LineEndings.Changed("one\r\ntwo\r\n", "one\r\nTWO\r\n").ShouldBeNull();
 	}
 
 	/// <summary>A file part-converted already reports only the lines that actually moved.</summary>
@@ -41,9 +42,9 @@ public sealed class LineEndingsTests
 	{
 		var changed = LineEndings.Changed("one\r\ntwo\nthree\n", "one\r\ntwo\r\nthree\r\n");
 
-		Assert.NotNull(changed);
-		Assert.Equal(2, changed.Value.Lines);
-		Assert.Equal("CRLF", changed.Value.To);
+		changed.ShouldNotBeNull();
+		changed.Value.Lines.ShouldBe(2);
+		changed.Value.To.ShouldBe("CRLF");
 	}
 
 	/// <summary>Both directions, because a repository that wants LF is as entitled to be told.</summary>
@@ -52,8 +53,8 @@ public sealed class LineEndingsTests
 	{
 		var changed = LineEndings.Changed("one\r\ntwo\r\n", "one\ntwo\n");
 
-		Assert.NotNull(changed);
-		Assert.Equal("LF", changed.Value.To);
+		changed.ShouldNotBeNull();
+		changed.Value.To.ShouldBe("LF");
 	}
 
 	/// <summary>
@@ -66,9 +67,9 @@ public sealed class LineEndingsTests
 	{
 		var changed = LineEndings.Changed("a\nb\nc\n", "a\r\nb\r\nc\n");
 
-		Assert.NotNull(changed);
-		Assert.Equal(2, changed.Value.Lines);
-		Assert.Equal("CRLF", changed.Value.To);
+		changed.ShouldNotBeNull();
+		changed.Value.Lines.ShouldBe(2);
+		changed.Value.To.ShouldBe("CRLF");
 	}
 
 	/// <summary>
@@ -79,7 +80,7 @@ public sealed class LineEndingsTests
 	[Test]
 	public void Does_not_invent_a_change_when_lines_were_added()
 	{
-		Assert.Null(LineEndings.Changed("one\r\n", "one\r\ntwo\r\nthree\r\n"));
+		LineEndings.Changed("one\r\n", "one\r\ntwo\r\nthree\r\n").ShouldBeNull();
 	}
 
 	/// <summary>
@@ -92,9 +93,9 @@ public sealed class LineEndingsTests
 	public void Does_not_invent_a_direction_when_lines_were_removed_above_a_literal()
 	{
 		// Two imports and a three-line literal written with bare LFs, then one import dropped.
-		Assert.Null(LineEndings.Changed(
+		LineEndings.Changed(
 			"using A;\r\nusing B;\r\nx\ny\nz\n",
-			"using B;\r\nx\ny\nz\n"));
+			"using B;\r\nx\ny\nz\n").ShouldBeNull();
 	}
 
 	/// <summary>
@@ -106,9 +107,9 @@ public sealed class LineEndingsTests
 	{
 		var changed = LineEndings.Changed("using A;\r\nusing B;\r\nx\ny\nz\n", "using B;\r\nx\r\ny\r\nz\r\n");
 
-		Assert.NotNull(changed);
-		Assert.Equal(3, changed.Value.Lines);
-		Assert.Equal("CRLF", changed.Value.To);
+		changed.ShouldNotBeNull();
+		changed.Value.Lines.ShouldBe(3);
+		changed.Value.To.ShouldBe("CRLF");
 	}
 
 	[Test]
@@ -116,5 +117,5 @@ public sealed class LineEndingsTests
 	[Arguments("\n", "LF")]
 	[Arguments("\r", "CR")]
 	public void Names_a_terminator_the_way_a_person_would(string ending, string expected) =>
-		Assert.Equal(expected, LineEndings.Name(ending));
+		LineEndings.Name(ending).ShouldBe(expected);
 }

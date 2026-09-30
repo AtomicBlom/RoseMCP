@@ -21,27 +21,27 @@ public sealed class ActivityLogTests
 
 		using (var scope = log.Begin(Solution, "rose_diagnostics", "solution"))
 		{
-			var running = Assert.Single(log.Running(Solution));
+			var running = log.Running(Solution).ShouldHaveSingleItem();
 
-			Assert.Equal("rose_diagnostics", running.Operation);
-			Assert.Equal("solution", running.Target);
-			Assert.Equal(ActivityOutcome.Running, running.Outcome);
-			Assert.Empty(log.Recent(Solution));
+			running.Operation.ShouldBe("rose_diagnostics");
+			running.Target.ShouldBe("solution");
+			running.Outcome.ShouldBe(ActivityOutcome.Running);
+			log.Recent(Solution).ShouldBeEmpty();
 
 			scope.Report(new ProgressNotificationValue { Progress = 30, Total = 100, Message = "Analysing Core" });
 
-			var reported = Assert.Single(log.Running(Solution));
+			var reported = log.Running(Solution).ShouldHaveSingleItem();
 
-			Assert.Equal("Analysing Core", reported.Message);
-			Assert.Equal(30, reported.PercentComplete);
+			reported.Message.ShouldBe("Analysing Core");
+			reported.PercentComplete.ShouldBe(30);
 		}
 
-		Assert.Empty(log.Running(Solution));
+		log.Running(Solution).ShouldBeEmpty();
 
-		var finished = Assert.Single(log.Recent(Solution));
+		var finished = log.Recent(Solution).ShouldHaveSingleItem();
 
-		Assert.Equal(ActivityOutcome.Succeeded, finished.Outcome);
-		Assert.Null(finished.Error);
+		finished.Outcome.ShouldBe(ActivityOutcome.Succeeded);
+		finished.Error.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -57,10 +57,10 @@ public sealed class ActivityLogTests
 		scope.Report(new ProgressNotificationValue { Progress = 50, Total = 100, Message = "Loading" });
 		scope.Report(new ProgressNotificationValue { Progress = 50, Message = "Searching the solution" });
 
-		var running = Assert.Single(log.Running(Solution));
+		var running = log.Running(Solution).ShouldHaveSingleItem();
 
-		Assert.Null(running.PercentComplete);
-		Assert.Equal("Searching the solution", running.Message);
+		running.PercentComplete.ShouldBeNull();
+		running.Message.ShouldBe("Searching the solution");
 	}
 
 	/// <summary>Progress the client asked for still reaches the client, not just the tray.</summary>
@@ -73,10 +73,10 @@ public sealed class ActivityLogTests
 		using var scope = log.Begin(Solution, "rose_rename_symbol", "Calculator.cs:7", upstream);
 		scope.Report(new ProgressNotificationValue { Progress = 10, Total = 100, Message = "Renaming" });
 
-		var forwarded = Assert.Single(upstream.Values);
+		var forwarded = upstream.Values.ShouldHaveSingleItem();
 
-		Assert.Equal("Renaming", forwarded.Message);
-		Assert.Equal(10, forwarded.Progress);
+		forwarded.Message.ShouldBe("Renaming");
+		forwarded.Progress.ShouldBe(10);
 	}
 
 	[Test]
@@ -89,11 +89,11 @@ public sealed class ActivityLogTests
 			scope.Complete(ActivityOutcome.Failed, "the worker died");
 		}
 
-		var finished = Assert.Single(log.Recent(Solution));
+		var finished = log.Recent(Solution).ShouldHaveSingleItem();
 
 		// Disposing after a failure must not overwrite it with success.
-		Assert.Equal(ActivityOutcome.Failed, finished.Outcome);
-		Assert.Equal("the worker died", finished.Error);
+		finished.Outcome.ShouldBe(ActivityOutcome.Failed);
+		finished.Error.ShouldBe("the worker died");
 	}
 
 	/// <summary>
@@ -112,9 +112,9 @@ public sealed class ActivityLogTests
 
 		var recent = log.Recent(Solution);
 
-		Assert.Equal(8, recent.Count);
-		Assert.Equal("call-11", recent[0].Operation);
-		Assert.Equal("call-4", recent[^1].Operation);
+		recent.Count.ShouldBe(8);
+		recent[0].Operation.ShouldBe("call-11");
+		recent[^1].Operation.ShouldBe("call-4");
 	}
 
 	/// <summary>
@@ -129,8 +129,8 @@ public sealed class ActivityLogTests
 
 		log.Forget(Solution);
 
-		Assert.Empty(log.Recent(Solution));
-		Assert.Empty(log.Running(Solution));
+		log.Recent(Solution).ShouldBeEmpty();
+		log.Running(Solution).ShouldBeEmpty();
 	}
 
 	/// <summary>
@@ -157,8 +157,8 @@ public sealed class ActivityLogTests
 			},
 			ContractJson.Options);
 
-		Assert.Contains("\"outcome\":\"Succeeded\"", json, StringComparison.Ordinal);
-		Assert.Contains("\"operation\":\"rose_diagnostics\"", json, StringComparison.Ordinal);
+		json.ShouldContain("\"outcome\":\"Succeeded\"", Case.Sensitive);
+		json.ShouldContain("\"operation\":\"rose_diagnostics\"", Case.Sensitive);
 	}
 
 	private sealed class RecordingProgress : IProgress<ProgressNotificationValue>

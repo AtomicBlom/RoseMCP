@@ -1,3 +1,5 @@
+using RoseMcp.Contracts;
+
 namespace RoseMcp.LiveApp.Xaml;
 
 /// <summary>
@@ -94,9 +96,19 @@ internal sealed record XamlChannelBounds
 	/// What to tell a caller whose provider is connected and did not answer. Distinct from every other
 	/// failure here: the provider is loaded and its pipe is up, so what has stopped is the app's UI
 	/// thread, which is the one thing none of the other messages would send anyone to look at.
+	/// <para>
+	/// Takes the request as well as the phrase for it, so that a verb which changes the app says the
+	/// wait expiring is not the same as the request not happening
+	/// (<see cref="XamlRequestKind.MayStillLand"/>). Passing the request is not optional and the
+	/// classification is not made here: a message about a timeout that does not know what timed out
+	/// is how the sentence goes missing from the verb that needed it.
+	/// </para>
 	/// </summary>
-	public static string Unanswered(string what, TimeSpan reply) =>
-		TimedOut($"the XAML provider, asked for {what}", reply);
+	/// <param name="request">The request that went unanswered, as it went on the wire.</param>
+	/// <param name="what">How to describe what was being waited for, in the words the logs use.</param>
+	/// <param name="reply">The bound that expired.</param>
+	public static string Unanswered(string request, string what, TimeSpan reply) =>
+		TimedOut($"the XAML provider, asked for {what}", reply) + XamlRequestKind.Caveat(request);
 
 	private static TimeSpan Shorter(TimeSpan bound, TimeSpan ceiling) => bound < ceiling ? bound : ceiling;
 }

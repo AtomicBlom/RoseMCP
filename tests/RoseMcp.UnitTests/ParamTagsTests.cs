@@ -28,13 +28,12 @@ public sealed class ParamTagsTests
 			""",
 			added: ["loud"]);
 
-		Assert.Equal(
+		updated.ShouldBe(
 			"""
 			/// <summary>The greeting for <paramref name="name"/>.</summary>
 			/// <param name="name">Who to greet.</param>
 			/// <param name="loud"></param>
-			""",
-			updated);
+			""");
 	}
 
 	/// <summary>
@@ -51,7 +50,7 @@ public sealed class ParamTagsTests
 			""",
 			added: ["loud"]);
 
-		Assert.Contains("""<param name="loud"></param>""", updated, StringComparison.Ordinal);
+		updated.ShouldContain("""<param name="loud"></param>""", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -70,12 +69,11 @@ public sealed class ParamTagsTests
 			""",
 			removed: ["name"]);
 
-		Assert.Equal(
+		updated.ShouldBe(
 			"""
 			/// <summary>The greeting for <paramref name="name"/>.</summary>
 			/// <param name="loud">Whether to shout.</param>
-			""",
-			updated);
+			""");
 	}
 
 	/// <summary>
@@ -94,12 +92,11 @@ public sealed class ParamTagsTests
 			removed: ["name"],
 			added: ["greeting"]);
 
-		Assert.Equal(
+		updated.ShouldBe(
 			"""
 			/// <summary>Says hello.</summary>
 			/// <param name="greeting"></param>
-			""",
-			updated);
+			""");
 	}
 
 	/// <summary>
@@ -117,14 +114,13 @@ public sealed class ParamTagsTests
 			""",
 			added: ["title"]);
 
-		Assert.Equal(
+		updated.ShouldBe(
 			"""
 			/// <summary>Says hello.</summary>
 			/// <param name="loud">Whether to shout.</param>
 			/// <param name="name">Who to greet.</param>
 			/// <param name="title"></param>
-			""",
-			updated);
+			""");
 	}
 
 	/// <summary>
@@ -151,7 +147,7 @@ public sealed class ParamTagsTests
 				""",
 			added: ["loud"]);
 
-		Assert.Equal(
+		updated.ShouldBe(
 			"""
 				/// <summary>Says hello.</summary>
 				/// <param name="name">
@@ -159,8 +155,7 @@ public sealed class ParamTagsTests
 				/// line, which is the ordinary shape for anything worth documenting.
 				/// </param>
 				/// <param name="loud"></param>
-				""",
-			updated);
+				""");
 	}
 
 	/// <summary>
@@ -170,11 +165,11 @@ public sealed class ParamTagsTests
 	[Test]
 	public void Leaves_a_member_that_documents_no_parameter_alone()
 	{
-		Assert.Null(ParamTags.Update(
+		ParamTags.Update(
 			SyntaxFactory.ParseLeadingTrivia("""/// <summary>Greets <paramref name="name"/>.</summary>"""),
 			[],
 			["loud"],
-			[]));
+			[]).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -188,7 +183,7 @@ public sealed class ParamTagsTests
 			"\t\t/// <summary>Says hello.</summary>\r\n\t\t/// <param name=\"name\">Who to greet.</param>\r\n",
 			added: ["loud"]);
 
-		Assert.EndsWith("\r\n\t\t/// <param name=\"loud\"></param>", updated, StringComparison.Ordinal);
+		updated.ShouldEndWith("\r\n\t\t/// <param name=\"loud\"></param>", Case.Sensitive);
 	}
 
 	/// <summary>

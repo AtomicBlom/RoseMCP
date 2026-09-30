@@ -11,10 +11,10 @@ public sealed class BuildPropertiesTests
 	{
 		var build = BuildProperties.Select(Options(), SolutionConfigurations.None);
 
-		Assert.Null(build.Configuration);
-		Assert.Null(build.Platform);
-		Assert.Empty(build.AsGlobalProperties());
-		Assert.Null(build.Notice);
+		build.Configuration.ShouldBeNull();
+		build.Platform.ShouldBeNull();
+		build.AsGlobalProperties().ShouldBeEmpty();
+		build.Notice.ShouldBeNull();
 	}
 
 	[Test]
@@ -28,9 +28,9 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(Options(), declared);
 
-		Assert.Null(build.Configuration);
-		Assert.Null(build.Platform);
-		Assert.Null(build.Notice);
+		build.Configuration.ShouldBeNull();
+		build.Platform.ShouldBeNull();
+		build.Notice.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -49,7 +49,7 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(Options(), declared);
 
-		Assert.True(build.PlatformWasChosen);
+		build.PlatformWasChosen.ShouldBeTrue();
 	}
 
 	[Test]
@@ -64,8 +64,8 @@ public sealed class BuildPropertiesTests
 		var options = new WorkerOptions { SolutionPath = "S.slnx", Platform = "x64" };
 		var build = BuildProperties.Select(options, declared);
 
-		Assert.Equal("x64", build.Platform);
-		Assert.False(build.PlatformWasChosen, "a platform the caller named was not chosen by this");
+		build.Platform.ShouldBe("x64");
+		build.PlatformWasChosen.ShouldBeFalse("a platform the caller named was not chosen by this");
 	}
 
 	/// <summary>
@@ -77,7 +77,7 @@ public sealed class BuildPropertiesTests
 	{
 		var build = BuildProperties.Select(Options(), SolutionConfigurations.None);
 
-		Assert.False(build.PlatformWasChosen, "MSBuild's own default is not a choice this made");
+		build.PlatformWasChosen.ShouldBeFalse("MSBuild's own default is not a choice this made");
 	}
 
 	/// <summary>
@@ -96,12 +96,12 @@ public sealed class BuildPropertiesTests
 			@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\B\bin\ARM64\Debug\B.dll'",
 		]);
 
-		Assert.NotNull(suspicion);
-		Assert.Contains("'ARM64' was chosen", suspicion, StringComparison.Ordinal);
-		Assert.Contains("2 load diagnostic(s)", suspicion, StringComparison.Ordinal);
+		suspicion.ShouldNotBeNull();
+		suspicion.ShouldContain("'ARM64' was chosen", Case.Sensitive);
+		suspicion.ShouldContain("2 load diagnostic(s)", Case.Sensitive);
 
 		// And it names the way out, which is the other platform rather than a general instruction.
-		Assert.Contains("platform=x64", suspicion, StringComparison.Ordinal);
+		suspicion.ShouldContain("platform=x64", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -113,7 +113,7 @@ public sealed class BuildPropertiesTests
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]) with { PlatformWasChosen = false };
 
-		Assert.Null(build.SuspectWrongPlatform([@"Cannot resolve 'D:\repo\A\bin\ARM64\Debug\A.dll'"]));
+		build.SuspectWrongPlatform([@"Cannot resolve 'D:\repo\A\bin\ARM64\Debug\A.dll'"]).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -125,11 +125,11 @@ public sealed class BuildPropertiesTests
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
 
-		Assert.Null(build.SuspectWrongPlatform(
+		build.SuspectWrongPlatform(
 		[
 			"Found project reference without a matching metadata reference: A.csproj",
 			@"Cannot resolve Assembly or Windows Metadata file 'D:\repo\A\bin\x64\Debug\A.dll'",
-		]));
+		]).ShouldBeNull();
 	}
 
 	/// <summary>Posix separators too, so this reads the same on Linux.</summary>
@@ -138,7 +138,7 @@ public sealed class BuildPropertiesTests
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
 
-		Assert.NotNull(build.SuspectWrongPlatform(["Cannot resolve '/home/me/repo/A/bin/ARM64/Debug/A.dll'"]));
+		build.SuspectWrongPlatform(["Cannot resolve '/home/me/repo/A/bin/ARM64/Debug/A.dll'"]).ShouldNotBeNull();
 	}
 
 	/// <summary>
@@ -150,7 +150,7 @@ public sealed class BuildPropertiesTests
 	{
 		var build = Chose("ARM64", ["x64", "ARM64"]);
 
-		Assert.Null(build.SuspectWrongPlatform(["ARM64 support for this SDK is preview."]));
+		build.SuspectWrongPlatform(["ARM64 support for this SDK is preview."]).ShouldBeNull();
 	}
 
 	private static BuildProperties Chose(string platform, string[] declared) => new()
@@ -171,15 +171,15 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(Options(), declared);
 
-		Assert.Equal("Debug-2024", build.Configuration);
-		Assert.Equal("x64", build.Platform);
-		Assert.Equal("Debug-2024|x64", build.Describe());
+		build.Configuration.ShouldBe("Debug-2024");
+		build.Platform.ShouldBe("x64");
+		build.Describe().ShouldBe("Debug-2024|x64");
 
 		// The notice has to name both the choice and the alternatives, because the choice is a guess
 		// and the caller is the only one who can correct it.
-		Assert.Contains("Debug-2024", build.Notice);
-		Assert.Contains("Debug-2025", build.Notice);
-		Assert.Contains("x64", build.Notice);
+		build.Notice!.ShouldContain("Debug-2024", Case.Sensitive);
+		build.Notice!.ShouldContain("Debug-2025", Case.Sensitive);
+		build.Notice!.ShouldContain("x64", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -205,8 +205,8 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(Options(), declared);
 
-		Assert.Equal(host, build.Platform, ignoreCase: true);
-		Assert.NotEqual(listedFirst, build.Platform, StringComparer.OrdinalIgnoreCase);
+		build.Platform.ShouldBe(host, StringCompareShould.IgnoreCase);
+		build.Platform.ShouldNotBe(listedFirst, StringComparer.OrdinalIgnoreCase);
 	}
 
 	[Test]
@@ -216,7 +216,7 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(Options(), declared);
 
-		Assert.Equal("Itanium", build.Platform);
+		build.Platform.ShouldBe("Itanium");
 	}
 
 	[Test]
@@ -227,9 +227,9 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(options, declared);
 
-		Assert.Equal("Debug-2027", build.Configuration);
-		Assert.Contains("Debug-2027", build.Notice);
-		Assert.Contains("not one this solution declares", build.Notice);
+		build.Configuration.ShouldBe("Debug-2027");
+		build.Notice!.ShouldContain("Debug-2027", Case.Sensitive);
+		build.Notice!.ShouldContain("not one this solution declares", Case.Sensitive);
 	}
 
 	[Test]
@@ -244,10 +244,10 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(options, SolutionConfigurations.None);
 
-		Assert.Equal("2027", build.AsGlobalProperties()["RevitVersion"]);
-		Assert.Equal("Release", build.AsGlobalProperties()["Configuration"]);
-		Assert.Contains("-p:RevitVersion=2027", build.AsRestoreArguments());
-		Assert.Contains("RevitVersion=2027", build.Describe());
+		build.AsGlobalProperties()["RevitVersion"].ShouldBe("2027");
+		build.AsGlobalProperties()["Configuration"].ShouldBe("Release");
+		build.AsRestoreArguments().ShouldContain("-p:RevitVersion=2027");
+		build.Describe().ShouldContain("RevitVersion=2027", Case.Sensitive);
 	}
 
 	[Test]
@@ -264,12 +264,12 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(Options(), declared, pinned);
 
-		Assert.Equal("Debug-2027", build.Configuration);
-		Assert.Equal("2027", build.AsGlobalProperties()["RevitVersion"]);
+		build.Configuration.ShouldBe("Debug-2027");
+		build.AsGlobalProperties()["RevitVersion"].ShouldBe("2027");
 
 		// Which file did it, because a caller told what it was loaded under has to be able to find
 		// the thing that decided.
-		Assert.Contains("rosemcp.json", build.Notice);
+		build.Notice!.ShouldContain("rosemcp.json", Case.Sensitive);
 	}
 
 	[Test]
@@ -292,12 +292,12 @@ public sealed class BuildPropertiesTests
 
 		var build = BuildProperties.Select(options, SolutionConfigurations.None, pinned);
 
-		Assert.Equal("Debug-2027", build.Configuration);
-		Assert.Equal("2027", build.AsGlobalProperties()["RevitVersion"]);
+		build.Configuration.ShouldBe("Debug-2027");
+		build.AsGlobalProperties()["RevitVersion"].ShouldBe("2027");
 
 		// Merged rather than replaced: overriding one property does not discard the rest.
-		Assert.Equal("kept", build.AsGlobalProperties()["Extra"]);
-		Assert.Equal("x64", build.Platform);
+		build.AsGlobalProperties()["Extra"].ShouldBe("kept");
+		build.Platform.ShouldBe("x64");
 	}
 
 	[Test]
@@ -310,9 +310,9 @@ public sealed class BuildPropertiesTests
 
 			var found = WorkspaceConfigFile.Find(Path.Combine(root.FullName, "App.slnx"));
 
-			Assert.NotNull(found);
-			Assert.Equal("Debug-2027", found.Configuration);
-			Assert.Equal("2027", found.Properties["RevitVersion"]);
+			found.ShouldNotBeNull();
+			found.Configuration.ShouldBe("Debug-2027");
+			found.Properties["RevitVersion"].ShouldBe("2027");
 		}
 		finally
 		{
@@ -337,13 +337,11 @@ public sealed class BuildPropertiesTests
 				Path.Combine(root.FullName, WorkspaceConfigFile.NameFor("Installer.slnx")),
 				"{ \"configuration\": \"Debug-2024\" }");
 
-			Assert.Equal(
-				"Debug-2024",
-				WorkspaceConfigFile.Find(Path.Combine(root.FullName, "Installer.slnx"))?.Configuration);
+			(WorkspaceConfigFile.Find(Path.Combine(root.FullName, "Installer.slnx"))?.Configuration).ShouldBe(
+				"Debug-2024");
 
-			Assert.Equal(
-				"Debug-2027",
-				WorkspaceConfigFile.Find(Path.Combine(root.FullName, "App.slnx"))?.Configuration);
+			(WorkspaceConfigFile.Find(Path.Combine(root.FullName, "App.slnx"))?.Configuration).ShouldBe(
+				"Debug-2027");
 		}
 		finally
 		{
@@ -365,7 +363,7 @@ public sealed class BuildPropertiesTests
 			File.WriteAllText(Path.Combine(root.FullName, WorkspaceConfigFile.FileName), "{ \"configuration\": \"Debug-2027\", \"properties\": { \"RevitVersion\": \"2027\" } }");
 			var nested = Directory.CreateDirectory(Path.Combine(root.FullName, "src", "app"));
 
-			Assert.Null(WorkspaceConfigFile.Find(Path.Combine(nested.FullName, "App.slnx")));
+			WorkspaceConfigFile.Find(Path.Combine(nested.FullName, "App.slnx")).ShouldBeNull();
 		}
 		finally
 		{
@@ -381,7 +379,7 @@ public sealed class BuildPropertiesTests
 		{
 			File.WriteAllText(Path.Combine(root.FullName, WorkspaceConfigFile.FileName), "{ not json");
 
-			Assert.Null(WorkspaceConfigFile.Find(Path.Combine(root.FullName, "App.slnx")));
+			WorkspaceConfigFile.Find(Path.Combine(root.FullName, "App.slnx")).ShouldBeNull();
 		}
 		finally
 		{

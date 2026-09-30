@@ -56,13 +56,13 @@ public static class ChangeSignatureService
 
 		var primary = target.Declaration;
 		var text = await target.Document.GetTextAsync(cancellationToken);
-		var indent = IndentAt(text, primary.SpanStart);
+		var indent = Whitespace.IndentAt(text, primary.SpanStart);
 
 		var wanted = MemberSyntax.ParseParameters(
 			request.Parameters,
 			target.Document.Project.ParseOptions,
 			indent,
-			Whitespace.RulesFor(target.Document.Project, primary.SyntaxTree, text).IndentUnit);
+			(await Whitespace.RulesForAsync(target.Document, cancellationToken)).IndentUnit);
 		var plan = ParameterPlan.For(parameters.Parameters, wanted);
 
 		if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);
@@ -92,7 +92,7 @@ public static class ChangeSignatureService
 
 		progress?.Report(request.Apply ? "Writing the changed files" : "Building the diff", 70);
 
-		await edit.WriteAsync(applied.Solution, cancellationToken);
+		await edit.WriteAsync(applied.Solution, AskedOf(snapshot.Solution, work), cancellationToken);
 
 		if (request.Verify && edit.Changed) progress?.Report("Compiling the solution to see what moved", 80);
 
@@ -239,8 +239,13 @@ public static class ChangeSignatureService
 
 				var found = For(document);
 
-				found.Declarations[declaration.Span] = ChangeFor(declaration, plan, wanted, primary, notices);
+				var change = ChangeFor(declaration, plan, wanted, primary, notices);
+
+				found.Declarations[declaration.Span] = change;
 				found.DeclarationSites.Add(declaration.GetLocation());
+				found.Asked.Add(ParameterLists.Of(declaration)!.Span);
+
+				if (change.Documentation is not null) found.Asked.Add(TextSpan.FromBounds(declaration.FullSpan.Start, declaration.SpanStart));
 			}
 		}
 
@@ -268,6 +273,7 @@ public static class ChangeSignatureService
 					}
 
 					found.CallSites.Add(arguments.Span);
+					found.Asked.Add(arguments.Span);
 					found.CallSiteLocations[arguments.Span] = location.Location;
 				}
 			}
@@ -425,11 +431,19 @@ public static class ChangeSignatureService
 				documentation.Add(document.FilePath ?? document.Name);
 			}
 
-			solution = await NormalisedAsync(solution, item.Id, updated, marker, cancellationToken);
+			var rules = await Whitespace.RulesForAsync(document, cancellationToken);
+
+			solution = await NormalisedAsync(solution, item.Id, updated, marker, rules, cancellationToken);
 		}
 
 		return new Applied(solution, rewritten, refused, documentation);
 	}
+
+	/// <summary>What the whole change asks of each file it rewrites, which is what its work recorded.</summary>
+	private static Asked AskedOf(Solution solution, IReadOnlyList<DocumentWork> work) =>
+		work.Aggregate(
+			Asked.Nothing,
+			(asked, item) => solution.GetDocument(item.Id) is { } document ? asked.And(document, item.Asked) : asked);
 
 	/// <summary>
 	/// The rewritten document with its written lines given the file's own whitespace, and every
@@ -440,6 +454,7 @@ public static class ChangeSignatureService
 		DocumentId id,
 		SyntaxNode updated,
 		SyntaxAnnotation marker,
+		WhitespaceRules rules,
 		CancellationToken cancellationToken)
 	{
 		solution = solution.WithDocumentSyntaxRoot(id, updated);
@@ -455,7 +470,6 @@ public static class ChangeSignatureService
 		var spans = root.GetAnnotatedNodes(marker).Select(node => node.FullSpan).ToArray();
 		if (spans.Length == 0) return solution;
 
-		var rules = Whitespace.RulesFor(document.Project, tree, text);
 		var final = Whitespace.Apply(root, text, rules, spans);
 
 		if (document.FilePath is not { Length: > 0 } path) return solution.WithDocumentText(id, final);
@@ -835,13 +849,6 @@ public static class ChangeSignatureService
 		return count;
 	}
 
-	private static string IndentAt(SourceText text, int position)
-	{
-		var line = text.Lines.GetLineFromPosition(position).ToString();
-
-		return line[..(line.Length - line.TrimStart(' ', '\t').Length)];
-	}
-
 	/// <summary>Everything one document has to have done to it.</summary>
 	private sealed record DocumentWork(DocumentId Id)
 	{
@@ -856,6 +863,12 @@ public static class ChangeSignatureService
 
 		/// <summary>Uses whose arguments this cannot rewrite, each with the reason.</summary>
 		public List<RefusedCallSite> Unusable { get; } = [];
+
+		/// <summary>
+		/// What rewriting this document asks to change: the parameter lists and argument lists it
+		/// rewrites, and the documentation above a declaration whose param tags move with them.
+		/// </summary>
+		public List<TextSpan> Asked { get; } = [];
 	}
 
 	/// <summary>

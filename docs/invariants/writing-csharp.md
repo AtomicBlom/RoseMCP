@@ -88,6 +88,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   which is how a text edit path produces an anchor found in the wrong place. Where a name matches
   more than one declaration it refuses and lists them, because writing correct code into the wrong
   overload is the only failure with no symptom at all.
+- **A write made in rounds finds what it marked, not where it was.** A tool that rewrites one part of
+  a file and then another cannot look the second up by its span from before the first. Qualifying a
+  call above a declaration moves the declaration, and a lookup that finds nothing and carries on
+  leaves a move's source in place: the member declared in both types, in code that compiles because
+  the types differ, so neither verification nor the overreach sentence says a word. So
+  `MoveMemberService` annotates the declaration and the type it goes into before anything is
+  rewritten, finds both by annotation afterwards, and treats a mark it cannot find as an error rather
+  than returning the solution unchanged.
 - **Written code is indented for where it goes, because the formatter only does half of it.** Roslyn
   reindents statements and moves braces -- rules it has -- so a line wrapped by hand *inside a body*
   comes out right. A wrapped parameter list is layout it has no rule about, so it keeps whatever

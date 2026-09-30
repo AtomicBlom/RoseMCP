@@ -137,14 +137,24 @@ public static class MoveMemberService
 	{
 		var qualified = target.Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
+		// By document rather than by tree: marking gives the files it touches new trees, and a call site
+		// found in the old one would no longer find its document through it.
+		var calls = sites
+			.Select(site => (Id: solution.GetDocumentId(site.SourceTree), Span: site.SourceSpan))
+			.Where(call => call.Id is not null)
+			.GroupBy(call => call.Id!, call => call.Span)
+			.ToArray();
+
+		var (marked, moving, into) = await MarkAsync(solution, source, target, cancellationToken);
+
 		// Call sites first, while every position still means what it did when they were found. Editing
 		// the declarations first would move the offsets the reference search returned.
 		var (current, asked) = request.CallSites == CallSiteStyle.Qualify
-			? await QualifyAsync(solution, source, target, sites, cancellationToken)
-			: await ImportAsync(solution, sites, qualified, cancellationToken);
+			? await QualifyAsync(marked, source, target, calls, cancellationToken)
+			: await ImportAsync(marked, calls, qualified, cancellationToken);
 
-		current = await RemoveAsync(current, source, cancellationToken);
-		current = await InsertAsync(current, source, target, notices, cancellationToken);
+		current = await RemoveAsync(current, source, moving, cancellationToken);
+		current = await InsertAsync(current, source, target, into, notices, cancellationToken);
 
 		asked = asked
 			.And(source.Document, source.Declaration.FullSpan)
@@ -153,29 +163,88 @@ public static class MoveMemberService
 		return (current, asked);
 	}
 
+	/// <summary>
+	/// The solution with the declaration being moved and the type it goes into each carrying an
+	/// annotation, so both are found again once the call sites are rewritten.
+	/// <para>
+	/// Not by span. Qualifying a call above either one moves every position under it, so a node looked
+	/// for where it stood is not there -- and for the removal that leaves the member declared in both
+	/// types, which compiles, because the types differ, so nothing downstream says so.
+	/// </para>
+	/// </summary>
+	private static async Task<(Solution Solution, SyntaxAnnotation Moving, SyntaxAnnotation Into)> MarkAsync(
+		Solution solution,
+		DeclarationTarget source,
+		TypeTarget target,
+		CancellationToken cancellationToken)
+	{
+		var moving = new SyntaxAnnotation();
+		var into = new SyntaxAnnotation();
+
+		var marked = await AnnotateAsync(
+			solution, source.Document.Id, source.Declaration, moving, $"the declaration of {source.Signature}", cancellationToken);
+		marked = await AnnotateAsync(
+			marked, target.Document.Id, target.Declaration, into, $"the declaration of {target.Symbol.Name}", cancellationToken);
+
+		return (marked, moving, into);
+	}
+
+	/// <summary>
+	/// One node annotated in place. Found by span and kind rather than by identity, because when the
+	/// member and its new home share a file the first annotation has already replaced that file's root;
+	/// an annotation adds no text, so the span still holds.
+	/// </summary>
+	private static async Task<Solution> AnnotateAsync(
+		Solution solution,
+		DocumentId id,
+		SyntaxNode original,
+		SyntaxAnnotation annotation,
+		string what,
+		CancellationToken cancellationToken)
+	{
+		var root = solution.GetDocument(id) is { } document
+			? await document.GetSyntaxRootAsync(cancellationToken)
+			: null;
+
+		var node = root?.DescendantNodesAndSelf()
+			.FirstOrDefault(candidate => candidate.Span == original.Span && candidate.RawKind == original.RawKind);
+
+		if (root is null || node is null) throw Lost(what);
+
+		return solution.WithDocumentSyntaxRoot(id, root.ReplaceNode(node, node.WithAdditionalAnnotations(annotation)));
+	}
+
+	/// <summary>
+	/// A node the move could not find in the solution it was editing. Never the caller's error, and
+	/// never survivable: a move that cannot take the member out of its old type has not happened, and
+	/// writing the rest of it leaves the member declared twice in code that compiles.
+	/// </summary>
+	private static InvalidOperationException Lost(string what) =>
+		new($"The move lost track of {what} while it rewrote the files, so nothing was written.");
+
 	/// <summary>Writes the new type in front of every call, asking for each name it replaces.</summary>
 	private static async Task<(Solution Solution, Asked Asked)> QualifyAsync(
 		Solution solution,
 		DeclarationTarget source,
 		TypeTarget target,
-		IReadOnlyList<Location> sites,
+		IReadOnlyList<IGrouping<DocumentId, TextSpan>> calls,
 		CancellationToken cancellationToken)
 	{
 		var current = solution;
 		var asked = Asked.Nothing;
 
-		foreach (var group in sites.GroupBy(site => site.SourceTree))
+		foreach (var group in calls)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
-			if (group.Key is null || current.GetDocument(group.Key) is not { } document) continue;
+			if (current.GetDocument(group.Key) is not { } document) continue;
 			if (await document.GetSyntaxRootAsync(cancellationToken) is not { } root) continue;
 
 			var replacements = new Dictionary<SyntaxNode, SyntaxNode>();
 
-			foreach (var site in group)
+			foreach (var span in group)
 			{
-				var node = root.FindNode(site.SourceSpan, getInnermostNodeForTie: true);
+				var node = root.FindNode(span, getInnermostNodeForTie: true);
 				if (node is not SimpleNameSyntax name) continue;
 
 				// An already-qualified call replaces the whole access, so Source.Member becomes
@@ -206,7 +275,7 @@ public static class MoveMemberService
 	/// </summary>
 	private static async Task<(Solution Solution, Asked Asked)> ImportAsync(
 		Solution solution,
-		IReadOnlyList<Location> sites,
+		IReadOnlyList<IGrouping<DocumentId, TextSpan>> calls,
 		string qualified,
 		CancellationToken cancellationToken)
 	{
@@ -214,11 +283,11 @@ public static class MoveMemberService
 		var asked = Asked.Nothing;
 		var name = $"static {qualified.Replace("global::", string.Empty, StringComparison.Ordinal)}";
 
-		foreach (var group in sites.GroupBy(site => site.SourceTree))
+		foreach (var group in calls)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
-			if (group.Key is null || current.GetDocument(group.Key) is not { } document) continue;
+			if (current.GetDocument(group.Key) is not { } document) continue;
 
 			asked = asked.And(document, await EditImports.RegionAsync(document, cancellationToken));
 			var rules = await Whitespace.RulesForAsync(document, cancellationToken);
@@ -228,46 +297,52 @@ public static class MoveMemberService
 		return (current, asked);
 	}
 
+	/// <summary>
+	/// Takes the declaration out of the type it is leaving, found by the annotation it was marked with
+	/// before the call sites were rewritten. Not finding it is an error rather than a solution handed
+	/// back unchanged, since a move that leaves its source in place has not happened.
+	/// </summary>
 	private static async Task<Solution> RemoveAsync(
 		Solution solution,
 		DeclarationTarget source,
+		SyntaxAnnotation moving,
 		CancellationToken cancellationToken)
 	{
-		if (solution.GetDocument(source.Document.Id) is not { } document) return solution;
-		if (await document.GetSyntaxRootAsync(cancellationToken) is not { } root) return solution;
+		var root = solution.GetDocument(source.Document.Id) is { } document
+			? await document.GetSyntaxRootAsync(cancellationToken)
+			: null;
 
-		var declaration = root.DescendantNodes()
-			.OfType<MemberDeclarationSyntax>()
-			.FirstOrDefault(node => node.Span == source.Declaration.Span);
+		var declaration = root?.GetAnnotatedNodes(moving).OfType<MemberDeclarationSyntax>().SingleOrDefault();
 
-		if (declaration?.Parent is not { } parent) return solution;
+		if (root is null || declaration?.Parent is not { } parent) throw Lost($"the declaration of {source.Signature}");
 
 		var without = parent.RemoveNode(
 			declaration,
-			SyntaxRemoveOptions.KeepNoTrivia | SyntaxRemoveOptions.KeepUnbalancedDirectives);
+			SyntaxRemoveOptions.KeepNoTrivia | SyntaxRemoveOptions.KeepUnbalancedDirectives)
+			?? throw Lost($"the type {source.Signature} is declared in");
 
-		return without is null
-			? solution
-			: solution.WithDocumentSyntaxRoot(document.Id, root.ReplaceNode(parent, without));
+		return solution.WithDocumentSyntaxRoot(source.Document.Id, root.ReplaceNode(parent, without));
 	}
 
 	/// <summary>
 	/// Puts the declaration into the target type, exactly as it was written -- documentation comment,
-	/// attributes and all -- reindented for where it now sits.
+	/// attributes and all -- reindented for where it now sits. The type is found by the annotation it
+	/// was marked with before the call sites were rewritten.
 	/// </summary>
 	private static async Task<Solution> InsertAsync(
 		Solution solution,
 		DeclarationTarget source,
 		TypeTarget target,
+		SyntaxAnnotation into,
 		List<string> notices,
 		CancellationToken cancellationToken)
 	{
-		if (solution.GetDocument(target.Document.Id) is not { } document) return solution;
-		if (await document.GetSyntaxRootAsync(cancellationToken) is not { } root) return solution;
+		var document = solution.GetDocument(target.Document.Id);
+		var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken);
 
-		var declaration = root.DescendantNodes()
-			.OfType<BaseTypeDeclarationSyntax>()
-			.FirstOrDefault(node => node.Span == target.Declaration.Span);
+		var declaration = root?.GetAnnotatedNodes(into).OfType<BaseTypeDeclarationSyntax>().SingleOrDefault();
+
+		if (document is null || root is null || declaration is null) throw Lost($"the declaration of {target.Symbol.Name}");
 
 		if (declaration is not TypeDeclarationSyntax type)
 		{

@@ -21,6 +21,27 @@ in its file in the same pull request, the way USE-08 was amended when the magnif
 came to light. The findings are a snapshot of what eight reviewers could see from the code, and the
 person implementing one knows more than the reviewer did.
 
+### Issues the final pull request closes
+
+Fixed on this branch and still open, because only the pull request into `main` can close them. A
+pull request that fixes an issue adds it here in the same commit, whether or not a card named it,
+so the final pull request copies this list rather than reconstructing it.
+
+| Issue | Fixed in |
+|---|---|
+| #121, #212 | #306 |
+| #214 | #305 |
+| #218 | #361 |
+| #320 | #321 |
+| #325 | #348 |
+| #334 | #342, #344 |
+| #340 | #356 |
+| #341 | #352 |
+| #359 | #366 |
+
+**Confirm before naming:** #335 is #218's shape, a project new to the workspace formatted without its
+`.editorconfig`, and #361's reading of the `.editorconfig` on disk should cover it.
+
 ### These documents shrink as the work lands
 
 Six thousand lines of review is a cost every future session pays to read. So a pull request that
@@ -153,16 +174,17 @@ using Rose.
 
 | File | Findings | High | Grade |
 |---|---|---|---|
-| `01-broker-and-server.md` | 19 | 2 | Adequate; strong core, fragile lifetime and seams |
+| `01-broker-and-server.md` | 21 | 2 | Adequate; strong core, fragile lifetime and seams |
 | `02-worker-roslyn.md` | 23 | 5 | Core strong, editing stack fragile |
 | `03-liveapp-debugger-and-tap.md` | 22 | 2 | Adequate leaning strong |
-| `04-agentic-citizenship.md` | 20 | 6 | Adequate, self-aware |
+| `04-agentic-citizenship.md` | 23 | 7 | Adequate, self-aware |
 | `05-ui-tests-and-process.md` | 27 | 3 | Strong; one structural hole, one growing debt |
 | `06-ipc-and-protocols.md` | 10 | 1 | Adequate tending strong |
 | `07-hot-reload-readiness.md` | 12 | 4 | Fragile but well-aimed; 5-6.5 weeks to v1 |
 | `08-ui-usability.md` | 17 | 3 | Adequate, aimed at the wrong job |
 
-150 findings: 26 High, 78 Medium, 46 Low. Roughly 6,000 lines of review.
+155 findings: 27 High, 81 Medium, 47 Low, counting the five added after the first pass. Roughly 6,000
+lines of review.
 
 **Operational note for a future run:** a reviewer reading a 20k-line project in full costs 400-500k
 tokens. Four in parallel plus the parent exhausted a session limit on the first attempt. Tell each

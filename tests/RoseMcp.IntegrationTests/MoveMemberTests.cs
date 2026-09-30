@@ -36,6 +36,54 @@ public sealed class MoveMemberTests
 	}
 
 	/// <summary>
+	/// A member its own file calls above its declaration comes out of the type it left. Qualifying
+	/// those calls moves every position under them, so the declaration is not where it stood when the
+	/// move found it -- and a move that then leaves it there compiles, because the two types differ,
+	/// so nothing downstream says the member is now declared twice.
+	/// </summary>
+	[Test]
+	public async Task Removes_a_member_its_own_file_calls_above_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Relocated.Helper", "Library.Greeter");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var source = await ReadAsync(fixture, "Relocated.cs");
+		var target = await ReadAsync(fixture, "Greeter.cs");
+
+		source.ShouldContain("Greeter.Helper(1) + Greeter.Helper(2)", Case.Sensitive);
+		source.ShouldNotContain("public static int Helper", Case.Sensitive);
+		target.ShouldContain("public static int Helper(int value)", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The same from the other side: a type whose file calls the member above it is still found to
+	/// move into, once qualifying that call has moved it.
+	/// </summary>
+	[Test]
+	public async Task Moves_into_a_type_its_own_file_calls_the_member_above()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await MoveAsync(session, "Library.Relocated.Helper", "Library.Resettled");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var file = await ReadAsync(fixture, "Relocated.cs");
+		var declaration = file.IndexOf("public static int Helper(int value)", StringComparison.Ordinal);
+
+		file.ShouldContain("Resettled.Helper(1) + Resettled.Helper(2)", Case.Sensitive);
+		file.LastIndexOf("public static int Helper(int value)", StringComparison.Ordinal).ShouldBe(declaration);
+		declaration.ShouldBeGreaterThan(file.IndexOf("class Resettled", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// The documentation comment goes with the declaration. Leaving it behind would leave a summary
 	/// describing something that is not there, above whatever the next member turns out to be.
 	/// </summary>

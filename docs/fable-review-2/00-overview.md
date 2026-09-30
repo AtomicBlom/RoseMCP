@@ -4,12 +4,12 @@ Synthesis of eight reviews of RoseMCP, 2026-09-16/17, at 446 commits. Read this 
 answers and the card list; read the numbered files for the evidence. Every finding cited here has
 a `path:line` reference in its own file.
 
-**Scale.** 154 findings across eight reports: 27 High, 81 Medium, 46 Low. Roughly 6,000 lines of
+**Scale.** 155 findings across eight reports: 27 High, 81 Medium, 47 Low. Roughly 6,000 lines of
 review over roughly 60,000 lines of production code and 31,000 of tests, in 18 projects.
 
 | File | Findings | H/M/L | Grade |
 |---|---|---|---|
-| 01 Broker and Server | 20 | 2/10/8 | Adequate; strong core, fragile lifetime and seams |
+| 01 Broker and Server | 21 | 2/10/9 | Adequate; strong core, fragile lifetime and seams |
 | 02 Worker and Roslyn | 23 | 5/11/7 | Core strong, edges adequate, **editing stack fragile** |
 | 03 LiveApp, debugger, tap | 22 | 2/12/8 | Adequate leaning strong |
 | 04 Agentic citizenship | 23 | 7/14/2 | Adequate, and unusually self-aware about it |
@@ -18,7 +18,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 07 Hot-reload readiness | 12 | 4/7/1 | Fragile but well-aimed; 5-6.5 weeks to v1 |
 | 08 UI usability | 17 | 3/10/4 | Adequate, and **aimed at the wrong job** |
 
-**Closed so far (2026-09-24).**
+**Closed so far (2026-09-28).**
 
 | Card | Findings | Shipped in |
 |---|---|---|
@@ -37,15 +37,22 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 5 | IPC-01, LIV-07 (the id), LIV-08, IPC-03 | #323 |
 | 7 | WRK-08 | #269 |
 | 9 | WRK-01 | #275, #276, #278 |
+| 8 (part) | AGT-17 (the overreach half) | #333 |
+| 8 (part) | WRK-03, WRK-19 | #361 |
+| 1c, 1d | filed after the review | #366 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
 **Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, all
-seven of tier 1's wrong-answer cards, one of tier 2's three refactors, and nine of the 27 High
+seven of tier 1's original wrong-answer cards, one of tier 2's three refactors, and nine of the 27 High
 findings -- including **the debugger core and the write pipeline**, which were the two
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
-**Tier 1 is done in full.** Next is **card 8** for tier 2's editing work. Card 1 opened the gate on
-**11b** and **11c**.
+**Tier 1 is done in full**, including the two wrong answers filed after the review (#366). Next is
+the rest of **card 8**, two slices in (#333, #361), whose next slice is #331 and #332. Card 1
+opened the gate on **11b** and **11c**.
+
+Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
+are listed after tier 6, so none of them is re-derived from scratch.
 
 Four cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
 would not), the layout half of **21**, **11f** (closing 1b lets a worktree go while its worker runs
@@ -313,6 +320,8 @@ These produce confident wrong results today. Everything else is cost.
 | ~~5~~ | **#323.** The tap's request side did not escape what its reply side unescaped, so an edit with a tab or a newline in its value landed and then reported that it had not. Host and provider share one wire contract, with a request id, a versioned greeting and a per-session key. | IPC-01, LIV-07, LIV-08, IPC-03 | — | — |
 | ~~6~~ | **#306.** One compilation was asked about another's symbol, so resolving a name and every write that worked out its own imports failed in most of this repository, naming an argument the caller never sent. A symbol is mapped into the asking compilation before it is asked about. | WRK-06 | — | — |
 | ~~7~~ | **#269.** Every analyzer was flattened into one load context, so two versions of one analyzer could not coexist. They are isolated per directory. | WRK-08 | — | — |
+| ~~1c~~ | **#366.** A move could leave the member declared in both types and report success, because it looked the declaration up where it stood before the call sites were rewritten. Both ends of a move are found by what they were marked with, and one that cannot be found is an error. | — | — | — |
+| ~~1d~~ | **#366.** Diagnostics seemed stale for a file new to the project. It was a body-only edit served from cache, which #299 had already fixed. | — | — | — |
 
 ### Tier 2 — the three structural refactors
 
@@ -320,10 +329,10 @@ Each closes a class of bug rather than a bug, and each is a prerequisite for som
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Five open fidelity issues close as a consequence.** A write names the lines it changed that nothing asked for (#333), so each fix is done when its sentence stops appearing. It also decides each file's layout once, from what declares it and then from the file (#361). `OverreachReportTests` pins #217's three shapes and #195's dropped comment. The sentence cannot see #197, whose list the caller writes whole, or damage inside a span the caller asked for (#217's doubled indentation, #199). AGT-17's `rose_format` half is left. | WRK-02, AGT-17 | #195 #197 #199 #200 #217 | M-L |
+| 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Five open fidelity issues close as a consequence.** A write names the lines it changed that nothing asked for (#333), so each fix is done when its sentence stops appearing. It also decides each file's layout once, from what declares it and then from the file (#361). `OverreachReportTests` pins #217's three shapes and #195's dropped comment. The sentence cannot see #197, whose list the caller writes whole, or damage inside a span the caller asked for (#217's doubled indentation, #199). AGT-17's `rose_format` half is left. **Filed since, in the same territory:** #331 and #332 are the next slice, named by #361: the bare-LF notice fires on every payload, and `rose_add_file` alone leaves an all-LF payload's literals as they arrived. #336 is #217's doubled indentation again, on a replace that starts mid-line. #338 reflows a collection's `[` outside the find and the sentence does not name it. #360 writes a run of tabs mid-line into an argument list, inside a span the caller asked for. #362 puts a new `<param>` tag last rather than in parameter order. #343 is #197 and #354 is #199, filed again: close each as a duplicate. | WRK-02, AGT-17 | #195 #197 #199 #200 #217 #331 #332 #336 #338 #360 #362 | M-L |
 | ~~9~~ | **#275, #276, #278.** Six services each carried their own copy of the write conventions, and four tools on them reported a project clean while the caller's errors sat in it. One pipeline owns the conventions. | WRK-01 | — | — |
 | 9b | **Route every mutation tool through `RunAsync`.** Seven tools inline the same `WorkProgress.Split` / `sharedWork.Follow` / `SessionAsync` / `MutateAsync` preamble that `RunAsync` already wraps; add `ReadAsync` so the `Follow` handle cannot be forgotten on reads either. Was assumed to disappear with card 9 and did not. | WRK-23 | new | S |
-| 10 | **One compilation-backed symbol resolver.** Today two-and-a-half resolvers disagree, so positional record properties are unaddressable when the name is common, and a metadata symbol is unreachable if any source symbol shares its leaf name. Every DTO in `Contracts` is a positional record. | WRK-04, WRK-05, WRK-14, AGT-03 | #233 #210 #239 | M |
+| 10 | **One compilation-backed symbol resolver.** Today two-and-a-half resolvers disagree, so positional record properties are unaddressable when the name is common, and a metadata symbol is unreachable if any source symbol shares its leaf name. Every DTO in `Contracts` is a positional record. Two filed since answer what a name binds to without asking the compilation: `rose_resolve_name` splits a namespace-qualified name at its first dot and answers about the first segment (#261), and the automatic imports satisfy an invocation with a namespace holding a *type* of that name (#337). | WRK-04, WRK-05, WRK-14, AGT-03 | #233 #210 #239 #261 #337 | M |
 
 ### Tier 3 — make Rose win against grep
 
@@ -331,16 +340,18 @@ Highest leverage on adoption. Cheap relative to impact.
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 11 | **Result size discipline, reads.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 | M |
-| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Both halves are unblocked**: card 1 shipped, so returning relative paths no longer makes agents send ones that resolve anywhere, and card 9 shipped, so `EditPipeline.Report()` is the one place a notice is decided. Apply card 9's own rule when trimming: a line stating *which* compile ran is a fact and stays. | AGT-21 | new | M |
+| 11 | **Result size discipline, reads.** Split the location shape so a listed member does not carry a declaration record; stop repeating the absolute path per hit; make `includeSignatures=false` actually remove the signature; mark generated members and honour `filePath` on code-behind. Two read defects in the same tools, filed since: `rose_outline` drops every `<see cref/>` and `<paramref/>` from a summary, leaving a hole where the name was (#328), and `rose_symbol_info` on a referenced assembly's type returns its summary and none of its members, which `rose_outline` cannot reach at all (#353). | AGT-01, AGT-02, AGT-06, AGT-11, UIP dogfooding | #234 #328 #353 | M |
+| 11b | **Result size discipline, writes.** A write result is ~4,000 characters of which ~85% is the caller's own diff echoed back, a notice that fires on every call, or a fact already stated. Drop the diff to a range plus a normalisation line, condition the constant notices, say each fact once, name the path once. Thirteen writing tools share the base record. **Both halves are unblocked**: card 1 shipped, so returning relative paths no longer makes agents send ones that resolve anywhere, and card 9 shipped, so `EditPipeline.Report()` is the one place a notice is decided. Apply card 9's own rule when trimming: a line stating *which* compile ran is a fact and stays. `rose_replace_pattern` shows where it ends: a full-scope preview reached 57,875 characters and the client refused it, most of it an uncapped list of absolute paths the result already counts (#345). | AGT-21 | #345 | M |
 | 11c | **Accept `workspaceKey` as an anchor wherever `workspace` is accepted.** Its own summary calls it "fit for a caller to quote back" and cites the six-worktree case; every result carries it and nothing reads it. Sixteen characters an agent will actually echo, where a sixty-character absolute path is what it drops. Makes the relative-path round trip unambiguous by construction, and covers the one case card 1 leaves: an http session with no relay never says where it is. Done when `WorkspaceKey` leaves `ProducedFactTests`' exemption list. | AGT-21 | new | S |
 | 11d | **Let a plural intent be one call.** The four debug bookkeeping tools take one location each, so instrumenting a code path is six model turns and six result envelopes; the alternative they are pitched against, adding log statements, is plural in one edit. Take an array, return per-item outcomes copying `LiveXamlApplyResult`, never fail the batch for one item. Read tools follow after card 11. | AGT-22 | new | M |
 | 11e | **Answer an overflow with a grouping, never a bigger artefact.** Every reference already carries its containing member, project, test-ness and generated-ness, and the tool filters on one of the four. On overflow return the shape ("412: 380 in tests, 6 members") plus the narrowing vocabulary, and accept as a filter every facet already returned. A spill file only when the caller names one. Done when its three facets leave `ProducedFactTests`' exemption list. | AGT-23, AGT-06, AGT-05 | #234 | M |
 | 11f | **A worker outlives the worktree it was opened on, an ended live-app session is never dropped, and no session can see what is warm.** Since card 1b a worktree can be removed while its worker lives, and the worker runs on against a solution that is gone -- tolerating it as it tolerates a branch switch -- holding its memory for the life of the broker. Make eviction the manager's job, said in the activity log: retire a worker whose solution has been gone past a grace period, evict idle workers on a timer, and drop an ended live-app session, which is otherwise polled every second for the life of the broker. Add `rose_workspace_list`, so a session can see what is loaded and quote each workspace's key back, which card 11c makes an anchor. #157 has the worker half and BRK-04 the shape. | BRK-04, BRK-20 | #157 | M |
+| 11g | **A path that does not exist yet is passed over as a routing hint**, so `rose_add_file` into another checkout is answered by the calling session's workspace every time, although the routing invariant says an absolute path is honoured wherever it points. It fails safely, and the refusal is the defect: it says the path is inside no project, which is false, and suggests an argument that would not help rather than `solution`, which would. Route a path that names nothing by its nearest existing ancestor, the way the tool will place the file. | new | #357 | S |
+| 11h | **Tool results switch mid-session to `\u`-escaped text**, `+` for every `+`, which makes a C# diff unreadable and several times longer. Nothing restarted; the switch coincided with another session's server starting. Two serialization paths with different encoders, and something choosing between them, would explain it. One encoder for every tool's text, and a test that `+ < > " '` come back unescaped. | new | #358 | S |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 12b | **Three live-app tools answer with a bare sentence**, which is the defect card 0c fixed on `rose_workspace_close` surviving on the surface 0c's guard exempts. Give each a result record, and narrow the exemption so it excuses a live-app result from *workspace* attribution rather than from being a result. | BRK-21 | new | S |
-| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. The WinUI load diagnostic ("Cannot resolve Assembly or Windows Metadata file") goes with it: it should say its remedy, which is to build the referenced project first. | AGT-04, WRK-07, AGT-05 | #210 | M |
-| 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. | AGT-12, USE-01 | new | S |
+| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. The WinUI load diagnostic ("Cannot resolve Assembly or Windows Metadata file") goes with it: it should say its remedy, which is to build the referenced project first. Two refusals filed since give advice that does not work: `rose_change_signature` tells the caller to pass `usings`, which it does not take (#329), and `rose_move_member` refuses an instance member with no call sites that never uses `this`, on the ground that moving it changes what `this` means (#346). | AGT-04, WRK-07, AGT-05 | #210 #329 #346 | M |
+| 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. #303 is the case where nothing is stamped because nothing noticed: after a reload, `rose_find_references` and `rose_symbol_info` failed on an assembly that would not load while status said Loaded with no degraded reasons. The load failure is its own fix; the card's half is that a tool path which is dead makes the workspace degraded. | AGT-12, USE-01 | #303 | S |
 | 15 | **`rose_find_implementations` cannot be restricted to your own solution**, so a common framework interface returns 116 metadata matches truncated at 40. Also: a property's definition is listed three to four times. | IPC dogfooding, USE dogfooding, AGT-07 | new | S |
 
 ### Tier 4 — mechanism: make the rules structural
@@ -382,6 +393,19 @@ proofs is in `07-hot-reload-readiness.md`.
 | 32 | **Apply through the debugger — the probe milestone.** Edit a method while it loops, observe the new value, no relaunch. Carries HOT-06's remaining half: an `Applying(ApplyRecord)` arm on `TargetExecution`, so the safety timer, a detach and a second apply each have to say what they mean during one. | M |
 | 33 | Symbols that model the process rather than disk. | M |
 | 34 | The managed agent path, which is what makes it a product. | L |
+
+### Filed since the review, and in no card
+
+Open issues from after the review that no card above covers. Each wants a decision: a card of its
+own, a place in one, or a line saying why it is declined.
+
+| Area | Issues |
+|---|---|
+| The integration suite | A probe that will not build fails one test and skips the rest, against its fixture's own rule (#256). The suite lock is per user, so two users do not exclude each other (#280). A running tray hangs the suite and the lock does not check for one (#288). A test asserts on a log line and fails intermittently (#292). Three subsystems fail only under full-suite load (#307). |
+| Process | `Check-Comments.ps1` walks the filesystem, so it fails on generated C++/WinRT headers that are gitignored (#304). |
+| Live app | `Debugger.Break()` in the target raises no session event, and a native crash says only that the process exited (#273). A XAML tree read ships the whole tree across the pipe whatever was asked for; the paging is applied after it, beside BRK-11's (#322). |
+| Tool surface | No tool changes a member's modifiers, AGT-18's "the edit cannot be expressed" again (#330). The surface has outgrown its character budget and its instructions, and a split into three surfaces served by one broker is proposed (#339). Nothing prompts the switch to Rose when a session that began in markdown becomes a C# change (#318). |
+| Enhancements | `rose_find_split_options` omits the helpers a moved island still calls, which reorders its ranking (#294). A measured cohesion backlog over `src` (#286). |
 
 ---
 

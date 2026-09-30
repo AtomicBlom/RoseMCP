@@ -72,23 +72,26 @@
 			ToolTipText="RoseMCP"
 			NoLeftClickDelay="True"
 			LeftClickCommand="{x:Bind ShowCommand}">
+			<!-- This flyout is never shown. The icon copies it into a native popup menu on every right
+			     click, taking each item's text, IsEnabled and IsChecked and nothing else: no Click, no
+			     Opening, no Visibility. So these items carry no handlers here: WireTrayMenu gives each
+			     a Command, the one thing the popup invokes, and PrepareTrayMenu does what Opening
+			     would. -->
 			<tb:TaskbarIcon.ContextFlyout>
-				<MenuFlyout Opening="OnMenuOpening">
-					<MenuFlyoutItem Text="Show workspaces" Click="OnShow" />
-					<!-- Collapsed until a check finds something, so a tray that is up to date carries
-					     no item for it at all. -->
-					<MenuFlyoutItem x:Name="TrayUpdate" Text="Update available" Click="OnOpenRelease"
-						Visibility="Collapsed" />
+				<MenuFlyout x:Name="TrayMenu">
+					<MenuFlyoutItem x:Name="TrayShow" Text="Show workspaces" />
+					<!-- Taken out of the menu until a check finds something, so a tray that is up to date
+					     carries no item for it at all. -->
+					<MenuFlyoutItem x:Name="TrayUpdate" Text="Update available" />
 					<MenuFlyoutSeparator />
-					<ToggleMenuFlyoutItem x:Name="TrayStartWithWindows" Text="Start with Windows" Click="OnToggleStartWithWindows" />
-					<MenuFlyoutItem x:Name="TrayOpenInspector" Text="Open inspector" Click="OnOpenInspector" />
-					<ToggleMenuFlyoutItem x:Name="TrayShowInspectorOnAttach" Text="Show inspector when the debugger attaches"
-						Click="OnToggleShowInspectorOnAttach" />
-					<MenuFlyoutItem Text="Copy inspector command" Click="OnCopyInspectorCommand" />
-					<MenuFlyoutItem Text="Open log folder" Click="OnOpenLogs" />
-					<MenuFlyoutItem Text="Close all workspaces" Click="OnCloseAll" />
+					<ToggleMenuFlyoutItem x:Name="TrayStartWithWindows" Text="Start with Windows" />
+					<MenuFlyoutItem x:Name="TrayOpenInspector" Text="Open inspector" />
+					<ToggleMenuFlyoutItem x:Name="TrayShowInspectorOnAttach" Text="Show inspector when the debugger attaches" />
+					<MenuFlyoutItem x:Name="TrayCopyInspectorCommand" Text="Copy inspector command" />
+					<MenuFlyoutItem x:Name="TrayOpenLogs" Text="Open log folder" />
+					<MenuFlyoutItem x:Name="TrayCloseAll" Text="Close all workspaces" />
 					<MenuFlyoutSeparator />
-					<MenuFlyoutItem Text="Exit" Click="OnExit" />
+					<MenuFlyoutItem x:Name="TrayExit" Text="Exit" />
 				</MenuFlyout>
 			</tb:TaskbarIcon.ContextFlyout>
 		</tb:TaskbarIcon>

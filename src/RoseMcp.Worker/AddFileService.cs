@@ -53,7 +53,17 @@ public static class AddFileService
 		Refuse(snapshot.Solution, path);
 
 		var project = Owner(snapshot.Solution, path, request.Project);
-		var unit = Parse(request.Code, project.ParseOptions);
+
+		// From the repository and the files around the new one, never from the code: composed for a tool
+		// argument, that is LF whatever the repository uses.
+		var rules = await Whitespace.RulesForNewAsync(project, path, from: null, cancellationToken);
+
+		// Before anything is put around the code, so a literal is named by its line in what was sent.
+		string? rewrote = null;
+		var code = MemberSyntax.WithEndings(
+			request.Code, rules.LineEnding, literals => rewrote = MemberEditService.RewrittenEndings(literals, rules));
+
+		var unit = Parse(code, project.ParseOptions);
 		var space = Namespace(unit, project, path, notices);
 
 		progress?.Report("Writing the file", 25);
@@ -64,9 +74,6 @@ public static class AddFileService
 		var added = snapshot.Solution.AddDocument(
 			id, Path.GetFileName(path), SourceText.From(built), Folders(project, path), path);
 
-		// From the repository and the files around the new one, never from the code: composed for a tool
-		// argument, that is LF whatever the repository uses.
-		var rules = await Whitespace.RulesForNewAsync(project, path, from: null, cancellationToken);
 		var solution = await FormatAsync(added, id, rules, cancellationToken);
 
 		var imports = ResolvedImports.Imports.None;
@@ -93,14 +100,14 @@ public static class AddFileService
 
 		// Read off the solution the file was written from, so a literal is named against the line it
 		// ends up on rather than the line the caller wrote it at.
-		var literalEndings = await LiteralEndingsAsync(solution, id, rules, cancellationToken);
+		var literalEndings = await LiteralEndingsAsync(solution, id, rules, request.Code, cancellationToken);
 
 		// After the verification, which is the first moment it can be said whether each import resolved
 		// the error it was fetched for rather than only which namespace it named.
 		var importsAdded = await ResolvedImports.ReportAsync(
 			solution, imports, edit.Verification.Introduced, path, cancellationToken);
 
-		notices.AddRange(Notices(request, imports, globs, project, literalEndings));
+		notices.AddRange(Notices(request, imports, globs, project, rewrote, literalEndings));
 
 		if (DefaultLayout(rules, Path.GetFileName(path)) is { } defaulted) notices.Add(defaulted);
 
@@ -416,18 +423,20 @@ public static class AddFileService
 	/// What to say about a multi-line literal in the new file whose endings are not the file's, or
 	/// null where it holds none.
 	/// <para>
-	/// A whole file of literals arrives here at once, which is what makes this the tool that needs it
-	/// most: sixty-four ENDOFLINE errors on one added file, every one inside a raw literal, and
-	/// nothing in the result to say a single ending had been left as it arrived. Keeping them is the
-	/// invariant -- an ending inside a literal is part of the string's value -- so the answer is the
-	/// sentence rather than a rewrite, and it is <c>rose_format</c>'s own sentence so a caller who
-	/// runs both is not told two different things.
+	/// Code whose every ending is a bare LF has had them all rewritten to the file's before this,
+	/// literals included, so what is left here is code that carried a CR: a caller thinking about
+	/// endings, whose literals are kept exactly as they arrived because an ending inside one is part of
+	/// the string's value. A whole file of literals arrives at once, so this is where the most of them
+	/// collect -- sixty-four ENDOFLINE errors on one added file, every one inside a raw literal -- and
+	/// it is <c>rose_format</c>'s own sentence, so a caller who runs both is not told two different
+	/// things. What is added to it is the way this tool offers to have them rewritten.
 	/// </para>
 	/// </summary>
 	private static async Task<string?> LiteralEndingsAsync(
 		Solution solution,
 		DocumentId id,
 		WhitespaceRules rules,
+		string sent,
 		CancellationToken cancellationToken)
 	{
 		if (solution.GetDocument(id) is not { } document) return null;
@@ -439,7 +448,15 @@ public static class AddFileService
 
 		var text = await document.GetTextAsync(cancellationToken);
 
-		return Whitespace.LiteralEndingNotice(root, text, rules, document.Name);
+		var notice = Whitespace.LiteralEndingNotice(root, text, rules, document.Name);
+		if (notice is null) return null;
+
+		var carriedCr = sent.Contains('\r', StringComparison.Ordinal);
+
+		return carriedCr
+			? notice + " The code carried a CR, so every ending in it was kept as it arrived; sent with bare LFs "
+				+ "only, its literals take the file's endings with everything else."
+			: notice;
 	}
 
 	/// <summary>
@@ -487,10 +504,13 @@ public static class AddFileService
 		ResolvedImports.Imports imports,
 		bool globs,
 		Project project,
+		string? rewrote,
 		string? literalEndings)
 	{
-		// Beside the other things the diff cannot show, and before the compile: an ending left inside a
-		// literal is not a compile error and reads as one only at the next dotnet format.
+		// Beside the other things the diff cannot show, and before the compile: an ending rewritten inside a
+		// literal is a changed value no diff shows, and one left there is not a compile error and reads as
+		// one only at the next dotnet format.
+		if (rewrote is { } rewritten) yield return rewritten;
 		if (literalEndings is { } endings) yield return endings;
 
 		if (!globs)

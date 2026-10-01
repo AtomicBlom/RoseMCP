@@ -127,7 +127,9 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   with endings the file does not use fails `dotnet format` while no build complains, and the obvious
   fix changes what the program says. Where code a caller supplied had its bare LFs rewritten, only
   the endings inside a literal's value are reported, each literal by its line in what the caller
-  sent: every other ending is layout, and a sentence on every write is one nobody reads. Literals
+  sent: every other ending is layout, and a sentence on every write is one nobody reads. A new
+  file is asked as a whole, before its namespace and imports are put around it, so its literals are
+  rewritten like a member's and named on the caller's lines rather than the file's. Literals
   are looked for in every branch of an `#if`, not only the ones the lexer took as active, because
   the rewrite reaches all of them and the build that defines the symbol compiles what it changed. See
   [the decision](../decisions/line-endings-in-code-a-caller-supplies.md).

@@ -21,8 +21,8 @@ replace a text edit hands the work back to a text edit on the commonest edit the
 **Why the condition rather than a parameter.** A caller *can* express CRLF: `"\r\n"` in a JSON
 string is a carriage return and a line feed, and there is a test that writes one. So the presence
 of a CR is a reliable signal that the caller is thinking about endings, and its absence is a
-reliable signal that it is not. That gives the rule an escape hatch with no new argument on four
-tools: to put a bare LF inside a literal in a CRLF file, write the rest of the code with CRLF, and
+reliable signal that it is not. That gives the rule an escape hatch with no new argument on any
+tool that takes code: to put a bare LF inside a literal in a CRLF file, write the rest of the code with CRLF, and
 nothing is touched.
 
 **It is reported where it changes a value, and only there.** Inside a multi-line literal a
@@ -57,6 +57,15 @@ around the literal are given the declared one. The statements an insertion lands
 joined with the block's own ending for the same reason in reverse: joins of another kind would make
 the file's text look as though nobody had a view about endings, and a literal of its own holding a
 deliberate bare LF would be rewritten by an insertion that never touched it.
+
+A new file is asked as a whole. `rose_add_file` puts a namespace and imports around what the
+caller sent, so the condition is asked of the payload before either goes on, and each literal is
+named by its line in what was sent rather than in the file that comes out. An all-LF payload lands
+with the file's endings throughout, literals included, exactly as the same code would through a
+member tool -- a new test file full of fixture text is where raw literals collect, and it is the
+case this rule exists for. A payload carrying a CR keeps every ending as it arrived, and the
+sentence about literals whose endings the file does not use adds that the same code sent with bare
+LFs only would have had them rewritten, since that is the one way to act on it through a tool.
 
 Every branch of an `#if` is read for literals, whichever symbols happen to be defined -- by the
 rewrite and its report, and by the whitespace pass that protects a literal's interior and warns

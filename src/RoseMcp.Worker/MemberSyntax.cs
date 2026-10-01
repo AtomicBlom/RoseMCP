@@ -261,6 +261,45 @@ public static class MemberSyntax
 	}
 
 	/// <summary>
+	/// <paramref name="code"/> with every ending rewritten to <paramref name="lineEnding"/>, string
+	/// literals included, where each one is a bare LF -- or exactly as it arrived where any carries a CR.
+	/// <para>
+	/// For code that is a whole file rather than members: there is no wrapper around it, no signature
+	/// copied out of the file and no indentation to take off, so the endings are the only part of its
+	/// layout to decide here, and the formatter and the whitespace pass see to the rest. It is the rule
+	/// <see cref="Shift"/> applies, asked of the whole payload. A caller composing C# for a JSON argument
+	/// writes LF without deciding to, and a literal left holding it fails a formatting check in a CRLF
+	/// repository while no build reports anything; one CR anywhere says the caller is thinking about
+	/// endings, and then none is touched, which is also how to keep a bare LF inside a literal.
+	/// </para>
+	/// <para>
+	/// Every multi-line literal whose value held an ending is reported, by its line in
+	/// <paramref name="code"/>, since rewriting is all or nothing and so each of those endings changed.
+	/// A literal in every branch of an <c>#if</c> is counted, because each one is rewritten. Asked of the
+	/// code before anything is put around it, the lines are the caller's own.
+	/// </para>
+	/// </summary>
+	/// <param name="code">The code as the caller sent it.</param>
+	/// <param name="lineEnding">The ending the destination file uses.</param>
+	/// <param name="rewritten">Told the literals whose values changed, where any did.</param>
+	public static string WithEndings(string code, string lineEnding, Action<IReadOnlyList<RewrittenLiteral>>? rewritten)
+	{
+		var saysSomething = code.Contains('\r', StringComparison.Ordinal);
+		if (saysSomething || lineEnding == "\n") return code;
+
+		RewrittenLiteral[] changed =
+		[
+			.. LiteralValues(code).Select(value => new RewrittenLiteral(LineOf(code, value.Start), value.Breaks.Count)),
+		];
+
+		var ended = code.Replace("\n", lineEnding, StringComparison.Ordinal);
+
+		if (changed.Length > 0) rewritten?.Invoke(changed);
+
+		return ended;
+	}
+
+	/// <summary>
 	/// The line of <paramref name="into"/> each literal named in <paramref name="from"/> is found on,
 	/// unchanged, or null for one that <paramref name="into"/> does not hold as it is.
 	/// <para>

@@ -447,6 +447,77 @@ public sealed class MemberSyntaxTests
 	}
 
 	/// <summary>
+	/// A whole file sent with bare LFs takes the destination's ending on every line, the inside of a raw
+	/// literal included, and the literal is named by its line in what was sent with the endings in its
+	/// value counted -- the two beside its delimiters are layout and are not.
+	/// </summary>
+	[Test]
+	public void Rewrites_every_ending_of_a_whole_file_sent_with_bare_line_feeds()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var written = MemberSyntax.WithEndings(
+			"namespace A;\n\npublic static class Fixture\n{\n\tpublic const string Text = \"\"\"\n\t\tfirst\n\t\tsecond\n\t\t\"\"\";\n}\n",
+			"\r\n",
+			literals => rewritten = literals);
+
+		written.ShouldBe(
+			"namespace A;\r\n\r\npublic static class Fixture\r\n{\r\n\tpublic const string Text = \"\"\"\r\n\t\tfirst\r\n\t\tsecond\r\n\t\t\"\"\";\r\n}\r\n");
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(4, 1));
+	}
+
+	/// <summary>
+	/// One CR LF anywhere is a caller thinking about endings, so every ending is kept as it arrived, the
+	/// bare LFs inside the literal included, and nothing is said to have been rewritten.
+	/// </summary>
+	[Test]
+	public void Keeps_a_whole_file_carrying_a_carriage_return_as_it_arrived()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+		var code = "public static class Fixture\r\n{\r\n\tpublic const string Text = @\"one\ntwo\";\n}\n";
+
+		MemberSyntax.WithEndings(code, "\r\n", literals => rewritten = literals).ShouldBe(code);
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>A file whose ending is LF has nothing to rewrite in code sent with LFs, and says nothing.</summary>
+	[Test]
+	public void Leaves_a_whole_file_alone_where_the_destination_ends_with_line_feeds()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+		var code = "public static class Fixture\n{\n\tpublic const string Text = @\"one\ntwo\";\n}\n";
+
+		MemberSyntax.WithEndings(code, "\n", literals => rewritten = literals).ShouldBe(code);
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// Every literal whose value held an ending is named, a verbatim one by all its endings, one in an
+	/// inactive branch of an <c>#if</c> as well as the active one, and two holding the same text each on
+	/// its own line. A literal on one line holds none and is not named.
+	/// </summary>
+	[Test]
+	public void Names_every_literal_of_a_whole_file_on_its_own_line()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var written = MemberSyntax.WithEndings(
+			"class C\n{\n\tstring A => \"one line\";\n\tstring B => @\"x\ny\nz\";\n#if DEBUG\n\tstring D => @\"p\nq\";\n#endif\n\tstring E => @\"p\nq\";\n}\n",
+			"\r\n",
+			literals => rewritten = literals);
+
+		written.ShouldNotContain("\n\n", Case.Sensitive);
+		written.Replace("\r\n", string.Empty, StringComparison.Ordinal).ShouldNotContain("\n", Case.Sensitive);
+
+		rewritten.ShouldNotBeNull().ShouldBe(
+			[
+				new MemberSyntax.RewrittenLiteral(3, 2),
+				new MemberSyntax.RewrittenLiteral(7, 1),
+				new MemberSyntax.RewrittenLiteral(10, 1),
+			]);
+	}
+
+	/// <summary>
 	/// A literal in a branch of an <c>#if</c> the lexer takes as inactive is still a literal in the build
 	/// that defines the symbol, and its endings are rewritten with every other. So both branches' literals
 	/// are named, each on its own line, and the inactive one's interior is left where it was, since moving

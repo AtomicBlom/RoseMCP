@@ -216,6 +216,327 @@ public sealed class MemberEditBodyTests
 		(trimmed > 0 && trimmed < returned).ShouldBeTrue();
 	}
 
+	/// <summary>
+	/// A whole body is parsed behind the signature it was copied from and inside braces it never had,
+	/// so a line counted in what is parsed is one the caller never wrote. The literal is named on its
+	/// line in the body they sent, blank line above it included.
+	/// </summary>
+	[Test]
+	public async Task Names_a_rewritten_literal_on_its_line_in_the_body_supplied()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Code = "\nvar greeting = text.Trim();\nvar banner = @\"one\ntwo\";\nreturn banner + greeting;",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldContain(
+			notice => notice.StartsWith("Rewrote 1 line ending(s) to CRLF", StringComparison.Ordinal)
+				&& notice.Contains("literal on line 3 of the code supplied", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("@\"one\r\ntwo\"", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Inserted code lands among statements it did not write, and the literal it carries is still named
+	/// on its line in what was sent -- while the statements around it, all on one line each, have their
+	/// endings rewritten without a word.
+	/// </summary>
+	[Test]
+	public async Task Names_a_rewritten_literal_on_its_line_in_the_code_inserted()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Position = BodyPosition.End,
+			Code = "text = text.Trim();\ntext += @\"one\ntwo\";",
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		var rewrote = result.Notices.Where(notice => notice.StartsWith("Rewrote", StringComparison.Ordinal)).ToArray();
+
+		rewrote.ShouldHaveSingleItem().ShouldContain("literal on line 2 of the code supplied", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A replacement for part of an expression body on its signature's line has no indentation to take
+	/// off and none to put on, and its blank line above still goes, as it does wherever a replacement
+	/// lands. So the literal it carries is named on the line the caller wrote it on.
+	/// </summary>
+	[Test]
+	public async Task Names_a_literal_replacing_part_of_a_one_line_expression_body_on_its_line()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Arrowed.Call",
+			Find = "Describe(\"one\", \"two\")",
+			Replace = "\n@\"a\nb\"",
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		var rewrote = result.Notices.Where(notice => notice.StartsWith("Rewrote", StringComparison.Ordinal)).ToArray();
+
+		rewrote.ShouldHaveSingleItem().ShouldContain("literal on line 2 of the code supplied", Case.Sensitive);
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		text.ShouldContain("public static string Call() => @\"a\r\nb\";", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A token-matched replacement inside a block body is counted from its first line with anything on
+	/// it, which is the line it is spliced at, so a literal two lines further down is named there.
+	/// </summary>
+	[Test]
+	public async Task Names_a_literal_a_token_matched_replacement_carries_on_its_line()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Find = "text.ToUpperInvariant()",
+			Replace = "\ntext.ToUpperInvariant()\n\t+ @\"one\ntwo\"",
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		var rewrote = result.Notices.Where(notice => notice.StartsWith("Rewrote", StringComparison.Ordinal)).ToArray();
+
+		rewrote.ShouldHaveSingleItem().ShouldContain("literal on line 3 of the code supplied", Case.Sensitive);
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("@\"one\r\ntwo\"", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A literal the file already held has its endings rewritten when the whole body it sits in is bare
+	/// LFs, and it is named on its line in the member as it stood -- the third, below the signature and
+	/// the brace -- rather than in what was parsed, where the brace joins the signature. The way to keep
+	/// its endings is offered, because the body edit took code to write a CR LF into.
+	/// </summary>
+	[Test]
+	public async Task Names_a_files_own_literal_on_its_line_in_the_member()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await WithLineFeedLiteralAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Find = "text.ToUpperInvariant()",
+			Replace = "text.ToLowerInvariant()",
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		// The file's own sentence about the lines it normalised is a different notice, about layout.
+		var rewrote = result.Notices.Where(notice => notice.Contains("inside the multi-line", StringComparison.Ordinal)).ToArray();
+
+		rewrote.ShouldHaveSingleItem().ShouldBe(
+			"Rewrote 1 line ending(s) to CRLF, the ending this file uses, inside the multi-line string literal on "
+				+ "line 3 of the member, which changes its value. Write one CR LF anywhere in the code sent to leave "
+				+ "every ending in the member as it was.");
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("@\"one\r\ntwo\"", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The escape hatch that sentence offers does what it says: one CR LF in the replacement leaves the
+	/// file's own literal with the bare LF it had, and nothing claims a literal's endings were rewritten.
+	/// </summary>
+	[Test]
+	public async Task Keeps_a_files_own_literal_as_it_was_when_the_replacement_carries_a_carriage_return()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await WithLineFeedLiteralAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Find = "return banner + text.ToUpperInvariant();",
+			Replace = "var shouted = text.ToLowerInvariant();\r\n\t\treturn banner + shouted;",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldNotContain(notice => notice.Contains("inside the multi-line", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("@\"one\ntwo\"", Case.Sensitive);
+		text.ShouldContain("var shouted = text.ToLowerInvariant();", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A literal in a branch the project's symbols leave inactive is still compiled by the build that
+	/// defines the symbol, so the whitespace pass leaves its interior alone -- the bare LF and the trailing
+	/// spaces both -- and a body written with a CR LF claims no ending was rewritten. Its LF does fail
+	/// <c>dotnet format</c> like any other, and is reported as such.
+	/// </summary>
+	[Test]
+	public async Task Leaves_a_literal_in_an_inactive_branch_exactly_as_it_was_written()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Code = "#if ROSE_NEVER_DEFINED\r\n\t\tvar s = @\"a  \nb\";\r\n#endif\r\n\t\treturn text.ToUpperInvariant();",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldNotContain(notice => notice.Contains("inside the multi-line", StringComparison.Ordinal));
+		result.Notices.ShouldContain(notice => notice.Contains("now fails dotnet format", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("@\"a  \nb\"", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A one-line insertion into a CRLF block leaves a literal of the file's own, holding a deliberate
+	/// bare LF, exactly as it was: the statements around the insertion keep the block's ending, so
+	/// nothing reads the block as one written by somebody with no view about endings.
+	/// </summary>
+	[Test]
+	public async Task Leaves_a_files_literal_alone_when_one_line_is_inserted_beside_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await ReplaceShoutBodyAsync(
+			fixture,
+			"\t{\r\n\t\tvar x = @\"a\nb\";\r\n\t\treturn x + text.ToUpperInvariant();\r\n\t}");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Position = BodyPosition.End,
+			Code = "text = text.Trim();",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldNotContain(notice => notice.Contains("inside the multi-line", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("@\"a\nb\"", Case.Sensitive);
+		text.ShouldContain("text = text.Trim();", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Removing the first of two identical literals the file holds leaves the second one named on its own
+	/// line in the member, not on the line of the one that went.
+	/// </summary>
+	[Test]
+	public async Task Names_the_remaining_copy_of_a_literal_on_its_own_line()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await ReplaceShoutBodyAsync(
+			fixture,
+			"\t{\n\t\tvar a = @\"x\ny\";\n\t\tvar b = @\"x\ny\";\n\t\treturn b + text.ToUpperInvariant();\n\t}");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Find = "var a = @\"x\ny\";",
+			Replace = string.Empty,
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		var rewrote = result.Notices.Where(notice => notice.Contains("inside the multi-line", StringComparison.Ordinal)).ToArray();
+
+		rewrote.ShouldHaveSingleItem().ShouldContain("literal on line 5 of the member", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A replacement takes the ending the repository declares, not the one the file was checked out
+	/// with: where .editorconfig asks for LF in a CRLF checkout, the caller's LF literal is left as it was,
+	/// agreeing with the lines the write gives the member, and nothing claims an ending was rewritten.
+	/// </summary>
+	[Test]
+	public async Task Gives_a_replacement_the_ending_the_repository_declares()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", ".editorconfig"),
+			"[*.cs]\nend_of_line = lf\n",
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Greeter.Shout",
+			Find = "text.ToUpperInvariant()",
+			Replace = "@\"one\ntwo\" + text",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldNotContain(notice => notice.Contains("inside the multi-line", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("@\"one\ntwo\"", Case.Sensitive);
+		text.ShouldNotContain("@\"one\r\ntwo\"", Case.Sensitive);
+	}
+
+	/// <summary>Gives Shout the body supplied, behind the workspace's back, before a session opens.</summary>
+	private static async Task ReplaceShoutBodyAsync(FixtureSolution fixture, string replacement)
+	{
+		var path = fixture.Path("Members", "Library", "Greeter.cs");
+		var cancellation = TestContext.Current!.Execution.CancellationToken;
+		var original = await File.ReadAllTextAsync(path, cancellation);
+
+		var body = "\t{\r\n\t\treturn text.ToUpperInvariant();\r\n\t}";
+
+		original.ShouldContain(body, Case.Sensitive);
+
+		await File.WriteAllTextAsync(path, original.Replace(body, replacement, StringComparison.Ordinal), cancellation);
+	}
+
+	/// <summary>
+	/// Gives Shout a body written entirely with bare LFs, a verbatim literal included, in a file that is
+	/// otherwise CRLF: the shape in which the endings of a literal the caller never wrote are rewritten.
+	/// </summary>
+	private static Task WithLineFeedLiteralAsync(FixtureSolution fixture) =>
+		ReplaceShoutBodyAsync(
+			fixture,
+			"\t{\n\t\tvar banner = @\"one\ntwo\";\n\t\treturn banner + text.ToUpperInvariant();\n\t}");
+
 	/// <summary>An expression body has no statement list, and the refusal says what to pass instead.</summary>
 	[Test]
 	public async Task Refuses_to_insert_into_an_expression_body()

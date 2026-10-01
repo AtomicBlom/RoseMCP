@@ -12,7 +12,8 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
 - **Whatever writes C# has to end formatted.** Roslyn's formatter honours `.editorconfig` but only
   rewrites the trivia it has reason to touch, so a file it reindents comes out with mixed line
   endings -- which IDE0055 then fails the build over. `Whitespace` is the second pass that fixes
-  every line, and it leaves multi-line verbatim and raw literals alone, because a newline in one is
+  every line, and it leaves multi-line verbatim and raw literals alone -- in every branch of an
+  `#if`, since an inactive one is disabled text no node walk finds -- because a newline in one is
   content and a raw literal's indentation decides how much is stripped from it. Both passes take a
   span when the caller wrote one member rather than a file: a repository whose endings are already
   inconsistent would otherwise have every line rewritten by a one-member change, which buries the
@@ -124,7 +125,12 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   and joining with one, which would have changed values inside the literals it was carefully not
   re-indenting. The consequence is reported rather than left silent: a multi-line literal written
   with endings the file does not use fails `dotnet format` while no build complains, and the obvious
-  fix changes what the program says.
+  fix changes what the program says. Where code a caller supplied had its bare LFs rewritten, only
+  the endings inside a literal's value are reported, each literal by its line in what the caller
+  sent: every other ending is layout, and a sentence on every write is one nobody reads. Literals
+  are looked for in every branch of an `#if`, not only the ones the lexer took as active, because
+  the rewrite reaches all of them and the build that defines the symbol compiles what it changed. See
+  [the decision](../decisions/line-endings-in-code-a-caller-supplies.md).
 - **A signature change moves the whole declaration group, or it does not compile.** A virtual
   method whose override keeps the old parameters is a build error, and so is an interface member
   whose implementations keep theirs -- so `rose_change_signature` changes the member, its base

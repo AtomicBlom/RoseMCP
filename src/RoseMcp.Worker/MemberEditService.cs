@@ -161,7 +161,7 @@ public static class MemberEditService
 			target.Document.Project.ParseOptions,
 			Whitespace.IndentAt(text, target.Declaration.SpanStart),
 			rules.LineEnding,
-			count => notices.Add(RewrittenEndings(count, rules)),
+			literals => notices.Add(RewrittenEndings(literals, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		if (parsed.Count != 1)
@@ -273,6 +273,10 @@ public static class MemberEditService
 		var text = await target.Document.GetTextAsync(cancellationToken);
 		var indent = Whitespace.IndentAt(text, declaration.SpanStart);
 
+		// Decided before the body is, because the caller's text is given the file's ending where it is
+		// spliced in, and that has to be the ending the rest of the write gives the member.
+		var rules = await Whitespace.RulesForAsync(target.Document, cancellationToken);
+
 		// Joined by a single space, with whatever separated the old signature from its old body
 		// dropped. The two are not interchangeable: a block body sat on the next line, so keeping
 		// that break would leave an expression body's => stranded on a line of its own, which no
@@ -286,7 +290,7 @@ public static class MemberEditService
 		// The signature then drifts on a change that promised to touch only the body.
 		var head = indent + text.ToString(TextSpan.FromBounds(declaration.SpanStart, bodyStart)).TrimEnd();
 		var asked = new List<TextSpan>();
-		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, notices, asked);
+		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, rules, notices, asked, out var supplied);
 
 		// The head is named as copied, which exempts it from the re-indentation the body needs. The
 		// two halves arrive in different coordinate systems -- the signature indented for the file it
@@ -298,9 +302,29 @@ public static class MemberEditService
 		// An initialiser goes back as an expression and a semicolon; a body is wrapped in braces or
 		// left behind its arrow. Sharing the rebuild is what keeps the copied-signature promise on
 		// both: what comes out in front of the "=" is the text that was in front of it.
-		var rebuilt = IsInitialiser(declaration)
-			? $"{head} {written.Trim()};"
-			: $"{head} {Body(written)}";
+		var shaped = IsInitialiser(declaration) ? $"{written.Trim()};" : Body(written);
+
+		// The member as it stood, counted from its first line as a moved member's is, which is where a
+		// literal the file already held is named.
+		var member = declaration.ToFullString().TrimStart('\r', '\n');
+		var memberAt = declaration.FullSpan.End - member.Length;
+
+		// What the caller's text took the place of, in the member's own terms, so a literal it removed is
+		// not paired with an identical one the file still holds.
+		TextSpan[] replaced =
+		[
+			.. asked
+				.Where(span => span.Length > 0 && span.Start >= memberAt)
+				.Select(span => new TextSpan(span.Start - memberAt, span.Length)),
+		];
+
+		var rebuilt = $"{head} {shaped}";
+
+		// Where the first character of the body would sit in what is parsed, so a line of it can be
+		// named in the terms of the code the caller sent. Trimming and wrapping both change that, and
+		// what the body trims to is found unchanged in either shape.
+		var bodyAt = head.Length + 1 + shaped.IndexOf(written.Trim(), StringComparison.Ordinal)
+			- (written.Length - written.TrimStart().Length);
 
 		// A body assembled from the file's own text is already indented for where it sits, and the
 		// only caller code in it has been placed against the line it lands on -- so the destination's
@@ -314,15 +338,13 @@ public static class MemberEditService
 		// its lines belong one level in from the member: what precedes them is a brace or an arrow on
 		// the signature's own line, not a line of their own to take a level from. Roslyn's formatter
 		// puts a block's braces back where .editorconfig wants them and has no rule for an arrow.
-		var rules = await Whitespace.RulesForAsync(target.Document, cancellationToken);
-
 		var parsed = MemberSyntax.Parse(
 			rebuilt,
 			KeywordAround(declaration),
 			target.Document.Project.ParseOptions,
 			fromTheFile ? indent : indent + rules.IndentUnit,
 			rules.LineEnding,
-			count => notices.Add(RewrittenEndings(count, rules)),
+			literals => notices.AddRange(RewrittenInBody(literals, rebuilt, bodyAt, supplied, member, replaced, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)),
 			copied: head,
 			baseline: fromTheFile ? indent : null);
@@ -365,6 +387,10 @@ public static class MemberEditService
 	/// the tokens it matched and not for the statements around them; an insertion asks for the place it
 	/// goes and not for the statements already there.
 	/// </para>
+	/// <para>
+	/// <paramref name="supplied"/> says where in the body the caller's own text landed, so a line the
+	/// rest of the write finds in it can be named as the caller numbered it rather than as the file does.
+	/// </para>
 	/// </summary>
 	private static string BodyFor(
 		MemberDeclarationSyntax declaration,
@@ -372,8 +398,10 @@ public static class MemberEditService
 		SourceText text,
 		int bodyStart,
 		MemberEditRequest request,
+		WhitespaceRules rules,
 		List<string> notices,
-		List<TextSpan> asked)
+		List<TextSpan> asked,
+		out Supplied supplied)
 	{
 		var payloads = (request.Code.Length > 0 ? 1 : 0)
 			+ (request.Find is { Length: > 0 } ? 1 : 0)
@@ -398,20 +426,37 @@ public static class MemberEditService
 		if (request.Find is { Length: > 0 } find)
 		{
 			var body = text.ToString(TextSpan.FromBounds(bodyStart, declaration.Span.End)).TrimEnd(';', ' ', '\t');
+			var replace = request.Replace ?? string.Empty;
+			var placed = -1;
 
-			return BodyEdit.Anchored(
+			var anchored = BodyEdit.Anchored(
 				body,
 				find,
-				request.Replace ?? string.Empty,
+				replace,
 				request.IncludeTrivia,
-				count => notices.Add(MemberSyntax.RewrittenEndings(count, LineEndings.Name(Whitespace.Dominant(body)))),
+				literals => notices.Add(RewrittenEndings(literals, rules)),
 				notices.Add,
-				span => asked.Add(new TextSpan(bodyStart + span.Start, span.Length)));
+				span =>
+				{
+					if (placed < 0) placed = span.Start;
+					asked.Add(new TextSpan(bodyStart + span.Start, span.Length));
+				},
+				rules.LineEnding);
+
+			// The text path splices the replacement exactly as written, and the token path from its first
+			// line with anything on it, since the blank lines above that are dropped.
+			supplied = request.IncludeTrivia
+				? Supplied.Whole(replace, Math.Max(placed, 0))
+				: Supplied.From(replace, Math.Max(placed, 0));
+
+			return anchored;
 		}
 
 		if (request.Position is not { } position)
 		{
 			asked.Add(WholeBody(declaration, bodyStart, request.Code));
+
+			supplied = Supplied.From(request.Code, request.Code.Length - request.Code.TrimStart().Length);
 
 			return request.Code;
 		}
@@ -422,7 +467,108 @@ public static class MemberEditService
 
 		asked.Add(new TextSpan(BodyEdit.InsertionPoint(block, atStart), 0));
 
-		return BodyEdit.Inserted(declaration, block, request.Code, atStart, notices);
+		var inserted = BodyEdit.Inserted(
+			declaration,
+			block,
+			request.Code,
+			atStart,
+			notices,
+			out var at,
+			rules.LineEnding,
+			literals => notices.Add(RewrittenEndings(literals, rules)));
+
+		supplied = Supplied.From(request.Code.TrimEnd(), at);
+
+		return inserted;
+	}
+
+	/// <summary>
+	/// What to say about the literals whose endings a body replacement rewrote: each one the caller
+	/// wrote named on its line in the code they sent, and each one that came out of the file on its
+	/// line in the member as it stood.
+	/// <para>
+	/// What is parsed is not what the caller sent. It is the signature copied out of the file, joined on
+	/// its last line to a body that may be wrapped in braces, trimmed, or be the file's own body with
+	/// the caller's text spliced into it -- so a line counted in it is a line nobody wrote, and naming it
+	/// sends the caller to the wrong place in their own code. For the same reason a literal the file
+	/// already held is found again in the member it came from rather than counted in what was parsed.
+	/// One that lies outside the caller's lines and is not in the member unchanged is one their text
+	/// edited, so it is theirs, named by the nearest of their lines.
+	/// </para>
+	/// <para>
+	/// The escape hatch goes with the file's literals as well as the caller's, since the rule that
+	/// rewrote them was asked of the whole body: a CR LF anywhere in the code sent leaves every ending in
+	/// it alone. It is said once: by the sentence about the caller's literals where there is one, and by
+	/// the one about the file's where there is not.
+	/// </para>
+	/// </summary>
+	/// <param name="literals">The literals, each on its line in <paramref name="rebuilt"/>.</param>
+	/// <param name="rebuilt">The member as it was parsed.</param>
+	/// <param name="bodyAt">Where the body's first character sits in <paramref name="rebuilt"/>.</param>
+	/// <param name="supplied">Where the caller's own text sits in the body.</param>
+	/// <param name="member">The member as it stood in the file, from its first line.</param>
+	/// <param name="replaced">The parts of <paramref name="member"/> the caller's text took the place of.</param>
+	/// <param name="rules">The destination file's layout, which names the ending they were given.</param>
+	private static IEnumerable<string> RewrittenInBody(
+		IReadOnlyList<MemberSyntax.RewrittenLiteral> literals,
+		string rebuilt,
+		int bodyAt,
+		Supplied supplied,
+		string member,
+		IReadOnlyList<TextSpan> replaced,
+		WhitespaceRules rules)
+	{
+		var first = MemberSyntax.LineOf(rebuilt, bodyAt + supplied.At);
+		var inMember = MemberSyntax.LinesIn(literals, rebuilt, member, (first, supplied.Lines), replaced);
+		var theirs = new List<MemberSyntax.RewrittenLiteral>();
+		var own = new List<MemberSyntax.RewrittenLiteral>();
+
+		for (var index = 0; index < literals.Count; index++)
+		{
+			var literal = literals[index];
+			var offset = literal.Line - first;
+			var isTheirs = offset >= 0 && offset < supplied.Lines;
+
+			if (!isTheirs && inMember[index] is { } line)
+			{
+				own.Add(literal with { Line = line });
+				continue;
+			}
+
+			var nearest = Math.Clamp(offset, 0, Math.Max(supplied.Lines - 1, 0));
+
+			theirs.Add(literal with { Line = nearest + supplied.Line });
+		}
+
+		var ending = LineEndings.Name(rules.LineEnding);
+
+		if (theirs.Count > 0) yield return RewrittenEndings(theirs, rules);
+		if (own.Count > 0) yield return MemberSyntax.RewrittenMemberEndings(own, ending, codeSupplied: theirs.Count == 0);
+	}
+
+	/// <summary>
+	/// Where the caller's own text sits inside a body being written: the offset in the body at which a
+	/// line of theirs begins, which of their lines that is, counted from zero, and how many of their
+	/// lines run on from it.
+	/// </summary>
+	private readonly record struct Supplied(int At, int Line, int Lines)
+	{
+		/// <summary>
+		/// Text placed from its first line with anything on it, which begins at <paramref name="at"/>.
+		/// Text with nothing on it is no lines at all, since nothing the caller wrote landed.
+		/// </summary>
+		public static Supplied From(string payload, int at)
+		{
+			if (payload.Trim().Length == 0) return new Supplied(at, 0, 0);
+
+			var first = MemberSyntax.LineOf(payload, payload.Length - payload.TrimStart().Length);
+
+			return new Supplied(at, first, MemberSyntax.LineOf(payload, payload.Length) + 1 - first);
+		}
+
+		/// <summary>Text placed exactly as written, its first line beginning at <paramref name="at"/>.</summary>
+		public static Supplied Whole(string payload, int at) =>
+			new(at, 0, payload.Length == 0 ? 0 : MemberSyntax.LineOf(payload, payload.Length) + 1);
 	}
 
 	/// <summary>
@@ -487,7 +633,7 @@ public static class MemberEditService
 			document.Project.ParseOptions,
 			IndentFor(type, text, rules),
 			lineEnding,
-			count => notices.Add(RewrittenEndings(count, rules)),
+			literals => notices.Add(RewrittenEndings(literals, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		GuardDuplicates(type, parsed);
@@ -972,9 +1118,11 @@ public static class MemberEditService
 	private sealed record Finished(Solution Solution, int Line, IReadOnlyList<string> Notices);
 
 	/// <summary>
-	/// Says that line endings in the supplied code were changed, because a diff cannot: a terminator
-	/// is not line content, and inside a literal it is part of what the string says.
+	/// Says that endings inside a literal in the supplied code were changed, because a diff cannot: a
+	/// terminator is not line content, and inside a literal it is part of what the string says.
 	/// </summary>
-	internal static string RewrittenEndings(int count, WhitespaceRules rules) =>
-		MemberSyntax.RewrittenEndings(count, LineEndings.Name(rules.LineEnding));
+	/// <param name="literals">The literals whose values changed, each on its line in the code supplied.</param>
+	/// <param name="rules">The destination file's layout, which names the ending they were given.</param>
+	internal static string RewrittenEndings(IReadOnlyList<MemberSyntax.RewrittenLiteral> literals, WhitespaceRules rules) =>
+		MemberSyntax.RewrittenEndings(literals, LineEndings.Name(rules.LineEnding));
 }

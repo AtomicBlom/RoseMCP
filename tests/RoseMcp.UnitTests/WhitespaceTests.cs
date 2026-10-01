@@ -238,6 +238,36 @@ public sealed class WhitespaceTests
 		Notice(source, "Agreed.cs").ShouldBeNull();
 	}
 
+	/// <summary>
+	/// A literal in a branch the parse took as inactive is disabled text rather than a node, and the build
+	/// that defines the symbol compiles it. Its interior is left exactly as it was, trailing spaces and
+	/// bare LF included, while the lines around it take the file's ending.
+	/// </summary>
+	[Test]
+	public void Leaves_a_literal_in_an_inactive_branch_alone()
+	{
+		var source = "class C" + Crlf + "{" + Crlf + "#if DEBUG" + Crlf + "\tstring s = @\"a  \nb\";" + Crlf
+			+ "#endif   \n}" + Crlf;
+
+		var result = Apply(source, Strict);
+
+		result.ShouldContain("@\"a  \nb\"", Case.Sensitive);
+		result.ShouldContain("#endif" + Crlf + "}", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A literal in an inactive branch whose endings are not the file's fails <c>dotnet format</c> like any
+	/// other, so it is reported like any other.
+	/// </summary>
+	[Test]
+	public void Reports_a_disagreeing_literal_in_an_inactive_branch()
+	{
+		var source = "class C" + Crlf + "{" + Crlf + "#if DEBUG" + Crlf + "\tstring s = @\"a\nb\";" + Crlf
+			+ "#endif" + Crlf + "}" + Crlf;
+
+		Disagreeing(source).ShouldBe([4]);
+	}
+
 	private static IReadOnlyList<int> Disagreeing(string source, TextSpan? within = null)
 	{
 		var tree = CSharpSyntaxTree.ParseText(source);

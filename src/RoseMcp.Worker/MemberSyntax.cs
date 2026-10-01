@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace RoseMcp.Worker;
 
@@ -49,8 +50,10 @@ public static class MemberSyntax
 	/// how to ask for a bare LF inside a literal on purpose. Empty leaves every ending untouched.
 	/// </param>
 	/// <param name="rewritten">
-	/// How many endings were changed, so a caller can say so. It is a change to what a literal says,
-	/// and it must not be silent.
+	/// The multi-line literals whose values had endings changed, each on the line of
+	/// <paramref name="code"/> it opens on, so a caller can say so: that is a change to what a string
+	/// says, and it must not be silent. Called only when there is one. An ending changed anywhere else
+	/// is layout, and is not reported.
 	/// </param>
 	/// <param name="reindented">
 	/// How many lines inside a multi-line raw literal moved, for the same reason. The value survives
@@ -86,7 +89,7 @@ public static class MemberSyntax
 		ParseOptions? options,
 		string indent = "",
 		string lineEnding = "",
-		Action<int>? rewritten = null,
+		Action<IReadOnlyList<RewrittenLiteral>>? rewritten = null,
 		Action<int>? reindented = null,
 		string copied = "",
 		string? baseline = null)
@@ -184,20 +187,159 @@ public static class MemberSyntax
 		];
 
 	/// <summary>
-	/// Says that line endings in the supplied code were changed, because a diff cannot: a terminator
-	/// is not line content, and inside a literal it is part of what the string says.
+	/// Says that endings inside a string literal in the supplied code were changed, naming the lines the
+	/// literals are on, because a diff cannot: a terminator is not line content, and inside a literal it
+	/// is part of what the string says.
 	/// <para>
-	/// Here rather than beside one caller, so every path that writes a member says the same sentence.
+	/// Only literals are named because only there does the rewrite mean anything. Outside one an ending
+	/// is layout, and making it the file's is what the whitespace pass does to every line it writes. A
+	/// sentence on every payload that ends a line would say nothing a caller could act on, and would
+	/// teach them to skim the channel that carries the notices that matter.
+	/// </para>
+	/// <para>
+	/// Here rather than beside one caller, so every path that writes supplied code says the same
+	/// sentence.
 	/// </para>
 	/// </summary>
-	/// <param name="count">How many endings were rewritten.</param>
+	/// <param name="literals">The literals whose values changed, each on its line in the code supplied.</param>
 	/// <param name="ending">The name of the ending they were rewritten to.</param>
-	public static string RewrittenEndings(int count, string ending) =>
-		$"Rewrote {count} line ending(s) in the code supplied to {ending}, "
-			+ "the ending this file uses. Every ending in it was a bare LF, which is what composing C# for "
-			+ "a tool argument produces without anyone deciding to -- but inside a string literal an "
-			+ "ending is part of the value, which is why this is said rather than left silent. Write one "
-			+ "CR LF anywhere in the code to keep every ending exactly as it arrived.";
+	public static string RewrittenEndings(IReadOnlyList<RewrittenLiteral> literals, string ending) =>
+		$"{Rewrote(literals, ending, "of the code supplied")} Write one CR LF anywhere in the code to keep every "
+			+ "ending exactly as it arrived.";
+
+	/// <summary>
+	/// Says that endings inside a string literal were changed in a member nobody supplied as code: one
+	/// being moved, or the part of a body that came out of the file rather than from the caller.
+	/// <para>
+	/// A sentence of its own because the caller did not write these lines, so they are named against
+	/// the member instead. Whether there is a way to keep the endings depends on the write. A move has
+	/// no code argument to write a CR LF into. A body edit does, and the rule that rewrites bare LFs is
+	/// asked of the whole body it rebuilds, so one CR LF in what the caller sends leaves the file's own
+	/// literals exactly as they were.
+	/// </para>
+	/// </summary>
+	/// <param name="literals">The literals whose values changed, each on its line in the member.</param>
+	/// <param name="ending">The name of the ending they were rewritten to.</param>
+	/// <param name="codeSupplied">
+	/// Whether the write took code from the caller, which is what makes the CR LF escape hatch reach these
+	/// literals too.
+	/// </param>
+	public static string RewrittenMemberEndings(IReadOnlyList<RewrittenLiteral> literals, string ending, bool codeSupplied = false) =>
+		Rewrote(literals, ending, "of the member")
+			+ (codeSupplied
+				? " Write one CR LF anywhere in the code sent to leave every ending in the member as it was."
+				: string.Empty);
+
+	/// <summary>
+	/// The multi-line literals of <paramref name="text"/> whose values hold any of the line breaks
+	/// inside <paramref name="span"/>, each named by the line of the span it first appears on.
+	/// <para>
+	/// For a span whose every ending has just been rewritten -- a replacement spliced into a body --
+	/// this is the part of the rewrite that changed what a string says, and the rest of it was layout.
+	/// A literal that opened before the span is named by the span's first line, which is where the
+	/// caller's text is inside it.
+	/// </para>
+	/// </summary>
+	/// <param name="text">The text as it will be written, the rewritten span included.</param>
+	/// <param name="span">The part of it whose endings were rewritten.</param>
+	public static IReadOnlyList<RewrittenLiteral> LiteralsHolding(string text, TextSpan span)
+	{
+		var within = text.Substring(span.Start, span.Length);
+		var found = new List<RewrittenLiteral>();
+
+		foreach (var literal in LiteralValues(text))
+		{
+			var endings = literal.Breaks.Count(span.Contains);
+			if (endings == 0) continue;
+
+			var named = Math.Max(literal.Start, span.Start) - span.Start;
+
+			found.Add(new RewrittenLiteral(LineOf(within, named), endings));
+		}
+
+		return found;
+	}
+
+	/// <summary>
+	/// The line of <paramref name="into"/> each literal named in <paramref name="from"/> is found on,
+	/// unchanged, or null for one that <paramref name="into"/> does not hold as it is.
+	/// <para>
+	/// For a body rebuilt out of the file's own text with the caller's spliced in. What is parsed joins
+	/// the body to the signature on one line, and an insertion joins the statements around it again, so
+	/// a line counted there is not one anybody can find in the member. A literal the file already held
+	/// is the same text in both, which is what finds it; one the caller's text edited is not, and that
+	/// is what tells the two apart.
+	/// </para>
+	/// <para>
+	/// The same literal written twice is told apart by order, and only among the copies on each side
+	/// that the other side also holds. A copy the caller wrote has no counterpart in the member, and one
+	/// their text replaced has none in what was parsed, so counting either would pair every later copy
+	/// with the one before it.
+	/// </para>
+	/// </summary>
+	/// <param name="literals">The literals, each on its line in <paramref name="from"/>.</param>
+	/// <param name="from">The text the lines were counted in.</param>
+	/// <param name="into">The text to find each literal in.</param>
+	/// <param name="theirs">The lines of <paramref name="from"/> the caller's text is on.</param>
+	/// <param name="replaced">The parts of <paramref name="into"/> the caller's text took the place of.</param>
+	public static IReadOnlyList<int?> LinesIn(
+		IReadOnlyList<RewrittenLiteral> literals,
+		string from,
+		string into,
+		(int First, int Count) theirs,
+		IReadOnlyList<TextSpan> replaced)
+	{
+		bool IsTheirs(LiteralValue value)
+		{
+			var line = LineOf(from, value.Start);
+
+			return line >= theirs.First && line < theirs.First + theirs.Count;
+		}
+
+		var all = LiteralValues(from).ToArray();
+		var sources = all.Where(value => !IsTheirs(value)).ToArray();
+		var targets = LiteralValues(into)
+			.Where(value => !replaced.Any(span => span.OverlapsWith(new TextSpan(value.Start, value.Length))))
+			.ToArray();
+
+		var taken = new Dictionary<int, int>();
+		var found = new List<int?>(literals.Count);
+
+		foreach (var literal in literals)
+		{
+			// Several literals can open on one line, and each is reported in the order it was read.
+			taken.TryGetValue(literal.Line, out var skip);
+			taken[literal.Line] = skip + 1;
+
+			var onLine = all.Where(value => LineOf(from, value.Start) == literal.Line).Skip(skip).ToArray();
+
+			if (onLine.Length == 0 || IsTheirs(onLine[0]))
+			{
+				found.Add(null);
+				continue;
+			}
+
+			var source = onLine[0];
+			var text = from.Substring(source.Start, source.Length);
+
+			var earlier = sources.Count(value => value.Start < source.Start && from.Substring(value.Start, value.Length) == text);
+			var matches = targets.Where(value => into.Substring(value.Start, value.Length) == text).ToArray();
+
+			found.Add(matches.Length == 0 ? null : LineOf(into, matches[Math.Min(earlier, matches.Length - 1)].Start));
+		}
+
+		return found;
+	}
+
+	/// <summary>
+	/// A multi-line string literal whose value had line endings rewritten, and how many of them.
+	/// </summary>
+	/// <param name="Line">
+	/// The line it is named by, counted from zero in the text it was found in: the line it opens on, or
+	/// that text's first line where the literal opened before it.
+	/// </param>
+	/// <param name="Endings">How many of the endings inside its value were rewritten.</param>
+	public readonly record struct RewrittenLiteral(int Line, int Endings);
 
 	/// <summary>
 	/// Says that a multi-line raw literal was moved to sit with the code around it, which is the
@@ -310,7 +452,9 @@ public static class MemberSyntax
 		var baseline = Written(lines, first, untouched, indent)
 			?? Baseline([.. lines.Select(line => line.Content)]);
 
-		if (baseline.Length == 0 && indent.Length == 0) return code;
+		// Run even with no baseline to take off and no indentation to put on, since the blank lines above
+		// the first line go either way: the line a caller is told a literal is on, counted from the first
+		// line with anything on it, then means the same wherever the fragment lands.
 
 		var shifted = lines
 			.Select((line, index) => (Line: line, Index: index))
@@ -436,13 +580,25 @@ public static class MemberSyntax
 	/// then every one of them is left exactly as it arrived -- which is also how to ask for a bare
 	/// LF inside a literal deliberately.
 	/// </para>
+	/// <para>
+	/// The last copied line is the exception in one respect. What was copied ends partway along it,
+	/// since a signature is joined to its body on the line the signature ends on, so the ending that
+	/// line comes out with is the first one the caller wrote. It is asked and rewritten with theirs,
+	/// and only its content is left alone -- otherwise a verbatim literal opening on that line keeps
+	/// its first ending as it arrived while every one after it takes the file's.
+	/// </para>
+	/// <para>
+	/// Only the rewritten endings that lie inside a literal's value are reported. Everywhere else an
+	/// ending is layout, and making it the file's is what the whitespace pass does to every line it
+	/// writes anyway.
+	/// </para>
 	/// </summary>
 	private static string Shift(
 		string code,
 		string indent,
 		Literal literals,
 		string lineEnding,
-		Action<int>? rewritten,
+		Action<IReadOnlyList<RewrittenLiteral>>? rewritten,
 		Action<int>? reindented,
 		int copied,
 		string? given)
@@ -450,18 +606,32 @@ public static class MemberSyntax
 		var lines = Split(code);
 		var written = lines.Skip(copied).ToArray();
 		var baseline = given ?? Baseline([.. written.Select(line => line.Content)]);
-		var changed = 0;
 		var moved = 0;
 
-		var wanted = written.All(line => line.Ending is "" or "\n") ? lineEnding : string.Empty;
+		var theirs = Math.Max(copied - 1, 0);
+		var wanted = lines.Skip(theirs).All(line => line.Ending is "" or "\n") ? lineEnding : string.Empty;
+
+		var values = LiteralValues(code)
+			.Select(value => (Line: LineOf(code, value.Start), Endings: value.Breaks.Select(at => LineOf(code, at)).ToHashSet()))
+			.ToArray();
+
+		var inValues = new int[values.Length];
 
 		var shifted = lines.Select((line, index) =>
 		{
-			// A copied line is already where it belongs and carries the file's own ending, so both
-			// halves of this pass would only move it away from its neighbours.
-			if (index < copied) return line.Content + line.Ending;
+			var ending = index < theirs ? line.Ending : Ending(line.Ending, wanted);
 
-			var ending = Ending(line.Ending, wanted, ref changed);
+			if (!string.Equals(ending, line.Ending, StringComparison.Ordinal))
+			{
+				for (var value = 0; value < values.Length; value++)
+				{
+					if (values[value].Endings.Contains(index)) inValues[value]++;
+				}
+			}
+
+			// A copied line is already where it belongs, so both halves of the re-indentation would only
+			// move it away from its neighbours.
+			if (index < copied) return line.Content + ending;
 
 			if (literals.Verbatim.Contains(index)) return line.Content + ending;
 
@@ -486,7 +656,14 @@ public static class MemberSyntax
 
 		var result = string.Concat(shifted);
 
-		if (changed > 0) rewritten?.Invoke(changed);
+		RewrittenLiteral[] changed =
+		[
+			.. values
+				.Select((value, index) => new RewrittenLiteral(value.Line, inValues[index]))
+				.Where(literal => literal.Endings > 0),
+		];
+
+		if (changed.Length > 0) rewritten?.Invoke(changed);
 		if (moved > 0) reindented?.Invoke(moved);
 
 		return result;
@@ -496,14 +673,8 @@ public static class MemberSyntax
 	/// The ending a line comes out with. A lone LF takes the destination's; anything else is left,
 	/// so a caller that wrote a CR LF pair keeps it even in a file that is otherwise LF.
 	/// </summary>
-	private static string Ending(string arrived, string wanted, ref int changed)
-	{
-		if (wanted.Length == 0 || arrived != "\n" || wanted == "\n") return arrived;
-
-		changed++;
-
-		return wanted;
-	}
+	private static string Ending(string arrived, string wanted) =>
+		wanted.Length == 0 || arrived != "\n" || wanted == "\n" ? arrived : wanted;
 
 	/// <summary>The indentation the code was written at, taken from its first line with content.</summary>
 	private static string Baseline(IReadOnlyList<string> lines)
@@ -721,11 +892,26 @@ public static class MemberSyntax
 	/// not moving it leaves a literal written at column zero sitting a level out from the code around
 	/// it, which nothing downstream corrects and no analyzer reports.
 	/// </para>
+	/// <para>
+	/// A branch of an <c>#if</c> the parse took as inactive is disabled text rather than nodes, and its
+	/// literals are found by lexing that text: the build that defines the symbol compiles them, and
+	/// moving a verbatim literal's line there changes what that build says.
+	/// </para>
 	/// </summary>
 	private static Literal Literals(IReadOnlyList<MemberDeclarationSyntax> members)
 	{
 		var verbatim = new HashSet<int>();
 		var raw = new HashSet<int>();
+
+		void Add(bool isRaw, int start, int end)
+		{
+			var into = isRaw ? raw : verbatim;
+
+			// From the line after the opening delimiter through the one carrying the closing one: a raw
+			// literal's terminator sets the indentation stripped from the rest, so it moves with them or
+			// the value changes.
+			for (var line = start + 1; line <= end; line++) into.Add(line - WrapperLines);
+		}
 
 		foreach (var member in members)
 		{
@@ -736,16 +922,19 @@ public static class MemberSyntax
 				var span = node.SyntaxTree.GetLineSpan(node.Span);
 				if (span.StartLinePosition.Line == span.EndLinePosition.Line) continue;
 
-				var into = IsRaw(node) ? raw : verbatim;
-
-				// From the line after the opening delimiter through the one carrying the closing one:
-				// a raw literal's terminator sets the indentation stripped from the rest, so it moves
-				// with them or the value changes.
-				for (var line = span.StartLinePosition.Line + 1; line <= span.EndLinePosition.Line; line++)
-				{
-					into.Add(line - WrapperLines);
-				}
+				Add(IsRaw(node), span.StartLinePosition.Line, span.EndLinePosition.Line);
 			}
+		}
+
+		// The whole tree rather than the members, because disabled text after the last member is trivia
+		// on the wrapper's closing brace.
+		var tree = members[0].SyntaxTree;
+
+		foreach (var (span, isRaw) in DisabledLiterals(tree.GetRoot()))
+		{
+			var lines = tree.GetLineSpan(span);
+
+			Add(isRaw, lines.StartLinePosition.Line, lines.EndLinePosition.Line);
 		}
 
 		return new Literal(verbatim, raw);
@@ -755,11 +944,212 @@ public static class MemberSyntax
 	/// Whether a multi-line literal is a raw one, read from the delimiter it opens with rather than
 	/// from a syntax flag, because the interpolated and plain forms carry that in different places.
 	/// </summary>
-	private static bool IsRaw(SyntaxNode node) =>
-		node.ToString().TrimStart('$', '@').StartsWith("\"\"\"", StringComparison.Ordinal);
+	private static bool IsRaw(SyntaxNode node) => IsRaw(node.ToString());
 
 	/// <summary>Which lines of the supplied code sit inside a literal, and of which kind.</summary>
 	private readonly record struct Literal(IReadOnlySet<int> Verbatim, IReadOnlySet<int> Raw);
+
+	/// <summary>Whether a literal's text opens with a raw delimiter, interpolated or not.</summary>
+	private static bool IsRaw(string literal) =>
+		literal.TrimStart('$', '@').StartsWith("\"\"\"", StringComparison.Ordinal);
+
+	/// <summary>
+	/// Every multi-line string literal in <paramref name="code"/>, with where it starts and where each
+	/// line break is that belongs to its value rather than to the layout around it.
+	/// <para>
+	/// Not every break between a literal's delimiters is one. A multi-line raw literal drops the break
+	/// after its opening delimiter and the one in front of its closing delimiter's line, so rewriting
+	/// either changes nothing the program says. A break inside an interpolation hole is code, spread
+	/// over lines the way any expression can be. What is left is where a rewritten ending is a changed
+	/// string, and so the only place the rewrite is worth a sentence.
+	/// </para>
+	/// <para>
+	/// Lexed rather than parsed, so it reads a body or a replacement as readily as a member. The lexer
+	/// hands an interpolated string over as one token, so that token is parsed on its own to tell its
+	/// text from its holes, and a literal nested in a hole is found by the same walk. Every branch of
+	/// an <c>#if</c> is read, whichever symbols are defined: see <see cref="Lexed"/>.
+	/// </para>
+	/// </summary>
+	private static IEnumerable<LiteralValue> LiteralValues(string code)
+	{
+		foreach (var (token, start) in Lexed(code))
+		{
+			if (token.IsKind(SyntaxKind.InterpolatedStringToken))
+			{
+				foreach (var node in SyntaxFactory.ParseExpression(token.Text).DescendantNodesAndSelf())
+				{
+					var nested = node switch
+					{
+						InterpolatedStringExpressionSyntax interpolated => ValueOf(interpolated, start),
+						LiteralExpressionSyntax literal => ValueOf(literal.Token.Text, start + literal.Token.SpanStart),
+						_ => null,
+					};
+
+					if (nested is { } found) yield return found;
+				}
+
+				continue;
+			}
+
+			var isString = token.Kind() is SyntaxKind.StringLiteralToken
+				or SyntaxKind.Utf8StringLiteralToken
+				or SyntaxKind.MultiLineRawStringLiteralToken
+				or SyntaxKind.Utf8MultiLineRawStringLiteralToken;
+
+			if (isString && ValueOf(token.Text, start) is { } value) yield return value;
+		}
+	}
+
+	/// <summary>
+	/// The tokens of <paramref name="code"/>, each with where it starts, and the tokens of every branch
+	/// of an <c>#if</c> the lexer took as inactive, lexed from the disabled text and placed where that
+	/// text sits.
+	/// <para>
+	/// The lexer defines no symbols, so a branch under <c>#if DEBUG</c> arrives as one run of disabled
+	/// text rather than as tokens -- and the build where the branch is active compiles exactly the
+	/// literal that text holds. Reading the active branches alone leaves a literal in any other one to
+	/// have its endings rewritten and its lines moved with nobody told, which is a change to what the
+	/// program says in the one build nobody looked at. A run of disabled text holds no directive, since
+	/// the lexer splits it at each one, so lexing it again yields its tokens and nothing else.
+	/// </para>
+	/// </summary>
+	private static IEnumerable<(SyntaxToken Token, int Start)> Lexed(string code)
+	{
+		foreach (var token in SyntaxFactory.ParseTokens(code))
+		{
+			foreach (var hidden in Disabled(token.LeadingTrivia)) yield return hidden;
+
+			yield return (token, token.SpanStart);
+
+			foreach (var hidden in Disabled(token.TrailingTrivia)) yield return hidden;
+		}
+
+		static IEnumerable<(SyntaxToken Token, int Start)> Disabled(SyntaxTriviaList trivia)
+		{
+			foreach (var piece in trivia)
+			{
+				if (!piece.IsKind(SyntaxKind.DisabledTextTrivia)) continue;
+
+				foreach (var (token, start) in Lexed(piece.ToFullString())) yield return (token, piece.SpanStart + start);
+			}
+		}
+	}
+
+	/// <summary>
+	/// The string literals in every branch of an <c>#if</c> the parse of <paramref name="root"/> took as
+	/// inactive, each by its span in that tree and whether it is a raw one.
+	/// <para>
+	/// A parse defines the project's symbols, so the branches it leaves inactive are disabled text rather
+	/// than nodes, and anything that finds literals by walking the nodes passes over them -- while the
+	/// build that defines the symbol compiles exactly the literal that text holds. Whatever protects a
+	/// literal's value has to protect these as well, or a line ending or a trailing space inside one is
+	/// rewritten as layout in the one build nobody looked at.
+	/// </para>
+	/// </summary>
+	internal static IEnumerable<(TextSpan Span, bool Raw)> DisabledLiterals(SyntaxNode root)
+	{
+		foreach (var trivia in root.DescendantTrivia(descendIntoTrivia: true))
+		{
+			if (!trivia.IsKind(SyntaxKind.DisabledTextTrivia)) continue;
+
+			foreach (var (token, at) in Lexed(trivia.ToFullString()))
+			{
+				var isString = token.Kind() is SyntaxKind.StringLiteralToken
+					or SyntaxKind.Utf8StringLiteralToken
+					or SyntaxKind.SingleLineRawStringLiteralToken
+					or SyntaxKind.MultiLineRawStringLiteralToken
+					or SyntaxKind.Utf8MultiLineRawStringLiteralToken
+					or SyntaxKind.InterpolatedStringToken;
+
+				if (isString) yield return (new TextSpan(trivia.SpanStart + at, token.Span.Length), IsRaw(token.Text));
+			}
+		}
+	}
+
+	/// <summary>
+	/// A plain literal's value breaks: every break in it, less a raw literal's two delimiter breaks.
+	/// Null where there are none, which is every literal on one line.
+	/// </summary>
+	/// <param name="literal">The literal's text.</param>
+	/// <param name="start">Where it starts in the code being read.</param>
+	private static LiteralValue? ValueOf(string literal, int start)
+	{
+		var breaks = Breaks(literal, IsRaw(literal));
+
+		return breaks.Count == 0 ? null : new LiteralValue(start, literal.Length, [.. breaks.Select(at => start + at)]);
+	}
+
+	/// <summary>
+	/// An interpolated literal's value breaks: the ones in its text, and none of the ones inside a hole.
+	/// </summary>
+	/// <param name="interpolated">The literal, parsed from its token on its own.</param>
+	/// <param name="offset">Where that token starts in the code being read.</param>
+	private static LiteralValue? ValueOf(InterpolatedStringExpressionSyntax interpolated, int offset)
+	{
+		var text = interpolated.ToString();
+		var parts = interpolated.Contents.OfType<InterpolatedStringTextSyntax>().Select(part => part.Span).ToArray();
+
+		var breaks = Breaks(text, IsRaw(text))
+			.Select(at => interpolated.SpanStart + at)
+			.Where(at => parts.Any(part => part.Contains(at)))
+			.Select(at => offset + at)
+			.ToArray();
+
+		return breaks.Length == 0 ? null : new LiteralValue(offset + interpolated.SpanStart, interpolated.Span.Length, breaks);
+	}
+
+	/// <summary>
+	/// Where each line break in <paramref name="text"/> starts, with CR, LF and CR LF each one break,
+	/// and without the first and last where <paramref name="raw"/> says they are a raw literal's
+	/// delimiter lines.
+	/// </summary>
+	private static IReadOnlyList<int> Breaks(string text, bool raw)
+	{
+		var breaks = new List<int>();
+
+		for (var index = 0; index < text.Length; index++)
+		{
+			if (text[index] is not ('\n' or '\r')) continue;
+
+			breaks.Add(index);
+
+			if (text[index] == '\r' && index + 1 < text.Length && text[index + 1] == '\n') index++;
+		}
+
+		if (!raw) return breaks;
+
+		return breaks.Count <= 2 ? [] : breaks.GetRange(1, breaks.Count - 2);
+	}
+
+	/// <summary>
+	/// A multi-line literal, by where it starts, how long it is, and where the line breaks that are part
+	/// of its value are, the offsets all into the code it was read from.
+	/// </summary>
+	private readonly record struct LiteralValue(int Start, int Length, IReadOnlyList<int> Breaks);
+
+	/// <summary>
+	/// Names the literals whose endings were rewritten, and the lines they are on.
+	/// </summary>
+	/// <param name="literals">The literals, each on its line counted from zero.</param>
+	/// <param name="ending">The name of the ending they were given.</param>
+	/// <param name="where">What the lines are counted in, as it reads after the line numbers.</param>
+	private static string Rewrote(IReadOnlyList<RewrittenLiteral> literals, string ending, string where)
+	{
+		var lines = literals.Select(literal => literal.Line + 1).Distinct().Order().ToArray();
+		var one = literals.Count == 1;
+
+		return $"Rewrote {literals.Sum(literal => literal.Endings)} line ending(s) to {ending}, the ending this "
+			+ $"file uses, inside the multi-line string literal{(one ? string.Empty : "s")} on {Numbered(lines)} "
+			+ $"{where}, which changes {(one ? "its value" : "their values")}.";
+	}
+
+	/// <summary>"line 4", "lines 4 and 12", or "lines 2, 4 and 12": every one, since each is a changed value.</summary>
+	private static string Numbered(int[] lines) => lines switch
+	{
+		[] => string.Empty,
+		[var only] => $"line {only}",
+		[.. var rest, var last] => $"lines {string.Join(", ", rest)} and {last}",
+	};
 
 	private static IReadOnlyList<MemberDeclarationSyntax> Members(BaseTypeDeclarationSyntax wrapper) => wrapper switch
 	{
@@ -818,10 +1208,10 @@ public static class MemberSyntax
 	{
 		var lines = new HashSet<int>();
 
-		foreach (var token in SyntaxFactory.ParseTokens(code))
+		foreach (var (token, at) in Lexed(code))
 		{
-			var start = LineOf(code, token.SpanStart);
-			var end = LineOf(code, token.Span.End - 1);
+			var start = LineOf(code, at);
+			var end = LineOf(code, at + token.Span.Length - 1);
 
 			// From the line after the opening delimiter through the one carrying the closing one: a raw
 			// literal's terminator sets the indentation taken off the rest, so it stays with them.
@@ -832,7 +1222,7 @@ public static class MemberSyntax
 	}
 
 	/// <summary>Which line an offset falls on, counted from zero, with CR, LF and CR LF all endings.</summary>
-	private static int LineOf(string code, int offset)
+	internal static int LineOf(string code, int offset)
 	{
 		var line = 0;
 

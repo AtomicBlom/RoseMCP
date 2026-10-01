@@ -269,8 +269,8 @@ public sealed class MemberEditFormattingTests
 	/// <summary>
 	/// A multi-line literal composed for a JSON argument arrives with bare newlines, which in a CRLF
 	/// file fails dotnet format while no build complains and the obvious fix changes what the program
-	/// says. The endings become the file's, and the result says so, because a diff cannot show a
-	/// terminator and this one is part of a string's value.
+	/// says. The endings become the file's, and the result says so and names the literal's line, because
+	/// a diff cannot show a terminator and this one is part of a string's value.
 	/// <para>
 	/// A caller that writes a carriage return is thinking about endings, and then nothing is touched --
 	/// which is also the way to ask for a bare newline inside a literal on purpose.
@@ -286,12 +286,12 @@ public sealed class MemberEditFormattingTests
 		{
 			Kind = MemberEditKind.Add,
 			Symbol = "Library.Greeter",
-			Code = "public string Bare() => @\"\nline one\nline two\n\";",
+			Code = "/// <summary>Two lines.</summary>\npublic string Bare() => @\"\nline one\nline two\n\";",
 		});
 
 		bare.Notices.ShouldContain(
-			notice => notice.Contains("Rewrote", StringComparison.Ordinal)
-				&& notice.Contains("line ending(s) in the code supplied", StringComparison.Ordinal));
+			notice => notice.StartsWith("Rewrote 3 line ending(s) to CRLF", StringComparison.Ordinal)
+				&& notice.Contains("literal on line 2 of the code supplied", StringComparison.Ordinal));
 
 		var text = await ReadAsync(fixture, "Greeter.cs");
 
@@ -305,8 +305,32 @@ public sealed class MemberEditFormattingTests
 			Code = "public string Matching() => @\"\r\nline one\r\nline two\r\n\";",
 		});
 
-		matching.Notices.ShouldNotContain(
-			notice => notice.Contains("line ending(s) in the code supplied", StringComparison.Ordinal));
+		matching.Notices.ShouldNotContain(notice => notice.StartsWith("Rewrote", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// Code holding no multi-line literal arrives with bare newlines on every call, and they become the
+	/// file's without a word: outside a literal an ending is layout, and a sentence on every write says
+	/// nothing a caller can act on while teaching them to skim the notices that matter.
+	/// </summary>
+	[Test]
+	public async Task Rewrites_the_endings_of_code_without_a_literal_in_silence()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "/// <summary>Says it twice.</summary>\npublic string Twice(string name)\n{\n\tvar once = Greet(name);\n\treturn once + \" \" + once;\n}",
+		});
+
+		result.Notices.ShouldNotContain(notice => notice.Contains("line ending", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("\tpublic string Twice(string name)\r\n\t{\r\n\t\tvar once = Greet(name);\r\n", Case.Sensitive);
 	}
 
 	/// <summary>

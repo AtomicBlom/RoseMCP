@@ -54,8 +54,10 @@ public static class BodyEdit
 	/// Match the body's text rather than its tokens, so a match may lie inside a comment or a string.
 	/// </param>
 	/// <param name="rewritten">
-	/// How many of the replacement's line endings were given the body's, so a caller can say so. It is a
-	/// change to what a literal says, and it must not be silent.
+	/// The literals whose values changed when the replacement's line endings were given the body's, each
+	/// on the line of the replacement it first appears on, so a caller can say so: that is a change to
+	/// what a string says, and it must not be silent. Called only when there is one, since an ending
+	/// rewritten outside a literal is layout.
 	/// </param>
 	/// <param name="mixed">
 	/// That the replacement's own lines disagree about which baseline they were written at, so the
@@ -64,6 +66,10 @@ public static class BodyEdit
 	/// <param name="matched">
 	/// Each span of <paramref name="body"/> the match covers, so a caller can say which lines it was asked
 	/// to change: one per token on the token path, and the matched text on the other.
+	/// </param>
+	/// <param name="lineEnding">
+	/// The ending the file's layout gives the member, which a replacement written with bare LFs takes.
+	/// Null takes the body's own instead.
 	/// </param>
 	/// <exception cref="ArgumentException">
 	/// Nothing matched, more than one thing did, find carries a comment the token matching cannot see,
@@ -74,16 +80,17 @@ public static class BodyEdit
 		string find,
 		string replace,
 		bool includeTrivia = false,
-		Action<int>? rewritten = null,
+		Action<IReadOnlyList<MemberSyntax.RewrittenLiteral>>? rewritten = null,
 		Action<string>? mixed = null,
-		Action<TextSpan>? matched = null)
+		Action<TextSpan>? matched = null,
+		string? lineEnding = null)
 	{
 		if (string.IsNullOrWhiteSpace(find))
 		{
 			throw new ArgumentException("Nothing to find. Pass the code to look for, or use code to write the whole body.");
 		}
 
-		if (includeTrivia) return InText(body, find, replace, rewritten, matched);
+		if (includeTrivia) return InText(body, find, replace, rewritten, matched, lineEnding);
 
 		var wanted = Tokens(find);
 
@@ -130,7 +137,12 @@ public static class BodyEdit
 		// a comment there is trivia the matching could not see, and the caller did not ask to change it.
 		foreach (var token in present.Skip(at).Take(wanted.Count)) matched?.Invoke(token.Span);
 
-		return string.Concat(body.AsSpan(0, start), Placed(replace, IndentOf(body, start), mixed), body.AsSpan(end));
+		var placed = Given(Placed(replace, IndentOf(body, start), mixed), lineEnding ?? Whitespace.EndingOf(body), out var changed);
+		var spliced = string.Concat(body.AsSpan(0, start), placed, body.AsSpan(end));
+
+		if (changed > 0) Reported(spliced, new TextSpan(start, placed.Length), replace, rewritten);
+
+		return spliced;
 	}
 
 	/// <summary>
@@ -156,10 +168,23 @@ public static class BodyEdit
 	/// be editing when they reach for this path at all. Normalising unconditionally would have closed
 	/// that case as it opened the other. The replacement follows the needle: if the caller's LFs were
 	/// read as transport artefacts in one half they are in both, and if they were taken literally then
-	/// they are taken literally in both.
+	/// they are taken literally in both. Read as artefacts, the replacement takes the ending the file's
+	/// layout writes rather than the body's, so a literal in it agrees with the lines the whitespace
+	/// pass writes around it.
+	/// </para>
+	/// <para>
+	/// What is reported of that is decided on the body as it will be written, since a replacement is
+	/// as often the words inside a string already in the file as code carrying a literal of its own:
+	/// only the endings that land inside a literal's value changed a string, and the rest are layout.
 	/// </para>
 	/// </summary>
-	private static string InText(string body, string find, string replace, Action<int>? rewritten, Action<TextSpan>? matched)
+	private static string InText(
+		string body,
+		string find,
+		string replace,
+		Action<IReadOnlyList<MemberSyntax.RewrittenLiteral>>? rewritten,
+		Action<TextSpan>? matched,
+		string? lineEnding)
 	{
 		var needle = find;
 		var written = replace;
@@ -179,7 +204,7 @@ public static class BodyEdit
 				{
 					needle = wanted;
 					matches = retried;
-					written = Normalised(replace, ending, out changed);
+					written = Normalised(replace, lineEnding ?? ending, out changed);
 				}
 			}
 		}
@@ -206,13 +231,21 @@ public static class BodyEdit
 
 		matched?.Invoke(new TextSpan(start, needle.Length));
 
-		if (changed > 0) rewritten?.Invoke(changed);
-
 		// Spliced with none of the re-indentation the token path applies. The point of this path is the
 		// text inside a comment or a literal, where leading whitespace is content: a raw literal's
 		// indentation decides how much is stripped from its value, and reflowing a comment is a change
 		// nobody asked for.
-		return string.Concat(body.AsSpan(0, start), written, body.AsSpan(start + needle.Length));
+		var spliced = string.Concat(body.AsSpan(0, start), written, body.AsSpan(start + needle.Length));
+
+		if (changed == 0) return spliced;
+
+		// Every ending the replacement carries was rewritten, so the literals holding any of them are the
+		// strings that changed.
+		var literals = MemberSyntax.LiteralsHolding(spliced, new TextSpan(start, written.Length));
+
+		if (literals.Count > 0) rewritten?.Invoke(literals);
+
+		return spliced;
 	}
 
 	/// <summary>Where <paramref name="needle"/> appears in <paramref name="body"/>, exactly.</summary>
@@ -420,25 +453,71 @@ public static class BodyEdit
 	/// <param name="code">The statements to insert.</param>
 	/// <param name="atStart">True for the top of the block, false for the end.</param>
 	/// <param name="notices">Where an insertion point worth explaining is recorded.</param>
+	/// <param name="placed">
+	/// Where the inserted code begins in what comes back, so a line inside it can be named in the
+	/// caller's own terms.
+	/// </param>
+	/// <param name="lineEnding">
+	/// The ending the file's layout gives the member, which code written with bare LFs takes. Null takes
+	/// the block's own instead.
+	/// </param>
+	/// <param name="rewritten">
+	/// The literals whose values changed when the code's line endings were rewritten, each on its line
+	/// in <paramref name="code"/>. Called only when there is one.
+	/// </param>
 	public static string Inserted(
 		MemberDeclarationSyntax declaration,
 		BlockSyntax block,
 		string code,
 		bool atStart,
-		List<string> notices)
+		List<string> notices,
+		out int placed,
+		string? lineEnding = null,
+		Action<IReadOnlyList<MemberSyntax.RewrittenLiteral>>? rewritten = null)
 	{
 		_ = declaration;
 
-		var statements = block.Statements;
-		var written = code.Trim();
+		var trimmed = code.Trim();
 
-		if (written.Length == 0) throw new ArgumentException("No code was supplied, so there is nothing to insert.");
+		placed = 0;
+
+		if (trimmed.Length == 0) throw new ArgumentException("No code was supplied, so there is nothing to insert.");
+
+		var own = Whitespace.EndingOf(block.ToFullString());
+		var written = Given(trimmed, lineEnding ?? own, out var changed);
+		var body = Composed(block.Statements, written, atStart, own ?? "\n", notices, out placed);
+
+		if (changed > 0) Reported(body, new TextSpan(placed, written.Length), code, rewritten);
+
+		return body;
+	}
+
+	/// <summary>
+	/// The block's statements with <paramref name="written"/> at one end of them, and where it begins.
+	/// <para>
+	/// Joined with <paramref name="ending"/>, the block's own, rather than with a bare LF. The joins are
+	/// layout and the whitespace pass gives them the file's ending either way, but the member parsed from
+	/// this decides whether to rewrite bare LFs by whether every ending in it is one -- and joins of the
+	/// wrong kind make a CRLF block look like one nobody had a view about, so a literal of the file's
+	/// own holding a deliberate bare LF has its value changed by an insertion that never touched it.
+	/// </para>
+	/// </summary>
+	private static string Composed(
+		SyntaxList<StatementSyntax> statements,
+		string written,
+		bool atStart,
+		string ending,
+		List<string> notices,
+		out int placed)
+	{
+		placed = 0;
 
 		if (statements.Count == 0) return written;
 
-		var existing = string.Join("\n", statements.Select(statement => statement.ToFullString().Trim()));
+		var gap = ending + ending;
+		var existing = string.Join(ending, statements.Select(statement => statement.ToFullString().Trim()));
 
-		if (atStart) return $"{written}\n\n{existing}";
+		if (atStart) return $"{written}{gap}{existing}";
 
 		// Appending after a return, throw, break, continue or goto is unreachable code, which is
 		// CS0162 -- a build error in a repository that turns warnings up, and dead code in one that
@@ -446,7 +525,12 @@ public static class BodyEdit
 		// wants and what they would have written by hand.
 		var last = statements[^1];
 
-		if (!IsJump(last)) return $"{existing}\n\n{written}";
+		if (!IsJump(last))
+		{
+			placed = existing.Length + gap.Length;
+
+			return $"{existing}{gap}{written}";
+		}
 
 		notices.Add($"Inserted before the closing {Keyword(last)}, since anything after it is unreachable.");
 
@@ -454,9 +538,54 @@ public static class BodyEdit
 			.Select(statement => statement.ToFullString().Trim())
 			.ToArray();
 
-		var head = above.Length == 0 ? string.Empty : string.Join("\n", above) + "\n\n";
+		var head = above.Length == 0 ? string.Empty : string.Join(ending, above) + gap;
 
-		return $"{head}{written}\n\n{last.ToFullString().Trim()}";
+		placed = head.Length;
+
+		return $"{head}{written}{gap}{last.ToFullString().Trim()}";
+	}
+
+	/// <summary>
+	/// The caller's text given <paramref name="ending"/>, where every ending it has is a bare LF and that
+	/// is another, and how many were rewritten.
+	/// <para>
+	/// Here rather than left to the member being parsed, because there the rule is asked of the whole
+	/// body and the file's own lines answer for the caller. A body already written with CR LF reads as a
+	/// caller who wrote one, so a literal they composed with bare LFs keeps them, and the file fails
+	/// <c>dotnet format</c> with no build saying so. The ending is the one the rest of the write gives
+	/// the member, so the literal and the lines around it agree. Null leaves the text to that pass.
+	/// </para>
+	/// </summary>
+	/// <param name="text">The caller's text, placed for where it goes.</param>
+	/// <param name="ending">The ending to give it, or null where there is none to read.</param>
+	/// <param name="changed">How many endings were rewritten.</param>
+	private static string Given(string text, string? ending, out int changed)
+	{
+		changed = 0;
+
+		return ending is null ? text : Normalised(text, ending, out changed);
+	}
+
+	/// <summary>
+	/// Names the multi-line literals in <paramref name="span"/> of <paramref name="text"/> whose endings
+	/// were rewritten, each on its line in <paramref name="sent"/>.
+	/// <para>
+	/// The span begins at the first line of what was sent that has anything on it, since the blank
+	/// lines above that are dropped where it lands, so those lines are added back to every count.
+	/// </para>
+	/// </summary>
+	private static void Reported(
+		string text,
+		TextSpan span,
+		string sent,
+		Action<IReadOnlyList<MemberSyntax.RewrittenLiteral>>? rewritten)
+	{
+		var literals = MemberSyntax.LiteralsHolding(text, span);
+		if (literals.Count == 0) return;
+
+		var dropped = MemberSyntax.LineOf(sent, sent.Length - sent.TrimStart().Length);
+
+		rewritten?.Invoke([.. literals.Select(literal => literal with { Line = literal.Line + dropped })]);
 	}
 
 	/// <summary>

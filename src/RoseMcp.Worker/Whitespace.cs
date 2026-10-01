@@ -273,16 +273,15 @@ public static class Whitespace
 	{
 		var lines = new List<int>();
 
-		foreach (var node in root.DescendantNodes())
+		foreach (var (literal, _) in Literals(root).OrderBy(literal => literal.Span.Start))
 		{
-			if (node is not (LiteralExpressionSyntax or InterpolatedStringExpressionSyntax)) continue;
-			if (within is { } span && !span.IntersectsWith(node.Span)) continue;
+			if (within is { } span && !span.IntersectsWith(literal)) continue;
 
-			var written = node.ToString();
+			var written = text.ToString(literal);
 			if (!written.Contains('\n', StringComparison.Ordinal)) continue;
 			if (!HoldsAnEndingOtherThan(written, rules.LineEnding)) continue;
 
-			lines.Add(text.Lines.GetLineFromPosition(node.SpanStart).LineNumber + 1);
+			lines.Add(text.Lines.GetLineFromPosition(literal.Start).LineNumber + 1);
 		}
 
 		return lines;
@@ -349,10 +348,27 @@ public static class Whitespace
 	/// rather than layout. A single-line literal cannot hold a line ending, and nothing can follow
 	/// it on its line except code, so protecting those would only stop ordinary lines from being
 	/// trimmed.
+	/// <para>
+	/// The literals of an <c>#if</c> branch the parse took as inactive are among them, found in its
+	/// disabled text: the build that defines the symbol compiles them, so an ending or a trailing space
+	/// rewritten there is a changed value in that build.
+	/// </para>
 	/// </summary>
 	private static IReadOnlyList<TextSpan> MultiLineLiterals(SyntaxNode root, SourceText text) =>
-		[.. Crossing(root.DescendantNodes()
-			.Where(node => node is LiteralExpressionSyntax or InterpolatedStringExpressionSyntax), text)];
+		[.. Crossing(LiteralSpans(root), text)];
+
+	/// <summary>
+	/// Every string literal in <paramref name="root"/> by its span and whether it is a raw one: the nodes
+	/// of the active code, and the literals lexed out of every inactive branch's disabled text.
+	/// </summary>
+	private static IEnumerable<(TextSpan Span, bool Raw)> Literals(SyntaxNode root) =>
+		root.DescendantNodes()
+			.Where(node => node is LiteralExpressionSyntax or InterpolatedStringExpressionSyntax)
+			.Select(node => (node.Span, IsRaw(node)))
+			.Concat(MemberSyntax.DisabledLiterals(root));
+
+	/// <summary>The spans of every string literal in <paramref name="root"/>, inactive branches included.</summary>
+	private static IEnumerable<TextSpan> LiteralSpans(SyntaxNode root) => Literals(root).Select(literal => literal.Span);
 
 	/// <summary>
 	/// The lines a multi-line raw literal's delimiters sit on.
@@ -380,7 +396,7 @@ public static class Whitespace
 	{
 		var lines = new HashSet<int>();
 
-		foreach (var span in Crossing(root.DescendantNodes().Where(IsRaw), text))
+		foreach (var span in Crossing(Literals(root).Where(literal => literal.Raw).Select(literal => literal.Span), text))
 		{
 			if (literals.Any(other => other != span && other.Contains(span))) continue;
 
@@ -403,10 +419,9 @@ public static class Whitespace
 		_ => false,
 	};
 
-	/// <summary>The spans of those nodes that start and end on different lines.</summary>
-	private static IEnumerable<TextSpan> Crossing(IEnumerable<SyntaxNode> nodes, SourceText text) =>
-		nodes
-			.Select(node => node.Span)
+	/// <summary>The spans that start and end on different lines.</summary>
+	private static IEnumerable<TextSpan> Crossing(IEnumerable<TextSpan> spans, SourceText text) =>
+		spans
 			.Where(span => text.Lines.GetLineFromPosition(span.Start).LineNumber
 				!= text.Lines.GetLineFromPosition(span.End).LineNumber)
 			.OrderBy(span => span.Start);

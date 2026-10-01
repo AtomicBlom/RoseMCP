@@ -56,7 +56,7 @@ internal static class EnumMemberEdit
 			document.Project.ParseOptions,
 			indent,
 			lineEnding,
-			count => notices.Add(MemberEditService.RewrittenEndings(count, rules)),
+			literals => notices.Add(MemberEditService.RewrittenEndings(literals, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)));
 
 		var adding = parsed.Cast<EnumMemberDeclarationSyntax>().Select(WithSeparatorTrivia).ToArray();

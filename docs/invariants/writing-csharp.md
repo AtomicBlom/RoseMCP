@@ -126,7 +126,9 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   with endings the file does not use fails `dotnet format` while no build complains, and the obvious
   fix changes what the program says. Where code a caller supplied had its bare LFs rewritten, only
   the endings inside a literal's value are reported, each literal by its line in what the caller
-  sent: every other ending is layout, and a sentence on every write is one nobody reads. See
+  sent: every other ending is layout, and a sentence on every write is one nobody reads. Literals
+  are looked for in every branch of an `#if`, not only the ones the lexer took as active, because
+  the rewrite reaches all of them and the build that defines the symbol compiles what it changed. See
   [the decision](../decisions/line-endings-in-code-a-caller-supplies.md).
 - **A signature change moves the whole declaration group, or it does not compile.** A virtual
   method whose override keeps the old parameters is a build error, and so is an interface member

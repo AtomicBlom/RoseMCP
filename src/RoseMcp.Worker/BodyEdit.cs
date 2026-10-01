@@ -132,7 +132,12 @@ public static class BodyEdit
 		// a comment there is trivia the matching could not see, and the caller did not ask to change it.
 		foreach (var token in present.Skip(at).Take(wanted.Count)) matched?.Invoke(token.Span);
 
-		return string.Concat(body.AsSpan(0, start), Placed(replace, IndentOf(body, start), mixed), body.AsSpan(end));
+		var placed = Given(Placed(replace, IndentOf(body, start), mixed), body, out var changed);
+		var spliced = string.Concat(body.AsSpan(0, start), placed, body.AsSpan(end));
+
+		if (changed > 0) Reported(spliced, new TextSpan(start, placed.Length), replace, rewritten);
+
+		return spliced;
 	}
 
 	/// <summary>
@@ -444,22 +449,46 @@ public static class BodyEdit
 	/// Where the inserted code begins in what comes back, so a line inside it can be named in the
 	/// caller's own terms.
 	/// </param>
+	/// <param name="rewritten">
+	/// The literals whose values changed when the code's line endings were given the block's, each on
+	/// its line in <paramref name="code"/>. Called only when there is one.
+	/// </param>
 	public static string Inserted(
 		MemberDeclarationSyntax declaration,
 		BlockSyntax block,
 		string code,
 		bool atStart,
 		List<string> notices,
-		out int placed)
+		out int placed,
+		Action<IReadOnlyList<MemberSyntax.RewrittenLiteral>>? rewritten = null)
 	{
 		_ = declaration;
 
-		var statements = block.Statements;
-		var written = code.Trim();
+		var trimmed = code.Trim();
 
 		placed = 0;
 
-		if (written.Length == 0) throw new ArgumentException("No code was supplied, so there is nothing to insert.");
+		if (trimmed.Length == 0) throw new ArgumentException("No code was supplied, so there is nothing to insert.");
+
+		var written = Given(trimmed, block.ToFullString(), out var changed);
+		var body = Composed(block.Statements, written, atStart, notices, out placed);
+
+		if (changed > 0) Reported(body, new TextSpan(placed, written.Length), code, rewritten);
+
+		return body;
+	}
+
+	/// <summary>
+	/// The block's statements with <paramref name="written"/> at one end of them, and where it begins.
+	/// </summary>
+	private static string Composed(
+		SyntaxList<StatementSyntax> statements,
+		string written,
+		bool atStart,
+		List<string> notices,
+		out int placed)
+	{
+		placed = 0;
 
 		if (statements.Count == 0) return written;
 
@@ -491,6 +520,49 @@ public static class BodyEdit
 		placed = head.Length;
 
 		return $"{head}{written}\n\n{last.ToFullString().Trim()}";
+	}
+
+	/// <summary>
+	/// The caller's text given the endings of the body it is spliced into, where every ending it has is
+	/// a bare LF and the body has another, and how many were rewritten.
+	/// <para>
+	/// Here rather than left to the member being parsed, because there the rule is asked of the whole
+	/// body and the file's own lines answer for the caller. A body already written with CR LF reads as
+	/// a caller who wrote one, so the replacement's literal kept its bare LFs and the file failed
+	/// <c>dotnet format</c> with no build saying so. A body with no line break to read an ending from is
+	/// left to that pass, which knows the file's.
+	/// </para>
+	/// </summary>
+	/// <param name="text">The caller's text, placed for where it goes.</param>
+	/// <param name="body">The text it goes into.</param>
+	/// <param name="changed">How many endings were rewritten.</param>
+	private static string Given(string text, string body, out int changed)
+	{
+		changed = 0;
+
+		return Whitespace.EndingOf(body) is { } ending ? Normalised(text, ending, out changed) : text;
+	}
+
+	/// <summary>
+	/// Names the multi-line literals in <paramref name="span"/> of <paramref name="text"/> whose endings
+	/// were rewritten, each on its line in <paramref name="sent"/>.
+	/// <para>
+	/// The span begins at the first line of what was sent that has anything on it, since the blank
+	/// lines above that are dropped where it lands, so those lines are added back to every count.
+	/// </para>
+	/// </summary>
+	private static void Reported(
+		string text,
+		TextSpan span,
+		string sent,
+		Action<IReadOnlyList<MemberSyntax.RewrittenLiteral>>? rewritten)
+	{
+		var literals = MemberSyntax.LiteralsHolding(text, span);
+		if (literals.Count == 0) return;
+
+		var dropped = MemberSyntax.LineOf(sent, sent.Length - sent.TrimStart().Length);
+
+		rewritten?.Invoke([.. literals.Select(literal => literal with { Line = literal.Line + dropped })]);
 	}
 
 	/// <summary>

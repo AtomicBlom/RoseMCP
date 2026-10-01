@@ -207,6 +207,28 @@ public sealed class BodyEditTests
 	}
 
 	/// <summary>
+	/// A token-matched replacement composed with bare LFs takes the endings of a body written with CR LF
+	/// before it meets the body's text, since afterwards the body's own endings would answer for the
+	/// caller and the literal would keep its LFs. The literal is named on its line in what was sent,
+	/// counted from the blank line above it that the splice drops.
+	/// </summary>
+	[Test]
+	public void Gives_a_token_matched_replacement_the_bodys_endings()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var body = BodyEdit.Anchored(
+			"{\r\n\treturn a;\r\n}",
+			"a",
+			"\na\n\t+ @\"x\ny\"",
+			rewritten: literals => rewritten = literals);
+
+		body.ShouldContain("@\"x\r\ny\"", Case.Sensitive);
+		body.ShouldNotContain("\n\n", Case.Sensitive);
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(2, 1));
+	}
+
+	/// <summary>
 	/// A needle carrying a carriage return is left exactly as written, which is how to reach an ending
 	/// the file does not use -- the same escape hatch as every other payload, and the reason the rule
 	/// can be a condition rather than an argument.

@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace RoseMcp.UnitTests;
 
@@ -430,7 +431,9 @@ public sealed class MemberSyntaxTests
 
 	/// <summary>
 	/// The sentence names the literal's line from one and keeps the escape hatch, and says nothing about
-	/// what a bare LF is, which only needed saying while it was said on every payload.
+	/// what a bare LF is or where one comes from: it is said only where a literal's value changed, and a
+	/// caller reading it there needs the line and the way to keep the endings, not an account of how
+	/// composing a string produces them.
 	/// </summary>
 	[Test]
 	public void Says_where_the_rewritten_literal_is()
@@ -441,6 +444,86 @@ public sealed class MemberSyntaxTests
 			"Rewrote 2 line ending(s) to CRLF, the ending this file uses, inside the multi-line string literal on "
 				+ "line 4 of the code supplied, which changes its value. Write one CR LF anywhere in the code to keep "
 				+ "every ending exactly as it arrived.");
+	}
+
+	/// <summary>
+	/// A literal in a branch of an <c>#if</c> the lexer takes as inactive is still a literal in the build
+	/// that defines the symbol, and its endings are rewritten with every other. So both branches' literals
+	/// are named, each on its own line, and the inactive one's interior is left where it was, since moving
+	/// a verbatim literal's line changes what that build says.
+	/// </summary>
+	[Test]
+	public void Names_a_literal_in_every_branch_of_an_if()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var members = MemberSyntax.Parse(
+			"public string T()\n{\n#if DEBUG\n\treturn @\"one\n  two\";\n#else\n\treturn @\"three\nfour\";\n#endif\n}",
+			"class",
+			options: null,
+			indent: "\t",
+			lineEnding: "\r\n",
+			rewritten: literals => rewritten = literals);
+
+		var written = members.ShouldHaveSingleItem().ToFullString();
+
+		written.ShouldContain("@\"one\r\n  two\"", Case.Sensitive);
+		written.ShouldContain("@\"three\r\nfour\"", Case.Sensitive);
+
+		rewritten.ShouldNotBeNull().ShouldBe(
+			[new MemberSyntax.RewrittenLiteral(3, 1), new MemberSyntax.RewrittenLiteral(6, 1)]);
+	}
+
+	/// <summary>
+	/// A spliced body's literals are found in an inactive branch too, so a replacement whose endings
+	/// landed inside one is named rather than passed over.
+	/// </summary>
+	[Test]
+	public void Finds_a_literal_holding_a_rewritten_ending_in_an_inactive_branch()
+	{
+		var text = "{\r\n#if DEBUG\r\n\tvar a = @\"x\r\ny\";\r\n#endif\r\n}";
+
+		var literals = MemberSyntax.LiteralsHolding(text, new TextSpan(0, text.Length));
+
+		literals.ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(2, 1));
+	}
+
+	/// <summary>
+	/// A literal the file already held is found again in the member it came from by its text, because
+	/// what was parsed joined the body to the signature and a line counted there is one nobody can
+	/// find. One the member does not hold unchanged is not found.
+	/// </summary>
+	[Test]
+	public void Finds_a_literal_again_in_the_member_it_came_from()
+	{
+		var rebuilt = "void M() {\n\tvar a = @\"x\ny\";\n\tvar b = @\"p\nq\";\n}";
+		var member = "void M()\n{\n\tvar a = @\"x\ny\";\n\tvar b = @\"p\nr\";\n}";
+
+		var lines = MemberSyntax.LinesIn(
+			[new MemberSyntax.RewrittenLiteral(1, 1), new MemberSyntax.RewrittenLiteral(3, 1)],
+			rebuilt,
+			member);
+
+		lines.ShouldBe([2, null]);
+	}
+
+	/// <summary>
+	/// A literal the caller did not write is named against the member, and the escape hatch is offered
+	/// only where there was code to write a CR LF into: a body edit has it, and a move does not.
+	/// </summary>
+	[Test]
+	public void Offers_the_escape_hatch_for_a_files_literal_only_where_code_was_sent()
+	{
+		MemberSyntax.RewrittenLiteral[] literals = [new(2, 1)];
+
+		MemberSyntax.RewrittenMemberEndings(literals, "CRLF").ShouldBe(
+			"Rewrote 1 line ending(s) to CRLF, the ending this file uses, inside the multi-line string literal on "
+				+ "line 3 of the member, which changes its value.");
+
+		MemberSyntax.RewrittenMemberEndings(literals, "CRLF", codeSupplied: true).ShouldEndWith(
+			"which changes its value. Write one CR LF anywhere in the code sent to leave every ending in the member "
+				+ "as it was.",
+			Case.Sensitive);
 	}
 
 	/// <summary>

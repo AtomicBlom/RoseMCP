@@ -299,6 +299,11 @@ public static class MemberEditService
 		// left behind its arrow. Sharing the rebuild is what keeps the copied-signature promise on
 		// both: what comes out in front of the "=" is the text that was in front of it.
 		var shaped = IsInitialiser(declaration) ? $"{written.Trim()};" : Body(written);
+
+		// The member as it stood, counted from its first line as a moved member's is, which is where a
+		// literal the file already held is named.
+		var member = declaration.ToFullString().TrimStart('\r', '\n');
+
 		var rebuilt = $"{head} {shaped}";
 
 		// Where the first character of the body would sit in what is parsed, so a line of it can be
@@ -327,7 +332,7 @@ public static class MemberEditService
 			target.Document.Project.ParseOptions,
 			fromTheFile ? indent : indent + rules.IndentUnit,
 			rules.LineEnding,
-			literals => notices.AddRange(RewrittenInBody(literals, rebuilt, bodyAt, supplied, rules)),
+			literals => notices.AddRange(RewrittenInBody(literals, rebuilt, bodyAt, supplied, member, rules)),
 			count => notices.Add(MemberSyntax.ReindentedLiteral(count)),
 			copied: head,
 			baseline: fromTheFile ? indent : null);
@@ -448,7 +453,16 @@ public static class MemberEditService
 
 		asked.Add(new TextSpan(BodyEdit.InsertionPoint(block, atStart), 0));
 
-		var inserted = BodyEdit.Inserted(declaration, block, request.Code, atStart, notices, out var at);
+		var ending = LineEndings.Name(Whitespace.Dominant(block.ToFullString()));
+
+		var inserted = BodyEdit.Inserted(
+			declaration,
+			block,
+			request.Code,
+			atStart,
+			notices,
+			out var at,
+			literals => notices.Add(MemberSyntax.RewrittenEndings(literals, ending)));
 
 		supplied = Supplied.From(request.Code.TrimEnd(), at);
 
@@ -458,46 +472,63 @@ public static class MemberEditService
 	/// <summary>
 	/// What to say about the literals whose endings a body replacement rewrote: each one the caller
 	/// wrote named on its line in the code they sent, and each one that came out of the file on its
-	/// line in the member.
+	/// line in the member as it stood.
 	/// <para>
 	/// What is parsed is not what the caller sent. It is the signature copied out of the file, joined on
 	/// its last line to a body that may be wrapped in braces, trimmed, or be the file's own body with
 	/// the caller's text spliced into it -- so a line counted in it is a line nobody wrote, and naming it
-	/// sends the caller to the wrong place in their own code.
+	/// sends the caller to the wrong place in their own code. For the same reason a literal the file
+	/// already held is found again in the member it came from rather than counted in what was parsed.
+	/// One that lies outside the caller's lines and is not in the member unchanged is one their text
+	/// edited, so it is theirs, named by the nearest of their lines.
+	/// </para>
+	/// <para>
+	/// The escape hatch goes with the file's literals as well as the caller's, since the rule that
+	/// rewrote them was asked of the whole body: a CR LF anywhere in the code sent leaves every ending in
+	/// it alone. It is said once: by the sentence about the caller's literals where there is one, and by
+	/// the one about the file's where there is not.
 	/// </para>
 	/// </summary>
 	/// <param name="literals">The literals, each on its line in <paramref name="rebuilt"/>.</param>
 	/// <param name="rebuilt">The member as it was parsed.</param>
 	/// <param name="bodyAt">Where the body's first character sits in <paramref name="rebuilt"/>.</param>
 	/// <param name="supplied">Where the caller's own text sits in the body.</param>
+	/// <param name="member">The member as it stood in the file, from its first line.</param>
 	/// <param name="rules">The destination file's layout, which names the ending they were given.</param>
 	private static IEnumerable<string> RewrittenInBody(
 		IReadOnlyList<MemberSyntax.RewrittenLiteral> literals,
 		string rebuilt,
 		int bodyAt,
 		Supplied supplied,
+		string member,
 		WhitespaceRules rules)
 	{
 		var first = MemberSyntax.LineOf(rebuilt, bodyAt + supplied.At);
+		var inMember = MemberSyntax.LinesIn(literals, rebuilt, member);
 		var theirs = new List<MemberSyntax.RewrittenLiteral>();
 		var own = new List<MemberSyntax.RewrittenLiteral>();
 
-		foreach (var literal in literals)
+		for (var index = 0; index < literals.Count; index++)
 		{
-			var isTheirs = literal.Line >= first && literal.Line < first + supplied.Lines;
+			var literal = literals[index];
+			var offset = literal.Line - first;
+			var isTheirs = offset >= 0 && offset < supplied.Lines;
 
-			if (isTheirs)
+			if (!isTheirs && inMember[index] is { } line)
 			{
-				theirs.Add(literal with { Line = literal.Line - first + supplied.Line });
+				own.Add(literal with { Line = line });
+				continue;
 			}
-			else
-			{
-				own.Add(literal);
-			}
+
+			var nearest = Math.Clamp(offset, 0, Math.Max(supplied.Lines - 1, 0));
+
+			theirs.Add(literal with { Line = nearest + supplied.Line });
 		}
 
+		var ending = LineEndings.Name(rules.LineEnding);
+
 		if (theirs.Count > 0) yield return RewrittenEndings(theirs, rules);
-		if (own.Count > 0) yield return MemberSyntax.RewrittenMemberEndings(own, LineEndings.Name(rules.LineEnding));
+		if (own.Count > 0) yield return MemberSyntax.RewrittenMemberEndings(own, ending, codeSupplied: theirs.Count == 0);
 	}
 
 	/// <summary>

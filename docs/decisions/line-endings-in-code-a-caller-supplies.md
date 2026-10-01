@@ -38,10 +38,25 @@ an interpolation hole is code, so rewriting any of those is not reported either.
 The line is the caller's, not the file's and not that of whatever was parsed. A body is parsed
 behind a signature copied out of the file, sometimes inside braces the caller never wrote, and a
 find-and-replace or an insertion puts the caller's text among statements that were already there,
-so each counts from where the caller's own text begins. A literal the file already held, whose
-endings change because it went through the same pass -- a moved member, or the part of a body the
-caller did not write -- is named by its line in the member instead, with no escape hatch, since
-there is no code argument to write a CR LF into.
+so each counts from where the caller's own text begins, with the blank lines above it dropped
+wherever it lands. A literal the file already held, whose endings change because it went through
+the same pass -- a moved member, or the part of a body the caller did not write -- is named by its
+line in the member as it stood, found there by its text, since the member that is parsed joins the
+body to the signature and a line counted in it is not one anybody can find. Whether the escape
+hatch is offered turns on whether there is code to write a CR LF into. A move has none, so it is
+not. A body edit does, and the condition is asked of the whole body it rebuilds, the file's own
+lines included, so one CR LF in the code or replacement the caller sends leaves the file's literals
+as they were along with everything else; the sentence says so.
+
+A replacement or an insertion is asked on its own, and given the body's endings where it splices
+in, before it meets the file's text. Asked afterwards, inside the rebuilt body, the CR LFs the file
+already had answer for a caller who said nothing, and the literal they wrote keeps its bare LFs in a
+file that then fails the formatting check.
+
+Every branch of an `#if` is read for literals, whichever symbols happen to be defined. The rewrite
+reaches the text of an inactive branch like any other, and the build that defines the symbol
+compiles the literal it holds, so a literal found only in the active branches is a changed value in
+exactly the build nobody looked at.
 
 **Raw literals also move with their surroundings.** A raw string literal's value is what remains
 after the closing delimiter's indentation is stripped from every line, so shifting the content and

@@ -1,3 +1,5 @@
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace RoseMcp.UnitTests;
 
@@ -226,6 +228,84 @@ public sealed class BodyEditTests
 		body.ShouldContain("@\"x\r\ny\"", Case.Sensitive);
 		body.ShouldNotContain("\n\n", Case.Sensitive);
 		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(2, 1));
+	}
+
+	/// <summary>
+	/// The ending a replacement takes is the one the file's layout writes, not whatever the body was
+	/// checked out with: a repository that declares LF keeps the caller's LF literal as it was, and
+	/// nothing claims an ending was rewritten.
+	/// </summary>
+	[Test]
+	public void Gives_a_token_matched_replacement_the_layouts_ending_rather_than_the_bodys()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+
+		var body = BodyEdit.Anchored(
+			"{\r\n\treturn a;\r\n}",
+			"a",
+			"@\"x\ny\"",
+			rewritten: literals => rewritten = literals,
+			lineEnding: "\n");
+
+		body.ShouldContain("@\"x\ny\"", Case.Sensitive);
+		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// Code inserted with bare LFs into a CRLF block takes the block's ending, and a literal it carries
+	/// is named on its line in the code sent, counted from the blank line above it that the insertion
+	/// drops.
+	/// </summary>
+	[Test]
+	public void Gives_inserted_code_the_files_ending_and_names_its_literal()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+		var (declaration, block) = Method("void M()\r\n{\r\n\tvar a = 1;\r\n}");
+
+		var body = BodyEdit.Inserted(
+			declaration,
+			block,
+			"\nLog();\nvar b = @\"x\ny\";",
+			atStart: false,
+			[],
+			out _,
+			"\r\n",
+			literals => rewritten = literals);
+
+		body.ShouldContain("@\"x\r\ny\"", Case.Sensitive);
+		rewritten.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBe(new MemberSyntax.RewrittenLiteral(2, 1));
+	}
+
+	/// <summary>
+	/// The statements around an insertion are joined with the block's own ending. Joined with bare LFs,
+	/// a CRLF block reads as one nobody had a view about, and the member parsed from it has the bare LF
+	/// in a literal of the file's own rewritten by an insertion that never touched it.
+	/// </summary>
+	[Test]
+	public void Joins_the_statements_around_an_insertion_with_the_blocks_ending()
+	{
+		IReadOnlyList<MemberSyntax.RewrittenLiteral>? rewritten = null;
+		var (declaration, block) = Method("void M()\r\n{\r\n\tvar x = @\"a\nb\";\r\n\treturn;\r\n}");
+
+		var body = BodyEdit.Inserted(
+			declaration,
+			block,
+			"Log();",
+			atStart: false,
+			[],
+			out _,
+			"\r\n",
+			literals => rewritten = literals);
+
+		body.ShouldBe("var x = @\"a\nb\";\r\n\r\nLog();\r\n\r\nreturn;");
+		rewritten.ShouldBeNull();
+	}
+
+	private static (MethodDeclarationSyntax Declaration, BlockSyntax Block) Method(string code)
+	{
+		var declaration = SyntaxFactory.ParseMemberDeclaration(code).ShouldBeOfType<MethodDeclarationSyntax>();
+
+		return (declaration, declaration.Body.ShouldNotBeNull());
 	}
 
 	/// <summary>

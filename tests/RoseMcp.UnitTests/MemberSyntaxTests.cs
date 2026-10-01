@@ -502,9 +502,57 @@ public sealed class MemberSyntaxTests
 		var lines = MemberSyntax.LinesIn(
 			[new MemberSyntax.RewrittenLiteral(1, 1), new MemberSyntax.RewrittenLiteral(3, 1)],
 			rebuilt,
-			member);
+			member,
+			theirs: (0, 0),
+			replaced: []);
 
 		lines.ShouldBe([2, null]);
+	}
+
+	/// <summary>
+	/// A copy the caller wrote of a literal the file holds twice has nothing to pair with in the member,
+	/// so it is not counted when the file's own copies are told apart by order: each is named on its own
+	/// line rather than both on the second one's.
+	/// </summary>
+	[Test]
+	public void Tells_identical_literals_apart_without_the_callers_copy()
+	{
+		var rebuilt = "void M() {\n\tvar c = @\"x\ny\";\n\n\tvar a = @\"x\ny\";\n\tvar b = @\"x\ny\";\n}";
+		var member = "void M()\n{\n\tvar a = @\"x\ny\";\n\tvar b = @\"x\ny\";\n}";
+
+		var lines = MemberSyntax.LinesIn(
+			[
+				new MemberSyntax.RewrittenLiteral(1, 1),
+				new MemberSyntax.RewrittenLiteral(4, 1),
+				new MemberSyntax.RewrittenLiteral(6, 1),
+			],
+			rebuilt,
+			member,
+			theirs: (1, 2),
+			replaced: []);
+
+		lines.ShouldBe([null, 2, 4]);
+	}
+
+	/// <summary>
+	/// A copy the caller's text replaced has nothing to pair with in what was parsed, so the copy that
+	/// is left is named on its own line rather than on the line of the one that went.
+	/// </summary>
+	[Test]
+	public void Tells_identical_literals_apart_without_the_one_replaced()
+	{
+		var rebuilt = "void M() {\n\tvar b = @\"x\ny\";\n}";
+		var member = "void M()\n{\n\tvar a = @\"x\ny\";\n\tvar b = @\"x\ny\";\n}";
+		var removed = "\tvar a = @\"x\ny\";";
+
+		var lines = MemberSyntax.LinesIn(
+			[new MemberSyntax.RewrittenLiteral(1, 1)],
+			rebuilt,
+			member,
+			theirs: (0, 0),
+			replaced: [new TextSpan(member.IndexOf(removed, StringComparison.Ordinal), removed.Length)]);
+
+		lines.ShouldBe([4]);
 	}
 
 	/// <summary>

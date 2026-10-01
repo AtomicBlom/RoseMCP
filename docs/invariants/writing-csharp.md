@@ -12,7 +12,8 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
 - **Whatever writes C# has to end formatted.** Roslyn's formatter honours `.editorconfig` but only
   rewrites the trivia it has reason to touch, so a file it reindents comes out with mixed line
   endings -- which IDE0055 then fails the build over. `Whitespace` is the second pass that fixes
-  every line, and it leaves multi-line verbatim and raw literals alone, because a newline in one is
+  every line, and it leaves multi-line verbatim and raw literals alone -- in every branch of an
+  `#if`, since an inactive one is disabled text no node walk finds -- because a newline in one is
   content and a raw literal's indentation decides how much is stripped from it. Both passes take a
   span when the caller wrote one member rather than a file: a repository whose endings are already
   inconsistent would otherwise have every line rewritten by a one-member change, which buries the

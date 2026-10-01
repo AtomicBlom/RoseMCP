@@ -270,14 +270,38 @@ public static class MemberSyntax
 	/// is the same text in both, which is what finds it; one the caller's text edited is not, and that
 	/// is what tells the two apart.
 	/// </para>
+	/// <para>
+	/// The same literal written twice is told apart by order, and only among the copies on each side
+	/// that the other side also holds. A copy the caller wrote has no counterpart in the member, and one
+	/// their text replaced has none in what was parsed, so counting either would pair every later copy
+	/// with the one before it.
+	/// </para>
 	/// </summary>
 	/// <param name="literals">The literals, each on its line in <paramref name="from"/>.</param>
 	/// <param name="from">The text the lines were counted in.</param>
 	/// <param name="into">The text to find each literal in.</param>
-	public static IReadOnlyList<int?> LinesIn(IReadOnlyList<RewrittenLiteral> literals, string from, string into)
+	/// <param name="theirs">The lines of <paramref name="from"/> the caller's text is on.</param>
+	/// <param name="replaced">The parts of <paramref name="into"/> the caller's text took the place of.</param>
+	public static IReadOnlyList<int?> LinesIn(
+		IReadOnlyList<RewrittenLiteral> literals,
+		string from,
+		string into,
+		(int First, int Count) theirs,
+		IReadOnlyList<TextSpan> replaced)
 	{
-		var sources = LiteralValues(from).ToArray();
-		var targets = LiteralValues(into).ToArray();
+		bool IsTheirs(LiteralValue value)
+		{
+			var line = LineOf(from, value.Start);
+
+			return line >= theirs.First && line < theirs.First + theirs.Count;
+		}
+
+		var all = LiteralValues(from).ToArray();
+		var sources = all.Where(value => !IsTheirs(value)).ToArray();
+		var targets = LiteralValues(into)
+			.Where(value => !replaced.Any(span => span.OverlapsWith(new TextSpan(value.Start, value.Length))))
+			.ToArray();
+
 		var taken = new Dictionary<int, int>();
 		var found = new List<int?>(literals.Count);
 
@@ -287,9 +311,9 @@ public static class MemberSyntax
 			taken.TryGetValue(literal.Line, out var skip);
 			taken[literal.Line] = skip + 1;
 
-			var onLine = sources.Where(value => LineOf(from, value.Start) == literal.Line).Skip(skip).ToArray();
+			var onLine = all.Where(value => LineOf(from, value.Start) == literal.Line).Skip(skip).ToArray();
 
-			if (onLine.Length == 0)
+			if (onLine.Length == 0 || IsTheirs(onLine[0]))
 			{
 				found.Add(null);
 				continue;
@@ -298,7 +322,6 @@ public static class MemberSyntax
 			var source = onLine[0];
 			var text = from.Substring(source.Start, source.Length);
 
-			// The same literal written twice is told apart by order, which a splice does not change.
 			var earlier = sources.Count(value => value.Start < source.Start && from.Substring(value.Start, value.Length) == text);
 			var matches = targets.Where(value => into.Substring(value.Start, value.Length) == text).ToArray();
 
@@ -906,22 +929,12 @@ public static class MemberSyntax
 		// The whole tree rather than the members, because disabled text after the last member is trivia
 		// on the wrapper's closing brace.
 		var tree = members[0].SyntaxTree;
-		var disabled = tree.GetRoot()
-			.DescendantTrivia(descendIntoTrivia: true)
-			.Where(trivia => trivia.IsKind(SyntaxKind.DisabledTextTrivia));
 
-		foreach (var trivia in disabled)
+		foreach (var (span, isRaw) in DisabledLiterals(tree.GetRoot()))
 		{
-			var text = trivia.ToFullString();
-			var first = tree.GetLineSpan(trivia.Span).StartLinePosition.Line;
+			var lines = tree.GetLineSpan(span);
 
-			foreach (var (token, at) in Lexed(text))
-			{
-				var start = LineOf(text, at);
-				var end = LineOf(text, at + token.Span.Length - 1);
-
-				if (end > start) Add(IsRaw(token.Text), first + start, first + end);
-			}
+			Add(isRaw, lines.StartLinePosition.Line, lines.EndLinePosition.Line);
 		}
 
 		return new Literal(verbatim, raw);
@@ -1018,6 +1031,37 @@ public static class MemberSyntax
 				if (!piece.IsKind(SyntaxKind.DisabledTextTrivia)) continue;
 
 				foreach (var (token, start) in Lexed(piece.ToFullString())) yield return (token, piece.SpanStart + start);
+			}
+		}
+	}
+
+	/// <summary>
+	/// The string literals in every branch of an <c>#if</c> the parse of <paramref name="root"/> took as
+	/// inactive, each by its span in that tree and whether it is a raw one.
+	/// <para>
+	/// A parse defines the project's symbols, so the branches it leaves inactive are disabled text rather
+	/// than nodes, and anything that finds literals by walking the nodes passes over them -- while the
+	/// build that defines the symbol compiles exactly the literal that text holds. Whatever protects a
+	/// literal's value has to protect these as well, or a line ending or a trailing space inside one is
+	/// rewritten as layout in the one build nobody looked at.
+	/// </para>
+	/// </summary>
+	internal static IEnumerable<(TextSpan Span, bool Raw)> DisabledLiterals(SyntaxNode root)
+	{
+		foreach (var trivia in root.DescendantTrivia(descendIntoTrivia: true))
+		{
+			if (!trivia.IsKind(SyntaxKind.DisabledTextTrivia)) continue;
+
+			foreach (var (token, at) in Lexed(trivia.ToFullString()))
+			{
+				var isString = token.Kind() is SyntaxKind.StringLiteralToken
+					or SyntaxKind.Utf8StringLiteralToken
+					or SyntaxKind.SingleLineRawStringLiteralToken
+					or SyntaxKind.MultiLineRawStringLiteralToken
+					or SyntaxKind.Utf8MultiLineRawStringLiteralToken
+					or SyntaxKind.InterpolatedStringToken;
+
+				if (isString) yield return (new TextSpan(trivia.SpanStart + at, token.Span.Length), IsRaw(token.Text));
 			}
 		}
 	}

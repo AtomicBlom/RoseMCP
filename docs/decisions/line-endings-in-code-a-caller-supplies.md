@@ -48,15 +48,22 @@ not. A body edit does, and the condition is asked of the whole body it rebuilds,
 lines included, so one CR LF in the code or replacement the caller sends leaves the file's literals
 as they were along with everything else; the sentence says so.
 
-A replacement or an insertion is asked on its own, and given the body's endings where it splices
-in, before it meets the file's text. Asked afterwards, inside the rebuilt body, the CR LFs the file
-already had answer for a caller who said nothing, and the literal they wrote keeps its bare LFs in a
-file that then fails the formatting check.
+A replacement or an insertion is asked on its own, and given the ending the file's layout writes
+where it splices in, before it meets the file's text. Asked afterwards, inside the rebuilt body, the
+CR LFs the file already had answer for a caller who said nothing, and the literal they wrote keeps
+its bare LFs in a file that then fails the formatting check. It is the layout's ending rather than
+the body's, because a checkout can disagree with what the repository declares, and the lines
+around the literal are given the declared one. The statements an insertion lands between are
+joined with the block's own ending for the same reason in reverse: joins of another kind would make
+the file's text look as though nobody had a view about endings, and a literal of its own holding a
+deliberate bare LF would be rewritten by an insertion that never touched it.
 
-Every branch of an `#if` is read for literals, whichever symbols happen to be defined. The rewrite
-reaches the text of an inactive branch like any other, and the build that defines the symbol
-compiles the literal it holds, so a literal found only in the active branches is a changed value in
-exactly the build nobody looked at.
+Every branch of an `#if` is read for literals, whichever symbols happen to be defined -- by the
+rewrite and its report, and by the whitespace pass that protects a literal's interior and warns
+about one whose endings the file does not use. The text of an inactive branch is rewritten like any
+other, and the build that defines the symbol compiles the literal it holds, so a literal found only
+in the active branches is a changed value in exactly the build nobody looked at. `dotnet format`
+reads those branches too, and fails a bare LF inside one.
 
 **Raw literals also move with their surroundings.** A raw string literal's value is what remains
 after the closing delimiter's indentation is stripped from every line, so shifting the content and

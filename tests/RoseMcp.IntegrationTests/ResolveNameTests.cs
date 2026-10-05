@@ -107,6 +107,31 @@ public sealed class ResolveNameTests
 		result.Notices.ShouldNotContain(notice => notice.Contains("not written yet", StringComparison.Ordinal));
 	}
 
+	/// <summary>
+	/// A namespace the file's project cannot see may be one another project declares, and then the
+	/// answer is the missing reference. Asked of the file's project alone, App.Announcer from Core is
+	/// "not written yet", which is false: App declares it, and Core does not reference App.
+	/// </summary>
+	[Test]
+	public async Task Names_the_project_declaring_a_namespace_the_file_cannot_reach()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ResolveAsync(session, "App.Announcer", fixture.Path("Simple", "Core", "Calculator.cs"));
+
+		result.Name.ShouldBe("Announcer");
+		result.Import.ShouldBeNull();
+
+		var candidate = result.Candidates.ShouldHaveSingleItem();
+
+		candidate.Caveat.ShouldNotBeNull();
+		candidate.Caveat.ShouldContain("which Core does not reference", Case.Sensitive);
+		result.Notices.ShouldContain(notice => notice.Contains(
+			"App is a namespace App declares, which Core does not reference", StringComparison.Ordinal));
+		result.Notices.ShouldNotContain(notice => notice.Contains("not written yet", StringComparison.Ordinal));
+	}
+
 	/// <summary>A namespace on its own is said to be one, rather than searched for as a type.</summary>
 	[Test]
 	public async Task Says_a_namespace_is_a_namespace()

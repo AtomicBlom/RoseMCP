@@ -56,15 +56,41 @@ public static class NameResolver
 		// splitting both at the first dot answers the first about Microsoft -- "not written yet", of a
 		// namespace the solution references everywhere.
 		var depth = segments.Count > 1 ? await NamespaceDepthAsync(projects, segments, cancellationToken) : 0;
+
+		// A namespace the file's project cannot see may still be one another project declares, and then
+		// the true answer is that a reference is missing -- not that nothing is written, which is what
+		// asking only the file's project says about Tools.Helpers.Foo from a project that does not
+		// reference the one declaring Tools.
+		var (declaring, declaredDepth) = document is not null && segments.Count > 1 && depth < segments.Count
+			? await DeclaringAsync(snapshot.Solution, document.Project, segments, cancellationToken)
+			: ([], 0);
+
+		var unreferenced = declaredDepth > depth;
+
+		if (unreferenced)
+		{
+			depth = declaredDepth;
+			projects = declaring;
+		}
+
 		var space = depth > 0 ? string.Join(".", segments.Take(depth)) : null;
+		var declarers = string.Join(", ", declaring.Select(project => project.Name).Distinct(StringComparer.Ordinal));
+
+		// Who can reach the namespace, as a clause: the file's project, or the projects declaring it
+		// that the file's project does not reference.
+		var reach = unreferenced
+			? $"{space} is a namespace {declarers} declares, which {where} does not reference -- add the project "
+				+ "reference first, or the import will not resolve"
+			: null;
 
 		IReadOnlyList<ISymbol> found = [];
-		var unreferenced = false;
 
 		if (depth == segments.Count)
 		{
-			notices.Add($"{space} is a namespace {where} can reach rather than a type. Import it as it stands, "
-				+ "with usings on the write or with rose_add_using.");
+			notices.Add(reach is not null
+				? $"{reach}. It is a namespace rather than a type."
+				: $"{space} is a namespace {where} can reach rather than a type. Import it as it stands, "
+					+ "with usings on the write or with rose_add_using.");
 		}
 		else if (space is not null)
 		{
@@ -76,8 +102,14 @@ public static class NameResolver
 
 			if (found.Count > 0)
 			{
-				notices.Add($"{space} is a namespace, so this answers about {name}, the type in it. Written out in "
-					+ $"full the name needs no import; importing {space} is what lets it be written as {name}.");
+				notices.Add(reach is not null
+					? $"{reach}."
+					: $"{space} is a namespace, so this answers about {name}, the type in it. Written out in full "
+						+ $"the name needs no import; importing {space} is what lets it be written as {name}.");
+			}
+			else if (reach is not null)
+			{
+				notices.Add($"{reach}; and nothing in it is called {name}.");
 			}
 		}
 		else
@@ -103,7 +135,9 @@ public static class NameResolver
 		var maxResults = request.MaxResults <= 0 ? 20 : request.MaxResults;
 		var truncated = ordered.Count > maxResults;
 
-		if (depth < segments.Count)
+		var saidAlready = reach is not null && found.Count == 0;
+
+		if (depth < segments.Count && !saidAlready)
 		{
 			notices.AddRange(Notices(name, ordered, spaces, document, unreferenced, space, split: segments.Count > 1 && depth == 0));
 		}
@@ -198,6 +232,41 @@ public static class NameResolver
 		}
 
 		return depth;
+	}
+
+	/// <summary>
+	/// The other projects whose own source declares the most leading segments as a namespace, and how
+	/// many. Their own source rather than what they can see, so the project named is the one the
+	/// reference has to point at.
+	/// </summary>
+	private static async Task<(IReadOnlyList<Project> Declaring, int Depth)> DeclaringAsync(
+		Solution solution,
+		Project asking,
+		IReadOnlyList<string> segments,
+		CancellationToken cancellationToken)
+	{
+		var names = segments.Select(segment => Parse(segment).Name).ToArray();
+		var declaring = new List<Project>();
+		var depth = 0;
+
+		foreach (var project in solution.Projects)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			if (project.Id == asking.Id) continue;
+			if (await project.GetCompilationAsync(cancellationToken) is not { } compilation) continue;
+
+			var declared = SymbolResolver.DeclaredNamespaceDepth(compilation, names);
+
+			if (declared == 0 || declared < depth) continue;
+
+			if (declared > depth) declaring.Clear();
+
+			depth = declared;
+			declaring.Add(project);
+		}
+
+		return (declaring, depth);
 	}
 
 	/// <summary>Types of that name declared directly in the namespace the leading segments name.</summary>

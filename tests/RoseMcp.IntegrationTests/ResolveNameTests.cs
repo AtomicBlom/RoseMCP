@@ -68,6 +68,60 @@ public sealed class ResolveNameTests
 	}
 
 	/// <summary>
+	/// A name that starts with a namespace is answered about the type in that namespace. Split at its
+	/// first dot instead, it is answered about the first segment, and "nothing called Microsoft is
+	/// written yet" is a confident falsehood about a namespace the solution references everywhere.
+	/// </summary>
+	[Test]
+	[Arguments("System.Text.Encoding")]
+	[Arguments("System.Text.Encoding.UTF8")]
+	public async Task Resolves_a_name_qualified_by_its_namespace(string name)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ResolveAsync(session, name, InLibrary(fixture, "Greeter.cs"));
+
+		result.Name.ShouldBe("Encoding");
+		result.Import.ShouldBe("System.Text");
+		result.Candidates.ShouldContain(candidate => candidate.Symbol == "System.Text.Encoding");
+		result.Notices.ShouldContain(notice => notice.Contains("System.Text is a namespace", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// Where the namespace is right and nothing in it carries the name, that is what is said: the
+	/// part that is missing is the last one, not the first.
+	/// </summary>
+	[Test]
+	public async Task Says_the_namespace_holds_nothing_of_that_name_rather_than_that_it_is_not_written()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ResolveAsync(session, "System.Text.Encodingg", InLibrary(fixture, "Greeter.cs"));
+
+		result.Name.ShouldBe("Encodingg");
+		result.Candidates.ShouldBeEmpty();
+		result.Notices.ShouldContain(notice => notice.Contains(
+			"System.Text is a namespace Library can reach, and nothing in it is called Encodingg", StringComparison.Ordinal));
+		result.Notices.ShouldNotContain(notice => notice.Contains("not written yet", StringComparison.Ordinal));
+	}
+
+	/// <summary>A namespace on its own is said to be one, rather than searched for as a type.</summary>
+	[Test]
+	public async Task Says_a_namespace_is_a_namespace()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ResolveAsync(session, "System.Text", InLibrary(fixture, "Greeter.cs"));
+
+		result.Name.ShouldBe("System.Text");
+		result.Candidates.ShouldBeEmpty();
+		result.Notices.ShouldContain(notice => notice.Contains("is a namespace Library can reach rather than a type", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// Already imported is not an answer, and saying so is the point: it means the error is
 	/// something other than a missing import, and adding it again is IDE0005.
 	/// </summary>

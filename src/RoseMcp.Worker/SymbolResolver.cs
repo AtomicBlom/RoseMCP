@@ -122,6 +122,44 @@ public static class SymbolResolver
 		await SymbolFinder.FindSourceDeclarationsAsync(solution, name, ignoreCase: false, SymbolFilter.Type, cancellationToken);
 
 	/// <summary>
+	/// How many leading segments of a dotted name are a namespace this compilation can see, counting
+	/// from the global namespace: two for <c>System.Text.Encoding</c>, none for <c>Encoding.UTF8</c>.
+	/// </summary>
+	public static int NamespaceDepth(Compilation compilation, IReadOnlyList<string> segments)
+	{
+		var current = compilation.GlobalNamespace;
+		var depth = 0;
+
+		foreach (var segment in segments)
+		{
+			if (current.GetMembers(segment).OfType<INamespaceSymbol>().FirstOrDefault() is not { } next) break;
+
+			current = next;
+			depth++;
+		}
+
+		return depth;
+	}
+
+	/// <summary>
+	/// The types of that name declared directly in the namespace <paramref name="space"/>, as this
+	/// compilation sees it: its own source, the projects it references and every assembly it does.
+	/// </summary>
+	public static IReadOnlyList<INamedTypeSymbol> TypesIn(Compilation compilation, IReadOnlyList<string> space, string name)
+	{
+		var current = compilation.GlobalNamespace;
+
+		foreach (var segment in space)
+		{
+			if (current.GetMembers(segment).OfType<INamespaceSymbol>().FirstOrDefault() is not { } next) return [];
+
+			current = next;
+		}
+
+		return current.GetTypeMembers(name);
+	}
+
+	/// <summary>
 	/// What one reading reaches in one compilation's source: anything declared under its name that
 	/// the reading matches, and the members of that name of the types its path leads to.
 	/// <para>

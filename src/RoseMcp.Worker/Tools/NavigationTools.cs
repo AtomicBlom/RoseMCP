@@ -9,7 +9,7 @@ namespace RoseMcp.Worker.Tools;
 
 /// <summary>Semantic navigation, as opposed to guessing from text search.</summary>
 [McpServerToolType]
-public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress sharedWork)
+public sealed class NavigationTools(WorkspaceCalls calls)
 {
 	[McpServerTool(
 		Name = ToolNames.FindImplementations,
@@ -19,7 +19,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.FindImplementations)]
-	public async Task<ImplementationsResult> FindImplementationsAsync(
+	public Task<ImplementationsResult> FindImplementationsAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
@@ -28,15 +28,15 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.MaxImplementationsArgument)] int maxResults = 200,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, _) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-
 		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
 
-		return await NavigationService.FindImplementationsAsync(
-			snapshot, target, maxResults <= 0 ? 200 : maxResults, cancellationToken);
+		// The search says nothing as it goes, but it is long enough on a large solution that the wait
+		// keeps only its half of the bar rather than reaching the end before the search has begun.
+		return calls.ReadAsync(
+			progress,
+			(snapshot, _) => NavigationService.FindImplementationsAsync(
+				snapshot, target, maxResults <= 0 ? 200 : maxResults, cancellationToken),
+			cancellationToken);
 	}
 
 	[McpServerTool(
@@ -47,7 +47,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.SymbolInfo)]
-	public async Task<SymbolInfoResult> SymbolInfoAsync(
+	public Task<SymbolInfoResult> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
@@ -56,17 +56,12 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.IncludeSourceArgument)] bool includeSource = false,
 		CancellationToken cancellationToken = default)
 	{
-		// Describing one symbol is instant. The only wait worth reporting is the workspace itself,
-		// which on a cold start is the difference between an answer in milliseconds and in minutes.
-		using var following = sharedWork.Follow(WorkProgress.For(progress));
+		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
 
-		var snapshot = await host.ReadAsync(cancellationToken);
-
-		return await NavigationService.DescribeAsync(
-			snapshot,
-			new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column },
-			cancellationToken,
-			includeSource);
+		return calls.ReadAsync(
+			progress,
+			snapshot => NavigationService.DescribeAsync(snapshot, target, cancellationToken, includeSource),
+			cancellationToken);
 	}
 
 	[McpServerTool(
@@ -77,7 +72,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.FindReferences)]
-	public async Task<ReferencesResult> FindReferencesAsync(
+	public Task<ReferencesResult> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
@@ -89,26 +84,27 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.IncludePreviewsArgument)] bool includePreviews = true,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-
 		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
 
-		// Reported without a percentage, deliberately. Roslyn's reference search offers no progress
-		// and cannot say up front how much of the solution it will visit, so an honest "working on
-		// it" beats a number that would be invented here.
-		working.Report($"Searching the solution for references to {target.Describe()}");
+		return calls.ReadAsync(
+			progress,
+			(snapshot, working) =>
+			{
+				// Reported without a percentage, deliberately. Roslyn's reference search offers no
+				// progress and cannot say up front how much of the solution it will visit, so an
+				// honest "working on it" beats a number that would be invented here.
+				working.Report($"Searching the solution for references to {target.Describe()}");
 
-		return await NavigationService.FindReferencesAsync(
-			snapshot,
-			target,
-			maxResults <= 0 ? 200 : maxResults,
-			cancellationToken,
-			definitionsOnly,
-			project,
-			includePreviews);
+				return NavigationService.FindReferencesAsync(
+					snapshot,
+					target,
+					maxResults <= 0 ? 200 : maxResults,
+					cancellationToken,
+					definitionsOnly,
+					project,
+					includePreviews);
+			},
+			cancellationToken);
 	}
 
 	[McpServerTool(
@@ -119,20 +115,21 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.SearchSymbols)]
-	public async Task<SymbolSearchResult> SearchSymbolsAsync(
+	public Task<SymbolSearchResult> SearchSymbolsAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SearchQueryArgument)] string query,
 		[Description(ToolDescriptions.MaxSearchMatchesArgument)] int maxResults = 50,
-		CancellationToken cancellationToken = default)
-	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
+		CancellationToken cancellationToken = default) =>
+		calls.ReadAsync(
+			progress,
+			(snapshot, working) =>
+			{
+				working.Report($"Searching declarations for '{query}'");
 
-		var snapshot = await host.ReadAsync(cancellationToken);
-		working.Report($"Searching declarations for '{query}'");
-
-		return await NavigationService.SearchAsync(snapshot, query, maxResults <= 0 ? 50 : maxResults, cancellationToken);
-	}
+				return NavigationService.SearchAsync(
+					snapshot, query, maxResults <= 0 ? 50 : maxResults, cancellationToken);
+			},
+			cancellationToken);
 
 	[McpServerTool(
 		Name = ToolNames.ResolveName,
@@ -142,7 +139,7 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.ResolveName)]
-	public async Task<NameResolutionResult> ResolveNameAsync(
+	public Task<NameResolutionResult> ResolveNameAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.ResolveNameArgument)] string name,
 		[Description(ToolDescriptions.ResolveFilePathArgument)] string? filePath = null,
@@ -150,12 +147,6 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		[Description(ToolDescriptions.MaxCandidatesArgument)] int maxResults = 20,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-		working.Report($"Working out what {name} could be");
-
 		var request = new ResolveNameRequest
 		{
 			Name = name,
@@ -164,7 +155,15 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 			MaxResults = maxResults <= 0 ? 20 : maxResults,
 		};
 
-		return await NameResolver.ResolveAsync(snapshot, request, cancellationToken, working);
+		return calls.ReadAsync(
+			progress,
+			(snapshot, working) =>
+			{
+				working.Report($"Working out what {name} could be");
+
+				return NameResolver.ResolveAsync(snapshot, request, cancellationToken, working);
+			},
+			cancellationToken);
 	}
 
 	[McpServerTool(
@@ -175,28 +174,25 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.Outline)]
-	public async Task<OutlineResult> OutlineAsync(
+	public Task<OutlineResult> OutlineAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
 		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
 		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
-		CancellationToken cancellationToken = default)
-	{
-		using var following = sharedWork.Follow(WorkProgress.For(progress));
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-
-		return await OutlineService.OutlineAsync(
-			snapshot,
-			symbol,
-			filePath,
-			includeInherited,
-			includeDocumentation,
-			includeSignatures,
+		CancellationToken cancellationToken = default) =>
+		calls.ReadAsync(
+			progress,
+			snapshot => OutlineService.OutlineAsync(
+				snapshot,
+				symbol,
+				filePath,
+				includeInherited,
+				includeDocumentation,
+				includeSignatures,
+				cancellationToken),
 			cancellationToken);
-	}
 
 	[McpServerTool(
 		Name = ToolNames.FindSplitOptions,
@@ -206,18 +202,15 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.FindSplitOptions)]
-	public async Task<IslandsResult> FindSplitOptionsAsync(
+	public Task<IslandsResult> FindSplitOptionsAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.SplitOptionsFilePathArgument)] string? filePath = null,
-		CancellationToken cancellationToken = default)
-	{
-		using var following = sharedWork.Follow(WorkProgress.For(progress));
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-
-		return await IslandService.IslandsAsync(snapshot, symbol, filePath, cancellationToken);
-	}
+		CancellationToken cancellationToken = default) =>
+		calls.ReadAsync(
+			progress,
+			snapshot => IslandService.IslandsAsync(snapshot, symbol, filePath, cancellationToken),
+			cancellationToken);
 
 	[McpServerTool(
 		Name = ToolNames.ProjectGraph,
@@ -227,15 +220,12 @@ public sealed class NavigationTools(WorkspaceHost host, SharedWorkProgress share
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.ProjectGraph)]
-	public async Task<ProjectGraphResult> ProjectGraphAsync(
+	public Task<ProjectGraphResult> ProjectGraphAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
-		CancellationToken cancellationToken = default)
-	{
-		using var following = sharedWork.Follow(WorkProgress.For(progress));
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-
-		return ProjectGraphService.Describe(snapshot, project);
-	}
+		CancellationToken cancellationToken = default) =>
+		calls.ReadAsync(
+			progress,
+			snapshot => Task.FromResult(ProjectGraphService.Describe(snapshot, project)),
+			cancellationToken);
 }

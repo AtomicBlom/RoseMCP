@@ -463,20 +463,10 @@ beside it, and the format check says when nothing declared the indentation it ch
   is what changes the answer, and name `Microsoft.CodeAnalysis.ExternalAccess.HotReload` as the route
   to evaluate.
 
-### WRK-23 Tool-layer boilerplate is repeated where two helpers already exist
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `Tools/RefactoringTools.cs:37-56, 84-103, 122-138, 158-175, 319-339, 359-377, 508-530`
-  (inline `Split`/`Follow`/`SessionAsync`/`MutateAsync`), against `RunAsync:614-626` and `EditAsync:384-398`
-- **What:** The tool layer is thin, which is right: each tool builds a request record and hands it to
-  a service through `MutateAsync` or `ReadAsync`. But seven mutation tools inline the same five lines
-  that `RunAsync` wraps, and `EditAsync` is `RunAsync` specialised for one lambda shape. A new tool
-  copies whichever it sees first.
-- **Why it matters:** Low on its own, and nothing else will absorb it. It survives WRK-01 because
-  `EditPipeline` is a *service*-layer type and this preamble is in the tool layer, which the pipeline
-  never reaches: the two duplications looked like one because they sit either side of the same call.
-- **Suggested change:** Every mutation tool goes through `RunAsync`; add `ReadAsync` for the reads in
-  `NavigationTools`/`AnalysisTools` so the `Follow` handle cannot be forgotten either.
+### ~~WRK-23 Tool-layer boilerplate is repeated where two helpers already exist~~
+**#418.** Most tools wrote out their own wait for the workspace beside two helpers that did it, so a
+new tool could copy one that let a cold load go unreported. Every tool reaches the workspace through
+one helper, and a test refuses a tool given the means to go round it.
 
 ## Pit-of-success inversions
 

@@ -10,10 +10,9 @@ namespace RoseMcp.Worker.Tools;
 /// <summary>Changes to the solution. Everything here writes, so everything here reports a diff.</summary>
 [McpServerToolType]
 public sealed class RefactoringTools(
-	WorkspaceHost host,
+	WorkspaceCalls calls,
 	CodeFixCatalog codeFixes,
-	DiagnosticsService diagnostics,
-	SharedWorkProgress sharedWork)
+	DiagnosticsService diagnostics)
 {
 	[McpServerTool(
 		Name = ToolNames.ApplyCodeFix,
@@ -34,11 +33,6 @@ public sealed class RefactoringTools(
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
 		var request = new CodeFixRequest
 		{
 			DiagnosticId = diagnosticId,
@@ -49,8 +43,9 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await session.MutateAsync(
-			(snapshot, token) => CodeFixService.ApplyAsync(
+		return await calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => CodeFixService.ApplyAsync(
 				snapshot, codeFixes, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
@@ -78,14 +73,6 @@ public sealed class RefactoringTools(
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
-		// A rename is the longest thing a client can ask for and the only one that writes, so it is
-		// the call most worth watching. The wait covers the queue behind other mutations as well as
-		// the workspace itself: a rename is ordered behind every request already in flight.
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
 		var request = new RenameRequest
 		{
 			Target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column },
@@ -97,8 +84,13 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await session.MutateAsync(
-			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token, working),
+		// A rename is the longest thing a client can ask for and the only one that writes, so it is
+		// the call most worth watching. The wait covers the queue behind other mutations as well as
+		// the workspace itself: a rename is ordered behind every request already in flight.
+		return await calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => RenameService.RenameAsync(
+				snapshot, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
 
@@ -119,11 +111,6 @@ public sealed class RefactoringTools(
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
 		var request = new FormatRequest
 		{
 			FilePaths = filePaths,
@@ -132,8 +119,10 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await session.MutateAsync(
-			(snapshot, token) => FormatService.FormatAsync(snapshot, request, session.NoteSelfWrite, token, working),
+		return await calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => FormatService.FormatAsync(
+				snapshot, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
 
@@ -155,11 +144,6 @@ public sealed class RefactoringTools(
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
 		var request = new MoveTypeRequest
 		{
 			FilePath = filePath,
@@ -169,8 +153,10 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await session.MutateAsync(
-			(snapshot, token) => MoveTypeService.MoveAsync(snapshot, request, session.NoteSelfWrite, token, working),
+		return await calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => MoveTypeService.MoveAsync(
+				snapshot, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
 
@@ -314,13 +300,6 @@ public sealed class RefactoringTools(
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
-		// The longest of the write operations by some distance: it finds every reference in the
-		// solution and then compiles all of it, so the wait is worth reporting.
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
 		var request = new ChangeSignatureRequest
 		{
 			Symbol = symbol,
@@ -332,8 +311,11 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await session.MutateAsync(
-			(snapshot, token) => ChangeSignatureService.ChangeAsync(
+		// The longest of the write operations by some distance: it finds every reference in the
+		// solution and then compiles all of it, so the wait is worth reporting.
+		return await calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => ChangeSignatureService.ChangeAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
@@ -357,13 +339,6 @@ public sealed class RefactoringTools(
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
-		// A mass rewrite binds its rules in every project in scope and scans every document, so the
-		// wait is worth reporting as it goes.
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
 		var request = new ReplacePatternRequest
 		{
 			Rules = rules,
@@ -374,8 +349,12 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await session.MutateAsync(
-			(snapshot, token) => ReplacePatternService.ReplaceAsync(snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
+		// A mass rewrite binds its rules in every project in scope and scans every document, so the
+		// wait is worth reporting as it goes.
+		return await calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => ReplacePatternService.ReplaceAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
 
@@ -397,11 +376,6 @@ public sealed class RefactoringTools(
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
 		var request = new AddUsingRequest
 		{
 			FilePath = filePath,
@@ -411,32 +385,26 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await session.MutateAsync(
-			(snapshot, token) => AddUsingService.AddAsync(
+		return await calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => AddUsingService.AddAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
 
 	/// <summary>
-	/// The three write-by-symbol tools differ only in their request, so they share everything else:
-	/// the same progress split, the same session, and the same ordering behind every pending
-	/// mutation and the disk barrier.
+	/// The four write-by-symbol tools differ only in their request, so they share the service call
+	/// as well as the queue, the progress split and the session every mutation shares.
 	/// </summary>
-	private async Task<MemberEditResult> EditAsync(
+	private Task<MemberEditResult> EditAsync(
 		IProgress<ProgressNotificationValue> progress,
 		MemberEditRequest request,
-		CancellationToken cancellationToken)
-	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
-		return await session.MutateAsync(
-			(snapshot, token) => MemberEditService.EditAsync(
+		CancellationToken cancellationToken) =>
+		calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => MemberEditService.EditAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
-	}
 
 	[McpServerTool(
 		Name = ToolNames.MoveMember,
@@ -471,7 +439,7 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await RunAsync(
+		return await calls.MutateAsync(
 			progress,
 			(session, snapshot, working, token) => MoveMemberService.MoveAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
@@ -546,11 +514,6 @@ public sealed class RefactoringTools(
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
 		var request = new AddFileRequest
 		{
 			FilePath = filePath,
@@ -564,8 +527,9 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await session.MutateAsync(
-			(snapshot, token) => AddFileService.AddAsync(
+		return await calls.MutateAsync(
+			progress,
+			(session, snapshot, working, token) => AddFileService.AddAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
 	}
@@ -599,7 +563,7 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await RunAsync(
+		return await calls.MutateAsync(
 			progress,
 			(session, snapshot, working, token) => DeclarationEditService.ReplaceDocCommentAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
@@ -641,29 +605,11 @@ public sealed class RefactoringTools(
 			ExpectedRevision = expectedRevision,
 		};
 
-		return await RunAsync(
+		return await calls.MutateAsync(
 			progress,
 			(session, snapshot, working, token) => DeclarationEditService.SetAttributeAsync(
 				snapshot, diagnostics, request, session.NoteSelfWrite, token, working),
 			cancellationToken);
-	}
-
-	/// <summary>
-	/// The queue, the progress split and the session, which every declaration edit needs and none of
-	/// them varies.
-	/// </summary>
-	private async Task<MemberEditResult> RunAsync(
-		IProgress<ProgressNotificationValue> progress,
-		Func<WorkspaceSession, WorkspaceSnapshot, IWorkProgress, CancellationToken, Task<MutationResult<MemberEditResult>>> work,
-		CancellationToken cancellationToken)
-	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var session = await host.SessionAsync();
-
-		return await session.MutateAsync(
-			(snapshot, token) => work(session, snapshot, working, token), cancellationToken);
 	}
 
 	/// <summary>

@@ -37,6 +37,7 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 5 | IPC-01, LIV-07 (the id), LIV-08, IPC-03 | #323 |
 | 7 | WRK-08 | #269 |
 | 9 | WRK-01 | #275, #276, #278 |
+| 9b | WRK-23 | #418 |
 | 8 (part) | AGT-17 (the overreach half) | #333 |
 | 8 (part) | WRK-03, WRK-19 | #361 |
 | 1c, 1d | filed after the review | #366 |
@@ -54,9 +55,8 @@ opened the gate on **11b** and **11c**.
 Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
 are listed after tier 6, so none of them is re-derived from scratch.
 
-Four cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
-would not), the layout half of **21**, **11f** (closing 1b lets a worktree go while its worker runs
-on), and card 0e's finding that three of the phrases the comment convention lists are not history
+Three cards came out of closing others: the layout half of **21**, **11f** (closing 1b lets a
+worktree go while its worker runs on), and card 0e's finding that three of the phrases the comment convention lists are not history
 clauses at all. Card 9 also found a wrong answer the review missed -- four write tools reporting a
 project clean while the caller's errors sat in it.
 
@@ -93,7 +93,7 @@ reasoning in the "X, because Y" shape the conventions ask for. Three reviewers s
 refactor which loses the comments loses the design.
 
 Against that: three copies of `ToolErrorReporting` (BRK-06, AGT-19), two classes that are the same class twice (UIP-09),
-tool-layer boilerplate beside two helpers that already wrap it (WRK-23), and a comment debt of 43
+and a comment debt of 43
 history clauses and 153 issue tags, 47 of the 49 issues named being closed (UIP-23). That debt was
 reported as growing and is now merely large: a per-file baseline means it can only shrink, and the
 count it grew past was measured with three phrases that turn out not to indicate history at all.
@@ -331,7 +331,7 @@ Each closes a class of bug rather than a bug, and each is a prerequisite for som
 |---|---|---|---|---|
 | 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Five open fidelity issues close as a consequence.** A write names the lines it changed that nothing asked for (#333), so each fix is done when its sentence stops appearing. It also decides each file's layout once, from what declares it and then from the file (#361). A rewritten bare LF is said only where it changed a literal's value, naming the literal's line (#331), and `rose_add_file` rewrites an all-LF payload's literals as the member tools do (#332). `OverreachReportTests` pins #217's three shapes and #195's dropped comment. The sentence cannot see #197, whose list the caller writes whole, or damage inside a span the caller asked for (#217's doubled indentation, #199). AGT-17's `rose_format` half is left. **Filed since, in the same territory:** #336 is #217's doubled indentation again, on a replace that starts mid-line. #338 reflows a collection's `[` outside the find and the sentence does not name it. #360 writes a run of tabs mid-line into an argument list, inside a span the caller asked for. #362 puts a new `<param>` tag last rather than in parameter order. #343 is #197 and #354 is #199, filed again: close each as a duplicate. | WRK-02, AGT-17 | #195 #197 #199 #200 #217 #336 #338 #360 #362 | M-L |
 | ~~9~~ | **#275, #276, #278.** Six services each carried their own copy of the write conventions, and four tools on them reported a project clean while the caller's errors sat in it. One pipeline owns the conventions. | WRK-01 | — | — |
-| 9b | **Route every mutation tool through `RunAsync`.** Seven tools inline the same `WorkProgress.Split` / `sharedWork.Follow` / `SessionAsync` / `MutateAsync` preamble that `RunAsync` already wraps; add `ReadAsync` so the `Follow` handle cannot be forgotten on reads either. Was assumed to disappear with card 9 and did not. | WRK-23 | new | S |
+| ~~9b~~ | **#418.** Most tools wrote out their own wait for the workspace beside two helpers that did it, so a new tool could copy one that let a cold load go unreported. Every tool reaches the workspace through one helper, and a test refuses a tool given the means to go round it. | WRK-23 | — | — |
 | 10 | **One compilation-backed symbol resolver.** Today two-and-a-half resolvers disagree, so positional record properties are unaddressable when the name is common, and a metadata symbol is unreachable if any source symbol shares its leaf name. Every DTO in `Contracts` is a positional record. Two filed since answer what a name binds to without asking the compilation: `rose_resolve_name` splits a namespace-qualified name at its first dot and answers about the first segment (#261), and the automatic imports satisfy an invocation with a namespace holding a *type* of that name (#337). | WRK-04, WRK-05, WRK-14, AGT-03 | #233 #210 #239 #261 #337 | M |
 
 ### Tier 3 — make Rose win against grep

@@ -63,7 +63,11 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   carries both the running and the recently finished ones. The tray window and
   `GET /admin/workspaces` read that same model, so they cannot disagree. A percentage is per
   operation and only ever rises; no percentage means "cannot say", which shows as an indeterminate
-  bar rather than one frozen at a number that has stopped meaning anything.
+  bar rather than one frozen at a number that has stopped meaning anything. A worker tool reaches
+  its workspace only through `WorkspaceCalls`, which keeps the call listening to the shared load and
+  reload reports for the whole wait: a tool that let go early would answer correctly and show a
+  client nothing through a cold load, which reads as a hang. No tool type is given the host or the
+  shared progress, and `WorkspaceCallsTests` fails one that is.
 - **A worker is asked for status the moment it connects.** Progress notifications only exist inside
   a request, but a worker starts loading when the process does. With no call in flight the first
   half-minute of a large solution is invisible -- which is exactly what a reload from the tray

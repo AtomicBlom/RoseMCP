@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using RoseMcp.Contracts;
 
 using RoseMcp.Logging;
+using RoseMcp.Worker.Tools;
 
 namespace RoseMcp.Worker;
 
@@ -48,6 +49,7 @@ internal static class Program
 		builder.Services.AddSingleton<CodeFixCatalog>();
 		builder.Services.AddSingleton<WorkspaceHost>();
 		builder.Services.AddHostedService(services => services.GetRequiredService<WorkspaceHost>());
+		builder.Services.AddSingleton<WorkspaceCalls>();
 		builder.Services
 			.AddMcpServer(server => server.ServerInfo = new()
 			{

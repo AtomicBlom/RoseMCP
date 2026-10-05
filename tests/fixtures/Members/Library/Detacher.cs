@@ -13,5 +13,11 @@ public sealed class Detacher
 		return failure.Length > 0;
 	}
 
+	/// <summary>Counts the items through a lambda whose parameter is named item.</summary>
+	public int Tally(int[] items) => items.Select(item => item).Count();
+
+	/// <summary>Counts the items through a query whose range variable is named item.</summary>
+	public int Queried(int[] items) => (from item in items select item).Count();
+
 	public bool Run() => Detach() && Release();
 }

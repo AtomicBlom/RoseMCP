@@ -225,9 +225,10 @@ public static class ChangeSignatureService
 
 					return $"The new parameter '{identifier.ValueText}' would clash with the '{identifier.ValueText}' that "
 						+ $"{SymbolAddress.Of(member)} already declares in its body, at "
-						+ $"{Path.GetFileName(identifier.SyntaxTree?.FilePath)}:{line} -- CS0136, since a local cannot share "
-						+ "a parameter's name. Nothing was written. Pick another name for the parameter, or rename the "
-						+ "local first with rose_rename_symbol at that position.";
+						+ $"{Path.GetFileName(identifier.SyntaxTree?.FilePath)}:{line} -- CS0136 or CS1931, since neither a "
+						+ "local nor a query's range variable may share a parameter's name. Nothing was written. Pick "
+						+ "another name for the parameter, or rename the local first with rose_rename_symbol at that "
+						+ "position.";
 				}
 			}
 		}
@@ -237,12 +238,22 @@ public static class ChangeSignatureService
 
 	/// <summary>
 	/// The names a body declares that a parameter of the same name would clash with: its locals, its
-	/// pattern and out variables, its loop and catch variables, and the parameters and names of the
-	/// lambdas and local functions inside it.
+	/// pattern and out variables, its loop and catch variables, its query range variables, and the names
+	/// of the local functions inside it.
+	/// <para>
+	/// Not what a lambda or a local function declares inside itself. Those may shadow a parameter of
+	/// the member around them, so <c>Select(project => project.Name)</c> in a method gaining a
+	/// <c>project</c> parameter compiles as it stands, and refusing it would refuse a valid change. A
+	/// query's range variables may not, and <c>from item in items</c> is CS1931 the moment a parameter
+	/// <c>item</c> lands.
+	/// </para>
 	/// </summary>
 	private static IEnumerable<SyntaxToken> DeclaredIn(SyntaxNode body)
 	{
-		foreach (var node in body.DescendantNodes())
+		var nodes = body.DescendantNodes(node =>
+			node is not AnonymousFunctionExpressionSyntax and not LocalFunctionStatementSyntax);
+
+		foreach (var node in nodes)
 		{
 			var declared = node switch
 			{
@@ -250,8 +261,12 @@ public static class ChangeSignatureService
 				SingleVariableDesignationSyntax designation => designation.Identifier,
 				ForEachStatementSyntax loop => loop.Identifier,
 				CatchDeclarationSyntax caught => caught.Identifier,
-				ParameterSyntax parameter => parameter.Identifier,
 				LocalFunctionStatementSyntax function => function.Identifier,
+				FromClauseSyntax from => from.Identifier,
+				LetClauseSyntax let => let.Identifier,
+				JoinClauseSyntax join => join.Identifier,
+				JoinIntoClauseSyntax into => into.Identifier,
+				QueryContinuationSyntax continuation => continuation.Identifier,
 				_ => default,
 			};
 

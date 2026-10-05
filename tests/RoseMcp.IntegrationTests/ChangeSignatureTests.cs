@@ -534,6 +534,37 @@ public sealed class ChangeSignatureTests
 		(await ReadAsync(fixture, "Detacher.cs")).ShouldBe(before);
 	}
 
+	/// <summary>
+	/// A lambda's parameter may shadow one of the member around it, so a new parameter named like
+	/// one is a valid change and goes through, compiling clean.
+	/// </summary>
+	[Test]
+	public async Task Adds_a_parameter_named_like_a_lambda_parameter_in_the_body()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Detacher.Tally", "int[] items, string item = \"\"");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		(await ReadAsync(fixture, "Detacher.cs")).ShouldContain("public int Tally(int[] items, string item = \"\")", Case.Sensitive);
+	}
+
+	/// <summary>A query's range variable may not, which is CS1931, so that one is still refused.</summary>
+	[Test]
+	public async Task Refuses_a_new_parameter_named_like_a_query_range_variable()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Detacher.Queried", "int[] items, string item = \"\"")).OfExactType();
+
+		error.Message.ShouldContain("would clash with the 'item'", Case.Sensitive);
+	}
+
 	private static Task<SignatureChangeResult> ChangeAsync(
 		WorkspaceSession session,
 		string symbol,

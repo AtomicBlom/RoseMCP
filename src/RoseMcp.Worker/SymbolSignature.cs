@@ -16,7 +16,9 @@ public static class SymbolSignature
 	/// <summary>
 	/// Fully qualified, with parameter types and names, and the language's own names for the special
 	/// types -- <c>int</c> rather than <c>System.Int32</c>, which is what the caller reading the
-	/// answer would have written themselves.
+	/// answer would have written themselves. A parameter keeps its <c>ref</c>, <c>out</c>, <c>in</c> or
+	/// <c>params</c>: two overloads can differ by nothing else, and a signature without them names
+	/// both.
 	/// </summary>
 	public static readonly SymbolDisplayFormat Format = new(
 		globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
@@ -25,7 +27,9 @@ public static class SymbolSignature
 		memberOptions: SymbolDisplayMemberOptions.IncludeParameters
 			| SymbolDisplayMemberOptions.IncludeType
 			| SymbolDisplayMemberOptions.IncludeContainingType,
-		parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeName,
+		parameterOptions: SymbolDisplayParameterOptions.IncludeType
+			| SymbolDisplayParameterOptions.IncludeName
+			| SymbolDisplayParameterOptions.IncludeParamsRefOut,
 		miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
 
 	public static string Of(ISymbol symbol) => symbol.ToDisplayString(Format);

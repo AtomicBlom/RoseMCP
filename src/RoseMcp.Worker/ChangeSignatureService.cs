@@ -73,6 +73,8 @@ public static class ChangeSignatureService
 
 		var group = await GroupAsync(snapshot.Solution, method, cancellationToken);
 
+		if (Clash(group, plan, cancellationToken) is { } clash) throw new ArgumentException(clash);
+
 		progress?.Report("Finding the call sites", 25);
 
 		var work = await GatherAsync(snapshot.Solution, group, method, plan, wanted, notices, cancellationToken);
@@ -184,6 +186,77 @@ public static class ChangeSignatureService
 		}
 
 		return group;
+	}
+
+	/// <summary>
+	/// Why a new parameter's name cannot go into the bodies that would receive it, or null where it
+	/// can.
+	/// <para>
+	/// A local, a lambda's parameter or a pattern variable in the body with the new name is CS0136 the
+	/// moment the parameter lands. That is knowable before anything is written, and a caller told first
+	/// picks another name rather than repairing one -- the compile afterwards would report the error,
+	/// but in a file this has already rewritten across every override and call site.
+	/// </para>
+	/// </summary>
+	private static string? Clash(
+		IReadOnlyList<IMethodSymbol> group,
+		ParameterPlan plan,
+		CancellationToken cancellationToken)
+	{
+		var added = plan.Added.Select(parameter => parameter.Name).ToHashSet(StringComparer.Ordinal);
+
+		if (added.Count == 0) return null;
+
+		foreach (var member in group)
+		{
+			foreach (var reference in member.DeclaringSyntaxReferences)
+			{
+				if (reference.GetSyntax(cancellationToken) is not BaseMethodDeclarationSyntax declaration) continue;
+
+				SyntaxNode? body = (SyntaxNode?)declaration.Body ?? declaration.ExpressionBody;
+
+				if (body is null) continue;
+
+				foreach (var identifier in DeclaredIn(body))
+				{
+					if (!added.Contains(identifier.ValueText)) continue;
+
+					var line = identifier.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+					return $"The new parameter '{identifier.ValueText}' would clash with the '{identifier.ValueText}' that "
+						+ $"{SymbolAddress.Of(member)} already declares in its body, at "
+						+ $"{Path.GetFileName(identifier.SyntaxTree?.FilePath)}:{line} -- CS0136, since a local cannot share "
+						+ "a parameter's name. Nothing was written. Pick another name for the parameter, or rename the "
+						+ "local first with rose_rename_symbol at that position.";
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// The names a body declares that a parameter of the same name would clash with: its locals, its
+	/// pattern and out variables, its loop and catch variables, and the parameters and names of the
+	/// lambdas and local functions inside it.
+	/// </summary>
+	private static IEnumerable<SyntaxToken> DeclaredIn(SyntaxNode body)
+	{
+		foreach (var node in body.DescendantNodes())
+		{
+			var declared = node switch
+			{
+				VariableDeclaratorSyntax variable => variable.Identifier,
+				SingleVariableDesignationSyntax designation => designation.Identifier,
+				ForEachStatementSyntax loop => loop.Identifier,
+				CatchDeclarationSyntax caught => caught.Identifier,
+				ParameterSyntax parameter => parameter.Identifier,
+				LocalFunctionStatementSyntax function => function.Identifier,
+				_ => default,
+			};
+
+			if (declared.IsKind(SyntaxKind.IdentifierToken)) yield return declared;
+		}
 	}
 
 	/// <summary>
@@ -330,7 +403,12 @@ public static class ChangeSignatureService
 
 		var addedHere = plan.Added.Select(parameter => parameter.Name).ToArray();
 
-		var documentation = ParamTags.Update(declaration.GetLeadingTrivia(), removedHere, addedHere, notices);
+		var keptHere = own
+			.Where((_, index) => kept.Contains(index))
+			.Select(parameter => parameter.Identifier.Text)
+			.ToArray();
+
+		var documentation = ParamTags.Update(declaration.GetLeadingTrivia(), removedHere, addedHere, keptHere, notices);
 		var parameters = list.WithParameters(Separated(built, primary ? wanted : own));
 
 		return new DeclarationChange

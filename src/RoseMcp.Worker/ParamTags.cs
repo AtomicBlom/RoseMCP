@@ -23,20 +23,32 @@ public static class ParamTags
 {
 	/// <summary>
 	/// The declaration's leading trivia with the tags brought into line, or null when there is
-	/// nothing to do -- which includes the common case of a member that documents no parameters,
-	/// since neither diagnostic fires on one.
+	/// nothing to do -- which includes a documented member that leaves parameters it keeps
+	/// undocumented, since adding a tag for a new one alone would raise CS1573 for each of those.
 	/// </summary>
+	/// <param name="leading">The declaration's leading trivia, documentation comment included.</param>
+	/// <param name="removed">Parameters the change takes away.</param>
+	/// <param name="added">Parameters the change brings in, by name.</param>
+	/// <param name="kept">Parameters that were there before the change and still are.</param>
+	/// <param name="notes">Where to say what was done, or could not be.</param>
 	public static SyntaxTriviaList? Update(
 		SyntaxTriviaList leading,
 		IReadOnlyList<string> removed,
 		IReadOnlyList<string> added,
+		IReadOnlyList<string> kept,
 		List<string> notes)
 	{
 		var lines = leading.ToFullString().Split('\n').ToList();
 
-		// Neither CS1572 nor CS1573 fires on a member that documents no parameter at all, so there is
-		// nothing here to keep in step.
-		if (!lines.Any(line => TagAt(line) >= 0)) return null;
+		// A member that documents no parameter gets a tag only where every parameter it will have is
+		// one this adds: a documented method that took nothing and now takes something. Its comment
+		// then describes all its parameters, as the tool promises, and nothing goes undocumented
+		// beside a tag. Where it keeps undocumented parameters, a tag for the new one alone would
+		// turn a comment no diagnostic fires on into CS1573 for each of them.
+		var documentsParameters = lines.Any(line => TagAt(line) >= 0);
+		var documentsAll = kept.Count == 0 && added.Count > 0 && lines.Any(IsSummaryEnd);
+
+		if (!documentsParameters && !documentsAll) return null;
 
 		var changed = false;
 
@@ -189,7 +201,7 @@ public static class ParamTags
 	{
 		var opening = lines.FindLastIndex(line => TagAt(line) >= 0);
 
-		if (opening < 0) return lines.FindLastIndex(line => line.Contains("</summary>", StringComparison.Ordinal));
+		if (opening < 0) return lines.FindLastIndex(IsSummaryEnd);
 
 		for (var index = opening; index < lines.Count; index++)
 		{
@@ -198,6 +210,8 @@ public static class ParamTags
 
 		return opening;
 	}
+
+	private static bool IsSummaryEnd(string line) => line.Contains("</summary>", StringComparison.Ordinal);
 
 	private static bool Closes(string line) =>
 		line.Contains("</param>", StringComparison.Ordinal) || line.Contains("/>", StringComparison.Ordinal);

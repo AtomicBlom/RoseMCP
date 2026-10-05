@@ -57,13 +57,18 @@ public sealed record SymbolAddress
 	/// hand to the next call, which is the whole reason this format exists. Parameter types are fully
 	/// qualified, which is one of the spellings the match accepts.
 	/// </para>
+	/// <para>
+	/// So is how a parameter is passed. <c>Detach(out string)</c> and <c>Detach(string)</c> may both be
+	/// declared, and an address dropping the <c>out</c> names whichever the match reaches first --
+	/// or, read back, the other one.
+	/// </para>
 	/// </summary>
 	private static readonly SymbolDisplayFormat AddressFormat = new(
 		globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
 		typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
 		genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
 		memberOptions: SymbolDisplayMemberOptions.IncludeParameters | SymbolDisplayMemberOptions.IncludeContainingType,
-		parameterOptions: SymbolDisplayParameterOptions.IncludeType,
+		parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeParamsRefOut,
 		miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
 
 	/// <summary>
@@ -240,7 +245,69 @@ public sealed record SymbolAddress
 
 		return parameters
 			.Zip(Parameters)
-			.All(pair => TypeMatches(pair.First.Type, pair.Second));
+			.All(pair => ParameterMatches(pair.First, pair.Second));
+	}
+
+	/// <summary>
+	/// Whether a parameter as written names this one: passed the same way, and of the same type.
+	/// <para>
+	/// A parameter written with no <c>ref</c>, <c>out</c> or <c>in</c> is one passed by value, as C#
+	/// reads it, so <c>Detach(string)</c> does not reach <c>Detach(out string)</c> -- if it did, the
+	/// two overloads could not be told apart by any spelling of the first. <c>params</c>,
+	/// <c>scoped</c> and <c>this</c> say nothing about which overload it is, and are passed over.
+	/// </para>
+	/// </summary>
+	private static bool ParameterMatches(IParameterSymbol parameter, string requested)
+	{
+		var (passed, type) = Passing(requested);
+
+		return parameter.RefKind == passed && TypeMatches(parameter.Type, type);
+	}
+
+	/// <summary>How a parameter as written is passed, and the type left once that is taken off.</summary>
+	private static (RefKind Passed, string Type) Passing(string requested)
+	{
+		var rest = requested.Trim();
+		var passed = RefKind.None;
+
+		while (true)
+		{
+			if (TakeWord(ref rest, "ref"))
+			{
+				passed = TakeWord(ref rest, "readonly") ? RefKind.RefReadOnlyParameter : RefKind.Ref;
+				continue;
+			}
+
+			if (TakeWord(ref rest, "out"))
+			{
+				passed = RefKind.Out;
+				continue;
+			}
+
+			if (TakeWord(ref rest, "in"))
+			{
+				passed = RefKind.In;
+				continue;
+			}
+
+			var ignored = TakeWord(ref rest, "params") || TakeWord(ref rest, "scoped") || TakeWord(ref rest, "this");
+
+			if (!ignored) return (passed, rest);
+		}
+	}
+
+	/// <summary>Takes a keyword and the space after it off the front, if that is how the text starts.</summary>
+	private static bool TakeWord(ref string text, string word)
+	{
+		var starts = text.Length > word.Length
+			&& text.StartsWith(word, StringComparison.Ordinal)
+			&& char.IsWhiteSpace(text[word.Length]);
+
+		if (!starts) return false;
+
+		text = text[word.Length..].TrimStart();
+
+		return true;
 	}
 
 	/// <summary>

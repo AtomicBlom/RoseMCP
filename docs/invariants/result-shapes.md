@@ -21,6 +21,11 @@ Read before adding a tool, adding a field to a result, or changing an error path
   `ReadOnlyMemory<char>` -- naming a type that does not exist, and matching nothing. Type arguments
   come off the path, where a caller should not have to know how a declaration spells its type
   parameters, and stay on parameter types, which are what tell two overloads apart.
+- **Every tool resolves a name through `SymbolResolver`, against the compilation.** A second resolver
+  answers some address differently, and which tool a caller met first decides what it learns about
+  the grammar: a positional record property was readable and not renameable, and a type named for its
+  namespace reachable by neither. See
+  [the decision](../decisions/a-name-is-resolved-by-the-compilation-in-one-place.md).
 - **A read falls back to metadata when source declares nothing the address reaches, and only
   then.** Both edges of that condition are a wrong answer. Narrowed to "the name is carried nowhere
   in the solution", the fallback never fires for any library symbol whose last segment something
@@ -31,8 +36,9 @@ Read before adding a tool, adding a field to a result, or changing an error path
   while source did reach something, which is a confident answer about somebody else's class: an
   ambiguous match is several declarations here, a declaration ruled out by where it lives was still
   found, and a type declaring no explicit constructor is still the type the caller meant.
-  `SymbolNotFoundException` is what carries the distinction, so it is thrown exactly where it
-  holds. A lone segment reaches metadata through the declaration index, because no metadata name
+  The resolver decides it in one place, filling its metadata answer only when source reached
+  nothing, and `SymbolNotFoundException` marks exactly the refusals where that held -- saying, on a
+  read, that referenced assemblies were searched too. A lone segment reaches metadata through the declaration index, because no metadata name
   lookup finds `StringBuilder` spelled that way and the source search has always accepted a bare
   last segment -- demanding the namespace only of metadata is strictest where the caller knows
   least.

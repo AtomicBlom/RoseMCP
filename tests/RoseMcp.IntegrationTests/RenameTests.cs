@@ -175,6 +175,37 @@ public sealed class RenameTests
 	}
 
 	/// <summary>
+	/// A positional record property by name, though other types declare a Name too. No declaration
+	/// of the property's name exists for a search to find -- a parameter declares it -- so the
+	/// rename has to ask the record for its members, as every read does.
+	/// </summary>
+	[Test]
+	public async Task Renames_a_positional_record_property_named_rather_than_pointed_at()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var request = new RenameRequest
+		{
+			Target = new SymbolTarget { Symbol = "Library.Labelled.Name" },
+			NewName = "Label",
+		};
+
+		var result = await session.MutateAsync(
+			(snapshot, token) => RenameService.RenameAsync(snapshot, request, session.NoteSelfWrite, token),
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Applied.ShouldBeTrue();
+		result.OldName.ShouldBe("Name");
+
+		var records = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Records.cs"), TestContext.Current!.Execution.CancellationToken);
+
+		records.ShouldContain("record Labelled(string Label, int Count)", Case.Sensitive);
+		records.ShouldContain("labelled.Label", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// Two overloads are two symbols, and renaming the wrong one is a change that compiles. The name
 	/// is refused with both listed rather than resolved to the first.
 	/// </summary>

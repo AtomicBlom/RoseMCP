@@ -1,6 +1,5 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.FindSymbols;
 
 using RoseMcp.Contracts;
 
@@ -124,7 +123,7 @@ public static class NameResolver
 	{
 		return await GatherAsync(
 			projects,
-			project => SymbolFinder.FindDeclarationsAsync(project, name, ignoreCase: false, SymbolFilter.Type, cancellationToken),
+			project => SymbolResolver.TypesCalledAsync(project, name, cancellationToken),
 			symbol => symbol is INamedTypeSymbol,
 			cancellationToken);
 	}
@@ -140,7 +139,7 @@ public static class NameResolver
 	{
 		return await GatherAsync(
 			projects,
-			project => SymbolFinder.FindDeclarationsAsync(project, name, ignoreCase: false, SymbolFilter.Member, cancellationToken),
+			project => SymbolResolver.MembersCalledAsync(project, name, cancellationToken),
 			symbol => symbol is IMethodSymbol { IsExtensionMethod: true },
 			cancellationToken);
 	}
@@ -157,8 +156,7 @@ public static class NameResolver
 		string name,
 		CancellationToken cancellationToken)
 	{
-		var found = await SymbolFinder.FindSourceDeclarationsAsync(
-			solution, name, ignoreCase: false, SymbolFilter.Type, cancellationToken);
+		var found = await SymbolResolver.SourceTypesCalledAsync(solution, name, cancellationToken);
 
 		return [.. found.OfType<INamedTypeSymbol>().Where(symbol => symbol.ContainingAssembly?.Name != asking.AssemblyName)];
 	}

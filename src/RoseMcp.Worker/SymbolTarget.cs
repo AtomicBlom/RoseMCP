@@ -55,25 +55,16 @@ public sealed record SymbolTarget
 	{
 		if (IsByName)
 		{
-			try
-			{
-				var target = await DeclarationLocator.FindSymbolAsync(
-					snapshot.Solution, Symbol!, FilePath, cancellationToken);
+			// A referenced assembly is asked only when the caller pinned no file: naming one says the
+			// answer is in this solution's source, and a referenced assembly is not in it.
+			var resolution = await SymbolResolver.ResolveAsync(
+				snapshot.Solution, SymbolAddress.Parse(Symbol!), includeMetadata && FilePath is null, cancellationToken);
 
-				return target.Symbol;
-			}
-			catch (SymbolNotFoundException) when (includeMetadata && FilePath is null)
-			{
-				// Only after source has found nothing matching the address, and only when the caller
-				// pinned no file: naming one says the answer is in this solution's source, and a
-				// referenced assembly is not in it.
-				var found = await MetadataSymbols.FindAsync(
-					snapshot.Solution, SymbolAddress.Parse(Symbol!), cancellationToken);
+			if (resolution.Metadata is { } fromMetadata) return fromMetadata;
 
-				if (found is not null) return found;
+			var target = await DeclarationLocator.FindSymbolAsync(snapshot.Solution, resolution, FilePath, cancellationToken);
 
-				throw;
-			}
+			return target.Symbol;
 		}
 
 		if (!IsByPosition)

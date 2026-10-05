@@ -68,9 +68,9 @@ public sealed class ProjectNamesTests
 
 	/// <summary>
 	/// A tool comparing a project's name with a string for itself is a tool with a policy of its own,
-	/// and the first one written that way taught callers a rule the others did not keep: one widened
-	/// to the whole solution, one answered with nothing, and only some took a path. So nothing in the
-	/// worker but <see cref="ProjectNames"/> reads a project's name in a method that compares strings.
+	/// and policies drift: one widening to the whole solution, one answering with nothing, only some
+	/// taking a path. So nothing in the worker but <see cref="ProjectNames"/> reads a project's name
+	/// straight into a string comparison.
 	/// </summary>
 	[Test]
 	public void No_tool_matches_a_project_name_except_through_the_one_helper()

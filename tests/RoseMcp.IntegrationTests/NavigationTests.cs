@@ -189,6 +189,49 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
+	/// A type named for the namespace it is in. Read only as a constructor, its qualified name is
+	/// answered with "declares no constructor ... add one with rose_add_member", which is advice about a
+	/// type nobody asked about.
+	/// </summary>
+	[Test]
+	public async Task Describes_a_type_named_for_the_namespace_it_is_in()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var info = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Gauge.Gauge" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		info.Kind.ShouldBe("NamedType");
+		info.Namespace.ShouldBe("Library.Gauge");
+		info.IsFromSource.ShouldBeTrue();
+	}
+
+	/// <summary>
+	/// A positional record property is read by name like any other member, whatever else in the
+	/// solution is called Name.
+	/// </summary>
+	[Test]
+	public async Task Finds_the_uses_of_a_positional_record_property_by_name()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await NavigationService.FindReferencesAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Labelled.Name" },
+			200,
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Address.ShouldBe("Library.Labelled.Name");
+		result.References.ShouldContain(reference => reference.Preview!.Contains("labelled.Name", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// A constructor is the one address whose type part is written out in full, so it is also the one
 	/// where falling back must stay narrow: a type this solution does declare keeps its own answer,
 	/// and only a type declared nowhere here is looked for in a referenced assembly.

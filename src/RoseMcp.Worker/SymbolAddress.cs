@@ -101,6 +101,27 @@ public sealed record SymbolAddress
 	/// </summary>
 	public ConstructorKind Constructor { get; init; }
 
+	/// <summary>
+	/// The same text read as a type rather than as a constructor, where it can be read both ways, or
+	/// null where it cannot.
+	/// <para>
+	/// <c>RoseMcp.XamlDiff.XamlDiff</c> is the type <c>XamlDiff</c> in the namespace
+	/// <c>RoseMcp.XamlDiff</c>, and it is also, as C# spells one, the constructor of a type
+	/// <c>XamlDiff</c> in a namespace <c>RoseMcp</c>. A member may not share the name of the type
+	/// enclosing it, but a type may share the name of its namespace, so a repeated last segment is a
+	/// constructor or a type and only the compilation can say which. Read as a constructor alone,
+	/// every type laid out as <c>Foo.Bar/Bar.cs</c> is unreachable by its qualified name, and the
+	/// refusal recommends adding a constructor to a type nobody asked about.
+	/// </para>
+	/// </summary>
+	public SymbolAddress? AsType { get; private init; }
+
+	/// <summary>
+	/// Every way the text can be read, the type reading first: one address, or two where a repeated
+	/// last segment may be a type or its constructor.
+	/// </summary>
+	public IReadOnlyList<SymbolAddress> Readings => AsType is null ? [this] : [AsType, this];
+
 	public static SymbolAddress Parse(string requested)
 	{
 		var text = (requested ?? string.Empty).Trim();
@@ -113,12 +134,22 @@ public sealed record SymbolAddress
 		if (text.StartsWith(Global, StringComparison.Ordinal)) text = text[Global.Length..];
 
 		var (head, parameters) = SplitOffParameters(text);
-		var (typePath, constructor) = SplitOffConstructor(head, requested!);
+		var (typePath, constructor, repeated) = SplitOffConstructor(head, requested!);
 
 		if (typePath.Length == 0)
 		{
 			throw new ArgumentException($"'{requested}' names no symbol. Write it as Namespace.Type.Member.");
 		}
+
+		// A type takes no parameter list, so Type.Type(int) can only be the constructor.
+		var asType = repeated && parameters is null
+			? new SymbolAddress
+			{
+				Requested = requested!.Trim(),
+				Name = typePath[^1],
+				Path = [.. typePath, typePath[^1]],
+			}
+			: null;
 
 		return new SymbolAddress
 		{
@@ -127,6 +158,7 @@ public sealed record SymbolAddress
 			Path = typePath,
 			Parameters = parameters,
 			Constructor = constructor,
+			AsType = asType,
 		};
 	}
 
@@ -174,14 +206,20 @@ public sealed record SymbolAddress
 	private static ISymbol? Containing(ISymbol symbol) =>
 		(ISymbol?)symbol.ContainingType ?? symbol.ContainingNamespace;
 
-	private bool QualificationMatches(ISymbol symbol)
+	private bool QualificationMatches(ISymbol symbol) => IsAt(symbol, Path);
+
+	/// <summary>
+	/// Whether <paramref name="symbol"/>'s own path ends with <paramref name="path"/>, which is how much
+	/// of a name a caller has to write: as little as the last segment, or the whole of it.
+	/// </summary>
+	public static bool IsAt(ISymbol symbol, IReadOnlyList<string> path)
 	{
 		var actual = PathOf(symbol);
-		if (Path.Count > actual.Count) return false;
+		if (path.Count > actual.Count) return false;
 
-		for (var index = 1; index <= Path.Count; index++)
+		for (var index = 1; index <= path.Count; index++)
 		{
-			if (!string.Equals(Path[^index], actual[^index], StringComparison.Ordinal)) return false;
+			if (!string.Equals(path[^index], actual[^index], StringComparison.Ordinal)) return false;
 		}
 
 		return true;
@@ -235,14 +273,18 @@ public sealed record SymbolAddress
 	/// constructs.
 	/// <para>
 	/// Two spellings, because both are the natural first guess from somewhere. <c>Type..ctor</c> is
-	/// what the CLR calls it and what a stack trace shows; <c>Type.Type</c> is what C# writes, and
-	/// it cannot mean anything else, since a member may not share the name of the type enclosing it.
+	/// what the CLR calls it and what a stack trace shows; <c>Type.Type</c> is what C# writes.
 	/// Accepting neither costs more than it looks: a constructor is where a parameter is added most
 	/// often, and the failure is a refusal saying nothing is declared there, which reads as the name
 	/// being wrong rather than as the spelling being unsupported.
 	/// </para>
+	/// <para>
+	/// <c>Type..ctor</c> cannot mean anything else. <c>Type.Type</c> can: no member shares the name of
+	/// the type enclosing it, but a type may share the name of the namespace enclosing it, so the
+	/// repetition is reported and the type reading kept beside this one -- see <see cref="AsType"/>.
+	/// </para>
 	/// </summary>
-	private static (string[] TypePath, ConstructorKind Constructor) SplitOffConstructor(
+	private static (string[] TypePath, ConstructorKind Constructor, bool Repeated) SplitOffConstructor(
 		string head,
 		string requested)
 	{
@@ -258,19 +300,17 @@ public sealed record SymbolAddress
 					$"'{requested}' names a constructor with no type. Write it as Namespace.Type{suffix}.");
 			}
 
-			return (path, kind);
+			return (path, kind, false);
 		}
 
 		var segments = Segments(head);
 
-		// A member may not share the name of the type enclosing it, so a repeated last segment is a
-		// constructor and cannot be read as anything else.
 		var repeats = segments.Length >= 2
 			&& string.Equals(segments[^1], segments[^2], StringComparison.Ordinal);
 
 		return repeats
-			? (segments[..^1], ConstructorKind.Instance)
-			: (segments, ConstructorKind.None);
+			? (segments[..^1], ConstructorKind.Instance, true)
+			: (segments, ConstructorKind.None, false);
 	}
 
 	/// <summary>

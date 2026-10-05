@@ -13,9 +13,9 @@ namespace RoseMcp.Worker;
 /// the solution does have costs one call, and the caller can copy the right name out of it.
 /// </para>
 /// <para>
-/// One place, because the tools that each did this for themselves disagreed: some widened, some
-/// returned nothing, some refused; some accepted a path and some did not. Whichever tool a caller
-/// reached first taught it a rule the next tool did not keep.
+/// One place, because tools that each do this for themselves drift apart -- one widening, one
+/// answering with nothing, one refusing, only some taking a path -- and whichever a caller reaches
+/// first teaches it a rule the next does not keep.
 /// </para>
 /// </summary>
 public static class ProjectNames

@@ -17,6 +17,13 @@ public sealed record DeclarationTarget
 	/// </summary>
 	public required MemberDeclarationSyntax Declaration { get; init; }
 
+	/// <summary>
+	/// True for a positional record property, which a parameter of the record declares rather than a
+	/// declaration of its own. <see cref="Declaration"/> is then the whole record, which is what the
+	/// parameter sits in and not something to write over in the property's name.
+	/// </summary>
+	public bool DeclaredByParameter { get; init; }
+
 	public string FilePath => Document.FilePath!;
 
 	public string Signature => SymbolSignature.Of(Symbol);

@@ -198,6 +198,33 @@ public sealed class SymbolAddressTests
 		address.Path.ShouldBe(["RoseMcp", "Worker", "Whitespace"]);
 	}
 
+	/// <summary>
+	/// A repeated last segment is a constructor as C# spells one, and equally a type named for the
+	/// namespace it is in. Both readings are kept, the type first, for the compilation to settle.
+	/// </summary>
+	[Test]
+	public void Keeps_both_readings_of_a_repeated_last_segment()
+	{
+		var readings = SymbolAddress.Parse("RoseMcp.XamlDiff.XamlDiff").Readings;
+
+		readings.Count.ShouldBe(2);
+		readings[0].Constructor.ShouldBe(ConstructorKind.None);
+		readings[0].Path.ShouldBe(["RoseMcp", "XamlDiff", "XamlDiff"]);
+		readings[1].Constructor.ShouldBe(ConstructorKind.Instance);
+		readings[1].Path.ShouldBe(["RoseMcp", "XamlDiff"]);
+	}
+
+	/// <summary>
+	/// The spellings only a constructor fits are read one way: a type takes no parameter list, and
+	/// <c>..ctor</c> is the CLR's name for a constructor and nothing else.
+	/// </summary>
+	[Test]
+	[Arguments("Shop.Gadget.Gadget(int)")]
+	[Arguments("Shop.Gadget..ctor")]
+	[Arguments("Shop.Gadget.Ring")]
+	public void Reads_a_spelling_only_one_reading_fits_one_way(string requested) =>
+		SymbolAddress.Parse(requested).Readings.Count.ShouldBe(1);
+
 	[Test]
 	public void Reads_a_static_constructor()
 	{

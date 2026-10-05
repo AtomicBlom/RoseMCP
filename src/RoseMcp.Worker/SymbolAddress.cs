@@ -107,6 +107,18 @@ public sealed record SymbolAddress
 	public ConstructorKind Constructor { get; init; }
 
 	/// <summary>
+	/// True for an address written from <c>global::</c>, whose path is the whole of the symbol's rather
+	/// than the end of it.
+	/// <para>
+	/// A type named for a namespace at the root is the one case where the full name still reads two
+	/// ways: <c>Gauge.Gauge</c> is the type, and it is the constructor of a type <c>Gauge</c> wherever
+	/// that type is, this one included. Without an anchor no spelling reaches the type alone, and a
+	/// refusal recommending its full name recommends the call that was just refused.
+	/// </para>
+	/// </summary>
+	public bool Anchored { get; init; }
+
+	/// <summary>
 	/// The same text read as a type rather than as a constructor, where it can be read both ways, or
 	/// null where it cannot.
 	/// <para>
@@ -136,7 +148,9 @@ public sealed record SymbolAddress
 			throw new ArgumentException("Name the symbol to write, for example Namespace.Type.Member.");
 		}
 
-		if (text.StartsWith(Global, StringComparison.Ordinal)) text = text[Global.Length..];
+		var anchored = text.StartsWith(Global, StringComparison.Ordinal);
+
+		if (anchored) text = text[Global.Length..];
 
 		var (head, parameters) = SplitOffParameters(text);
 		var (typePath, constructor, repeated) = SplitOffConstructor(head, requested!);
@@ -153,6 +167,7 @@ public sealed record SymbolAddress
 				Requested = requested!.Trim(),
 				Name = typePath[^1],
 				Path = [.. typePath, typePath[^1]],
+				Anchored = anchored,
 			}
 			: null;
 
@@ -164,6 +179,7 @@ public sealed record SymbolAddress
 			Parameters = parameters,
 			Constructor = constructor,
 			AsType = asType,
+			Anchored = anchored,
 		};
 	}
 
@@ -211,16 +227,18 @@ public sealed record SymbolAddress
 	private static ISymbol? Containing(ISymbol symbol) =>
 		(ISymbol?)symbol.ContainingType ?? symbol.ContainingNamespace;
 
-	private bool QualificationMatches(ISymbol symbol) => IsAt(symbol, Path);
+	private bool QualificationMatches(ISymbol symbol) => IsAt(symbol, Path, Anchored);
 
 	/// <summary>
 	/// Whether <paramref name="symbol"/>'s own path ends with <paramref name="path"/>, which is how much
-	/// of a name a caller has to write: as little as the last segment, or the whole of it.
+	/// of a name a caller has to write: as little as the last segment, or the whole of it. Anchored, the
+	/// path has to be the whole of the symbol's, as <c>global::</c> says.
 	/// </summary>
-	public static bool IsAt(ISymbol symbol, IReadOnlyList<string> path)
+	public static bool IsAt(ISymbol symbol, IReadOnlyList<string> path, bool anchored = false)
 	{
 		var actual = PathOf(symbol);
 		if (path.Count > actual.Count) return false;
+		if (anchored && path.Count != actual.Count) return false;
 
 		for (var index = 1; index <= path.Count; index++)
 		{

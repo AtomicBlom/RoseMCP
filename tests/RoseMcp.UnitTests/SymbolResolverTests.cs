@@ -28,6 +28,27 @@ public sealed class SymbolResolverTests
 			public sealed class StringBuilder
 			{
 			}
+
+			public sealed class Encoder
+			{
+			}
+
+			public sealed class Decoder
+			{
+				public Decoder(int size)
+				{
+				}
+			}
+		}
+
+		namespace Gauge
+		{
+			public sealed class Gauge
+			{
+				public Gauge(int size)
+				{
+				}
+			}
 		}
 
 		namespace Shop.Widget
@@ -127,7 +148,7 @@ public sealed class SymbolResolverTests
 		var refusal = await Should.ThrowAsync<ArgumentException>(
 			() => DeclarationLocator.FindSymbolAsync(solution, "Gadget.Gadget", null, Token));
 
-		refusal.Message.ShouldContain("as a type and as that type's constructor", Case.Sensitive);
+		refusal.Message.ShouldContain("reads both as a type and as a constructor", Case.Sensitive);
 		refusal.Message.ShouldContain("Gadget..ctor", Case.Sensitive);
 	}
 
@@ -158,6 +179,49 @@ public sealed class SymbolResolverTests
 
 		refusal.Message.ShouldContain("'StringBuilder' declares no constructor", Case.Sensitive);
 		refusal.Message.ShouldContain("Read as a type instead", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A constructor address that reaches a source type is about that type, whether it declares no
+	/// constructor or only ones taking other parameters. A library's Encoder or Decoder, reached
+	/// instead, is a complete, well-formed answer about somebody else's class.
+	/// </summary>
+	[Test]
+	[Arguments("Encoder.Encoder", "'Encoder' declares no constructor")]
+	[Arguments("Decoder.Decoder()", "No constructor of 'Decoder' takes those parameter types")]
+	public async Task Keeps_a_constructor_address_on_the_source_type_it_reached(string requested, string refused)
+	{
+		using var workspace = Workspace(out var solution);
+
+		var refusal = await Should.ThrowAsync<ArgumentException>(
+			() => Target(requested).ResolveAsync(Snapshot(solution), Token, includeMetadata: true));
+
+		refusal.ShouldNotBeOfType<SymbolNotFoundException>();
+		refusal.Message.ShouldContain(refused, Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A type named for a namespace at the root reads, by its full name, as the type and as a
+	/// constructor of a type the root namespace declares -- and the full name is the spelling a caller
+	/// is told to use. <c>global::</c> anchors the name at the root, so it reaches the type alone, and
+	/// every spelling the refusal recommends resolves to one symbol.
+	/// </summary>
+	[Test]
+	public async Task Anchors_a_global_name_and_recommends_only_spellings_that_resolve()
+	{
+		using var workspace = Workspace(out var solution);
+
+		(await DeclarationLocator.FindSymbolAsync(solution, "global::Gauge.Gauge", null, Token)).Symbol
+			.ShouldBeAssignableTo<INamedTypeSymbol>();
+
+		var refusal = await Should.ThrowAsync<ArgumentException>(
+			() => DeclarationLocator.FindSymbolAsync(solution, "Gauge.Gauge", null, Token));
+
+		refusal.Message.ShouldContain("global::Gauge.Gauge", Case.Sensitive);
+		refusal.Message.ShouldContain("Gauge.Gauge..ctor", Case.Sensitive);
+
+		(await DeclarationLocator.FindSymbolAsync(solution, "Gauge.Gauge..ctor", null, Token)).Symbol.Kind
+			.ShouldBe(SymbolKind.Method);
 	}
 
 	/// <summary>

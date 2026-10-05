@@ -26,19 +26,23 @@ or a compilation what a name is, so a new tool cannot grow a second.
 last segment. `System.Collections.Generic.List.Add` is reached whatever this solution happens to call
 `Add`; a bare `Add` that source declares is answered from source, which keeps a bare name ambiguous
 wherever it is ambiguous rather than letting a library member settle it. A constructor address that
-reaches a source type keeps that type's answer -- "declares no constructor" -- because the caller
-means that type; a type of the same name somewhere else is not at the address and does not stop a
-library's constructor being reached. A refusal after a metadata search says it ran.
+reaches a source type keeps that type's answer -- "declares no constructor", or "no constructor takes
+those parameter types" -- and referenced assemblies are not asked, because the caller means that
+type; a type of the same name somewhere else is not at the address and does not stop a library's
+constructor being reached. A refusal after a metadata search says it ran.
 
 **Why both readings, and why refuse when both hit.** A member may not share the name of its type, but
 a type may share the name of its namespace, so `RoseMcp.XamlDiff.XamlDiff` is a type and is also, as
 C# spells one, the constructor of a type `XamlDiff` in `RoseMcp`. Read only as a constructor, every
 `Foo.Bar/Bar.cs` layout is unreachable by name and the refusal advises adding a constructor. Read
 only as a type, `Greeter.Greeter` -- the spelling C# itself uses -- would stop naming a constructor.
-The two collide only for a partly qualified name of a type named for its namespace that declares a
-constructor, and there either answer is a guess: a wrong one writes correct code into the wrong
-member. The refusal names both and how to write each (`Type..ctor` or a parameter list for the
-constructor, the whole namespace for the type), and every spelling it recommends resolves. A tool
+The two collide only for a type named for its namespace that declares a constructor, written partly
+qualified -- or, where that namespace is at the root, written in full -- and there either answer is a guess: a wrong one writes correct code into the wrong
+member. The refusal names both and how to write each, and every spelling it recommends resolves:
+`Namespace.Type..ctor` for the constructor, and `global::Namespace.Type` for the type. `global::`
+anchors a name at the root, so its path has to be the whole of the symbol's rather than the end of
+it -- which is what separates a type named for a root namespace from a constructor even by its full
+name, since `Gauge.Gauge` is still also the constructor of the type `Gauge`. A tool
 that wants a type -- an outline, adding a member -- takes only the type reading, so it never meets
 the collision.
 

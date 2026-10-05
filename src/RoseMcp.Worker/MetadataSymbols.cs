@@ -78,7 +78,7 @@ public static class MetadataSymbols
 
 		foreach (var reading in address.Readings)
 		{
-			foreach (var type in await TypesNamedAsync(project, compilation, reading.Path, cancellationToken))
+			foreach (var type in await TypesNamedAsync(project, compilation, reading.Path, reading.Anchored, cancellationToken))
 			{
 				if (reading.Constructor != ConstructorKind.None)
 				{
@@ -92,7 +92,7 @@ public static class MetadataSymbols
 			if (reading.Constructor != ConstructorKind.None || reading.Path.Count < 2) continue;
 
 			var containing = await TypesNamedAsync(
-				project, compilation, [.. reading.Path.Take(reading.Path.Count - 1)], cancellationToken);
+				project, compilation, [.. reading.Path.Take(reading.Path.Count - 1)], reading.Anchored, cancellationToken);
 
 			foreach (var type in containing)
 			{
@@ -120,6 +120,7 @@ public static class MetadataSymbols
 		Project project,
 		Compilation compilation,
 		IReadOnlyList<string> path,
+		bool anchored,
 		CancellationToken cancellationToken)
 	{
 		if (path.Count == 0) return [];
@@ -135,7 +136,7 @@ public static class MetadataSymbols
 		[
 			.. declared
 				.OfType<INamedTypeSymbol>()
-				.Where(type => SymbolAddress.IsAt(type, path))
+				.Where(type => SymbolAddress.IsAt(type, path, anchored))
 				.Where(type => !type.Locations.Any(location => location.IsInSource))
 
 				// Asked of the compilation rather than of DeclaredAccessibility, so an internal type

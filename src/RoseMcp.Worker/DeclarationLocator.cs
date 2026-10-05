@@ -414,17 +414,20 @@ public static class DeclarationLocator
 			.Distinct(SymbolEqualityComparer.Default)
 			.Count() > 1;
 
-		// A type and its constructor, which is the one ambiguity a repeated last segment brings: the
-		// way out is a spelling that only one of the readings accepts.
-		var typeAndConstructor = candidates.Any(candidate => candidate.Symbol is INamedTypeSymbol)
-			&& candidates.Any(candidate => candidate.Symbol is IMethodSymbol { MethodKind: MethodKind.Constructor });
+		// A type and a constructor, which is the one ambiguity a repeated last segment brings: the way
+		// out is a spelling only one of the readings accepts, written from the candidates themselves so
+		// that each resolves. global:: anchors the type at the root, which is what separates it from a
+		// constructor even where its full name repeats a root namespace; ..ctor is only a constructor.
+		var type = candidates.Select(candidate => candidate.Symbol).OfType<INamedTypeSymbol>().FirstOrDefault();
+		var constructor = candidates.Select(candidate => candidate.Symbol).OfType<IMethodSymbol>()
+			.FirstOrDefault(method => method.MethodKind == MethodKind.Constructor);
 
 		// One symbol in several places is a partial, which no parameter list can separate however
 		// precisely it is written. Several symbols are overloads, which one can.
-		var how = typeAndConstructor
-			? $"It reads both as a type and as that type's constructor. For the constructor write "
-				+ $"{string.Join(".", address.Path)}..ctor, or give its parameter types; for the type, name it with the "
-				+ "whole of its namespace, or pass filePath."
+		var how = type is not null && constructor is not null
+			? $"It reads both as a type and as a constructor. For the type write global::{SymbolAddress.Of(type)}; "
+				+ $"for the constructor write {SymbolAddress.Of(constructor.ContainingType)}..ctor, with its parameter "
+				+ "types if it has several."
 			: !separateSymbols
 				? "Pass filePath to say which of its declarations to write to."
 				: filePath is null

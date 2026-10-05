@@ -3,9 +3,10 @@ namespace RoseMcp.Worker;
 /// <summary>
 /// Nothing in the solution's source is reached by the address the caller wrote.
 /// <para>
-/// Its own type because it is the one refusal a read may answer another way, and does: a read asks
-/// referenced assemblies under exactly this condition before refusing, and says so when it refuses
-/// anyway. The condition is that nothing the address <em>reaches</em> is declared here, which is
+/// Its own type because it marks the one condition under which a read answers another way:
+/// <see cref="SymbolResolver"/> asks referenced assemblies exactly when source reaches nothing at the
+/// address and no constructor reading reached a source type, and a read refused after that says the
+/// search ran. The condition is that nothing the address <em>reaches</em> is declared here, which is
 /// wider than nothing carrying the name and has to be: a solution of any size declares an Add, a Name
 /// and a Document of its own, and a refusal that fired only on a name nobody uses would send every
 /// library member sharing one to a decompiler while the compilation held the answer.

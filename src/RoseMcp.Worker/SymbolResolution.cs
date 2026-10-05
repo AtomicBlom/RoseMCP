@@ -33,7 +33,8 @@ public sealed record SymbolResolution
 
 	/// <summary>
 	/// The one symbol a referenced assembly declares at the address, where source declares nothing
-	/// there and the caller asked for metadata to be searched.
+	/// there, no constructor reading reached a source type, and the caller asked for metadata to be
+	/// searched.
 	/// </summary>
 	public ISymbol? Metadata { get; init; }
 

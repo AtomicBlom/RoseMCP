@@ -18,7 +18,8 @@ namespace RoseMcp.Worker;
 /// </para>
 /// <para>
 /// Source wins outright. Referenced assemblies are searched only when nothing in source is at the
-/// address under any reading, and only for a caller that can say something true about a symbol with
+/// address under any reading -- a source type a constructor reading reaches counts, whether or not it
+/// declares the constructor -- and only for a caller that can say something true about a symbol with
 /// no file: carrying the address's last segment somewhere else in the solution is not being at the
 /// address, and a library member is reached whatever the solution happens to declare under its leaf
 /// name. A bare name is still answered from source whenever source carries it, which keeps it
@@ -66,7 +67,7 @@ public static class SymbolResolver
 					continue;
 				}
 
-				var types = TypesAt(compilation, reading.Path);
+				var types = TypesAt(compilation, reading.Path, reading.Anchored);
 
 				constructed.AddRange(types);
 				reached.AddRange(types.SelectMany(type => Declared(type.Constructors)).Where(reading.Matches));
@@ -75,7 +76,11 @@ public static class SymbolResolver
 
 		var source = reached.Distinct(SymbolEqualityComparer.Default).ToArray();
 
-		if (source.Length > 0 || !includeMetadata)
+		// A constructor address that reached a source type is about that type, whatever constructors it
+		// declares: a library type of the same name is somebody else's class.
+		var reachedSource = source.Length > 0 || constructed.Count > 0;
+
+		if (reachedSource || !includeMetadata)
 		{
 			return new SymbolResolution
 			{
@@ -125,9 +130,20 @@ public static class SymbolResolver
 	/// How many leading segments of a dotted name are a namespace this compilation can see, counting
 	/// from the global namespace: two for <c>System.Text.Encoding</c>, none for <c>Encoding.UTF8</c>.
 	/// </summary>
-	public static int NamespaceDepth(Compilation compilation, IReadOnlyList<string> segments)
+	public static int NamespaceDepth(Compilation compilation, IReadOnlyList<string> segments) =>
+		Depth(compilation.GlobalNamespace, segments);
+
+	/// <summary>
+	/// How many leading segments of a dotted name are a namespace this compilation's own source
+	/// declares something in, which is what says the project is where the namespace comes from rather
+	/// than one more project that can see it.
+	/// </summary>
+	public static int DeclaredNamespaceDepth(Compilation compilation, IReadOnlyList<string> segments) =>
+		Depth(compilation.Assembly.GlobalNamespace, segments);
+
+	private static int Depth(INamespaceSymbol root, IReadOnlyList<string> segments)
 	{
-		var current = compilation.GlobalNamespace;
+		var current = root;
 		var depth = 0;
 
 		foreach (var segment in segments)
@@ -174,7 +190,7 @@ public static class SymbolResolver
 		foreach (var symbol in Called(compilation, reading.Name).Where(reading.Matches)) yield return symbol;
 
 		var containers = reading.Path.Count >= 2
-			? TypesAt(compilation, [.. reading.Path.Take(reading.Path.Count - 1)])
+			? TypesAt(compilation, [.. reading.Path.Take(reading.Path.Count - 1)], reading.Anchored)
 			: Records(compilation, cancellationToken);
 
 		foreach (var container in containers)
@@ -187,11 +203,14 @@ public static class SymbolResolver
 	}
 
 	/// <summary>The source types whose own path ends with <paramref name="path"/>.</summary>
-	private static IReadOnlyList<INamedTypeSymbol> TypesAt(Compilation compilation, IReadOnlyList<string> path) =>
+	private static IReadOnlyList<INamedTypeSymbol> TypesAt(
+		Compilation compilation,
+		IReadOnlyList<string> path,
+		bool anchored) =>
 		[
 			.. compilation.GetSymbolsWithName(path[^1], SymbolFilter.Type)
 				.OfType<INamedTypeSymbol>()
-				.Where(type => SymbolAddress.IsAt(type, path)),
+				.Where(type => SymbolAddress.IsAt(type, path, anchored)),
 		];
 
 	/// <summary>

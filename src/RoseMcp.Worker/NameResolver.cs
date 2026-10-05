@@ -82,7 +82,8 @@ public static class NameResolver
 		}
 		else
 		{
-			(found, unreferenced) = await ByNameAsync(snapshot, projects, document, name, notices, cancellationToken, progress);
+			(found, unreferenced) = await ByNameAsync(
+				snapshot, projects, document, name, request.Use, notices, cancellationToken, progress);
 		}
 
 		progress?.Report("Working out what is in scope already", 85);
@@ -121,31 +122,38 @@ public static class NameResolver
 
 	/// <summary>
 	/// A name with no namespace in front of it, searched as a type, then as an extension method, then
-	/// anywhere in the solution's source the file's project cannot see.
+	/// anywhere in the solution's source the file's project cannot see -- each only where the way the
+	/// code uses the name lets that kind of symbol answer it.
 	/// </summary>
 	private static async Task<(IReadOnlyList<ISymbol> Found, bool Unreferenced)> ByNameAsync(
 		WorkspaceSnapshot snapshot,
 		IReadOnlyList<Project> projects,
 		Document? document,
 		string name,
+		NameUse use,
 		List<string> notices,
 		CancellationToken cancellationToken,
 		IWorkProgress? progress)
 	{
-		progress?.Report($"Looking for a type called {name}", 20);
+		IReadOnlyList<ISymbol> found = [];
 
-		var found = await TypesAsync(projects, name, cancellationToken);
+		if (use.TakesAType())
+		{
+			progress?.Report($"Looking for a type called {name}", 20);
+
+			found = await TypesAsync(projects, name, cancellationToken);
+		}
 
 		// Only once nothing of that name is a type. A member search matches every method of that
 		// name in every referenced assembly -- thousands of them, for a name like Count -- and it
 		// answers a question the type search has already ruled out.
-		if (found.Count == 0)
+		if (found.Count == 0 && use.TakesAnExtension())
 		{
 			progress?.Report($"Nothing is called {name}; looking for an extension method", 50);
 
 			found = await ExtensionsAsync(projects, name, cancellationToken);
 
-			if (found.Count > 0)
+			if (found.Count > 0 && use.TakesAType())
 			{
 				notices.Add(
 					$"No type is called {name}; these are extension methods. The namespace still has to be "
@@ -155,7 +163,7 @@ public static class NameResolver
 
 		// Still nothing the file can reach, so the useful answer is which of the two things went
 		// wrong: it is not written yet, or it is written somewhere this project cannot see.
-		var unreferenced = found.Count == 0 && document is not null;
+		var unreferenced = found.Count == 0 && document is not null && use.TakesAType();
 
 		if (unreferenced)
 		{

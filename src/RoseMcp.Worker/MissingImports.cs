@@ -66,10 +66,10 @@ public static class MissingImports
 			if (entry.FilePath is not { Length: > 0 } path) continue;
 			if (asked.Count >= Looked) break;
 
-			var name = await NameAtAsync(snapshot.Solution, path, entry.Line, entry.Column, cancellationToken);
-			if (name is null || !asked.Add(name)) continue;
+			var unresolved = await UnresolvedAtAsync(snapshot.Solution, path, entry.Line, entry.Column, cancellationToken);
+			if (unresolved is not { } found || !asked.Add(found.Name)) continue;
 
-			if (await DescribeAsync(snapshot, name, path, cancellationToken) is { } suggestion)
+			if (await DescribeAsync(snapshot, found.Name, found.Use, path, cancellationToken) is { } suggestion)
 			{
 				suggestions.Add(suggestion);
 			}
@@ -87,12 +87,13 @@ public static class MissingImports
 	private static async Task<string?> DescribeAsync(
 		WorkspaceSnapshot snapshot,
 		string name,
+		NameUse use,
 		string filePath,
 		CancellationToken cancellationToken)
 	{
 		var resolution = await NameResolver.ResolveAsync(
 			snapshot,
-			new ResolveNameRequest { Name = name, FilePath = filePath },
+			new ResolveNameRequest { Name = name, FilePath = filePath, Use = use },
 			cancellationToken);
 
 		var usable = resolution.Candidates
@@ -137,6 +138,18 @@ public static class MissingImports
 		string filePath,
 		int line,
 		int column,
+		CancellationToken cancellationToken) =>
+		(await UnresolvedAtAsync(solution, filePath, line, column, cancellationToken))?.Name;
+
+	/// <summary>
+	/// The identifier the diagnostic is pointing at and how the code uses it, which together are the
+	/// question an import answers: not only what is called that, but what kind of thing could be.
+	/// </summary>
+	public static async Task<(string Name, NameUse Use)?> UnresolvedAtAsync(
+		Solution solution,
+		string filePath,
+		int line,
+		int column,
 		CancellationToken cancellationToken)
 	{
 		var document = SymbolLocator.FindDocument(solution, filePath);
@@ -152,6 +165,6 @@ public static class MissingImports
 		var position = textLine.Start + Math.Clamp(column - 1, 0, textLine.Span.Length);
 		var token = root.FindToken(position);
 
-		return token.IsKind(SyntaxKind.IdentifierToken) ? token.ValueText : null;
+		return token.IsKind(SyntaxKind.IdentifierToken) ? (token.ValueText, NameUses.Of(token)) : null;
 	}
 }

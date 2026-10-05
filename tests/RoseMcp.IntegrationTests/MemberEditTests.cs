@@ -708,20 +708,12 @@ public sealed class MemberEditTests
 	}
 
 	/// <summary>
-	/// An import fetched for a name and the error it was fetched for surviving are two facts the
-	/// result used to carry side by side without joining them: "imported Library.Extras, the only
-	/// namespace anything of that name is in" beside an error about the same name, and nothing saying
-	/// the first had not fixed the second.
-	/// <para>
-	/// The join is decidable rather than a guess -- an import for a name that still does not bind is
-	/// the wrong import -- and it is what turns the outcome a sole candidate is allowed to have into
-	/// one sentence rather than two facts the caller has to put together. Here the only thing called
-	/// <c>Shouted</c> is a method, the code uses the name as a type, and the namespace is right about
-	/// where the name lives and wrong about what it is.
-	/// </para>
+	/// The only thing called <c>Shouted</c> is an extension method, and the code uses the name as a
+	/// type. A method cannot answer a name in a type's place, so nothing is imported: importing the
+	/// namespace that holds it would leave the error standing and add an unused using beside it.
 	/// </summary>
 	[Test]
-	public async Task Says_when_an_import_did_not_resolve_the_error_it_was_fetched_for()
+	public async Task Imports_nothing_for_a_name_used_as_a_type_when_only_a_method_carries_it()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -734,10 +726,65 @@ public sealed class MemberEditTests
 		});
 
 		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "CS0246");
+		result.Notices.ShouldContain(notice => notice.Contains("Shouted is used as a type here", StringComparison.Ordinal));
+		result.Notices.ShouldNotContain(notice => notice.Contains("imported Library.Extras", StringComparison.Ordinal));
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldNotContain("using Library.Extras;", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A name called on its own is answered by no type, since a type is only ever invoked through
+	/// <c>new</c>. The only <c>Group</c> this project sees is
+	/// <c>System.Text.RegularExpressions.Group</c>, and importing it for <c>Group(1, 2)</c> turns one
+	/// CS0103 into a CS1955 and an unused using, in a line the caller never wrote.
+	/// </summary>
+	[Test]
+	public async Task Imports_no_type_for_a_name_that_is_called()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public int Grouped() => Group(1, 2);",
+		});
+
+		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "CS0103");
+		result.IntroducedDiagnostics.ShouldNotContain(entry => entry.Id == "CS1955");
+		result.Notices.ShouldContain(notice => notice.Contains("Group is called here on its own", StringComparison.Ordinal));
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldNotContain("RegularExpressions", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// An import that does not resolve the name it was fetched for is the wrong import, and the tool
+	/// can tell before it writes: the name still fails with the import in place. So it is taken back
+	/// out in the same call, and the caller keeps the one error they had rather than gaining an
+	/// unused using beside it. Here the name stands where a value could, so the extension method is a
+	/// candidate -- and a bare name never reaches an extension method, whatever is imported.
+	/// </summary>
+	[Test]
+	public async Task Takes_back_an_import_that_did_not_resolve_the_name_it_was_fetched_for()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Greeter",
+			Code = "public object Loud() => Shouted;",
+		});
+
+		result.IntroducedDiagnostics.ShouldContain(entry => entry.Id == "CS0103");
+		result.IntroducedDiagnostics.ShouldNotContain(entry => entry.Id == "IDE0005");
 
 		result.Notices.ShouldContain(
-			notice => notice.Contains("Shouted", StringComparison.Ordinal)
-				&& notice.Contains("Library.Extras", StringComparison.Ordinal)
-				&& notice.Contains("did not resolve", StringComparison.Ordinal));
+			notice => notice.Contains("importing Library.Extras", StringComparison.Ordinal)
+				&& notice.Contains("taken back out", StringComparison.Ordinal));
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldNotContain("using Library.Extras;", Case.Sensitive);
 	}
 }

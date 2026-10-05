@@ -102,10 +102,7 @@ public static class AddFileService
 		// ends up on rather than the line the caller wrote it at.
 		var literalEndings = await LiteralEndingsAsync(solution, id, rules, request.Code, cancellationToken);
 
-		// After the verification, which is the first moment it can be said whether each import resolved
-		// the error it was fetched for rather than only which namespace it named.
-		var importsAdded = await ResolvedImports.ReportAsync(
-			solution, imports, edit.Verification.Introduced, path, cancellationToken);
+		var importsAdded = ResolvedImports.Report(imports);
 
 		notices.AddRange(Notices(request, imports, globs, project, rewrote, literalEndings));
 
@@ -407,11 +404,7 @@ public static class AddFileService
 			Looked,
 			cancellationToken);
 
-		if (!imports.AnythingToAdd) return (after, imports);
-
-		var added = await ResolvedImports.ApplyAsync(after, id, imports.Namespaces, rules, cancellationToken);
-
-		return (added, imports);
+		return await ResolvedImports.ApplyResolvingAsync(after, id, imports, rules, cancellationToken);
 	}
 
 	/// <summary>

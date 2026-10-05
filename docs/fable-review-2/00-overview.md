@@ -56,9 +56,9 @@ Issues filed after the review, up to #362, are triaged into the cards below. The
 are listed after tier 6, so none of them is re-derived from scratch.
 
 Three cards came out of closing others: the layout half of **21**, **11f** (closing 1b lets a
-worktree go while its worker runs on), and card 0e's finding that three of the phrases the comment convention lists are not history
-clauses at all. Card 9 also found a wrong answer the review missed -- four write tools reporting a
-project clean while the caller's errors sat in it.
+worktree go while its worker runs on), and card 0e's finding that three of the phrases the comment
+convention lists are not history clauses at all. Card 9 also found a wrong answer the review missed
+-- four write tools reporting a project clean while the caller's errors sat in it.
 
 Each closed finding is struck in its own file: the pull request, the problem, the state.
 

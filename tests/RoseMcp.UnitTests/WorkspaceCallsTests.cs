@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 using ModelContextProtocol.Server;
 
@@ -71,10 +72,20 @@ public sealed class WorkspaceCallsTests
 		var offenders =
 			from type in toolTypes
 			from method in type.GetConstructors(Everything).Cast<MethodBase>().Concat(type.GetMethods(Everything))
+			where !IsCompilerWritten(method)
 			from parameter in method.GetParameters()
 			where bypasses.Contains(parameter.ParameterType)
 			select $"{type.Name}.{method.Name}({parameter.ParameterType.Name} {parameter.Name})";
 
 		offenders.ShouldBeEmpty("a tool reaches the workspace through WorkspaceCalls and nothing else");
 	}
+
+	/// <summary>
+	/// A method the compiler wrote rather than the tool's author: a lambda handed to the calls that
+	/// captures nothing but fields is lowered to an instance method on the tool type, taking the
+	/// session it was given, which is the helper doing its job rather than a way round it. Lambda
+	/// methods are not reliably marked as generated, so their unspeakable names are checked too.
+	/// </summary>
+	private static bool IsCompilerWritten(MethodBase method) =>
+		method.IsDefined(typeof(CompilerGeneratedAttribute)) || method.Name.StartsWith('<');
 }

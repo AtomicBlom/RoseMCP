@@ -245,10 +245,10 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 	/// <summary>
 	/// The projects a request covers.
 	/// <para>
-	/// A file or project name that matches nothing is refused rather than widened to the solution. The
-	/// wide answer is the shape of failure this whole surface is built against: it comes back clean and
-	/// complete, for a question fourteen projects larger than the one asked, and a caller who mistyped
-	/// a path reads it as an answer about that path. A refusal naming what it looked for costs one call.
+	/// A file or project name that matches nothing is refused rather than widened to the solution, the
+	/// policy <see cref="ProjectNames"/> keeps for every tool: the wide answer comes back clean and
+	/// complete, for a question many projects larger than the one asked, and a caller who mistyped a
+	/// path reads it as an answer about that path. A refusal naming what it looked for costs one call.
 	/// </para>
 	/// </summary>
 	/// <exception cref="ArgumentException">Nothing in the solution matches the file or project named.</exception>
@@ -259,19 +259,7 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 			return [.. solution.Projects];
 		}
 
-		if (request.Scope == DiagnosticScope.Project)
-		{
-			var byName = solution.Projects
-				.Where(project => string.Equals(project.Name, target, StringComparison.OrdinalIgnoreCase)
-					|| PathMatches(project.FilePath, target))
-				.ToArray();
-
-			if (byName.Length > 0) return byName;
-
-			throw new ArgumentException(
-				$"No project in this solution is called '{target}'. It has "
-					+ $"{string.Join(", ", solution.Projects.Select(project => project.Name).Order(StringComparer.Ordinal))}.");
-		}
+		if (request.Scope == DiagnosticScope.Project) return ProjectNames.Resolve(solution, target);
 
 		// Document scope: analyse the projects that compile the file. A file shared by several projects,
 		// or multi-targeted, legitimately belongs to more than one.

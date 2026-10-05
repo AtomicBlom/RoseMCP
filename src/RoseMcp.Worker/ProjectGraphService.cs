@@ -21,17 +21,7 @@ public static class ProjectGraphService
 		var solution = snapshot.Solution;
 		var graph = solution.GetProjectDependencyGraph();
 
-		var wanted = project is { Length: > 0 }
-			? solution.Projects.Where(candidate =>
-				string.Equals(candidate.Name, project, StringComparison.OrdinalIgnoreCase)).ToArray()
-			: [.. solution.Projects];
-
-		if (wanted.Length == 0)
-		{
-			throw new ArgumentException(
-				$"No project called '{project}'. The solution has "
-					+ $"{string.Join(", ", solution.Projects.Select(candidate => candidate.Name).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))}.");
-		}
+		var wanted = ProjectNames.ResolveOrAll(solution, project);
 
 		var described = wanted
 			.Select(candidate => Describe(solution, graph, candidate))

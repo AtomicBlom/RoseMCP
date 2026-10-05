@@ -99,7 +99,25 @@ public sealed class BuildFreshnessTests
 		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
 		BuildFreshness.Of(snapshot.Solution, "Core", TestContext.Current!.Execution.CancellationToken).ShouldHaveSingleItem();
-		BuildFreshness.Of(snapshot.Solution, "Nonexistent", TestContext.Current!.Execution.CancellationToken).ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// A name no project carries is refused, naming what there is, rather than answered with an empty
+	/// list -- which reads as "nothing is stale" to a caller about to run what they built.
+	/// </summary>
+	[Test]
+	public async Task Refuses_a_project_the_solution_does_not_have()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var refusal = Should.Throw<ArgumentException>(
+			() => BuildFreshness.Of(snapshot.Solution, "Nonexistent", TestContext.Current!.Execution.CancellationToken));
+
+		refusal.Message.ShouldContain("No project in this solution is called 'Nonexistent'", Case.Sensitive);
+		refusal.Message.ShouldContain("Core", Case.Sensitive);
 	}
 
 	/// <summary>

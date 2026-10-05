@@ -171,14 +171,9 @@ public static class AddFileService
 	/// </summary>
 	private static Project Owner(Solution solution, string path, string? named)
 	{
-		if (named is { Length: > 0 })
-		{
-			return solution.Projects.FirstOrDefault(project =>
-					string.Equals(project.Name, named, StringComparison.OrdinalIgnoreCase))
-				?? throw new ArgumentException(
-					$"No project called '{named}'. The solution has "
-						+ $"{string.Join(", ", solution.Projects.Select(project => project.Name).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))}.");
-		}
+		// The first of several only where they are one project file loaded per framework, which share
+		// the file and compile it alike.
+		if (named is { Length: > 0 }) return ProjectNames.Resolve(solution, named)[0];
 
 		var containing = solution.Projects
 			.Where(project => project.FilePath is { Length: > 0 } && Contains(Path.GetDirectoryName(project.FilePath)!, path))

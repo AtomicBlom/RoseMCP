@@ -43,7 +43,7 @@ public sealed class AnalysisTools(
 	[Description(ToolDescriptions.BuildFreshness)]
 	public Task<BuildFreshnessReport> BuildFreshnessAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.ProjectOrPathFilterArgument)] string? project = null,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		CancellationToken cancellationToken = default) =>
 		calls.ReadAsync(
 			progress,
@@ -63,11 +63,6 @@ public sealed class AnalysisTools(
 		var stale = freshness.Count(candidate => candidate.Stale);
 
 		var notices = new List<string>(snapshot.Notices);
-
-		if (freshness.Count == 0 && !string.IsNullOrWhiteSpace(project))
-		{
-			notices.Add($"No project matched '{project}'.");
-		}
 
 		// Said out loud rather than left to be read off the list, because a caller asking this is about
 		// to run something and the answer they need is one word.

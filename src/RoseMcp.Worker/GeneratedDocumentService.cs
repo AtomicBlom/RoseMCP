@@ -23,7 +23,7 @@ public static class GeneratedDocumentService
 		IWorkProgress? progress = null)
 	{
 		var notices = new List<string>(snapshot.Notices);
-		var projects = Select(snapshot.Solution, projectName, notices);
+		var projects = ProjectNames.ResolveOrAll(snapshot.Solution, projectName);
 		var summaries = new List<GeneratedDocumentSummary>();
 		var listed = 0;
 
@@ -91,8 +91,7 @@ public static class GeneratedDocumentService
 		string? projectName,
 		CancellationToken cancellationToken)
 	{
-		var notices = new List<string>();
-		var projects = Select(snapshot.Solution, projectName, notices);
+		var projects = ProjectNames.ResolveOrAll(snapshot.Solution, projectName);
 
 		foreach (var project in projects)
 		{
@@ -120,20 +119,6 @@ public static class GeneratedDocumentService
 			? $"No generated document named '{hintName}', and no generated documents exist. "
 				+ "Check rose_workspace_status: a generator whose assembly is missing produces nothing silently."
 			: $"No generated document named '{hintName}'. Available: {string.Join(", ", names)}");
-	}
-
-	private static IReadOnlyList<Project> Select(Solution solution, string? projectName, List<string> notices)
-	{
-		if (string.IsNullOrWhiteSpace(projectName)) return [.. solution.Projects];
-
-		var matches = solution.Projects
-			.Where(project => string.Equals(project.Name, projectName, StringComparison.OrdinalIgnoreCase))
-			.ToArray();
-
-		if (matches.Length > 0) return matches;
-
-		notices.Add($"No project named '{projectName}'; looked across the whole solution instead.");
-		return [.. solution.Projects];
 	}
 
 	private static IEnumerable<ISourceGenerator> SafeGetGenerators(AnalyzerReference reference, string language)

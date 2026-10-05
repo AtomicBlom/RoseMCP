@@ -97,10 +97,8 @@ public static class ToolDescriptions
 		"Imports the code needs, ensured in the same file: System.Text, static System.Math, or Json = "
 			+ "System.Text.Json. One already in scope is reported, not added.";
 
-	public const string ProjectFilterArgument = "Limit to one project by name. Defaults to the whole solution.";
-
-	public const string ProjectOrPathFilterArgument =
-		"Limit to one project by name or path. Defaults to every project.";
+	public const string ProjectFilterArgument =
+		"Limit to one project, by name or by the path to its project file. Defaults to the whole solution.";
 
 	public const string SingleFilePathArgument =
 		"Path to the file: absolute, or relative to where your session is running.";
@@ -126,7 +124,8 @@ public static class ToolDescriptions
 	public const string DefinitionsOnlyArgument =
 		"Return where it is declared and how many uses there are, without listing them.";
 
-	public const string ReferenceProjectArgument = "Only references compiled by this project.";
+	public const string ReferenceProjectArgument =
+		"Only references compiled by this project, named or given as the path to its project file.";
 
 	public const string IncludePreviewsArgument =
 		"Give each location its line of source. On by default; off is much smaller.";

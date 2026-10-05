@@ -610,7 +610,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 	[Description(ToolDescriptions.BuildFreshness)]
 	public Task<BuildFreshnessReport> BuildFreshnessAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.ProjectOrPathFilterArgument)] string? project = null,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<BuildFreshnessReport>(WorkspaceHints.From(paths.Of(workspace)), ToolNames.BuildFreshness, new()

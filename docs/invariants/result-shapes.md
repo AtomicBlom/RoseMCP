@@ -36,6 +36,13 @@ Read before adding a tool, adding a field to a result, or changing an error path
   lookup finds `StringBuilder` spelled that way and the source search has always accepted a bare
   last segment -- demanding the namespace only of metadata is strictest where the caller knows
   least.
+- **A project a caller names is refused when nothing carries it, never widened and never emptied.**
+  Both wrong answers are well-formed: the whole solution's generated documents reported as one
+  project's, or an empty reference list that reads as a symbol nobody uses and invites a deletion.
+  `ProjectNames` is the one way a tool turns a `project` argument into projects -- by name ignoring
+  case, by a multi-targeted project's name without its framework, or by the path to its project
+  file -- and its refusal lists the names there are. `ProjectNamesTests` fails any other worker type
+  that compares a project's name with a string itself.
 - **Status may not report a field it cannot fill.** `GetStatusAsync` once passed `restore: null`,
   `loadSeconds: 0` and no load diagnostics, hard-coded, so every status answer on every solution
   carried the same three blanks. That is worse than omitting them: a failed restore reaches

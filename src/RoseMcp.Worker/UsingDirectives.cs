@@ -80,7 +80,9 @@ public static class UsingDirectives
 	/// </summary>
 	public static TextSpan Region(CompilationUnitSyntax root)
 	{
-		if (root.Usings.Count > 0) return TextSpan.FromBounds(root.Usings[0].SpanStart, root.Usings[^1].FullSpan.End);
+		var usings = Usings(root);
+
+		if (usings.Count > 0) return TextSpan.FromBounds(usings[0].SpanStart, usings[^1].FullSpan.End);
 
 		var following = root.AttributeLists.FirstOrDefault()?.SpanStart
 			?? root.Members.FirstOrDefault()?.SpanStart
@@ -116,7 +118,10 @@ public static class UsingDirectives
 		ImportDirective requested,
 		CancellationToken cancellationToken)
 	{
-		var present = root.Usings.Select(ImportDirective.From).ToList();
+		var present = root.Usings
+			.Concat(BlockNamespace(root)?.Usings ?? [])
+			.Select(ImportDirective.From)
+			.ToList();
 
 		if (present.Any(import => import.Text == requested.Text)) return "already imported here";
 
@@ -134,7 +139,10 @@ public static class UsingDirectives
 			return $"in scope already, since this file is in namespace {declared}";
 		}
 
-		var position = root.Members.FirstOrDefault()?.SpanStart ?? root.Span.End;
+		// From the tree the model was built over, never from root: a caller inserting several imports
+		// passes a root that has grown with each one, and a position read off it runs past the end of
+		// the tree the model can answer about.
+		var position = ScopePosition((CompilationUnitSyntax)model.SyntaxTree.GetRoot(cancellationToken));
 
 		foreach (var scope in model.GetImportScopes(position, cancellationToken))
 		{
@@ -171,17 +179,11 @@ public static class UsingDirectives
 	/// <summary>
 	/// The order two imports of the same kind go in: System first where the file asks for it, then
 	/// ordinal.
-	/// <para>
-	/// Public because a file that does not exist yet has its imports written as text rather than
-	/// placed among existing ones, and two orderings would be two chances to disagree -- which is
-	/// exactly what happened: a new file opened with its imports sorted ordinally, so anything
-	/// alphabetically before "System" landed above it.
-	/// </para>
 	/// </summary>
 	/// <param name="left">The import being placed.</param>
 	/// <param name="right">The import it is being compared against.</param>
 	/// <param name="systemFirst">Whether System imports sort above the rest.</param>
-	public static int Sorts(string left, string right, bool systemFirst)
+	private static int Sorts(string left, string right, bool systemFirst)
 	{
 		if (systemFirst)
 		{
@@ -195,13 +197,15 @@ public static class UsingDirectives
 	}
 
 	/// <summary>
-	/// The file with one directive written in where the file's own ordering puts it.
+	/// The file with one directive written in where the file's own ordering puts it, at the depth the
+	/// directives already there sit -- which is a level in where they live inside a namespace block.
 	/// </summary>
 	private static CompilationUnitSyntax Insert(CompilationUnitSyntax root, ImportDirective requested, UsingStyle style)
 	{
-		var directive = requested.ToSyntax(style.LineEnding);
+		var existing = Usings(root);
+		var indent = existing.Count > 0 ? Indentation(existing[0]) : SyntaxFactory.TriviaList();
 
-		var existing = root.Usings;
+		var directive = requested.ToSyntax(style.LineEnding).WithLeadingTrivia(indent);
 		var index = Position(existing, requested, style);
 
 		// Starting a group of its own, and only where the file already separates them: this
@@ -211,7 +215,7 @@ public static class UsingDirectives
 			&& index > 0
 			&& ImportDirective.From(existing[index - 1]).Group != requested.Group;
 
-		if (separate) directive = directive.WithLeadingTrivia(SyntaxFactory.EndOfLine(style.LineEnding));
+		if (separate) directive = directive.WithLeadingTrivia(indent.Insert(0, SyntaxFactory.EndOfLine(style.LineEnding)));
 
 		// Going in first means inheriting whatever sat above the old first line -- the file header,
 		// a copyright, an auto-generated marker -- because that belongs to the file and not to the
@@ -233,7 +237,7 @@ public static class UsingDirectives
 			existing = existing.Replace(displaced, displaced.WithLeadingTrivia(trivia));
 		}
 
-		return root.WithUsings(existing.Insert(index, directive));
+		return WithUsings(root, existing.Insert(index, directive));
 	}
 
 	/// <summary>
@@ -248,13 +252,16 @@ public static class UsingDirectives
 	{
 		var blank = SyntaxFactory.EndOfLine(style.LineEnding);
 
-		if (root.Usings.Count > 0)
-		{
-			var displaced = root.Usings[0];
-			var separate = style.SeparateGroups && ImportDirective.From(displaced).Group != group;
+		var usings = Usings(root);
 
-			return root.WithUsings(root.Usings
-				.Replace(displaced, displaced.WithLeadingTrivia(separate ? [blank] : SyntaxFactory.TriviaList()))
+		if (usings.Count > 0)
+		{
+			var displaced = usings[0];
+			var separate = style.SeparateGroups && ImportDirective.From(displaced).Group != group;
+			var indent = Indentation(displaced);
+
+			return WithUsings(root, usings
+				.Replace(displaced, displaced.WithLeadingTrivia(separate ? indent.Insert(0, blank) : indent))
 				.Insert(0, directive.WithLeadingTrivia(displaced.GetLeadingTrivia())));
 		}
 
@@ -268,6 +275,50 @@ public static class UsingDirectives
 			.WithMembers(root.Members.Replace(first, first.WithLeadingTrivia(blank)))
 			.WithUsings([directive.WithLeadingTrivia(first.GetLeadingTrivia())]);
 	}
+
+	/// <summary>
+	/// The directives an import is placed among: the file's own, or those of the namespace block that is
+	/// the whole file where the file keeps its imports in there and has none above it. Placed at file
+	/// level instead, an import lands apart from the imports it belongs with.
+	/// </summary>
+	internal static SyntaxList<UsingDirectiveSyntax> Usings(CompilationUnitSyntax root) =>
+		Holder(root)?.Usings ?? root.Usings;
+
+	/// <summary>The namespace block whose directives <see cref="Usings"/> answers with, or null for the file's own.</summary>
+	private static NamespaceDeclarationSyntax? Holder(CompilationUnitSyntax root) =>
+		root.Usings.Count == 0 && BlockNamespace(root) is { Usings.Count: > 0 } block ? block : null;
+
+	private static CompilationUnitSyntax WithUsings(CompilationUnitSyntax root, SyntaxList<UsingDirectiveSyntax> usings) =>
+		Holder(root) is { } block ? root.ReplaceNode(block, block.WithUsings(usings)) : root.WithUsings(usings);
+
+	/// <summary>
+	/// The namespace block that is the whole of the file, or null where the file holds anything else.
+	/// <para>
+	/// Only the sole declaration: the imports in one of two sibling blocks are not in scope in the
+	/// other, so placing among them or counting them would put an import where the code needing it
+	/// cannot see it, and call one in scope that is not.
+	/// </para>
+	/// </summary>
+	private static NamespaceDeclarationSyntax? BlockNamespace(CompilationUnitSyntax root) =>
+		root.Members is [NamespaceDeclarationSyntax block] ? block : null;
+
+	/// <summary>
+	/// Where to ask what is in scope: inside the namespace block that is the whole file, so the imports it
+	/// carries are counted, and otherwise at the first declaration.
+	/// </summary>
+	private static int ScopePosition(CompilationUnitSyntax root)
+	{
+		if (BlockNamespace(root) is { } block) return block.Members.FirstOrDefault()?.SpanStart ?? block.CloseBraceToken.SpanStart;
+
+		return root.Members.FirstOrDefault()?.SpanStart ?? root.Span.End;
+	}
+
+	/// <summary>The whitespace a directive's line opens with, after anything else in front of it.</summary>
+	private static SyntaxTriviaList Indentation(UsingDirectiveSyntax directive) =>
+		SyntaxFactory.TriviaList(directive.GetLeadingTrivia()
+			.Reverse()
+			.TakeWhile(item => item.IsKind(SyntaxKind.WhitespaceTrivia))
+			.Reverse());
 
 	/// <summary>
 	/// Where the directive goes: after its own kind's predecessors, before the first of its kind that

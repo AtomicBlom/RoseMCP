@@ -22,13 +22,23 @@ namespace RoseMcp.Worker;
 /// </summary>
 public sealed class EvaluationInputs
 {
+	private readonly IReadOnlyDictionary<string, ConfigDiscovery> _discovery;
+
 	/// <summary>What was learned from evaluating a solution's projects.</summary>
 	/// <param name="imports">Each evaluated project's imports, keyed by the full path of its project file.</param>
 	/// <param name="unevaluated">Projects whose evaluation failed.</param>
-	public EvaluationInputs(IReadOnlyDictionary<string, IReadOnlySet<string>> imports, IReadOnlyList<string> unevaluated)
+	/// <param name="discovery">
+	/// Which analyzer config files each evaluated project discovers, keyed like <paramref name="imports"/>, where
+	/// it differs from <see cref="ConfigDiscovery.Both"/>. Null or missing an entry means both.
+	/// </param>
+	public EvaluationInputs(
+		IReadOnlyDictionary<string, IReadOnlySet<string>> imports,
+		IReadOnlyList<string> unevaluated,
+		IReadOnlyDictionary<string, ConfigDiscovery>? discovery = null)
 	{
 		Imports = imports;
 		Unevaluated = unevaluated;
+		_discovery = discovery ?? new Dictionary<string, ConfigDiscovery>();
 	}
 
 	/// <summary>Nothing evaluated.</summary>
@@ -49,6 +59,13 @@ public sealed class EvaluationInputs
 		Imports.Values.SelectMany(files => files).Distinct(StringComparer.OrdinalIgnoreCase);
 
 	/// <summary>
+	/// Which analyzer config files <paramref name="projectPath"/> discovers. Both for a project that was not
+	/// evaluated, since both is what a project that says nothing gets, and an evaluation that failed said nothing.
+	/// </summary>
+	public ConfigDiscovery DiscoveryFor(string projectPath) =>
+		_discovery.TryGetValue(Path.GetFullPath(projectPath), out var discovery) ? discovery : ConfigDiscovery.Both;
+
+	/// <summary>
 	/// Evaluates each project once under <paramref name="globalProperties"/>, which must be the
 	/// properties the design-time build used, since a configuration can decide what is imported.
 	/// MSBuild must already be registered through <see cref="MSBuildRegistration.Ensure"/>.
@@ -65,6 +82,7 @@ public sealed class EvaluationInputs
 	{
 		var imports = new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase);
 		var unevaluated = new List<string>();
+		var discovery = new Dictionary<string, ConfigDiscovery>(StringComparer.OrdinalIgnoreCase);
 
 		using var collection = new ProjectCollection(
 			globalProperties.ToDictionary(property => property.Key, property => property.Value));
@@ -80,6 +98,9 @@ public sealed class EvaluationInputs
 				imports[path] = project.Imports
 					.Select(import => Path.GetFullPath(import.ImportedProject.FullPath))
 					.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+				var configs = Discovery(project);
+				if (configs != ConfigDiscovery.Both) discovery[path] = configs;
 
 				collection.UnloadProject(project);
 			}
@@ -97,6 +118,23 @@ public sealed class EvaluationInputs
 			}
 		}
 
-		return new EvaluationInputs(imports, unevaluated);
+		return new EvaluationInputs(imports, unevaluated, discovery);
 	}
+
+	/// <summary>
+	/// Which analyzer config files an evaluated project discovers. Each kind is turned off only by the property
+	/// saying false, which is the condition the compiler's own targets test.
+	/// </summary>
+	private static ConfigDiscovery Discovery(Project project)
+	{
+		var discovery = ConfigDiscovery.Both;
+
+		if (IsFalse(project, "DiscoverEditorConfigFiles")) discovery &= ~ConfigDiscovery.EditorConfig;
+		if (IsFalse(project, "DiscoverGlobalAnalyzerConfigFiles")) discovery &= ~ConfigDiscovery.GlobalConfig;
+
+		return discovery;
+	}
+
+	private static bool IsFalse(Project project, string property) =>
+		string.Equals(project.GetPropertyValue(property).Trim(), "false", StringComparison.OrdinalIgnoreCase);
 }

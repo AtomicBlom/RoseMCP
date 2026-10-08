@@ -64,6 +64,52 @@ public sealed class DocCommentTests
 		lines.ShouldContain(line => line.Replace("\t", "    ").Length > 104);
 	}
 
+	/// <summary>
+	/// A comment copied out of a file with its markers still on is refused rather than wrapped: taken as
+	/// plain text it would be written as a summary holding the whole comment, every line behind a
+	/// second marker, and the old documentation replaced by it.
+	/// </summary>
+	[Test]
+	[Arguments("/// <summary>A probe comment.</summary>")]
+	[Arguments("/// <summary>\r\n/// A probe comment.\r\n/// </summary>\r\n/// <param name=\"body\">The body.</param>")]
+	[Arguments("<summary>\n\t/// A probe comment.\n\t/// </summary>")]
+	[Arguments("/** <summary>A probe comment.</summary> */")]
+	public void Refuses_a_comment_that_carries_its_own_markers(string comment)
+	{
+		var error = Should.Throw<ArgumentException>(() => DocComment.Guard(comment));
+
+		error.Message.ShouldContain("carries its own /// or /** markers", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Plain text followed by a top-level tag would be wrapped in a summary of its own and nest the
+	/// tag inside it, the old comment replaced by one whose param and returns are part of the summary.
+	/// </summary>
+	[Test]
+	[Arguments("A probe comment.\n<summary>The real one.</summary>", "summary")]
+	[Arguments("A probe comment. <summary>The real one.</summary>", "summary")]
+	[Arguments("Greets.\n<param name=\"x\">X.</param>", "param")]
+	[Arguments("Greets.\n<returns>Y.</returns>", "returns")]
+	[Arguments("Greets.\r\n\t<remarks>\r\n\tMore.\r\n\t</remarks>", "remarks")]
+	public void Refuses_plain_text_followed_by_a_top_level_tag(string comment, string tag)
+	{
+		var error = Should.Throw<ArgumentException>(() => DocComment.Guard(comment));
+
+		error.Message.ShouldContain($"<{tag}> tag further on", Case.Sensitive);
+	}
+
+	[Test]
+	[Arguments("<summary>ok</summary>")]
+	[Arguments("<summary>\n\tok\n</summary>\n<param name=\"body\">The body.</param>")]
+	[Arguments("A plain sentence.")]
+	[Arguments("A plain sentence naming <see cref=\"X\"/> and <c>code</c>.")]
+	[Arguments("A plain sentence\n<paramref name=\"x\"/> starting a line, and\n<para>a paragraph.</para>")]
+	[Arguments("Reads the file at D:/a///b, which a marker inside a line does not refuse.")]
+	public void Accepts_a_comment_without_markers(string comment)
+	{
+		Should.NotThrow(() => DocComment.Guard(comment));
+	}
+
 	private static string Replaced(string comment, string text) =>
 		DocComment.Replace(SyntaxFactory.ParseLeadingTrivia(comment + "\t"), text, "\t", "\r\n").ToFullString();
 }

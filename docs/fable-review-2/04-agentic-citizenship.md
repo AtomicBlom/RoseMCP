@@ -282,14 +282,11 @@ the argument help says so, and the hop on from there carries absolute paths only
 - **Why it matters:** A client uses `destructiveHint` to decide whether to ask the user -- the same consent decision `ReadOnly` gets a list and a paragraph for. The hint is only load-bearing if true, and 51 hand-written booleans with no reader will drift the way the descriptions did.
 - **Suggested change:** Extend `ToolSurfaceTests` with `Destructive` and `Idempotent` lists in the same shape: a name appears only by someone adding it and saying why. Then reconsider `rose_replace_body` -- idempotence is a property of a *payload* here, so either declare it `false` or split the three payloads into shapes that make the claim true.
 
-### AGT-17 Whitespace fidelity is why an agent stops trusting the writer, and `rose_format` certifies the damage as clean
-- **Severity:** High
-- **Effort:** L
-- **Half done, #333.** A write names every line it changed that nothing it was asked to do reaches, first among what its result says. Refusing above a threshold is declined: a line can change harmlessly, and only the caller holding the diff can tell that from a reflow. The `rose_format` half is not done.
-- **Where:** issues #195, #197, #200, #217; `docs/invariants/writing-csharp.md`; `CLAUDE.md`, "Whatever writes C# has to end formatted"
-- **What:** Four open issues, one shape. `rose_replace_body`'s `find`/`replace` adds the destination's indentation on top of the replacement's own, producing four-tab lines inside a two-tab block, and `position: end` re-emits the whole body so the diff touches every statement already there (#217). `rose_change_signature` joins a six-line parameter list into one 168-character line (#197). `rose_add_file` puts the `usings` argument in a block of its own above the code's own imports, which `dotnet format` rejects (#200). `rose_replace_body` duplicates a comment before the match and silently deletes one between matched tokens (#195). In #217, `rose_format` then reports "Every file was already formatted", because IDE0055 has no opinion about collection-expression indentation or parameter-list wrapping.
-- **Why it matters:** This is the answer to "what would make an agent go back to `Edit`". The documented workflow is *write with a rose tool, check with `rose_format`*. The write now says when it reached past what it was asked, but the check still reports success on a file a reviewer will reject and CI may fail. An agent that cannot trust the check verifies by hand, and once it is reading the file back, `Edit` is cheaper and its result is already known.
-- **Suggested change:** Make `rose_format` answer the question it is asked: today it reports what IDE0055 thinks, so either give it `dotnet format --verify-no-changes` semantics or stop its description implying it is the check.
+### ~~AGT-17 Whitespace fidelity is why an agent stops trusting the writer, and `rose_format` certifies the damage as clean~~
+**#333, #427.** Writes damaged layout nobody asked them to change, and `rose_format` then called the
+file formatted, because neither it nor dotnet format has a rule for where a line wraps. A write names
+every line it changed outside what it was asked, and `rose_format` says what it checked rather than
+that a file is formatted.
 
 ### AGT-18 `rose_replace_member` cannot express extract-method, and the workaround reports an error it caused itself
 - **Severity:** Medium
@@ -585,9 +582,9 @@ by how often it decides a call, not by severity.
    `(Parameter 'symbol')`, a dropped argument name reported as a missing value, advice to make the
    call that just failed. Each costs one to three round trips, and the agent's next move after two
    failed round trips is always the tool it already trusts.
-4. **The write is not trusted** (AGT-17, #195, #197, #200, #217). Whitespace, import grouping
-   and comment damage that `rose_format` then certifies as clean. Once an agent has to read the file
-   back to check a write, `Edit` is strictly cheaper.
+4. ~~**The write is not trusted** (AGT-17, #195, #197, #217).~~ **#333, #427.** A write names the
+   lines it changed that it was not asked to, and `rose_format` no longer calls a file clean beyond
+   what it checked.
 5. **The edit cannot be expressed** (AGT-18, #195, #211). Extract-method, changing a comment.
    The fallback is re-emitting the whole member, which is the read-the-file-then-edit loop the
    surface exists to remove.

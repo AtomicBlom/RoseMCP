@@ -100,11 +100,13 @@ public sealed class ParamTagsTests
 	}
 
 	/// <summary>
-	/// Tags written in an order the declaration does not use. The new one goes after the last of
-	/// them, because reordering documentation nobody asked to reorder is a diff to read for nothing.
+	/// Tags written in an order the declaration does not use. They stay in that order, because
+	/// reordering documentation nobody asked to reorder is a diff to read for nothing, and the new tag
+	/// goes after the tag of the parameter before it, wherever that tag sits -- here in the middle,
+	/// not after the last tag.
 	/// </summary>
 	[Test]
-	public void Anchors_on_the_last_tag_even_where_the_tags_are_out_of_order()
+	public void Writes_beside_its_neighbours_tag_where_the_tags_are_out_of_order()
 	{
 		var updated = Update(
 			"""
@@ -112,15 +114,437 @@ public sealed class ParamTagsTests
 			/// <param name="loud">Whether to shout.</param>
 			/// <param name="name">Who to greet.</param>
 			""",
-			added: ["title"]);
+			added: ["title"],
+			order: ["name", "loud", "title"],
+			kept: ["name", "loud"]);
 
 		updated.ShouldBe(
 			"""
 			/// <summary>Says hello.</summary>
 			/// <param name="loud">Whether to shout.</param>
+			/// <param name="title"></param>
+			/// <param name="name">Who to greet.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A parameter added between two documented ones, ahead of a trailing cancellation token. Its tag
+	/// goes between theirs, in parameter order, rather than after the last tag, where it would read
+	/// as documenting the last parameter.
+	/// </summary>
+	[Test]
+	public void Writes_a_tag_for_a_parameter_added_in_the_middle_between_its_neighbours_tags()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Ensures each namespace is imported.</summary>
+			/// <param name="namespaces">Namespaces to ensure, each already known to have one answer.</param>
+			/// <param name="cancellationToken">Cancels the scope lookups.</param>
+			""",
+			added: ["rules"],
+			order: ["namespaces", "rules", "cancellationToken"],
+			kept: ["namespaces", "cancellationToken"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Ensures each namespace is imported.</summary>
+			/// <param name="namespaces">Namespaces to ensure, each already known to have one answer.</param>
+			/// <param name="rules"></param>
+			/// <param name="cancellationToken">Cancels the scope lookups.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A new first parameter has no parameter before it, so its tag goes in front of the tag of the
+	/// parameter after it, not after the last one.
+	/// </summary>
+	[Test]
+	public void Writes_a_tag_for_a_new_first_parameter_before_the_tag_of_the_one_after_it()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["title", "name", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="title"></param>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// The parameter right before the new one has no tag, so the tag goes after the nearest one before
+	/// it that has, rather than falling all the way through to after the last tag.
+	/// </summary>
+	[Test]
+	public void Passes_over_an_undocumented_neighbour_to_the_nearest_documented_one_before()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["name", "count", "title", "loud"],
+			kept: ["name", "count", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
 			/// <param name="name">Who to greet.</param>
 			/// <param name="title"></param>
+			/// <param name="loud">Whether to shout.</param>
 			""");
+	}
+
+	/// <summary>
+	/// The same from the other side: with nothing documented before it, the new tag goes in front of
+	/// the nearest documented parameter after it, passing over one that has no tag.
+	/// </summary>
+	[Test]
+	public void Passes_over_an_undocumented_neighbour_to_the_nearest_documented_one_after()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["title", "count", "name", "loud"],
+			kept: ["count", "name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="title"></param>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// Two new parameters side by side come out side by side and in parameter order, whatever order
+	/// they were asked for in: the second finds the first one's new tag as its neighbour.
+	/// </summary>
+	[Test]
+	public void Writes_tags_for_two_adjacent_new_parameters_in_parameter_order()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["count", "title"],
+			order: ["name", "title", "count", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="title"></param>
+			/// <param name="count"></param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// Two new parameters at the front: the first goes before the tag of the first documented
+	/// parameter, and the second after the first's new tag rather than before that same tag, which
+	/// would put the two in the wrong order.
+	/// </summary>
+	[Test]
+	public void Writes_tags_for_two_new_leading_parameters_in_parameter_order()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet.</param>
+			""",
+			added: ["count", "title"],
+			order: ["title", "count", "name"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="title"></param>
+			/// <param name="count"></param>
+			/// <param name="name">Who to greet.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A parameter whose predecessor's tag runs over several lines goes after the line that tag closes
+	/// on, not inside its prose, even where another tag follows.
+	/// </summary>
+	[Test]
+	public void Writes_after_the_whole_of_a_predecessors_tag_that_runs_over_several_lines()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">
+			/// Who to greet, at enough length that the description wraps onto a line of its own.
+			/// </param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["name", "title", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">
+			/// Who to greet, at enough length that the description wraps onto a line of its own.
+			/// </param>
+			/// <param name="title"></param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A new tag that goes before a successor's tag running over several lines goes before the line it
+	/// opens on, so the successor's description stays whole.
+	/// </summary>
+	[Test]
+	public void Writes_before_the_opening_line_of_a_successors_tag_that_runs_over_several_lines()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet, at enough length that the description
+			/// wraps onto a second line.</param>
+			""",
+			added: ["title"],
+			order: ["title", "name"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="title"></param>
+			/// <param name="name">Who to greet, at enough length that the description
+			/// wraps onto a second line.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A predecessor's description that mentions another parameter with <c>paramref</c>. Its
+	/// <c>/&gt;</c> is not the end of the tag, so the new tag goes after <c>&lt;/param&gt;</c> rather
+	/// than into the middle of the sentence.
+	/// </summary>
+	[Test]
+	public void Writes_after_the_whole_of_a_predecessors_tag_that_mentions_a_paramref()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">
+			/// Who to greet; ignored when <paramref name="loud"/> is set
+			/// and the greeting is shouted.
+			/// </param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["name", "title", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">
+			/// Who to greet; ignored when <paramref name="loud"/> is set
+			/// and the greeting is shouted.
+			/// </param>
+			/// <param name="title"></param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// The same with a <c>see</c> element on the line the predecessor's tag opens on, where the tag
+	/// would otherwise be taken to close on its first line.
+	/// </summary>
+	[Test]
+	public void Writes_after_the_whole_of_a_predecessors_tag_that_opens_with_a_see_element()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">See <see cref="Greeter"/> for
+			/// how the greeting is chosen.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["name", "title", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">See <see cref="Greeter"/> for
+			/// how the greeting is chosen.</param>
+			/// <param name="title"></param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A tag that closes itself is a whole tag on its own line, so a new one goes straight after it.
+	/// </summary>
+	[Test]
+	public void Writes_after_a_predecessors_tag_that_closes_itself()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name"/>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["name", "title", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name"/>
+			/// <param name="title"></param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// Removing a parameter whose tag runs over several lines takes the whole tag, from the line it
+	/// opens on to the line it closes on. A <c>see</c> element on the opening line does not end it
+	/// there: cutting only that line would leave the rest of the description behind as malformed XML.
+	/// </summary>
+	[Test]
+	public void Removes_the_whole_of_a_tag_that_runs_over_several_lines()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">See <see cref="Greeter"/> for
+			/// how the greeting is chosen.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			removed: ["name"],
+			kept: ["loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A tag that never closes has no end to cut to, so removing its parameter leaves it alone and says
+	/// so, rather than guessing where the description stops.
+	/// </summary>
+	[Test]
+	public void Leaves_a_tag_that_never_closes_alone_and_says_so()
+	{
+		var notes = new List<string>();
+
+		var updated = ParamTags.Update(
+			SyntaxFactory.ParseLeadingTrivia(
+				"/// <summary>Says hello.</summary>\r\n/// <param name=\"name\">Who to greet.\r\n/// <param name=\"loud\">Whether to shout.\r\n"),
+			["name"],
+			[],
+			["loud"],
+			["loud"],
+			notes);
+
+		updated.ShouldBeNull();
+		notes.ShouldContain(note => note.Contains("never closes", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A tag written in front of another takes that tag's indentation, its marker and the comment's
+	/// line ending, and leaves the rest of the trivia exactly as it was.
+	/// </summary>
+	[Test]
+	public void Keeps_the_indentation_and_the_ending_when_it_writes_before_a_tag()
+	{
+		var updated = ParamTags.Update(
+			SyntaxFactory.ParseLeadingTrivia(
+				"\t\t/// <summary>Says hello.</summary>\r\n\t\t/// <param name=\"name\">Who to greet.</param>\r\n\t\t"),
+			[],
+			["loud"],
+			["name"],
+			["loud", "name"],
+			[]);
+
+		updated.ShouldNotBeNull();
+		updated.Value.ToFullString().ShouldBe(
+			"\t\t/// <summary>Says hello.</summary>\r\n"
+				+ "\t\t/// <param name=\"loud\"></param>\r\n"
+				+ "\t\t/// <param name=\"name\">Who to greet.</param>\r\n"
+				+ "\t\t");
+	}
+
+	/// <summary>
+	/// Renaming a parameter in the middle of a list takes its tag out and writes the new name's tag
+	/// where the old one was, between the tags of its neighbours.
+	/// </summary>
+	[Test]
+	public void Writes_a_renamed_parameters_tag_between_its_neighbours_tags()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="loud">Whether to shout.</param>
+			/// <param name="title">How to address them.</param>
+			""",
+			removed: ["loud"],
+			added: ["volume"],
+			order: ["name", "volume", "title"],
+			kept: ["name", "title"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">Who to greet.</param>
+			/// <param name="volume"></param>
+			/// <param name="title">How to address them.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A documented member that took nothing and now takes several parameters gets a tag for each,
+	/// after the summary and in parameter order, whatever order they were asked for in.
+	/// </summary>
+	[Test]
+	public void Writes_tags_for_several_first_parameters_of_a_documented_member_in_order()
+	{
+		var updated = ParamTags.Update(
+			SyntaxFactory.ParseLeadingTrivia("\t/// <summary>Lets go of the process.</summary>\r\n\t"),
+			[],
+			["reason", "failure"],
+			[],
+			["failure", "reason"],
+			[]);
+
+		updated.ShouldNotBeNull();
+		updated.Value.ToFullString().ShouldBe(
+			"\t/// <summary>Lets go of the process.</summary>\r\n"
+				+ "\t/// <param name=\"failure\"></param>\r\n"
+				+ "\t/// <param name=\"reason\"></param>\r\n"
+				+ "\t");
 	}
 
 	/// <summary>
@@ -171,6 +595,7 @@ public sealed class ParamTagsTests
 			[],
 			["loud"],
 			["name"],
+			[],
 			[]).ShouldBeNull();
 	}
 
@@ -189,6 +614,7 @@ public sealed class ParamTagsTests
 			[],
 			["failure"],
 			[],
+			[],
 			notes);
 
 		updated.ShouldNotBeNull();
@@ -202,7 +628,7 @@ public sealed class ParamTagsTests
 	[Test]
 	public void Writes_no_tag_into_a_member_with_no_documentation()
 	{
-		ParamTags.Update(SyntaxFactory.ParseLeadingTrivia("\t// A note.\r\n\t"), [], ["failure"], [], []).ShouldBeNull();
+		ParamTags.Update(SyntaxFactory.ParseLeadingTrivia("\t// A note.\r\n\t"), [], ["failure"], [], [], []).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -221,7 +647,8 @@ public sealed class ParamTagsTests
 
 	/// <summary>
 	/// The tags as they read afterwards, or the comment unchanged when nothing was needed, with the
-	/// ends trimmed.
+	/// ends trimmed. The parameters kept default to <c>name</c>, and the order the declaration ends up
+	/// with defaults to those followed by the ones added.
 	/// <para>
 	/// Trimmed because a declaration's leading trivia runs on past its last tag -- to the line break
 	/// and the indentation in front of the declaration itself -- and a fixture written as a literal
@@ -229,10 +656,17 @@ public sealed class ParamTagsTests
 	/// the one thing these cases are not about and one of them is entirely about.
 	/// </para>
 	/// </summary>
-	private static string Update(string comment, string[]? removed = null, string[]? added = null)
+	private static string Update(
+		string comment,
+		string[]? removed = null,
+		string[]? added = null,
+		string[]? order = null,
+		string[]? kept = null)
 	{
 		var leading = SyntaxFactory.ParseLeadingTrivia(comment);
+		string[] keptHere = kept ?? ["name"];
+		string[] orderHere = order ?? [.. keptHere, .. added ?? []];
 
-		return (ParamTags.Update(leading, removed ?? [], added ?? [], ["name"], []) ?? leading).ToFullString().TrimEnd();
+		return (ParamTags.Update(leading, removed ?? [], added ?? [], keptHere, orderHere, []) ?? leading).ToFullString().TrimEnd();
 	}
 }

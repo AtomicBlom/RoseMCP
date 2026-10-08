@@ -680,14 +680,14 @@ public static class ToolDescriptions
 		""";
 
 	public const string FormatDocuments = """
-		Formats C# files to their own repository's .editorconfig: indentation, brace placement, line
-		endings, trailing whitespace and the final newline. Call this after writing or editing a C#
-		file by any other means. Hand-written C# routinely lands with spaces where the repository
-		wants tabs and LF where it wants CRLF, and in a repository that treats IDE0055 as an error
-		that is a failed build rather than untidiness. Returns a unified diff; pass apply=false to
-		check formatting without writing. Multi-line string literals are left alone, since a newline
-		inside one is content rather than layout -- and reported, since dotnet format will still
-		ask for the endings inside one while no build complains.
+		Formats C# files to their .editorconfig: indentation, braces, line endings, trailing
+		whitespace and final newline. Call this after writing or editing a C# file
+		by any other means: hand-written C# routinely lands with spaces where the repository wants
+		tabs and LF where it wants CRLF, a failed build wherever IDE0055 is an error. Returns a
+		unified diff; apply=false checks without writing. It applies dotnet format's whitespace
+		check (IDE0055), which has no rule for where a line wraps or how deep a wrapped line sits,
+		so clean does not vouch for those. A wrapped list whose items begin at different depths is reported, as is a
+		multi-line literal whose endings dotnet format will reject; neither is rewritten.
 		""";
 
 	public const string ReplacePattern = """
@@ -900,9 +900,9 @@ public static class ToolDescriptions
 	public const string ReplaceDocComment = """
 		Replaces a declaration's documentation comment, addressed by name, without touching the code
 		under it. Use it rather than rose_replace_member or a text edit when only the prose is
-		changing: composing a whole member to change one sentence is a trade nobody takes, and once the
-		file is open in an editor the code half goes through the editor too. Pass the summary as plain
-		text or the whole comment as XML; it emits /// in the file's own indentation and line endings,
+		changing: composing a whole member to change one sentence is a trade nobody takes. Pass the
+		summary as plain text or the whole comment as XML, without the /// markers; it writes them in
+		the file's own indentation and line endings, and refuses a comment already carrying them. It
 		goes exactly where the old comment was so a blank line above the member and a licence header
 		stay where they are, and refuses XML that does not parse, which would otherwise land as CS1570.
 		It compiles afterwards, because a comment can break a build: a param tag for a parameter that

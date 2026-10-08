@@ -63,6 +63,24 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   trailing whitespace trimmed where the file asks for it, and only the caller holding the diff can
   tell that from a reflow. It says nothing about what happens inside the spans: a replacement
   written at the wrong depth is still the replacement the caller asked for.
+- **`rose_format` says what it checked, never that a file is formatted.** It applies Roslyn's
+  formatter and the whitespace pass, which is what `dotnet format`'s whitespace check, IDE0055,
+  applies, so a clean result means that check will pass the file, not that a reviewer will. It
+  runs none of `dotnet format`'s style or analyzer passes. Neither the formatter nor IDE0055 has a
+  rule for where a line wraps or how deep a wrapped line sits: a list written two levels deep, a
+  parameter list joined onto one long line and a continuation indented twice all pass both. So a
+  run with nothing to change says that it met those rules and that wrapping is outside them, and
+  the description says the same. Giving it the whitespace half of
+  `dotnet format --verify-no-changes` would add nothing: that check is the same formatter, so it
+  passes every one of those shapes, and the one it does catch, a run of whitespace between two tokens on a line,
+  the formatter already rewrites here. Of the layout nothing has a rule for, one shape is told
+  mechanically and reported by line: items of one list wrapped one to a line beginning at
+  different depths, which no file does on purpose and which is what a splice leaves when it adds
+  the destination's indentation to code that already had it. Depth on its own is not judged, since
+  a list two levels deep throughout is a convention some repositories choose, and a list with more
+  than one item on a line is passed over, since a table aligned by hand starts its rows wherever
+  its columns line up. Nothing is rewritten, since which depth was meant is exactly what cannot be
+  told. While anything is reported, the headline does not call the file clean.
 - **A file goes back in the encoding it arrived in.** A byte order mark is part of the file, and the
   two calls that look like the obvious way to do this get it wrong in opposite directions.
   `File.WriteAllText` is UTF-8 *without* a mark whatever the file was, so a rewrite routed through it
@@ -152,6 +170,31 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   long, and drops the comments that grouped its parameters without a word. A list the caller wrapped
   is a layout they chose and is used, but the comments above existing parameters stay, because a
   comment is not layout.
+- **An argument's indentation belongs to the line it begins, not to the argument.** A call site
+  keeps its own arguments, commas and wrapping. An argument that is new, or that a change moves to
+  another position, is laid out by the token in front of it: at the call's continuation indentation
+  after a token that ends a line, with no whitespace of its own after one that does not, and with
+  any comment the caller wrote in front of it kept. Copying a neighbour's leading whitespace is
+  right only where every argument begins a line. Where several share a continuation line it writes
+  a run of tabs in the middle of that line, which compiles, verifies clean and is exactly the
+  argument list the change asked for, so nothing but `dotnet format` would ever say so. A blank
+  line above an argument that still begins a line stays, and stays empty. Comments go with the
+  argument they are about, not with a position: one ending the line after a comma belongs to the
+  argument before it, and one between a comma and the next argument on the same line belongs to
+  that argument. A comma the list gains copies the last one's layout but not its comment, and an
+  argument that ends up last keeps the comment its comma carried, with the line break a line
+  comment needs. Copying the comma whole writes the comment twice; dropping it with the comma
+  deletes it, and neither is reported. The line break in front of a closing parenthesis written on
+  its own line is the parenthesis's, though Roslyn hangs it on the last argument: it goes to
+  whichever argument ends up last, or an argument appended after it puts its comma at column zero.
+  A directive in front of an argument keeps a line break before it wherever the argument lands,
+  since a directive that does not begin its line is CS1040.
+  Nothing the rewrite writes may follow a line comment on its line. Every comma or argument given
+  a comment carried from elsewhere ends its line after it, so the next argument starts a new line;
+  otherwise the argument lands inside the comment, and a parameter with a default compiles without
+  the value the caller passed. A call whose removed argument or comma carries a directive is left
+  to a person and reported: the directive goes with the token it sits in front of, and an `#if`
+  taken out without its `#endif` is CS1028.
 - **A change of accessibility moves the override chain, and nothing else in the modifier list.** An
   override that keeps the old accessibility is CS0507, so the base all the way up and every override
   all the way down change with the member named. Interfaces are not part of that group: an implicit

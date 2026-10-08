@@ -87,7 +87,9 @@ public static class Whitespace
 	/// in front of the token after whatever it formats as well as to what was written, so a member edited in
 	/// a file indented with tabs comes back with the member after it indented with spaces -- a line nothing
 	/// asked to change. Only the gaps are filled, because where Roslyn was told, it read the same
-	/// .editorconfig the rules did and knows its own reading of it best.
+	/// .editorconfig the rules did and knows its own reading of it best -- except where an .editorconfig on
+	/// disk applies to the file that the project was never given. Then Roslyn's reading is of the wrong files,
+	/// and the rules, which read the disk, decide all four.
 	/// </para>
 	/// </summary>
 	public static async Task<OptionSet> FormattingOptionsAsync(
@@ -103,7 +105,10 @@ public static class Whitespace
 		var language = document.Project.Language;
 		var tabs = rules.IndentUnit == "\t";
 
-		bool Untold(string key) => !told.TryGetValue(key, out _);
+		var misread = document.FilePath is { Length: > 0 } path
+			&& EditorConfigFiles.NotGiven(document.Project, path).Any(EditorConfigFiles.IsEditorConfig);
+
+		bool Untold(string key) => misread || !told.TryGetValue(key, out _);
 
 		if (Untold("indent_style")) options = options.WithChangedOption(FormattingOptions.UseTabs, language, tabs);
 		if (Untold("indent_size")) options = options.WithChangedOption(FormattingOptions.IndentationSize, language, rules.IndentSize);
@@ -509,9 +514,15 @@ public static class Whitespace
 	}
 
 	/// <summary>
-	/// What .editorconfig says about the file: Roslyn's reading of the files the project was given, and,
-	/// where it was given none covering this path, the files on disk -- which is the difference between a
-	/// project the design-time build has described and one it has not yet.
+	/// What .editorconfig says about the file: Roslyn's reading of the files the project was given, and, where an
+	/// .editorconfig on disk applies to this path that the project was not given, the files on disk -- which is the
+	/// difference between a project the design-time build has described and one it has not yet.
+	/// <para>
+	/// The disk wins wherever it speaks. It holds every file Roslyn was given, which the sweep keeps in step with
+	/// what was read, and the ones it was not: one in a folder that held no source when the project was built, or
+	/// above a project that held none at all. A nearer file the project was never given is exactly the one whose
+	/// settings Roslyn's reading lacks.
+	/// </para>
 	/// </summary>
 	private static IReadOnlyDictionary<string, string> Declared(Project project, string? path, SyntaxTree? tree)
 	{
@@ -525,13 +536,16 @@ public static class Whitespace
 			if (given is not null && given.TryGetValue(key, out var value)) declared[key] = value;
 		}
 
-		if (path is null || EditorConfigFiles.Given(project, path)) return declared;
+		if (path is null) return declared;
+
+		var unread = EditorConfigFiles.NotGiven(project, path).Any(EditorConfigFiles.IsEditorConfig);
+		if (!unread) return declared;
 
 		var onDisk = EditorConfigFiles.For(path);
 
 		foreach (var key in LayoutKeys)
 		{
-			if (!declared.ContainsKey(key) && onDisk.TryGetValue(key, out var value)) declared[key] = value;
+			if (onDisk.TryGetValue(key, out var value)) declared[key] = value;
 		}
 
 		return declared;

@@ -30,12 +30,17 @@ public static class ParamTags
 	/// <param name="removed">Parameters the change takes away.</param>
 	/// <param name="added">Parameters the change brings in, by name.</param>
 	/// <param name="kept">Parameters that were there before the change and still are.</param>
+	/// <param name="order">
+	/// Every parameter the declaration has after the change, in order and by its own names, which is
+	/// what puts a new tag beside the tags of the parameters either side of it.
+	/// </param>
 	/// <param name="notes">Where to say what was done, or could not be.</param>
 	public static SyntaxTriviaList? Update(
 		SyntaxTriviaList leading,
 		IReadOnlyList<string> removed,
 		IReadOnlyList<string> added,
 		IReadOnlyList<string> kept,
+		IReadOnlyList<string> order,
 		List<string> notes)
 	{
 		var lines = leading.ToFullString().Split('\n').ToList();
@@ -57,26 +62,36 @@ public static class ParamTags
 			var index = lines.FindIndex(line => NameAt(line) == name);
 			if (index < 0) continue;
 
-			// A tag that does not close on its own line is a paragraph somebody wrote, and cutting it
-			// at a line boundary would leave half of it behind.
-			if (!Closes(lines[index]))
+			// The whole tag goes, from the line it opens on to the line it closes on: cutting a tag
+			// whose description runs on at a line boundary would leave half of it behind, which is
+			// malformed XML. A tag that never closes has no end to cut to, so it is left alone.
+			var closing = ClosingFrom(lines, index);
+
+			if (closing < 0)
 			{
-				notes.Add($"The param tag for '{name}' spans more than one line, so it was left alone. "
+				notes.Add($"The param tag for '{name}' never closes, so it was left alone. "
 					+ "Remove it by hand, or the build will fail on CS1572.");
 				continue;
 			}
 
-			lines.RemoveAt(index);
+			lines.RemoveRange(index, closing - index + 1);
 			changed = true;
 		}
 
-		foreach (var name in added)
+		// In the order the parameters will have rather than the order they were asked for, so that two
+		// new parameters side by side come out side by side: the second finds the tag just written for
+		// the first and goes after it.
+		var inOrder = order
+			.Where(name => added.Contains(name, StringComparer.Ordinal))
+			.Concat(added.Where(name => !order.Contains(name, StringComparer.Ordinal)));
+
+		foreach (var name in inOrder)
 		{
 			if (lines.Any(line => NameAt(line) == name)) continue;
 
-			var anchor = Anchor(lines);
+			var (line, before) = Placement(lines, order, name);
 
-			if (anchor < 0)
+			if (line < 0)
 			{
 				notes.Add($"There was nowhere safe to put a param tag for '{name}'. Add one by hand, or "
 					+ "the build will fail on CS1573.");
@@ -85,13 +100,15 @@ public static class ParamTags
 
 			var ending = EndingOf(lines);
 
-			// The line the tag goes after stops being the last one, so it needs the ending a last line
-			// does not have. Only where the comment has one to give: the last line of a trivia list
-			// legitimately ends without one, and that is the line an anchor lands on whenever the tag it
-			// found is the last thing the comment says.
-			if (ending.Length > 0 && !lines[anchor].EndsWith('\r')) lines[anchor] += ending;
+			if (before)
+			{
+				lines.Insert(line, Modelled(lines[line], name, ending));
+			}
+			else
+			{
+				InsertAfter(lines, line, name, ending);
+			}
 
-			lines.Insert(anchor + 1, Modelled(lines[anchor], name, ending));
 			changed = true;
 
 			notes.Add($"Added an empty param tag for '{name}'; it needs a description, which is not "
@@ -180,39 +197,133 @@ public static class ParamTags
 	}
 
 	/// <summary>
-	/// The line a new tag goes after: the line the last param tag closes on, else the line the
-	/// summary closes on, else nowhere.
+	/// Where the tag for a new parameter goes: after the line where the tag of the nearest parameter
+	/// before it closes, else before the line where the tag of the nearest parameter after it opens,
+	/// else wherever <see cref="Anchor"/> says. <c>Before</c> says which side of <c>Line</c> it goes;
+	/// a line of -1 is nowhere, which is what a preceding tag that never closes gives, since there is
+	/// no line after it that is outside its prose.
 	/// <para>
-	/// The line it closes on, not the line it opens on. A tag whose description runs to a second line
-	/// opens on one and closes on a later one, so anchoring where it opens writes the new tag into the
-	/// middle of its prose -- and, taking its pattern from the line it lands after, copies that line's
-	/// words into itself. Which is the same failure a <c>paramref</c> in the summary used to cause,
-	/// arriving from a tag that is real.
+	/// Beside its neighbours rather than after the last tag, because a parameter added in the middle of
+	/// a list and documented at the end of it reads as the last parameter, and the fix is the reorder by
+	/// hand this tool was called to save. The nearest neighbour that has a tag, not the immediate one,
+	/// since a neighbour with no tag gives the new one nothing to stand next to.
 	/// </para>
 	/// <para>
-	/// After the last tag rather than in declaration order, because a member's tags are not always in
-	/// that order and reordering documentation nobody asked to reorder is a diff to read for nothing.
-	/// After the summary when there is no tag left, which is what renaming a parameter looks like from
-	/// here -- the removal takes the only tag and the addition then has nothing to anchor on, so the
-	/// new name never gets a tag and the build fails on CS1573.
+	/// A neighbour's tag is wherever the comment has put it, so tags written in an order the declaration
+	/// does not use stay in that order and the new one goes next to the tag of the parameter beside it.
+	/// Reordering documentation nobody asked to reorder is a diff to read for nothing.
+	/// </para>
+	/// </summary>
+	private static (int Line, bool Before) Placement(List<string> lines, IReadOnlyList<string> order, string name)
+	{
+		var position = -1;
+
+		for (var index = 0; index < order.Count; index++)
+		{
+			if (order[index] == name)
+			{
+				position = index;
+				break;
+			}
+		}
+
+		if (position < 0) return (Anchor(lines), false);
+
+		for (var index = position - 1; index >= 0; index--)
+		{
+			var opening = OpeningOf(lines, order[index]);
+			if (opening >= 0) return (ClosingFrom(lines, opening), false);
+		}
+
+		for (var index = position + 1; index < order.Count; index++)
+		{
+			var opening = OpeningOf(lines, order[index]);
+			if (opening >= 0) return (opening, true);
+		}
+
+		return (Anchor(lines), false);
+	}
+
+	/// <summary>
+	/// The line a new tag goes after when no parameter beside it has a tag: the line the last param tag
+	/// closes on, or nowhere when it never closes; else the line the summary closes on, else nowhere.
+	/// <para>
+	/// After the summary when there is no tag left, which is what renaming a member's only parameter
+	/// looks like from here -- the removal takes the only tag and the addition then has nothing to
+	/// anchor on, so without the summary the new name never gets a tag and the build fails on CS1573.
 	/// </para>
 	/// </summary>
 	private static int Anchor(List<string> lines)
 	{
 		var opening = lines.FindLastIndex(line => TagAt(line) >= 0);
 
-		if (opening < 0) return lines.FindLastIndex(IsSummaryEnd);
+		return opening < 0 ? lines.FindLastIndex(IsSummaryEnd) : ClosingFrom(lines, opening);
+	}
+
+	/// <summary>The line the tag documenting <paramref name="name"/> opens on, or -1.</summary>
+	private static int OpeningOf(List<string> lines, string name) => lines.FindIndex(line => NameAt(line) == name);
+
+	/// <summary>
+	/// The line a param tag opening on <paramref name="opening"/> closes on, or -1 when it never does:
+	/// the opening line itself when the tag closes itself, else the first line from there that holds
+	/// <c>&lt;/param&gt;</c>.
+	/// <para>
+	/// A new tag goes after the line a tag closes on, never the line it opens on. A tag whose
+	/// description runs to a second line opens on one and closes on a later one, so anchoring where it
+	/// opens writes the new tag into the middle of its prose -- and, taking its pattern from the line it
+	/// lands after, copies that line's words into itself.
+	/// </para>
+	/// <para>
+	/// Only <c>&lt;/param&gt;</c> or the tag's own <c>/&gt;</c> closes it. A description is free to say
+	/// <c>&lt;paramref name="x"/&gt;</c> or <c>&lt;see cref="X"/&gt;</c>, and taking any <c>/&gt;</c>
+	/// as the end of the tag puts the new tag, or the cut of a removal, in the middle of that prose.
+	/// </para>
+	/// </summary>
+	private static int ClosingFrom(List<string> lines, int opening)
+	{
+		if (SelfCloses(lines[opening])) return opening;
 
 		for (var index = opening; index < lines.Count; index++)
 		{
-			if (Closes(lines[index])) return index;
+			if (lines[index].Contains("</param>", StringComparison.Ordinal)) return index;
 		}
 
-		return opening;
+		return -1;
+	}
+
+	/// <summary>
+	/// Writes a tag for <paramref name="name"/> on the line after <paramref name="anchor"/>, modelled
+	/// on it.
+	/// <para>
+	/// The last line of a trivia list legitimately ends without a line ending, and an anchor lands on it
+	/// whenever the tag it found is the last thing the comment says. That line stops being the last, so
+	/// it takes the comment's ending, and the new line, now the last, goes without one.
+	/// </para>
+	/// </summary>
+	private static void InsertAfter(List<string> lines, int anchor, string name, string ending)
+	{
+		var isLast = anchor == lines.Count - 1;
+		var needsEnding = isLast && !lines[anchor].EndsWith('\r');
+
+		if (needsEnding) lines[anchor] += ending;
+
+		lines.Insert(anchor + 1, Modelled(lines[anchor], name, isLast ? string.Empty : ending));
 	}
 
 	private static bool IsSummaryEnd(string line) => line.Contains("</summary>", StringComparison.Ordinal);
 
-	private static bool Closes(string line) =>
-		line.Contains("</param>", StringComparison.Ordinal) || line.Contains("/>", StringComparison.Ordinal);
+	/// <summary>
+	/// Whether the param tag opening on this line closes itself: the first <c>&gt;</c> after it is
+	/// preceded by <c>/</c>. A <c>/&gt;</c> further along belongs to some other element in its
+	/// description.
+	/// </summary>
+	private static bool SelfCloses(string line)
+	{
+		var opening = TagAt(line);
+		if (opening < 0) return false;
+
+		var close = line.IndexOf('>', opening);
+
+		return close > 0 && line[close - 1] == '/';
+	}
 }

@@ -453,6 +453,173 @@ public sealed class AddFileTests
 	}
 
 	/// <summary>
+	/// The usings argument joins the imports the code declares as one ordered list. Prepended as a
+	/// block of its own, a namespace outside System lands above the code's System import with a blank
+	/// line between -- which compiles, and fails dotnet format on import ordering.
+	/// </summary>
+	[Test]
+	public async Task Merges_the_usings_argument_into_the_imports_the_code_declares()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Reflected.cs");
+
+		var result = await AddAsync(
+			session,
+			path,
+			"using System.Reflection;\r\n\r\npublic static class Reflected\r\n{\r\n\tpublic static string Name => Marker.Name + typeof(Reflected).GetTypeInfo().Name;\r\n}\r\n",
+			usings: ["Library.Nested"]);
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith("using System.Reflection;\r\nusing Library.Nested;\r\n\r\nnamespace Library;\r\n", Case.Sensitive, text);
+	}
+
+	/// <summary>
+	/// Where the code separates its import groups, each requested import goes into its own group,
+	/// in order, and the file keeps its separation -- what rose_add_using does to a file that exists.
+	/// </summary>
+	[Test]
+	public async Task Places_each_requested_using_in_the_group_the_code_already_has()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Grouped.cs");
+
+		var result = await AddAsync(
+			session,
+			path,
+			"using System.Text;\r\n\r\nusing Library.Nested;\r\n\r\npublic static class Grouped\r\n{\r\n\tpublic static string Name => Marker.Name;\r\n}\r\n",
+			usings: ["Library.Extras", "System.Globalization"]);
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith(
+			"using System.Globalization;\r\nusing System.Text;\r\n\r\nusing Library.Extras;\r\nusing Library.Nested;\r\n\r\nnamespace Library;\r\n",
+			Case.Sensitive,
+			text);
+	}
+
+	/// <summary>
+	/// A requested import the compilation already has -- from the SDK's implicit usings, from the
+	/// file's own namespace, or written in the code -- is not written a second time, since that is
+	/// IDE0005, and each is named so the caller does not go looking for it.
+	/// </summary>
+	[Test]
+	public async Task Does_not_write_a_requested_using_already_in_scope()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Scoped.cs");
+
+		var result = await AddAsync(
+			session,
+			path,
+			"using System.Text;\r\n\r\npublic static class Scoped\r\n{\r\n\tpublic static Encoding Utf8 => Encoding.UTF8;\r\n}\r\n",
+			usings: ["System.Linq", "Library", "System.Text"]);
+
+		result.Applied.ShouldBeTrue();
+
+		result.Notices.ShouldContain("Did not import System.Linq: in scope already, from a global or implicit using.");
+		result.Notices.ShouldContain("Did not import Library: in scope already, since this file is in namespace Library.");
+		result.Notices.ShouldContain("Did not import System.Text: already imported here.");
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith("using System.Text;\r\n\r\nnamespace Library;\r\n", Case.Sensitive, text);
+	}
+
+	/// <summary>
+	/// A requested alias whose name the code already gives to something else does not compile, so it
+	/// is refused before anything is written rather than left for the build to find.
+	/// </summary>
+	[Test]
+	public async Task Refuses_a_requested_alias_the_code_already_uses_for_something_else()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Aliased.cs");
+
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => AddAsync(
+				session,
+				path,
+				"using Text = System.Text;\r\n\r\npublic static class Aliased\r\n{\r\n\tpublic static Text.Encoding Utf8 => Text.Encoding.UTF8;\r\n}\r\n",
+				usings: ["Text = System.IO"])).OfExactType();
+
+		thrown.Message.ShouldContain("Text already stands for System.Text", Case.Sensitive);
+		File.Exists(path).ShouldBeFalse("a refusal writes nothing");
+	}
+
+	/// <summary>
+	/// Several requested imports into code shorter than they are, which is the ordinary new record.
+	/// Each one written grows the file the next is placed into, and the scope of each is still asked
+	/// of the file as it was added.
+	/// </summary>
+	[Test]
+	public async Task Writes_several_requested_usings_into_a_one_line_record()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Point.cs");
+
+		var result = await AddAsync(
+			session,
+			path,
+			"public sealed record Point(int X, int Y);",
+			usings: ["System.Text.Json", "System.Text.Json.Serialization", "System.Collections.Immutable"]);
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith(
+			"using System.Collections.Immutable;\r\nusing System.Text.Json;\r\nusing System.Text.Json.Serialization;\r\n\r\nnamespace Library;\r\n",
+			Case.Sensitive,
+			text);
+	}
+
+	/// <summary>
+	/// Code that keeps its imports inside a namespace block has the requested ones placed there with
+	/// them. Placed at file level, one the block already has is written a second time, which is IDE0005,
+	/// and any other lands apart from the imports it belongs with.
+	/// </summary>
+	[Test]
+	public async Task Places_requested_usings_inside_the_namespace_block_that_keeps_the_code_s_own()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Blocked.cs");
+
+		var result = await AddAsync(
+			session,
+			path,
+			"namespace Library\r\n{\r\n\tusing System.Text;\r\n\r\n\tpublic static class Blocked\r\n\t{\r\n\t\tpublic static Encoding Utf8 => Encoding.UTF8;\r\n\t}\r\n}\r\n",
+			usings: ["System.Text", "System.Globalization"]);
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldContain("Did not import System.Text: already imported here.");
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith(
+			"namespace Library\r\n{\r\n\tusing System.Globalization;\r\n\tusing System.Text;\r\n\r\n\tpublic static class Blocked\r\n",
+			Case.Sensitive,
+			text);
+	}
+
+	/// <summary>
 	/// A project that lists its files is worked on in one order: name the file in the project, then create
 	/// it. The project then loads a document for the name with nothing on disk behind it, and refusing that
 	/// as a file already in the solution leaves no tool that can create it. It is written into that
@@ -517,11 +684,12 @@ public sealed class AddFileTests
 		WorkspaceSession session,
 		string filePath,
 		string code,
-		bool apply = true)
+		bool apply = true,
+		IReadOnlyList<string>? usings = null)
 	{
 		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
 
-		var request = new AddFileRequest { FilePath = filePath, Code = code, Apply = apply };
+		var request = new AddFileRequest { FilePath = filePath, Code = code, Apply = apply, Usings = usings ?? [] };
 
 		return session.MutateAsync(
 			(snapshot, token) => AddFileService.AddAsync(

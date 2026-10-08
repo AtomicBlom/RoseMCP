@@ -570,7 +570,9 @@ public static class ChangeSignatureService
 			.Select(parameter => parameter.Identifier.Text)
 			.ToArray();
 
-		var documentation = ParamTags.Update(declaration.GetLeadingTrivia(), removedHere, addedHere, keptHere, notices);
+		var orderHere = built.Select(parameter => parameter.Identifier.Text).ToArray();
+
+		var documentation = ParamTags.Update(declaration.GetLeadingTrivia(), removedHere, addedHere, keptHere, orderHere, notices);
 		var parameters = list.WithParameters(Separated(built, callerWraps ? wanted : own, ExtraSeparator(list)));
 
 		return new DeclarationChange
@@ -1009,7 +1011,7 @@ public static class ChangeSignatureService
 				: $"This introduced {verification.Introduced.Count} error(s) in the solution.";
 		}
 
-		if (verification.TotalCount == 0) yield return "The whole solution compiles clean.";
+		if (verification.TotalCount == 0) yield return verification.Clean("The whole solution");
 
 		var existing = verification.TotalCount - verification.Introduced.Count;
 

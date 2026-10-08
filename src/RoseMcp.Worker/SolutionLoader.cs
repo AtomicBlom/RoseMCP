@@ -110,6 +110,7 @@ public sealed class SolutionLoader(
 
 		progress?.Report("Redirecting analyzers to shadow copies", BuildDone);
 		var solution = UseShadowCopiedAnalyzers(workspace.CurrentSolution);
+		solution = await WithConfigsAboveEachProjectAsync(solution, inputs, cancellationToken);
 
 		if (!options.NoXamlStubs)
 		{
@@ -187,6 +188,58 @@ public sealed class SolutionLoader(
 		}
 
 		return _xamlStubs = new AnalyzerFileReference(path, analyzerLoader);
+	}
+
+	/// <summary>
+	/// Gives every project the .editorconfig and .globalconfig files in and above its directory that the
+	/// design-time build left out, which it does for a project with nothing to compile.
+	/// <para>
+	/// The build discovers those files by walking up from each source, so a project added to the solution before
+	/// anything was written into it is built with none, and stays that way after the first file arrives: the
+	/// barrier absorbs a new file without building anything. Every write into it is then formatted to Roslyn's
+	/// defaults and compiled under its default severities, which in a repository raising IDE0055 to an error
+	/// is a project called clean whose build fails. These are the files the next build gives it once a source is
+	/// there, so adding them now is that build's answer rather than a guess, and the disk synchroniser tracks them
+	/// like any other analyzer config document. A project that turns discovery off is given none of that kind,
+	/// as its build gives it none.
+	/// </para>
+	/// </summary>
+	private async Task<Solution> WithConfigsAboveEachProjectAsync(
+		Solution solution,
+		EvaluationInputs inputs,
+		CancellationToken cancellationToken)
+	{
+		var added = 0;
+
+		foreach (var id in solution.ProjectIds.ToArray())
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			var project = solution.GetProject(id)!;
+			if (project.FilePath is not { Length: > 0 } projectFile) continue;
+
+			foreach (var path in EditorConfigFiles.MissingAbove(project, inputs.DiscoveryFor(projectFile)))
+			{
+				var text = await ReadTextAsync(path, cancellationToken);
+				if (text is null) continue;
+
+				solution = solution.AddAnalyzerConfigDocument(
+					DocumentId.CreateNewId(id, Path.GetFileName(path)),
+					Path.GetFileName(path),
+					text,
+					filePath: path);
+				added++;
+			}
+		}
+
+		if (added > 0)
+		{
+			logger.LogInformation(
+				"Gave projects {Count} analyzer config file(s) their design-time build left out for want of a source to walk up from.",
+				added);
+		}
+
+		return solution;
 	}
 
 	/// <summary>

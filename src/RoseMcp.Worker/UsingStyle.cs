@@ -41,18 +41,22 @@ public sealed record UsingStyle
 	/// <summary>
 	/// Whether this file puts a blank line between groups, or null when it has no two groups to tell
 	/// from. Answered by looking at the first place the group changes: one example is enough, because
-	/// a file is consistent about this or it is not a file anybody is maintaining.
+	/// a file is consistent about this or it is not a file anybody is maintaining. Read from the
+	/// directives an import would be placed among, which in a file keeping its imports inside a
+	/// namespace block are the block's.
 	/// </summary>
 	private static bool? Separated(CompilationUnitSyntax root)
 	{
-		for (var index = 1; index < root.Usings.Count; index++)
+		var usings = UsingDirectives.Usings(root);
+
+		for (var index = 1; index < usings.Count; index++)
 		{
-			var previous = First(root.Usings[index - 1]);
-			var current = First(root.Usings[index]);
+			var previous = First(usings[index - 1]);
+			var current = First(usings[index]);
 
 			if (previous == current) continue;
 
-			return root.Usings[index].GetLeadingTrivia().Any(SyntaxKind.EndOfLineTrivia);
+			return usings[index].GetLeadingTrivia().Any(SyntaxKind.EndOfLineTrivia);
 		}
 
 		return null;

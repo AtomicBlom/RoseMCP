@@ -1,3 +1,4 @@
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace RoseMcp.UnitTests;
 
@@ -50,6 +51,32 @@ public sealed class CallSiteShapeMatrixTests
 		+ "\n"
 		+ "\tpublic static string Use(string a, string b) => Target(\n"
 		+ "\t\ta,\n"
+		+ "\t\tb);\n"
+		+ "}\n";
+
+	/// <summary>
+	/// A call wrapped once after its parenthesis, with its arguments sharing the continuation line --
+	/// the shape a long argument list takes when it is wrapped to fit rather than to stack.
+	/// </summary>
+	private const string SharedLineCall = "public static class Fixture\n"
+		+ "{\n"
+		+ "\tpublic static string Target(string first, string second) => first + second;\n"
+		+ "\n"
+		+ "\tpublic static string Use(string a, string b) => Target(\n"
+		+ "\t\ta, b);\n"
+		+ "}\n";
+
+	/// <summary>
+	/// A call wrapped one argument to a line, with a comment ending the first argument's line. The
+	/// comment sits in the comma's trailing trivia, which is what makes it easy to copy or lose with
+	/// the comma.
+	/// </summary>
+	private const string CommentedCall = "public static class Fixture\n"
+		+ "{\n"
+		+ "\tpublic static string Target(string first, string second) => first + second;\n"
+		+ "\n"
+		+ "\tpublic static string Use(string a, string b) => Target(\n"
+		+ "\t\ta, // the a\n"
 		+ "\t\tb);\n"
 		+ "}\n";
 
@@ -254,6 +281,349 @@ public sealed class CallSiteShapeMatrixTests
 
 		Rewrite(call, Inserted, Dash).ShouldBe("(\n\t\tfirst: a,\n\t\t\"-\",\n\t\tsecond: b)");
 	}
+
+	/// <summary>
+	/// A call wrapped once after its parenthesis, with both arguments on the continuation line. The
+	/// argument arriving between them goes in after a comma and a space, as they do.
+	/// <para>
+	/// Taking the indentation of the first argument that has any gives it the continuation's own --
+	/// right where every argument begins a line, and here a run of tabs in the middle of one, between
+	/// the comma and the new argument. Nothing reports that: it compiles, and the argument list is
+	/// exactly what the change asked for.
+	/// </para>
+	/// </summary>
+	[Test]
+	public void Puts_a_new_argument_inline_where_the_arguments_share_a_continuation_line()
+	{
+		Rewrite(SharedLineCall, Inserted, Dash).ShouldBe("(\n\t\ta, \"-\", b)");
+	}
+
+	/// <summary>The same line, with the new argument after the last one.</summary>
+	[Test]
+	public void Appends_a_new_argument_inline_where_the_arguments_share_a_continuation_line()
+	{
+		Rewrite(SharedLineCall, "string first, string second, string separator", Dash).ShouldBe("(\n\t\ta, b, \"-\")");
+	}
+
+	/// <summary>
+	/// The same line, with the new argument in front of the first. The new one begins the line, so it
+	/// takes the indentation; the argument it displaces is now mid-line and gives its indentation up,
+	/// or the tabs would sit after the new argument's comma instead.
+	/// </summary>
+	[Test]
+	public void Puts_a_new_first_argument_at_the_start_of_a_shared_continuation_line()
+	{
+		Rewrite(SharedLineCall, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\", a, b)");
+	}
+
+	/// <summary>
+	/// One argument to a line, with the new argument in front of the first: it takes a line of its own,
+	/// and the argument it displaces keeps one.
+	/// </summary>
+	[Test]
+	public void Puts_a_new_first_argument_on_a_line_of_its_own_where_each_argument_has_one()
+	{
+		Rewrite(WrappedCall, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\",\n\t\ta,\n\t\tb)");
+	}
+
+	/// <summary>
+	/// A comment written in front of the argument a new one displaces stays in front of it. Only the
+	/// whitespace before it is layout; the comment is the caller's.
+	/// </summary>
+	[Test]
+	public void Keeps_the_comment_in_front_of_an_argument_a_new_first_argument_displaces()
+	{
+		var call = "public static class Fixture\n"
+			+ "{\n"
+			+ "\tpublic static string Target(string first, string second) => first + second;\n"
+			+ "\n"
+			+ "\tpublic static string Use(string a, string b) => Target(\n"
+			+ "\t\t/* first */ a, b);\n"
+			+ "}\n";
+
+		Rewrite(call, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\", /* first */ a, b)");
+	}
+
+	/// <summary>
+	/// Taking out the parameter whose argument began the continuation line leaves the next argument
+	/// beginning it, at the indentation the line had, rather than at column zero.
+	/// </summary>
+	[Test]
+	public void Moves_the_indentation_onto_the_argument_that_begins_the_line_when_the_first_is_removed()
+	{
+		Rewrite(SharedLineCall, "string second").ShouldBe("(\n\t\tb)");
+	}
+
+	/// <summary>
+	/// Taking out the first argument where the break follows it, rather than the parenthesis, leaves
+	/// the next one directly after the parenthesis instead of on a line of its own behind it.
+	/// </summary>
+	[Test]
+	public void Pulls_the_next_argument_up_to_the_parenthesis_when_the_first_is_removed_before_a_break()
+	{
+		var call = "public static class Fixture\n"
+			+ "{\n"
+			+ "\tpublic static string Target(string first, string second) => first + second;\n"
+			+ "\n"
+			+ "\tpublic static string Use(string a, string b) => Target(a,\n"
+			+ "\t\tb);\n"
+			+ "}\n";
+
+		Rewrite(call, "string second").ShouldBe("(b)");
+	}
+
+	/// <summary>
+	/// A blank line above an argument that a new first argument pushes along stays a blank line, with
+	/// nothing on it. Indentation put in front of the argument's own break would leave a line holding
+	/// nothing but tabs.
+	/// </summary>
+	[Test]
+	public void Keeps_a_blank_line_above_a_displaced_argument_empty()
+	{
+		var call = Calling("Target(\n\t\ta,\n\n\t\tb)");
+
+		Rewrite(call, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\",\n\t\ta,\n\n\t\tb)");
+	}
+
+	/// <summary>
+	/// A blank line between the parenthesis and the first argument, which a new first argument then
+	/// follows on the same line. The indentation is the one after the blank line, so the new argument
+	/// is not at column zero, and the displaced one gives up its breaks rather than leaving a trailing
+	/// space after the comma in front of it.
+	/// </summary>
+	[Test]
+	public void Indents_a_new_first_argument_from_below_a_blank_line()
+	{
+		var call = Calling("Target(\n\n\t\ta, b)");
+
+		Rewrite(call, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\", a, b)");
+	}
+
+	/// <summary>
+	/// A comment ending the line after an argument's comma stays after that argument when another is
+	/// added at the end. The comma the list gains is the shape of the last one without its comment;
+	/// copied whole, it writes the comment a second time.
+	/// </summary>
+	[Test]
+	public void Keeps_a_line_end_comment_once_when_an_argument_is_appended()
+	{
+		var text = Rewrite(CommentedCall, "string first, string second, string separator", Dash);
+
+		text.ShouldBe("(\n\t\ta, // the a\n\t\tb,\n\t\t\"-\")");
+		CountOf(text, "// the a").ShouldBe(1);
+	}
+
+	/// <summary>
+	/// The same comment, with a new argument in front. The comment stays beside the argument it was
+	/// written about rather than with the comma at its position, which would put it beside the new one.
+	/// </summary>
+	[Test]
+	public void Keeps_a_line_end_comment_with_its_argument_when_one_is_inserted_in_front()
+	{
+		var text = Rewrite(CommentedCall, "string separator, string first, string second", Dash);
+
+		text.ShouldBe("(\n\t\t\"-\",\n\t\ta, // the a\n\t\tb)");
+		CountOf(text, "// the a").ShouldBe(1);
+	}
+
+	/// <summary>The same comment, with a new argument between the commented one and the next.</summary>
+	[Test]
+	public void Keeps_a_line_end_comment_with_its_argument_when_one_is_inserted_after_it()
+	{
+		var text = Rewrite(CommentedCall, Inserted, Dash);
+
+		text.ShouldBe("(\n\t\ta, // the a\n\t\t\"-\",\n\t\tb)");
+		CountOf(text, "// the a").ShouldBe(1);
+	}
+
+	/// <summary>
+	/// The same comment, with the parameter after it removed, which takes away the comma that carried
+	/// it. It is kept after its argument, and the break that ends it stays too, so the parenthesis is
+	/// not commented out.
+	/// </summary>
+	[Test]
+	public void Keeps_a_line_end_comment_when_the_comma_carrying_it_is_removed()
+	{
+		var text = Rewrite(CommentedCall, "string first");
+
+		text.ShouldBe("(\n\t\ta // the a\n\t\t)");
+		CountOf(text, "// the a").ShouldBe(1);
+	}
+
+	/// <summary>
+	/// A comment between a comma and the argument after it, on one line, labels that argument, and
+	/// goes with it when a new argument is put in front of it.
+	/// </summary>
+	[Test]
+	public void Keeps_an_inline_comment_in_front_of_the_argument_it_labels()
+	{
+		Rewrite(Calling("Target(a, /* the b */ b)"), Inserted, Dash).ShouldBe("""(a, "-", /* the b */ b)""");
+	}
+
+	/// <summary>
+	/// A comment kept after the last argument when its comma goes, where the parenthesis is on a line
+	/// of its own. The parenthesis keeps its own indentation; the call's continuation indentation is
+	/// only for one that has none, and added to its own it pushes the parenthesis a level too deep.
+	/// </summary>
+	[Test]
+	public void Keeps_the_indentation_of_a_closing_parenthesis_on_its_own_line_after_a_kept_comment()
+	{
+		var call = Calling("Target(\n\t\ta, // the a\n\t\tb\n\t)");
+
+		Rewrite(call, "string first").ShouldBe("(\n\t\ta // the a\n\t)");
+	}
+
+	/// <summary>
+	/// An argument appended to a call whose closing parenthesis is on a line of its own -- the shape a
+	/// cancellation token added on the end meets most. The break in front of the parenthesis stays in
+	/// front of the parenthesis; left on the argument that was last, it puts the new comma at column
+	/// zero and the parenthesis's indentation after the new argument.
+	/// </summary>
+	[Test]
+	public void Appends_before_a_closing_parenthesis_on_its_own_line()
+	{
+		Rewrite(OwnLineParenthesis(string.Empty), "string first, string second, string separator", Dash).ShouldBe(
+			"(\n\t\ta,\n\t\tb,\n\t\t\"-\"\n\t)");
+	}
+
+	/// <summary>
+	/// The same, with a comment ending the line of the argument that was last. It stays beside that
+	/// argument, after the comma the argument gains, rather than ahead of it.
+	/// </summary>
+	[Test]
+	public void Appends_before_a_closing_parenthesis_on_its_own_line_keeping_the_last_comment()
+	{
+		var text = Rewrite(OwnLineParenthesis(" // the b"), "string first, string second, string separator", Dash);
+
+		text.ShouldBe("(\n\t\ta,\n\t\tb, // the b\n\t\t\"-\"\n\t)");
+		CountOf(text, "// the b").ShouldBe(1);
+	}
+
+	/// <summary>
+	/// The last argument taken out of a call whose closing parenthesis is on a line of its own. The
+	/// argument left last takes the break in front of the parenthesis, rather than the parenthesis
+	/// following it on its line behind its own indentation.
+	/// </summary>
+	[Test]
+	[Arguments("")]
+	[Arguments(" // the b")]
+	public void Removes_the_last_argument_before_a_closing_parenthesis_on_its_own_line(string comment)
+	{
+		Rewrite(OwnLineParenthesis(comment), "string first").ShouldBe("(\n\t\ta\n\t)");
+	}
+
+	/// <summary>
+	/// A call with its parenthesis on a line of its own that the change does not touch comes back
+	/// exactly as written: what is taken off the last argument to be placed is put back.
+	/// </summary>
+	[Test]
+	public void Leaves_a_call_with_its_closing_parenthesis_on_its_own_line_as_written()
+	{
+		Rewrite(OwnLineParenthesis(" // the b"), "string first, string second, string separator = \"\"").ShouldBe(
+			"(\n\t\ta,\n\t\tb // the b\n\t)");
+	}
+
+	/// <summary>
+	/// An argument whose line opens with a directive, moved up behind the parenthesis by taking out
+	/// the argument before it. A directive has to begin its line, so the break in front of it stays:
+	/// directly after the parenthesis, it is CS1040.
+	/// </summary>
+	[Test]
+	public void Keeps_a_directive_in_front_of_a_moved_argument_on_a_line_of_its_own()
+	{
+		var call = Calling("Target(a,\n#region r\n\t\tb\n#endregion\n\t)");
+
+		Rewrite(call, "string second").ShouldBe("(\n#region r\n\t\tb\n#endregion\n\t)");
+	}
+
+	/// <summary>
+	/// An argument appended after one whose line ends in a comment, where the arguments share a line
+	/// and no argument begins one. The comment goes after the comma the argument gains, and that comma
+	/// ends the line: the new argument goes on the next one, a level inside the parenthesis, rather
+	/// than after the comment on the same line, where it would be part of the comment.
+	/// </summary>
+	[Test]
+	public void Appends_after_a_line_comment_on_a_line_no_argument_begins()
+	{
+		var text = Rewrite(Calling("Target(a, b // the b\n\t)"), "string first, string second, string separator", Dash);
+
+		text.ShouldBe("(a, b, // the b\n\t\t\"-\"\n\t)");
+		ArgumentCount(text).ShouldBe(3);
+	}
+
+	/// <summary>The same, where the arguments share a continuation line, which gives the indentation.</summary>
+	[Test]
+	public void Appends_after_a_line_comment_on_a_shared_continuation_line()
+	{
+		var text = Rewrite(
+			Calling("Target(\n\t\ta, b // the b\n\t)"), "string first, string second, string separator", Dash);
+
+		text.ShouldBe("(\n\t\ta, b, // the b\n\t\t\"-\"\n\t)");
+		ArgumentCount(text).ShouldBe(3);
+	}
+
+	/// <summary>
+	/// The same with a single argument and the parenthesis on a line of its own -- the shape a
+	/// cancellation token appended to a one-argument call meets.
+	/// </summary>
+	[Test]
+	public void Appends_after_a_line_comment_on_a_lone_argument()
+	{
+		var source = "public static class Fixture\n"
+			+ "{\n"
+			+ "\tpublic static string Target(string first) => first;\n"
+			+ "\n"
+			+ "\tpublic static string Use(string a) => Target(\n"
+			+ "\t\ta // the a\n"
+			+ "\t);\n"
+			+ "}\n";
+
+		var text = Rewrite(source, "string first, string separator", Dash);
+
+		text.ShouldBe("(\n\t\ta, // the a\n\t\t\"-\"\n\t)");
+		ArgumentCount(text).ShouldBe(2);
+	}
+
+	/// <summary>
+	/// The same append where the new parameter has a default and a value is passed for it. Inside the
+	/// comment the value would vanish and the call would still compile on the default, so nothing would
+	/// say it had gone; the argument count is what does.
+	/// </summary>
+	[Test]
+	public void Keeps_the_value_passed_for_a_defaulted_parameter_out_of_a_line_comment()
+	{
+		var text = Rewrite(
+			Calling("Target(a, b // the b\n\t)"), "string first, string second, string separator = \"\"", Dash);
+
+		text.ShouldBe("(a, b, // the b\n\t\t\"-\"\n\t)");
+		ArgumentCount(text).ShouldBe(3);
+	}
+
+	/// <summary>
+	/// An argument with an <c>#if</c> in front of it, taken out. The directive is in the argument's
+	/// leading trivia and would go with it, leaving the <c>#endif</c> on its own, which is CS1028; which
+	/// arguments the block was meant to hold is not something to guess, so the site is left and says so.
+	/// </summary>
+	[Test]
+	public void Refuses_to_take_out_an_argument_with_a_directive_in_front_of_it()
+	{
+		var call = Calling("Target(\n\t\ta,\n#if true\n\t\tb\n#endif\n\t)");
+
+		CallSites.Rewrite(call, "string first", out var refusal).ShouldBeNull();
+		refusal.ShouldContain("preprocessor directive", Case.Sensitive);
+	}
+
+	/// <summary>How many arguments a rewritten list parses to, so one swallowed by a comment is counted out.</summary>
+	private static int ArgumentCount(string? text) =>
+		text is null ? 0 : SyntaxFactory.ParseArgumentList(text).Arguments.Count;
+
+	/// <summary>A call wrapped one argument to a line with its closing parenthesis on a line of its own.</summary>
+	/// <param name="comment">Written after the last argument, before the parenthesis's line.</param>
+	private static string OwnLineParenthesis(string comment) => Calling($"Target(\n\t\ta,\n\t\tb{comment}\n\t)");
+
+	/// <summary>How many times a piece of text occurs, so a duplicated comment is caught by name.</summary>
+	private static int CountOf(string? text, string piece) =>
+		text is null ? 0 : (text.Length - text.Replace(piece, string.Empty, StringComparison.Ordinal).Length) / piece.Length;
 
 	/// <summary>
 	/// Where the call sits does not change what its arguments mean, so an expression-bodied member

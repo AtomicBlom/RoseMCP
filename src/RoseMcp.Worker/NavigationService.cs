@@ -191,7 +191,7 @@ public static class NavigationService
 			.ThenBy(location => location.Column)
 			.ToArray();
 
-		var kept = filter.KeepsAll ? every : every.Where(filter.Keeps).ToArray();
+		var kept = filter.KeepsAll ? every : every.Where(filter.Over(every).Keeps).ToArray();
 
 		// Which of four answers this is. A filter that kept nothing from a symbol that is used describes
 		// every use instead, and says so: an empty list there reads as a symbol nobody uses, and the

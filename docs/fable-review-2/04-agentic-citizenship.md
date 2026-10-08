@@ -197,8 +197,8 @@ Truncation means only that raising the cap lists more.
 - **Severity:** Medium
 - **Effort:** M
 - **Where:** `src/RoseMcp.Contracts/SourceLocation.cs:18-22`; `src/RoseMcp.Contracts/ToolDescriptions.cs:577-578`; transcript T5
-- **What:** The description says "Each hit names the member it sits inside, which turns a flat list into 'used by these six methods'", and `SourceLocation.ContainingMember` says the same. The result is a flat array; the grouping is a thing the *agent* must do. Each of the 16 entries carried the same 95-character absolute path prefix, plus `project` and `isTestProject` -- with previews off, 4.1 KB of which roughly 1.6 KB is the workspace root written out 17 times, under a `workspace` field that already names it once.
-- **Why it matters:** The `01-broker-and-server` reviewer got 53 hits on one symbol and called the answer noisy; at the 200-hit default that is ~20 KB of repeated path. The tool's claim over grep is precision *and* answering in the unit the caller thinks in (methods). It delivers the first and asks the caller to compute the second, at a size where the caller may not have room to.
+- **What:** Each file's path is absolute, so every one repeats the workspace root, under a `workspace` field that already names it once.
+- **Why it matters:** On an answer spanning many files the root is most of each path, and it is the one part of the path the caller already has.
 - **Suggested change:** Emit paths relative to the `workspace` root already in the result (absolute only when outside it).
 
 ### AGT-07 `rose_find_implementations` has no `project` filter, so the question it advertises is the one it cannot answer
@@ -444,8 +444,7 @@ entry never fails the rest.
 ### ~~AGT-23 Overflow should return a smaller answer to a better question, never the same answer somewhere else~~
 **#378.** An answer past its cap was the first few references and a truncation flag, and three of
 the four facets on every reference could not be asked about. It is now the shape of the references,
-with every facet a filter and nothing spilled to a file; the other lists on the surface do not yet
-answer an overflow this way.
+with every facet a filter and nothing spilled to a file.
 
 
 ## Why tools lose to grep, ranked

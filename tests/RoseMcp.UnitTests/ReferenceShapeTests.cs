@@ -17,6 +17,13 @@ public sealed class ReferenceShapeTests
 		At("C:/repo/Tests/CalculatorTests.cs", 12, "Tests", "CalculatorTests.Adds", test: true),
 		At("C:/repo/Tests/OtherTests.cs", 3, "Tests", "OtherTests.Adds", test: true),
 		At("C:/repo/obj/Gen/Calculator.g.cs", 5, "Core", "Calculator.Generated", hint: "Calculator.g.cs"),
+
+		// A type-level reference is keyed by the bare type name, which is also the name of the type's
+		// constructor; and two members of one type can differ only by case.
+		At("C:/repo/Widgets/Widget.cs", 3, "Widgets", "Widget"),
+		At("C:/repo/Widgets/Widget.cs", 5, "Widgets", "Widget.Widget"),
+		At("C:/repo/Widgets/Foo.cs", 4, "Widgets", "Foo.name"),
+		At("C:/repo/Widgets/Foo.cs", 6, "Widgets", "Foo.Name"),
 	];
 
 	[Test]
@@ -26,7 +33,7 @@ public sealed class ReferenceShapeTests
 		var product = new ReferenceFilter { IsTestProject = false };
 
 		References.Count(tests.Keeps).ShouldBe(3);
-		References.Count(product.Keeps).ShouldBe(4);
+		References.Count(product.Keeps).ShouldBe(8);
 		References.Where(tests.Keeps).ShouldAllBe(location => location.IsTestProject);
 	}
 
@@ -37,20 +44,24 @@ public sealed class ReferenceShapeTests
 		var written = new ReferenceFilter { IsGenerated = false };
 
 		References.Where(generated.Keeps).ShouldHaveSingleItem().GeneratedHintName.ShouldBe("Calculator.g.cs");
-		References.Count(written.Keeps).ShouldBe(6);
+		References.Count(written.Keeps).ShouldBe(10);
 	}
 
 	/// <summary>
-	/// The whole <c>Type.Member</c> picks one type's member; the name alone picks it in every type,
-	/// which is the form a caller has before it has seen an answer. Neither matches a member whose name
-	/// merely ends the same way.
+	/// A key some reference carries whole picks exactly those references; a name no reference carries
+	/// whole is a bare member name and picks it in every type, which is the form a caller has before it
+	/// has seen an answer. Neither matches a member whose name merely ends the same way, and case is
+	/// part of the name.
 	/// </summary>
 	[Test]
 	public void A_member_is_matched_whole_or_by_its_name_in_every_type()
 	{
-		References.Count(new ReferenceFilter { ContainingMember = "CalculatorTests.Adds" }.Keeps).ShouldBe(2);
-		References.Count(new ReferenceFilter { ContainingMember = "adds" }.Keeps).ShouldBe(3);
-		References.Count(new ReferenceFilter { ContainingMember = "dds" }.Keeps).ShouldBe(0);
+		References.Count(Asking("CalculatorTests.Adds").Keeps).ShouldBe(2);
+		References.Count(Asking("Adds").Keeps).ShouldBe(3);
+		References.Count(Asking("adds").Keeps).ShouldBe(0);
+		References.Count(Asking("dds").Keeps).ShouldBe(0);
+		References.Count(Asking("Widget").Keeps).ShouldBe(1);
+		References.Count(Asking("Foo.name").Keeps).ShouldBe(1);
 	}
 
 	[Test]
@@ -102,21 +113,20 @@ public sealed class ReferenceShapeTests
 	{
 		var shape = ReferenceShapes.Of(References);
 
-		shape.Total.ShouldBe(7);
+		shape.Total.ShouldBe(11);
 		shape.InTestProjects.ShouldBe(3);
 		shape.InGeneratedCode.ShouldBe(1);
 
 		shape.Projects.Select(project => (project.Project, project.Count, project.IsTestProject))
-			.ShouldBe([("Core", 3, false), ("Tests", 3, true), ("App", 1, false)]);
+			.ShouldBe([("Widgets", 4, false), ("Core", 3, false), ("Tests", 3, true), ("App", 1, false)]);
 
 		shape.Members[0].ShouldBe(new MemberReferenceCount { ContainingMember = "CalculatorTests.Adds", Count = 2 });
-		shape.MemberCount.ShouldBe(6);
-		shape.Members.Sum(member => member.Count).ShouldBe(7);
+		shape.MemberCount.ShouldBe(10);
+		shape.Members.Sum(member => member.Count).ShouldBe(11);
 
 		foreach (var member in shape.Members)
 		{
-			var asked = new ReferenceFilter { ContainingMember = member.ContainingMember };
-			References.Count(asked.Keeps).ShouldBe(member.Count);
+			References.Count(Asking(member.ContainingMember).Keeps).ShouldBe(member.Count);
 		}
 	}
 
@@ -150,7 +160,7 @@ public sealed class ReferenceShapeTests
 
 		var files = ReferenceShapes.ByFile([.. References, linked], includePreviews: false);
 
-		files.Count.ShouldBe(6);
+		files.Count.ShouldBe(8);
 
 		var calculator = files.First(file => file.FilePath == "C:/repo/Core/Calculator.cs" && file.Project == "Core");
 		calculator.References.Select(site => site.Line).ShouldBe([4, 9]);
@@ -184,6 +194,10 @@ public sealed class ReferenceShapeTests
 			notice.ShouldContain(argument, Case.Sensitive);
 		}
 	}
+
+	/// <summary>A filter on one containing member, as rose_find_references applies it to these references.</summary>
+	private static ReferenceFilter Asking(string member) =>
+		new ReferenceFilter { ContainingMember = member }.Over(References);
 
 	private static SourceLocation At(
 		string filePath,

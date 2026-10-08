@@ -501,7 +501,7 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
 			200,
 			TestContext.Current!.Execution.CancellationToken,
-			containingMember: "call");
+			containingMember: "Call");
 
 		byName.Listed().ShouldHaveSingleItem().Site.ContainingMember.ShouldBe("Caller.Call");
 	}

@@ -32,6 +32,29 @@ public sealed record ReferenceFilter
 	/// <summary>True for only references in source-generated code, false for only those in files.</summary>
 	public bool? IsGenerated { get; init; }
 
+	/// <summary>
+	/// True where <see cref="ContainingMember"/> is a key some reference carries whole, which is set by
+	/// <see cref="Over"/> and makes it match only that key. False makes it a bare member name, matched in
+	/// every type.
+	/// </summary>
+	public bool MemberIsKey { get; init; }
+
+	/// <summary>
+	/// The filter as it applies to these references: <see cref="ContainingMember"/> read as a whole key
+	/// where any of them carries it, and as a bare member name otherwise.
+	/// <para>
+	/// Decided over the whole set rather than per reference, because a shape's groups are keys and a
+	/// group passed back has to list exactly what it counted. Read per reference, <c>Widget</c> -- the
+	/// key of a reference in a type's base list -- would also match the constructor <c>Widget.Widget</c>.
+	/// </para>
+	/// </summary>
+	public ReferenceFilter Over(IEnumerable<SourceLocation> references) =>
+		this with
+		{
+			MemberIsKey = ContainingMember is { } wanted
+				&& references.Any(location => string.Equals(location.ContainingMember, wanted, StringComparison.Ordinal)),
+		};
+
 	/// <summary>True where the filter keeps every reference.</summary>
 	public bool KeepsAll =>
 		Projects is null && ContainingMember is null && IsTestProject is null && IsGenerated is null;
@@ -64,16 +87,16 @@ public sealed record ReferenceFilter
 	}
 
 	/// <summary>
-	/// Whether a reference's containing member is the one asked for: the whole <c>Type.Member</c>, or
-	/// the member's name alone, which matches it in every type -- the form a caller has before it has
-	/// seen an answer.
+	/// Whether a reference's containing member is the one asked for. Ordinal, because <c>name</c> and
+	/// <c>Name</c> are two members of one type and a group of either has to list only its own.
 	/// </summary>
-	private static bool SitsInside(string? member, string wanted)
+	private bool SitsInside(string? member, string wanted)
 	{
 		if (member is null) return false;
 
-		return string.Equals(member, wanted, StringComparison.OrdinalIgnoreCase)
-			|| member.EndsWith($".{wanted}", StringComparison.OrdinalIgnoreCase);
+		return MemberIsKey
+			? string.Equals(member, wanted, StringComparison.Ordinal)
+			: member.EndsWith($".{wanted}", StringComparison.Ordinal);
 	}
 }
 

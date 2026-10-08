@@ -452,6 +452,67 @@ public sealed class AddFileTests
 			$"System did not come first: {text}");
 	}
 
+	/// <summary>
+	/// A project that lists its files is worked on in one order: name the file in the project, then create
+	/// it. The project then loads a document for the name with nothing on disk behind it, and refusing that
+	/// as a file already in the solution leaves no tool that can create it. It is written into that
+	/// document instead, and reported in the build, because the project names it; a file the project does
+	/// not name is still reported as outside it.
+	/// <para>
+	/// Listing is turned on here rather than with a legacy project, which would not load the same way
+	/// everywhere the suite runs. What decides the answer is the same: no default globs, and a
+	/// <c>Compile</c> item naming the file.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task Creates_a_file_its_project_already_lists()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		var project = fixture.Path("Members", "Library", "Library.csproj");
+
+		string Listing(string named) =>
+			$"""
+			<Project Sdk="Microsoft.NET.Sdk">
+			  <PropertyGroup>
+			    <TargetFramework>net10.0</TargetFramework>
+			    <Nullable>enable</Nullable>
+			    <ImplicitUsings>enable</ImplicitUsings>
+			    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+			  </PropertyGroup>
+			  <ItemGroup>
+			    <Compile Include="**\*.cs" Exclude="obj\**;bin\**;Listed.cs;Unlisted.cs" />
+			    {named}
+			  </ItemGroup>
+			</Project>
+			""";
+
+		var cancellation = TestContext.Current!.Execution.CancellationToken;
+
+		await File.WriteAllTextAsync(project, Listing(string.Empty), cancellation);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		// Named after the session has loaded, which is the order of work the refusal came from: the
+		// next call reloads the project and finds a document for a file that is not there.
+		await File.WriteAllTextAsync(project, Listing("""<Compile Include="Listed.cs" />"""), cancellation);
+
+		var listedPath = fixture.Path("Members", "Library", "Listed.cs");
+		var listed = await AddAsync(session, listedPath, "public static class Listed\n{\n    public static int One => 1;\n}");
+
+		listed.Applied.ShouldBeTrue();
+		listed.InTheBuild.ShouldBeTrue("the project names the file");
+		listed.IntroducedDiagnostics.ShouldBeEmpty();
+		listed.Notices.ShouldNotContain(notice => notice.Contains("lists the files it compiles", StringComparison.Ordinal));
+		File.Exists(listedPath).ShouldBeTrue();
+
+		var unlisted = await AddAsync(
+			session, fixture.Path("Members", "Library", "Unlisted.cs"), "public static class Unlisted\n{\n}");
+
+		unlisted.InTheBuild.ShouldBeFalse("the project does not name the file");
+		unlisted.Notices.ShouldContain(notice => notice.Contains("lists the files it compiles", StringComparison.Ordinal));
+	}
+
 	private static Task<AddFileResult> AddAsync(
 		WorkspaceSession session,
 		string filePath,

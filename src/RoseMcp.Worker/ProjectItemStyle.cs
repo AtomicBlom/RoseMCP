@@ -58,6 +58,51 @@ public static class ProjectItemStyle
 	}
 
 	/// <summary>
+	/// Whether the project's own text names <paramref name="path"/> in a <c>Compile</c> item and does not
+	/// remove it again, which puts the file in the build of a project that lists its files whether it is
+	/// on disk yet or not.
+	/// <para>
+	/// Only a literal path counts. A wildcard or a property is something only evaluation can answer, and
+	/// globbing is <see cref="GlobsSourceFiles"/>'s question; this is the other half, for the projects
+	/// that answer no to it. A name it cannot read is a name it does not count, so where it is wrong it
+	/// reports as outside the build a file that is in it, which is the cautious way round.
+	/// </para>
+	/// </summary>
+	/// <param name="projectFileText">The project file's text.</param>
+	/// <param name="projectDirectory">The directory the project file is in, which its paths are relative to.</param>
+	/// <param name="path">The source file, as a full path.</param>
+	public static bool Lists(string projectFileText, string projectDirectory, string path)
+	{
+		if (string.IsNullOrWhiteSpace(projectFileText)) return false;
+
+		try
+		{
+			var root = XDocument.Parse(projectFileText).Root;
+			if (root is null) return false;
+
+			var target = Path.GetFullPath(path);
+			var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+			bool Names(string? items) =>
+				items is not null
+				&& items
+					.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+					.Where(item => !item.Contains('*', StringComparison.Ordinal) && !item.Contains("$(", StringComparison.Ordinal))
+					.Select(item => Path.GetFullPath(Path.Combine(projectDirectory, item.Replace('\\', Path.DirectorySeparatorChar))))
+					.Any(item => string.Equals(item, target, comparison));
+
+			var compiles = root.Descendants().Where(element => element.Name.LocalName == "Compile").ToArray();
+
+			return compiles.Any(element => Names(element.Attribute("Include")?.Value))
+				&& !compiles.Any(element => Names(element.Attribute("Remove")?.Value));
+		}
+		catch (System.Xml.XmlException)
+		{
+			return false;
+		}
+	}
+
+	/// <summary>
 	/// Whether a property is set to false anywhere in the text. Matched textually rather than by
 	/// element, so a condition on it is not read as a value -- which is the safe way round: a
 	/// property that might be turning the globs off is treated as though it does, and the only

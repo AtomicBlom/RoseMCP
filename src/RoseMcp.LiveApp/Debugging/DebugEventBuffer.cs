@@ -25,7 +25,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 
 	private sealed record Waiter(
 		long After,
-		IReadOnlyCollection<LiveDebugEventKind>? Kinds,
+		EventFilter Filter,
 		TaskCompletionSource Arrived);
 
 	/// <summary>
@@ -51,7 +51,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 		lock (_gate)
 		{
 			var sequence = ++_observed;
-			_events.Enqueue(new LiveDebugEvent
+			var appended = new LiveDebugEvent
 			{
 				Sequence = sequence,
 				TimestampUtc = DateTime.UtcNow,
@@ -63,14 +63,16 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 				Frames = frames,
 				Variables = variables,
 				Logged = logged,
-			});
+			};
+
+			_events.Enqueue(appended);
 
 			while (_events.Count > capacity)
 			{
 				_events.Dequeue();
 			}
 
-			WakeWaitersFor(kind, sequence);
+			WakeWaitersFor(appended);
 
 			return sequence;
 		}
@@ -111,13 +113,13 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 	/// tasks -- the waiter re-reads for itself afterwards, so the page it gets is built the same way a
 	/// polled one is rather than by a second path that could differ.
 	/// </summary>
-	private void WakeWaitersFor(LiveDebugEventKind kind, long sequence)
+	private void WakeWaitersFor(LiveDebugEvent appended)
 	{
 		for (var index = _waiters.Count - 1; index >= 0; index--)
 		{
 			var waiter = _waiters[index];
-			if (sequence <= waiter.After) continue;
-			if (waiter.Kinds is { Count: > 0 } && !waiter.Kinds.Contains(kind)) continue;
+			if (appended.Sequence <= waiter.After) continue;
+			if (!waiter.Filter.Keeps(appended)) continue;
 
 			_waiters.RemoveAt(index);
 
@@ -155,17 +157,20 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 		long after,
 		IReadOnlyCollection<LiveDebugEventKind>? kinds,
 		TimeSpan timeout,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		string? exceptionType = null)
 	{
+		var filter = new EventFilter(kinds, exceptionType);
+
 		Waiter waiter;
 		lock (_gate)
 		{
 			// Already there, so do not wait at all. Checked under the same gate that Append takes, or
 			// an event landing between the check and the registration would be missed and the caller
 			// would wait out the whole timeout for something that had already happened.
-			if (HasMatch(after, kinds)) return DebugEventWait.AlreadyBuffered;
+			if (HasMatch(after, filter)) return DebugEventWait.AlreadyBuffered;
 
-			waiter = new Waiter(after, kinds, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+			waiter = new Waiter(after, filter, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
 			_waiters.Add(waiter);
 		}
 
@@ -184,7 +189,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 			// than a slow one.
 			lock (_gate)
 			{
-				return HasMatch(after, kinds) ? DebugEventWait.Arrived : DebugEventWait.TimedOut;
+				return HasMatch(after, filter) ? DebugEventWait.Arrived : DebugEventWait.TimedOut;
 			}
 		}
 		finally
@@ -197,12 +202,12 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 	}
 
 	/// <summary>Whether anything past a cursor matches. Callers hold <see cref="_gate"/>.</summary>
-	private bool HasMatch(long after, IReadOnlyCollection<LiveDebugEventKind>? kinds)
+	private bool HasMatch(long after, EventFilter filter)
 	{
 		foreach (var entry in _events)
 		{
 			if (entry.Sequence <= after) continue;
-			if (kinds is { Count: > 0 } && !kinds.Contains(entry.Kind)) continue;
+			if (!filter.Keeps(entry)) continue;
 
 			return true;
 		}
@@ -211,7 +216,7 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 	}
 
 	/// <summary>
-	/// A page of events after a cursor, optionally of only certain kinds.
+	/// A page of events after a cursor, optionally of only certain kinds or one exception type.
 	/// <para>
 	/// The kind filter is applied here rather than by the caller, and the cursor still advances over
 	/// the events it skips. Filtering after the fact would either lose the skipped events' place --
@@ -219,27 +224,44 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 	/// pull every module load across the wire to find them. A minute-old app produced 312 events and
 	/// 93KB, which is over a client's token cap, so "read it all and grep" is not a usable answer.
 	/// </para>
+	/// <para>
+	/// A page the limit cut short says what lies past it: the shape of the matching events still
+	/// buffered beyond the page, by kind and by exception type, each group a value <c>kinds</c> or
+	/// <c>exceptionType</c> takes. The page itself is kept, unlike a reference search's sample, because
+	/// a stream read in order is not a sample -- its first events are the next ones, and the cursor
+	/// reaches the rest -- but a caller looking for one exception among a thousand module loads should
+	/// learn from this page that it is there, and how to ask for it, rather than by paging to it.
+	/// </para>
 	/// </summary>
-	public (IReadOnlyList<LiveDebugEvent> Events, long NextCursor, long OldestAvailable, long TotalObserved, int Skipped) ReadAfter(
+	public EventRead ReadAfter(
 		long after,
 		int limit = 500,
-		IReadOnlyCollection<LiveDebugEventKind>? kinds = null)
+		IReadOnlyCollection<LiveDebugEventKind>? kinds = null,
+		string? exceptionType = null)
 	{
+		var filter = new EventFilter(kinds, exceptionType);
+
 		lock (_gate)
 		{
 			var oldest = _events.Count == 0 ? 0 : _events.Peek().Sequence;
 
 			var matching = new List<LiveDebugEvent>();
+			var beyond = new List<LiveDebugEvent>();
 			var skipped = 0;
 			var lastSeen = after;
 
 			foreach (var entry in _events)
 			{
 				if (entry.Sequence <= after) continue;
-				if (matching.Count >= limit) break;
+
+				if (matching.Count >= limit)
+				{
+					if (filter.Keeps(entry)) beyond.Add(entry);
+					continue;
+				}
 
 				lastSeen = entry.Sequence;
-				if (kinds is { Count: > 0 } && !kinds.Contains(entry.Kind))
+				if (!filter.Keeps(entry))
 				{
 					skipped++;
 					continue;
@@ -251,7 +273,69 @@ public sealed class DebugEventBuffer(int capacity = 4096)
 			// The cursor is where reading got to, not where the last *match* was, so a filtered read
 			// does not hand back a cursor that re-delivers everything it just chose to skip.
 			var nextCursor = _events.Count == 0 ? Math.Max(after, _observed) : lastSeen;
-			return (matching, nextCursor, oldest, _observed, skipped);
+
+			return new EventRead(matching, nextCursor, oldest, _observed, skipped, beyond.Count == 0 ? null : ShapeOf(beyond));
 		}
+	}
+
+	/// <summary>
+	/// How a set of events divides by kind and by exception type, each group keyed by the value its
+	/// argument takes, most first and ties by value -- the order the worker's shapes use, so every shape
+	/// on the surface reads the same way.
+	/// </summary>
+	public static LiveDebugEventShape ShapeOf(IReadOnlyCollection<LiveDebugEvent> events) => new()
+	{
+		Total = events.Count,
+		Kinds =
+		[
+			.. Counted(events.Select(entry => (string?)entry.Kind.ToString()))
+				.Select(group => new LiveEventKindCount { Kind = group.Value, Count = group.Count }),
+		],
+		ExceptionTypes =
+		[
+			.. Counted(events.Select(entry => entry.ExceptionType))
+				.Select(group => new LiveExceptionTypeCount { ExceptionType = group.Value, Count = group.Count }),
+		],
+	};
+
+	private static IEnumerable<(string Value, int Count)> Counted(IEnumerable<string?> values) =>
+		values
+			.OfType<string>()
+			.GroupBy(value => value, StringComparer.Ordinal)
+			.Select(group => (group.Key, group.Count()))
+			.OrderByDescending(group => group.Item2)
+			.ThenBy(group => group.Key, StringComparer.Ordinal);
+}
+
+/// <summary>A page of events after a cursor, and the shape of the matching ones past it where the page was cut short.</summary>
+public sealed record EventRead(
+	IReadOnlyList<LiveDebugEvent> Events,
+	long NextCursor,
+	long OldestAvailable,
+	long TotalObserved,
+	int Skipped,
+	LiveDebugEventShape? Beyond);
+
+/// <summary>
+/// Which events a read or a wait is about: of the kinds given, where any are, and of the exception type
+/// given, where one is -- matched by the type's full name or by its last segment, ignoring case, since
+/// a caller writes <c>InvalidOperationException</c> as often as <c>System.InvalidOperationException</c>.
+/// </summary>
+public sealed record EventFilter(IReadOnlyCollection<LiveDebugEventKind>? Kinds, string? ExceptionType)
+{
+	public bool Keeps(LiveDebugEvent entry)
+	{
+		var kindMatches = Kinds is not { Count: > 0 } || Kinds.Contains(entry.Kind);
+		var typeMatches = string.IsNullOrWhiteSpace(ExceptionType) || IsType(entry.ExceptionType, ExceptionType.Trim());
+
+		return kindMatches && typeMatches;
+	}
+
+	private static bool IsType(string? actual, string wanted)
+	{
+		if (actual is null) return false;
+		if (string.Equals(actual, wanted, StringComparison.OrdinalIgnoreCase)) return true;
+
+		return actual.EndsWith("." + wanted, StringComparison.OrdinalIgnoreCase);
 	}
 }

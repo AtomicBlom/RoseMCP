@@ -197,7 +197,8 @@ public sealed class LiveAppDebugTools(
 			+ "or ExceptionFirstChance alone is the difference between a readable answer and one that "
 			+ "has to be written to a file. Use waitSeconds with kinds to wait for one thing, such as "
 			+ "BreakpointHit, rather than calling this in a loop. Pass 'sequence' to fetch one event "
-			+ "whole when a page came back truncated.")]
+			+ "whole when a page came back truncated. A page cut at its limit counts what lies past it by "
+			+ "kind and exceptionType, each a value those filters take.")]
 	public async Task<LiveDebugEventPage> EventsAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.AfterSequenceArgument)]
@@ -210,10 +211,12 @@ public sealed class LiveAppDebugTools(
 		int waitSeconds = 0,
 		[Description(ToolDescriptions.EventSequenceArgument)]
 		long? sequence = null,
+		[Description(ToolDescriptions.EventExceptionTypeArgument)]
+		string? exceptionType = null,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		return await session.ReadEventsAsync(after, kinds, limit, waitSeconds, sequence, cancellationToken);
+		return await session.ReadEventsAsync(after, kinds, limit, waitSeconds, sequence, cancellationToken, exceptionType);
 	}
 
 	[McpServerTool(

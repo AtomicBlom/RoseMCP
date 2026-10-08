@@ -137,7 +137,11 @@ public static class ToolDescriptions
 	public const string IncludeAnalyzersArgument =
 		"Run analyzers as well as the compiler. Much slower over a whole solution; off by default.";
 
-	public const string MaxDiagnosticsArgument = "Maximum diagnostics to return. Defaults to 200.";
+	public const string MaxDiagnosticsArgument = "Most diagnostics to list; past it, their shape instead. Defaults to 200.";
+
+	public const string DiagnosticIdFilterArgument = "Only diagnostics with this id, as CS0103.";
+
+	public const string DiagnosticIsGeneratedArgument = "true: only diagnostics in generated code; false: only the rest.";
 
 	public const string MaxReferencesArgument = "Most references to list; past it, their shape instead. Defaults to 200.";
 
@@ -161,7 +165,9 @@ public static class ToolDescriptions
 
 	public const string SearchQueryArgument = "Name or abbreviation to search for.";
 
-	public const string MaxSearchMatchesArgument = "Maximum matches to return. Defaults to 50.";
+	public const string MaxSearchMatchesArgument = "Most matches to list, closest first; past it, the shape of the rest too. Defaults to 50.";
+
+	public const string SearchKindArgument = "Only matches of this kind: NamedType, Method, Property, Field or Event.";
 
 	public const string IncludeInheritedArgument = "Also list what the base classes contribute. Off by default.";
 
@@ -396,6 +402,8 @@ public static class ToolDescriptions
 		"Return just this one event, whole: every field it carries, logged values included -- use it "
 			+ "when a page came back truncated. Empty if not buffered: below oldestAvailable it was "
 			+ "dropped, above totalObserved it has not happened. Overrides the rest.";
+
+	public const string EventExceptionTypeArgument = "Only exceptions of this type, by full or short name.";
 
 	public const string MaxEventsArgument =
 		"Maximum events in this page (default 500). Lower it when you only need to see whether something "
@@ -659,7 +667,9 @@ public static class ToolDescriptions
 		MSBuild targets, so it cannot see emit-time errors, anything a build step generates or repacks,
 		or a failure in a project reference's own build, and analyzers are opt-in here while they can
 		be errors there. Diagnostics inside source-generated code are included, tagged with the hint
-		name that reads that code back. To repair what it reports, ask rose_list_code_fixes.
+		name that reads that code back. To repair what it reports, ask rose_list_code_fixes. Past
+		maxResults the answer is their shape: counts by id, project and file, each a value id, project
+		or filePath takes.
 		""";
 
 	public const string SymbolInfo = """
@@ -699,7 +709,8 @@ public static class ToolDescriptions
 	public const string SearchSymbols = """
 		Finds declarations across the solution by name pattern. Understands the abbreviations people
 		actually type, so SLoader matches SolutionLoader. Use this to locate a type or member before
-		asking for its references, its implementations, or renaming it.
+		asking for its references, its implementations, or renaming it. Past maxResults the closest are
+		listed with counts of all by kind and project, each a value kind or project takes.
 		""";
 
 	public const string ListGeneratedDocuments = """

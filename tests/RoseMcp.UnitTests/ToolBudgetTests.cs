@@ -59,8 +59,14 @@ public sealed class ToolBudgetTests
 	/// key is what lets a caller name its workspace in a few characters on every later call, where the
 	/// absolute path it replaces is the argument agents drop.
 	/// </para>
+	/// <para>
+	/// The overflow shapes on rose_diagnostics, rose_search_symbols and rose_debug_events are about 1,000
+	/// more: five narrowing arguments, one per facet a shape groups by, and a sentence on each tool saying
+	/// what an answer past its cap gives. Without them an answer past its cap is a sample of the first few,
+	/// which reads as the whole and cannot be narrowed except by reading all of it.
+	/// </para>
 	/// </summary>
-	private const int ModelFacing = 81500;
+	private const int ModelFacing = 82600;
 
 	[Test]
 	public void No_description_is_longer_than_its_ceiling()

@@ -21,4 +21,10 @@ public sealed record DiagnosticsRequest
 	public bool IncludeAnalyzers { get; init; }
 
 	public int MaxResults { get; init; } = 200;
+
+	/// <summary>Only diagnostics with this id, ignoring case; null for every id.</summary>
+	public string? Id { get; init; }
+
+	/// <summary>True for only diagnostics in source-generated code, false for only those in files.</summary>
+	public bool? IsGenerated { get; init; }
 }

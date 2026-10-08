@@ -48,6 +48,9 @@ public sealed class ProducedFactTests
 		typeof(ReferenceFile),
 		typeof(ReferenceSite),
 		typeof(WorkspaceScopedResult),
+		typeof(DiagnosticEntry),
+		typeof(SymbolMatch),
+		typeof(LiveDebugEvent),
 	];
 
 	/// <summary>
@@ -61,6 +64,10 @@ public sealed class ProducedFactTests
 	{
 		["SourceLocation.GeneratedHintName"] = "isGenerated",
 		["ReferenceFile.GeneratedHintName"] = "isGenerated",
+		["DiagnosticEntry.GeneratedHintName"] = "isGenerated",
+		["DiagnosticEntry.Severity"] = "minimumSeverity",
+		["SymbolMatch.Address"] = "symbols",
+		["LiveDebugEvent.Kind"] = "kinds",
 	};
 
 	/// <summary>
@@ -91,6 +98,18 @@ public sealed class ProducedFactTests
 
 		["ReferenceSite.Preview"] = "The evidence for a hit, and already switchable by includePreviews.",
 		["ReferenceFile.References"] = "The hits themselves, which every other facet narrows.",
+
+		["DiagnosticEntry.Message"] = "The finding itself, which its id already selects.",
+		["DiagnosticEntry.HelpLink"] = "Where to read about the id, which is what selects it.",
+		["SymbolMatch.Signature"] = "For reading; the address beside it is what is passed back.",
+		["SymbolMatch.Location"] = "Where the declaration is, not a dimension of the search.",
+		["LiveDebugEvent.TimestampUtc"] = "When it happened; the cursor is how a read selects by time.",
+		["LiveDebugEvent.Message"] = "The event itself, which its kind already selects.",
+		["LiveDebugEvent.ModuleName"] = "Carried only by a module load, one per module, which kinds selects.",
+		["LiveDebugEvent.ThreadId"] = "Which thread a stop is on, for the frame tools to read; a page is narrowed by what happened, not where.",
+		["LiveDebugEvent.Frames"] = "The stack at a stop, read with the event rather than asked about.",
+		["LiveDebugEvent.Variables"] = "The frame at a stop, read with the event rather than asked about.",
+		["LiveDebugEvent.Logged"] = "The values a tracepoint was asked to log, read with the event.",
 
 		// Card 22: the cheapest wins in the repository, and the reason a window can report a healthy
 		// workspace that is not one.

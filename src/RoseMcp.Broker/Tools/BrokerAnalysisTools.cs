@@ -28,6 +28,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.MinimumSeverityArgument)] string? minimumSeverity = null,
 		[Description(ToolDescriptions.IncludeAnalyzersArgument)] bool includeAnalyzers = false,
 		[Description(ToolDescriptions.MaxDiagnosticsArgument)] int maxResults = 200,
+		[Description(ToolDescriptions.DiagnosticIdFilterArgument)] string? id = null,
+		[Description(ToolDescriptions.DiagnosticIsGeneratedArgument)] bool? isGenerated = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
@@ -42,6 +44,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 				["minimumSeverity"] = minimumSeverity,
 				["includeAnalyzers"] = includeAnalyzers,
 				["maxResults"] = maxResults,
+				["id"] = id,
+				["isGenerated"] = isGenerated,
 			},
 			cancellationToken,
 			progress);
@@ -134,6 +138,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SearchQueryArgument)] string query,
 		[Description(ToolDescriptions.MaxSearchMatchesArgument)] int maxResults = 50,
+		[Description(ToolDescriptions.SearchKindArgument)] string? kind = null,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
@@ -141,6 +147,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		{
 			["query"] = query,
 			["maxResults"] = maxResults,
+			["kind"] = kind,
+			["project"] = project,
 		}, cancellationToken, progress);
 
 	[McpServerTool(

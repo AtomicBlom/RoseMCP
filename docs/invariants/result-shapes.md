@@ -111,7 +111,10 @@ Read before adding a tool, adding a field to a result, or changing an error path
   list reads as a symbol nobody uses. `truncated` means one thing, that raising the cap lists more,
   so an answer that lists nothing because it was asked to is not truncated. Nothing spills to a file
   the caller did not name: a read that writes to disk unasked leaves files nobody owns, and telling the
-  caller to grep them concedes the reason the tool exists.
+  caller to grep them concedes the reason the tool exists. `rose_diagnostics`, `rose_search_symbols` and
+  `rose_debug_events` answer past their caps the same way; a search keeps its closest matches and an
+  event page its events, since neither is a sample, and adds the shape of the rest. See
+  [the decision](../decisions/a-list-past-its-cap-describes-itself.md).
 - **Status may not report a field it cannot fill.** `GetStatusAsync` once passed `restore: null`,
   `loadSeconds: 0` and no load diagnostics, hard-coded, so every status answer on every solution
   carried the same three blanks. That is worse than omitting them: a failed restore reaches

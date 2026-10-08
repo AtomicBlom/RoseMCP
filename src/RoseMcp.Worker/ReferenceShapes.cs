@@ -145,26 +145,20 @@ public static class ReferenceShapes
 	/// </summary>
 	public static ReferenceShape Of(IReadOnlyCollection<SourceLocation> references)
 	{
-		var projects = references
-			.Where(location => location.Project is not null)
-			.GroupBy(location => location.Project!, StringComparer.Ordinal)
-			.Select(project => new ProjectReferenceCount
+		var projects = FacetGroups.Of(
+			references,
+			location => location.Project,
+			(project, inIt) => new ProjectReferenceCount
 			{
-				Project = project.Key,
-				Count = project.Count(),
-				IsTestProject = project.First().IsTestProject,
-			})
-			.OrderByDescending(project => project.Count)
-			.ThenBy(project => project.Project, StringComparer.Ordinal)
-			.ToArray();
+				Project = project,
+				Count = inIt.Count,
+				IsTestProject = inIt[0].IsTestProject,
+			});
 
-		var members = references
-			.Where(location => location.ContainingMember is not null)
-			.GroupBy(location => location.ContainingMember!, StringComparer.Ordinal)
-			.Select(member => new MemberReferenceCount { ContainingMember = member.Key, Count = member.Count() })
-			.OrderByDescending(member => member.Count)
-			.ThenBy(member => member.ContainingMember, StringComparer.Ordinal)
-			.ToArray();
+		var members = FacetGroups.Of(
+			references,
+			location => location.ContainingMember,
+			(member, inIt) => new MemberReferenceCount { ContainingMember = member, Count = inIt.Count });
 
 		return new ReferenceShape
 		{
@@ -172,8 +166,8 @@ public static class ReferenceShapes
 			InTestProjects = references.Count(location => location.IsTestProject),
 			InGeneratedCode = references.Count(location => location.GeneratedHintName is not null),
 			Projects = projects,
-			Members = members.Length > NamedMembers ? members[..NamedMembers] : members,
-			MemberCount = members.Length,
+			Members = FacetGroups.Capped(members, NamedMembers),
+			MemberCount = members.Count,
 		};
 	}
 

@@ -365,13 +365,14 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		IReadOnlyCollection<LiveDebugEventKind>? kinds,
 		int limit,
 		int waitSeconds,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		string? exceptionType = null)
 	{
-		if (waitSeconds <= 0) return ReadEvents(after, kinds, limit);
+		if (waitSeconds <= 0) return ReadEvents(after, kinds, limit, exceptionType);
 
 		var bounded = Math.Min(waitSeconds, MaxWaitSeconds);
-		var wait = await _events.WaitForAsync(after, kinds, TimeSpan.FromSeconds(bounded), cancellationToken);
-		var page = ReadEvents(after, kinds, limit);
+		var wait = await _events.WaitForAsync(after, kinds, TimeSpan.FromSeconds(bounded), cancellationToken, exceptionType);
+		var page = ReadEvents(after, kinds, limit, exceptionType);
 
 		// A wait from the start of the stream that never waited was answered out of history, and the
 		// page it produced is indistinguishable from one that waited for something new. Said here
@@ -418,23 +419,28 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	/// <summary>
 	/// A page of buffered debug events after the given cursor, with the session's state. <paramref
-	/// name="kinds"/> narrows it to the kinds asked for, and <paramref name="limit"/> caps the window.
+	/// name="kinds"/> and <paramref name="exceptionType"/> narrow it, and <paramref name="limit"/> caps the window.
 	/// </summary>
-	public LiveDebugEventPage ReadEvents(long after, IReadOnlyCollection<LiveDebugEventKind>? kinds = null, int limit = 500)
+	public LiveDebugEventPage ReadEvents(
+		long after,
+		IReadOnlyCollection<LiveDebugEventKind>? kinds = null,
+		int limit = 500,
+		string? exceptionType = null)
 	{
-		var (events, nextCursor, oldest, total, skipped) = _events.ReadAfter(after, limit, kinds);
+		var read = _events.ReadAfter(after, limit, kinds, exceptionType);
 
 		lock (_gate)
 		{
 			return new LiveDebugEventPage
 			{
 				State = EffectiveState(),
-				NextCursor = nextCursor,
-				OldestAvailable = oldest,
-				TotalObserved = total,
+				NextCursor = read.NextCursor,
+				OldestAvailable = read.OldestAvailable,
+				TotalObserved = read.TotalObserved,
 				TargetProcessId = _targetProcessId,
-				Events = events,
-				Skipped = skipped,
+				Events = read.Events,
+				Skipped = read.Skipped,
+				Beyond = read.Beyond,
 			};
 		}
 	}

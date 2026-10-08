@@ -674,53 +674,100 @@ public static class NavigationService
 		return matches;
 	}
 
+	/// <summary>
+	/// Declarations whose names match a pattern, closest names first.
+	/// <para>
+	/// Past the cap the closest names are still listed, unlike a reference search's sample: the order is
+	/// by how near each name is to what was typed, so the first matches are the best part of the answer
+	/// rather than an accident of where they sit. What the cap left out is described beside them -- how
+	/// many of each kind and in each project -- with every group a value <paramref name="kind"/> or
+	/// <paramref name="project"/> takes, so the next call can ask for the ones the cap hid.
+	/// </para>
+	/// </summary>
+	/// <param name="snapshot">The solution to search.</param>
+	/// <param name="query">The name or abbreviation.</param>
+	/// <param name="maxResults">How many matches to list.</param>
+	/// <param name="cancellationToken">Cancels the search.</param>
+	/// <param name="kind">Only matches of this kind, as a match reports it: NamedType, Method, Property, Field or Event.</param>
+	/// <param name="project">Only matches declared in this project.</param>
+	/// <exception cref="ArgumentException">The solution has no project of that name.</exception>
 	public static async Task<SymbolSearchResult> SearchAsync(
 		WorkspaceSnapshot snapshot,
 		string query,
 		int maxResults,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		string? kind = null,
+		string? project = null)
 	{
-		var matches = new List<SymbolMatch>();
+		var matches = new List<(ISymbol Symbol, string Project)>();
 
-		foreach (var project in snapshot.Solution.Projects)
+		// Resolved before the search, so a name no project carries is refused rather than read as a name
+		// nothing declares.
+		var searched = project is { Length: > 0 }
+			? ProjectNames.Resolve(snapshot.Solution, project)
+			: snapshot.Solution.Projects;
+		var wantedKind = string.IsNullOrWhiteSpace(kind) ? null : kind.Trim();
+
+		foreach (var candidate in searched)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
 			// Pattern search understands the abbreviations people actually type -- "SLoader" finds
 			// SolutionLoader -- which plain substring matching does not.
-			var found = await SymbolFinder.FindSourceDeclarationsWithPatternAsync(project, query, cancellationToken);
+			var found = await SymbolFinder.FindSourceDeclarationsWithPatternAsync(candidate, query, cancellationToken);
 
 			foreach (var symbol in found)
 			{
-				var location = symbol.Locations.FirstOrDefault(candidate => candidate.IsInSource);
-
-				matches.Add(new SymbolMatch
-				{
-					Name = symbol.Name,
-					Kind = symbol.Kind.ToString(),
-					Address = SymbolAddress.Of(symbol),
-					Signature = symbol.ToDisplayString(SymbolSignature.Format),
-					Project = project.Name,
-					Location = location is null
-						? null
-						: await SymbolLocator.DescribeAsync(snapshot.Solution, location, cancellationToken),
-				});
+				var isOfKind = wantedKind is null || string.Equals(symbol.Kind.ToString(), wantedKind, StringComparison.OrdinalIgnoreCase);
+				if (isOfKind) matches.Add((symbol, candidate.Name));
 			}
 		}
 
 		var ordered = matches
-			.OrderBy(match => match.Name.Length)
-			.ThenBy(match => match.Name, StringComparer.OrdinalIgnoreCase)
+			.OrderBy(match => match.Symbol.Name.Length)
+			.ThenBy(match => match.Symbol.Name, StringComparer.OrdinalIgnoreCase)
 			.ToArray();
 
 		var truncated = ordered.Length > maxResults;
+		var listed = new List<SymbolMatch>();
+
+		// Described only as far as the cap, since a location is a document read and the matches past it
+		// are counted, not listed.
+		foreach (var (symbol, projectName) in truncated ? ordered[..maxResults] : ordered)
+		{
+			var location = symbol.Locations.FirstOrDefault(candidate => candidate.IsInSource);
+
+			listed.Add(new SymbolMatch
+			{
+				Name = symbol.Name,
+				Kind = symbol.Kind.ToString(),
+				Address = SymbolAddress.Of(symbol),
+				Signature = symbol.ToDisplayString(SymbolSignature.Format),
+				Project = projectName,
+				Location = location is null
+					? null
+					: await SymbolLocator.DescribeAsync(snapshot.Solution, location, cancellationToken),
+			});
+		}
 
 		return new SymbolSearchResult
 		{
 			Revision = snapshot.Revision,
-			Matches = truncated ? ordered[..maxResults] : ordered,
+			Matches = listed,
 			TotalCount = ordered.Length,
 			Truncated = truncated,
+			Shape = truncated ? SearchShape(ordered) : null,
+			Notices = truncated
+				? [$"Listed the {maxResults} closest of {ordered.Length} matches. Narrow with kind or project -- every group "
+					+ $"in the shape is a value one of them takes -- or pass maxResults={ordered.Length} to list them all."]
+				: [],
 		};
 	}
+
+	/// <summary>How a search's matches divide by kind and by project, each group keyed by the value its argument takes.</summary>
+	private static SymbolSearchShape SearchShape(IReadOnlyCollection<(ISymbol Symbol, string Project)> matches) => new()
+	{
+		Kinds = FacetGroups.Of(matches, match => match.Symbol.Kind.ToString(), (kind, inIt) => new SymbolKindCount { Kind = kind, Count = inIt.Count }),
+		Projects = FacetGroups.Of(matches, match => match.Project, (project, inIt) => new SymbolProjectCount { Project = project, Count = inIt.Count }),
+	};
 }

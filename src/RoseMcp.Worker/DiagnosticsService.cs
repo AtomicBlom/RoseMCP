@@ -64,7 +64,10 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 				if (diagnostic.Severity < request.MinimumSeverity) continue;
 				if (!Matches(diagnostic, request)) continue;
 
-				collected.Add(ToEntry(diagnostic, project.Name, generatedNames));
+				var entry = ToEntry(diagnostic, project.Name, generatedNames);
+				if (!Keeps(entry, request)) continue;
+
+				collected.Add(entry);
 			}
 
 			analysed++;
@@ -76,22 +79,65 @@ public sealed class DiagnosticsService(ILogger<DiagnosticsService> logger)
 			.ThenBy(entry => entry.Line)
 			.ToArray();
 
+		// Past the cap, the shape rather than the first few: which diagnostics come first is an accident of
+		// severity and path order, and a sample read as the whole sends the caller to fix the wrong file.
+		// Every group in the shape is a value one of the narrowing arguments takes, so the next call asks
+		// a smaller question.
 		var truncated = ordered.Length > request.MaxResults;
 		if (truncated)
 		{
-			notices.Add($"Showing {request.MaxResults} of {ordered.Length} diagnostics. Narrow the scope or raise "
-				+ "the minimum severity to see the rest.");
+			notices.Add($"{ordered.Length} diagnostics is more than maxResults ({request.MaxResults}), so their shape is "
+				+ "given instead of the list. Narrow with id, project, filePath or isGenerated -- every group in the "
+				+ $"shape is a value one of them takes -- or pass maxResults={ordered.Length} to list them all.");
 		}
 
 		return new DiagnosticsResult
 		{
 			Revision = snapshot.Revision,
-			Diagnostics = truncated ? ordered[..request.MaxResults] : ordered,
+			Diagnostics = truncated ? [] : ordered,
 			TotalCount = ordered.Length,
 			Truncated = truncated,
+			Shape = truncated ? ShapeOf(ordered) : null,
 			IncludedAnalyzers = request.IncludeAnalyzers,
 			Notices = notices,
 		};
+	}
+
+	/// <summary>How many files a shape names, the rest counted beside them; the most a caller narrows to one at a time.</summary>
+	public const int NamedFiles = 10;
+
+	/// <summary>How a set of diagnostics divides by id, project and file, each group keyed by the value its argument takes.</summary>
+	public static DiagnosticShape ShapeOf(IReadOnlyCollection<DiagnosticEntry> diagnostics)
+	{
+		var files = FacetGroups.Of(
+			diagnostics.Where(entry => entry.GeneratedHintName is null),
+			entry => entry.FilePath,
+			(file, inIt) => new DiagnosticFileCount { FilePath = file, Count = inIt.Count });
+
+		return new DiagnosticShape
+		{
+			Total = diagnostics.Count,
+			InGeneratedCode = diagnostics.Count(entry => entry.GeneratedHintName is not null),
+			Ids = FacetGroups.Of(
+				diagnostics,
+				entry => entry.Id,
+				(id, inIt) => new DiagnosticIdCount { Id = id, Severity = inIt[0].Severity, Count = inIt.Count }),
+			Projects = FacetGroups.Of(
+				diagnostics,
+				entry => entry.Project,
+				(project, inIt) => new DiagnosticProjectCount { Project = project, Count = inIt.Count }),
+			Files = FacetGroups.Capped(files, NamedFiles),
+			FileCount = files.Count,
+		};
+	}
+
+	/// <summary>Whether a diagnostic satisfies the id and generated-code filters the caller gave.</summary>
+	private static bool Keeps(DiagnosticEntry entry, DiagnosticsRequest request)
+	{
+		var idMatches = request.Id is null || string.Equals(entry.Id, request.Id, StringComparison.OrdinalIgnoreCase);
+		var generatedMatches = request.IsGenerated is not { } generated || (entry.GeneratedHintName is not null) == generated;
+
+		return idMatches && generatedMatches;
 	}
 
 	private async Task<ImmutableArray<Diagnostic>> ForProjectAsync(

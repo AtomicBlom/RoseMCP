@@ -593,6 +593,36 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
+	/// A search past its cap lists the closest names, which are its best part rather than a sample, and
+	/// counts every match by kind and project, each group a value the narrowing argument takes -- so the
+	/// matches the cap hid are one call away by the group they are in.
+	/// </summary>
+	[Test]
+	public async Task A_search_past_its_cap_counts_every_match_by_kind_and_project()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var capped = await NavigationService.SearchAsync(snapshot, "Greet", 1, TestContext.Current!.Execution.CancellationToken);
+
+		capped.Truncated.ShouldBeTrue();
+		capped.Matches.ShouldHaveSingleItem();
+		var shape = capped.Shape.ShouldNotBeNull();
+		shape.Kinds.Sum(group => group.Count).ShouldBe(capped.TotalCount);
+		shape.Kinds.ShouldContain(group => group.Kind == "Method");
+		shape.Projects.ShouldContain(group => group.Project == "Library");
+
+		var methods = await NavigationService.SearchAsync(
+			snapshot, "Greet", 50, TestContext.Current!.Execution.CancellationToken, kind: "method", project: "Library");
+
+		methods.Matches.ShouldNotBeEmpty();
+		methods.Matches.ShouldAllBe(match => match.Kind == "Method" && match.Project == "Library");
+		methods.TotalCount.ShouldBeLessThanOrEqualTo(shape.Kinds.Single(group => group.Kind == "Method").Count);
+		methods.Shape.ShouldBeNull();
+	}
+
+	/// <summary>
 	/// An address a result reports is one the next call takes. The signature beside it is for reading
 	/// and does not parse: it leads with the return type, so the space before the second qualified name
 	/// lands inside a segment, and it names the parameters, which are not their types. A caller who

@@ -172,6 +172,8 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SearchQueryArgument)] string query,
 		[Description(ToolDescriptions.MaxSearchMatchesArgument)] int maxResults = 50,
+		[Description(ToolDescriptions.SearchKindArgument)] string? kind = null,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		CancellationToken cancellationToken = default) =>
 		calls.ReadAsync(
 			progress,
@@ -180,7 +182,7 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 				working.Report($"Searching declarations for '{query}'");
 
 				return NavigationService.SearchAsync(
-					snapshot, query, maxResults <= 0 ? 50 : maxResults, cancellationToken);
+					snapshot, query, maxResults <= 0 ? 50 : maxResults, cancellationToken, kind, project);
 			},
 			cancellationToken);
 

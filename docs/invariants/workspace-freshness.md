@@ -61,6 +61,16 @@ Read before adding or changing a read path, a reload trigger, or the file watche
   reloads -- over-reloading is the only answer there that cannot be stale. A watcher that loses events,
   to an overflowed buffer or a vanished directory, loses nothing else, so lost events reload only in that
   same case.
+- **A project's analyzer config files are the ones on disk, not only the ones its build walked to.** The
+  design-time build finds each .editorconfig and .globalconfig by walking up from the files it compiles,
+  so a project with nothing to compile when it was built -- one added to the solution before its first
+  file -- is given none, and the barrier absorbs that first file without building anything. Left there,
+  every write into it is laid out to Roslyn's defaults and compiled under its default severities, and
+  called clean while the build fails on an IDE0055 the repository raises to an error. So the load gives every project the files in and above its directory that it lacks,
+  which is what its next build gives it once a source is there, and leaves a kind out where the project
+  turns that discovery off. A folder inside a project that held no source at load still has an
+  .editorconfig nothing was given: the layout reads it from disk, and a write there names it and does not
+  say the project compiles clean without saying what the compile ran without.
 - **Re-reading a file decides what a later write puts back.** The barrier's reader is where a file's
   encoding is settled, so the fallback it passes for a stream with no byte order mark has to be one
   that emits none -- `Encoding.UTF8` emits a preamble and would mark every mark-less file the sweep

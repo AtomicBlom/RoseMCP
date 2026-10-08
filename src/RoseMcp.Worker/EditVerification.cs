@@ -61,6 +61,7 @@ public static class EditVerification
 		var movement = await TextMovement.BetweenAsync(before, after, cancellationToken);
 		var (introduced, resolved) = DiagnosticDelta.Compare(was, now, movement);
 		var ordered = Ordered(introduced, nearest);
+		var unread = UnreadConfigs(before, after, analyzed);
 
 		return new Verification
 		{
@@ -70,7 +71,8 @@ public static class EditVerification
 			TotalCount = now.Count,
 			Projects = projects,
 			AnalyzedProjects = analyzed,
-			Notices = [.. AnalyzerNotices(projects, analyzed)],
+			Notices = [.. AnalyzerNotices(projects, analyzed), .. unread.Select(Describe)],
+			UnreadConfigs = [.. unread.Select(config => config.Config).Distinct(StringComparer.OrdinalIgnoreCase)],
 
 			// Asked here rather than by each write tool, so the one thing a caller wants next after
 			// "this name does not resolve" arrives with the error rather than a call later.
@@ -131,6 +133,79 @@ public static class EditVerification
 			: $"Analyzers ran in {string.Join(", ", analyzed)}, where the edit wrote. "
 				+ $"{string.Join(", ", rest)} had the compiler only, so an analyzer rule broken there is not in this answer.";
 	}
+
+	/// <summary>
+	/// The analyzer config files on disk that apply to a file the edit wrote in <paramref name="analyzed"/> and
+	/// that its project was never given, each with the project and the files it applies to.
+	/// <para>
+	/// The load gives every project the files in and above its directory, so what is left is a folder that held
+	/// no source when the project was built -- the design-time build walks up from the files it compiles, and
+	/// found nothing to walk from there. A file written into it compiles under Roslyn's default severities, and
+	/// the build, which reads that folder's .editorconfig once the file is in it, can fail on a rule this compile
+	/// never applied. Asked once per directory, since every file in one has the same answer.
+	/// </para>
+	/// <para>
+	/// A project that sets <c>DiscoverEditorConfigFiles</c> or <c>DiscoverGlobalAnalyzerConfigFiles</c> to false
+	/// is named here too, although its build reads none of that kind: the solution does not carry what the
+	/// project's evaluation said. That costs a caveat on a compile that was right, where leaving it out would cost
+	/// a clean answer on one that was wrong.
+	/// </para>
+	/// </summary>
+	private static IReadOnlyList<UnreadConfig> UnreadConfigs(Solution before, Solution after, IReadOnlyList<string> analyzed)
+	{
+		var asked = new Dictionary<(ProjectId, string), IReadOnlyList<string>>();
+		var unread = new Dictionary<(string Project, string Config), List<string>>();
+
+		foreach (var change in after.GetChanges(before).GetProjectChanges())
+		{
+			if (after.GetProject(change.ProjectId) is not { } project) continue;
+			if (!analyzed.Contains(project.Name, StringComparer.Ordinal)) continue;
+
+			foreach (var id in change.GetChangedDocuments().Concat(change.GetAddedDocuments()))
+			{
+				if (project.GetDocument(id)?.FilePath is not { Length: > 0 } path) continue;
+				if (Path.GetDirectoryName(Path.GetFullPath(path)) is not { } directory) continue;
+
+				if (!asked.TryGetValue((project.Id, directory), out var configs))
+				{
+					configs = EditorConfigFiles.NotGiven(project, path);
+					asked[(project.Id, directory)] = configs;
+				}
+
+				foreach (var config in configs)
+				{
+					if (!unread.TryGetValue((project.Name, config), out var files)) unread[(project.Name, config)] = files = [];
+					files.Add(Path.GetFileName(path));
+				}
+			}
+		}
+
+		return
+		[
+			.. unread
+				.OrderBy(entry => entry.Key.Project, StringComparer.Ordinal)
+				.ThenBy(entry => entry.Key.Config, StringComparer.OrdinalIgnoreCase)
+				.Select(entry => new UnreadConfig(entry.Key.Project, entry.Key.Config, entry.Value)),
+		];
+	}
+
+	/// <summary>
+	/// What to say about one analyzer config file a project was never given: which files it applies to, that what
+	/// it sets is missing from this answer, and what brings it in.
+	/// </summary>
+	private static string Describe(UnreadConfig unread)
+	{
+		var files = unread.Files.Count <= 3
+			? string.Join(", ", unread.Files)
+			: $"{string.Join(", ", unread.Files.Take(3))} and {unread.Files.Count - 3} more";
+
+		return $"{unread.Config} applies to {files} and was never given to {unread.Project}, so the severities and "
+			+ "options it sets are not in this answer, and a build that reads it can fail where this did not. The "
+			+ "design-time build gives it once a source under it is on disk: rose_workspace_reload.";
+	}
+
+	/// <summary>An analyzer config file a project was never given, and the files the edit wrote that it applies to.</summary>
+	private sealed record UnreadConfig(string Project, string Config, IReadOnlyList<string> Files);
 
 	/// <summary>
 	/// The projects that hold a file, which is the right scope for a change that stays inside one

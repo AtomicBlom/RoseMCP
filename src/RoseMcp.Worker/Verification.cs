@@ -47,4 +47,22 @@ public sealed record Verification
 	/// </para>
 	/// </summary>
 	public IReadOnlyList<string> Suggestions { get; init; } = [];
+
+	/// <summary>
+	/// The .editorconfig and .globalconfig files on disk that apply to a file the edit wrote and that its project
+	/// was never given, so the compile ran under Roslyn's default severities where the build will not. Each is
+	/// named in <see cref="Notices"/>.
+	/// </summary>
+	public IReadOnlyList<string> UnreadConfigs { get; init; } = [];
+
+	/// <summary>
+	/// The sentence for a compile that found no errors in <paramref name="compiled"/>, which is not the build's
+	/// answer while <see cref="UnreadConfigs"/> holds anything: a rule one of them raises to an error was not
+	/// applied, and saying clean without that is the confident wrong answer verifying exists to prevent.
+	/// </summary>
+	public string Clean(string compiled) =>
+		UnreadConfigs.Count == 0
+			? $"{compiled} compiles clean."
+			: $"{compiled} compiles clean without the {UnreadConfigs.Count} analyzer config file(s) named above, so a "
+				+ "build that reads them can still fail.";
 }

@@ -1011,7 +1011,7 @@ public static class ChangeSignatureService
 				: $"This introduced {verification.Introduced.Count} error(s) in the solution.";
 		}
 
-		if (verification.TotalCount == 0) yield return "The whole solution compiles clean.";
+		if (verification.TotalCount == 0) yield return verification.Clean("The whole solution");
 
 		var existing = verification.TotalCount - verification.Introduced.Count;
 

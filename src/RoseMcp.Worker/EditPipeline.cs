@@ -212,7 +212,7 @@ internal sealed class EditPipeline
 			yield return $"{Verification.ResolvedCount} error(s) went away.";
 		}
 
-		if (Verification.TotalCount == 0) yield return $"{compiled} compiles clean.";
+		if (Verification.TotalCount == 0) yield return Verification.Clean(compiled);
 
 		var existing = Verification.TotalCount - Verification.Introduced.Count;
 

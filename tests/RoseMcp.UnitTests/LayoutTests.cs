@@ -143,6 +143,27 @@ public sealed class LayoutTests
 	}
 
 	/// <summary>
+	/// A folder that held no source when the project was built has an .editorconfig the project was never given,
+	/// below one it was. Roslyn's reading has the outer file's answer, and the nearer file on disk is the one a
+	/// build reads once the new file is in that folder, so it decides.
+	/// </summary>
+	[Test]
+	public async Task Takes_a_nearer_editorconfig_the_project_was_never_given_over_the_one_it_was()
+	{
+		const string Outer = "root = true\n[*.cs]\nindent_style = space\nindent_size = 4\n";
+
+		using var sandbox = Sandbox.Create()
+			.Given(Outer)
+			.OnDisk(".editorconfig", Outer)
+			.OnDisk("Rules/.editorconfig", "[*.cs]\nindent_style = tab\n");
+
+		var rules = await Whitespace.RulesForAsync(sandbox.Document("Rules/A.cs", "class A\r\n{\r\n}\r\n"), Token);
+
+		rules.IndentUnit.ShouldBe("\t");
+		rules.IndentFrom.ShouldBe(LayoutSource.EditorConfig);
+	}
+
+	/// <summary>
 	/// A new file has no text of its own to read, and the code a caller supplied for it is no witness:
 	/// composed for a JSON argument it is LF and indented however the caller typed it. The files nearest
 	/// it say how this repository is laid out.

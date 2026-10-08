@@ -79,10 +79,12 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   is measured from, and `WorkspaceHints` carries nothing else, so the resolution cannot ask the file
   system about a relative path. An absolute path is honoured wherever it points, including into
   another checkout -- inferring a path was the failure and accepting one never was. A workspace key
-  changes which worker answers and not where a relative path is measured from. Results carry
-  absolute paths, so a relative path a caller sends is one it wrote from where it stands, and the
-  session's directory is what it means; measuring it from the key's workspace instead would be right
-  only for a path the result had made relative to that workspace, and no result does.
+  changes which worker answers and not where a relative path is measured from. A result's paths are
+  absolute, or relative to that same directory -- `rose_find_references` shortens every file under it
+  and names it once as `relativeTo` -- so a relative path a caller sends is one it wrote or was handed
+  from where it stands, and the session's directory is what it means either way. Measuring it from the
+  key's workspace instead would break the round trip for every caller not running in its solution's
+  own directory. See [the decision](../decisions/a-path-a-read-returns-is-relative-to-the-caller.md).
 - **The hop to a worker or a live-app host is absolute-only, and they refuse a relative path.** A
   worker resolves one against its own working directory, which is its solution's root: the right
   answer for the call it was given and the wrong one for a call it should never have received, since

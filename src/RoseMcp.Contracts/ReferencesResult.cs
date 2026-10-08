@@ -46,11 +46,22 @@ public sealed record ReferencesResult : WorkspaceScopedResult
 	public ReferenceShape? Shape { get; init; }
 
 	public IReadOnlyList<string> Notices { get; init; } = [];
+
+	/// <summary>
+	/// The directory a relative <c>filePath</c> here is measured from: the one the calling session runs
+	/// in, which is also what a relative path sent back is measured from, so it names the same file in
+	/// the next call. Absent where every path is absolute.
+	/// </summary>
+	public string? RelativeTo { get; init; }
 }
 
 /// <summary>One file's references.</summary>
 public sealed record ReferenceFile
 {
+	/// <summary>
+	/// The file, relative to <see cref="ReferencesResult.RelativeTo"/> where it lies under it, and absolute
+	/// otherwise.
+	/// </summary>
 	public required string FilePath { get; init; }
 
 	/// <summary>The project compiling the file.</summary>

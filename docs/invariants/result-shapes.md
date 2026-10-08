@@ -188,7 +188,10 @@ Read before adding a tool, adding a field to a result, or changing an error path
   cost. See [the decision](../decisions/an-outline-is-cheap-by-default.md).
   <br>
   `rose_find_references` lists its references by file for the same reason: the path, the project and
-  whether it is a test project are said once per file rather than on every hit.
+  whether it is a test project are said once per file rather than on every hit. And the part of each
+  path every file shares, the directory the caller runs in, is said once as `relativeTo`, by the broker,
+  which is the only process that knows it; see
+  [the decision](../decisions/a-path-a-read-returns-is-relative-to-the-caller.md).
   <br>
   A write's `changedFiles` is the one list a narrowing must not reach early: `WorkspaceManager` reads
   all of it to say which sibling solution compiles the same files, so a worker that cut it would hide

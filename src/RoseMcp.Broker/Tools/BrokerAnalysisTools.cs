@@ -86,7 +86,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.FindReferences)]
-	public Task<ReferencesResult> FindReferencesAsync(
+	public async Task<ReferencesResult> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
 		[Description(ToolDescriptions.FilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
@@ -102,8 +102,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.IsGeneratedArgument)] bool? isGenerated = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
-		CancellationToken cancellationToken = default) =>
-		ForwardAsync<ReferencesResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.FindReferences, new()
+		CancellationToken cancellationToken = default)
+	{
+		var found = await ForwardAsync<ReferencesResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.FindReferences, new()
 		{
 			["symbol"] = symbol,
 			["filePath"] = filePath,
@@ -117,6 +118,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["isTestProject"] = isTestProject,
 			["isGenerated"] = isGenerated,
 		}, cancellationToken, progress);
+
+		return ResultPaths.RelativeTo(found, paths.Origin);
+	}
 
 	[McpServerTool(
 		Name = ToolNames.SearchSymbols,

@@ -2,6 +2,8 @@ using System.Text.Json;
 
 using ModelContextProtocol;
 
+using RoseMcp.Broker;
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -47,13 +49,13 @@ public sealed class ResultBudgetTests
 	private const int PerMetadataMember = 180;
 
 	/// <summary>
-	/// One listed reference with previews off, which costs 91 over string's uses in the fixture: its line,
+	/// One listed reference with previews off, which costs 71 over string's uses in the fixture: its line,
 	/// column and containing member, with its file's path, project and test-ness said once for every
-	/// reference in that file rather than on each. Measured over a symbol whose files hold several
+	/// reference in that file rather than on each, and the path relative to the caller's directory. Measured over a symbol whose files hold several
 	/// references apiece, since a file per reference is the case where the grouping saves nothing and
 	/// the case where size never matters.
 	/// </summary>
-	private const int PerReference = 95;
+	private const int PerReference = 75;
 
 	/// <summary>
 	/// A whole write result for adding a doc comment, which costs 1,499 -- the floor for an edit that
@@ -94,12 +96,16 @@ public sealed class ResultBudgetTests
 
 		// A symbol used all over the fixture, so files hold several references each, as they do in
 		// any answer large enough for its size to matter.
-		var references = await NavigationService.FindReferencesAsync(
-			snapshot,
-			new SymbolTarget { Symbol = "System.String" },
-			1000,
-			TestContext.Current!.Execution.CancellationToken,
-			includePreviews: false);
+		// Measured as the broker sends it, with each path relative to a caller standing in the
+		// solution's directory, since that shortening is the broker's and the worker never does it.
+		var references = ResultPaths.RelativeTo(
+			await NavigationService.FindReferencesAsync(
+				snapshot,
+				new SymbolTarget { Symbol = "System.String" },
+				1000,
+				TestContext.Current!.Execution.CancellationToken,
+				includePreviews: false),
+			Path.GetDirectoryName(fixture.SolutionPath)!);
 
 		var hits = references.Files.Sum(file => file.References.Count);
 		hits.ShouldBeGreaterThan(references.Files.Count, "the fixture should have files with several references");

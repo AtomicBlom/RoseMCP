@@ -200,6 +200,43 @@ public sealed class BrokerForwardingTests
 	}
 
 	/// <summary>
+	/// A reference's file comes back relative to the calling session's directory, and handed straight
+	/// back as a position it names the same file: the caller quotes back what it was given and the call
+	/// resolves, with no workspace key or root sent beside it.
+	/// </summary>
+	[Test]
+	public async Task A_references_relative_path_resolves_when_it_is_sent_back()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+		var origin = Path.GetDirectoryName(fixture.SolutionPath)!;
+		var tools = new BrokerAnalysisTools(manager, CreatePaths(origin));
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var references = await tools.FindReferencesAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbol: "Library.Greeter.Greet(string)",
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken);
+
+		references.RelativeTo.ShouldBe(origin);
+
+		var file = references.Files.First();
+		Path.IsPathRooted(file.FilePath).ShouldBeFalse($"'{file.FilePath}' should be relative to the session's directory");
+
+		var site = file.References.First();
+		var described = await tools.SymbolInfoAsync(
+			new Progress<ProgressNotificationValue>(),
+			filePath: file.FilePath,
+			line: site.Line,
+			column: site.Column,
+			cancellationToken: cancellationToken);
+
+		described.Name.ShouldBe("Greet");
+		described.Kind.ShouldBe("Method");
+	}
+
+	/// <summary>
 	/// Changing a signature over the wire, which is where an argument the broker spells differently
 	/// would show up -- and this one has the most arguments of any tool here.
 	/// </summary>

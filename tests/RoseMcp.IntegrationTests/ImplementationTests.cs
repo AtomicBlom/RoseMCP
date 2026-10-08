@@ -253,6 +253,30 @@ public sealed class ImplementationTests
 	}
 
 	/// <summary>
+	/// A file linked into two projects with different assembly names is compiled by each, so each lists
+	/// what the file declares there, as its own copy -- whichever project's copy the target resolved to.
+	/// </summary>
+	[Test]
+	public async Task Narrows_to_each_project_a_linked_file_is_compiled_by()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var target = new SymbolTarget { Symbol = "App.IShelf" };
+
+		foreach (var project in new[] { "App", "App.Tests" })
+		{
+			var result = await NavigationService.FindImplementationsAsync(
+				snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: project);
+
+			var match = result.Matches.ShouldHaveSingleItem();
+			match.Name.ShouldBe("WoodenShelf");
+			match.Project.ShouldBe(project);
+			result.TotalCount.ShouldBe(1);
+		}
+	}
+
+	/// <summary>
 	/// A project name the solution does not carry is refused, naming the ones it does. An empty list
 	/// reads exactly like a type nothing implements.
 	/// </summary>

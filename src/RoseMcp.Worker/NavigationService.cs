@@ -414,9 +414,10 @@ public static class NavigationService
 	}
 
 	/// <summary>
-	/// The symbol as each project compiling its declaration has it: once per framework of a multi-targeted
-	/// project, each a symbol of its own. A symbol from a referenced assembly, or one with no file a project
-	/// lists, is its only copy.
+	/// The symbol as each project compiling the file it is declared in declares it: once per framework of
+	/// a multi-targeted project, and once in each project a linked file is compiled by, each a symbol of
+	/// its own. A project whose <c>#if</c> leaves the declaration out has no copy. A symbol from a
+	/// referenced assembly, or one written in no file a project lists, is its only copy.
 	/// </summary>
 	private static async Task<IReadOnlyList<ISymbol>> CopiesAsync(Solution solution, ISymbol symbol, CancellationToken cancellationToken)
 	{
@@ -427,11 +428,10 @@ public static class NavigationService
 
 		foreach (var projectId in solution.GetDocumentIdsWithFilePath(path).Select(document => document.ProjectId).Distinct())
 		{
-			var compilation = solution.GetProject(projectId) is { } project
-				? await project.GetCompilationAsync(cancellationToken)
-				: null;
-
-			if (compilation is not null && CopyIn(compilation, symbol, cancellationToken) is { } copy) copies.Add(copy);
+			if (solution.GetProject(projectId) is { } project && await CopyInAsync(project, symbol, cancellationToken) is { } copy)
+			{
+				copies.Add(copy);
+			}
 		}
 
 		return [.. copies.Distinct(SymbolEqualityComparer.Default)];
@@ -480,41 +480,81 @@ public static class NavigationService
 		IReadOnlyList<ISymbol> candidates,
 		CancellationToken cancellationToken)
 	{
-		var compilations = new List<Compilation>();
-
-		foreach (var project in projects)
-		{
-			if (await project.GetCompilationAsync(cancellationToken) is { } compilation) compilations.Add(compilation);
-		}
-
 		var copies = new List<ISymbol>();
 
 		foreach (var candidate in candidates)
 		{
-			cancellationToken.ThrowIfCancellationRequested();
-
-			var copy = compilations
-				.Select(compilation => CopyIn(compilation, candidate, cancellationToken))
-				.FirstOrDefault(found => found is not null);
-
-			if (copy is not null) copies.Add(copy);
+			foreach (var project in projects)
+			{
+				if (await CopyInAsync(project, candidate, cancellationToken) is { } copy)
+				{
+					copies.Add(copy);
+					break;
+				}
+			}
 		}
 
 		return copies;
 	}
 
 	/// <summary>
-	/// The symbol as this compilation declares it, or null where it declares no such symbol. The copy a
-	/// symbol key resolves to has to belong to the compilation's own assembly: resolved in a project that
-	/// references the declaring one, the key finds the referenced type, which that project uses and does
-	/// not compile.
+	/// The symbol as this project declares it, or null where the project declares no such symbol.
+	/// <para>
+	/// Found by position first: the declaration written at the same place in this project's copy of the
+	/// file. That reaches across projects with different assembly names, which a file linked into two of
+	/// them has -- a shared project's items compiled by a UWP head and a desktop one -- where a symbol key
+	/// carries the assembly name and resolves within one assembly only. A region <c>#if</c> leaves inactive
+	/// for this project has no declaration at that place, so a type one framework compiles is not found in
+	/// the other. Where nothing of the candidate's kind is declared at that place -- a declaration a
+	/// generator wrote, in no file the project lists, or a positional record's property, whose syntax
+	/// declares a parameter -- it is resolved by its symbol key instead. The key honours <c>#if</c> too,
+	/// finding only what the compilation declares, and has to land in the project's own assembly: in a
+	/// project that only references the declaring one, the key finds the type it uses and does not compile.
+	/// </para>
 	/// </summary>
-	private static ISymbol? CopyIn(Compilation compilation, ISymbol candidate, CancellationToken cancellationToken)
+	private static async Task<ISymbol?> CopyInAsync(Project project, ISymbol candidate, CancellationToken cancellationToken)
 	{
+		if (await project.GetCompilationAsync(cancellationToken) is not { } compilation) return null;
 		if (SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, compilation.Assembly)) return candidate;
+		if (await DeclaredAtAsync(project, candidate, cancellationToken) is { } declared) return declared;
 
 		return SymbolFinder.FindSimilarSymbols(candidate, compilation, cancellationToken)
 			.FirstOrDefault(similar => SymbolEqualityComparer.Default.Equals(similar.ContainingAssembly, compilation.Assembly));
+	}
+
+	/// <summary>
+	/// What this project declares at a place the candidate is written, of the candidate's kind and name;
+	/// null where the project does not compile that file, or compiles it with the declaration inactive.
+	/// </summary>
+	private static async Task<ISymbol?> DeclaredAtAsync(Project project, ISymbol candidate, CancellationToken cancellationToken)
+	{
+		foreach (var reference in candidate.DeclaringSyntaxReferences)
+		{
+			var path = reference.SyntaxTree.FilePath;
+			var id = string.IsNullOrEmpty(path)
+				? null
+				: project.Solution.GetDocumentIdsWithFilePath(path).FirstOrDefault(document => document.ProjectId == project.Id);
+
+			if (id is null || project.GetDocument(id) is not { } document) continue;
+
+			var root = await document.GetSyntaxRootAsync(cancellationToken);
+			var model = await document.GetSemanticModelAsync(cancellationToken);
+			var isWithinTheFile = root is not null && reference.Span.End <= root.FullSpan.End;
+			if (!isWithinTheFile || model is null) continue;
+
+			// The same text parsed with other symbols defined: where the declaration is active the node
+			// spans exactly what it spans in the candidate's tree, and where it is not, the place is
+			// disabled text inside some larger node.
+			var declared = root!.FindNode(reference.Span, getInnermostNodeForTie: true)
+				.AncestorsAndSelf()
+				.TakeWhile(node => node.Span == reference.Span)
+				.Select(node => model.GetDeclaredSymbol(node, cancellationToken))
+				.FirstOrDefault(symbol => symbol is not null && symbol.Kind == candidate.Kind && symbol.Name == candidate.Name);
+
+			if (declared is not null) return declared;
+		}
+
+		return null;
 	}
 
 	/// <summary>What the listing left out, counted, since a short list otherwise reads as the whole answer.</summary>

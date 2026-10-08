@@ -962,4 +962,54 @@ public sealed class MemberEditTests
 
 		(await ReadAsync(fixture, "Greeter.cs")).ShouldNotContain("using Library.Extras;", Case.Sensitive);
 	}
+
+	/// <summary>
+	/// rose_delete_member takes no usings, so a deletion that leaves a remaining use binding only through
+	/// an unimported namespace is answered with rose_add_using alone. Advice to pass usings would name an
+	/// argument the call drops.
+	/// </summary>
+	[Test]
+	public async Task Suggests_only_rose_add_using_after_a_deletion()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Holder.cs"),
+			"""
+			namespace Library;
+
+			public static class Holder
+			{
+				public static string Read() => Marker.Name;
+
+				private static class Marker
+				{
+					public const string Name = "own";
+				}
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		// Left to resolve, the edit would import Library.Nested itself; the advice is what is under test.
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Delete,
+			Symbol = "Library.Holder.Marker",
+			ResolveUsings = false,
+			Apply = false,
+		});
+
+		var unresolved = result.IntroducedDiagnostics.First(entry => entry.Id == "CS0103");
+
+		result.Notices.ShouldContain(
+			notice => notice.StartsWith("Marker is", StringComparison.Ordinal)
+				&& notice.Contains(
+					$"call rose_add_using with namespaces: [\"Library.Nested\"] on {unresolved.FilePath}.", StringComparison.Ordinal));
+
+		result.Notices.ShouldNotContain(notice => notice.Contains("pass usings:", StringComparison.Ordinal));
+		result.Notices.ShouldNotContain(notice => notice.Contains("usings argument on this tool", StringComparison.Ordinal));
+	}
 }

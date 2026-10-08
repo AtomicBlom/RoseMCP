@@ -84,7 +84,10 @@ public static class MemberEditService
 
 		progress?.Report("Compiling to see what the edit did", 70);
 
-		await edit.VerifyAsync(path, scope, [path], cancellationToken);
+		// rose_delete_member writes no code and takes no usings, so its advice names rose_add_using alone.
+		IReadOnlyCollection<string> usingsReach = request.Kind == MemberEditKind.Delete ? [] : [path];
+
+		await edit.VerifyAsync(path, scope, usingsReach, cancellationToken);
 
 		// Only where something did not bind, so an edit whose imports were right or unneeded pays
 		// nothing for this and the one that needed it pays the compile it would have paid at the
@@ -101,7 +104,7 @@ public static class MemberEditService
 
 			var importing = asked.And(written.Document, await EditImports.RegionAsync(written.Document, cancellationToken));
 
-			await edit.RewriteAsync(resolved, importing, path, scope, [path], cancellationToken);
+			await edit.RewriteAsync(resolved, importing, path, scope, usingsReach, cancellationToken);
 
 			notices.AddRange(ResolvedImports.Report(imports));
 
@@ -1001,9 +1004,13 @@ public static class MemberEditService
 		if (verification.Introduced.Any(entry => Unresolved.Contains(entry.Id, StringComparer.Ordinal))
 			&& verification.Suggestions.Count == 0)
 		{
+			var importer = request.Kind == MemberEditKind.Delete
+				? "rose_add_using imports what the code needs."
+				: "the usings argument on this tool imports what the code needs in the same call.";
+
 			yield return "A name that does not resolve is either something not written yet or a missing import, and "
 				+ "nothing of that name is reachable from here -- so it is the first. rose_resolve_name searches for "
-				+ "one by name; the usings argument on this tool imports what the code needs in the same call.";
+				+ $"one by name; {importer}";
 		}
 
 		// Said only where it can happen. A body cannot change a signature, and adding a member

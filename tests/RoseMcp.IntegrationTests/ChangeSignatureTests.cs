@@ -1348,15 +1348,72 @@ public sealed class ChangeSignatureTests
 			usings: ["System.Text"],
 			apply: false);
 
-		result.IntroducedDiagnostics.ShouldContain(diagnostic => diagnostic.Id == "CS0246");
+		var unresolved = result.IntroducedDiagnostics.First(diagnostic => diagnostic.Id == "CS0246");
+
 		result.IntroducedDiagnostics.ShouldAllBe(
 			diagnostic => diagnostic.FilePath!.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase));
 
+		// The whole path, since that is what rose_add_using's filePath is matched against: a file name
+		// alone is refused, and two files can share one.
+		Path.IsPathFullyQualified(unresolved.FilePath!).ShouldBeTrue();
+
 		result.Notices.ShouldContain(
 			notice => notice.StartsWith("StringBuilder is", StringComparison.Ordinal)
-				&& notice.Contains("call rose_add_using on Caller.cs with namespaces: [\"System.Text\"]", StringComparison.Ordinal));
+				&& notice.Contains(
+					$"call rose_add_using with namespaces: [\"System.Text\"] on {unresolved.FilePath}.", StringComparison.Ordinal));
 
 		result.Notices.ShouldNotContain(notice => notice.Contains("pass usings:", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A name unresolved at the declaration and at call sites in two other files is answered for each:
+	/// the usings argument for the declaration, which it reaches, and rose_add_using for every caller's
+	/// file, which it does not. Answering the name once, by the first file it failed in, leaves the
+	/// callers failing after the advice is followed.
+	/// </summary>
+	[Test]
+	public async Task Names_every_file_a_name_is_unresolved_in_with_the_advice_that_reaches_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await WriteAsync(fixture, "SecondCaller.cs", """
+			namespace Library;
+
+			public static class SecondCaller
+			{
+				public static string Call() => new Greeter().Greet("again");
+			}
+
+			""");
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session,
+			"Library.Greeter.Greet(string)",
+			"string name, StringBuilder into",
+			["into=new StringBuilder()"],
+			apply: false);
+
+		var callers = result.IntroducedDiagnostics
+			.Where(diagnostic => diagnostic.Id == "CS0246" && !diagnostic.FilePath!.EndsWith("Greeter.cs", StringComparison.OrdinalIgnoreCase))
+			.Select(diagnostic => diagnostic.FilePath!)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+
+		callers.Length.ShouldBe(2, "both callers pass an argument naming a type their files do not import");
+
+		result.Notices.ShouldContain(
+			notice => notice.StartsWith("StringBuilder is", StringComparison.Ordinal)
+				&& notice.Contains("pass usings: [\"System.Text\"]", StringComparison.Ordinal));
+
+		var elsewhere = result.Notices
+			.Where(notice => notice.StartsWith("StringBuilder is also unresolved where usings does not reach", StringComparison.Ordinal))
+			.ShouldHaveSingleItem();
+
+		elsewhere.ShouldContain("call rose_add_using with namespaces: [\"System.Text\"] once for each of", Case.Sensitive);
+
+		foreach (var caller in callers) elsewhere.ShouldContain(caller, Case.Sensitive);
 	}
 
 	/// <summary>

@@ -419,12 +419,13 @@ public sealed class DeclarationEditTests
 				token),
 			TestContext.Current!.Execution.CancellationToken);
 
-		result.IntroducedDiagnostics.ShouldContain(diagnostic => diagnostic.Id == "CS0246");
+		var unresolved = result.IntroducedDiagnostics.First(diagnostic => diagnostic.Id == "CS0246");
 
 		result.Notices.ShouldContain(
 			notice => notice.StartsWith("DebuggerDisplayAttribute is", StringComparison.Ordinal)
 				&& notice.Contains(
-					"call rose_add_using on Greeter.cs with namespaces: [\"System.Diagnostics\"]", StringComparison.Ordinal));
+					$"call rose_add_using with namespaces: [\"System.Diagnostics\"] on {unresolved.FilePath}.",
+					StringComparison.Ordinal));
 
 		result.Notices.ShouldNotContain(notice => notice.Contains("pass usings:", StringComparison.Ordinal));
 	}

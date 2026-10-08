@@ -272,7 +272,7 @@ public sealed class IgnoredArgumentsTests
 	/// A server and a client joined by pipes in this process, with the broker's two boundary filters
 	/// in the order the broker registers them.
 	/// </summary>
-	private sealed class Connection : IAsyncDisposable
+	internal sealed class Connection : IAsyncDisposable
 	{
 		private readonly ServiceProvider _services;
 		private readonly CancellationTokenSource _stop;

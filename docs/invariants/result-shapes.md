@@ -22,6 +22,16 @@ Read before adding a tool, adding a field to a result, or changing an error path
   sees what the caller sent, and a spelling it accepts in place of a declared name is not unknown.
   Named, never refused, and never answered with a further alias -- clients attach extras of their
   own, and an alias teaches nobody the real name.
+- **A result's text is written with one encoder, `ToolJson.Encoder`, in every host.** A typed
+  tool's answer reaches a client twice, as structured content and as a text block holding the same
+  JSON, and most clients hand the model the text. The SDK writes that text with the framework's
+  default encoder unless a registration passes options, and the default spells every `+ < > ' "`,
+  backtick and `&` as a six-character escape inside the string, where no client decodes it: a diff
+  becomes unreadable and several times longer. So every `WithTools` and `WithToolsFromAssembly` passes
+  `ToolJson.Readable(McpJsonUtilities.DefaultOptions)`, and anything that rewrites a result's text
+  block afterwards -- the ignored-argument notice is one -- writes it with the same instance. A
+  registration that leaves the options off, or a filter that picks its own, is a second spelling of
+  the same answer that changes from one call to the next with nothing in the call saying why.
 - **Advice names an argument only where the tool takes it and it reaches.** A write that leaves a
   name unresolved suggests the import, and a suggestion is followed literally: telling the caller of
   a tool without `usings` to pass it sends an argument the tool never sees, and telling

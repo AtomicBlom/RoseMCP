@@ -111,6 +111,34 @@ public sealed class RelayTests
 	}
 
 	/// <summary>The structured half of a tool reply, or the error text when the call failed.</summary>
+	/// <summary>
+	/// A worker's answer, through the broker and the relay in front of it, reads in the text block a
+	/// client hands the model with its plus sign as itself. Every hop it crosses -- the worker's own
+	/// serialization, the broker that reads its structured content and writes its own, and the relay
+	/// that passes the tray's result on -- is one where a default encoder would spell it as an escape
+	/// inside the string, which no client decodes.
+	/// </summary>
+	[Test]
+	public async Task A_relayed_worker_answer_spells_its_source_as_written()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		var directory = Path.GetDirectoryName(fixture.SolutionPath)!;
+		await using var relay = await RelayFixture.StartAsync(directory, cancellationToken);
+
+		using var answer = await relay.Session.CallToolAsync(
+			ToolNames.SymbolInfo,
+			"""{"symbol":"Core.Calculator.Add","includeSource":true}""",
+			cancellationToken);
+
+		Structured(answer);
+		var text = ErrorText(answer);
+
+		text.ShouldContain("left + right", Case.Sensitive);
+		text.ShouldNotContain("\\" + "u002B", Case.Sensitive);
+	}
+
 	internal static JsonElement Structured(JsonDocument reply)
 	{
 		var result = reply.RootElement.GetProperty("result");

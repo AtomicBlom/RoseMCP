@@ -1,9 +1,9 @@
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -31,10 +31,10 @@ namespace RoseMcp.Broker;
 public static class IgnoredArguments
 {
 	/// <summary>
-	/// Written for a person reading the text block. The default encoder escapes a backtick, which
-	/// every notice uses to quote a name, so a notice read as text would show <c>`path`</c>.
+	/// The options every broker tool is registered with, so the text block rewritten here is spelled
+	/// exactly as the one the SDK wrote for a call that carried nothing extra.
 	/// </summary>
-	private static readonly JsonSerializerOptions Readable = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+	private static readonly JsonSerializerOptions Json = ToolJson.Readable(McpJsonUtilities.DefaultOptions);
 
 	/// <summary>
 	/// Adds a notice to each successful call for every argument it carried that the tool does not
@@ -81,7 +81,7 @@ public static class IgnoredArguments
 
 		var structured = result.StructuredContent is { } element ? JsonNode.Parse(element.GetRawText()) : null;
 		var noticed = WithNotices(structured, notices);
-		if (noticed is not null) result.StructuredContent = JsonSerializer.SerializeToElement(noticed);
+		if (noticed is not null) result.StructuredContent = JsonSerializer.SerializeToElement(noticed, Json);
 
 		// A new list rather than edits to the old one, which may be fixed-size.
 		var content = new List<ContentBlock>(result.Content.Count + notices.Count);
@@ -93,7 +93,7 @@ public static class IgnoredArguments
 				&& block is TextContentBlock text
 				&& JsonNode.DeepEquals(Parsed(text.Text), structured);
 
-			content.Add(isMirror ? new TextContentBlock { Text = noticed!.ToJsonString(Readable) } : block);
+			content.Add(isMirror ? new TextContentBlock { Text = noticed!.ToJsonString(Json) } : block);
 			mirrored |= isMirror;
 		}
 

@@ -154,6 +154,10 @@ public static class ServiceCollectionExtensions
 		// Type[] as a tool instance and registers nothing at all. ArgumentAliases.Scanned is what
 		// keeps this list and that one honest, since a tool registered here but never read for
 		// aliases is a tool whose arguments can silently go missing.
+		//
+		// Every type gets the same options, which differ from the SDK's only in the encoder, so the
+		// text block a client reads spells + and < as themselves rather than as escapes.
+		var json = ToolJson.Readable(McpJsonUtilities.DefaultOptions);
 		var builder = services
 			.AddMcpServer(server =>
 			{
@@ -162,10 +166,10 @@ public static class ServiceCollectionExtensions
 					? Instructions + DebuggingInstructions
 					: Instructions;
 			})
-			.WithTools<BrokerTools>()
-			.WithTools<BrokerAnalysisTools>();
+			.WithTools<BrokerTools>(json)
+			.WithTools<BrokerAnalysisTools>(json);
 
-		if (OperatingSystem.IsWindows()) builder = builder.WithTools<LiveAppDebugTools>();
+		if (OperatingSystem.IsWindows()) builder = builder.WithTools<LiveAppDebugTools>(json);
 
 		return builder
 			.WithArgumentAliases(aliases)

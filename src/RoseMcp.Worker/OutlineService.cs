@@ -173,6 +173,7 @@ public static partial class OutlineService
 		}
 
 		var described = new List<OutlinedType>();
+		var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
 
 		// Declared order, not alphabetical: a file's own order is what a reader is going to see when
 		// they open it, and sorting would make the outline and the file disagree.
@@ -181,6 +182,10 @@ public static partial class OutlineService
 			cancellationToken.ThrowIfCancellationRequested();
 
 			if (model.GetDeclaredSymbol(declaration, cancellationToken) is not INamedTypeSymbol symbol) continue;
+
+			// A partial type declared in two blocks of one file is one type: listing it per block would
+			// spend the member cap on it twice and count its members twice in the totals.
+			if (!seen.Add(symbol)) continue;
 
 			described.Add(await DescribeAsync(snapshot, symbol, root.SyntaxTree, detail, listing, cancellationToken));
 		}

@@ -8,17 +8,16 @@ namespace RoseMcp.IntegrationTests;
 /// What an answer costs the caller who has to read it, per item.
 /// <para>
 /// The unit suite's <c>ToolBudgetTests</c> measures what the model is shown before it calls
-/// anything; nothing measured what came back. The surface it did not cover is where the cost
-/// actually is: a compact outline of a 24-member type came back at 10.1 KB with both of its size
-/// controls off, and an agent that pays that once and learns nothing it could not have grepped does
-/// not pay it twice. Four cards in tier 3 are about result size, and without a number they are
-/// unverifiable and silently regress.
+/// anything; this measures what comes back, which is where most of the cost is. An agent that pays
+/// for a large answer once and learns nothing it could not have grepped does not pay it twice.
+/// Work that shrinks a result is unverifiable without a number, and a result nobody measures
+/// silently grows.
 /// </para>
 /// <para>
 /// Per item rather than per result, because a result is as big as the answer needs to be and the
-/// question is what each item of it costs. The ceilings below are what the shapes cost now: they are
-/// a ratchet for work that has not happened, so the cards that shrink these results lower them, and
-/// the diff is the record of what the work bought.
+/// question is what each item of it costs. Each ceiling sits just above what its shape measures: it
+/// is a ratchet, so a change that shrinks a result lowers it, and the diff is the record of what the
+/// change bought.
 /// </para>
 /// <para>
 /// Measured over the record as the tool returns it, serialised with the MCP layer's own options --
@@ -41,21 +40,21 @@ public sealed class ResultBudgetTests
 	/// <summary>
 	/// One reference with previews off, which costs 235. Every hit repeats the absolute path and
 	/// carries four facets the tool will not filter on, which is what makes an overflow answerable
-	/// only with a bigger artefact. Card 11e is where both halves of that go.
+	/// only with a bigger artefact -- so this is the number that falls when either is taken out.
 	/// </summary>
 	private const int PerReference = 240;
 
 	/// <summary>
 	/// A whole write result for adding a doc comment, which costs 1,499 -- the floor for an edit that
-	/// introduces no diagnostic at all, where card 11b measured about 4,000 for one that did. Most of
-	/// it is the doc comment the caller composed, read back in the diff. An edit loop pays this per
-	/// edit, so it is the number tier 3 moves furthest.
+	/// introduces no diagnostic at all; one that does costs several times more. Most of it is the doc
+	/// comment the caller composed, read back in the diff. An edit loop pays this per edit, which
+	/// makes it the result whose size matters most.
 	/// </summary>
 	private const int PerWriteResult = 1550;
 
 	/// <summary>
-	/// The read shapes, measured against one loaded fixture because a load is the expensive part and
-	/// sharing one is card 18's work rather than this test's.
+	/// The read shapes, measured against one loaded fixture, because a load is the expensive part of
+	/// this test and one is enough for both.
 	/// </summary>
 	[Test]
 	public async Task A_read_costs_no_more_per_item_than_its_budget()
@@ -109,7 +108,7 @@ public sealed class ResultBudgetTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
 
-		// A doc comment and nothing else, which is the edit card 11b measured: the caller composed
+		// A doc comment and nothing else, the cheapest edit there is: the caller composed
 		// every character of it and pays to read it back in the diff.
 		var result = await MemberEdits.ReplaceAsync(
 			session,
@@ -128,7 +127,7 @@ public sealed class ResultBudgetTests
 	/// The size passed in is the marginal one -- the result with the items in it, less the same
 	/// result with none -- so the answer's own scaffold is not divided across however many items a
 	/// fixture happens to have. That makes the number a property of the item's shape rather than of
-	/// the fixture, which is what lets a card lower it and mean something.
+	/// the fixture, which is what lets a change lower it and mean something.
 	/// </para>
 	/// </summary>
 	private static void AssertWithin(int budget, int size, int items, string shape)

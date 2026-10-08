@@ -397,6 +397,34 @@ public sealed class OutlineTests
 	}
 
 	/// <summary>
+	/// A partial type written as two blocks of one file is one type in the outline. Listed once per
+	/// block, it would spend the member cap twice and its totals would count every member twice.
+	/// </summary>
+	[Test]
+	public async Task Lists_a_type_split_within_one_file_once()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			type: null,
+			fixture.Path("Members", "Library", "Halved.cs"),
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.Select(member => member.Name).ShouldBe(["FrontHalf", "BackHalf"]);
+		type.TotalMembers.ShouldBe(2);
+		type.Members.ShouldAllBe(member => member.FilePath == null);
+		result.Truncated.ShouldBeFalse();
+	}
+
+	/// <summary>
 	/// An inherited member says which type declared it, which is the one case where the type it is
 	/// listed under is not its own.
 	/// </summary>

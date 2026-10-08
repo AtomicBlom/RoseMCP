@@ -176,8 +176,8 @@ offset it was bound at.
   already sees every module as it loads, but keeps only the path -- the `CorDebugModule` is dropped, so
   the walk has to be retaken.
 - **Why it matters:** A full stop of somebody's application per breakpoint set, for a list the session
-  could have kept. It is also the cost that makes card 11d (a plural `rose_debug_*` call) worth more
-  than it looks: six locations today is six stops.
+  could have kept. A batch of locations is bound in one pass and so costs one stop, but every call
+  still costs one, however many modules the session has already seen load.
 - **Suggested change:** Keep the `CorDebugModule` objects alongside the paths in `TargetSymbols`, filled
   from `Remember` on load and from the one walk the attach already takes, so `AddBinding` binds against
   what is known without stopping the target. Hot reload wants the same map for a different reason: EnC

@@ -503,6 +503,25 @@ public sealed class ChangeSignatureTests
 			notice => notice.Contains("Retyped name", StringComparison.Ordinal));
 	}
 
+	/// <summary>
+	/// Saying a parameter may be null converts no argument, so it is not warned about as a retype, and no
+	/// call site is listed: there is nothing at one worth a look, and every one of them used to be named
+	/// with a reason about a new parameter's default that there was no new parameter to have.
+	/// </summary>
+	[Test]
+	public async Task Does_not_call_a_change_of_nullability_a_retype()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Greeter.Greet(string)", "string? name");
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldNotContain(notice => notice.Contains("Retyped", StringComparison.Ordinal));
+		result.Notices.ShouldContain(notice => notice.StartsWith("Changed only whether name may be null", StringComparison.Ordinal));
+		result.UnchangedCallSites.ShouldBeEmpty();
+	}
+
 	[Test]
 	public async Task Writes_nothing_when_previewing()
 	{

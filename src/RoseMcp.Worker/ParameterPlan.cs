@@ -24,6 +24,16 @@ public sealed record ParameterPlan
 	/// <summary>Parameters that stayed but changed type, which is what can break a call site silently.</summary>
 	public required IReadOnlyList<string> Retyped { get; init; }
 
+	/// <summary>
+	/// The retyped parameters whose type changed only in whether it may be null: <c>string</c> to
+	/// <c>string?</c> and back. Still retyped, since every declaration in the group has to agree, but no
+	/// argument converts to anything different, so warning that one might is a false alarm.
+	/// </summary>
+	public IReadOnlyList<string> Reannotated { get; init; } = [];
+
+	/// <summary>The retyped parameters whose arguments may now convert to something else.</summary>
+	public IEnumerable<string> Converted => Retyped.Except(Reannotated, StringComparer.Ordinal);
+
 	/// <summary>New parameters, in the order they now appear.</summary>
 	public IEnumerable<PlannedParameter> Added => Parameters.Where(parameter => parameter.WasAt is null);
 
@@ -81,11 +91,17 @@ public sealed record ParameterPlan
 			.Select(parameter => parameter.Name)
 			.ToArray();
 
+		var reannotated = planned
+			.Where(parameter => parameter.WasAt is { } at && OnlyNullability(existing[at], parameter.Declaration))
+			.Select(parameter => parameter.Name)
+			.ToArray();
+
 		return new ParameterPlan
 		{
 			Parameters = planned,
 			Removed = removed,
 			Retyped = retyped,
+			Reannotated = reannotated,
 		};
 	}
 
@@ -120,4 +136,14 @@ public sealed record ParameterPlan
 			existing.Type?.ToString().Replace(" ", string.Empty, StringComparison.Ordinal),
 			wanted.Type?.ToString().Replace(" ", string.Empty, StringComparison.Ordinal),
 			StringComparison.Ordinal);
+
+	/// <summary>Whether two parameter types differ only by a trailing <c>?</c> on one of them.</summary>
+	private static bool OnlyNullability(ParameterSyntax existing, ParameterSyntax wanted)
+	{
+		var before = existing.Type?.ToString().Replace(" ", string.Empty, StringComparison.Ordinal) ?? string.Empty;
+		var after = wanted.Type?.ToString().Replace(" ", string.Empty, StringComparison.Ordinal) ?? string.Empty;
+
+		return string.Equals(before + "?", after, StringComparison.Ordinal)
+			|| string.Equals(after + "?", before, StringComparison.Ordinal);
+	}
 }

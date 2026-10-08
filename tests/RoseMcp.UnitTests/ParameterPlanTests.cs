@@ -66,6 +66,24 @@ public sealed class ParameterPlanTests
 	}
 
 	/// <summary>
+	/// A change of nullability is still a retype, since every declaration in the group has to agree on it,
+	/// but no argument converts to anything different -- so it is told apart from one that might.
+	/// </summary>
+	[Test]
+	[Arguments("string name", "string? name")]
+	[Arguments("string? name", "string name")]
+	[Arguments("int count", "int? count")]
+	public void Tells_a_change_of_nullability_from_a_change_of_type(string existing, string wanted)
+	{
+		var plan = Plan(existing, wanted);
+		var name = plan.Parameters.ShouldHaveSingleItem().Name;
+
+		plan.Retyped.ShouldBe([name]);
+		plan.Reannotated.ShouldBe([name]);
+		plan.Converted.ShouldBeEmpty();
+	}
+
+	/// <summary>
 	/// Renaming a parameter reads as removing one and adding another, which is the right answer:
 	/// rose_rename_symbol moves the named arguments at every call site too, and nothing here would.
 	/// </summary>

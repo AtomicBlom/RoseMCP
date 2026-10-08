@@ -744,8 +744,14 @@ public static class ChangeSignatureService
 			});
 		}
 
-		// The ones that compile either way, which is where the silent bug lives.
-		if (plan.CallSitesUnaffected)
+		// The ones that compile either way, which is where the silent bug lives: a new parameter every
+		// caller takes the default of, or an argument that converts to a parameter's new type. A change
+		// that brings neither -- one that only says whether a parameter may be null -- leaves nothing at
+		// a call site worth a look, and listing every one of them is a list nobody reads.
+		var added = plan.Added.Any();
+		var converted = plan.Converted.ToArray();
+
+		if (plan.CallSitesUnaffected && (added || converted.Length > 0))
 		{
 			foreach (var item in work)
 			{
@@ -753,12 +759,18 @@ public static class ChangeSignatureService
 				{
 					if (!reported.Add(location)) continue;
 
+					var reason = added
+						? await ForwarderAsync(solution, location, cancellationToken)
+							?? "Nothing needed changing, since every new parameter has a default. Worth a look all "
+							+ "the same: a caller that goes on taking the default may be one that should not."
+						: $"Its arguments were left as they were, and the one it passes to {string.Join(", ", converted)} "
+							+ "now goes to a different type. Worth a look: a conversion that happens to exist compiles "
+							+ "and may mean something else.";
+
 					unchanged.Add(new UnchangedCallSite
 					{
 						Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),
-						Reason = await ForwarderAsync(solution, location, cancellationToken)
-							?? "Nothing needed changing, since every new parameter has a default. Worth a look all "
-							+ "the same: a caller that goes on taking the default may be one that should not.",
+						Reason = reason,
 					});
 				}
 			}
@@ -855,10 +867,17 @@ public static class ChangeSignatureService
 		// before anything about what compiled.
 		foreach (var notice in outcome.Notices) yield return notice;
 
-		if (plan.Retyped.Count > 0)
+		if (plan.Converted.Any())
 		{
-			yield return $"Retyped {string.Join(", ", plan.Retyped)}, which the call sites still pass their old "
+			yield return $"Retyped {string.Join(", ", plan.Converted)}, which the call sites still pass their old "
 				+ "arguments to. A conversion that happens to exist will compile and mean something different.";
+		}
+
+		if (plan.Reannotated.Count > 0)
+		{
+			yield return $"Changed only whether {string.Join(", ", plan.Reannotated)} may be null, which no argument "
+				+ "has to change for. A caller passing null where it no longer may is a nullable warning, and the "
+				+ "compile reports it only where those are errors.";
 		}
 
 		if (unchanged.Count > 0)

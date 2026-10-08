@@ -162,9 +162,11 @@ Read before adding a tool, adding a field to a result, or changing an error path
   tools are dead, and the loader's message names a file and nothing else. The worker's call-tool filter
   reads it off the exception (`AssemblyLoadFault`), says what it means and that `rose_workspace_reload`
   starts a fresh worker, and records it on the session, which status reads on every call and a reload does
-  not clear. A missing source file throws the same exception type naming a path, and an analyzer's own
-  dependency fails in a load context of its own; neither is this, and telling a caller to restart the
-  worker over them would be wrong advice.
+  not clear. A missing source file throws the same exception type naming a path, and a code fixer's or
+  generator's own dependency names an assembly the worker was not started with -- decided by the missing
+  assembly against the trusted platform list and the worker's directory, not by the throwing frame, since
+  the JIT reports a missing dependency in its caller's frame, which can be Roslyn's. Neither is this, and
+  telling a caller to restart the worker over them would be wrong advice.
 - **A fixer that declines is the same as no fixer.** `rose_list_code_fixes` dropped a diagnostic
   whose providers offered nothing from `fixes` and from `unfixableIds` both, so it disappeared from
   the answer entirely -- which is exactly what the second list exists to prevent. CS0103 is what

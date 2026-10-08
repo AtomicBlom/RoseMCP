@@ -80,6 +80,23 @@ public sealed class AssemblyLoadFaultTests
 	}
 
 	/// <summary>
+	/// A code fixer whose package did not ship one of its dependencies fails in whichever default-context frame
+	/// called it, Roslyn's own included. The missing assembly is the package's, a fresh worker fails the same
+	/// way, and degrading the workspace for life with restart advice over it would be wrong.
+	/// </summary>
+	[Test]
+	public void Leaves_an_assembly_the_worker_was_not_started_with()
+	{
+		var missing = new FileNotFoundException(
+			"Could not load file or assembly 'Some.Fixer.Helper, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'.",
+			"Some.Fixer.Helper, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null");
+
+		AssemblyLoadFault.From(Caught(() => throw missing), "rose_apply_code_fix").ShouldBeNull();
+		AssemblyLoadFault.From(Caught(ForeignCode.Throw), "rose_apply_code_fix").ShouldNotBeNull(
+			"System.IO.Compression is on the trusted platform list, so it is still the worker's");
+	}
+
+	/// <summary>
 	/// .NET updated underneath a running worker takes its runtime directory away, which is the one cause of a
 	/// framework assembly failing to load that the worker can see for itself, so it is said when it holds.
 	/// </summary>

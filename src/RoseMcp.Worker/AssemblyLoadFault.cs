@@ -58,9 +58,10 @@ public sealed record AssemblyLoadFault
 	/// for this worker's own code.
 	/// <para>
 	/// A <see cref="FileNotFoundException"/> counts only when it names an assembly by its display name, since
-	/// a tool reading a file that is not there throws the same type naming a path. One thrown from code an
-	/// analyzer load context holds is left alone: that is a generator's dependency missing, which a rebuild of
-	/// the generator fixes and <c>analyzerLoadFailures</c> already reports, not this process going wrong.
+	/// a tool reading a file that is not there throws the same type naming a path. An assembly the worker was
+	/// not started with -- a code fixer's or generator's own dependency -- is left alone, and so is one thrown
+	/// from code an analyzer load context holds: those are a package missing something, which a fresh worker
+	/// fails on too and <c>analyzerLoadFailures</c> already reports, not this process going wrong.
 	/// </para>
 	/// </summary>
 	/// <param name="exception">What the tool call ended with. Its inner exceptions are searched too.</param>
@@ -71,6 +72,7 @@ public sealed record AssemblyLoadFault
 		for (var current = exception; current is not null; current = current.InnerException)
 		{
 			if (AssemblyNamed(current) is not { } assembly) continue;
+			if (!ShipsWithTheWorker(assembly)) return null;
 			if (ThrownInAnalyzerCode(current)) return null;
 
 			var directory = runtimeDirectory ?? RuntimeEnvironment.GetRuntimeDirectory();
@@ -89,7 +91,7 @@ public sealed record AssemblyLoadFault
 
 	private static string? AssemblyNamed(Exception exception) => exception switch
 	{
-		FileLoadException load => SimpleName(load.FileName) ?? "an assembly the runtime did not name",
+		FileLoadException load => SimpleName(load.FileName),
 		FileNotFoundException missing when IsDisplayName(missing.FileName) => SimpleName(missing.FileName),
 		_ => null,
 	};
@@ -116,6 +118,29 @@ public sealed record AssemblyLoadFault
 			return Path.GetFileNameWithoutExtension(fileName);
 		}
 	}
+
+	/// <summary>
+	/// Whether the assembly is one this process was started with: on the runtime's trusted platform list, which
+	/// is the shared framework plus everything the worker's own deps file names, or beside the worker itself.
+	/// <para>
+	/// Decided by the assembly that is missing rather than by the frame that noticed, because a dependency the
+	/// JIT cannot find surfaces in the caller's frame: a third-party code fixer reached through Roslyn's own
+	/// code-action machinery, missing an assembly its package never shipped, fails in a Roslyn frame in the
+	/// default context. That is the package's fault, a fresh worker fails the same way, and recording it would
+	/// mark the workspace degraded for the life of the process with advice that cannot help.
+	/// </para>
+	/// </summary>
+	private static bool ShipsWithTheWorker(string assembly) =>
+		TrustedPlatformAssemblies.Value.Contains(assembly)
+		|| File.Exists(Path.Combine(AppContext.BaseDirectory, $"{assembly}.dll"));
+
+	/// <summary>The simple names on the runtime's trusted platform list, read once.</summary>
+	private static readonly Lazy<HashSet<string>> TrustedPlatformAssemblies = new(() =>
+		((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty)
+			.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+			.Select(Path.GetFileNameWithoutExtension)
+			.OfType<string>()
+			.ToHashSet(StringComparer.OrdinalIgnoreCase));
 
 	/// <summary>
 	/// Whether the method the exception came out of belongs to an assembly some load context other than the

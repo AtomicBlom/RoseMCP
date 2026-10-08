@@ -69,9 +69,9 @@ public sealed class OverreachReportTests
 	}
 
 	/// <summary>
-	/// A whole initialiser written into a constant whose value sat on the line below it. The value used
-	/// to come up onto the declaration's line, which nothing asked for; it stays below its "=", so the
-	/// declaration's line is untouched and there is nothing to name.
+	/// A whole initialiser written into a constant whose value sits on the line below it. Joined to the
+	/// declaration with a space, the value comes up onto the declaration's line, which nothing asked for;
+	/// it stays below its "=", so the declaration's line is untouched and there is nothing to name.
 	/// </summary>
 	[Test]
 	public async Task Leaves_the_declaration_a_wrapped_value_sits_under()
@@ -103,9 +103,9 @@ public sealed class OverreachReportTests
 	}
 
 	/// <summary>
-	/// An anchored change to one element of a collection expression. The bracket that opened it on a line
-	/// of its own used to come up onto the declaration's line (#338); it stays where it was, and nothing
-	/// outside the anchor is named.
+	/// An anchored change to one element of a collection expression whose bracket opens on a line of its
+	/// own. Joined to the declaration with a space, the bracket comes up onto the declaration's line; it
+	/// stays where it was, and nothing outside the anchor is named.
 	/// </summary>
 	[Test]
 	public async Task Leaves_a_bracket_on_the_line_it_opened_on()

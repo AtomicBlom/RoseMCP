@@ -506,8 +506,8 @@ public sealed class ChangeSignatureTests
 
 	/// <summary>
 	/// Saying a parameter may be null converts no argument, so it is not warned about as a retype, and no
-	/// call site is listed: there is nothing at one worth a look, and every one of them used to be named
-	/// with a reason about a new parameter's default that there was no new parameter to have.
+	/// call site is listed: there is nothing at one worth a look, and naming every one of them with a reason
+	/// about a new parameter's default, when no parameter was added, is a list nobody can act on.
 	/// </summary>
 	[Test]
 	public async Task Does_not_call_a_change_of_nullability_a_retype()

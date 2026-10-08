@@ -36,7 +36,6 @@ src/RoseMcp.Ui.Core/Inspector/XamlTreeBuilder.cs	history	1
 src/RoseMcp.Worker/ChangeSignatureService.cs	issue	1
 src/RoseMcp.Worker/DiagnosticTarget.cs	history	2
 src/RoseMcp.Worker/DiskSynchronizer.cs	history	1
-src/RoseMcp.Worker/MemberSyntax.cs	issue	1
 src/RoseMcp.Worker/NavigationService.cs	history	1
 src/RoseMcp.Worker/SignatureRewriter.cs	issue	1
 src/RoseMcp.Worker/UsingDirectives.cs	history	1

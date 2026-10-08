@@ -359,7 +359,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | ~~12b~~ | **#380.** Three debug tools answered with a sentence naming no session, and the guard against that exempted the whole live-app surface. Every tool answers with a record, and the live-app exemption covers workspace attribution only. | BRK-21 | — | — |
 | 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. The WinUI load diagnostic ("Cannot resolve Assembly or Windows Metadata file") goes with it: it should say its remedy, which is to build the referenced project first. Advice naming an argument the tool does not take is gone (#329). `rose_move_member` refuses an instance member with no call sites that never uses `this`, on the ground that moving it changes what `this` means (#346). | AGT-04, WRK-07 | #346 | M |
 | 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. #303 is the case where nothing is stamped because nothing noticed: after a reload, `rose_find_references` and `rose_symbol_info` failed on an assembly that would not load while status said Loaded with no degraded reasons. The load failure is its own fix; the card's half is that a tool path which is dead makes the workspace degraded. | AGT-12, USE-01 | #303 | S |
-| 15 | **`rose_find_implementations` cannot be restricted to your own solution**, so a common framework interface returns 116 metadata matches truncated at 40. | IPC dogfooding, AGT-07 | new | S |
+| ~~15~~ | **#383.** `rose_find_implementations` answered a framework interface with every dependency's implementations and could not be narrowed, and `rose_find_references` listed one declaration several times. The first lists this solution's source only and takes `project`; each declaration and each use is listed once. | IPC dogfooding, USE dogfooding, AGT-07 | — | — |
 
 ### Tier 4 — mechanism: make the rules structural
 
@@ -451,7 +451,7 @@ Filed here so they reach the issue tracker. Several are not in any existing issu
    despite the description's promise, and ignores `filePath` (05 dogfooding).
 4. ~~A metadata symbol is unreachable whenever any source symbol shares its leaf name (AGT-03).~~ **#418.**
 5. ~~A positional record property cannot be addressed by name from any tool (WRK-04).~~ **#418.**
-6. `rose_find_implementations` has no way to ask "in my solution" (IPC dogfooding).
+6. ~~`rose_find_implementations` has no way to ask "in my solution" (IPC dogfooding).~~ **#383.**
 7. ~~`rose_find_references` lists one definition three to four times at different columns (USE dogfooding).~~ **#378.**
 8. ~~`definitionsOnly=true` reports `truncated: true` over an empty list (AGT-05).~~ **#378.**
 9. `rose_resolve_name` without a file path fails with a leaked Roslyn parameter name (AGT-04).

@@ -1069,11 +1069,8 @@ a second pass mapping paths to projects. It also correctly excluded the `RoseMcp
 documentation matches and the `.dll` binary match that polluted my grep output for `InstallLocation`.
 **Worth recording as a win, because most dogfooding notes in this review series are losses.**
 
-**One defect in that answer.** Each result's `definitions` array lists the same declaration three or
-four times at different columns on one line -- for `InfoAge`, line 96 at columns 19, 19, 29 and 34.
-One property, one declaration, four entries, one of them an exact duplicate. It is harmless to read
-and it inflates the payload of the cheapest possible query, and a caller counting definitions gets a
-wrong answer. AGT territory.
+~~**One defect in that answer.**~~ **#383.** A property's declaration was listed as several
+definitions, one per accessor and backing field. Each declaration is listed once.
 
 **Where I did not reach for Rose, and why.**
 

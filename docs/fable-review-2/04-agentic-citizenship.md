@@ -201,13 +201,12 @@ Truncation means only that raising the cap lists more.
 - **Why it matters:** On an answer spanning many files the root is most of each path, and it is the one part of the path the caller already has.
 - **Suggested change:** Emit paths relative to the `workspace` root already in the result (absolute only when outside it).
 
-### AGT-07 `rose_find_implementations` has no `project` filter, so the question it advertises is the one it cannot answer
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/Tools/BrokerAnalysisTools.cs:276-283`; `src/RoseMcp.Contracts/ToolDescriptions.cs:588-589`
-- **What:** The description's worked example is `"what here implements IDisposable" is one call`. The tool takes `maxResults` and no `project`, where its sibling `rose_find_references` takes both. The `03-liveapp` reviewer ran exactly the advertised call, got 1,312 matches truncated twice, every one from `ClrDebug`, `WinRT.Runtime`, ASP.NET and Roslyn metadata, could not scope it (passing `workspace` does not narrow), and fell back to grep.
-- **Why it matters:** For a BCL or framework interface -- the case the description chose to advertise -- scoping is not an optimisation, it is the only form of the question. Truncating at 200 without it returns 200 arbitrary matches from dependencies and calls itself an answer.
-- **Suggested change:** Add `project` with the same semantics and the same refusal-on-unknown-name as `rose_find_references` (`NavigationService.cs:143`), and add `sourceOnly` (default true) so metadata implementations are excluded unless asked for. Assert in `ToolParityTests` that the two navigation tools offer the same narrowing arguments.
+### ~~AGT-07 `rose_find_implementations` has no `project` filter, so the question it advertises is the one it cannot answer~~
+**#383.** A framework interface was answered with its implementations across every dependency, and
+the solution's own were cut off behind them. It lists this solution's source only, counts what it
+left out, and narrows by `project` the way `rose_find_references` does.
+**Declined:** an argument to list the dependencies' implementations as well. The surface had no room
+for one under its budget, and no caller has asked that question of this tool.
 
 ### ~~AGT-08 A misspelled argument is dropped in silence and the error then reports the value as missing~~
 **#249.** An argument sent under a name the tool did not declare was dropped, so a refusal reported
@@ -403,8 +402,7 @@ that a file is formatted.
   (`AddFileResult`, `CodeFixResult`, `FormatResult`, `MemberEditResult`, `MoveTypeResult`,
   `RenameResult`, `SignatureChangeResult`, `UsingResult`), so `ChangedFiles` and `Notices` are on
   every one of the thirteen writing tools. The same shapes recur on the read surface: a path per
-  member in `rose_outline` (AGT-01), a path per hit and a definition listed three to four times in
-  `rose_find_references` (AGT-06), unbounded raw XML in `rose_symbol_info` (AGT-11), and a
+  member in `rose_outline` (AGT-01), a path per hit in `rose_find_references` (AGT-06), unbounded raw XML in `rose_symbol_info` (AGT-11), and a
   `helpLink` plus an absolute path on every entry of `rose_diagnostics`, which at solution scope is
   the worst case in the product.
 
@@ -453,8 +451,8 @@ From the 18-issue corpus, the three other reviewers' dogfooding notes, and my ow
 by how often it decides a call, not by severity.
 
 1. **The answer is too big to use** (AGT-01, AGT-02, AGT-06, AGT-11, #234). The commonest loss, and
-   the only one where the tool *worked*. `rose_outline` at 22 KB, `rose_find_implementations` at
-   1,312 matches, `rose_symbol_info` at 9 KB of XML. An agent that cannot afford the answer greps,
+   the only one where the tool *worked*. `rose_outline` at 22 KB, `rose_symbol_info` at 9 KB of
+   XML. An agent that cannot afford the answer greps,
    and it does not come back.
 2. ~~**The name the caller wrote cannot be addressed** (AGT-03, #210, #233, #239).~~ **#418.** The
    four instances named here resolve by name.
@@ -537,9 +535,8 @@ more fact needs to travel through them.
 3. **Does `rose_format` intend to be the check?** Its description says "pass apply=false to check
    formatting without writing", and #218 shows it passing a file `dotnet format` fails. Is the
    contract "what IDE0055 thinks" or "what CI will think"? They are different tools.
-4. **Is there a reason `rose_find_implementations` has no `project`?** It looks like an omission
-   rather than a decision, but `rose_find_references` grew one and this did not, so it may have been
-   considered.
+4. ~~**Is there a reason `rose_find_implementations` has no `project`?**~~ **Answered, #383:** it
+   was an omission, and it takes one.
 5. **Should the writing tools be usable without the model having read the file?** Today
    `rose_replace_body`'s `find` and `rose_replace_member`'s whole-declaration payload both assume the
    caller knows what is currently there. An agent that has not read the file cannot use either, and

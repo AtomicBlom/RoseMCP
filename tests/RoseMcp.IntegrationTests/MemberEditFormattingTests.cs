@@ -220,6 +220,62 @@ public sealed class MemberEditFormattingTests
 	}
 
 	/// <summary>
+	/// A value wrapped below its "=" stays below it, whether the whole value is written or part of it is
+	/// found and replaced. Joined to the declaration with a space, it was pulled up onto the declaration's
+	/// line -- and a collection expression's "[" with it -- which no formatting rule puts back and no
+	/// request asked for. A caller who starts a value with a line break is asking for the wrap, and gets
+	/// it where the file had none.
+	/// </summary>
+	[Test]
+	[Arguments("Long", "\"replaced\"", null, "\tpublic const string Long =\r\n\t\t\"replaced\";\r\n")]
+	[Arguments("Names", null, "\"two\",", "\tpublic static readonly string[] Names =\r\n\t[\r\n\t\t\"one\",\r\n\t\t\"three\",\r\n\t];\r\n")]
+	[Arguments("Short", "\n\"wrapped\"", null, "\tpublic const string Short =\r\n\t\t\"wrapped\";\r\n")]
+	public async Task Keeps_a_value_on_the_line_it_was_on(string member, string? code, string? find, string expected)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Values.cs"),
+			"""
+			namespace Library;
+
+			public static class Values
+			{
+				public const string Long =
+					"a value long enough that it was wrapped onto a line of its own";
+
+				public static readonly string[] Names =
+				[
+					"one",
+					"two",
+				];
+
+				public const string Short = "a";
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = $"Library.Values.{member}",
+			Code = code ?? string.Empty,
+			Find = find,
+			Replace = find is null ? null : "\"three\",",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.Notices.ShouldNotContain(
+			notice => notice.Contains("Nothing this was asked to do reaches them", StringComparison.Ordinal));
+
+		(await ReadAsync(fixture, "Values.cs")).ShouldContain(expected, Case.Sensitive);
+	}
+
+	/// <summary>
 	/// An expression-bodied member added rather than edited, with its body on a line of its own.
 	/// </summary>
 	[Test]

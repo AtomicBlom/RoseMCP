@@ -288,6 +288,14 @@ public static class MemberEditService
 		var asked = new List<TextSpan>();
 		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, rules, notices, asked, out var supplied);
 
+		// A body assembled from the file's own text is already indented for where it sits, and the
+		// only caller code in it has been placed against the line it lands on -- so the destination's
+		// own indentation is what comes off and goes back on, and the pass is the identity it should
+		// be. Read from the code instead, the baseline is how deep the body sits inside its member,
+		// and every line comes out a level shallower: invisibly for a block body, which the formatter
+		// has rules for, and on disk for an expression body, which is a continuation it has none for.
+		var fromTheFile = request.Find is { Length: > 0 } || request.Position is not null;
+
 		// The head is named as copied, which exempts it from the re-indentation the body needs. The
 		// two halves arrive in different coordinate systems -- the signature indented for the file it
 		// came out of, the body at whatever baseline the caller happened to write it at -- and one
@@ -298,7 +306,24 @@ public static class MemberEditService
 		// An initialiser goes back as an expression and a semicolon; a body is wrapped in braces or
 		// left behind its arrow. Sharing the rebuild is what keeps the copied-signature promise on
 		// both: what comes out in front of the "=" is the text that was in front of it.
-		var shaped = IsInitialiser(declaration) ? $"{written.Trim()};" : Body(written);
+		//
+		// An initialiser's value goes back on the line it was on. A wrapped value sits below its "=",
+		// and the single space a body is joined with pulls it up -- no formatting rule puts a value
+		// back on a line of its own, so the declaration's line changed on a write that asked only for
+		// the value. Where the file broke before the value, the file's own break and indentation are
+		// kept when the body comes from the file, and a line ending is used when the caller sent it
+		// whole, with the caller's first line keeping its indentation so the whole value is measured
+		// against itself. A caller whose value starts with a line break is asking for that layout.
+		var wrapped = IsInitialiser(declaration)
+			&& (BreaksBeforeValue(declaration, bodyStart) || StartsWithBreak(request.Code));
+
+		var separator = !wrapped ? " "
+			: fromTheFile && BreaksBeforeValue(declaration, bodyStart) ? text.ToString(TextSpan.FromBounds(ValueSeparatorStart(declaration, bodyStart), bodyStart))
+			: rules.LineEnding;
+
+		var shaped = !IsInitialiser(declaration) ? Body(written)
+			: wrapped && !fromTheFile ? $"{FromFirstLine(written).TrimEnd()};"
+			: $"{written.Trim()};";
 
 		// The member as it stood, counted from its first line as a moved member's is, which is where a
 		// literal the file already held is named.
@@ -314,21 +339,13 @@ public static class MemberEditService
 				.Select(span => new TextSpan(span.Start - memberAt, span.Length)),
 		];
 
-		var rebuilt = $"{head} {shaped}";
+		var rebuilt = $"{head}{separator}{shaped}";
 
 		// Where the first character of the body would sit in what is parsed, so a line of it can be
 		// named in the terms of the code the caller sent. Trimming and wrapping both change that, and
 		// what the body trims to is found unchanged in either shape.
-		var bodyAt = head.Length + 1 + shaped.IndexOf(written.Trim(), StringComparison.Ordinal)
+		var bodyAt = head.Length + separator.Length + shaped.IndexOf(written.Trim(), StringComparison.Ordinal)
 			- (written.Length - written.TrimStart().Length);
-
-		// A body assembled from the file's own text is already indented for where it sits, and the
-		// only caller code in it has been placed against the line it lands on -- so the destination's
-		// own indentation is what comes off and goes back on, and the pass is the identity it should
-		// be. Read from the code instead, the baseline is how deep the body sits inside its member,
-		// and every line comes out a level shallower: invisibly for a block body, which the formatter
-		// has rules for, and on disk for an expression body, which is a continuation it has none for.
-		var fromTheFile = request.Find is { Length: > 0 } || request.Position is not null;
 
 		// A body the caller supplied whole is measured against itself, as everything else here is, and
 		// its lines belong one level in from the member: what precedes them is a brace or an arrow on
@@ -573,7 +590,9 @@ public static class MemberEditService
 	/// <para>
 	/// An arrow goes on the line the signature ends on and a block's brace below it, so trading one for
 	/// the other rewrites that line by definition. Keeping the shape does not: a value pulled up onto
-	/// the line its declaration ends on, or an arrow drawn up after it, is a change nobody asked for.
+	/// the line its declaration ends on, or an arrow drawn up after it, is a change nobody asked for. An
+	/// initialiser changes shape when the caller starts its value with a line break the file did not
+	/// have, which moves the value off the declaration's line.
 	/// </para>
 	/// </summary>
 	private static TextSpan WholeBody(MemberDeclarationSyntax declaration, int bodyStart, string code)
@@ -583,11 +602,41 @@ public static class MemberEditService
 			or IndexerDeclarationSyntax { ExpressionBody: not null };
 
 		var arrowAfter = code.TrimStart().StartsWith("=>", StringComparison.Ordinal);
-		var reshaped = !IsInitialiser(declaration) && arrowNow != arrowAfter;
 
-		var from = reshaped ? declaration.FindToken(bodyStart).GetPreviousToken().Span.End : bodyStart;
+		var reshaped = IsInitialiser(declaration)
+			? StartsWithBreak(code) && !BreaksBeforeValue(declaration, bodyStart)
+			: arrowNow != arrowAfter;
+
+		var from = reshaped ? ValueSeparatorStart(declaration, bodyStart) : bodyStart;
 
 		return TextSpan.FromBounds(from, declaration.Span.End);
+	}
+
+	/// <summary>Where the token in front of the body ends: the arrow, the "=", or the end of the signature.</summary>
+	private static int ValueSeparatorStart(MemberDeclarationSyntax declaration, int bodyStart) =>
+		declaration.FindToken(bodyStart).GetPreviousToken().Span.End;
+
+	/// <summary>Whether the file has a line break between the token in front of the body and the body itself.</summary>
+	private static bool BreaksBeforeValue(MemberDeclarationSyntax declaration, int bodyStart)
+	{
+		var first = declaration.FindToken(bodyStart);
+
+		return first.GetPreviousToken().TrailingTrivia.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia))
+			|| first.LeadingTrivia.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+	}
+
+	/// <summary>Whether the code the caller sent begins with a line break, blanks before it aside.</summary>
+	private static bool StartsWithBreak(string code) => code.TrimStart(' ', '\t') is ['\r' or '\n', ..];
+
+	/// <summary>
+	/// The code from the start of its first line with anything on it, so that line keeps its indentation
+	/// and the code can be measured against itself.
+	/// </summary>
+	private static string FromFirstLine(string code)
+	{
+		var leading = code.Length - code.TrimStart().Length;
+
+		return code[(code[..leading].LastIndexOf('\n') + 1)..];
 	}
 
 	/// <summary>The block a member is written with, or null where it has an expression body instead.</summary>

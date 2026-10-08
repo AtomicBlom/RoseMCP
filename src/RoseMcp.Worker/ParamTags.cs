@@ -62,16 +62,19 @@ public static class ParamTags
 			var index = lines.FindIndex(line => NameAt(line) == name);
 			if (index < 0) continue;
 
-			// A tag that does not close on its own line is a paragraph somebody wrote, and cutting it
-			// at a line boundary would leave half of it behind.
-			if (!Closes(lines[index]))
+			// The whole tag goes, from the line it opens on to the line it closes on: cutting a tag
+			// whose description runs on at a line boundary would leave half of it behind, which is
+			// malformed XML. A tag that never closes has no end to cut to, so it is left alone.
+			var closing = ClosingFrom(lines, index);
+
+			if (closing < 0)
 			{
-				notes.Add($"The param tag for '{name}' spans more than one line, so it was left alone. "
+				notes.Add($"The param tag for '{name}' never closes, so it was left alone. "
 					+ "Remove it by hand, or the build will fail on CS1572.");
 				continue;
 			}
 
-			lines.RemoveAt(index);
+			lines.RemoveRange(index, closing - index + 1);
 			changed = true;
 		}
 
@@ -197,7 +200,8 @@ public static class ParamTags
 	/// Where the tag for a new parameter goes: after the line where the tag of the nearest parameter
 	/// before it closes, else before the line where the tag of the nearest parameter after it opens,
 	/// else wherever <see cref="Anchor"/> says. <c>Before</c> says which side of <c>Line</c> it goes;
-	/// a line of -1 is nowhere.
+	/// a line of -1 is nowhere, which is what a preceding tag that never closes gives, since there is
+	/// no line after it that is outside its prose.
 	/// <para>
 	/// Beside its neighbours rather than after the last tag, because a parameter added in the middle of
 	/// a list and documented at the end of it reads as the last parameter, and the fix is the reorder by
@@ -242,7 +246,7 @@ public static class ParamTags
 
 	/// <summary>
 	/// The line a new tag goes after when no parameter beside it has a tag: the line the last param tag
-	/// closes on, else the line the summary closes on, else nowhere.
+	/// closes on, or nowhere when it never closes; else the line the summary closes on, else nowhere.
 	/// <para>
 	/// After the summary when there is no tag left, which is what renaming a member's only parameter
 	/// looks like from here -- the removal takes the only tag and the addition then has nothing to
@@ -260,23 +264,31 @@ public static class ParamTags
 	private static int OpeningOf(List<string> lines, string name) => lines.FindIndex(line => NameAt(line) == name);
 
 	/// <summary>
-	/// The line a tag opening on <paramref name="opening"/> closes on, or the opening line when nothing
-	/// after it closes.
+	/// The line a param tag opening on <paramref name="opening"/> closes on, or -1 when it never does:
+	/// the opening line itself when the tag closes itself, else the first line from there that holds
+	/// <c>&lt;/param&gt;</c>.
 	/// <para>
 	/// A new tag goes after the line a tag closes on, never the line it opens on. A tag whose
 	/// description runs to a second line opens on one and closes on a later one, so anchoring where it
 	/// opens writes the new tag into the middle of its prose -- and, taking its pattern from the line it
 	/// lands after, copies that line's words into itself.
 	/// </para>
+	/// <para>
+	/// Only <c>&lt;/param&gt;</c> or the tag's own <c>/&gt;</c> closes it. A description is free to say
+	/// <c>&lt;paramref name="x"/&gt;</c> or <c>&lt;see cref="X"/&gt;</c>, and taking any <c>/&gt;</c>
+	/// as the end of the tag puts the new tag, or the cut of a removal, in the middle of that prose.
+	/// </para>
 	/// </summary>
 	private static int ClosingFrom(List<string> lines, int opening)
 	{
+		if (SelfCloses(lines[opening])) return opening;
+
 		for (var index = opening; index < lines.Count; index++)
 		{
-			if (Closes(lines[index])) return index;
+			if (lines[index].Contains("</param>", StringComparison.Ordinal)) return index;
 		}
 
-		return opening;
+		return -1;
 	}
 
 	/// <summary>
@@ -300,6 +312,18 @@ public static class ParamTags
 
 	private static bool IsSummaryEnd(string line) => line.Contains("</summary>", StringComparison.Ordinal);
 
-	private static bool Closes(string line) =>
-		line.Contains("</param>", StringComparison.Ordinal) || line.Contains("/>", StringComparison.Ordinal);
+	/// <summary>
+	/// Whether the param tag opening on this line closes itself: the first <c>&gt;</c> after it is
+	/// preceded by <c>/</c>. A <c>/&gt;</c> further along belongs to some other element in its
+	/// description.
+	/// </summary>
+	private static bool SelfCloses(string line)
+	{
+		var opening = TagAt(line);
+		if (opening < 0) return false;
+
+		var close = line.IndexOf('>', opening);
+
+		return close > 0 && line[close - 1] == '/';
+	}
 }

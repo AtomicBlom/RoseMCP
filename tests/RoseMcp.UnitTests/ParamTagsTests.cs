@@ -340,6 +340,139 @@ public sealed class ParamTagsTests
 	}
 
 	/// <summary>
+	/// A predecessor's description that mentions another parameter with <c>paramref</c>. Its
+	/// <c>/&gt;</c> is not the end of the tag, so the new tag goes after <c>&lt;/param&gt;</c> rather
+	/// than into the middle of the sentence.
+	/// </summary>
+	[Test]
+	public void Writes_after_the_whole_of_a_predecessors_tag_that_mentions_a_paramref()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">
+			/// Who to greet; ignored when <paramref name="loud"/> is set
+			/// and the greeting is shouted.
+			/// </param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["name", "title", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">
+			/// Who to greet; ignored when <paramref name="loud"/> is set
+			/// and the greeting is shouted.
+			/// </param>
+			/// <param name="title"></param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// The same with a <c>see</c> element on the line the predecessor's tag opens on, where the tag
+	/// would otherwise be taken to close on its first line.
+	/// </summary>
+	[Test]
+	public void Writes_after_the_whole_of_a_predecessors_tag_that_opens_with_a_see_element()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">See <see cref="Greeter"/> for
+			/// how the greeting is chosen.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["name", "title", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">See <see cref="Greeter"/> for
+			/// how the greeting is chosen.</param>
+			/// <param name="title"></param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A tag that closes itself is a whole tag on its own line, so a new one goes straight after it.
+	/// </summary>
+	[Test]
+	public void Writes_after_a_predecessors_tag_that_closes_itself()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name"/>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			added: ["title"],
+			order: ["name", "title", "loud"],
+			kept: ["name", "loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name"/>
+			/// <param name="title"></param>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// Removing a parameter whose tag runs over several lines takes the whole tag, from the line it
+	/// opens on to the line it closes on. A <c>see</c> element on the opening line does not end it
+	/// there: cutting only that line would leave the rest of the description behind as malformed XML.
+	/// </summary>
+	[Test]
+	public void Removes_the_whole_of_a_tag_that_runs_over_several_lines()
+	{
+		var updated = Update(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="name">See <see cref="Greeter"/> for
+			/// how the greeting is chosen.</param>
+			/// <param name="loud">Whether to shout.</param>
+			""",
+			removed: ["name"],
+			kept: ["loud"]);
+
+		updated.ShouldBe(
+			"""
+			/// <summary>Says hello.</summary>
+			/// <param name="loud">Whether to shout.</param>
+			""");
+	}
+
+	/// <summary>
+	/// A tag that never closes has no end to cut to, so removing its parameter leaves it alone and says
+	/// so, rather than guessing where the description stops.
+	/// </summary>
+	[Test]
+	public void Leaves_a_tag_that_never_closes_alone_and_says_so()
+	{
+		var notes = new List<string>();
+
+		var updated = ParamTags.Update(
+			SyntaxFactory.ParseLeadingTrivia(
+				"/// <summary>Says hello.</summary>\r\n/// <param name=\"name\">Who to greet.\r\n/// <param name=\"loud\">Whether to shout.\r\n"),
+			["name"],
+			[],
+			["loud"],
+			["loud"],
+			notes);
+
+		updated.ShouldBeNull();
+		notes.ShouldContain(note => note.Contains("never closes", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// A tag written in front of another takes that tag's indentation, its marker and the comment's
 	/// line ending, and leaves the rest of the trivia exactly as it was.
 	/// </summary>

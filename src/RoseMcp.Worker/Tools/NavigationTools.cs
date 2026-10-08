@@ -26,6 +26,7 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(ToolDescriptions.MaxImplementationsArgument)] int maxResults = 200,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		CancellationToken cancellationToken = default)
 	{
 		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
@@ -35,7 +36,7 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		return calls.ReadAsync(
 			progress,
 			(snapshot, _) => NavigationService.FindImplementationsAsync(
-				snapshot, target, maxResults <= 0 ? 200 : maxResults, cancellationToken),
+				snapshot, target, maxResults <= 0 ? 200 : maxResults, cancellationToken, project),
 			cancellationToken);
 	}
 

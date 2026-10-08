@@ -162,15 +162,22 @@ public static class NavigationService
 		var definitions = new List<SourceLocation>();
 		var references = new List<SourceLocation>();
 
+		// The search cascades from a property to its accessors and its backing field, each a definition
+		// of its own written inside the property's declaration, and listing each makes one property four
+		// definitions on one line. A part is listed only when it is what was asked about.
+		var defined = found.Select(reference => reference.Definition).ToHashSet(SymbolEqualityComparer.Default);
+
 		foreach (var reference in found)
 		{
-			// A property's search cascades to its accessors, whose declarations are the get and set
-			// keywords inside the property's own: listing them would say the symbol is declared three
-			// times on one line. Their uses are still the property's uses, so only the definitions go.
-			var isAccessor = reference.Definition is IMethodSymbol { AssociatedSymbol: not null }
-				&& !SymbolEqualityComparer.Default.Equals(reference.Definition, symbol);
+			var isPartOfAnother = !SymbolEqualityComparer.Default.Equals(reference.Definition, symbol)
+				&& DeclaredAsPartOf(reference.Definition) is { } whole
+				&& defined.Contains(whole);
 
-			foreach (var location in reference.Definition.Locations.Where(location => location.IsInSource && !isAccessor))
+			var declared = isPartOfAnother
+				? []
+				: reference.Definition.Locations.Where(location => location.IsInSource).ToArray();
+
+			foreach (var location in declared)
 			{
 				definitions.Add(await SymbolLocator.DescribeAsync(snapshot.Solution, location, cancellationToken));
 			}
@@ -215,9 +222,11 @@ public static class NavigationService
 			Address = SymbolAddress.Of(symbol),
 			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
 
-			// Distinct, because one declaration is found once for each symbol the search cascades
-			// through that shares it.
-			Definitions = [.. definitions.Select(location => Previewed(location, includePreviews)).Distinct()],
+			// One declaration is still reached more than once: a positional record's property shares its
+			// parameter's position, and a multi-targeted project compiles it once per framework.
+			Definitions = [.. definitions
+				.DistinctBy(location => (location.FilePath, location.Line, location.Column))
+				.Select(location => Previewed(location, includePreviews))],
 			Files = ReferenceShapes.ByFile(listed, includePreviews),
 			TotalCount = kept.Length,
 
@@ -228,6 +237,17 @@ public static class NavigationService
 			Notices = notices,
 		};
 	}
+
+	/// <summary>
+	/// The symbol whose declaration this one is written inside: the property or event an accessor
+	/// belongs to, or the property an automatic backing field stores.
+	/// </summary>
+	private static ISymbol? DeclaredAsPartOf(ISymbol symbol) => symbol switch
+	{
+		IMethodSymbol { AssociatedSymbol: { } whole } => whole,
+		IFieldSymbol { AssociatedSymbol: { } whole } => whole,
+		_ => null,
+	};
 
 	/// <summary>
 	/// The location with or without its line of source. Dropping the preview is most of the size of a
@@ -244,16 +264,37 @@ public static class NavigationService
 	/// to be. Answering the wrong question silently would be worse than answering none, so which one
 	/// was answered is reported back.
 	/// </para>
+	/// <para>
+	/// Only this solution's source is listed. Roslyn's search walks the referenced assemblies too, so a
+	/// framework interface would be answered with every type in every dependency that implements it,
+	/// and the cut would fall long before the first type declared here. For a type no project here
+	/// declares, what this solution implements is the only form the question takes. What was left out
+	/// is counted in a notice, so a short list does not read as the whole answer.
+	/// </para>
 	/// </summary>
+	/// <param name="snapshot">The solution to search.</param>
+	/// <param name="target">The symbol, named or pointed at.</param>
+	/// <param name="maxResults">How many matches to return.</param>
+	/// <param name="cancellationToken">Cancels the search.</param>
+	/// <param name="project">
+	/// Only matches compiled by this project. Applied before the cut, so the total and the truncation
+	/// describe the narrowed list.
+	/// </param>
+	/// <exception cref="ArgumentException">The solution has no project of that name.</exception>
 	public static async Task<ImplementationsResult> FindImplementationsAsync(
 		WorkspaceSnapshot snapshot,
 		SymbolTarget target,
 		int maxResults,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		string? project = null)
 	{
-		// Metadata included, and this is where it earns most: what in this solution implements
-		// IDisposable or derives from Exception is a question about source, asked of a type no project
-		// here declares, and it is the ordinary shape of the question rather than an edge of it.
+		// Resolved before the search, so a name no project carries is refused rather than filtering every
+		// match out: an empty list reads exactly like a type nothing implements.
+		var narrowed = project is { Length: > 0 } ? ProjectNames.Resolve(snapshot.Solution, project) : null;
+
+		// Metadata included for the target, and this is where it earns most: what in this solution
+		// implements IDisposable or derives from Exception is a question about source, asked of a type no
+		// project here declares, and it is the ordinary shape of the question rather than an edge of it.
 		var symbol = await target.ResolveAsync(snapshot, cancellationToken, includeMetadata: true);
 		var solution = snapshot.Solution;
 		var found = new List<ISymbol>();
@@ -282,10 +323,18 @@ public static class NavigationService
 			found.AddRange(await SymbolFinder.FindImplementationsAsync(symbol, solution, cancellationToken: cancellationToken));
 		}
 
-		var matches = await DescribeAllAsync(
-			snapshot,
-			found.Distinct(SymbolEqualityComparer.Default).ToArray(),
-			cancellationToken);
+		var distinct = found.Distinct(SymbolEqualityComparer.Default).ToArray();
+		var inSource = distinct.Where(IsInSource).ToArray();
+		var compiled = narrowed is null ? inSource : await CompiledByAsync(narrowed, inSource, cancellationToken);
+
+		// A multi-targeted project is a compilation per framework, each with its own copy of every type in
+		// it, so one declaration is found once per framework. It is listed and counted once, after the
+		// narrowing, so a project named with its framework keeps its own copy.
+		var listed = compiled.DistinctBy(Declaration).ToArray();
+		var inMetadata = distinct.Where(candidate => !IsInSource(candidate)).DistinctBy(Declaration).Count();
+		var elsewhere = inSource.DistinctBy(Declaration).Count() - listed.Length;
+
+		var matches = await DescribeAllAsync(snapshot, listed, cancellationToken);
 
 		var ordered = matches
 			.OrderBy(match => match.Signature, StringComparer.OrdinalIgnoreCase)
@@ -302,7 +351,59 @@ public static class NavigationService
 			Matches = truncated ? ordered[..maxResults] : ordered,
 			TotalCount = ordered.Length,
 			Truncated = truncated,
+			Notices = [.. snapshot.Notices, .. LeftOut(inMetadata, elsewhere)],
 		};
+	}
+
+	private static bool IsInSource(ISymbol symbol) => symbol.Locations.Any(location => location.IsInSource);
+
+	/// <summary>
+	/// What makes two symbols one declaration: the signature, and where it is written -- or, for a
+	/// symbol from a referenced assembly, which assembly. The copies of a type that each framework of a
+	/// multi-targeted project compiles are different symbols with one key.
+	/// </summary>
+	private static (string Signature, string? Where) Declaration(ISymbol symbol)
+	{
+		var location = symbol.Locations.FirstOrDefault(candidate => candidate.IsInSource);
+		var where = location is null
+			? symbol.ContainingAssembly?.Identity.GetDisplayName()
+			: $"{location.SourceTree?.FilePath}:{location.SourceSpan.Start}";
+
+		return (symbol.ToDisplayString(SymbolSignature.Format), where);
+	}
+
+	/// <summary>
+	/// The candidates one of the projects compiles. Decided by the assembly each belongs to rather than
+	/// by the document it sits in, so a declaration a generator wrote counts for the project whose
+	/// generator wrote it.
+	/// </summary>
+	private static async Task<IReadOnlyList<ISymbol>> CompiledByAsync(
+		IReadOnlyList<Project> projects,
+		IReadOnlyList<ISymbol> candidates,
+		CancellationToken cancellationToken)
+	{
+		var assemblies = new HashSet<IAssemblySymbol>(SymbolEqualityComparer.Default);
+
+		foreach (var project in projects)
+		{
+			if (await project.GetCompilationAsync(cancellationToken) is { } compilation) assemblies.Add(compilation.Assembly);
+		}
+
+		return [.. candidates.Where(candidate => candidate.ContainingAssembly is { } assembly && assemblies.Contains(assembly))];
+	}
+
+	/// <summary>What the listing left out, counted, since a short list otherwise reads as the whole answer.</summary>
+	private static IEnumerable<string> LeftOut(int inMetadata, int elsewhere)
+	{
+		if (inMetadata > 0)
+		{
+			yield return $"{inMetadata} more in referenced assemblies are not listed: only this solution's source is.";
+		}
+
+		if (elsewhere > 0)
+		{
+			yield return $"{elsewhere} more in projects other than the one named by project are not listed.";
+		}
 	}
 
 	/// <summary>What a member overrides and what it implements, which is the same list to a caller.</summary>

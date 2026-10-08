@@ -681,6 +681,51 @@ public sealed class NavigationTests
 		error.Message.ShouldContain("Core", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// One declaration is one definition. An automatic property's accessors and backing field are
+	/// symbols the search cascades to, each declared inside the property, and a multi-targeted project
+	/// compiles the property once per framework -- so without the merge one line of source is listed as
+	/// several definitions, and a caller counting them gets a wrong answer.
+	/// </summary>
+	[Test]
+	public async Task Lists_a_property_declaration_once()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await NavigationService.FindReferencesAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Core.MemoryStore.Capacity" },
+			200,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var definition = result.Definitions.ShouldHaveSingleItem();
+
+		definition.Preview.ShouldNotBeNull().ShouldContain("Capacity { get; init; }", Case.Sensitive);
+		result.References.ShouldContain(reference => reference.Project == "App");
+	}
+
+	/// <summary>
+	/// A positional record's property is declared by its parameter, at the same place, and the search
+	/// finds both. It is still one definition.
+	/// </summary>
+	[Test]
+	public async Task Lists_a_positional_record_property_declaration_once()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await NavigationService.FindReferencesAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Labelled.Name" },
+			200,
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Definitions.ShouldHaveSingleItem();
+	}
+
 	/// <summary>How big an answer is on the wire, which is the thing the narrowing exists to change.</summary>
 	private static int Size(ReferencesResult result) =>
 		System.Text.Json.JsonSerializer.Serialize(result, ContractJson.Options).Length;

@@ -333,6 +333,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(ToolDescriptions.MaxImplementationsArgument)] int maxResults = 200,
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
@@ -343,6 +344,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["line"] = line,
 			["column"] = column,
 			["maxResults"] = maxResults,
+			["project"] = project,
 		}, cancellationToken, progress);
 
 	[McpServerTool(

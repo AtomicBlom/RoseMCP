@@ -109,7 +109,7 @@ public static class ToolDescriptions
 		"Imports the parameter types need, as System.Text, ensured in each file whose declaration changes.";
 
 	public const string ProjectFilterArgument =
-		"Limit to one project, by name or by the path to its project file. Defaults to the whole solution.";
+		"Limit to one project, by name or by the path to its project file.";
 
 	public const string SingleFilePathArgument =
 		"Path to the file: absolute, or relative to where your session is running.";
@@ -676,12 +676,12 @@ public static class ToolDescriptions
 		""";
 
 	public const string FindImplementations = """
-		What implements, overrides or derives from a symbol -- derived types for a class, implementing
-		types for an interface, overriding members for a virtual or abstract one. Grep cannot answer
-		this at all: an implementation need not mention the interface's name anywhere near the member.
-		Name the symbol as Namespace.Type.Member, which also works for a type in a referenced assembly,
-		so "what here implements IDisposable" is one call. The answer says which of those three
-		questions it actually answered, since that depends on what the symbol turns out to be.
+		What implements, overrides or derives from a symbol: implementing types for an interface,
+		derived types for a class, overriding members for a virtual or abstract one; the answer says
+		which. Grep cannot answer this: an implementation need not name the interface near the member.
+		Name the symbol as Namespace.Type.Member, a referenced assembly's type included, so "what here
+		implements IDisposable" is one call. Lists this solution's source only, counting what it left
+		out.
 		""";
 
 	public const string SearchSymbols = """

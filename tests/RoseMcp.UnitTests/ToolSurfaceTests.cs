@@ -249,6 +249,23 @@ public sealed class ToolSurfaceTests
 	}
 
 	/// <summary>
+	/// The two navigation tools narrow the same way. A framework interface is the case
+	/// rose_find_implementations is reached for, and without project the answer is every dependency's
+	/// implementations with the solution's own cut off behind them, so a caller who learnt the argument
+	/// on one tool has to find it on the other.
+	/// </summary>
+	[Test]
+	public void Both_navigation_tools_narrow_by_project()
+	{
+		var tools = Listed().ToDictionary(tool => tool.Name, StringComparer.Ordinal);
+
+		foreach (var name in new[] { ToolNames.FindReferences, ToolNames.FindImplementations })
+		{
+			tools[name].InputSchema.GetProperty("properties").TryGetProperty("project", out _).ShouldBeTrue($"{name} takes no project");
+		}
+	}
+
+	/// <summary>
 	/// And that the trim is wired into the listing rather than only available to be called. The two
 	/// assertions are separate because a filter registered without doing the work and work available
 	/// but never applied are different failures and neither implies the other.

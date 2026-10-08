@@ -14,9 +14,16 @@ public sealed record ChangeSignatureRequest
 	/// The parameters the member should have, written as they would be between the parentheses:
 	/// <c>int count, string name, bool loud = false</c>. Declarative rather than a list of
 	/// operations, because it is the thing the caller actually knows -- what the signature should
-	/// say -- and what changed can be worked out from it.
+	/// say -- and what changed can be worked out from it. Null leaves them as they are.
 	/// </summary>
-	public required string Parameters { get; init; }
+	public string? Parameters { get; init; }
+
+	/// <summary>
+	/// The accessibility the member should have, as the language spells it: <c>internal</c>,
+	/// <c>protected internal</c>. Null leaves it as it is. At least one of this and
+	/// <see cref="Parameters"/> is given.
+	/// </summary>
+	public string? Accessibility { get; init; }
 
 	/// <summary>
 	/// What to pass at existing call sites for a new parameter that has no default, as

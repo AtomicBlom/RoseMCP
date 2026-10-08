@@ -40,6 +40,31 @@ public sealed class ProjectItemStyleTests
 	}
 
 	/// <summary>
+	/// Whether a project that lists its files names this one: a literal Compile item, relative to the
+	/// project, either separator, among several in one attribute. A wildcard or a property is left to
+	/// evaluation and does not count, and a Remove takes the name back.
+	/// </summary>
+	[Test]
+	[Arguments("""<Compile Include="Views\Page.cs" />""", true)]
+	[Arguments("""<Compile Include="Views/Page.cs" />""", true)]
+	[Arguments("""<Compile Include="Other.cs;Views\Page.cs" />""", true)]
+	[Arguments("""<Compile Include="Views\*.cs" />""", false)]
+	[Arguments("""<Compile Include="$(Shared)\Views\Page.cs" />""", false)]
+	[Arguments("""<Compile Include="Views\Page.cs" /><Compile Remove="Views\Page.cs" />""", false)]
+	[Arguments("""<Compile Include="Views\Other.cs" />""", false)]
+	public void Says_whether_a_listing_project_names_a_file(string items, bool expected)
+	{
+		var directory = Path.Combine(Path.GetTempPath(), "listing");
+		var project = $"""
+			<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+			  <ItemGroup>{items}</ItemGroup>
+			</Project>
+			""";
+
+		ProjectItemStyle.Lists(project, directory, Path.Combine(directory, "Views", "Page.cs")).ShouldBe(expected);
+	}
+
+	/// <summary>
 	/// An SDK project can turn the globs off, and a repository that does it means it: the file list
 	/// is then as explicit as a legacy project's.
 	/// </summary>

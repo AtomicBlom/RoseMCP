@@ -1,12 +1,17 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace RoseMcp.Worker;
 
-/// <summary>What one declaration becomes: a new parameter list, and its documentation if that moved too.</summary>
+/// <summary>What one declaration becomes: a new parameter list, a new accessibility, or both, and its documentation if that moved too.</summary>
 public sealed record DeclarationChange
 {
-	public required ParameterListSyntax Parameters { get; init; }
+	/// <summary>The new parameter list, or null where the parameters are not changing.</summary>
+	public ParameterListSyntax? Parameters { get; init; }
+
+	/// <summary>The keywords of the new accessibility, or null where it is not changing.</summary>
+	public IReadOnlyList<SyntaxKind>? Accessibility { get; init; }
 
 	/// <summary>
 	/// Replacement leading trivia, or null when the documentation needed nothing. Null is the common

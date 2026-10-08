@@ -85,13 +85,14 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
-	/// The other half of the same rule: a list the caller wrote on one line goes on the signature
-	/// line, even where the declaration it replaces was wrapped and its parenthesis still carries the
-	/// break. Left there, that break puts the first parameter alone on a line of its own at whatever
-	/// column the caller's text happened to begin at.
+	/// The other half of the same rule: a list written on one line says what the parameters are and
+	/// nothing about where they go, so a declaration wrapped one parameter to a line stays wrapped. The
+	/// parameter that went takes its line with it and the ones that stayed keep theirs. Collapsing it
+	/// instead puts a hand-wrapped signature onto one line nobody asked for, and a caller who wants the
+	/// list unwrapped writes the declaration with rose_replace_member.
 	/// </summary>
 	[Test]
-	public async Task Unwraps_a_parameter_list_the_caller_wrote_on_one_line()
+	public async Task Keeps_a_wrapped_parameter_list_wrapped_when_the_caller_writes_it_on_one_line()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -103,7 +104,72 @@ public sealed class ChangeSignatureTests
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
-		text.ShouldContain("\tpublic static string Join(string first, string second)\r\n", Case.Sensitive);
+		text.ShouldContain("\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second)\r\n", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A constructor whose parameters are one to a line, in groups headed by comments, keeps both when a
+	/// parameter is added, however the caller wrote the list. A comment between two parameters is not
+	/// layout: rebuilt from the caller's text it is dropped without trace, and the list it held open
+	/// collapses onto the signature line with it. Parameters that keep their place keep their own lines,
+	/// the way the arguments at a call site already do, and the new one follows the line of the
+	/// parameter before it.
+	/// <para>
+	/// The fixture is written here rather than checked in, so the members other tests count stay as
+	/// they are.
+	/// </para>
+	/// </summary>
+	[Test]
+	[Arguments("string name, string title, int count, bool loud = false")]
+	[Arguments("\nstring name,\nstring title,\nint count,\nbool loud = false")]
+	public async Task Keeps_a_wrapped_parameter_list_and_its_comments_when_it_adds_a_parameter(string written)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Grouped.cs"),
+			"""
+			namespace Library;
+
+			public sealed class Grouped
+			{
+				public Grouped(
+					// What it is called
+					string name,
+					string title,
+					// How many there are
+					int count)
+				{
+					Name = $"{title} {name}";
+					Count = count;
+				}
+
+				public string Name { get; }
+
+				public int Count { get; }
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Grouped.Grouped(string, string, int)", written);
+
+		result.Applied.ShouldBeTrue("the change is written; only its layout is under test");
+		result.TotalErrorCount.ShouldBe(0);
+
+		var text = await ReadAsync(fixture, "Grouped.cs");
+
+		text.ShouldContain(
+			"\tpublic Grouped(\r\n"
+				+ "\t\t// What it is called\r\n"
+				+ "\t\tstring name,\r\n"
+				+ "\t\tstring title,\r\n"
+				+ "\t\t// How many there are\r\n"
+				+ "\t\tint count,\r\n"
+				+ "\t\tbool loud = false)\r\n",
+			Case.Sensitive);
 	}
 
 	/// <summary>
@@ -438,6 +504,25 @@ public sealed class ChangeSignatureTests
 			notice => notice.Contains("Retyped name", StringComparison.Ordinal));
 	}
 
+	/// <summary>
+	/// Saying a parameter may be null converts no argument, so it is not warned about as a retype, and no
+	/// call site is listed: there is nothing at one worth a look, and naming every one of them with a reason
+	/// about a new parameter's default, when no parameter was added, is a list nobody can act on.
+	/// </summary>
+	[Test]
+	public async Task Does_not_call_a_change_of_nullability_a_retype()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Greeter.Greet(string)", "string? name");
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldNotContain(notice => notice.Contains("Retyped", StringComparison.Ordinal));
+		result.Notices.ShouldContain(notice => notice.StartsWith("Changed only whether name may be null", StringComparison.Ordinal));
+		result.UnchangedCallSites.ShouldBeEmpty();
+	}
+
 	[Test]
 	public async Task Writes_nothing_when_previewing()
 	{
@@ -565,11 +650,188 @@ public sealed class ChangeSignatureTests
 		error.Message.ShouldContain("would clash with the 'item'", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// Accessibility on its own, which is a one-word change that had no tool: replacing the member meant
+	/// re-emitting all of it to change one keyword. Only the keyword moves -- the other modifiers, the
+	/// parameters and the documentation above it are as they were -- and nothing is reported about call
+	/// sites, since a change of accessibility rewrites no argument.
+	/// </summary>
+	[Test]
+	public async Task Makes_a_private_method_internal()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Greeter.Shout", parameters: null, accessibility: "internal");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
+		result.Accessibility.ShouldBe("internal");
+		result.Parameters.ShouldBeNull();
+		result.UpdatedCallSites.ShouldBeEmpty();
+		result.UnchangedCallSites.ShouldBeEmpty();
+		result.Notices.ShouldContain(notice => notice.StartsWith("It was private.", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("!\";\r\n\r\n\tinternal static string Shout(string text)\r\n\t{\r\n", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A property and a field reach it the same way, since accessibility is not a method's alone. A field's
+	/// own syntax is its variable declarator, and the keyword is on the declaration around it.
+	/// </summary>
+	[Test]
+	[Arguments("Library.Greeter.Count", "\tinternal int Count { get; set; }\r\n")]
+	[Arguments("Library.Greeter._prefix", "\tinternal readonly string _prefix = \"Hello\";\r\n")]
+	public async Task Changes_the_accessibility_of_a_property_or_a_field(string symbol, string expected)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, symbol, parameters: null, accessibility: "internal");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldContain(expected, Case.Sensitive);
+	}
+
+	/// <summary>
+	/// An override has to keep the accessibility of what it overrides, or it is CS0507 -- so the base all
+	/// the way up and every override all the way down move with the one named, which is the same promise
+	/// the parameters make and for the same reason.
+	/// </summary>
+	[Test]
+	public async Task Moves_the_overrides_with_the_accessibility()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Shapes.cs"),
+			"""
+			namespace Library;
+
+			public class Shape
+			{
+				protected virtual double Area() => 0;
+
+				public double Measure() => Area();
+			}
+
+			public class Square : Shape
+			{
+				protected override double Area() => 4;
+			}
+
+			public sealed class Tile : Square
+			{
+				protected override double Area() => 1;
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Square.Area", parameters: null, accessibility: "protected internal");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
+		result.UpdatedDeclarations.Count.ShouldBe(3);
+		result.Notices.ShouldContain(notice => notice.Contains("2 declaration(s) it overrides", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Shapes.cs");
+
+		text.ShouldContain("protected internal virtual double Area() => 0;", Case.Sensitive);
+		text.ShouldContain("protected internal override double Area() => 4;", Case.Sensitive);
+		text.ShouldContain("protected internal override double Area() => 1;", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Narrowing a member breaks whatever can no longer see it, and that is a fact about other code, so it
+	/// is the compile afterwards that names it rather than a refusal: the member's own declaration is
+	/// still exactly what was asked for. Which error the compiler gives is its own business -- with an
+	/// accessible overload beside it, it complains about that overload rather than with CS0122 -- so what
+	/// is checked is that the call site is named.
+	/// </summary>
+	[Test]
+	public async Task Names_the_uses_a_narrower_member_can_no_longer_reach()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Greeter.Greet(string)", parameters: null, accessibility: "private");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldContain(
+			diagnostic => diagnostic.FilePath!.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase));
+	}
+
+	/// <summary>
+	/// A member implements an interface by matching it only while it is public, so anything narrower
+	/// quietly stops it implementing anything and the type no longer compiles -- CS0737 at a line the
+	/// caller never asked to change. Refused before the file is touched, with the explicit
+	/// implementation as the way to hide it.
+	/// </summary>
+	[Test]
+	public async Task Refuses_to_narrow_a_member_an_interface_needs_public()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Layers.cs");
+
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.LoudNotifier.Notify(string)", parameters: null, accessibility: "internal")).OfExactType();
+
+		error.Message.ShouldContain("INotifier.Notify", Case.Sensitive);
+		error.Message.ShouldContain("CS0737", Case.Sensitive);
+		(await ReadAsync(fixture, "Layers.cs")).ShouldBe(before);
+	}
+
+	/// <summary>
+	/// Both at once is one call and one compile, which is the shape a member being made part of a surface
+	/// usually takes: it gains a parameter and the visibility to be called with it.
+	/// </summary>
+	[Test]
+	public async Task Changes_the_parameters_and_the_accessibility_together()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Greeter.Shout", "string text, bool loud = true", accessibility: "internal");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldContain(
+			"\tinternal static string Shout(string text, bool loud = true)\r\n", Case.Sensitive);
+	}
+
+	/// <summary>Neither half asked for is a request for nothing, and is told so rather than written as a no-op.</summary>
+	[Test]
+	public async Task Refuses_a_call_that_changes_nothing()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Greeter.Shout", parameters: null)).OfExactType();
+
+		error.Message.ShouldContain("Nothing to change", Case.Sensitive);
+		error.Message.ShouldContain("accessibility", Case.Sensitive);
+	}
+
 	private static Task<SignatureChangeResult> ChangeAsync(
 		WorkspaceSession session,
 		string symbol,
-		string parameters,
-		string[]? arguments = null)
+		string? parameters,
+		string[]? arguments = null,
+		string? accessibility = null)
 	{
 		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
 
@@ -577,6 +839,7 @@ public sealed class ChangeSignatureTests
 		{
 			Symbol = symbol,
 			Parameters = parameters,
+			Accessibility = accessibility,
 			Arguments = arguments ?? [],
 		};
 

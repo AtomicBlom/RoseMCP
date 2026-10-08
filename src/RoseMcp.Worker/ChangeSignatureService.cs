@@ -47,37 +47,57 @@ public static class ChangeSignatureService
 		var target = await DeclarationLocator.FindSymbolAsync(
 			snapshot.Solution, request.Symbol, request.FilePath, cancellationToken);
 
-		if (target.Symbol is not IMethodSymbol method || ParameterLists.Of(target.Declaration) is not { } parameters)
+		var accessibility = request.Accessibility is { } written ? AccessibilityModifiers.Parse(written) : (Accessibility?)null;
+
+		if (request.Parameters is null && accessibility is null)
 		{
 			throw new ArgumentException(
-				$"{target.Signature} has no parameter list to change. This changes a method, a constructor or an "
-					+ "operator; rose_replace_member writes any other declaration whole.");
+				"Nothing to change. Pass parameters for the parameter list, accessibility for who may see it, or both.");
 		}
 
-		var primary = target.Declaration;
-		var text = await target.Document.GetTextAsync(cancellationToken);
-		var indent = Whitespace.IndentAt(text, primary.SpanStart);
+		var plan = ParameterPlan.None;
+		var wanted = default(SeparatedSyntaxList<ParameterSyntax>);
+		IReadOnlyList<IMethodSymbol> group = [];
 
-		var wanted = MemberSyntax.ParseParameters(
-			request.Parameters,
-			target.Document.Project.ParseOptions,
-			indent,
-			(await Whitespace.RulesForAsync(target.Document, cancellationToken)).IndentUnit);
-		var plan = ParameterPlan.For(parameters.Parameters, wanted);
+		if (request.Parameters is { } requested)
+		{
+			if (target.Symbol is not IMethodSymbol method || ParameterLists.Of(target.Declaration) is not { } parameters)
+			{
+				throw new ArgumentException(
+					$"{target.Signature} has no parameter list to change. Parameters belong to a method, a constructor "
+						+ "or an operator; accessibility on its own changes anything else, and rose_replace_member "
+						+ "writes any other declaration whole.");
+			}
 
-		if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);
+			var text = await target.Document.GetTextAsync(cancellationToken);
+			var indent = Whitespace.IndentAt(text, target.Declaration.SpanStart);
+
+			wanted = MemberSyntax.ParseParameters(
+				requested,
+				target.Document.Project.ParseOptions,
+				indent,
+				(await Whitespace.RulesForAsync(target.Document, cancellationToken)).IndentUnit);
+			plan = ParameterPlan.For(parameters.Parameters, wanted);
+
+			if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);
+
+			progress?.Report("Finding the declarations that move with it", 10);
+
+			group = await GroupAsync(snapshot.Solution, method, cancellationToken);
+
+			if (Clash(group, plan, cancellationToken) is { } clash) throw new ArgumentException(clash);
+		}
 
 		var supplied = Supplied(request.Arguments);
 
-		progress?.Report("Finding the declarations that move with it", 10);
+		var access = accessibility is { } wantedAccess
+			? await AccessGroupAsync(snapshot.Solution, target, wantedAccess, cancellationToken)
+			: [];
 
-		var group = await GroupAsync(snapshot.Solution, method, cancellationToken);
+		progress?.Report(request.Parameters is null ? "Finding the declarations" : "Finding the call sites", 25);
 
-		if (Clash(group, plan, cancellationToken) is { } clash) throw new ArgumentException(clash);
-
-		progress?.Report("Finding the call sites", 25);
-
-		var work = await GatherAsync(snapshot.Solution, group, method, plan, wanted, notices, cancellationToken);
+		var work = await GatherAsync(
+			snapshot.Solution, group, access, target.Symbol, plan, wanted, notices, cancellationToken);
 
 		// After the call sites and before anything is written, so a refusal still costs nothing and
 		// can be true of the sites it names. Asked of the plan alone it fired on a member nothing
@@ -103,13 +123,14 @@ public static class ChangeSignatureService
 
 		var unchanged = await DescribeUnchangedAsync(snapshot.Solution, work, applied, plan, cancellationToken);
 
-		notices.AddRange(Notices(request, plan, applied, edit.Verification, edit.Outcome, unchanged));
+		notices.AddRange(Notices(request, plan, applied, edit.Verification, edit.Outcome, unchanged, target.Symbol, access));
 
 		var result = new SignatureChangeResult
 		{
 			Revision = snapshot.Revision,
 			Symbol = target.Signature,
-			Parameters = request.Parameters.Trim(),
+			Parameters = request.Parameters?.Trim(),
+			Accessibility = accessibility is { } given ? AccessibilityModifiers.Spelled(given) : null,
 			Applied = edit.Applied,
 			Diff = edit.Outcome.Diff,
 			UpdatedDeclarations = await DescribeAsync(snapshot.Solution, work.SelectMany(w => w.DeclarationSites), cancellationToken),
@@ -294,11 +315,91 @@ public static class ChangeSignatureService
 		}
 	}
 
-	/// <summary>Which nodes in which documents have to change, worked out before anything is written.</summary>
+	/// <summary>
+	/// The declarations whose accessibility has to change together, each with the accessibility it gets:
+	/// the member, what it overrides all the way up, and everything overriding any of those.
+	/// <para>
+	/// Narrower than <see cref="GroupAsync"/>, which also follows interfaces. An override has to keep
+	/// the accessibility of what it overrides, or it is CS0507, so the chain moves as one. An interface
+	/// member and its implementations do not: an implementation is public or it is not one, so a
+	/// change that would make it anything else is refused rather than written.
+	/// </para>
+	/// <para>
+	/// One override can differ. A <c>protected internal</c> member overridden from another assembly is
+	/// overridden as <c>protected</c>, because the internal half does not reach across, and writing it as
+	/// declared is CS0507 again.
+	/// </para>
+	/// </summary>
+	private static async Task<IReadOnlyList<AccessChange>> AccessGroupAsync(
+		Solution solution,
+		DeclarationTarget target,
+		Accessibility wanted,
+		CancellationToken cancellationToken)
+	{
+		if (AccessibilityModifiers.WhyRefused(target.Symbol, target.Declaration, wanted) is { } refusal)
+		{
+			throw new ArgumentException(refusal);
+		}
+
+		var root = target.Symbol;
+		while (AccessibilityModifiers.Overridden(root) is { } above) root = above;
+
+		var chain = new List<ISymbol>();
+		var seen = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+		var pending = new Queue<ISymbol>([root]);
+
+		while (pending.TryDequeue(out var next))
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			if (!seen.Add(next)) continue;
+
+			chain.Add(next);
+
+			var overridable = next.IsVirtual || next.IsAbstract || next.IsOverride;
+			if (!overridable) continue;
+
+			foreach (var over in await SymbolFinder.FindOverridesAsync(next, solution, cancellationToken: cancellationToken))
+			{
+				pending.Enqueue(over);
+			}
+		}
+
+		if (wanted != Accessibility.Public)
+		{
+			foreach (var member in chain)
+			{
+				if (AccessibilityModifiers.ImplicitlyImplemented(member) is not { } implemented) continue;
+
+				throw new ArgumentException(
+					$"{SymbolSignature.Of(member)} implements {SymbolSignature.Of(implemented)}, and does that only while it is "
+						+ "public: anything narrower stops it implementing the interface, which is CS0737. Implement the "
+						+ "interface member explicitly to keep it off the type's own surface instead.");
+			}
+		}
+
+		return
+		[
+			.. chain.Select(member =>
+			{
+				var acrossAssemblies = wanted == Accessibility.ProtectedOrInternal
+					&& !SymbolEqualityComparer.Default.Equals(member.ContainingAssembly, root.ContainingAssembly);
+
+				return new AccessChange(member, acrossAssemblies ? Accessibility.Protected : wanted);
+			}),
+		];
+	}
+
+	/// <summary>
+	/// Which nodes in which documents have to change, worked out before anything is written. The call
+	/// sites are looked for only when the parameters change: accessibility changes no argument, and what
+	/// it does to a use is something only the compile afterwards can say.
+	/// </summary>
 	private static async Task<IReadOnlyList<DocumentWork>> GatherAsync(
 		Solution solution,
 		IReadOnlyList<IMethodSymbol> group,
-		IMethodSymbol primarySymbol,
+		IReadOnlyList<AccessChange> access,
+		ISymbol primarySymbol,
 		ParameterPlan plan,
 		SeparatedSyntaxList<ParameterSyntax> wanted,
 		List<string> notices,
@@ -313,7 +414,11 @@ public static class ChangeSignatureService
 			return found;
 		}
 
-		foreach (var symbol in group)
+		var parameterGroup = group.ToHashSet<ISymbol>(SymbolEqualityComparer.Default);
+		var accessFor = access.ToDictionary(change => change.Symbol, change => change.Accessibility, SymbolEqualityComparer.Default);
+		var symbols = group.Concat(access.Select(change => change.Symbol)).Distinct(SymbolEqualityComparer.Default);
+
+		foreach (var symbol in symbols)
 		{
 			var primary = SymbolEqualityComparer.Default.Equals(symbol, primarySymbol);
 
@@ -321,17 +426,25 @@ public static class ChangeSignatureService
 			{
 				cancellationToken.ThrowIfCancellationRequested();
 
-				var declaration = await reference.GetSyntaxAsync(cancellationToken);
-				if (ParameterLists.Of(declaration) is null) continue;
+				if (DeclarationOf(await reference.GetSyntaxAsync(cancellationToken)) is not { } declaration) continue;
 				if (solution.GetDocument(reference.SyntaxTree) is not { } document) continue;
 
+				var reshaped = parameterGroup.Contains(symbol) && ParameterLists.Of(declaration) is not null;
+				if (!reshaped && !accessFor.ContainsKey(symbol)) continue;
+
+				var change = reshaped ? ChangeFor(declaration, plan, wanted, primary, notices) : new DeclarationChange();
 				var found = For(document);
 
-				var change = ChangeFor(declaration, plan, wanted, primary, notices);
+				if (reshaped) found.Asked.Add(ParameterLists.Of(declaration)!.Span);
+
+				if (accessFor.TryGetValue(symbol, out var accessibility))
+				{
+					change = change with { Accessibility = AccessibilityModifiers.KeywordsFor(accessibility) };
+					found.Asked.Add(AccessibilityModifiers.SpanOf(declaration));
+				}
 
 				found.Declarations[declaration.Span] = change;
 				found.DeclarationSites.Add(declaration.GetLocation());
-				found.Asked.Add(ParameterLists.Of(declaration)!.Span);
 
 				if (change.Documentation is not null) found.Asked.Add(TextSpan.FromBounds(declaration.FullSpan.Start, declaration.SpanStart));
 			}
@@ -371,6 +484,17 @@ public static class ChangeSignatureService
 	}
 
 	/// <summary>
+	/// The declaration a symbol's syntax belongs to. A field's own syntax is its variable declarator,
+	/// and the modifiers that say who may see it are on the field declaration around that.
+	/// </summary>
+	private static MemberDeclarationSyntax? DeclarationOf(SyntaxNode node) => node switch
+	{
+		VariableDeclaratorSyntax { Parent.Parent: BaseFieldDeclarationSyntax field } => field,
+		MemberDeclarationSyntax member => member,
+		_ => null,
+	};
+
+	/// <summary>
 	/// One declaration's new parameter list, and its documentation when that had to move too.
 	/// <para>
 	/// The declaration the caller named gets exactly the parameters they wrote. Every other
@@ -378,6 +502,16 @@ public static class ChangeSignatureService
 	/// and attributes and taking only the change of type -- because an override is free to call its
 	/// parameters something else, and replacing its list wholesale would rename them without saying
 	/// so.
+	/// </para>
+	/// <para>
+	/// The layout is the file's unless the caller wrote one. A list written on one line says what the
+	/// parameters are and nothing about where they go, so every parameter that was there keeps its own
+	/// line, indentation and comments, a new one takes the line of the parameter before it, and the
+	/// commas between them are the file's -- the way a call site keeps its arguments. Rebuilt from the
+	/// caller's text instead, a constructor wrapped one parameter to a line collapses into one line of
+	/// two hundred characters, and the comments grouping its parameters go without trace. A list the
+	/// caller wrapped is a layout they chose, and is used; the comments above its parameters are still
+	/// the file's, since a comment is not layout.
 	/// </para>
 	/// </summary>
 	private static DeclarationChange ChangeFor(
@@ -391,19 +525,32 @@ public static class ChangeSignatureService
 		var own = list.Parameters;
 		var built = new List<ParameterSyntax>(plan.Parameters.Count);
 
+		var callerWraps = primary
+			&& wanted.GetWithSeparators().Any(item => item.ToFullString().Contains('\n', StringComparison.Ordinal));
+
 		foreach (var parameter in plan.Parameters)
 		{
-			if (!primary && parameter.WasAt is { } at && at < own.Count)
+			if (parameter.WasAt is { } at && at < own.Count)
 			{
 				var mine = own[at];
-				var retyped = plan.Retyped.Contains(parameter.Name, StringComparer.Ordinal)
-					&& parameter.Declaration.Type is { } type;
 
-				built.Add(retyped ? mine.WithType(parameter.Declaration.Type!) : mine);
+				if (!primary)
+				{
+					var retyped = plan.Retyped.Contains(parameter.Name, StringComparer.Ordinal)
+						&& parameter.Declaration.Type is { } type;
+
+					built.Add(retyped ? mine.WithType(parameter.Declaration.Type!) : mine);
+					continue;
+				}
+
+				built.Add(callerWraps
+					? WithComments(parameter.Declaration, mine)
+					: parameter.Declaration.WithLeadingTrivia(mine.GetLeadingTrivia()).WithTrailingTrivia(mine.GetTrailingTrivia()));
+
 				continue;
 			}
 
-			built.Add(parameter.Declaration);
+			built.Add(callerWraps ? parameter.Declaration : Beside(parameter.Declaration, built, own));
 		}
 
 		var kept = plan.Parameters
@@ -424,22 +571,24 @@ public static class ChangeSignatureService
 			.ToArray();
 
 		var documentation = ParamTags.Update(declaration.GetLeadingTrivia(), removedHere, addedHere, keptHere, notices);
-		var parameters = list.WithParameters(Separated(built, primary ? wanted : own));
+		var parameters = list.WithParameters(Separated(built, callerWraps ? wanted : own, ExtraSeparator(list)));
 
 		return new DeclarationChange
 		{
-			Parameters = primary ? parameters.WithOpenParenToken(Unbroken(parameters.OpenParenToken)) : parameters,
+			Parameters = callerWraps ? parameters.WithOpenParenToken(Unbroken(parameters.OpenParenToken)) : parameters,
 			Documentation = documentation,
 		};
 	}
 
 	/// <summary>
 	/// Rebuilds the separated list, keeping the commas that are already there so a parameter list
-	/// somebody wrapped across lines stays wrapped.
+	/// somebody wrapped across lines stays wrapped, and giving any comma past them
+	/// <paramref name="extra"/>.
 	/// </summary>
 	private static SeparatedSyntaxList<ParameterSyntax> Separated(
 		IReadOnlyList<ParameterSyntax> parameters,
-		SeparatedSyntaxList<ParameterSyntax> pattern)
+		SeparatedSyntaxList<ParameterSyntax> pattern,
+		SyntaxToken extra)
 	{
 		if (parameters.Count <= 1) return SyntaxFactory.SeparatedList(parameters);
 
@@ -448,12 +597,88 @@ public static class ChangeSignatureService
 
 		for (var index = 0; index < parameters.Count - 1; index++)
 		{
-			separators.Add(index < existing.Length
-				? existing[index]
-				: SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(SyntaxFactory.Space));
+			separators.Add(index < existing.Length ? existing[index] : extra);
 		}
 
 		return SyntaxFactory.SeparatedList(parameters, separators);
+	}
+
+	/// <summary>
+	/// The comma to put between parameters where the list has none to copy: its last one, or one ending
+	/// the line where the list puts each parameter on a line of its own, or a comma and a space.
+	/// <para>
+	/// Whether the list wraps is read from the opening parenthesis and the parameters, never from the
+	/// closing one: the line break after it is the signature ending, which every block-bodied member has.
+	/// </para>
+	/// </summary>
+	private static SyntaxToken ExtraSeparator(ParameterListSyntax list)
+	{
+		var separators = list.Parameters.GetSeparators().ToArray();
+
+		if (separators.Length > 0) return separators[^1];
+
+		var lineEnding = list.OpenParenToken.TrailingTrivia
+			.Concat(list.Parameters.SelectMany(parameter => parameter.GetLeadingTrivia()))
+			.FirstOrDefault(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+
+		return lineEnding.IsKind(SyntaxKind.EndOfLineTrivia)
+			? SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(lineEnding)
+			: SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(SyntaxFactory.Space);
+	}
+
+	/// <summary>
+	/// A new parameter laid out as the one before it is: at that indentation where the list wraps,
+	/// inline where it does not. The first parameter of a list takes the indentation of the one it is
+	/// going in front of.
+	/// <para>
+	/// The indentation alone, from after the neighbour's last line break. Its comment lines are its own,
+	/// and copying the whitespace around them leaves a blank line where the comment was.
+	/// </para>
+	/// </summary>
+	private static ParameterSyntax Beside(
+		ParameterSyntax parameter,
+		IReadOnlyList<ParameterSyntax> built,
+		SeparatedSyntaxList<ParameterSyntax> own)
+	{
+		var neighbour = built.Count > 0 ? built[^1] : own.FirstOrDefault();
+
+		var layout = neighbour is null
+			? []
+			: AfterLastBreak(neighbour.GetLeadingTrivia()).Where(trivia => trivia.IsKind(SyntaxKind.WhitespaceTrivia));
+
+		return parameter.WithLeadingTrivia(layout).WithTrailingTrivia();
+	}
+
+	/// <summary>
+	/// The caller's parameter with the comment lines the file had above it, where there were any.
+	/// Whatever layout the caller chose, a comment grouping parameters is not part of it, and a list
+	/// rebuilt without it loses it without trace. The comment lines go between the caller's own line
+	/// break and the caller's own indentation, so the layout around them is still the caller's.
+	/// </summary>
+	private static ParameterSyntax WithComments(ParameterSyntax written, ParameterSyntax existing)
+	{
+		var theirs = existing.GetLeadingTrivia();
+
+		if (!theirs.Any(MemberSyntax.IsComment)) return written;
+
+		var mine = written.GetLeadingTrivia();
+		var indentation = AfterLastBreak(mine).ToArray();
+		var commentLines = theirs.Take(theirs.Count - AfterLastBreak(theirs).Count());
+
+		return written.WithLeadingTrivia(mine.Take(mine.Count - indentation.Length).Concat(commentLines).Concat(indentation));
+	}
+
+	/// <summary>The trivia after the last line break in a list, which is the indentation of the line it ends on.</summary>
+	private static IEnumerable<SyntaxTrivia> AfterLastBreak(SyntaxTriviaList trivia)
+	{
+		var last = -1;
+
+		for (var index = 0; index < trivia.Count; index++)
+		{
+			if (trivia[index].IsKind(SyntaxKind.EndOfLineTrivia)) last = index;
+		}
+
+		return trivia.Skip(last + 1);
 	}
 
 	/// <summary>
@@ -560,7 +785,7 @@ public static class ChangeSignatureService
 
 		if (root is null || tree is null) return solution;
 
-		var spans = root.GetAnnotatedNodes(marker).Select(node => node.FullSpan).ToArray();
+		var spans = root.GetAnnotatedNodesAndTokens(marker).Select(written => written.FullSpan).ToArray();
 		if (spans.Length == 0) return solution;
 
 		var final = Whitespace.Apply(root, text, rules, spans);
@@ -620,8 +845,14 @@ public static class ChangeSignatureService
 			});
 		}
 
-		// The ones that compile either way, which is where the silent bug lives.
-		if (plan.CallSitesUnaffected)
+		// The ones that compile either way, which is where the silent bug lives: a new parameter every
+		// caller takes the default of, or an argument that converts to a parameter's new type. A change
+		// that brings neither -- one that only says whether a parameter may be null -- leaves nothing at
+		// a call site worth a look, and listing every one of them is a list nobody reads.
+		var added = plan.Added.Any();
+		var converted = plan.Converted.ToArray();
+
+		if (plan.CallSitesUnaffected && (added || converted.Length > 0))
 		{
 			foreach (var item in work)
 			{
@@ -629,12 +860,18 @@ public static class ChangeSignatureService
 				{
 					if (!reported.Add(location)) continue;
 
+					var reason = added
+						? await ForwarderAsync(solution, location, cancellationToken)
+							?? "Nothing needed changing, since every new parameter has a default. Worth a look all "
+							+ "the same: a caller that goes on taking the default may be one that should not."
+						: $"Its arguments were left as they were, and the one it passes to {string.Join(", ", converted)} "
+							+ "now goes to a different type. Worth a look: a conversion that happens to exist compiles "
+							+ "and may mean something else.";
+
 					unchanged.Add(new UnchangedCallSite
 					{
 						Location = await SymbolLocator.DescribeAsync(solution, location, cancellationToken),
-						Reason = await ForwarderAsync(solution, location, cancellationToken)
-							?? "Nothing needed changing, since every new parameter has a default. Worth a look all "
-							+ "the same: a caller that goes on taking the default may be one that should not.",
+						Reason = reason,
 					});
 				}
 			}
@@ -694,7 +931,9 @@ public static class ChangeSignatureService
 		Applied applied,
 		Verification verification,
 		WriteOutcome outcome,
-		IReadOnlyList<UnchangedCallSite> unchanged)
+		IReadOnlyList<UnchangedCallSite> unchanged,
+		ISymbol symbol,
+		IReadOnlyList<AccessChange> access)
 	{
 		// First, because it is the only thing here that is nobody's work but this tool's.
 		foreach (var defect in Defects(applied, verification)) yield return defect;
@@ -702,14 +941,44 @@ public static class ChangeSignatureService
 		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 		if (outcome.ChangedFiles.Count == 0) yield return "The signature already read exactly like that.";
 
+		if (access.Count > 0 && AccessibilityModifiers.Spelled(symbol.DeclaredAccessibility) is { } was)
+		{
+			var moved = access.Count - 1;
+
+			yield return $"It was {was}."
+				+ (moved > 0
+					? $" {moved} declaration(s) it overrides or that override it moved with it, since an override has to "
+						+ "keep the accessibility of what it overrides."
+					: string.Empty);
+		}
+
+		if (request.Accessibility is { } asked)
+		{
+			var wanted = AccessibilityModifiers.Parse(asked);
+
+			foreach (var change in access.Where(change => change.Accessibility != wanted))
+			{
+				yield return $"{SymbolSignature.Of(change.Symbol)} is {AccessibilityModifiers.Spelled(change.Accessibility)} "
+					+ $"rather than {AccessibilityModifiers.Spelled(wanted)}: it overrides from another assembly, which "
+					+ "the internal half does not reach.";
+			}
+		}
+
 		// What the diff could not show, which for a change reaching several files is worth saying
 		// before anything about what compiled.
 		foreach (var notice in outcome.Notices) yield return notice;
 
-		if (plan.Retyped.Count > 0)
+		if (plan.Converted.Any())
 		{
-			yield return $"Retyped {string.Join(", ", plan.Retyped)}, which the call sites still pass their old "
+			yield return $"Retyped {string.Join(", ", plan.Converted)}, which the call sites still pass their old "
 				+ "arguments to. A conversion that happens to exist will compile and mean something different.";
+		}
+
+		if (plan.Reannotated.Count > 0)
+		{
+			yield return $"Changed only whether {string.Join(", ", plan.Reannotated)} may be null, which no argument "
+				+ "has to change for. A caller passing null where it no longer may is a nullable warning, and the "
+				+ "compile reports it only where those are errors.";
 		}
 
 		if (unchanged.Count > 0)
@@ -971,6 +1240,9 @@ public static class ChangeSignatureService
 	/// a shape the rewriter cannot spell has to be written by hand.
 	/// </summary>
 	private sealed record RefusedCallSite(Location Location, string Reason);
+
+	/// <summary>One declaration whose accessibility changes, and what it changes to.</summary>
+	private sealed record AccessChange(ISymbol Symbol, Accessibility Accessibility);
 
 	private sealed record Applied(
 		Solution Solution,

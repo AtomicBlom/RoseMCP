@@ -262,7 +262,7 @@ public sealed class DiskSynchronizer
 			var owners = Owners(solution, path);
 			if (owners.Count == 0) continue;
 
-			if (!Globs(owners[0]))
+			if (!Globs(owners[0]) && !Lists(owners[0], path))
 			{
 				// Once. The file stays untracked for as long as it stays out of the project, and
 				// repeating the notice on every read afterwards would bury everything else.
@@ -602,6 +602,26 @@ public sealed class DiskSynchronizer
 		_globs[path] = globs;
 
 		return globs;
+	}
+
+	/// <summary>
+	/// Whether a project that lists its files names this one, which puts it in the build however it got
+	/// onto disk. Read fresh rather than cached with <see cref="Globs"/>, since naming a file is the edit a
+	/// listing project gets most, and it is asked only of a file that has appeared beside one.
+	/// </summary>
+	private static bool Lists(Project project, string path)
+	{
+		if (project.FilePath is not { Length: > 0 } file) return false;
+		if (Path.GetDirectoryName(Path.GetFullPath(file)) is not { Length: > 0 } directory) return false;
+
+		try
+		{
+			return ProjectItemStyle.Lists(File.ReadAllText(file), directory, path);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			return false;
+		}
 	}
 
 	private static bool IsSource(string path) =>

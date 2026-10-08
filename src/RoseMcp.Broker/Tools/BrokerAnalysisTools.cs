@@ -541,7 +541,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 
 	[McpServerTool(
 		Name = ToolNames.ChangeSignature,
-		Title = "Change a member's parameters",
+		Title = "Change a member's parameters or accessibility",
 		ReadOnly = false,
 		Destructive = true,
 		Idempotent = true,
@@ -551,7 +551,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 	public Task<SignatureChangeResult> ChangeSignatureAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.MemberArgument)] string symbol,
-		[Description(ToolDescriptions.ParametersArgument)] string parameters,
+		[Description(ToolDescriptions.ParametersArgument)] string? parameters = null,
+		[Description(ToolDescriptions.AccessibilityArgument)] string? accessibility = null,
 		[Description(ToolDescriptions.ArgumentsArgument)] string[]? arguments = null,
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
@@ -564,6 +565,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		{
 			["symbol"] = symbol,
 			["parameters"] = parameters,
+			["accessibility"] = accessibility,
 			["arguments"] = arguments,
 			["filePath"] = filePath,
 			["apply"] = apply,

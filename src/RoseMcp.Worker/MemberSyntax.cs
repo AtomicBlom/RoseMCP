@@ -505,7 +505,9 @@ public static class MemberSyntax
 				var stripped = Stripped(entry.Line.Content, baseline);
 
 				// Padding a blank line only makes trailing whitespace for the next pass to strip again.
-				var prefixed = entry.Index > first && stripped.Trim().Length > 0 ? indent + stripped : stripped;
+				var prefixed = entry.Index > first && stripped.Trim().Length > 0
+					? Moved(entry.Line.Content, baseline, indent)
+					: stripped;
 
 				return prefixed + entry.Line.Ending;
 			});
@@ -742,20 +744,20 @@ public static class MemberSyntax
 	/// already had and gains another. That is what put six tabs at eleven and three at five.
 	/// </para>
 	/// <para>
-	/// Two conditions, and both are needed. The first line has to carry no indentation of its own: one
-	/// that does is the fragment's baseline, written deliberately, and the caller indented everything
-	/// against it -- an attribute written at two tabs with its arguments at three wants those
-	/// arguments one level in from wherever it lands, not at the destination. And every other line has
-	/// to sit <em>strictly deeper</em> than the destination: a line at exactly the destination's
-	/// indentation is what a fragment written flush produces when the destination is one level deep,
-	/// which is the ordinary case for a member's attribute, and reading that as absolute would flatten
-	/// every wrapped line onto the line it continues.
+	/// The first line has to carry no indentation of its own: one that does is the fragment's baseline,
+	/// written deliberately, and the caller indented everything against it -- an attribute written at
+	/// two tabs with its arguments at three wants those arguments one level in from wherever it lands,
+	/// not at the destination.
 	/// </para>
 	/// <para>
-	/// What is left over is a fragment written flush whose next line sits at exactly the destination
-	/// -- a sibling statement indented for where it goes. It is indistinguishable from the flush case
-	/// above by anything here, and it is not what a wrapped continuation looks like, so it keeps the
-	/// doubling (#189).
+	/// Every other line has to read as placed: deeper than the destination and starting with its
+	/// indentation, or -- the shape a caller produces by copying a phrase out of the file and editing it
+	/// -- at the destination's own depth or one level out, as a continuation and the line that closes it
+	/// sit. That second reading needs two levels at least. A line one level deep is what a fragment
+	/// written flush produces against a destination one level deep, which is the ordinary case for a
+	/// member's attribute, and reading it as absolute would flatten every wrapped line onto the line it
+	/// continues. A fragment written flush only reaches two levels by nesting, and nesting passes
+	/// through the levels in between, which fails the test on the way.
 	/// </para>
 	/// <para>
 	/// A literal's lines are not layout and are passed over, since their whitespace is the value.
@@ -782,13 +784,43 @@ public static class MemberSyntax
 
 			var leading = Leading(lines[index].Content);
 
-			if (leading.Length <= indent.Length) return null;
-			if (!leading.StartsWith(indent, StringComparison.Ordinal)) return null;
+			var deeper = leading.Length > indent.Length && leading.StartsWith(indent, StringComparison.Ordinal);
+			var comparable = leading.StartsWith(indent, StringComparison.Ordinal) || indent.StartsWith(leading, StringComparison.Ordinal);
+			var atTheDestination = comparable && Levels(leading) >= 2 && Levels(leading) >= Levels(indent) - 1;
+
+			if (!deeper && !atTheDestination) return null;
 
 			found = true;
 		}
 
 		return found ? indent : null;
+	}
+
+	/// <summary>How many levels of indentation some leading whitespace is, a tab or four spaces to a level.</summary>
+	private static int Levels(string leading) =>
+		leading.Count(character => character == '\t') + (leading.Count(character => character == ' ') / 4);
+
+	/// <summary>
+	/// A line moved from the fragment's baseline to <paramref name="indent"/>.
+	/// <para>
+	/// A line shallower than the baseline keeps its distance from it rather than having the destination
+	/// put in front of what it had. That is the shape of a replacement copied out of the file with its
+	/// first line's indentation: the brace that closes the block above sits two levels out from it, and
+	/// adding the destination to the brace's own indentation put it -- and the continuation lines after
+	/// it, which no formatting rule moves back -- as far in again as the destination is deep.
+	/// </para>
+	/// </summary>
+	private static string Moved(string line, string baseline, string indent)
+	{
+		if (line.StartsWith(baseline, StringComparison.Ordinal)) return indent + line[baseline.Length..];
+
+		var leading = Leading(line);
+
+		if (!baseline.StartsWith(leading, StringComparison.Ordinal)) return indent + line;
+
+		var outdent = baseline.Length - leading.Length;
+
+		return indent[..Math.Max(indent.Length - outdent, 0)] + line[leading.Length..];
 	}
 
 	/// <summary>

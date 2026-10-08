@@ -9,23 +9,24 @@ namespace RoseMcp.IntegrationTests;
 /// <summary>
 /// What a write says about the lines it changed that nothing it was asked to do reaches.
 /// <para>
-/// The first five are damage the writing tools still do, each one of the shapes the open fidelity
-/// issues recorded, and each asserts the damage as well as the sentence naming it. When a tool stops
-/// doing it, both assertions fail together, and the test becomes that tool's own: an edit that
-/// changes only what it was asked to. The last is the other half, and the one that keeps the sentence
-/// worth reading: ordinary edits of every kind, none of which may be told it reached further than it
-/// was asked.
+/// The tests named for what they name are damage the writing tools still do, each one of the shapes the
+/// open fidelity issues recorded, and each asserts the damage as well as the sentence naming it. When a
+/// tool stops doing it, both assertions fail together, and the test becomes that tool's own: an edit that
+/// changes only what it was asked to, which is what the tests named for what they leave alone are. The
+/// last is the other half, and the one that keeps the sentence worth reading: ordinary edits of every
+/// kind, none of which may be told it reached further than it was asked.
 /// </para>
 /// </summary>
 public sealed class OverreachReportTests
 {
 	/// <summary>
-	/// An insertion at the end of a body rebuilds the whole body from its statements, so the statements
-	/// already there come back laid out again: the blank lines between them go, and the arguments they
-	/// wrapped move with them (#217).
+	/// An insertion at the end of a body, among statements separated by blank lines and wrapped onto
+	/// continuation lines. Rebuilt from its statements, the body loses the blank lines and has its
+	/// arguments re-indented; spliced into, it changes only where the new statement goes, and nothing
+	/// outside that is named.
 	/// </summary>
 	[Test]
-	public async Task Names_the_statements_an_insertion_at_the_end_rewrote()
+	public async Task Leaves_the_statements_an_insertion_at_the_end_lands_beside()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 
@@ -62,18 +63,18 @@ public sealed class OverreachReportTests
 
 		var text = await ReadAsync(fixture, "Routes.cs");
 
-		text.ShouldContain("new List<string>();\r\n\t\troutes.Add(", Case.Sensitive);
-		text.ShouldNotContain("\r\n\t\t\tstring.Concat(\"/sessions\", \"/threads\"));", Case.Sensitive);
-		Reached(result.Notices, "Routes.cs").ShouldStartWith(
-			"Routes.cs: lines 8, 10-11 and 13 changed.", Case.Sensitive);
+		text.ShouldContain("new List<string>();\r\n\r\n\t\troutes.Add(\r\n\t\t\tstring.Concat(\"/sessions\", \"/breakpoints\"));", Case.Sensitive);
+		text.ShouldContain("\t\t\tstring.Concat(\"/sessions\", \"/threads\"));\r\n\r\n\t\troutes.Sort();\r\n\r\n\t\treturn routes;", Case.Sensitive);
+		Reached(result.Notices, "Routes.cs").ShouldBeNull();
 	}
 
 	/// <summary>
-	/// A whole initialiser written into a constant whose value sat on the line below it: the value comes
-	/// up onto the declaration's line, which nothing asked for (#217).
+	/// A whole initialiser written into a constant whose value sits on the line below it. Joined to the
+	/// declaration with a space, the value comes up onto the declaration's line, which nothing asked for;
+	/// it stays below its "=", so the declaration's line is untouched and there is nothing to name.
 	/// </summary>
 	[Test]
-	public async Task Names_the_declaration_a_value_was_pulled_up_onto()
+	public async Task Leaves_the_declaration_a_wrapped_value_sits_under()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 
@@ -96,16 +97,18 @@ public sealed class OverreachReportTests
 
 		var text = await ReadAsync(fixture, "Phrases.cs");
 
-		text.ShouldContain("public const string Greeting = \"Goodbye, \"", Case.Sensitive);
-		Reached(result.Notices, "Phrases.cs").ShouldStartWith("Phrases.cs: line 5 changed.", Case.Sensitive);
+		text.ShouldContain(
+			"\tpublic const string Greeting =\r\n\t\t\"Goodbye, \"\r\n\t\t\t+ \"world.\";\r\n", Case.Sensitive);
+		Reached(result.Notices, "Phrases.cs").ShouldBeNull();
 	}
 
 	/// <summary>
-	/// An anchored change to one element of a collection expression: the bracket that opened it on a
-	/// line of its own comes up onto the declaration's line (#217).
+	/// An anchored change to one element of a collection expression whose bracket opens on a line of its
+	/// own. Joined to the declaration with a space, the bracket comes up onto the declaration's line; it
+	/// stays where it was, and nothing outside the anchor is named.
 	/// </summary>
 	[Test]
-	public async Task Names_the_line_a_bracket_was_pulled_up_from()
+	public async Task Leaves_a_bracket_on_the_line_it_opened_on()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 
@@ -135,8 +138,8 @@ public sealed class OverreachReportTests
 
 		var text = await ReadAsync(fixture, "Lists.cs");
 
-		text.ShouldContain("Names = [", Case.Sensitive);
-		Reached(result.Notices, "Lists.cs").ShouldStartWith("Lists.cs: lines 5-6 changed.", Case.Sensitive);
+		text.ShouldContain("\tprivate static readonly string[] Names =\r\n\t[\r\n\t\t\"first\",\r\n", Case.Sensitive);
+		Reached(result.Notices, "Lists.cs").ShouldBeNull();
 	}
 
 	/// <summary>

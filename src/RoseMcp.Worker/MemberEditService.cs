@@ -288,6 +288,14 @@ public static class MemberEditService
 		var asked = new List<TextSpan>();
 		var written = BodyFor(declaration, target.Signature, text, bodyStart, request, rules, notices, asked, out var supplied);
 
+		// A body assembled from the file's own text is already indented for where it sits, and the
+		// only caller code in it has been placed against the line it lands on -- so the destination's
+		// own indentation is what comes off and goes back on, and the pass is the identity it should
+		// be. Read from the code instead, the baseline is how deep the body sits inside its member,
+		// and every line comes out a level shallower: invisibly for a block body, which the formatter
+		// has rules for, and on disk for an expression body, which is a continuation it has none for.
+		var fromTheFile = request.Find is { Length: > 0 } || request.Position is not null;
+
 		// The head is named as copied, which exempts it from the re-indentation the body needs. The
 		// two halves arrive in different coordinate systems -- the signature indented for the file it
 		// came out of, the body at whatever baseline the caller happened to write it at -- and one
@@ -298,7 +306,24 @@ public static class MemberEditService
 		// An initialiser goes back as an expression and a semicolon; a body is wrapped in braces or
 		// left behind its arrow. Sharing the rebuild is what keeps the copied-signature promise on
 		// both: what comes out in front of the "=" is the text that was in front of it.
-		var shaped = IsInitialiser(declaration) ? $"{written.Trim()};" : Body(written);
+		//
+		// An initialiser's value goes back on the line it was on. A wrapped value sits below its "=",
+		// and the single space a body is joined with pulls it up -- no formatting rule puts a value
+		// back on a line of its own, so the declaration's line changed on a write that asked only for
+		// the value. Where the file broke before the value, the file's own break and indentation are
+		// kept when the body comes from the file, and a line ending is used when the caller sent it
+		// whole, with the caller's first line keeping its indentation so the whole value is measured
+		// against itself. A caller whose value starts with a line break is asking for that layout.
+		var wrapped = IsInitialiser(declaration)
+			&& (BreaksBeforeValue(declaration, bodyStart) || StartsWithBreak(request.Code));
+
+		var separator = !wrapped ? " "
+			: fromTheFile && BreaksBeforeValue(declaration, bodyStart) ? text.ToString(TextSpan.FromBounds(ValueSeparatorStart(declaration, bodyStart), bodyStart))
+			: rules.LineEnding;
+
+		var shaped = !IsInitialiser(declaration) ? Body(written)
+			: wrapped && !fromTheFile ? $"{FromFirstLine(written).TrimEnd()};"
+			: $"{written.Trim()};";
 
 		// The member as it stood, counted from its first line as a moved member's is, which is where a
 		// literal the file already held is named.
@@ -314,21 +339,13 @@ public static class MemberEditService
 				.Select(span => new TextSpan(span.Start - memberAt, span.Length)),
 		];
 
-		var rebuilt = $"{head} {shaped}";
+		var rebuilt = $"{head}{separator}{shaped}";
 
 		// Where the first character of the body would sit in what is parsed, so a line of it can be
 		// named in the terms of the code the caller sent. Trimming and wrapping both change that, and
 		// what the body trims to is found unchanged in either shape.
-		var bodyAt = head.Length + 1 + shaped.IndexOf(written.Trim(), StringComparison.Ordinal)
+		var bodyAt = head.Length + separator.Length + shaped.IndexOf(written.Trim(), StringComparison.Ordinal)
 			- (written.Length - written.TrimStart().Length);
-
-		// A body assembled from the file's own text is already indented for where it sits, and the
-		// only caller code in it has been placed against the line it lands on -- so the destination's
-		// own indentation is what comes off and goes back on, and the pass is the identity it should
-		// be. Read from the code instead, the baseline is how deep the body sits inside its member,
-		// and every line comes out a level shallower: invisibly for a block body, which the formatter
-		// has rules for, and on disk for an expression body, which is a continuation it has none for.
-		var fromTheFile = request.Find is { Length: > 0 } || request.Position is not null;
 
 		// A body the caller supplied whole is measured against itself, as everything else here is, and
 		// its lines belong one level in from the member: what precedes them is a brace or an arrow on
@@ -573,7 +590,9 @@ public static class MemberEditService
 	/// <para>
 	/// An arrow goes on the line the signature ends on and a block's brace below it, so trading one for
 	/// the other rewrites that line by definition. Keeping the shape does not: a value pulled up onto
-	/// the line its declaration ends on, or an arrow drawn up after it, is a change nobody asked for.
+	/// the line its declaration ends on, or an arrow drawn up after it, is a change nobody asked for. An
+	/// initialiser changes shape when the caller starts its value with a line break the file did not
+	/// have, which moves the value off the declaration's line.
 	/// </para>
 	/// </summary>
 	private static TextSpan WholeBody(MemberDeclarationSyntax declaration, int bodyStart, string code)
@@ -583,11 +602,41 @@ public static class MemberEditService
 			or IndexerDeclarationSyntax { ExpressionBody: not null };
 
 		var arrowAfter = code.TrimStart().StartsWith("=>", StringComparison.Ordinal);
-		var reshaped = !IsInitialiser(declaration) && arrowNow != arrowAfter;
 
-		var from = reshaped ? declaration.FindToken(bodyStart).GetPreviousToken().Span.End : bodyStart;
+		var reshaped = IsInitialiser(declaration)
+			? StartsWithBreak(code) && !BreaksBeforeValue(declaration, bodyStart)
+			: arrowNow != arrowAfter;
+
+		var from = reshaped ? ValueSeparatorStart(declaration, bodyStart) : bodyStart;
 
 		return TextSpan.FromBounds(from, declaration.Span.End);
+	}
+
+	/// <summary>Where the token in front of the body ends: the arrow, the "=", or the end of the signature.</summary>
+	private static int ValueSeparatorStart(MemberDeclarationSyntax declaration, int bodyStart) =>
+		declaration.FindToken(bodyStart).GetPreviousToken().Span.End;
+
+	/// <summary>Whether the file has a line break between the token in front of the body and the body itself.</summary>
+	private static bool BreaksBeforeValue(MemberDeclarationSyntax declaration, int bodyStart)
+	{
+		var first = declaration.FindToken(bodyStart);
+
+		return first.GetPreviousToken().TrailingTrivia.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia))
+			|| first.LeadingTrivia.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+	}
+
+	/// <summary>Whether the code the caller sent begins with a line break, blanks before it aside.</summary>
+	private static bool StartsWithBreak(string code) => code.TrimStart(' ', '\t') is ['\r' or '\n', ..];
+
+	/// <summary>
+	/// The code from the start of its first line with anything on it, so that line keeps its indentation
+	/// and the code can be measured against itself.
+	/// </summary>
+	private static string FromFirstLine(string code)
+	{
+		var leading = code.Length - code.TrimStart().Length;
+
+		return code[(code[..leading].LastIndexOf('\n') + 1)..];
 	}
 
 	/// <summary>The block a member is written with, or null where it has an expression body instead.</summary>
@@ -643,12 +692,29 @@ public static class MemberEditService
 		// trivia, in which case it is already separated and adding another gives two.
 		var followerIsSeparated = index >= type.Members.Count || StartsBlank(type.Members[index]);
 
+		// Fields written one under another with no blank line between them are a block, and a field
+		// added into one joins it: no blank line above where the field it follows is packed against a
+		// neighbour, and none below where the next field is packed against it. Spacing the new field
+		// out instead opens a gap either side of it in the middle of the block, which the overreach
+		// sentence cannot see because the lines it adds are the insertion's own.
+		var anchor = index > 0 ? type.Members[index - 1] : null;
+		var follower = index < type.Members.Count ? type.Members[index] : null;
+		var anchorIsPacked = (index > 1 && !StartsBlank(anchor!)) || (follower is not null && !followerIsSeparated);
+
+		var joinsAbove = anchor is BaseFieldDeclarationSyntax
+			&& parsed[0] is BaseFieldDeclarationSyntax
+			&& anchorIsPacked;
+
+		var joinsBelow = follower is BaseFieldDeclarationSyntax
+			&& parsed[^1] is BaseFieldDeclarationSyntax
+			&& !followerIsSeparated;
+
 		for (var position = 0; position < parsed.Count; position++)
 		{
 			prepared.Add(MemberSyntax.Prepared(
 				parsed[position],
-				blankBefore: position > 0 || index > 0,
-				blankAfter: position == parsed.Count - 1 && !followerIsSeparated,
+				blankBefore: position > 0 || (index > 0 && !joinsAbove),
+				blankAfter: position == parsed.Count - 1 && !followerIsSeparated && !joinsBelow,
 				lineEnding,
 				IndentFor(type, text, rules),
 				marker));
@@ -685,29 +751,32 @@ public static class MemberEditService
 		var options = await Whitespace.FormattingOptionsAsync(document, written.Rules, cancellationToken);
 		var formatted = await Formatter.FormatAsync(document, written.Marker, options, cancellationToken);
 
-		var root = await formatted.GetSyntaxRootAsync(cancellationToken);
-		var tree = await formatted.GetSyntaxTreeAsync(cancellationToken);
-		var text = await formatted.GetTextAsync(cancellationToken);
+		// And only the written lines keep what it did. Asked to format a node, the formatter rewrites the
+		// whitespace out to the tokens either side of it as well: the trailing spaces after the member
+		// above, a blank line holding a tab, the indentation of the member below. None of that was
+		// written, so the file's own text goes back everywhere outside the lines that were, which is
+		// what keeps those lines out of the overreach sentence rather than named in it.
+		var before = await document.GetTextAsync(cancellationToken);
+		var after = await formatted.GetTextAsync(cancellationToken);
+		var (wrote, _) = WrittenLines(await RootOf(document, cancellationToken), before, written.Marker);
+		var (laidOut, first) = WrittenLines(await RootOf(formatted, cancellationToken), after, written.Marker);
 
-		if (root is null || tree is null)
-		{
-			throw new InvalidOperationException($"{Path.GetFileName(written.Document.FilePath)} is not a C# source file.");
-		}
+		var kept = SourceText.From(
+			string.Concat(
+				before.ToString(TextSpan.FromBounds(0, wrote.Start)),
+				after.ToString(laidOut),
+				before.ToString(TextSpan.FromBounds(wrote.End, before.Length))),
+			after.Encoding,
+			after.ChecksumAlgorithm);
 
-		var nodes = root.GetAnnotatedNodes(written.Marker).ToArray();
-
-		if (nodes.Length == 0)
-		{
-			throw new InvalidOperationException("The written members could not be found again after formatting.");
-		}
-
-		var span = TextSpan.FromBounds(
-			nodes.Min(node => node.FullSpan.Start),
-			nodes.Max(node => node.FullSpan.End));
+		var spliced = formatted.WithText(kept);
+		var root = await RootOf(spliced, cancellationToken);
+		var text = await spliced.GetTextAsync(cancellationToken);
+		var span = new TextSpan(wrote.Start, laidOut.Length);
 
 		// Read before the whitespace pass, which can move every offset in the file by rewriting
 		// line endings but cannot move a line: a line is a line either way.
-		var line = text.Lines.GetLineFromPosition(nodes.Min(node => node.SpanStart)).LineNumber + 1;
+		var line = text.Lines.GetLineFromPosition(wrote.Start + (first - laidOut.Start)).LineNumber + 1;
 
 		var rules = written.Rules;
 		var final = Whitespace.Apply(root, text, rules, [span]);
@@ -715,7 +784,7 @@ public static class MemberEditService
 		// Every project holding this file gets the same text. A linked document left on the old text
 		// would answer the next question from a file that no longer exists, which is the staleness
 		// this server exists to prevent.
-		var solution = formatted.Project.Solution;
+		var solution = spliced.Project.Solution;
 
 		foreach (var id in solution.GetDocumentIdsWithFilePath(written.Document.FilePath!))
 		{
@@ -723,6 +792,35 @@ public static class MemberEditService
 		}
 
 		return new Finished(solution, line, [.. LiteralEndingNotices(root, span, text, rules)]);
+	}
+
+	/// <summary>
+	/// The lines a write wrote, and where its first declaration's own text begins: from the start of the
+	/// line the first marked node's content begins on, to the end of the last.
+	/// <para>
+	/// The blank lines at the top of a node's leading trivia are left out. On a replaced member they are
+	/// the file's own, carried across untouched, and a blank line holding a tab is exactly what the
+	/// formatter tidies; on an added member they are the separation this wrote, which is already right.
+	/// </para>
+	/// </summary>
+	/// <exception cref="InvalidOperationException">Nothing carries the marker any more.</exception>
+	private static (TextSpan Lines, int First) WrittenLines(SyntaxNode root, SourceText text, SyntaxAnnotation marker)
+	{
+		var nodes = root.GetAnnotatedNodes(marker).OrderBy(node => node.FullSpan.Start).ToArray();
+
+		if (nodes.Length == 0)
+		{
+			throw new InvalidOperationException("The written members could not be found again after formatting.");
+		}
+
+		var content = nodes[0].GetLeadingTrivia()
+			.Where(trivia => !trivia.IsKind(SyntaxKind.WhitespaceTrivia) && !trivia.IsKind(SyntaxKind.EndOfLineTrivia))
+			.Select(trivia => (int?)trivia.SpanStart)
+			.FirstOrDefault() ?? nodes[0].SpanStart;
+
+		var start = text.Lines.GetLineFromPosition(content).Start;
+
+		return (TextSpan.FromBounds(start, nodes.Max(node => node.FullSpan.End)), nodes.Min(node => node.SpanStart));
 	}
 
 	/// <summary>
@@ -1038,10 +1136,14 @@ public static class MemberEditService
 
 	/// <summary>
 	/// Whether a member already has a blank line above it, which it will have when whoever wrote the
-	/// file put one there: the break belongs to the member below rather than the one above.
+	/// file put one there: the break belongs to the member below rather than the one above. A blank line
+	/// holding nothing but whitespace is a blank line too, and reading it as none gives the member a second.
 	/// </summary>
 	internal static bool StartsBlank(MemberDeclarationSyntax member) =>
-		member.GetLeadingTrivia() is [var first, ..] && first.IsKind(SyntaxKind.EndOfLineTrivia);
+		member.GetLeadingTrivia()
+			.SkipWhile(trivia => trivia.IsKind(SyntaxKind.WhitespaceTrivia))
+			.FirstOrDefault()
+			.IsKind(SyntaxKind.EndOfLineTrivia);
 
 	/// <summary>
 	/// What a declaration is called, which for a field is every variable it declares. Used both to

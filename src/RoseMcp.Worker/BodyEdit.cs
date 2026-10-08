@@ -485,15 +485,25 @@ public static class BodyEdit
 
 		var own = Whitespace.EndingOf(block.ToFullString());
 		var written = Given(trimmed, lineEnding ?? own, out var changed);
-		var body = Composed(block.Statements, written, atStart, own ?? "\n", notices, out placed);
+		var body = Composed(block, written, atStart, own ?? "\n", notices, out var landed);
 
-		if (changed > 0) Reported(body, new TextSpan(placed, written.Length), code, rewritten);
+		placed = landed.Start;
+
+		if (changed > 0) Reported(body, landed, code, rewritten);
 
 		return body;
 	}
 
 	/// <summary>
-	/// The block's statements with <paramref name="written"/> at one end of them, and where it begins.
+	/// The block's statements with <paramref name="written"/> at one end of them, and where it landed.
+	/// <para>
+	/// Spliced into the block's own text rather than rebuilt from its statements. Rebuilt, every
+	/// statement comes back trimmed and joined one to a line: the blank lines between them go, and the
+	/// lines a statement wrapped onto are re-indented by a formatter that has no rule for a continuation
+	/// -- a five-line addition to a long method then rewrites every statement in it. Only the place the
+	/// new code goes changes, with a blank line either side of it, and the new code is indented as the
+	/// statements beside it are.
+	/// </para>
 	/// <para>
 	/// Joined with <paramref name="ending"/>, the block's own, rather than with a bare LF. The joins are
 	/// layout and the whitespace pass gives them the file's ending either way, but the member parsed from
@@ -503,21 +513,38 @@ public static class BodyEdit
 	/// </para>
 	/// </summary>
 	private static string Composed(
-		SyntaxList<StatementSyntax> statements,
+		BlockSyntax block,
 		string written,
 		bool atStart,
 		string ending,
 		List<string> notices,
-		out int placed)
+		out TextSpan placed)
 	{
-		placed = 0;
+		var statements = block.Statements;
 
-		if (statements.Count == 0) return written;
+		if (statements.Count == 0)
+		{
+			placed = new TextSpan(0, written.Length);
 
+			return written;
+		}
+
+		var source = block.SyntaxTree.GetText();
+		var indent = Whitespace.IndentAt(source, statements[0].SpanStart);
+		var inserted = indent + MemberSyntax.Reindented(written, indent);
 		var gap = ending + ending;
-		var existing = string.Join(ending, statements.Select(statement => statement.ToFullString().Trim()));
 
-		if (atStart) return $"{written}{gap}{existing}";
+		// A statement from the start of its first line with anything on it, so the comments above it
+		// come with it and the blank lines above them do not, through to the end of anything trailing it.
+		string Run(StatementSyntax first, StatementSyntax last) =>
+			source.ToString(TextSpan.FromBounds(LineStart(source, first), last.FullSpan.End)).TrimEnd();
+
+		if (atStart)
+		{
+			placed = new TextSpan(indent.Length, inserted.Length - indent.Length);
+
+			return inserted + gap + Run(statements[0], statements[^1]);
+		}
 
 		// Appending after a return, throw, break, continue or goto is unreachable code, which is
 		// CS0162 -- a build error in a repository that turns warnings up, and dead code in one that
@@ -527,22 +554,34 @@ public static class BodyEdit
 
 		if (!IsJump(last))
 		{
-			placed = existing.Length + gap.Length;
+			var existing = Run(statements[0], last);
 
-			return $"{existing}{gap}{written}";
+			placed = new TextSpan(existing.Length + gap.Length + indent.Length, inserted.Length - indent.Length);
+
+			return existing + gap + inserted;
 		}
 
 		notices.Add($"Inserted before the closing {Keyword(last)}, since anything after it is unreachable.");
 
-		var above = statements.Take(statements.Count - 1)
-			.Select(statement => statement.ToFullString().Trim())
-			.ToArray();
+		var head = statements.Count == 1 ? string.Empty : Run(statements[0], statements[^2]) + gap;
 
-		var head = above.Length == 0 ? string.Empty : string.Join(ending, above) + gap;
+		placed = new TextSpan(head.Length + indent.Length, inserted.Length - indent.Length);
 
-		placed = head.Length;
+		return head + inserted + gap + Run(last, last);
+	}
 
-		return $"{head}{written}{gap}{last.ToFullString().Trim()}";
+	/// <summary>
+	/// Where a statement's first line with anything on it begins: a comment above it counts, and the
+	/// blank lines above that do not.
+	/// </summary>
+	private static int LineStart(SourceText source, StatementSyntax statement)
+	{
+		var content = statement.GetLeadingTrivia()
+			.Where(trivia => !trivia.IsKind(SyntaxKind.WhitespaceTrivia) && !trivia.IsKind(SyntaxKind.EndOfLineTrivia))
+			.Select(trivia => (int?)trivia.SpanStart)
+			.FirstOrDefault() ?? statement.SpanStart;
+
+		return source.Lines.GetLineFromPosition(content).Start;
 	}
 
 	/// <summary>

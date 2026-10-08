@@ -216,6 +216,61 @@ public sealed class MemberEditTests
 		text.ShouldContain("public sealed class Empty\r\n{\r\n\tpublic int Value => 1;\r\n}\r\n", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// Fields written one under another with no blank line between them are a block, and a field added
+	/// into it joins the block rather than opening a gap either side of itself. The blank line a member is
+	/// given belongs among members that are spaced; a packed block is the file saying these are not. The
+	/// overreach sentence cannot see it, since the lines it adds are inside the insertion.
+	/// <para>
+	/// At the end of the block the field joins it above and keeps the gap below, which belonged to the
+	/// member after the block all along.
+	/// </para>
+	/// </summary>
+	[Test]
+	[Arguments(
+		"First",
+		"\tprivate const string First = \"a\";\r\n\tprivate const string Added = \"x\";\r\n\tprivate const string Second = \"b\";\r\n")]
+	[Arguments(
+		"Third",
+		"\tprivate const string Third = \"c\";\r\n\tprivate const string Added = \"x\";\r\n\r\n\tpublic string All")]
+	public async Task Adds_a_field_into_a_packed_block_without_spacing_it(string after, string expected)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Packed.cs"),
+			"""
+			namespace Library;
+
+			public sealed class Packed
+			{
+				private const string First = "a";
+				private const string Second = "b";
+				private const string Third = "c";
+
+				public string All => First + Second + Third;
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Packed",
+			Code = "private const string Added = \"x\";",
+			After = after,
+		});
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await ReadAsync(fixture, "Packed.cs");
+
+		text.ShouldContain(expected, Case.Sensitive);
+	}
+
 	[Test]
 	public async Task Refuses_a_member_the_type_already_declares()
 	{

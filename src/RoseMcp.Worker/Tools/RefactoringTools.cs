@@ -282,7 +282,7 @@ public sealed class RefactoringTools(
 
 	[McpServerTool(
 		Name = ToolNames.ChangeSignature,
-		Title = "Change a member's parameters",
+		Title = "Change a member's parameters or accessibility",
 		ReadOnly = false,
 		Destructive = true,
 		Idempotent = true,
@@ -292,7 +292,8 @@ public sealed class RefactoringTools(
 	public async Task<SignatureChangeResult> ChangeSignatureAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.MemberArgument)] string symbol,
-		[Description(ToolDescriptions.ParametersArgument)] string parameters,
+		[Description(ToolDescriptions.ParametersArgument)] string? parameters = null,
+		[Description(ToolDescriptions.AccessibilityArgument)] string? accessibility = null,
 		[Description(ToolDescriptions.ArgumentsArgument)] string[]? arguments = null,
 		[Description(ToolDescriptions.PartialFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
@@ -304,6 +305,7 @@ public sealed class RefactoringTools(
 		{
 			Symbol = symbol,
 			Parameters = parameters,
+			Accessibility = accessibility,
 			Arguments = arguments ?? [],
 			FilePath = filePath,
 			Apply = apply,

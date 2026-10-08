@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -50,9 +52,11 @@ public static class AddFileService
 
 		progress?.Report($"Placing {Path.GetFileName(path)}", 0);
 
-		Refuse(snapshot.Solution, path);
+		var listed = Refuse(snapshot.Solution, path);
 
-		var project = Owner(snapshot.Solution, path, request.Project);
+		var project = listed.Length > 0
+			? snapshot.Solution.GetDocument(listed[0])!.Project
+			: Owner(snapshot.Solution, path, request.Project);
 
 		// From the repository and the files around the new one, never from the code: composed for a tool
 		// argument, that is LF whatever the repository uses.
@@ -69,10 +73,14 @@ public static class AddFileService
 		progress?.Report("Writing the file", 25);
 
 		var built = Build(unit, space, request.Usings, project);
-		var id = DocumentId.CreateNewId(project.Id, Path.GetFileName(path));
+		// Into the document a listing project already has for the path, where there is one: adding a
+		// second would put the file in the compilation twice.
+		var id = listed.Length > 0 ? listed[0] : DocumentId.CreateNewId(project.Id, Path.GetFileName(path));
 
-		var added = snapshot.Solution.AddDocument(
-			id, Path.GetFileName(path), SourceText.From(built), Folders(project, path), path);
+		var added = listed.Length > 0
+			? snapshot.Solution.WithDocumentText(id, SourceText.From(built))
+			: snapshot.Solution.AddDocument(
+				id, Path.GetFileName(path), SourceText.From(built), Folders(project, path), path);
 
 		var solution = await FormatAsync(added, id, rules, cancellationToken);
 
@@ -86,6 +94,13 @@ public static class AddFileService
 				diagnostics, snapshot.Solution, solution, id, path, rules, cancellationToken);
 		}
 
+		// A multi-targeted project that lists the path has a document for it per target, and each gets
+		// the text the first was given.
+		foreach (var other in listed.Skip(1))
+		{
+			solution = solution.WithDocumentText(other, await solution.GetDocument(id)!.GetTextAsync(cancellationToken));
+		}
+
 		progress?.Report(request.Apply ? "Writing to disk" : "Building the diff", 70);
 
 		// A file that is not there yet, so nothing already there was asked to change.
@@ -96,7 +111,12 @@ public static class AddFileService
 		await edit.VerifyAsync(
 			path, EditVerification.ScopeFor(solution, path, reaches: null, request.VerifyScope), cancellationToken);
 
-		var globs = ProjectItemStyle.GlobsSourceFiles(await ProjectTextAsync(project, cancellationToken));
+		// In the build when the project globs its directory or names the file itself: a project that
+		// lists its files compiles the ones it lists, whether or not they were on disk when it loaded.
+		var projectText = await ProjectTextAsync(project, cancellationToken);
+		var inTheBuild = ProjectItemStyle.GlobsSourceFiles(projectText)
+			|| listed.Length > 0
+			|| (Path.GetDirectoryName(project.FilePath) is { } directory && ProjectItemStyle.Lists(projectText, directory, path));
 
 		// Read off the solution the file was written from, so a literal is named against the line it
 		// ends up on rather than the line the caller wrote it at.
@@ -104,7 +124,7 @@ public static class AddFileService
 
 		var importsAdded = ResolvedImports.Report(imports);
 
-		notices.AddRange(Notices(request, imports, globs, project, rewrote, literalEndings));
+		notices.AddRange(Notices(request, imports, inTheBuild, project, rewrote, literalEndings));
 
 		if (DefaultLayout(rules, Path.GetFileName(path)) is { } defaulted) notices.Add(defaulted);
 
@@ -118,7 +138,7 @@ public static class AddFileService
 			Namespace = space,
 			Types = [.. TypeNames(unit)],
 			Applied = request.Apply,
-			InTheBuild = globs,
+			InTheBuild = inTheBuild,
 			ImportsAdded = importsAdded,
 			ImportsAmbiguous = imports.Ambiguous,
 			Unresolved = imports.Unresolved,
@@ -134,28 +154,40 @@ public static class AddFileService
 	}
 
 	/// <summary>
-	/// Refuses a path that is already something. Overwriting a file is not what "add" means, and a
-	/// caller that meant to replace one has three tools that say so.
+	/// Refuses a path that is already something, and returns the documents a project already lists for
+	/// a path that is not on disk yet. Overwriting a file is not what "add" means, and a caller that meant
+	/// to replace one has three tools that say so.
+	/// <para>
+	/// A project that lists its files loads a document for every <c>Compile</c> item it names, there or
+	/// not, so naming the file in the project first and then creating it is the ordinary order of work
+	/// there. A document with no file behind it is the place the new file goes, not a file that exists:
+	/// refusing it as "already in the solution" leaves the caller no tool that can create the file at all.
+	/// </para>
 	/// </summary>
-	private static void Refuse(Solution solution, string path)
+	private static ImmutableArray<DocumentId> Refuse(Solution solution, string path)
 	{
-		if (solution.GetDocumentIdsWithFilePath(path).Length > 0)
+		if (!Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase))
+		{
+			throw new ArgumentException($"{Path.GetFileName(path)} is not a .cs file, and this writes C#.");
+		}
+
+		var listed = solution.GetDocumentIdsWithFilePath(path);
+		var exists = File.Exists(path);
+
+		if (listed.Length > 0 && exists)
 		{
 			throw new ArgumentException(
 				$"{Path.GetFileName(path)} is already in the solution. Write into it with rose_add_member, "
 					+ "rose_replace_member or rose_replace_body.");
 		}
 
-		if (File.Exists(path))
+		if (exists)
 		{
 			throw new ArgumentException(
 				$"{path} already exists on disk. This creates a file rather than overwriting one.");
 		}
 
-		if (!Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase))
-		{
-			throw new ArgumentException($"{Path.GetFileName(path)} is not a .cs file, and this writes C#.");
-		}
+		return listed;
 	}
 
 	/// <summary>
@@ -490,7 +522,7 @@ public static class AddFileService
 	private static IEnumerable<string> Notices(
 		AddFileRequest request,
 		ResolvedImports.Imports imports,
-		bool globs,
+		bool inTheBuild,
 		Project project,
 		string? rewrote,
 		string? literalEndings)
@@ -501,7 +533,7 @@ public static class AddFileService
 		if (rewrote is { } rewritten) yield return rewritten;
 		if (literalEndings is { } endings) yield return endings;
 
-		if (!globs)
+		if (!inTheBuild)
 		{
 			yield return $"{project.Name} lists the files it compiles rather than globbing them, so this file is "
 				+ "not in the build until the project names it. Nothing here can see it until then, and a "

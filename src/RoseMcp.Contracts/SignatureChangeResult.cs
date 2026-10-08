@@ -11,8 +11,14 @@ public sealed record SignatureChangeResult : WorkspaceMutationResult
 	/// <summary>The member as it was, so the caller can see which one this resolved to.</summary>
 	public required string Symbol { get; init; }
 
-	/// <summary>The parameter list as it now reads.</summary>
-	public required string Parameters { get; init; }
+	/// <summary>The parameter list as it now reads, or null where the call left the parameters alone.</summary>
+	public string? Parameters { get; init; }
+
+	/// <summary>
+	/// The accessibility it now has, as the language spells it, or null where the call left it alone.
+	/// An override in another assembly can differ from this, and the notices say where.
+	/// </summary>
+	public string? Accessibility { get; init; }
 
 	public required bool Applied { get; init; }
 

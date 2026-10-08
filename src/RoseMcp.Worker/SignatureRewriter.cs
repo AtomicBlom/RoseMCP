@@ -42,11 +42,19 @@ public sealed class SignatureRewriter(
 		var visited = base.Visit(node);
 		if (node is null || visited is null) return visited;
 
-		if (declarations.TryGetValue(node.Span, out var change) && ParameterLists.Of(visited) is not null)
+		if (declarations.TryGetValue(node.Span, out var change))
 		{
-			// The parameter list carries the annotation rather than the declaration, so the whitespace
-			// pass afterwards owns the lines that were written and not the whole member body.
-			var updated = ParameterLists.With(visited, change.Parameters.WithAdditionalAnnotations(marker));
+			// The parameter list and the accessibility keywords carry the annotation rather than the
+			// declaration, so the whitespace pass afterwards owns the lines that were written and not the
+			// whole member body.
+			var updated = change.Parameters is { } parameters && ParameterLists.Of(visited) is not null
+				? ParameterLists.With(visited, parameters.WithAdditionalAnnotations(marker))
+				: visited;
+
+			if (change.Accessibility is { } keywords && updated is MemberDeclarationSyntax member)
+			{
+				updated = AccessibilityModifiers.With(member, keywords, marker);
+			}
 
 			return change.Documentation is { } documentation ? updated.WithLeadingTrivia(documentation) : updated;
 		}

@@ -187,7 +187,9 @@ public static partial class OutlineService
 			// A generator's member has no file to edit, and saying so here saves a call that would
 			// refuse for exactly that reason.
 			IsGenerated = member.DeclaringSyntaxReferences.Length > 0
-				&& snapshot.Solution.GetDocument(member.DeclaringSyntaxReferences[0].SyntaxTree) is null,
+				&& member.DeclaringSyntaxReferences.All(reference =>
+					snapshot.Solution.GetDocument(reference.SyntaxTree) is not { } owner
+							|| GeneratedCode.Is(owner, reference.GetSyntax(cancellationToken).FirstAncestorOrSelf<MemberDeclarationSyntax>() ?? reference.GetSyntax(cancellationToken))),
 			Summary = detail.Documentation ? Summary(member, cancellationToken) : null,
 			Location = location is null
 				? null

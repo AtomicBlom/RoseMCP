@@ -39,12 +39,7 @@ public static class DeclarationLocator
 		var resolution = await SourceAsync(solution, requested, cancellationToken);
 		var found = await FindAsync(solution, resolution, filePath, typesOnly: false, cancellationToken);
 
-		if (found.Declarations.Count != 1)
-		{
-			throw found.Declarations.Count == 0 ? found.NotFound() : found.Ambiguous();
-		}
-
-		var target = found.Declarations[0];
+		var target = Writable(found);
 
 		if (target.DeclaredByParameter) throw Positional(target);
 
@@ -80,7 +75,10 @@ public static class DeclarationLocator
 	{
 		var found = await FindAsync(solution, resolution, filePath, typesOnly: false, cancellationToken);
 
+		// Hand-written declarations first, so the one a read answers with is the one a person can open
+		// -- a generated half is still an answer where it is the only one there is.
 		var bySignature = found.Declarations
+			.OrderBy(target => target.IsGenerated)
 			.GroupBy(target => target.Signature, StringComparer.Ordinal)
 			.ToArray();
 
@@ -104,12 +102,7 @@ public static class DeclarationLocator
 		var resolution = await SourceAsync(solution, requested, cancellationToken);
 		var found = await FindAsync(solution, resolution, filePath, typesOnly: true, cancellationToken);
 
-		if (found.Declarations.Count != 1)
-		{
-			throw found.Declarations.Count == 0 ? found.NotFound() : found.Ambiguous();
-		}
-
-		var target = found.Declarations[0];
+		var target = Writable(found);
 
 		// A named type whose declaration is not a type declaration is a delegate, and a delegate has
 		// no members to add to.
@@ -149,7 +142,7 @@ public static class DeclarationLocator
 		var generated = 0;
 		var elsewhere = 0;
 
-		foreach (var symbol in matching)
+		foreach (var symbol in matching.SelectMany(Parts))
 		{
 			foreach (var reference in symbol.DeclaringSyntaxReferences)
 			{
@@ -178,6 +171,7 @@ public static class DeclarationLocator
 					Document = document,
 					Declaration = declaration,
 					DeclaredByParameter = node is ParameterSyntax,
+					IsGenerated = GeneratedCode.Is(document, declaration),
 				});
 			}
 		}
@@ -203,6 +197,54 @@ public static class DeclarationLocator
 			FilePath = filePath,
 			TypesOnly = typesOnly,
 		};
+	}
+
+	/// <summary>
+	/// A symbol and, for a partial method or property, its other half. The two halves are separate
+	/// symbols, and a name resolves to the defining one -- which a generator such as the MVVM toolkit's
+	/// declares in its own output for a hook like <c>partial void OnNameChanged(string value)</c>, while
+	/// the body the caller wants to write over is the implementing half in their file. Without it that
+	/// body is out of reach by name, and naming its file refuses it as declared somewhere else.
+	/// </summary>
+	private static IEnumerable<ISymbol> Parts(ISymbol symbol)
+	{
+		yield return symbol;
+
+		var other = symbol switch
+		{
+			IMethodSymbol method => (ISymbol?)method.PartialImplementationPart ?? method.PartialDefinitionPart,
+			IPropertySymbol property => (ISymbol?)property.PartialImplementationPart ?? property.PartialDefinitionPart,
+			_ => null,
+		};
+
+		if (other is not null) yield return other;
+	}
+
+	/// <summary>
+	/// The one declaration a write can go to: the only one outside generated code. A partial type
+	/// with one hand-written half and any number of generated ones has one place a member can go, so
+	/// the generated halves are never candidates, and a name declared only in generated code is refused
+	/// for what it is.
+	/// </summary>
+	private static DeclarationTarget Writable(Found found)
+	{
+		var writable = found.Declarations.Where(target => !target.IsGenerated).ToArray();
+
+		if (writable.Length == 1) return writable[0];
+
+		if (writable.Length > 1) throw Ambiguous(found.Resolution.Address, writable, found.FilePath);
+
+		if (found.Declarations.Count == 0) throw found.NotFound();
+
+		var files = found.Declarations
+			.Select(target => Path.GetFileName(target.FilePath))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+
+		throw new ArgumentException(
+			$"{Quote(found.Resolution.Address.Requested)} is declared only in generated code ({Summarise(files)}), which "
+				+ "the build writes again, so an edit there is lost. Change what it is generated from -- the XAML, or "
+				+ "the attribute or member the generator reads -- instead.");
 	}
 
 	/// <summary>What the search found, and how to say that it was not enough.</summary>

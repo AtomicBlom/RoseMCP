@@ -115,7 +115,8 @@ Read before adding a tool, adding a field to a result, or changing an error path
   is the turn count a batch exists to save; only what makes the call impossible as a whole is an
   error, and an empty list is one, since an answer with no entries reads as a call that worked. An
   entry that is waiting rather than wrong -- a breakpoint whose module has not loaded -- is a success
-  that says so, never a refusal. See [the decision](../decisions/a-plural-intent-is-one-call.md).
+  that says so, never a refusal -- and one that will never bind, because the loaded module cannot
+  carry it, says that instead, with why, since a caller told to wait waits for nothing. See [the decision](../decisions/a-plural-intent-is-one-call.md).
 - **A fixer that declines is the same as no fixer.** `rose_list_code_fixes` dropped a diagnostic
   whose providers offered nothing from `fixes` and from `unfixableIds` both, so it disappeared from
   the answer entirely -- which is exactly what the second list exists to prevent. CS0103 is what

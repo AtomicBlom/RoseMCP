@@ -67,5 +67,13 @@ internal sealed class BreakpointBinding
 
 	public string? Detail { get; set; }
 
+	/// <summary>
+	/// Whether the reason it is unbound is one a module load cannot cure: the module that would carry
+	/// it is loaded and lacks the method or the type, several loaded modules declare the type, or the
+	/// runtime refused the bind. False while it is only waiting for its module, which is the state a
+	/// caller can leave alone, and the difference a caller acts on.
+	/// </summary>
+	public bool WillNotBind { get; set; }
+
 	public bool Bound => Breakpoint is not null;
 }

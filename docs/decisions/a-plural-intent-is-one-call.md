@@ -43,15 +43,19 @@ path.
 parse says nothing about the five beside it, and refusing all six for it sends the caller back to
 retry the good ones piece by piece -- the turn count the batch exists to save. So an entry's own
 mistake is its `status` (`refused: ` and the reason), and only what makes the whole call impossible is
-an error: no such session, no target attached, or a list with nothing in it. The last is refused
-rather than answered, because an answer with no entries reads as a call that worked. What counts as
+an error: no such session, no target attached, or a list with nothing in it. The last is refused,
+naming the argument that was empty, rather than answered, because an answer with no entries reads
+as a call that worked. What counts as
 an entry's own mistake is what its parsers throw, `ArgumentException`; anything else is a fault in the
 session and fails the call as it would have for one request.
 
 **Not bound is a success, said.** An entry whose module has not loaded is added, waits, and binds on
 the load -- that is how a breakpoint in a plugin is set before the plugin arrives. It is not a
-refusal, and its status says `added, not bound yet` so that it does not read as bound either. The
-reason it is waiting is on the entry's tracepoint or breakpoint, once.
+refusal, and its status says `added, not bound yet` and why, so that it does not read as bound
+either. An entry that will never bind is told apart from one that is waiting: a method or type the
+loaded module does not have, a type several loaded modules declare, or a bind the runtime refused
+says `added, will not bind` and why. Saying both the same way would send a caller with a
+misspelled method off to wait for a load that has already happened.
 
 **Removing answers each id, and refuses one of the other kind.** An id that is already gone is `not
 found`, and does not stop the rest; cleaning up after a path should not need to know which of its ids

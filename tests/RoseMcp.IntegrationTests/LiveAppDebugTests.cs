@@ -710,11 +710,12 @@ public sealed class LiveAppDebugTests
 					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick" },
 					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick", LogMessage = "again" },
 					new AddTracepointRequest { Location = "NotYetLoaded!Somewhere.Later.Run" },
+					new AddTracepointRequest { Location = "DebugProbeTarget.Program.NoSuchMethod" },
 				],
 				cancellationToken);
 
-			batch.Total.ShouldBe(7);
-			batch.Added.ShouldBe(4);
+			batch.Total.ShouldBe(8);
+			batch.Added.ShouldBe(5);
 			batch.Cursor.ShouldBeGreaterThan(0, "a batch is an action, so it hands back the cursor");
 			batch.Results.Select(outcome => outcome.Location).ShouldBe(
 			[
@@ -725,6 +726,7 @@ public sealed class LiveAppDebugTests
 				"Elsewhere.Pulse.Tick",
 				"Elsewhere.Pulse.Tick",
 				"NotYetLoaded!Somewhere.Later.Run",
+				"DebugProbeTarget.Program.NoSuchMethod",
 			]);
 
 			batch.Results[0].Status.ShouldBe("added");
@@ -743,13 +745,19 @@ public sealed class LiveAppDebugTests
 			batch.Results[5].Status.ShouldBe("added");
 			batch.Notes.ShouldHaveSingleItem().ShouldContain("Elsewhere.Pulse.Tick was asked for 2 times", Case.Sensitive);
 
-			batch.Results[6].Status.ShouldBe("added, not bound yet");
+			// Waiting and never are told apart, each with its reason: one module has not loaded and will
+			// bind when it does, and the other is loaded and has no such method, so waiting cures nothing.
+			batch.Results[6].Status.ShouldStartWith("added, not bound yet: ", Case.Sensitive);
+			batch.Results[6].Status.ShouldContain("NotYetLoaded", Case.Sensitive);
 			var waiting = batch.Results[6].Tracepoint.ShouldNotBeNull();
 			waiting.Bound.ShouldBeFalse();
 			waiting.Detail.ShouldNotBeNull().ShouldContain("NotYetLoaded", Case.Sensitive);
 
+			batch.Results[7].Status.ShouldBe("added, will not bind: no method DebugProbeTarget.Program.NoSuchMethod in DebugProbeTarget.dll");
+			batch.Results[7].Tracepoint.ShouldNotBeNull().Bound.ShouldBeFalse();
+
 			var held = await session.ListTracepointsAsync(cancellationToken);
-			held.Tracepoints.Count.ShouldBe(4);
+			held.Tracepoints.Count.ShouldBe(5);
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 			child.HasExited.ShouldBeFalse("the target runs on through a batch of tracepoints");
@@ -791,17 +799,21 @@ public sealed class LiveAppDebugTests
 					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Run" },
 					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Stop", AutoContinueSeconds = 0 },
 					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Walk", Condition = "this is not a condition" },
+					new SetBreakpointRequest { Location = "DebugProbeTarget.Program.NoSuchMethod" },
 				],
 				cancellationToken);
-			breakpoints.Total.ShouldBe(3);
-			breakpoints.Set.ShouldBe(1);
-			breakpoints.Results[0].Status.ShouldBe("set, not bound yet");
+			breakpoints.Total.ShouldBe(4);
+			breakpoints.Set.ShouldBe(2);
+			breakpoints.Results[0].Status.ShouldStartWith("set, not bound yet: ", Case.Sensitive);
+			breakpoints.Results[0].Status.ShouldContain("NotYetLoaded", Case.Sensitive);
 			breakpoints.Results[1].Status.ShouldContain("autoContinueSeconds", Case.Sensitive);
 			breakpoints.Results[2].Status.ShouldStartWith("refused: ", Case.Sensitive);
+			breakpoints.Results[3].Status.ShouldBe("set, will not bind: no method DebugProbeTarget.Program.NoSuchMethod in DebugProbeTarget.dll");
 
 			var first = tracepoints.Results[0].Tracepoint.ShouldNotBeNull().Id;
 			var second = tracepoints.Results[1].Tracepoint.ShouldNotBeNull().Id;
 			var breakpoint = breakpoints.Results[0].Breakpoint.ShouldNotBeNull().Id;
+			var never = breakpoints.Results[3].Breakpoint.ShouldNotBeNull().Id;
 
 			var removed = await session.RemoveTracepointsAsync([first, "tp-999", breakpoint, first], cancellationToken);
 
@@ -818,12 +830,13 @@ public sealed class LiveAppDebugTests
 			removed.Cursor.ShouldBeGreaterThan(0);
 
 			var stillSet = await session.ListBreakpointsAsync(cancellationToken);
-			stillSet.Breakpoints.ShouldHaveSingleItem().Id.ShouldBe(breakpoint);
+			stillSet.Breakpoints.Select(entry => entry.Id).ShouldBe([breakpoint, never]);
 
-			var cleared = await session.RemoveBreakpointsAsync([second, breakpoint], cancellationToken);
+			var cleared = await session.RemoveBreakpointsAsync([second, breakpoint, never], cancellationToken);
 			cleared.Results.Select(outcome => outcome.Status).ShouldBe(
 			[
 				$"refused: {second} is a tracepoint, which {ToolNames.DebugRemoveTracepoint} removes",
+				"removed",
 				"removed",
 			]);
 			cleared.Breakpoints.ShouldBeEmpty();
@@ -851,11 +864,18 @@ public sealed class LiveAppDebugTests
 		{
 			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
 
+			// Each names the argument that was empty, since that is what the caller has to change.
 			var adding = await Should.ThrowAsync<InvalidOperationException>(() => session.AddTracepointsAsync([], cancellationToken));
-			adding.Message.ShouldContain("Nothing was asked for", Case.Sensitive);
+			adding.Message.ShouldContain("tracepoints is empty", Case.Sensitive);
+
+			var setting = await Should.ThrowAsync<InvalidOperationException>(() => session.SetBreakpointsAsync([], cancellationToken));
+			setting.Message.ShouldContain("breakpoints is empty", Case.Sensitive);
+
+			var removingTracepoints = await Should.ThrowAsync<InvalidOperationException>(() => session.RemoveTracepointsAsync([], cancellationToken));
+			removingTracepoints.Message.ShouldContain("tracepointIds is empty", Case.Sensitive);
 
 			var removing = await Should.ThrowAsync<InvalidOperationException>(() => session.RemoveBreakpointsAsync([], cancellationToken));
-			removing.Message.ShouldContain("Nothing was asked for", Case.Sensitive);
+			removing.Message.ShouldContain("breakpointIds is empty", Case.Sensitive);
 
 			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
 		}

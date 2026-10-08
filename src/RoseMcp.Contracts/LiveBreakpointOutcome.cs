@@ -1,10 +1,11 @@
 namespace RoseMcp.Contracts;
 
 /// <summary>
-/// One requested stopping breakpoint and what became of it. <see cref="Status"/> is <c>set</c> when it
-/// bound, <c>set, not bound yet: </c> and the reason when it is waiting for its module, or
-/// <c>refused: </c> and the reason when it was not set at all. Only a set one carries
-/// <see cref="Breakpoint"/>, whose id is what removes it.
+/// One requested stopping breakpoint and what became of it, in the four statuses
+/// <see cref="LiveTracepointOutcome"/> uses with <c>set</c> for <c>added</c>: <c>set</c>,
+/// <c>set, not bound yet</c> and the reason, <c>set, will not bind</c> and the reason, or
+/// <c>refused: </c> and the reason. Only a set one carries <see cref="Breakpoint"/>, whose id is what
+/// removes it.
 /// </summary>
 public sealed record LiveBreakpointOutcome
 {

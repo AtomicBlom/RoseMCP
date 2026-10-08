@@ -118,8 +118,11 @@ rose_debug_add_tracepoint
 ```
 
 The answer has one entry per request, in order, with a `status`: `added`; `added, not bound yet`
-for one whose module has not loaded, which binds when it does; or `refused: ` and the reason, for
-one whose location, message or condition does not parse. A refused entry never stops the others, so
+and the reason, for one whose module has not loaded, which binds when it does; `added, will not
+bind` and the reason, for one whose module is loaded and lacks the method or type, whose type
+several loaded modules declare, or whose bind the runtime refused -- remove it and add the right
+location; or `refused: ` and the reason, for one whose location, message or condition does not
+parse. A refused entry never stops the others, so
 read the statuses rather than assuming all of them took. `rose_debug_remove_tracepoint` takes a list
 of ids the same way, and answers each one -- an id already gone is `not found` -- along with the
 tracepoints still set.

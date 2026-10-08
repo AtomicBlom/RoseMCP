@@ -199,7 +199,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		var session = Attached();
 
 		return session?.Bindings.RemoveTracepoints(tracepointIds)
-			?? new LiveTracepointRemoval { Results = TargetBreakpoints.NoneHeld(tracepointIds) };
+			?? new LiveTracepointRemoval { Results = TargetBreakpoints.NoneHeld("tracepointIds", tracepointIds) };
 	}
 
 	/// <summary>
@@ -228,7 +228,7 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		var session = Attached();
 
 		return session?.Bindings.RemoveBreakpoints(breakpointIds)
-			?? new LiveBreakpointRemoval { Results = TargetBreakpoints.NoneHeld(breakpointIds) };
+			?? new LiveBreakpointRemoval { Results = TargetBreakpoints.NoneHeld("breakpointIds", breakpointIds) };
 	}
 
 	/// <summary>Resumes a target held at a stopping breakpoint; false when nothing was stopped.</summary>

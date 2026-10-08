@@ -53,6 +53,7 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 	internal LiveTracepointBatch AddTracepoints(IReadOnlyList<AddTracepointRequest> requests)
 	{
 		var added = AddBindings(
+			"tracepoints",
 			requests,
 			static request => request?.Location,
 			(table, request) =>
@@ -66,7 +67,12 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 		{
 			var results = added
 				.Select(entry => entry.Binding is { } binding
-					? Added(entry.Location, BreakpointTable.DescribeTracepoint(binding))
+					? new LiveTracepointOutcome
+					{
+						Location = entry.Location,
+						Status = Recorded("added", binding),
+						Tracepoint = BreakpointTable.DescribeTracepoint(binding),
+					}
 					: new LiveTracepointOutcome { Location = entry.Location, Status = $"refused: {entry.Refusal}" })
 				.ToList();
 
@@ -77,13 +83,6 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 				Notes = Repeated(added, "tracepoint"),
 			};
 		}
-
-		static LiveTracepointOutcome Added(string location, LiveTracepoint tracepoint) => new()
-		{
-			Location = location,
-			Status = tracepoint.Bound ? "added" : "added, not bound yet",
-			Tracepoint = tracepoint,
-		};
 	}
 
 	/// <summary>
@@ -96,6 +95,7 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 	internal LiveBreakpointBatch AddBreakpoints(IReadOnlyList<SetBreakpointRequest> requests)
 	{
 		var added = AddBindings(
+			"breakpoints",
 			requests,
 			static request => request?.Location,
 			(table, request) =>
@@ -109,7 +109,12 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 		{
 			var results = added
 				.Select(entry => entry.Binding is { } binding
-					? Set(entry.Location, BreakpointTable.DescribeBreakpoint(binding))
+					? new LiveBreakpointOutcome
+					{
+						Location = entry.Location,
+						Status = Recorded("set", binding),
+						Breakpoint = BreakpointTable.DescribeBreakpoint(binding),
+					}
 					: new LiveBreakpointOutcome { Location = entry.Location, Status = $"refused: {entry.Refusal}" })
 				.ToList();
 
@@ -120,13 +125,23 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 				Notes = Repeated(added, "breakpoint"),
 			};
 		}
+	}
 
-		static LiveBreakpointOutcome Set(string location, LiveBreakpoint breakpoint) => new()
-		{
-			Location = location,
-			Status = breakpoint.Bound ? "set" : "set, not bound yet",
-			Breakpoint = breakpoint,
-		};
+	/// <summary>
+	/// The status of an entry that was recorded: the verb alone when it bound; <c>not bound yet</c>
+	/// and the reason when it is waiting for a module to load, which a caller can leave alone; and
+	/// <c>will not bind</c> and the reason when the module that would carry it is loaded and cannot,
+	/// which waiting will not cure. Saying both the same way would send a caller with a misspelled
+	/// method off to wait for a load that has already happened.
+	/// </summary>
+	private static string Recorded(string verb, BreakpointBinding binding)
+	{
+		if (binding.Bound) return verb;
+
+		var hasReason = binding.Detail is not (null or BreakpointTable.NotBoundYet);
+		var reason = hasReason ? $": {binding.Detail}" : string.Empty;
+
+		return binding.WillNotBind ? $"{verb}, will not bind{reason}" : $"{verb}, not bound yet{reason}";
 	}
 
 	internal IReadOnlyList<LiveTracepoint> ListTracepoints()
@@ -198,12 +213,13 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 	/// </summary>
 	/// <exception cref="ArgumentException">Nothing was asked for.</exception>
 	private List<Requested> AddBindings<TRequest>(
+		string argument,
 		IReadOnlyList<TRequest?> requests,
 		Func<TRequest?, string?> locationOf,
 		Func<BreakpointTable, TRequest, BreakpointBinding> add)
 		where TRequest : class
 	{
-		RequireSome(requests.Count, "location");
+		RequireSome(requests.Count, argument, "location");
 
 		var added = new List<Requested>(requests.Count);
 		lock (target.Gate)
@@ -309,9 +325,9 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 	/// not found. Refused when empty for the same reason a removal with a target is.
 	/// </summary>
 	/// <exception cref="ArgumentException">No id was given.</exception>
-	internal static IReadOnlyList<LiveRemovalOutcome> NoneHeld(IReadOnlyList<string?> ids)
+	internal static IReadOnlyList<LiveRemovalOutcome> NoneHeld(string argument, IReadOnlyList<string?> ids)
 	{
-		RequireSome(ids.Count, "id");
+		RequireSome(ids.Count, argument, "id");
 
 		return [.. ids.Select(id => new LiveRemovalOutcome { Id = id ?? string.Empty, Status = NotFound })];
 	}
@@ -332,7 +348,7 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 	/// </summary>
 	private List<LiveRemovalOutcome> RemoveAll(IReadOnlyList<string?> ids, bool stopOnHit)
 	{
-		RequireSome(ids.Count, "id");
+		RequireSome(ids.Count, stopOnHit ? "breakpointIds" : "tracepointIds", "id");
 
 		var results = new List<LiveRemovalOutcome>(ids.Count);
 		foreach (var id in ids)
@@ -365,9 +381,9 @@ internal sealed class TargetBreakpoints(DebuggedTarget target, DebugEventBuffer 
 	/// together, and an answer with no entries in it would read as a call that worked.
 	/// </summary>
 	/// <exception cref="ArgumentException">The count is zero.</exception>
-	private static void RequireSome(int count, string what)
+	private static void RequireSome(int count, string argument, string what)
 	{
-		if (count == 0) throw new ArgumentException($"Nothing was asked for; give at least one {what}.");
+		if (count == 0) throw new ArgumentException($"{argument} is empty: nothing was asked for. Give at least one {what}.");
 	}
 
 	/// <summary>

@@ -279,8 +279,9 @@ public sealed class LiveAppDebugTools(
 			+ "freeze the target the way a stopping breakpoint would -- the right default for a turn-based "
 			+ "agent. Each hit appears in rose_debug_events, carrying the values its message interpolated as "
 			+ "data as well as in the line. Prefer this over adding logging statements and rebuilding, which "
-			+ "needs a source edit and a restart to see anything. Each entry gets its own status, and one "
-			+ "whose module has not loaded binds when it does.")]
+			+ "needs a source edit and a restart to see anything. Each entry gets its own status: one whose "
+			+ "module has not loaded binds when it does, and one whose name did not resolve says why and "
+			+ "will not bind.")]
 	public async Task<LiveTracepointBatch> AddTracepointAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.TracepointsArgument)]
@@ -300,7 +301,7 @@ public sealed class LiveAppDebugTools(
 		UseStructuredContent = true)]
 	[Description(
 		"List a session's tracepoints, each with its id, location, hit count, and whether it is bound "
-			+ "yet -- one added before its module loaded binds later, and this is where that shows.")]
+			+ "yet, and why not: a module still to load, or a name that did not resolve.")]
 	public async Task<LiveTracepointList> ListTracepointsAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
@@ -343,7 +344,7 @@ public sealed class LiveAppDebugTools(
 			+ "with its call stack in rose_debug_events, so you can see how execution got there. The target "
 			+ "stays frozen until rose_debug_continue, or until an auto-continue safety timeout (default 30s) "
 			+ "fires so an unattended stop cannot wedge the app -- so read the events and continue promptly. "
-			+ "Each entry gets its own status. For non-invasive logging that never pauses, prefer rose_debug_add_tracepoint.")]
+			+ "Each entry gets its own status, and why when unbound. For non-invasive logging that never pauses, prefer rose_debug_add_tracepoint.")]
 	public async Task<LiveBreakpointBatch> SetBreakpointAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.BreakpointsArgument)]
@@ -363,8 +364,8 @@ public sealed class LiveAppDebugTools(
 		UseStructuredContent = true)]
 	[Description(
 		"List a session's stopping breakpoints, each with its id, location, hit count, auto-continue "
-			+ "timeout, and whether it is bound yet -- one set before its module loaded binds later, and "
-			+ "this is where that shows.")]
+			+ "timeout, and whether it is bound yet, and why not: a module still to load, or "
+			+ "a name that did not resolve.")]
 	public async Task<LiveBreakpointList> ListBreakpointsAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)

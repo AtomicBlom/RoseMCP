@@ -72,7 +72,7 @@ public static class AddFileService
 
 		progress?.Report("Writing the file", 25);
 
-		var built = Build(unit, space, request.Usings, project);
+		var built = Build(unit, space);
 		// Into the document a listing project already has for the path, where there is one: adding a
 		// second would put the file in the compilation twice.
 		var id = listed.Length > 0 ? listed[0] : DocumentId.CreateNewId(project.Id, Path.GetFileName(path));
@@ -82,7 +82,11 @@ public static class AddFileService
 			: snapshot.Solution.AddDocument(
 				id, Path.GetFileName(path), SourceText.From(built), Folders(project, path), path);
 
-		var solution = await FormatAsync(added, id, rules, cancellationToken);
+		// Into the document once it is in its project, so what is already in scope is the compilation's
+		// answer, and before the formatter, so one pass lays out the imports with everything else.
+		var imported = await WithUsingsAsync(added, id, request.Usings, rules, notices, cancellationToken);
+
+		var solution = await FormatAsync(imported, id, rules, cancellationToken);
 
 		var imports = ResolvedImports.Imports.None;
 
@@ -321,48 +325,26 @@ public static class AddFileService
 	}
 
 	/// <summary>
-	/// The file's text: the imports, then the namespace, then what the caller wrote. Built as text
-	/// and parsed by the formatter afterwards rather than assembled as syntax, because the shape
-	/// being produced is a file and every part of it is decided by the repository's own rules.
+	/// The file's text: the namespace, then what the caller wrote. Built as text and parsed by the
+	/// formatter afterwards rather than assembled as syntax, because the shape being produced is a file
+	/// and every part of it is decided by the repository's own rules.
 	/// <para>
-	/// The imports are ordered by <see cref="UsingDirectives.Sorts"/>, the same comparison that
-	/// places one among a file's existing imports. Sorting them here ordinally instead put anything
-	/// alphabetically before "System" above it, which compiles and trips no analyzer -- two orderings
-	/// were two chances to disagree, and they did. System-first is the language tooling's default and
-	/// cannot be read from .editorconfig at this point, since the document it would be read for does
-	/// not exist until this text does.
+	/// The usings argument is not written here, because a block prepended to the text never meets the
+	/// imports the code declares: code opening with <c>using System.Reflection;</c> and an argument naming
+	/// a namespace outside System make two blocks in the wrong order, which compiles and fails
+	/// <c>dotnet format</c> on import ordering. <see cref="WithUsingsAsync"/> places each one among the
+	/// file's own instead.
 	/// </para>
 	/// </summary>
-	private static string Build(
-		CompilationUnitSyntax unit,
-		string space,
-		IReadOnlyList<string> usings,
-		Project project)
-	{
+	private static string Build(CompilationUnitSyntax unit, string space) =>
 		// The caller's own text, never NormalizeWhitespace. That regenerates every piece of trivia in
 		// the file from scratch, which loses in one operation the blank lines between using groups,
 		// between members and inside a body, the wrapping of a chained call, and the spacing inside a
 		// documentation tag -- none of which any rule here has an opinion about. What the repository
 		// does enforce is applied afterwards by the formatter and the whitespace pass.
-		var body = unit.Members.OfType<BaseNamespaceDeclarationSyntax>().Any()
+		unit.Members.OfType<BaseNamespaceDeclarationSyntax>().Any()
 			? unit.ToFullString()
 			: WithNamespace(unit, space);
-
-		var order = Comparer<string>.Create((left, right) => UsingDirectives.Sorts(left, right, systemFirst: true));
-
-		var imports = usings
-			.Where(requested => !string.IsNullOrWhiteSpace(requested))
-			.Select(ImportDirective.Parse)
-			.DistinctBy(import => import.Text, StringComparer.Ordinal)
-			.OrderBy(import => import.Kind)
-			.ThenBy(import => import.SortKey, order)
-			.Select(import => $"using {import.Text};")
-			.ToArray();
-
-		_ = project;
-
-		return imports.Length == 0 ? body : $"{string.Join("\n", imports)}\n\n{body}";
-	}
 
 	/// <summary>
 	/// The declarations under a file-scoped namespace, which is what this repository's convention
@@ -387,6 +369,50 @@ public static class AddFileService
 		var imports = head.Length == 0 ? string.Empty : $"{head}\n\n";
 
 		return body.Length == 0 ? $"{imports}namespace {space};\n" : $"{imports}namespace {space};\n\n{body}\n";
+	}
+
+	/// <summary>
+	/// The new document with the usings argument imported into it, each where the file's own imports
+	/// put it -- the placement <c>rose_add_using</c> gives an existing file, since the code a caller
+	/// sends often declares imports of its own and the two have to end up one ordered list.
+	/// <para>
+	/// Asked of the compilation, before the file is formatted so one pass lays out both: an import an
+	/// implicit or global using already covers, or the namespace the file is in, is not written, because
+	/// writing it is IDE0005. Each of those is said, in the words the member tools use, since the caller
+	/// named it and will otherwise look for it in the file. An alias whose name already stands for
+	/// something else is refused here, before anything is written.
+	/// </para>
+	/// </summary>
+	private static async Task<Solution> WithUsingsAsync(
+		Solution solution,
+		DocumentId id,
+		IReadOnlyList<string> usings,
+		WhitespaceRules rules,
+		List<string> notices,
+		CancellationToken cancellationToken)
+	{
+		if (usings.Count == 0) return solution;
+
+		var document = solution.GetDocument(id)
+			?? throw new InvalidOperationException("The document being written left the solution mid-edit.");
+
+		var model = await document.GetSemanticModelAsync(cancellationToken);
+		var tree = await document.GetSyntaxTreeAsync(cancellationToken);
+
+		if (model is null || tree is null || await tree.GetRootAsync(cancellationToken) is not CompilationUnitSyntax root)
+		{
+			throw new InvalidOperationException($"{document.Name} is not a C# source file.");
+		}
+
+		var style = UsingStyle.For(document.Project, tree, root, rules.LineEnding);
+		var insertion = UsingDirectives.Ensure(root, model, usings, style, cancellationToken);
+
+		foreach (var covered in insertion.AlreadyInScope)
+		{
+			notices.Add($"Did not import {covered}.");
+		}
+
+		return insertion.Changed ? solution.WithDocumentSyntaxRoot(id, insertion.Root) : solution;
 	}
 
 	/// <summary>The two formatting passes, over the whole file, since the whole file is new.</summary>

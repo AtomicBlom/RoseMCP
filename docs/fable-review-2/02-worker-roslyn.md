@@ -35,8 +35,8 @@ as a convention copied into six services. **That half is fixed** — `EditPipeli
 (WRK-01, PRs #275 #276 #278), and closing it turned up four tools reporting a project clean while the
 caller's own errors sat in it. **The text tier is now the whole of the problem**:
 `BodyEdit` splicing strings by token span, `ChangeSignatureService` discarding the declaration's own
-separators, `AddFileService` prepending imports as text, `DocComment` sniffing the first character. All
-five open fidelity bugs (#195, #197, #199, #200, #217) live there. ~~Symbol addressing had a lossy
+separators, `DocComment` sniffing the first character. All
+four open fidelity bugs (#195, #197, #199, #217) live there. ~~Symbol addressing had a lossy
 primary resolver~~ — one compilation-backed resolver in PR #418 (WRK-04). ~~The Degraded status on this repository is a Rose defect
 in the analyzer loader~~ — fixed in PR #269 (WRK-08); the workspace loads clean.
 Grade: **core strong, edges adequate, editing stack fragile below the pipeline** -- and the fragile part
@@ -118,7 +118,7 @@ conventions.
 - **Where:** `BodyEdit.cs:123` (string splice by token span), `BodyEdit.cs:203` (text splice),
   `BodyEdit.cs:406-426` (`Inserted` rebuilds a body from `statement.ToFullString().Trim()` joined with
   `\n`), `ChangeSignatureService.cs:332` and `:347` (primary declaration takes the caller's separators
-  and an `Unbroken` parenthesis), `AddFileService.cs:326` (imports prepended as text),
+  and an `Unbroken` parenthesis),
   `DocComment.cs:95-97` (`StartsWith('<')` decides XML vs prose), `Whitespace.cs:32` (falls back to the
   payload's own dominant ending). Unaffected by WRK-01: `EditPipeline` owns the sequence around these,
   not the text handling inside them, so card 8 is exactly as large as it was.
@@ -130,14 +130,13 @@ conventions.
   body[end..]` on token spans), #217 (`Inserted` discards every existing statement's leading trivia
   and hands the formatter a body to re-indent, which re-indents statements and not their wrapped
   arguments), #197 (`Separated(built, primary ? wanted : own)` throws the file's own layout away for
-  the one declaration the caller named), #200 (`Build` never meets the file's own `using` block, while
-  `UsingDirectives.Ensure` exists and is what `rose_add_using` uses), #199 (a comment arriving with
+  the one declaration the caller named), #199 (a comment arriving with
   `///` starts with `/`, so it is wrapped in `<summary>` and prefixed again).
   `MemberSyntax` then carries five string re-indenters (`Shift`, `Reindented`, `Arranged`, `Placed`
   via `BodyEdit`, `Written`/`MixedIndentation` heuristics) whose job is to reconcile the caller's
   coordinate system with the file's before the formatter runs.
-- **Why it matters:** This is the class of bug the brief asks about. It is not six bugs; it is one
-  architectural line -- where text stops and syntax starts -- drawn in six different places. Each fix
+- **Why it matters:** This is the class of bug the brief asks about. It is not five bugs; it is one
+  architectural line -- where text stops and syntax starts -- drawn in five different places. Each fix
   so far has added a heuristic (`Written`, `Copied`, `baseline`, `MixedIndentation`) rather than moving
   the line, and `#189` is acknowledged inside `MemberSyntax.cs:548` as a shape the heuristics cannot
   reach.
@@ -148,8 +147,7 @@ conventions.
   `block.WithStatements(block.Statements.Insert(index, prepared))` and touches no existing statement;
   `ChangeSignatureService.ChangeFor` uses `own` as the separator pattern for the primary too and gives
   a new parameter the trivia of its neighbour, exactly as `CallSiteRewriter.Continuation` already does
-  on the call-site side (`CallSiteRewriter.cs:136-146`); `AddFileService.Build` parses the caller's
-  unit and runs `UsingDirectives.Ensure` on it; `DocComment.Lines` parses with
+  on the call-site side (`CallSiteRewriter.cs:136-146`); `DocComment.Lines` parses with
   `SyntaxFactory.ParseLeadingTrivia` and branches on `DocumentationCommentTriviaSyntax`. Then replace
   the string re-indenters with **one trivia pass after the formatter**: for each token that begins a
   line inside the annotated span, set its leading whitespace to the destination indent plus the
@@ -341,8 +339,7 @@ nothing to the whole solution. One helper does it for every tool, and refuses.
   `WorkspaceStatusReporter.cs:253` (records the failure) and `GeneratedDocumentService.cs:139`
   (swallows it); unresolved-id lists at `MemberEditService.cs:52`, `MissingImports.cs:30`,
   `ResolvedImports.cs:268` with deliberate one-id differences documented in each; dead parameters
-  silenced with `_ = declaration;` (`BodyEdit.cs:397`), `_ = wanted;` (`BodyEdit.cs:549`),
-  `_ = project;` (`AddFileService.cs:335`)
+  silenced with `_ = declaration;` (`BodyEdit.cs:397`), `_ = wanted;` (`BodyEdit.cs:549`)
 - **What:** `BuildInfluencingFiles` shows the project knows the fix ("Three lists of these had drifted
   apart"); these are the next three lists.
 - **Why it matters:** `SafeGetGenerators` is the one that bites: a generator that throws on load is

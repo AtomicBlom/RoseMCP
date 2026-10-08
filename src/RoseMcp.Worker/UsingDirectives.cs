@@ -171,17 +171,11 @@ public static class UsingDirectives
 	/// <summary>
 	/// The order two imports of the same kind go in: System first where the file asks for it, then
 	/// ordinal.
-	/// <para>
-	/// Public because a file that does not exist yet has its imports written as text rather than
-	/// placed among existing ones, and two orderings would be two chances to disagree -- which is
-	/// exactly what happened: a new file opened with its imports sorted ordinally, so anything
-	/// alphabetically before "System" landed above it.
-	/// </para>
 	/// </summary>
 	/// <param name="left">The import being placed.</param>
 	/// <param name="right">The import it is being compared against.</param>
 	/// <param name="systemFirst">Whether System imports sort above the rest.</param>
-	public static int Sorts(string left, string right, bool systemFirst)
+	private static int Sorts(string left, string right, bool systemFirst)
 	{
 		if (systemFirst)
 		{

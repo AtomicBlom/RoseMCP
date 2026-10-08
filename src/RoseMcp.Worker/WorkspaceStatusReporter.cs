@@ -263,6 +263,32 @@ public static class WorkspaceStatusReporter
 	}
 
 	/// <summary>
+	/// The one reason covering assemblies tool calls failed to load for this worker's own code, or null when
+	/// none have.
+	/// <para>
+	/// Grouped by assembly, each naming the tools that failed on it, because one assembly is one broken path
+	/// through the worker and the tools are how a caller recognises which of its answers are missing. Without
+	/// this the workspace goes on reporting itself healthy while two tools fail on every call, and the only
+	/// way to find out is to be the next caller.
+	/// </para>
+	/// </summary>
+	public static string? AssemblyLoadReason(IReadOnlyList<AssemblyLoadFault> faults)
+	{
+		if (faults.Count == 0) return null;
+
+		var assemblies = faults
+			.GroupBy(fault => fault.Assembly, StringComparer.OrdinalIgnoreCase)
+			.Select(group => $"{group.Key} ({string.Join(", ", group.Select(fault => fault.Tool).Distinct(StringComparer.Ordinal))})")
+			.ToArray();
+
+		return $"This worker could not load {Count(assemblies.Length, "assembly", "assemblies")} its own code needs, so the "
+			+ $"tools that reach that code fail on every call while the rest answer: {Name(assemblies)}. "
+			+ (faults.Any(fault => fault.RuntimeDirectoryMissing) ? AssemblyLoadFault.RuntimeGone : string.Empty)
+			+ "A running process does not recover from this and nothing in the solution causes it: rose_workspace_reload "
+			+ "starts a fresh worker.";
+	}
+
+	/// <summary>
 	/// Failures grouped by what MSBuild said, the commonest first, each naming a few of its projects.
 	/// </summary>
 	private static string Grouped(IEnumerable<ProjectEvaluationFailure> failures) =>

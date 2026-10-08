@@ -39,6 +39,10 @@ public sealed class WorkspaceSession : IAsyncDisposable
 
 	private readonly Lock _selfWriteGate = new();
 
+	private readonly List<AssemblyLoadFault> _assemblyLoadFaults = [];
+
+	private readonly Lock _faultGate = new();
+
 	private readonly SolutionWatcher _watcher;
 	private readonly CancellationTokenSource _shutdown = new();
 	private readonly SolutionLoader _loader;
@@ -96,6 +100,38 @@ public sealed class WorkspaceSession : IAsyncDisposable
 	/// status describes the load it is actually looking at rather than the first one of the process.
 	/// </summary>
 	public LoadOutcome Load { get; private set; }
+
+	/// <summary>
+	/// Every assembly a tool call failed to load for this worker's own code, one entry per assembly and tool.
+	/// Kept for the life of the session and never cleared by a reload: a reload replaces the workspace inside
+	/// this process, and it is the process that cannot load them.
+	/// </summary>
+	public IReadOnlyList<AssemblyLoadFault> AssemblyLoadFaults
+	{
+		get
+		{
+			lock (_faultGate)
+			{
+				return [.. _assemblyLoadFaults];
+			}
+		}
+	}
+
+	/// <summary>
+	/// Remembers that a tool call failed to load an assembly, so status can say the worker is hurt rather
+	/// than leave it to whoever next calls the same tool to find out.
+	/// </summary>
+	public void RecordAssemblyLoadFault(AssemblyLoadFault fault)
+	{
+		lock (_faultGate)
+		{
+			var known = _assemblyLoadFaults.Any(existing =>
+				string.Equals(existing.Assembly, fault.Assembly, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(existing.Tool, fault.Tool, StringComparison.Ordinal));
+
+			if (!known) _assemblyLoadFaults.Add(fault);
+		}
+	}
 
 	public static WorkspaceSession Create(
 		LoadResult load,

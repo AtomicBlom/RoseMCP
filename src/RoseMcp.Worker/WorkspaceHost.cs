@@ -70,9 +70,11 @@ public sealed class WorkspaceHost(
 			// already been computed from the reasons the reporter found. Staleness is the exception
 			// that belongs there: a snapshot served while the solution file is missing is the last
 			// good one rather than current truth, which is exactly what Degraded means.
-			var reasons = snapshot.Stale
-				? (IReadOnlyList<string>)[.. report.DegradedReasons, .. snapshot.Notices]
-				: report.DegradedReasons;
+			// The assembly faults belong to the process rather than to the load or the snapshot, so they are read
+			// off the session here, where the session is in hand, and survive every reload.
+			var reasons = new List<string>(report.DegradedReasons);
+			if (WorkspaceStatusReporter.AssemblyLoadReason(session.AssemblyLoadFaults) is { } faults) reasons.Add(faults);
+			if (snapshot.Stale) reasons.AddRange(snapshot.Notices);
 
 			var notices = snapshot.Stale
 				? report.Notices
@@ -105,6 +107,22 @@ public sealed class WorkspaceHost(
 		await (await StartedAsync()).ReadAsync(cancellationToken);
 
 	public async Task<WorkspaceSession> SessionAsync() => await StartedAsync();
+
+	/// <summary>
+	/// Remembers on the session that a tool call failed to load an assembly, so every status from here on is
+	/// <see cref="WorkspaceState.Degraded"/> and says why. Nothing to record against when the session never
+	/// started: that status is already <see cref="WorkspaceState.Faulted"/> and names the load's own failure.
+	/// </summary>
+	public void RecordAssemblyLoadFault(AssemblyLoadFault fault)
+	{
+		logger.LogError(
+			"{Tool} failed because this worker could not load {Assembly}: {Message} Every call reaching the same code will fail the same way until the worker is restarted.",
+			fault.Tool,
+			fault.Assembly,
+			fault.Message);
+
+		if (_start is { IsCompletedSuccessfully: true } started) started.Result.RecordAssemblyLoadFault(fault);
+	}
 
 	private async Task<WorkspaceSession> StartSessionAsync()
 	{

@@ -140,6 +140,41 @@ public sealed class WorkspaceStatusTests
 		}
 	}
 
+	/// <summary>
+	/// A tool call that failed to load an assembly for the worker's own code leaves a worker that fails that
+	/// tool on every call while diagnostics and status answer normally. Status has to stop calling it healthy,
+	/// and keep saying so: the fault belongs to the process, not to any one status call.
+	/// </summary>
+	[Test]
+	public async Task An_assembly_a_tool_could_not_load_degrades_every_status_after_it()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var host = Host(fixture);
+
+		await host.StartAsync(token);
+		(await host.GetStatusAsync(token)).DegradedReasons.ShouldNotContain(
+			reason => reason.Contains("could not load", StringComparison.Ordinal));
+
+		host.RecordAssemblyLoadFault(new AssemblyLoadFault
+		{
+			Assembly = "System.IO.Compression",
+			Tool = "rose_find_references",
+			Message = "Could not load file or assembly 'System.IO.Compression, Version=10.0.0.0'.",
+			RuntimeDirectoryMissing = false,
+		});
+
+		foreach (var _ in Enumerable.Range(0, 2))
+		{
+			var status = await host.GetStatusAsync(token);
+
+			status.State.ShouldBe(WorkspaceState.Degraded);
+			status.DegradedReasons.ShouldContain(reason =>
+				reason.Contains("System.IO.Compression (rose_find_references)", StringComparison.Ordinal)
+				&& reason.Contains("rose_workspace_reload starts a fresh worker", StringComparison.Ordinal));
+		}
+	}
+
 	private static WorkspaceHost Host(FixtureSolution fixture) => new(
 		new WorkerOptions { SolutionPath = fixture.SolutionPath },
 		new SolutionLoader(

@@ -31,6 +31,11 @@ public static class ToolErrorReporting
 	/// The solution this worker owns, named in every error it reports. Which workspace answered is
 	/// the one thing a failing call could never say, and it is the thing most likely to be wrong --
 	/// the failures worth explaining are mostly a file that belongs to some other solution.
+	/// <para>
+	/// An assembly the worker's own code could not load is explained rather than forwarded, and recorded
+	/// on the session so status says so too: the loader's message names a file, and says nothing of the
+	/// worker being unable to answer that tool again until it is replaced.
+	/// </para>
 	/// </summary>
 	public static IMcpServerBuilder WithToolErrorMessages(this IMcpServerBuilder builder, string solutionPath) =>
 		builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
@@ -41,7 +46,9 @@ public static class ToolErrorReporting
 			}
 			catch (Exception exception) when (Explainable(exception))
 			{
-				throw new McpException($"{Named(context, exception)} (workspace: {solutionPath})", exception);
+				var message = Recorded(context, exception)?.Refusal ?? exception.Message;
+
+				throw new McpException($"{Named(context, exception, message)} (workspace: {solutionPath})", exception);
 			}
 		}));
 
@@ -55,9 +62,24 @@ public static class ToolErrorReporting
 		&& !string.IsNullOrWhiteSpace(exception.Message);
 
 	/// <summary>
-	/// The message to forward: the argument the caller got wrong where the binder refused one, the
-	/// exception's own words otherwise, and after either, any argument the call carried under a name
-	/// the tool does not declare. Composed by <see cref="ToolArgumentShape.Refusal"/>, so every
+	/// The assembly the call failed to load for this worker's own code, recorded on the session, or null when
+	/// the failure was anything else.
+	/// </summary>
+	private static AssemblyLoadFault? Recorded(RequestContext<CallToolRequestParams> context, Exception exception)
+	{
+		var fault = AssemblyLoadFault.From(exception, context.Params?.Name ?? "The tool");
+		if (fault is null) return null;
+
+		context.Services?.GetService<WorkspaceHost>()?.RecordAssemblyLoadFault(fault);
+
+		return fault;
+	}
+
+	/// <summary>
+	/// The message to forward: the argument the caller got wrong where the binder refused one,
+	/// <paramref name="message"/> otherwise -- the exception's own words, or the boundary's explanation
+	/// of them -- and after either, any argument the call carried under a name the tool does not
+	/// declare. Composed by <see cref="ToolArgumentShape.Refusal"/>, so every
 	/// boundary words it the same way.
 	/// <para>
 	/// The binder's account of a malformed argument names a CLR type the caller never wrote and points
@@ -66,12 +88,12 @@ public static class ToolErrorReporting
 	/// already been refused means a schema this cannot read costs nothing.
 	/// </para>
 	/// </summary>
-	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception)
+	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception, string message)
 	{
-		if (context.MatchedPrimitive is not McpServerTool tool) return exception.Message;
+		if (context.MatchedPrimitive is not McpServerTool tool) return message;
 
 		return ToolArgumentShape.Refusal(
-			exception.Message,
+			message,
 			exception is JsonException,
 			tool.ProtocolTool.Name,
 			tool.ProtocolTool.InputSchema,

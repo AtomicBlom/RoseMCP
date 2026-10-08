@@ -21,6 +21,7 @@ public static class WorkspaceStatusReporter
 		string solutionPath,
 		IReadOnlyList<WorkspaceDiagnostic> workspaceDiagnostics,
 		RestoreReport? restore,
+		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures,
 		long revision,
 		double loadSeconds,
 		CancellationToken cancellationToken,
@@ -36,7 +37,7 @@ public static class WorkspaceStatusReporter
 		var analyzerFailures = analyzerLoader?.LoadFailures ?? [];
 
 		var degradedReasons = (IReadOnlyList<string>)
-			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build, analyzerFailures),
+			[.. CollectDegradedReasons(workspaceDiagnostics, projects, restore, build, analyzerFailures, evaluationFailures),
 			 .. XamlReasons(xamlReports)];
 
 		return new WorkspaceStatusReport
@@ -49,9 +50,10 @@ public static class WorkspaceStatusReporter
 			LoadDiagnosticCount = workspaceDiagnostics.Count,
 			DegradedReasons = degradedReasons,
 			AnalyzerLoadFailures = analyzerFailures,
+			EvaluationFailures = evaluationFailures,
 			BuildConfiguration = build?.Describe(),
 			AvailableConfigurations = build?.Available.Configurations ?? [],
-			Notices = [.. NoticesFor(build, solution, cancellationToken)],
+			Notices = [.. NoticesFor(build, solution, evaluationFailures, cancellationToken)],
 			Restore = restore,
 			LoadSeconds = loadSeconds,
 		};
@@ -199,6 +201,79 @@ public static class WorkspaceStatusReporter
 			+ "generator colliding, and only one of them loaded. Rebuild them, or check their dependencies and "
 			+ "the Roslyn version they were built against, then reload. analyzerLoadFailures has each message.";
 	}
+
+	/// <summary>
+	/// The one reason covering projects that name an SDK and that this worker's own MSBuild could not
+	/// evaluate, or null when every such project evaluated.
+	/// <para>
+	/// Degrading, where the same failure in a legacy project is only a notice, because an SDK project is
+	/// exactly what the SDK's own MSBuild exists to evaluate: when it cannot, MSBuild in this process has
+	/// gone wrong -- an SDK it can no longer resolve, typically -- and nothing that process does afterwards
+	/// can be assumed to work, even while the design-time build, which runs in a build host of its own,
+	/// loaded every project. Grouped by message, because one cause failing every project is one message
+	/// carrying a count, and a line per project would bury it.
+	/// </para>
+	/// <para>
+	/// Worded more strongly when every project failed, counted against <paramref name="projectCount"/>
+	/// distinct project files: then it is not the projects, and the only remedy is a fresh worker.
+	/// </para>
+	/// </summary>
+	public static string? EvaluationReason(IReadOnlyList<ProjectEvaluationFailure> failures, int projectCount)
+	{
+		var sdk = failures.Where(failure => failure.NamesSdk).ToArray();
+		if (sdk.Length == 0) return null;
+
+		var messages = Grouped(sdk);
+		var everyProject = projectCount > 0 && failures.Count >= projectCount;
+
+		if (everyProject)
+		{
+			return $"This worker's own MSBuild could not evaluate any of the solution's {Count(projectCount, "project", "projects")}, "
+				+ $"which says its MSBuild is broken -- usually an SDK it can no longer resolve -- rather than that the projects are: {messages}. "
+				+ "What they import is unknown, so every .props or .targets change reloads the whole solution, and a worker in this "
+				+ "state cannot be relied on for anything that resolves through MSBuild or loads an assembly afterwards. Nothing in "
+				+ "the solution fixes this: rose_workspace_reload starts a fresh worker. evaluationFailures has each project's message.";
+		}
+
+		return $"{Count(sdk.Length, "project that names an SDK", "projects that name an SDK")} could not be evaluated by this "
+			+ $"worker's own MSBuild: {messages}. The design-time build may still have loaded them, but what they import is "
+			+ "unknown here, so every .props or .targets change reloads the whole solution, and an SDK project that the SDK's "
+			+ "MSBuild cannot evaluate is MSBuild in this process going wrong rather than an expected gap. If the message names "
+			+ "something in the project, fix that; otherwise rose_workspace_reload starts a fresh worker. evaluationFailures "
+			+ "has each project's message.";
+	}
+
+	/// <summary>
+	/// The one notice covering projects that name no SDK and could not be evaluated, or null when there are none.
+	/// <para>
+	/// Not degrading: a legacy project's targets ship only with Visual Studio's MSBuild, which the design-time build
+	/// uses and this evaluation cannot, so its failure here is expected and its answers are as good as any.
+	/// </para>
+	/// </summary>
+	public static string? EvaluationNotice(IReadOnlyList<ProjectEvaluationFailure> failures)
+	{
+		var legacy = failures.Where(failure => !failure.NamesSdk).ToArray();
+		if (legacy.Length == 0) return null;
+
+		return $"{Count(legacy.Length, "project that names no SDK", "projects that name no SDK")} could not be evaluated "
+			+ $"by this worker's own MSBuild: {Name(legacy.Select(ProjectName))}. That is expected of a legacy project, whose "
+			+ "targets ship with Visual Studio's MSBuild, which the design-time build uses, so it does not make the workspace "
+			+ "degraded. What they import is unknown here, so every .props or .targets change reloads the whole solution. "
+			+ "evaluationFailures has each project's message.";
+	}
+
+	/// <summary>
+	/// Failures grouped by what MSBuild said, the commonest first, each naming a few of its projects.
+	/// </summary>
+	private static string Grouped(IEnumerable<ProjectEvaluationFailure> failures) =>
+		string.Join("; ", failures
+			.GroupBy(failure => failure.Message, StringComparer.Ordinal)
+			.OrderByDescending(group => group.Count())
+			.Select(group => $"\"{group.Key}\" ({Count(group.Count(), "project", "projects")}: {Name(group.Select(ProjectName))})"));
+
+	/// <summary>A project file's name without its directory or extension, which is how a project is named everywhere else.</summary>
+	private static string ProjectName(ProjectEvaluationFailure failure) =>
+		Path.GetFileNameWithoutExtension(failure.Project);
 
 	/// <summary>
 	/// The one reason covering projects left with no restore output, or null when none were.
@@ -364,9 +439,12 @@ public static class WorkspaceStatusReporter
 	private static IEnumerable<string> NoticesFor(
 		BuildProperties? build,
 		Solution solution,
+		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures,
 		CancellationToken cancellationToken)
 	{
 		if (build?.Notice is { } notice) yield return notice;
+
+		if (EvaluationNotice(evaluationFailures) is { } unevaluated) yield return unevaluated;
 
 		var stale = BuildFreshness.Of(solution, project: null, cancellationToken)
 			.Count(project => project.Stale);
@@ -392,7 +470,8 @@ public static class WorkspaceStatusReporter
 		IReadOnlyList<ProjectStatus> projects,
 		RestoreReport? restore,
 		BuildProperties? build,
-		IReadOnlyList<AnalyzerLoadFailure> analyzerLoadFailures)
+		IReadOnlyList<AnalyzerLoadFailure> analyzerLoadFailures,
+		IReadOnlyList<ProjectEvaluationFailure> evaluationFailures)
 	{
 		var reasons = new List<string>();
 
@@ -436,6 +515,18 @@ public static class WorkspaceStatusReporter
 		// the project reports a clean load and a generator count of zero -- a healthy-looking workspace
 		// that is not one, and the second of the three failures this server exists to prevent.
 		if (AnalyzerReason(analyzerLoadFailures) is { } analyzers) reasons.Add(analyzers);
+
+		// The design-time build runs in Roslyn's build host, a process of its own, so it can load every project
+		// while this process's MSBuild evaluates none of them -- a workspace that reports Loaded from a worker
+		// that has lost its SDK. Counted against distinct project files, which is what the evaluation walked:
+		// a multi-targeted project is several projects here and one evaluation there.
+		var projectFiles = projects
+			.Select(project => project.FilePath)
+			.Where(path => path.Length > 0)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.Count();
+
+		if (EvaluationReason(evaluationFailures, projectFiles) is { } evaluation) reasons.Add(evaluation);
 
 		// Counted, but only degrading when something actually came back impaired. MSBuild's Failure
 		// kind covers complaints that have no bearing on whether a project compiled, and a status

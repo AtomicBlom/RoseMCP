@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.UnitTests;
 
@@ -21,7 +22,9 @@ public sealed class DiskSynchronizerTests
 		synchronizer.Reset(
 			tree.Solution,
 			tree.SolutionPath,
-			new EvaluationInputs(new Dictionary<string, IReadOnlySet<string>>(), [tree.ProjectPath]));
+			new EvaluationInputs(
+				new Dictionary<string, IReadOnlySet<string>>(),
+				[new ProjectEvaluationFailure { Project = tree.ProjectPath, Message = "The SDK could not be found.", NamesSdk = true }]));
 
 		synchronizer.UntrackedImportChanged([tree.PathTo("build", "Shared.props")]).ShouldBeTrue();
 		synchronizer.UntrackedImportChanged([tree.PathTo("App", "App.csproj.user")]).ShouldBeFalse(

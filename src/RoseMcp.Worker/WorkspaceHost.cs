@@ -55,6 +55,7 @@ public sealed class WorkspaceHost(
 				options.SolutionPath,
 				session.Load.Diagnostics,
 				session.Load.Restore,
+				session.Load.EvaluationFailures,
 				snapshot.Revision,
 				session.Load.Seconds,
 				cancellationToken,

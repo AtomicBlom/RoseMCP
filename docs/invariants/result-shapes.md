@@ -143,6 +143,17 @@ Read before adding a tool, adding a field to a result, or changing an error path
   entry that is waiting rather than wrong -- a breakpoint whose module has not loaded -- is a success
   that says so, never a refusal -- and one that will never bind, because the loaded module cannot
   carry it, says that instead, with why, since a caller told to wait waits for nothing. See [the decision](../decisions/a-plural-intent-is-one-call.md).
+- **A fact about the load travels with the load.** Status re-describes the live snapshot on every call,
+  so anything learned once per load -- the restore, the load diagnostics, the projects the worker's own
+  MSBuild could not evaluate -- reaches a later status only through `LoadOutcome`, which a reload
+  replaces. Passed to the load's report and not to `LoadOutcome`, it is said once and then the workspace
+  reads `Loaded` again with nothing changed.
+- **A project naming an SDK that the worker cannot evaluate degrades; a legacy one is a notice.** The
+  design-time build runs in Roslyn's build host, a process of its own, so a worker whose MSBuild has lost
+  its SDK still loads every project and reports nothing else wrong. An SDK project is exactly what the
+  SDK's MSBuild exists to evaluate, so its failing here is this process going wrong. A project naming no
+  SDK fails here by design -- its targets ship only with Visual Studio's MSBuild -- and calling that
+  degraded would mark every UWP solution degraded.
 - **A fixer that declines is the same as no fixer.** `rose_list_code_fixes` dropped a diagnostic
   whose providers offered nothing from `fixes` and from `unfixableIds` both, so it disappeared from
   the answer entirely -- which is exactly what the second list exists to prevent. CS0103 is what

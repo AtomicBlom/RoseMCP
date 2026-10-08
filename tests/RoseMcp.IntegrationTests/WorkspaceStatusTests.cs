@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 
+using RoseMcp.Contracts;
 using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
@@ -74,6 +75,69 @@ public sealed class WorkspaceStatusTests
 			project.LoadedSuccessfully.ShouldBeTrue();
 		}
 		status.DegradedReasons.ShouldNotContain(reason => reason.Contains("did not load", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A project the design-time build loads and this worker's own MSBuild cannot evaluate is the shape of a
+	/// worker that has lost its SDK: the build host is a process of its own and still loads everything, so
+	/// nothing else in the status says anything is wrong. The load's report has to say so, and so does every
+	/// status after it, which re-describes the snapshot and would drop a fact that belongs to the load.
+	/// <para>
+	/// The project chooses an SDK that does not exist only where neither the design-time build's nor
+	/// restore's property is set, which is exactly the worker's own evaluation.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_project_the_worker_cannot_evaluate_degrades_the_load_and_every_status_after_it()
+	{
+		var token = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+
+		await File.WriteAllTextAsync(fixture.Path("Core", "Core.csproj"), """
+			<Project>
+			  <PropertyGroup>
+			    <InWorkerEvaluation>true</InWorkerEvaluation>
+			    <InWorkerEvaluation Condition="'$(DesignTimeBuild)' == 'true' or '$(MSBuildIsRestoring)' == 'true' or '$(ExcludeRestorePackageImports)' == 'true'">false</InWorkerEvaluation>
+			  </PropertyGroup>
+			  <Import Project="Sdk.props" Sdk="RoseMcp.Fixture.Missing.Sdk" Condition="'$(InWorkerEvaluation)' == 'true'" />
+			  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(InWorkerEvaluation)' != 'true'" />
+			  <PropertyGroup>
+			    <TargetFramework>net10.0</TargetFramework>
+			    <Nullable>enable</Nullable>
+			    <ImplicitUsings>enable</ImplicitUsings>
+			  </PropertyGroup>
+			  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(InWorkerEvaluation)' != 'true'" />
+			</Project>
+			""", token);
+
+		var loader = new SolutionLoader(
+			new RestoreRunner(NullLogger<RestoreRunner>.Instance),
+			new ShadowCopyAnalyzerAssemblyLoader(NullLogger<ShadowCopyAnalyzerAssemblyLoader>.Instance),
+			NullLogger<SolutionLoader>.Instance);
+
+		var load = await loader.LoadAsync(new WorkerOptions { SolutionPath = fixture.SolutionPath }, token);
+		load.Workspace.Dispose();
+
+		load.Report.Projects.ShouldAllBe(project => project.LoadedSuccessfully, "the design-time build loads Core");
+		load.Report.State.ShouldBe(WorkspaceState.Degraded);
+		load.Report.EvaluationFailures.Select(failure => Path.GetFileName(failure.Project)).ShouldBe(["Core.csproj"]);
+		load.Report.EvaluationFailures[0].NamesSdk.ShouldBeTrue();
+		load.Report.DegradedReasons.ShouldContain(
+			reason => reason.StartsWith("1 project that names an SDK could not be evaluated", StringComparison.Ordinal));
+
+		await using var host = Host(fixture);
+		await host.StartAsync(token);
+
+		var first = await host.GetStatusAsync(token);
+		var later = await host.GetStatusAsync(token);
+
+		foreach (var status in new[] { first, later })
+		{
+			status.State.ShouldBe(WorkspaceState.Degraded);
+			status.EvaluationFailures.Count.ShouldBe(1);
+			status.DegradedReasons.ShouldContain(reason => reason.Contains("Core", StringComparison.Ordinal)
+				&& reason.Contains("could not be evaluated", StringComparison.Ordinal));
+		}
 	}
 
 	private static WorkspaceHost Host(FixtureSolution fixture) => new(

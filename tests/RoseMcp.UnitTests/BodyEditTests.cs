@@ -364,8 +364,29 @@ public sealed class BodyEditTests
 			"\r\n",
 			literals => rewritten = literals);
 
-		body.ShouldBe("var x = @\"a\nb\";\r\n\r\nLog();\r\n\r\nreturn;");
+		body.ShouldBe("\tvar x = @\"a\nb\";\r\n\r\n\tLog();\r\n\r\n\treturn;");
 		rewritten.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// The statements an insertion lands beside come back as they were: the blank line between two of
+	/// them, the comment above one, and the line one of them wraps onto at the depth it was written at.
+	/// Rebuilt from the statements one to a line, all three go, and the continuation is left for a
+	/// formatter with no rule that puts one back.
+	/// </summary>
+	[Test]
+	[Arguments(true)]
+	[Arguments(false)]
+	public void Leaves_the_statements_beside_an_insertion_as_they_were(bool atStart)
+	{
+		var (declaration, block) = Method(
+			"void M()\r\n{\r\n\t\tvar total = 0;\r\n\r\n\t\t// Wrapped on purpose.\r\n\t\tAdd(\r\n\t\t\t\ttotal);\r\n\r\n\t\treturn;\r\n}");
+
+		var body = BodyEdit.Inserted(declaration, block, "Log();", atStart, [], out _, "\r\n");
+
+		body.ShouldContain(
+			"\t\tvar total = 0;\r\n\r\n\t\t// Wrapped on purpose.\r\n\t\tAdd(\r\n\t\t\t\ttotal);\r\n\r\n", Case.Sensitive);
+		body.ShouldContain("\t\tLog();", Case.Sensitive);
 	}
 
 	private static (MethodDeclarationSyntax Declaration, BlockSyntax Block) Method(string code)

@@ -20,12 +20,13 @@ namespace RoseMcp.IntegrationTests;
 public sealed class OverreachReportTests
 {
 	/// <summary>
-	/// An insertion at the end of a body rebuilds the whole body from its statements, so the statements
-	/// already there come back laid out again: the blank lines between them go, and the arguments they
-	/// wrapped move with them (#217).
+	/// An insertion at the end of a body, among statements separated by blank lines and wrapped onto
+	/// continuation lines. Rebuilt from its statements, the body loses the blank lines and has its
+	/// arguments re-indented; spliced into, it changes only where the new statement goes, and nothing
+	/// outside that is named.
 	/// </summary>
 	[Test]
-	public async Task Names_the_statements_an_insertion_at_the_end_rewrote()
+	public async Task Leaves_the_statements_an_insertion_at_the_end_lands_beside()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 
@@ -62,10 +63,9 @@ public sealed class OverreachReportTests
 
 		var text = await ReadAsync(fixture, "Routes.cs");
 
-		text.ShouldContain("new List<string>();\r\n\t\troutes.Add(", Case.Sensitive);
-		text.ShouldNotContain("\r\n\t\t\tstring.Concat(\"/sessions\", \"/threads\"));", Case.Sensitive);
-		Reached(result.Notices, "Routes.cs").ShouldStartWith(
-			"Routes.cs: lines 8, 10-11 and 13 changed.", Case.Sensitive);
+		text.ShouldContain("new List<string>();\r\n\r\n\t\troutes.Add(\r\n\t\t\tstring.Concat(\"/sessions\", \"/breakpoints\"));", Case.Sensitive);
+		text.ShouldContain("\t\t\tstring.Concat(\"/sessions\", \"/threads\"));\r\n\r\n\t\troutes.Sort();\r\n\r\n\t\treturn routes;", Case.Sensitive);
+		Reached(result.Notices, "Routes.cs").ShouldBeNull();
 	}
 
 	/// <summary>

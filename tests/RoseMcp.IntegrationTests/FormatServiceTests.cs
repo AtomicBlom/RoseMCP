@@ -68,6 +68,30 @@ public sealed class FormatServiceTests
 		"}",
 		string.Empty);
 
+	/// <summary>
+	/// Correct everywhere the formatter has a rule, with the second and third elements of a collection
+	/// written two levels deeper than the first and fourth.
+	/// </summary>
+	private static readonly string WithADoubledElement = string.Join(
+		Crlf,
+		"namespace Core;",
+		string.Empty,
+		"public static class Lists",
+		"{",
+		"\tpublic static readonly string[] Names =",
+		"\t[",
+		"\t\t\"a\",",
+		"\t\t\t\t\"b\",",
+		"\t\t\t\t\"c\",",
+		"\t\t\"d\",",
+		"\t];",
+		string.Empty,
+		"\tpublic static int Total() => Sum(1, 2, 3);",
+		string.Empty,
+		"\tprivate static int Sum(int a, int b, int c) => a + b + c;",
+		"}",
+		string.Empty);
+
 	[Test]
 	public async Task Formats_a_file_to_what_the_editorconfig_asks_for()
 	{
@@ -131,7 +155,11 @@ public sealed class FormatServiceTests
 		var second = await FormatAsync(session, [path]);
 
 		second.ChangedFiles.ShouldBeEmpty();
-		string.Join(" ", second.Notices).ShouldContain("already formatted", Case.Sensitive);
+		var notices = string.Join(" ", second.Notices);
+
+		// Says what it checked, and that wrapping was not part of it, rather than that the file is formatted.
+		notices.ShouldContain("Every file already met the formatter's rules", Case.Sensitive);
+		notices.ShouldContain("where a line wraps", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -250,7 +278,7 @@ public sealed class FormatServiceTests
 		var notices = string.Join(" ", result.Notices);
 
 		result.ChangedFiles.ShouldBeEmpty();
-		notices.ShouldNotContain("Every file was already formatted", Case.Sensitive);
+		notices.ShouldNotContain("Every file already met", Case.Sensitive);
 		notices.ShouldContain("dotnet format", Case.Sensitive);
 	}
 
@@ -273,6 +301,55 @@ public sealed class FormatServiceTests
 		var result = await FormatAsync(session, [path]);
 
 		string.Join(" ", result.Notices).ShouldNotContain("line endings the file does not use", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Two elements written two levels deeper than the neighbours they sit between, which is what a splice
+	/// leaves when it adds the destination's indentation to code that already had it. The formatter has no
+	/// rule for a continuation line and dotnet format passes the file, so all this can do is say where,
+	/// and not call the file clean in the same result.
+	/// </summary>
+	[Test]
+	public async Task Names_a_wrapped_list_whose_items_begin_at_different_depths()
+	{
+		using var fixture = Prepare(out _);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Simple", "Core", "Lists.cs");
+		await File.WriteAllTextAsync(path, WithADoubledElement, TestContext.Current!.Execution.CancellationToken);
+
+		var result = await FormatAsync(session, [path]);
+		var notices = string.Join(" ", result.Notices);
+
+		result.ChangedFiles.ShouldBeEmpty();
+		notices.ShouldContain("Lists.cs: lines 8, 9 begin items of wrapped lists", Case.Sensitive);
+		notices.ShouldNotContain("Every file already met", Case.Sensitive);
+		(await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken)).ShouldBe(WithADoubledElement);
+	}
+
+	/// <summary>
+	/// A run of tabs left between two arguments on one line is a rule the formatter does have, so it is
+	/// rewritten to the single space the file's spacing asks for rather than reported.
+	/// </summary>
+	[Test]
+	public async Task Rewrites_a_run_of_whitespace_between_two_arguments()
+	{
+		using var fixture = Prepare(out _);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Simple", "Core", "Lists.cs");
+		var spread = WithADoubledElement
+			.Replace("\t\t\t\t\"b\",\r\n\t\t\t\t\"c\",", "\t\t\"b\",\r\n\t\t\"c\",", StringComparison.Ordinal)
+			.Replace("Sum(1, 2, 3)", "Sum(1,\t\t\t2, 3)", StringComparison.Ordinal);
+
+		await File.WriteAllTextAsync(path, spread, TestContext.Current!.Execution.CancellationToken);
+
+		var result = await FormatAsync(session, [path]);
+
+		result.ChangedFiles.ShouldBe([path]);
+
+		var after = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+		after.ShouldContain("Sum(1, 2, 3)", Case.Sensitive);
 	}
 
 	private static FixtureSolution Prepare(out string manglePath)

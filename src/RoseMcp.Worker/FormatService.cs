@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Formatting;
+using Microsoft.CodeAnalysis.Text;
 
 using RoseMcp.Contracts;
 
@@ -14,6 +15,12 @@ namespace RoseMcp.Worker;
 /// where it wants CRLF, a brace on the wrong line. In a repository that escalates IDE0055 to an
 /// error, each of those is a failed build rather than a tidiness question -- and the fix is not a
 /// judgement call, it is written down in a file the compiler already reads.
+/// </para>
+/// <para>
+/// What it applies is what <c>dotnet format</c> checks, so it answers whether the build will accept a
+/// file, not whether a reviewer will. Where a line wraps and how deep a wrapped line sits are rules
+/// neither has; the result says so rather than calling a file formatted, and names the one shape of
+/// that layout it can tell mechanically, a wrapped list whose items begin at different depths.
 /// </para>
 /// </summary>
 public static class FormatService
@@ -92,11 +99,24 @@ public static class FormatService
 			if (cleanup.Removed.Count > 0) notices.Add($"Removed {cleanup.Removed.Count} unnecessary using directive(s).");
 		}
 
-		// Read off the final text, so a literal the passes above left alone is reported once, against
-		// the line it ends up on rather than the line it started at.
-		var literalEndings = await LiteralEndingNoticesAsync(solution, formatted, layouts, cancellationToken);
+		// Read off the final text, so a literal or a list the passes above left alone is reported once,
+		// against the line it ends up on rather than the line it started at.
+		var literalEndings = await PerFileNoticesAsync(
+			solution,
+			formatted,
+			(root, text, rules, name) => Whitespace.LiteralEndingNotice(root, text, rules, name),
+			layouts,
+			cancellationToken);
+
+		var wrappedLists = await PerFileNoticesAsync(
+			solution,
+			formatted,
+			(root, text, rules, name) => WrappedLists.Notice(root, text, rules.IndentSize, name),
+			layouts,
+			cancellationToken);
 
 		notices.AddRange(literalEndings);
+		notices.AddRange(wrappedLists);
 		notices.AddRange(UndeclaredIndentation(solution, formatted, layouts));
 
 		progress?.Report(request.Apply ? "Writing the changed files" : "Building the diff", 95);
@@ -112,14 +132,7 @@ public static class FormatService
 		if (!request.Apply) notices.Add("Preview only; nothing was written to disk.");
 		if (outcome.ChangedFiles.Count == 0 && missing.Count == 0)
 		{
-			// Never "already formatted" while a literal above says dotnet format will reject the file.
-			// The two sentences contradict each other, a caller reads the headline, and the headline is
-			// the one that restates the failure this tool exists to remove. Which literal and why it was
-			// left alone is already said; this only has to stop claiming the opposite.
-			notices.Add(literalEndings.Count == 0
-				? "Every file was already formatted."
-				: "Nothing needed reformatting, and dotnet format will still reject the literal endings named "
-					+ "above -- a failed build wherever IDE0055 is an error.");
+			notices.Add(Unchanged(literalEndings.Count > 0, wrappedLists.Count > 0));
 		}
 
 		var result = new FormatResult
@@ -159,30 +172,69 @@ public static class FormatService
 	}
 
 	/// <summary>
-	/// One notice per file holding a multi-line literal whose line endings are not the file's.
+	/// The headline when nothing needed reformatting, which says what was checked rather than that the
+	/// files are formatted.
 	/// <para>
-	/// This is the half of the promise the formatter cannot keep. <c>rose_format</c> tells a caller
-	/// their file is formatted, and its own description tells them to call it after writing C# by any
-	/// other means -- and then <c>dotnet format</c> fails the same file on ENDOFLINE inside a raw
-	/// literal, at the build, which is exactly the shape of failure this whole surface exists to
-	/// remove. Rewriting it is not the answer, because a newline inside a literal is part of the
-	/// string's value: what is missing is that the tool ever said so.
+	/// The formatter's rules and the file's whitespace rules are what this applies, and they are what
+	/// <c>dotnet format</c> checks -- which makes them a check of the build, not of the layout. Neither has
+	/// a rule for where a line wraps or how deep a wrapped line sits, so a list written two levels deep,
+	/// or a parameter list joined onto one line, passes both. Calling such a file formatted is the answer
+	/// a reviewer contradicts, from the tool whose description sends a caller to it after every write. Of
+	/// that layout, the one shape told mechanically is a wrapped list whose items disagree, and it is
+	/// named where it is found.
 	/// </para>
 	/// <para>
-	/// The sentence itself is <see cref="Whitespace.LiteralEndingNotice"/>, shared with
-	/// <c>rose_add_file</c>, which is the other tool a caller reaches for after writing a file full of
-	/// literals and has to say the same thing about it.
+	/// Never a clean headline while a notice above says otherwise. The two sentences would contradict
+	/// each other, a caller reads the headline, and the headline would restate the failure the notice
+	/// exists to report. Which lines and why they were left alone is already said; this only has to
+	/// stop claiming the opposite.
 	/// </para>
 	/// </summary>
-	private static async Task<IReadOnlyList<string>> LiteralEndingNoticesAsync(
+	private static string Unchanged(bool literalEndings, bool wrappedLists)
+	{
+		if (literalEndings)
+		{
+			return "Nothing needed reformatting, and dotnet format will still reject the literal endings named "
+				+ "above -- a failed build wherever IDE0055 is an error.";
+		}
+
+		if (wrappedLists)
+		{
+			return "Nothing needed reformatting by the formatter's rules or the files' whitespace rules, and the "
+				+ "wrapped lists named above are still laid out at depths that disagree.";
+		}
+
+		return "Every file already met the formatter's rules and its own whitespace rules, which is what dotnet "
+			+ "format checks. Neither covers where a line wraps or how deep a wrapped line sits; of that, this "
+			+ "checks only that a wrapped list's items begin at one depth.";
+	}
+
+	/// <summary>
+	/// One notice per file from <paramref name="notice"/>, read off each file as the passes above left it.
+	/// <para>
+	/// This is how the result says what the formatter cannot fix or cannot see. A multi-line literal whose
+	/// endings are not the file's fails <c>dotnet format</c> on ENDOFLINE at the build, and rewriting it
+	/// is not the answer, because a newline inside a literal is part of the string's value. A wrapped list
+	/// whose items begin at different depths passes <c>dotnet format</c> altogether, because neither it
+	/// nor the formatter has a rule for a continuation line. Either way the file comes out of this call
+	/// unchanged and is not right, and what is missing is that the tool ever said so.
+	/// </para>
+	/// <para>
+	/// The sentences themselves live beside their checks, shared with <c>rose_add_file</c> in the
+	/// literal's case, which is the other tool a caller reaches for after writing a file full of literals
+	/// and has to say the same thing about it.
+	/// </para>
+	/// </summary>
+	private static async Task<IReadOnlyList<string>> PerFileNoticesAsync(
 		Solution solution,
 		IReadOnlyList<DocumentId> documentIds,
+		Func<SyntaxNode, SourceText, WhitespaceRules, string, string?> notice,
 		IReadOnlyDictionary<DocumentId, WhitespaceRules> layouts,
 		CancellationToken cancellationToken)
 	{
 		var notices = new List<string>();
 
-		foreach (var documentId in documentIds)
+		foreach (var documentId in documentIds.Distinct())
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
@@ -190,13 +242,11 @@ public static class FormatService
 			if (document is null) continue;
 
 			var root = await document.GetSyntaxRootAsync(cancellationToken);
-			var tree = await document.GetSyntaxTreeAsync(cancellationToken);
-			if (root is null || tree is null) continue;
+			if (root is null) continue;
 
 			var text = await document.GetTextAsync(cancellationToken);
-			var rules = layouts[documentId];
 
-			if (Whitespace.LiteralEndingNotice(root, text, rules, document.Name) is { } notice) notices.Add(notice);
+			if (notice(root, text, layouts[documentId], document.Name) is { } said) notices.Add(said);
 		}
 
 		return notices;

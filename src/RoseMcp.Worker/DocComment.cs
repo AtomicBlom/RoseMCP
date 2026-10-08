@@ -62,12 +62,13 @@ public static class DocComment
 	/// <summary>
 	/// Checks that the comment can be written as it stands, so text that would come out wrong is refused
 	/// before the file is opened rather than landing in it: XML that does not parse is CS1570 with a line
-	/// number in the file, and a comment copied out of a file with its markers still on would be marked a
-	/// second time, every line read as text under a <c>///</c> of its own.
+	/// number in the file, a comment copied out of a file with its markers still on would be marked a
+	/// second time, every line read as text under a <c>///</c> of its own, and plain text followed by a
+	/// param or returns tag would put that tag inside the summary the text is wrapped in.
 	/// </summary>
 	/// <exception cref="ArgumentException">
 	/// The text is empty, carries its own <c>///</c> or <c>/**</c> markers, follows plain text with a
-	/// summary tag, or opens a tag it does not close.
+	/// top-level documentation tag, or opens a tag it does not close.
 	/// </exception>
 	public static void Guard(string comment)
 	{
@@ -85,15 +86,14 @@ public static class DocComment
 		}
 
 		var isXml = comment.TrimStart().StartsWith('<');
-		var namesSummary = comment.Contains("<summary", StringComparison.Ordinal)
-			|| comment.Contains("</summary", StringComparison.Ordinal);
+		var misplaced = isXml ? null : TopLevelTag(comment);
 
-		if (!isXml && namesSummary)
+		if (misplaced is not null)
 		{
 			throw new ArgumentException(
-				"The comment starts as plain text and carries a <summary> tag further on. Plain text is wrapped "
-					+ "in a summary of its own, so the tag would be nested inside one. Pass the whole comment as XML "
-					+ "starting with its first tag, or the summary as plain text without the tags.");
+				$"The comment starts as plain text and carries a <{misplaced}> tag further on. Plain text is "
+					+ "wrapped in a summary of its own, so the tag would be nested inside it. Pass the whole comment "
+					+ "as XML starting with <summary>, or the summary as plain text without the tag.");
 		}
 
 		if (!isXml) return;
@@ -121,6 +121,46 @@ public static class DocComment
 			.Select(line => line.TrimStart())
 			.Any(line => line.StartsWith(Marker, StringComparison.Ordinal)
 				|| line.StartsWith("/**", StringComparison.Ordinal));
+
+	/// <summary>
+	/// The documentation tags that stand beside a summary rather than inside one. Plain text followed by
+	/// one of these is a whole comment whose summary was left untagged.
+	/// </summary>
+	private static readonly string[] TopLevelTags =
+	[
+		"summary", "remarks", "param", "typeparam", "returns", "value", "exception", "example", "seealso",
+		"inheritdoc", "include", "permission",
+	];
+
+	/// <summary>
+	/// The name of a top-level tag in text that is otherwise plain, opening or closing: one starting a
+	/// line, or a summary tag anywhere. Inline tags such as see, c, paramref and para belong inside a
+	/// summary and are not counted, so prose that names a member is still plain text.
+	/// </summary>
+	private static string? TopLevelTag(string comment)
+	{
+		var namesSummary = comment.Contains("<summary", StringComparison.Ordinal)
+			|| comment.Contains("</summary", StringComparison.Ordinal);
+
+		if (namesSummary) return "summary";
+
+		return comment.Split('\n')
+			.Select(line => TagName(line.TrimStart()))
+			.FirstOrDefault(name => name is not null && TopLevelTags.Contains(name));
+	}
+
+	/// <summary>
+	/// The name of the tag a line opens with, opening or closing, or null when it does not open with one.
+	/// The whole name is read, so paramref is not taken for param.
+	/// </summary>
+	private static string? TagName(string line)
+	{
+		if (!line.StartsWith('<')) return null;
+
+		var name = new string([.. line.Skip(1).SkipWhile(character => character == '/').TakeWhile(char.IsLetter)]);
+
+		return name.Length == 0 ? null : name;
+	}
 
 	/// <summary>
 	/// The comment as source lines: each one indented, prefixed and terminated the way the file

@@ -82,16 +82,20 @@ public sealed class DocCommentTests
 	}
 
 	/// <summary>
-	/// Plain text followed by a summary tag would be wrapped in a summary of its own and nest the
-	/// tag inside it.
+	/// Plain text followed by a top-level tag would be wrapped in a summary of its own and nest the
+	/// tag inside it, the old comment replaced by one whose param and returns are part of the summary.
 	/// </summary>
 	[Test]
-	public void Refuses_plain_text_followed_by_a_summary_tag()
+	[Arguments("A probe comment.\n<summary>The real one.</summary>", "summary")]
+	[Arguments("A probe comment. <summary>The real one.</summary>", "summary")]
+	[Arguments("Greets.\n<param name=\"x\">X.</param>", "param")]
+	[Arguments("Greets.\n<returns>Y.</returns>", "returns")]
+	[Arguments("Greets.\r\n\t<remarks>\r\n\tMore.\r\n\t</remarks>", "remarks")]
+	public void Refuses_plain_text_followed_by_a_top_level_tag(string comment, string tag)
 	{
-		var error = Should.Throw<ArgumentException>(
-			() => DocComment.Guard("A probe comment.\n<summary>The real one.</summary>"));
+		var error = Should.Throw<ArgumentException>(() => DocComment.Guard(comment));
 
-		error.Message.ShouldContain("<summary> tag further on", Case.Sensitive);
+		error.Message.ShouldContain($"<{tag}> tag further on", Case.Sensitive);
 	}
 
 	[Test]
@@ -99,6 +103,7 @@ public sealed class DocCommentTests
 	[Arguments("<summary>\n\tok\n</summary>\n<param name=\"body\">The body.</param>")]
 	[Arguments("A plain sentence.")]
 	[Arguments("A plain sentence naming <see cref=\"X\"/> and <c>code</c>.")]
+	[Arguments("A plain sentence\n<paramref name=\"x\"/> starting a line, and\n<para>a paragraph.</para>")]
 	[Arguments("Reads the file at D:/a///b, which a marker inside a line does not refuse.")]
 	public void Accepts_a_comment_without_markers(string comment)
 	{

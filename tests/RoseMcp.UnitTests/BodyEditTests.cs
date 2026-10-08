@@ -114,6 +114,73 @@ public sealed class BodyEditTests
 	}
 
 	/// <summary>
+	/// A replacement copied out of the file, its first line still carrying the indentation it had there,
+	/// whose later lines step back out past it -- the brace closing the block above, then a statement
+	/// beside it. Each line shallower than the first keeps its distance from it. Adding the destination
+	/// to what those lines already had put the brace five levels in, and the continuation lines with it,
+	/// which no formatting rule moves back.
+	/// </summary>
+	[Test]
+	public void Keeps_the_lines_a_copied_replacement_steps_back_out_to()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\t\tif (x)\n\t\t{\n\t\t\tyield return 1\n\t\t\t\t\t: string.Empty;\n\t\t}\n\n\t\treturn;\n\t}",
+			"\t\t\t\t\t: string.Empty;\n\t\t}",
+			"\t\t\t\t\t: string.Empty;\n\t\t}\n\n\t\tif (y)\n\t\t{\n\t\t\tyield return $\"a \"\n\t\t\t\t+ \"b\";\n\t\t}");
+
+		body.ShouldContain(
+			"\t\t\t\t\t: string.Empty;\n\t\t}\n\n\t\tif (y)\n\t\t{\n\t\t\tyield return $\"a \"\n\t\t\t\t+ \"b\";\n\t\t}\n\n\t\treturn;",
+			Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A replacement starting mid-line whose continuation is written at exactly the depth it sits at in
+	/// the file, which is what editing a phrase copied out of the file produces. Read as flush, it gained
+	/// the destination's indentation on top of its own and landed twice as deep.
+	/// </summary>
+	[Test]
+	public void Leaves_a_continuation_written_at_the_destinations_own_depth()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\t\t\t\tthrow new X(\n\t\t\t\t$\"once \"\n\t\t\t\t+ \"twice\");\n}",
+			"$\"once \"\n+ \"twice\"",
+			"$\"one \"\n\t\t\t\t+ \"two\"");
+
+		body.ShouldContain("\n\t\t\t\t$\"one \"\n\t\t\t\t+ \"two\");", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// An element added after the one matched, at the depth the elements sit at. The same shape as the
+	/// continuation above, reached by an insertion rather than a rewording.
+	/// </summary>
+	[Test]
+	public void Inserts_an_element_at_the_depth_of_the_one_it_follows()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\t\tFirst,\n\t\tSecond,\n}",
+			"First,",
+			"First,\n\t\tAdded,");
+
+		body.ShouldContain("\n\t\tFirst,\n\t\tAdded,\n\t\tSecond,", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A replacement starting mid-line whose later lines close what it opened, one level out from the
+	/// line the match started on. Nothing between column zero and that depth appears in it, so it was
+	/// written for the destination, not nested from flush.
+	/// </summary>
+	[Test]
+	public void Leaves_the_lines_that_close_a_replacement_one_level_out()
+	{
+		var body = BodyEdit.Anchored(
+			"{\n\t\t\t\tnew Options\n\t\t\t\t{\n\t\t\t\t\tHeaders = null,\n\t\t\t\t}),\n\t\t\t\tdone);\n}",
+			"Headers = null,\n}),",
+			"Headers = Make(),\n\t\t\t\t}),");
+
+		body.ShouldContain("\n\t\t\t\t\tHeaders = Make(),\n\t\t\t\t}),\n\t\t\t\tdone);", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// The text path matches exactly, endings included, because inside a comment or a literal an
 	/// ending is the content being edited. That is right and it made the path unreachable: every file
 	/// here is CRLF and C# composed for a JSON argument is LF, so an anchor spanning two lines never

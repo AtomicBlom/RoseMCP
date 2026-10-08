@@ -74,6 +74,28 @@ public sealed class UsingDirectivesTests
 			.ShouldBe("already imported here");
 	}
 
+	/// <summary>
+	/// With two sibling namespace blocks, the first one's imports are not in scope in the second, so
+	/// an import goes to the top of the file where both see it, and one only the first block carries is
+	/// not reported as already there.
+	/// </summary>
+	[Test]
+	public void Imports_at_file_level_where_the_file_holds_sibling_namespace_blocks()
+	{
+		var (root, model) = Compile(
+			"namespace First\n{\n\tusing System.Text;\n\n\tpublic static class A\n\t{\n\t}\n}\n\n"
+				+ "namespace Second\n{\n\tpublic static class B\n\t{\n\t}\n}\n");
+
+		var insertion = UsingDirectives.Ensure(
+			root, model, ["System.Text"], Style, TestContext.Current!.Execution.CancellationToken);
+
+		insertion.Added.ShouldBe(["System.Text"]);
+		insertion.AlreadyInScope.ShouldBeEmpty();
+
+		insertion.Root.ToFullString().ShouldStartWith(
+			"using System.Text;\n\nnamespace First\n{\n\tusing System.Text;\n", Case.Sensitive, insertion.Root.ToFullString());
+	}
+
 	/// <summary>Compiled against everything this test host runs on, which is every namespace these name.</summary>
 	private static (CompilationUnitSyntax Root, SemanticModel Model) Compile(string source)
 	{

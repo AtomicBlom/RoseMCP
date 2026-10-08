@@ -152,6 +152,40 @@ public sealed class ReplacePatternTests
 		text.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// A file keeping its imports inside a namespace block has the ones a replacement needs placed
+	/// there, and a rule's import nothing it wrote uses taken back out of the block: left there it is
+	/// IDE0005, a build error, in a line the caller never wrote.
+	/// </summary>
+	[Test]
+	public async Task Takes_an_unused_import_back_out_of_a_namespace_block()
+	{
+		using var fixture = FixtureSolution.Copy("Assertions", "Assertions.slnx");
+
+		var path = fixture.Path("Assertions", "NoGlobal", "Blocked.cs");
+
+		await File.WriteAllTextAsync(
+			path,
+			"namespace NoGlobal\r\n{\r\n\tusing Xunit;\r\n\r\n\tpublic static class Blocked\r\n\t{\r\n\t\tpublic static void Cases(int count)\r\n\t\t{\r\n\t\t\tAssert.Equal(1, count);\r\n\t\t}\r\n\t}\r\n}\r\n",
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await RunAsync(session, new ReplacePatternRequest
+		{
+			Rules = [Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)")],
+			Usings = ["Shouldly", "Xunit", "System.Text"],
+			FilePaths = [path],
+		});
+
+		var text = await ReadAsync(fixture, "NoGlobal", "Blocked.cs");
+
+		result.TotalErrorCount.ShouldBe(0);
+		text.ShouldStartWith("namespace NoGlobal\r\n{\r\n\tusing Shouldly;\r\n\tusing Xunit;\r\n\r\n", Case.Sensitive, text);
+		text.ShouldNotContain("System.Text", Case.Sensitive, text);
+		text.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
+	}
+
 	/// <summary>A preview builds and checks everything and writes nothing.</summary>
 	[Test]
 	public async Task A_preview_writes_nothing()

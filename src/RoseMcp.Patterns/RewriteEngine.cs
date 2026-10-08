@@ -228,21 +228,31 @@ public static class RewriteEngine
 		return fresh;
 	}
 
-	/// <summary>The imports this rewrite added that the compiler reports nothing uses.</summary>
+	/// <summary>
+	/// The imports this rewrite added that the compiler reports nothing uses. Looked for wherever a
+	/// file keeps its imports, a namespace block included: an import is placed among the file's own,
+	/// and one left unused inside a block is as much a build error as one at the top of the file.
+	/// </summary>
 	private static IReadOnlyList<string> UnnecessaryImports(Plan plan, SemanticModel model, CancellationToken cancellationToken)
 	{
-		var original = ((CompilationUnitSyntax)plan.Document.Tree.GetRoot(cancellationToken)).Usings.Select(directive => directive.ToString()).ToHashSet(StringComparer.Ordinal);
-		var root = (CompilationUnitSyntax)plan.Rewritten!.GetRoot(cancellationToken);
+		var original = Imports(plan.Document.Tree.GetRoot(cancellationToken))
+			.Select(directive => directive.ToString())
+			.ToHashSet(StringComparer.Ordinal);
 
 		var unused = model.GetDiagnostics(cancellationToken: cancellationToken)
 			.Where(diagnostic => diagnostic.Id == "CS8019")
 			.Select(diagnostic => diagnostic.Location.SourceSpan)
 			.ToList();
 
-		return [.. root.Usings
+		return [.. Imports(plan.Rewritten!.GetRoot(cancellationToken))
 			.Where(directive => !original.Contains(directive.ToString()) && unused.Any(span => directive.Span.Contains(span)))
 			.Select(directive => directive.ToString())];
 	}
+
+	/// <summary>Every using directive in the file, at the top and inside any namespace block.</summary>
+	private static IEnumerable<UsingDirectiveSyntax> Imports(SyntaxNode root) =>
+		root.DescendantNodes(node => node is CompilationUnitSyntax or BaseNamespaceDeclarationSyntax)
+			.OfType<UsingDirectiveSyntax>();
 
 	/// <summary>One tree's rewrite in progress: which of its sites are still written, and why the others are not.</summary>
 	private sealed class Plan(DocumentSites document)
@@ -285,7 +295,11 @@ public static class RewriteEngine
 
 			if (root is not null && Unnecessary.Count > 0)
 			{
-				root = root.WithUsings([.. root.Usings.Where(directive => !Unnecessary.Contains(directive.ToString()))]);
+				// Out of whichever list holds each, the file's or a namespace block's, so an import placed
+				// among a block's own is taken back out of the block.
+				var unnecessary = Imports(root).Where(directive => Unnecessary.Contains(directive.ToString()));
+
+				root = root.RemoveNodes(unnecessary, SyntaxRemoveOptions.KeepNoTrivia)!;
 			}
 
 			return new DocumentRewrite(Document.Tree, root, [.. outcomes]);

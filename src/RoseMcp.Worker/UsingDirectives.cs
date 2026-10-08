@@ -277,12 +277,9 @@ public static class UsingDirectives
 	}
 
 	/// <summary>
-	/// The directives an import is placed among: the file's own, or those of the namespace block that
-	/// opens the file where the file keeps its imports in there and has none above it.
-	/// <para>
-	/// Placed at file level instead, an import a block namespace already has is written a second time,
-	/// which is IDE0005, and any other lands apart from the imports it belongs with.
-	/// </para>
+	/// The directives an import is placed among: the file's own, or those of the namespace block that is
+	/// the whole file where the file keeps its imports in there and has none above it. Placed at file
+	/// level instead, an import lands apart from the imports it belongs with.
 	/// </summary>
 	internal static SyntaxList<UsingDirectiveSyntax> Usings(CompilationUnitSyntax root) =>
 		Holder(root)?.Usings ?? root.Usings;
@@ -294,12 +291,19 @@ public static class UsingDirectives
 	private static CompilationUnitSyntax WithUsings(CompilationUnitSyntax root, SyntaxList<UsingDirectiveSyntax> usings) =>
 		Holder(root) is { } block ? root.ReplaceNode(block, block.WithUsings(usings)) : root.WithUsings(usings);
 
-	/// <summary>The namespace block that opens the file, or null where the file opens with anything else.</summary>
+	/// <summary>
+	/// The namespace block that is the whole of the file, or null where the file holds anything else.
+	/// <para>
+	/// Only the sole declaration: the imports in one of two sibling blocks are not in scope in the
+	/// other, so placing among them or counting them would put an import where the code needing it
+	/// cannot see it, and call one in scope that is not.
+	/// </para>
+	/// </summary>
 	private static NamespaceDeclarationSyntax? BlockNamespace(CompilationUnitSyntax root) =>
-		root.Members.FirstOrDefault() as NamespaceDeclarationSyntax;
+		root.Members is [NamespaceDeclarationSyntax block] ? block : null;
 
 	/// <summary>
-	/// Where to ask what is in scope: inside the namespace block that opens the file, so the imports it
+	/// Where to ask what is in scope: inside the namespace block that is the whole file, so the imports it
 	/// carries are counted, and otherwise at the first declaration.
 	/// </summary>
 	private static int ScopePosition(CompilationUnitSyntax root)

@@ -641,7 +641,7 @@ public static class ToolDescriptions
 		the code is. Thousands of errors about System.Object being undefined means the solution loaded
 		under a configuration it does not declare, which rose_workspace_reload takes; a project whose
 		design-time build failed answers unreliably and is named. It waits for the load, unlike
-		rose_workspace_open.
+		rose_workspace_open; an evicted or crashed worker is reported, not restarted.
 		""";
 
 	public const string WorkspaceReload = """

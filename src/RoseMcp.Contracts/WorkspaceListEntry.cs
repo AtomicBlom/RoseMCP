@@ -15,7 +15,10 @@ namespace RoseMcp.Contracts;
 /// </summary>
 public sealed record WorkspaceListEntry : WorkspaceScopedResult
 {
-	/// <summary>Where the workspace is in its life. <see cref="WorkspaceState.Unloaded"/> once its worker has stopped.</summary>
+	/// <summary>
+	/// Where the workspace is in its life: <see cref="WorkspaceState.Unloaded"/> once its worker has
+	/// stopped, or <see cref="WorkspaceState.Faulted"/> where it crashed.
+	/// </summary>
 	public required WorkspaceState State { get; init; }
 
 	/// <summary>

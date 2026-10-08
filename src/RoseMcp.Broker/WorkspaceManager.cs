@@ -61,13 +61,17 @@ public sealed class WorkspaceManager(
 	/// </summary>
 	public ActivityLog Activities { get; } = new();
 
-	/// <summary>Open workspaces, for status reporting and the tray UI.</summary>
+	/// <summary>
+	/// Every worker the broker holds, for status reporting and the tray UI: the running ones, and the
+	/// stopped ones whose rows stay so a person can read why they stopped. Being in this list is not
+	/// being open; <see cref="WorkspaceWorker.IsAlive"/> is.
+	/// </summary>
 	public IReadOnlyList<WorkspaceWorker> Workers => [.. _workers.Values];
 
 	/// <summary>
-	/// One row per open workspace, memory and in-flight work included. The same model backs the
-	/// tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
-	/// with.
+	/// One row per worker, running or stopped, memory and in-flight work included. The same model backs
+	/// the tray window and GET /admin/workspaces, so the UI can never show something the API disagrees
+	/// with. A stopped row says so in <see cref="Contracts.WorkspaceSummary.Alive"/>.
 	/// </summary>
 	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => worker.Describe())];
 

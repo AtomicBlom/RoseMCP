@@ -247,6 +247,7 @@ public sealed class WorkspaceRow : Observable
 		WorkspaceState.Degraded => "Degraded",
 		WorkspaceState.PendingUnload => "Solution missing",
 		WorkspaceState.Faulted => summary.Alive ? "Load failed" : "Crashed",
+		_ when summary.ExitReason == "Evicted" => "Evicted",
 		_ => "Stopped",
 	};
 

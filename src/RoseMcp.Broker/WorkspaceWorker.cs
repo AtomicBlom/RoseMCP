@@ -329,11 +329,12 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 
 	/// <summary>
 	/// Holds this worker for one call until the returned handle is disposed, so the eviction sweep
-	/// leaves it alone. Taken only under the manager's gate, which the sweep also holds while it
-	/// decides, so a worker handed to a caller is never stopped between being handed over and being
-	/// called. <paramref name="use"/> says whether the call counts as use, which restarts the idle
-	/// clock now and again when the call ends: a call that runs for an hour has not left the worker
-	/// idle for that hour.
+	/// leaves it alone. Taken under the manager's gate, which the sweep also holds while it decides, so
+	/// a worker handed to a caller is never stopped between being handed over and being called -- or,
+	/// for the load the worker follows itself, before the worker is registered at all, which no sweep
+	/// can see past either. <paramref name="use"/> says whether the call counts as use, which restarts
+	/// the idle clock now and again when the call ends: a call that runs for an hour has not left the
+	/// worker idle for that hour.
 	/// </summary>
 	internal IDisposable Hold(bool use)
 	{
@@ -595,9 +596,21 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// </summary>
 	private void BeginLoading() => _ = FollowLoadAsync();
 
+	/// <summary>
+	/// Follows the load to its end, and starts the idle clock there.
+	/// <para>
+	/// Held for the whole load, and let go only after the clock has restarted. The status report that
+	/// ends the load is what moves the worker out of <see cref="WorkspaceState.Loading"/>, and it lands
+	/// before this resumes; unheld, a sweep in that gap would see a loaded worker idle since its process
+	/// started and evict a solution that took longer than the limit to load the moment it finished.
+	/// Taken before the worker is registered, so no sweep can see it unheld, which is the guarantee the
+	/// manager's gate gives every other hold.
+	/// </para>
+	/// </summary>
 	private async Task FollowLoadAsync()
 	{
 		var load = Stopwatch.StartNew();
+		var hold = Hold(use: false);
 
 		try
 		{
@@ -621,6 +634,10 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			// the tray can say so about a worker no client has spoken to yet.
 			_loadFailure = $"Loading the solution failed: {exception.Message}";
 			_logger.LogDebug(exception, "Following the load of {SolutionPath} ended early.", SolutionPath);
+		}
+		finally
+		{
+			hold.Dispose();
 		}
 	}
 

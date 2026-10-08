@@ -81,6 +81,11 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 	[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
 	public bool Truncated { get; init; }
 
+	/// <summary>
+	/// What the caller should know about how this was answered: what a member listing's filter or cap
+	/// left out, a <c>members</c> or <c>maxMembers</c> that did not apply to this symbol, and what the
+	/// workspace reconciled before reading.
+	/// </summary>
 	public IReadOnlyList<string> Notices { get; init; } = [];
 
 	/// <summary>

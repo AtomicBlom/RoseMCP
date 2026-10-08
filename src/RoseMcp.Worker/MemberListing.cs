@@ -9,6 +9,7 @@ namespace RoseMcp.Worker;
 /// </summary>
 public sealed record MemberListing
 {
+	/// <summary>The members listed, at most the cap, in the order the type declares them.</summary>
 	public required IReadOnlyList<OutlinedMember> Members { get; init; }
 
 	/// <summary>How many members matched the name filter, listed or not.</summary>
@@ -17,5 +18,6 @@ public sealed record MemberListing
 	/// <summary>True where the cap stopped the listing before every match was listed.</summary>
 	public required bool Truncated { get; init; }
 
+	/// <summary>What the name filter or the cap left out, said; empty where neither changed the listing.</summary>
 	public required IReadOnlyList<string> Notices { get; init; }
 }

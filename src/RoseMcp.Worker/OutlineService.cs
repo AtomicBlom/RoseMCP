@@ -368,7 +368,12 @@ public static class OutlineService
 	private static string? Obsolescence(ISymbol member)
 	{
 		var obsolete = member.GetAttributes().FirstOrDefault(attribute =>
-			attribute.AttributeClass is { Name: nameof(ObsoleteAttribute), ContainingNamespace.Name: "System" });
+			attribute.AttributeClass is
+			{
+				Name: nameof(ObsoleteAttribute),
+				ContainingType: null,
+				ContainingNamespace: { Name: "System", ContainingNamespace.IsGlobalNamespace: true },
+			});
 
 		if (obsolete is null) return null;
 
@@ -381,14 +386,17 @@ public static class OutlineService
 	/// Whether code outside the type's assembly can use the member: public, protected or protected
 	/// internal, and named something it can write. Metadata carries members a compiler emitted under
 	/// names no source can spell -- a record's <c>&lt;Clone&gt;$</c>, a lambda's closure class -- which
-	/// are public and still not part of anything a caller can call. The compiler's
-	/// <c>[CompilerGenerated]</c> is not the test, because a record's <c>Equals</c>, <c>ToString</c> and
-	/// <c>Deconstruct</c> carry it too and are called like any other member.
+	/// are public and still not part of anything a caller can call. A constructor and an indexer are
+	/// the two a caller writes without their metadata name, <c>.ctor</c> and <c>this[]</c>, so neither
+	/// is held to it. The compiler's <c>[CompilerGenerated]</c> is not the test, because a record's
+	/// <c>Equals</c>, <c>ToString</c> and <c>Deconstruct</c> carry it too and are called like any other
+	/// member.
 	/// </summary>
 	private static bool IsReachableFromOutside(ISymbol member)
 	{
 		var accessible = member.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal;
-		var speakable = member is IMethodSymbol { MethodKind: MethodKind.Constructor } || SyntaxFacts.IsValidIdentifier(member.Name);
+		var writtenWithoutItsName = member is IMethodSymbol { MethodKind: MethodKind.Constructor } or IPropertySymbol { IsIndexer: true };
+		var speakable = writtenWithoutItsName || SyntaxFacts.IsValidIdentifier(member.Name);
 
 		return accessible && speakable;
 	}

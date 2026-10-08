@@ -52,6 +52,8 @@ public sealed class MetadataMembersTests
 
 			public int Total { get; set; }
 
+			public string this[int slot] => "";
+
 			public event EventHandler? Opened;
 
 			public static Till operator +(Till left, Till right) => left;
@@ -72,9 +74,22 @@ public sealed class MetadataMembersTests
 			public required string Number { get; init; }
 
 			public ref struct Slip { }
+
+			[Shop.System.Obsolete]
+			public void Reprint() { }
 		}
 
 		public record Sale(string Item);
+		""";
+
+	/// <summary>
+	/// An attribute named ObsoleteAttribute in a namespace whose last segment is System, which the
+	/// compiler does not treat as obsolescence and so neither may the listing.
+	/// </summary>
+	private const string Lookalike = """
+		namespace Shop.System;
+
+		public sealed class ObsoleteAttribute : global::System.Attribute { }
 		""";
 
 	[Test]
@@ -86,7 +101,7 @@ public sealed class MetadataMembersTests
 		var names = info.Members.ShouldNotBeNull().Select(member => member.Name).ToArray();
 
 		names.ShouldBe(
-			[".ctor", ".ctor", "Ring", "Ring", "Balance", "Close", "Charge", "Swipe", "Total", "Opened", "op_Addition", "Counter", "Drawer"],
+			[".ctor", ".ctor", "Ring", "Ring", "Balance", "Close", "Charge", "Swipe", "Total", "this[]", "Opened", "op_Addition", "Counter", "Drawer"],
 			ignoreOrder: true);
 
 		// Internal, private and private protected are the assembly's own business, and a property's or
@@ -136,6 +151,10 @@ public sealed class MetadataMembersTests
 		members.Single(member => member.Name == "Charge").Obsolete.ShouldBe("warning");
 		members.Single(member => member.Name == "Swipe").Obsolete.ShouldBe("error");
 		members.Where(member => member.Name == "Ring").ShouldAllBe(member => member.Obsolete == null);
+
+		// An attribute that only shares System.ObsoleteAttribute's name and last namespace segment.
+		var receipt = await DescribeAsync("Shop.Receipt");
+		receipt.Members.ShouldNotBeNull().Single(member => member.Name == "Reprint").Obsolete.ShouldBeNull();
 	}
 
 	/// <summary>
@@ -194,9 +213,9 @@ public sealed class MetadataMembersTests
 		var info = await DescribeAsync("Shop.Till", maxMembers: 3);
 
 		info.Members.ShouldNotBeNull().Count.ShouldBe(3);
-		info.TotalMembers.ShouldBe(13);
+		info.TotalMembers.ShouldBe(14);
 		info.Truncated.ShouldBeTrue();
-		info.Notices.ShouldHaveSingleItem().ShouldContain("Listed 3 of 13 members, stopping at maxMembers=3", Case.Sensitive);
+		info.Notices.ShouldHaveSingleItem().ShouldContain("Listed 3 of 14 members, stopping at maxMembers=3", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -277,7 +296,10 @@ public sealed class MetadataMembersTests
 
 		var library = CSharpCompilation.Create(
 			"Shop",
-			[CSharpSyntaxTree.ParseText(Library, new CSharpParseOptions(LanguageVersion.Latest))],
+			[
+				CSharpSyntaxTree.ParseText(Library, new CSharpParseOptions(LanguageVersion.Latest)),
+				CSharpSyntaxTree.ParseText(Lookalike, new CSharpParseOptions(LanguageVersion.Latest)),
+			],
 			[framework],
 			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
 

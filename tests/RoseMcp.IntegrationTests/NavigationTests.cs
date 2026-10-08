@@ -116,6 +116,15 @@ public sealed class NavigationTests
 		capped.Truncated.ShouldBeTrue();
 		capped.TotalMembers.ShouldNotBeNull().ShouldBeGreaterThan(5);
 		capped.Notices.ShouldContain(notice => notice.Contains("stopping at maxMembers=5", StringComparison.Ordinal));
+
+		// The indexer, which metadata names this[] -- not an identifier, and still a member a caller uses.
+		var indexer = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.StringBuilder" },
+			TestContext.Current!.Execution.CancellationToken,
+			members: "this[]");
+
+		indexer.Members.ShouldNotBeNull().ShouldHaveSingleItem().Signature.ShouldNotBeNull().ShouldContain("this[int index]", Case.Sensitive);
 	}
 
 	/// <summary>

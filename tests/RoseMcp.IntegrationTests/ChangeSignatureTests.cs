@@ -107,6 +107,71 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
+	/// A constructor whose parameters are one to a line, in groups headed by comments, keeps both when a
+	/// parameter is added, however the caller wrote the list. A comment between two parameters is not
+	/// layout: rebuilt from the caller's text it is dropped without trace, and the list it held open
+	/// collapses onto the signature line with it. Parameters that keep their place keep their own lines,
+	/// the way the arguments at a call site already do, and the new one follows the line of the
+	/// parameter before it.
+	/// <para>
+	/// The fixture is written here rather than checked in, so the members other tests count stay as
+	/// they are.
+	/// </para>
+	/// </summary>
+	[Test]
+	[Arguments("string name, string title, int count, bool loud = false")]
+	[Arguments("\nstring name,\nstring title,\nint count,\nbool loud = false")]
+	public async Task Keeps_a_wrapped_parameter_list_and_its_comments_when_it_adds_a_parameter(string written)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Grouped.cs"),
+			"""
+			namespace Library;
+
+			public sealed class Grouped
+			{
+				public Grouped(
+					// What it is called
+					string name,
+					string title,
+					// How many there are
+					int count)
+				{
+					Name = $"{title} {name}";
+					Count = count;
+				}
+
+				public string Name { get; }
+
+				public int Count { get; }
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Grouped.Grouped(string, string, int)", written);
+
+		result.Applied.ShouldBeTrue("the change is written; only its layout is under test");
+		result.TotalErrorCount.ShouldBe(0);
+
+		var text = await ReadAsync(fixture, "Grouped.cs");
+
+		text.ShouldContain(
+			"\tpublic Grouped(\r\n"
+				+ "\t\t// What it is called\r\n"
+				+ "\t\tstring name,\r\n"
+				+ "\t\tstring title,\r\n"
+				+ "\t\t// How many there are\r\n"
+				+ "\t\tint count,\r\n"
+				+ "\t\tbool loud = false)\r\n",
+			Case.Sensitive);
+	}
+
+	/// <summary>
 	/// A signature change on a member whose expression body is wrapped. The parameters are this
 	/// tool's business and the body is not, but the whitespace pass runs over the lines the change
 	/// wrote -- so the body is what says whether it reached past them.

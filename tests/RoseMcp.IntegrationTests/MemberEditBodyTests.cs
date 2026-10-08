@@ -217,6 +217,65 @@ public sealed class MemberEditBodyTests
 	}
 
 	/// <summary>
+	/// Code inserted at either end of a body lands among statements it did not write, and the blank lines
+	/// between those statements are theirs. Rebuilt by joining the statements one to a line, a body loses
+	/// every blank line but the ones beside the insertion: a change nobody asked for, which the overreach
+	/// sentence names and nothing should have made.
+	/// </summary>
+	[Test]
+	[Arguments(BodyPosition.Start)]
+	[Arguments(BodyPosition.End)]
+	public async Task Keeps_the_blank_lines_between_the_statements_it_inserts_beside(BodyPosition position)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Spaced.cs"),
+			"""
+			namespace Library;
+
+			public static class Spaced
+			{
+				public static int Sum(int[] values)
+				{
+					var total = 0;
+
+					foreach (var value in values)
+					{
+						total += value;
+					}
+
+					return total;
+				}
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Spaced.Sum",
+			Position = position,
+			Code = "ArgumentNullException.ThrowIfNull(values);",
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var text = await ReadAsync(fixture, "Spaced.cs");
+
+		// The blank line under the first statement and the one under the loop, whichever end was written.
+		text.ShouldContain("\t\tvar total = 0;\r\n\r\n\t\tforeach", Case.Sensitive);
+		text.ShouldContain("\t\t}\r\n\r\n\t\t", Case.Sensitive);
+
+		result.Notices.ShouldNotContain(
+			notice => notice.Contains("Nothing this was asked to do reaches them", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// A whole body is parsed behind the signature it was copied from and inside braces it never had,
 	/// so a line counted in what is parsed is one the caller never wrote. The literal is named on its
 	/// line in the body they sent, blank line above it included.

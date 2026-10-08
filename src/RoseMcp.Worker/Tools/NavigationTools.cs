@@ -84,6 +84,9 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		[Description(ToolDescriptions.DefinitionsOnlyArgument)] bool definitionsOnly = false,
 		[Description(ToolDescriptions.ReferenceProjectArgument)] string? project = null,
 		[Description(ToolDescriptions.IncludePreviewsArgument)] bool includePreviews = true,
+		[Description(ToolDescriptions.ContainingMemberArgument)] string? containingMember = null,
+		[Description(ToolDescriptions.IsTestProjectArgument)] bool? isTestProject = null,
+		[Description(ToolDescriptions.IsGeneratedArgument)] bool? isGenerated = null,
 		CancellationToken cancellationToken = default)
 	{
 		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
@@ -104,7 +107,10 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 					cancellationToken,
 					definitionsOnly,
 					project,
-					includePreviews);
+					includePreviews,
+					containingMember,
+					isTestProject,
+					isGenerated);
 			},
 			cancellationToken);
 	}

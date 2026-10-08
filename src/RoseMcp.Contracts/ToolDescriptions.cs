@@ -130,13 +130,20 @@ public static class ToolDescriptions
 
 	public const string MaxDiagnosticsArgument = "Maximum diagnostics to return. Defaults to 200.";
 
-	public const string MaxReferencesArgument = "Maximum references to return. Defaults to 200.";
+	public const string MaxReferencesArgument = "Most references to list; past it, their shape instead. Defaults to 200.";
 
 	public const string DefinitionsOnlyArgument =
-		"Return where it is declared and how many uses there are, without listing them.";
+		"Return where it is declared, how many uses there are and their shape, without listing them.";
 
 	public const string ReferenceProjectArgument =
 		"Only references compiled by this project, named or given as the path to its project file.";
+
+	public const string ContainingMemberArgument =
+		"Only references inside this member: Type.Member, or a name alone for every type's.";
+
+	public const string IsTestProjectArgument = "true: only references in test projects; false: only the rest.";
+
+	public const string IsGeneratedArgument = "true: only references in generated code; false: only written files.";
 
 	public const string IncludePreviewsArgument =
 		"Give each location its line of source. On by default; off is much smaller.";
@@ -660,10 +667,11 @@ public static class ToolDescriptions
 		this follows overrides, interface implementations and aliases, and will not match comments,
 		strings or unrelated identifiers that share a name. Name the symbol as Namespace.Type.Member;
 		a position still reaches a local or a parameter, and needs the column on the identifier itself,
-		since one on a neighbour answers completely and correctly about a different symbol. Each hit
-		names the member it sits inside, which turns a flat list into "used by these six methods". A
-		large answer narrows three ways: definitionsOnly for the count alone, project for one project,
-		includePreviews=false to drop the line of source. For the opposite direction, use
+		since one on a neighbour answers completely and correctly about a different symbol. Hits are
+		listed by file, each naming its containing member. Past maxResults the answer is their shape:
+		counts by project, test project, generated code and member, each group a value project,
+		isTestProject, isGenerated or containingMember takes. definitionsOnly gives the shape alone;
+		includePreviews=false drops the source lines. For the opposite direction, use
 		rose_find_implementations.
 		""";
 

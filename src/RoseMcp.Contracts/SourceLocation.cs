@@ -16,8 +16,9 @@ public sealed record SourceLocation
 	public string? GeneratedHintName { get; init; }
 
 	/// <summary>
-	/// The member this location sits inside, as a signature. What turns a flat list of forty
-	/// references into "used by these six methods", which is the question a caller actually had.
+	/// The member this location sits inside, as <c>Type.Member</c>. What turns a flat list of forty
+	/// references into "used by these six methods", which is the question a caller actually had, and the
+	/// value rose_find_references' <c>containingMember</c> takes.
 	/// </summary>
 	public string? ContainingMember { get; init; }
 

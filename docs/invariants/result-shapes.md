@@ -99,6 +99,19 @@ Read before adding a tool, adding a field to a result, or changing an error path
   case, by a multi-targeted project's name without its framework, or by the path to its project
   file -- and its refusal lists the names there are. `ProjectNamesTests` fails any other worker type
   that compares a project's name with a string itself.
+- **Every facet a result returns is a filter the tool owes, and an overflow is answered with a
+  smaller question, never a bigger artefact.** A fact computed on every item is a fact a caller wants
+  to select on; one it can read and not ask about leaves two ways to narrow a large answer, reading
+  all of it or text-searching it, and the second throws away the precision the semantic search was
+  paid for. `ProducedFactTests` fails a facet with no argument of its name. Past its cap,
+  `rose_find_references` returns the shape of its references instead of the first few in path order
+  -- counts by project, test project, generated code and member, each group keyed by the value its
+  narrowing argument takes -- because a first-N cut is an arbitrary sample that reads as the whole
+  answer. A filter that keeps nothing says so and describes every reference instead, since an empty
+  list reads as a symbol nobody uses. `truncated` means one thing, that raising the cap lists more,
+  so an answer that lists nothing because it was asked to is not truncated. Nothing spills to a file
+  the caller did not name: a read that writes to disk unasked leaves files nobody owns, and telling the
+  caller to grep them concedes the reason the tool exists.
 - **Status may not report a field it cannot fill.** `GetStatusAsync` once passed `restore: null`,
   `loadSeconds: 0` and no load diagnostics, hard-coded, so every status answer on every solution
   carried the same three blanks. That is worse than omitting them: a failed restore reaches
@@ -149,6 +162,9 @@ Read before adding a tool, adding a field to a result, or changing an error path
   The other half is the one a cap or a filter breaks: an empty or short list reads as the whole
   answer, so whatever narrowed it carries a total and a notice. `ResultBudgetTests` holds the per-item
   cost. See [the decision](../decisions/an-outline-is-cheap-by-default.md).
+  <br>
+  `rose_find_references` lists its references by file for the same reason: the path, the project and
+  whether it is a test project are said once per file rather than on every hit.
   <br>
   A write's `changedFiles` is the one list a narrowing must not reach early: `WorkspaceManager` reads
   all of it to say which sibling solution compiles the same files, so a worker that cut it would hide

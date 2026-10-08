@@ -48,7 +48,9 @@ public sealed class ToolBudgetTests
 	/// and the surface is to be split into per-surface servers with budgets of their own (#339), which
 	/// retires this single ceiling rather than paying for one tool by cutting another's refusals. The
 	/// usings argument on rose_change_signature is about 200 of it, since the import a new parameter's
-	/// type needs is otherwise a second call to a second tool.
+	/// type needs is otherwise a second call to a second tool. rose_find_references' three facet
+	/// filters are about 450 more, since they are what lets an answer too large to list be followed by
+	/// a smaller question rather than a bigger artefact.
 	/// </para>
 	/// <para>
 	/// The <c>workspaceKey</c> argument is about 4,300 of it: some 140 characters of schema on each of
@@ -58,7 +60,7 @@ public sealed class ToolBudgetTests
 	/// absolute path it replaces is the argument agents drop.
 	/// </para>
 	/// </summary>
-	private const int ModelFacing = 81000;
+	private const int ModelFacing = 81500;
 
 	[Test]
 	public void No_description_is_longer_than_its_ceiling()

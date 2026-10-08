@@ -12,7 +12,6 @@ namespace RoseMcp.UnitTests;
 /// half was built and the cheap half was not, and nothing failed, because a producer with no
 /// consumer breaks nothing. A workspace key on every result, described as fit for a caller to
 /// quote back, is worth its characters only where an argument accepts it back.
-/// <c>ContainingMember</c> carries a docstring naming "the question a caller actually had", and nothing filters on it.
 /// <c>InfoAge</c> and <c>InstallLocation</c> are computed for a window that does not render them.
 /// </para>
 /// <para>
@@ -43,7 +42,26 @@ public sealed class ProducedFactTests
 	/// with. The consumer is an argument of that name anywhere on the surface: a result field and
 	/// the argument that selects on it are the same word, or one of them is unreachable.
 	/// </summary>
-	private static readonly Type[] Selectable = [typeof(SourceLocation), typeof(WorkspaceScopedResult)];
+	private static readonly Type[] Selectable =
+	[
+		typeof(SourceLocation),
+		typeof(ReferenceFile),
+		typeof(ReferenceSite),
+		typeof(WorkspaceScopedResult),
+	];
+
+	/// <summary>
+	/// Facts whose argument is named for the question asked of them rather than for the field, each with
+	/// that argument, which is still checked by name. Kept to a field whose value is an identifier while
+	/// the question is whether there is one: a hint name names one generated file as a path names a
+	/// written one, and what a caller narrows by is whether a reference is generated at all, which a
+	/// string argument named for the field could ask only with a sentinel value.
+	/// </summary>
+	private static readonly Dictionary<string, string> AskedAs = new(StringComparer.Ordinal)
+	{
+		["SourceLocation.GeneratedHintName"] = "isGenerated",
+		["ReferenceFile.GeneratedHintName"] = "isGenerated",
+	};
 
 	/// <summary>
 	/// Facts computed for a person to read. The consumer is any mention in a window's own sources,
@@ -71,11 +89,8 @@ public sealed class ProducedFactTests
 		["SourceLocation.Column"] = "Part of the position being reported, not a dimension of it.",
 		["SourceLocation.Preview"] = "The evidence for a hit, and already switchable by includePreviews.",
 
-		// Card 11e: each is computed on every reference and offered as neither filter nor grouping,
-		// which is why an overflow can only be answered with a bigger artefact.
-		["SourceLocation.ContainingMember"] = "Card 11e: the grouping an overflow should be answered with.",
-		["SourceLocation.IsTestProject"] = "Card 11e: the narrowing that separates 380 test hits from 32 real ones.",
-		["SourceLocation.GeneratedHintName"] = "Card 11e: generated hits are not separable from written ones.",
+		["ReferenceSite.Preview"] = "The evidence for a hit, and already switchable by includePreviews.",
+		["ReferenceFile.References"] = "The hits themselves, which every other facet narrows.",
 
 		// Card 22: the cheapest wins in the repository, and the reason a window can report a healthy
 		// workspace that is not one.
@@ -114,9 +129,11 @@ public sealed class ProducedFactTests
 		{
 			if (Unconsumed.ContainsKey(key)) continue;
 
-			arguments.Contains(property, StringComparer.OrdinalIgnoreCase).ShouldBeTrue(
-				$"{key} is computed on every item and no argument accepts it. Add the argument, or "
-					+ "add the fact to Unconsumed with the reason nothing should.");
+			var argument = AskedAs.GetValueOrDefault(key, property);
+
+			arguments.Contains(argument, StringComparer.OrdinalIgnoreCase).ShouldBeTrue(
+				$"{key} is computed on every item and no argument called {argument} accepts it. Add the "
+					+ "argument, or add the fact to Unconsumed with the reason nothing should.");
 		}
 	}
 
@@ -154,6 +171,11 @@ public sealed class ProducedFactTests
 		{
 			known.ShouldContain(key);
 			reason.ShouldNotBeEmpty();
+		}
+
+		foreach (var key in AskedAs.Keys)
+		{
+			known.ShouldContain(key);
 		}
 	}
 

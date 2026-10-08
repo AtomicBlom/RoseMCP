@@ -189,9 +189,13 @@ public static class SymbolLocator
 	}
 
 	/// <summary>
-	/// The member a location sits inside, as a signature, or the type where it is not inside a member
-	/// -- a field initialiser or a base list is still somewhere, and saying which type beats saying
+	/// The member a location sits inside, as <c>Type.Member</c>, or the type where it is not inside a
+	/// member -- a field initialiser or a base list is still somewhere, and saying which type beats saying
 	/// nothing.
+	/// <para>
+	/// Qualified by the type, because the member is what references are grouped and filtered by, and a
+	/// bare name would count every type's <c>Dispose</c> as one member.
+	/// </para>
 	/// </summary>
 	private static async Task<string?> ContainingMemberAsync(Location location, CancellationToken cancellationToken)
 	{
@@ -205,7 +209,9 @@ public static class SymbolLocator
 			if (current is BaseTypeDeclarationSyntax type) return type.Identifier.Text;
 			if (current is not MemberDeclarationSyntax member) continue;
 
-			return NameOf(member) ?? member.Kind().ToString();
+			var name = NameOf(member) ?? member.Kind().ToString();
+
+			return member.Parent is BaseTypeDeclarationSyntax owner ? $"{owner.Identifier.Text}.{name}" : name;
 		}
 
 		return null;
@@ -220,6 +226,8 @@ public static class SymbolLocator
 		EventDeclarationSyntax @event => @event.Identifier.Text,
 		BaseFieldDeclarationSyntax field => field.Declaration.Variables.FirstOrDefault()?.Identifier.Text,
 		DelegateDeclarationSyntax @delegate => @delegate.Identifier.Text,
+		EnumMemberDeclarationSyntax value => value.Identifier.Text,
+		IndexerDeclarationSyntax => "this[]",
 		_ => null,
 	};
 

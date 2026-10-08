@@ -535,11 +535,11 @@ public sealed class OutlineTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var reference = references.References.ShouldHaveSingleItem();
+		var reference = references.Listed().ShouldHaveSingleItem();
 
-		reference.ContainingMember.ShouldBe("Call");
-		reference.Project.ShouldBe("Library");
-		reference.IsTestProject.ShouldBeFalse("the reference is in the library rather than a test project");
+		reference.Site.ContainingMember.ShouldBe("Caller.Call");
+		reference.File.Project.ShouldBe("Library");
+		reference.File.IsTestProject.ShouldBeFalse("the reference is in the library rather than a test project");
 	}
 
 	/// <summary>A type's own bases and interfaces, which were reported only for members.</summary>

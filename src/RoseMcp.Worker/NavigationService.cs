@@ -90,23 +90,27 @@ public static class NavigationService
 	}
 
 	/// <summary>
-	/// Every reference to a symbol, with three ways to ask for less of it.
+	/// Every reference to a symbol: listed by file where there are few enough to read, and described by
+	/// their shape where there are not.
 	/// <para>
 	/// A widely used member answers at a size nothing can read: one member of a test fixture came back
-	/// at 63 KB, and <paramref name="maxResults"/> is no answer to it, because it drops references and
-	/// the previews on the ones it keeps are most of the payload. So the payload is separable from the
-	/// list -- how widely a symbol is used, which projects use it, and where exactly, are three
-	/// questions of very different sizes and only the last of them needs a line of source per hit.
+	/// at 63 KB. Cutting the list at <paramref name="maxResults"/> is no answer to it, because the first
+	/// two hundred in path order are an arbitrary sample that reads as the whole answer, and the caller
+	/// cannot tell what was cut. So past the cap the answer is the shape of the references instead --
+	/// how many in each project, how many in tests and in generated code, which members hold them --
+	/// and every group in it is a value one of the narrowing arguments takes, so the next call asks a
+	/// smaller question rather than fetching the same answer somewhere else. Nothing is ever written to
+	/// a file a caller did not name.
 	/// </para>
 	/// </summary>
 	/// <param name="snapshot">The solution to search.</param>
 	/// <param name="target">The symbol, named or pointed at.</param>
-	/// <param name="maxResults">How many references to return.</param>
+	/// <param name="maxResults">How many references to list at most before describing them instead.</param>
 	/// <param name="cancellationToken">Cancels the search.</param>
 	/// <param name="definitionsOnly">
-	/// Return where the symbol is declared and how many uses there are, without listing them. The count
-	/// is the whole answer to "is this used at all" and to "is this safe to change", at a fraction of
-	/// the size.
+	/// Return where the symbol is declared, how many uses there are and their shape, without listing
+	/// them. The count is the whole answer to "is this used at all", and the shape to "is this safe to
+	/// change", at a fraction of the size.
 	/// </param>
 	/// <param name="project">
 	/// Only references compiled by this project. Named rather than filtered by the caller afterwards,
@@ -114,9 +118,14 @@ public static class NavigationService
 	/// product answers with the two only if the narrowing reaches the search.
 	/// </param>
 	/// <param name="includePreviews">
-	/// Whether each location carries its line of source. The member each reference sits inside is
+	/// Whether each reference carries its line of source. The member each reference sits inside is
 	/// reported either way, and that is what turns a flat list into "used by these six methods".
 	/// </param>
+	/// <param name="containingMember">
+	/// Only references inside this member, as <c>Type.Member</c> or by the member's name alone.
+	/// </param>
+	/// <param name="isTestProject">True for only references in test projects, false for only those outside them.</param>
+	/// <param name="isGenerated">True for only references in source-generated code, false for only those in files.</param>
 	/// <exception cref="ArgumentException">The solution has no project of that name.</exception>
 	public static async Task<ReferencesResult> FindReferencesAsync(
 		WorkspaceSnapshot snapshot,
@@ -125,13 +134,23 @@ public static class NavigationService
 		CancellationToken cancellationToken,
 		bool definitionsOnly = false,
 		string? project = null,
-		bool includePreviews = true)
+		bool includePreviews = true,
+		string? containingMember = null,
+		bool? isTestProject = null,
+		bool? isGenerated = null)
 	{
 		// Resolved before the search, so a name no project carries is refused rather than filtering every
 		// reference out: an empty list reads exactly like a symbol nobody uses, which invites a deletion.
-		var narrowed = project is { Length: > 0 }
-			? ProjectNames.Resolve(snapshot.Solution, project).Select(candidate => candidate.Name).ToHashSet(StringComparer.Ordinal)
-			: null;
+		var filter = new ReferenceFilter
+		{
+			Projects = project is { Length: > 0 }
+				? ProjectNames.Resolve(snapshot.Solution, project).Select(candidate => candidate.Name).ToHashSet(StringComparer.Ordinal)
+				: null,
+			Project = project,
+			ContainingMember = string.IsNullOrWhiteSpace(containingMember) ? null : containingMember.Trim(),
+			IsTestProject = isTestProject,
+			IsGenerated = isGenerated,
+		};
 
 		// Metadata included: who calls ILogger.LogInformation in this solution is a question about this
 		// solution's source, and refusing it because nothing here declares the member answers a narrower
@@ -145,7 +164,13 @@ public static class NavigationService
 
 		foreach (var reference in found)
 		{
-			foreach (var location in reference.Definition.Locations.Where(location => location.IsInSource))
+			// A property's search cascades to its accessors, whose declarations are the get and set
+			// keywords inside the property's own: listing them would say the symbol is declared three
+			// times on one line. Their uses are still the property's uses, so only the definitions go.
+			var isAccessor = reference.Definition is IMethodSymbol { AssociatedSymbol: not null }
+				&& !SymbolEqualityComparer.Default.Equals(reference.Definition, symbol);
+
+			foreach (var location in reference.Definition.Locations.Where(location => location.IsInSource && !isAccessor))
 			{
 				definitions.Add(await SymbolLocator.DescribeAsync(snapshot.Solution, location, cancellationToken));
 			}
@@ -159,25 +184,48 @@ public static class NavigationService
 			}
 		}
 
-		var ordered = references
-			.Where(location => narrowed is null || (location.Project is { } owner && narrowed.Contains(owner)))
+		var every = references
+			.Distinct()
 			.OrderBy(location => location.FilePath, StringComparer.OrdinalIgnoreCase)
 			.ThenBy(location => location.Line)
+			.ThenBy(location => location.Column)
 			.ToArray();
 
-		// Truncated says the list is not all of them, which is as true of asking for none as of asking
-		// for two hundred. The count beside it is the real one either way.
-		var listed = definitionsOnly ? [] : ordered.Length > maxResults ? ordered[..maxResults] : ordered;
+		var kept = filter.KeepsAll ? every : every.Where(filter.Keeps).ToArray();
+
+		// Which of four answers this is. A filter that kept nothing from a symbol that is used describes
+		// every use instead, and says so: an empty list there reads as a symbol nobody uses, and the
+		// unfiltered shape is what shows the caller which question does have an answer.
+		var keptNothing = kept.Length == 0 && every.Length > 0;
+		var overflows = !definitionsOnly && kept.Length > maxResults;
+
+		var notices = new List<string>();
+		if (keptNothing) notices.Add(ReferenceShapes.NothingKept(every.Length, filter));
+		else if (overflows) notices.Add(ReferenceShapes.Overflow(kept.Length, maxResults));
+
+		var shape = keptNothing ? ReferenceShapes.Of(every)
+			: (definitionsOnly || overflows) && kept.Length > 0 ? ReferenceShapes.Of(kept)
+			: null;
+
+		var listed = definitionsOnly || overflows ? [] : kept;
 
 		return new ReferencesResult
 		{
 			Revision = snapshot.Revision,
 			Address = SymbolAddress.Of(symbol),
 			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
-			Definitions = [.. definitions.Select(location => Previewed(location, includePreviews))],
-			References = [.. listed.Select(location => Previewed(location, includePreviews))],
-			TotalCount = ordered.Length,
-			Truncated = listed.Length < ordered.Length,
+
+			// Distinct, because one declaration is found once for each symbol the search cascades
+			// through that shares it.
+			Definitions = [.. definitions.Select(location => Previewed(location, includePreviews)).Distinct()],
+			Files = ReferenceShapes.ByFile(listed, includePreviews),
+			TotalCount = kept.Length,
+
+			// Only an overflow is truncated: it is the one answer that raising maxResults changes.
+			// definitionsOnly lists nothing because it was asked to, and asking again lists nothing again.
+			Truncated = overflows,
+			Shape = shape,
+			Notices = notices,
 		};
 	}
 

@@ -284,7 +284,7 @@ public sealed class NavigationTests
 			TestContext.Current!.Execution.CancellationToken);
 
 		result.Address.ShouldBe("Library.Labelled.Name");
-		result.References.ShouldContain(reference => reference.Preview!.Contains("labelled.Name", StringComparison.Ordinal));
+		result.Listed().ShouldContain(reference => reference.Site.Preview!.Contains("labelled.Name", StringComparison.Ordinal));
 	}
 
 	/// <summary>
@@ -350,17 +350,14 @@ public sealed class NavigationTests
 
 		result.Definitions.ShouldBeEmpty();
 		result.TotalCount.ShouldBe(2);
-		foreach (var location in result.References)
-		{
-			location.FilePath.ShouldEndWith("Program.cs", Case.Insensitive);
-		}
+		result.Files.ShouldHaveSingleItem().FilePath.ShouldEndWith("Program.cs", Case.Insensitive);
+		result.Listed().Count.ShouldBe(2);
 	}
 
 	/// <summary>
-	/// The three ways to ask for less, measured as sizes rather than asserted as flags. A widely used
-	/// member answers at a size nothing can read, and maxResults is no answer to it: it drops
-	/// references while the previews on the ones it keeps are most of the payload. Each narrowing has
-	/// to be smaller than the full answer or it is not one.
+	/// The ways to ask for less, measured as sizes rather than asserted as flags. Each narrowing has to
+	/// be smaller than the full answer or it is not one, and none of them may read as a symbol nobody
+	/// uses.
 	/// </summary>
 	[Test]
 	public async Task Narrows_a_large_answer_three_ways()
@@ -374,10 +371,11 @@ public sealed class NavigationTests
 		var full = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken);
 
-		full.References.ShouldNotBeEmpty();
-		foreach (var location in full.References)
+		full.Listed().ShouldNotBeEmpty();
+		full.Shape.ShouldBeNull("a list that is the whole answer needs no description of itself");
+		foreach (var reference in full.Listed())
 		{
-			location.Preview.ShouldNotBeNull();
+			reference.Site.Preview.ShouldNotBeNull();
 		}
 
 		var plain = await NavigationService.FindReferencesAsync(
@@ -385,37 +383,213 @@ public sealed class NavigationTests
 
 		// The count and the places are the same answer; only the lines of source are gone.
 		plain.TotalCount.ShouldBe(full.TotalCount);
-		plain.References.Count.ShouldBe(full.References.Count);
-		foreach (var location in plain.References)
+		plain.Listed().Count.ShouldBe(full.Listed().Count);
+		foreach (var reference in plain.Listed())
 		{
-			location.Preview.ShouldBeNull();
-		}
-		foreach (var location in plain.References)
-		{
-			location.ContainingMember.ShouldNotBeNull();
+			reference.Site.Preview.ShouldBeNull();
+			reference.Site.ContainingMember.ShouldNotBeNull();
 		}
 		Size(plain).ShouldBeLessThan(Size(full));
 
 		var counted = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, definitionsOnly: true);
 
-		counted.References.ShouldBeEmpty();
+		// Nothing listed because nothing was asked for, which raising maxResults would not change: so the
+		// answer is not truncated, and it carries the shape the list would have had.
+		counted.Files.ShouldBeEmpty();
 		counted.Definitions.ShouldNotBeEmpty();
 		counted.TotalCount.ShouldBe(full.TotalCount);
-		counted.Truncated.ShouldBeTrue();
-		Size(counted).ShouldBeLessThan(Size(plain));
+		counted.Truncated.ShouldBeFalse();
+		counted.Notices.ShouldBeEmpty();
+		counted.Shape.ShouldNotBeNull().Total.ShouldBe(full.TotalCount);
 
 		var scoped = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core");
 
-		// Add is called from App and never from the project declaring it, so narrowing to Core empties
-		// the list while the symbol goes on being used -- which the caller can tell apart only because
-		// naming a project the solution does not have is refused instead.
-		scoped.References.ShouldBeEmpty();
-		foreach (var location in full.References)
+		// Add is called from App and never from the project declaring it, so narrowing to Core keeps
+		// nothing while the symbol goes on being used -- which the answer says, with the shape of every
+		// use, rather than handing back an empty list that reads as dead code.
+		scoped.Files.ShouldBeEmpty();
+		scoped.TotalCount.ShouldBe(0);
+		scoped.Notices.ShouldHaveSingleItem().ShouldContain("in project Core", Case.Sensitive);
+		scoped.Shape.ShouldNotBeNull().Projects.ShouldHaveSingleItem().Project.ShouldBe("App");
+		foreach (var file in full.Files)
 		{
-			location.Project.ShouldBe("App");
+			file.Project.ShouldBe("App");
 		}
+	}
+
+	/// <summary>
+	/// Past maxResults the answer is the shape of the references rather than the first few of them, and
+	/// a group read off that shape is a question the next call asks: passed back as containingMember, the
+	/// busiest member lists exactly the references the shape counted in it.
+	/// </summary>
+	[Test]
+	public async Task Answers_an_overflow_with_its_shape_and_lists_a_group_asked_for()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var target = new SymbolTarget { Symbol = "System.String" };
+
+		var overflowed = await NavigationService.FindReferencesAsync(
+			snapshot, target, 3, TestContext.Current!.Execution.CancellationToken, includePreviews: false);
+
+		overflowed.TotalCount.ShouldBeGreaterThan(3, "the fixture should use string more often than the cap");
+		overflowed.Truncated.ShouldBeTrue();
+		overflowed.Files.ShouldBeEmpty();
+
+		var shape = overflowed.Shape.ShouldNotBeNull();
+		shape.Total.ShouldBe(overflowed.TotalCount);
+		shape.Projects.Sum(project => project.Count).ShouldBe(shape.Total);
+		shape.MemberCount.ShouldBeGreaterThan(1);
+
+		var notice = overflowed.Notices.ShouldHaveSingleItem();
+		notice.ShouldContain("containingMember", Case.Sensitive);
+		notice.ShouldContain($"maxResults={overflowed.TotalCount}", Case.Sensitive);
+
+		// The shape is the smaller answer, which is the whole point of giving it instead of the list.
+		var everything = await NavigationService.FindReferencesAsync(
+			snapshot, target, overflowed.TotalCount, TestContext.Current!.Execution.CancellationToken, includePreviews: false);
+
+		everything.Truncated.ShouldBeFalse();
+		everything.Listed().Count.ShouldBe(overflowed.TotalCount);
+		Size(overflowed).ShouldBeLessThan(Size(everything));
+
+		var busiest = shape.Members[0];
+		var asked = await NavigationService.FindReferencesAsync(
+			snapshot,
+			target,
+			200,
+			TestContext.Current!.Execution.CancellationToken,
+			containingMember: busiest.ContainingMember);
+
+		asked.TotalCount.ShouldBe(busiest.Count);
+		asked.Shape.ShouldBeNull();
+		asked.Listed().Count.ShouldBe(busiest.Count);
+		asked.Listed().ShouldAllBe(reference => reference.Site.ContainingMember == busiest.ContainingMember);
+	}
+
+	/// <summary>
+	/// A member nothing references from is said, with the shape of every reference so the member that
+	/// does can be read off it, rather than answered with a list that reads as a symbol nobody uses.
+	/// </summary>
+	[Test]
+	public async Task Says_when_no_reference_sits_in_the_member_asked_for()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await NavigationService.FindReferencesAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
+			200,
+			TestContext.Current!.Execution.CancellationToken,
+			containingMember: "Nowhere");
+
+		result.Files.ShouldBeEmpty();
+		result.TotalCount.ShouldBe(0);
+		result.Truncated.ShouldBeFalse();
+		result.Notices.ShouldHaveSingleItem().ShouldContain("inside a member called Nowhere", Case.Sensitive);
+		result.Shape.ShouldNotBeNull().Members.ShouldHaveSingleItem().ContainingMember.ShouldBe("Caller.Call");
+
+		// The member's name alone reaches it, which is what a caller has before it has seen an answer.
+		var byName = await NavigationService.FindReferencesAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
+			200,
+			TestContext.Current!.Execution.CancellationToken,
+			containingMember: "call");
+
+		byName.Listed().ShouldHaveSingleItem().Site.ContainingMember.ShouldBe("Caller.Call");
+	}
+
+	/// <summary>
+	/// A generator's output and the files somebody wrote are separable, and between them they are every
+	/// reference: string is used both by the fixture's own class and by the source its generator emits.
+	/// </summary>
+	[Test]
+	public async Task Separates_generated_references_from_written_ones()
+	{
+		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
+		fixture.Build("WithGenerator", "Gen", "Gen.csproj");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		// By position, because the generator project's netstandard reference makes the name System.String
+		// name two symbols, and the refusal of that is a separate matter from what this test is about.
+		var target = new SymbolTarget { FilePath = fixture.Path("WithGenerator", "Consumer", "Widget.cs"), Line = 8, Column = 9 };
+
+		var all = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, definitionsOnly: true, project: "Consumer");
+
+		var generated = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Consumer", isGenerated: true);
+
+		var written = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Consumer", isGenerated: false);
+
+		generated.Files.ShouldNotBeEmpty();
+		generated.Files.ShouldAllBe(file => file.GeneratedHintName != null);
+		written.Files.ShouldNotBeEmpty();
+		written.Files.ShouldAllBe(file => file.GeneratedHintName == null);
+
+		var shape = all.Shape.ShouldNotBeNull();
+		shape.InGeneratedCode.ShouldBe(generated.TotalCount);
+		(generated.TotalCount + written.TotalCount).ShouldBe(all.TotalCount);
+	}
+
+	/// <summary>
+	/// A use from a test is a different fact from a use in the product, so the two are separable -- and
+	/// asking for the product side of a symbol only tests use is said, not answered with nothing.
+	/// </summary>
+	[Test]
+	public async Task Separates_references_in_test_projects()
+	{
+		using var fixture = FixtureSolution.Copy("Assertions", "Assertions.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var target = new SymbolTarget { Symbol = "Xunit.Assert" };
+
+		var tests = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, isTestProject: true);
+
+		tests.Files.ShouldNotBeEmpty();
+		tests.Files.ShouldAllBe(file => file.IsTestProject);
+		tests.Notices.ShouldBeEmpty();
+
+		var product = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, isTestProject: false);
+
+		product.Files.ShouldBeEmpty();
+		product.Notices.ShouldHaveSingleItem().ShouldContain("outside test projects", Case.Sensitive);
+
+		var shape = product.Shape.ShouldNotBeNull();
+		shape.Total.ShouldBe(tests.TotalCount);
+		shape.InTestProjects.ShouldBe(shape.Total);
+	}
+
+	/// <summary>
+	/// A property is declared once, though its search cascades through both accessors, each declared by
+	/// a keyword inside the property's own declaration.
+	/// </summary>
+	[Test]
+	public async Task Lists_a_property_declared_once_once()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await NavigationService.FindReferencesAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Greeter.Count" },
+			200,
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Definitions.ShouldHaveSingleItem().FilePath.ShouldEndWith("Greeter.cs", Case.Insensitive);
 	}
 
 	/// <summary>
@@ -450,7 +624,7 @@ public sealed class NavigationTests
 			snapshot, new SymbolTarget { Symbol = described.Address }, 200, TestContext.Current!.Execution.CancellationToken);
 
 		references.Address.ShouldBe(match.Address);
-		references.References.ShouldNotBeEmpty();
+		references.Files.ShouldNotBeEmpty();
 	}
 
 	/// <summary>
@@ -528,11 +702,11 @@ public sealed class NavigationTests
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken);
 
-		var reference = references.References.ShouldHaveSingleItem();
+		var reference = references.Listed().ShouldHaveSingleItem();
 
-		reference.FilePath.ShouldBe(fixture.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
-		reference.Line.ShouldBe(4);
-		reference.Preview!.ShouldContain("Calculator.Multiply", Case.Sensitive);
+		reference.File.FilePath.ShouldBe(fixture.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
+		reference.Site.Line.ShouldBe(4);
+		reference.Site.Preview!.ShouldContain("Calculator.Multiply", Case.Sensitive);
 	}
 
 	[Test]
@@ -668,10 +842,10 @@ public sealed class NavigationTests
 			200,
 			TestContext.Current!.Execution.CancellationToken);
 
-		var reference = references.References.ShouldHaveSingleItem();
+		var reference = references.Listed().ShouldHaveSingleItem();
 
-		reference.FilePath.ShouldBe(fixture.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
-		reference.Line.ShouldBe(4);
+		reference.File.FilePath.ShouldBe(fixture.Path("Simple", "App", "Program.cs"), StringCompareShould.IgnoreCase);
+		reference.Site.Line.ShouldBe(4);
 	}
 
 	/// <summary>

@@ -47,11 +47,13 @@ public sealed class ResultBudgetTests
 	private const int PerMetadataMember = 180;
 
 	/// <summary>
-	/// One reference with previews off, which costs 235. Every hit repeats the absolute path and
-	/// carries four facets the tool will not filter on, which is what makes an overflow answerable
-	/// only with a bigger artefact -- so this is the number that falls when either is taken out.
+	/// One listed reference with previews off, which costs 91 over string's uses in the fixture: its line,
+	/// column and containing member, with its file's path, project and test-ness said once for every
+	/// reference in that file rather than on each. Measured over a symbol whose files hold several
+	/// references apiece, since a file per reference is the case where the grouping saves nothing and
+	/// the case where size never matters.
 	/// </summary>
-	private const int PerReference = 240;
+	private const int PerReference = 95;
 
 	/// <summary>
 	/// A whole write result for adding a doc comment, which costs 1,499 -- the floor for an edit that
@@ -90,19 +92,21 @@ public sealed class ResultBudgetTests
 			members,
 			"an outlined member with signatures and documentation off");
 
+		// A symbol used all over the fixture, so files hold several references each, as they do in
+		// any answer large enough for its size to matter.
 		var references = await NavigationService.FindReferencesAsync(
 			snapshot,
-			new SymbolTarget { Symbol = "Library.Greeter" },
-			200,
+			new SymbolTarget { Symbol = "System.String" },
+			1000,
 			TestContext.Current!.Execution.CancellationToken,
 			includePreviews: false);
 
-		var hits = references.References.Count + references.Definitions.Count;
-		hits.ShouldBeGreaterThan(0, "the fixture should have references to measure");
+		var hits = references.Files.Sum(file => file.References.Count);
+		hits.ShouldBeGreaterThan(references.Files.Count, "the fixture should have files with several references");
 
 		AssertWithin(
 			PerReference,
-			Size(references) - Size(references with { References = [], Definitions = [] }),
+			Size(references) - Size(references with { Files = [] }),
 			hits,
 			"a reference with previews off");
 

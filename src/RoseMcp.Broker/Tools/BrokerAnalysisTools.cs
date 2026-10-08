@@ -97,6 +97,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.DefinitionsOnlyArgument)] bool definitionsOnly = false,
 		[Description(ToolDescriptions.ReferenceProjectArgument)] string? project = null,
 		[Description(ToolDescriptions.IncludePreviewsArgument)] bool includePreviews = true,
+		[Description(ToolDescriptions.ContainingMemberArgument)] string? containingMember = null,
+		[Description(ToolDescriptions.IsTestProjectArgument)] bool? isTestProject = null,
+		[Description(ToolDescriptions.IsGeneratedArgument)] bool? isGenerated = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
@@ -110,6 +113,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["definitionsOnly"] = definitionsOnly,
 			["project"] = project,
 			["includePreviews"] = includePreviews,
+			["containingMember"] = containingMember,
+			["isTestProject"] = isTestProject,
+			["isGenerated"] = isGenerated,
 		}, cancellationToken, progress);
 
 	[McpServerTool(

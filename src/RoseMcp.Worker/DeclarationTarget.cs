@@ -18,6 +18,12 @@ public sealed record DeclarationTarget
 	public required MemberDeclarationSyntax Declaration { get; init; }
 
 	/// <summary>
+	/// Whether the declaration is in generated code -- a source generator's output, or a file the build
+	/// or a designer writes -- where an edit is lost on the next build.
+	/// </summary>
+	public bool IsGenerated { get; init; }
+
+	/// <summary>
 	/// True for a positional record property, which a parameter of the record declares rather than a
 	/// declaration of its own. <see cref="Declaration"/> is then the whole record, which is what the
 	/// parameter sits in and not something to write over in the property's name.

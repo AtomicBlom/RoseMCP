@@ -646,18 +646,7 @@ public static class Whitespace
 	}
 
 	/// <summary>Whether a file is one the build or a designer writes rather than a person.</summary>
-	private static bool Generated(string file)
-	{
-		var name = Path.GetFileName(file);
-
-		var isOutput = file.Split(Separators).Any(segment =>
-			segment.Equals("obj", StringComparison.OrdinalIgnoreCase) || segment.Equals("bin", StringComparison.OrdinalIgnoreCase));
-
-		return isOutput
-			|| name.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)
-			|| name.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase)
-			|| name.EndsWith(".designer.cs", StringComparison.OrdinalIgnoreCase);
-	}
+	private static bool Generated(string file) => GeneratedCode.IsGeneratedFile(file);
 
 	private static bool SamePath(string left, string right) =>
 		string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);

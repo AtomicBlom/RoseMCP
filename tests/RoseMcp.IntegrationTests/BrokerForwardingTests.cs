@@ -143,6 +143,35 @@ public sealed class BrokerForwardingTests
 	}
 
 	/// <summary>
+	/// A metadata type's members, narrowed and capped, through the broker's own tool method rather than
+	/// straight to the worker: an argument the broker declares and leaves out of what it forwards is
+	/// bound at its default on the other side, which here would list every member and read as a filter
+	/// ignored.
+	/// </summary>
+	[Test]
+	public async Task Lists_a_metadata_types_members_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+		var tools = new BrokerAnalysisTools(manager, CreatePaths());
+
+		var info = await tools.SymbolInfoAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbol: "System.Text.StringBuilder",
+			members: "Append",
+			maxMembers: 3,
+			workspace: fixture.SolutionPath,
+			cancellationToken: TestContext.Current!.Execution.CancellationToken);
+
+		var members = info.Members.ShouldNotBeNull();
+
+		members.Count.ShouldBe(3);
+		members.ShouldAllBe(member => member.Name.Contains("Append", StringComparison.Ordinal));
+		info.Truncated.ShouldBeTrue();
+		info.TotalMembers.ShouldNotBeNull().ShouldBeGreaterThan(3);
+	}
+
+	/// <summary>
 	/// Changing a signature over the wire, which is where an argument the broker spells differently
 	/// would show up -- and this one has the most arguments of any tool here.
 	/// </summary>

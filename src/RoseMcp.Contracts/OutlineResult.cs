@@ -123,6 +123,13 @@ public sealed record OutlinedMember
 	public bool IsGenerated { get; init; }
 
 	/// <summary>
+	/// <c>warning</c> or <c>error</c> where the member is marked obsolete, which is what its
+	/// <c>[Obsolete]</c> costs a caller: a warning fails a build that treats warnings as errors, and an
+	/// error fails every build. Absent where it is not obsolete.
+	/// </summary>
+	public string? Obsolete { get; init; }
+
+	/// <summary>
 	/// The type that declares it, given only for an inherited member, which is the one case where the
 	/// type the member is listed under is not the one it belongs to.
 	/// </summary>

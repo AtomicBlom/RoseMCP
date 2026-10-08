@@ -72,6 +72,53 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
+	/// What can be called on a library type is the question a caller has before writing against it, and
+	/// a metadata type has no file for rose_outline to read -- so the answer about the type carries it,
+	/// against the real framework, where overloads are many and some members are obsolete.
+	/// </summary>
+	[Test]
+	public async Task Lists_what_can_be_called_on_a_type_that_lives_in_metadata()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var builder = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.StringBuilder" },
+			TestContext.Current!.Execution.CancellationToken,
+			members: "AppendLine");
+
+		var appendLines = builder.Members.ShouldNotBeNull();
+
+		appendLines.Count.ShouldBeGreaterThan(1, "AppendLine is overloaded");
+		appendLines.ShouldAllBe(member => member.Name == "AppendLine" && member.Signature != null);
+		appendLines.Select(member => member.Signature).ShouldContain("System.Text.StringBuilder System.Text.StringBuilder.AppendLine(string value)");
+		builder.TotalMembers.ShouldBe(appendLines.Count);
+
+		// A framework member obsolete as a warning, which is the mark a warnings-as-errors build fails on.
+		var encoding = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.Encoding" },
+			TestContext.Current!.Execution.CancellationToken,
+			members: "UTF7");
+
+		encoding.Members.ShouldNotBeNull().ShouldHaveSingleItem().Obsolete.ShouldBe("warning");
+
+		// And the cap, said rather than left to read as the whole type.
+		var capped = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.StringBuilder" },
+			TestContext.Current!.Execution.CancellationToken,
+			maxMembers: 5);
+
+		capped.Members.ShouldNotBeNull().Count.ShouldBe(5);
+		capped.Truncated.ShouldBeTrue();
+		capped.TotalMembers.ShouldNotBeNull().ShouldBeGreaterThan(5);
+		capped.Notices.ShouldContain(notice => notice.Contains("stopping at maxMembers=5", StringComparison.Ordinal));
+	}
+
+	/// <summary>
 	/// A member of a metadata type, which is the half a caller reaches for after the type: the last
 	/// segment is looked up on the type the rest of the name resolves to.
 	/// </summary>

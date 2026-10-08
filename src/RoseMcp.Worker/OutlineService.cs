@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 using RoseMcp.Contracts;
@@ -69,21 +70,7 @@ public static class OutlineService
 		if (types.Count == 0) notices.Add("The file declares no types.");
 
 		var found = types.Sum(outlined => outlined.TotalMembers);
-		var nothingMatched = filter is not null && types.Count > 0 && found == 0;
-
-		if (nothingMatched)
-		{
-			notices.Add(listing.Unfiltered == 0
-				? $"No member's name contains '{filter}': there are no members to match."
-				: $"No member's name contains '{filter}', so none is listed. Leave members off to list all {Plural(listing.Unfiltered, "member")}.");
-		}
-
-		if (listing.Truncated)
-		{
-			notices.Add(
-				$"Listed {listing.Listed} of {Plural(found, "member")}, stopping at maxMembers={listing.Cap}. "
-					+ "Narrow by name with members, or raise maxMembers, for the rest.");
-		}
+		if (types.Count > 0) notices.AddRange(listing.Notices(filter, found));
 
 		return new OutlineResult
 		{
@@ -92,6 +79,56 @@ public static class OutlineService
 			Types = types,
 			Truncated = listing.Truncated,
 			Notices = notices,
+		};
+	}
+
+	/// <summary>
+	/// The members of a type from a referenced assembly that code outside that assembly can use: its
+	/// own public, protected and protected internal members, each with its signature and whether it is
+	/// obsolete, narrowed and capped the way an outline is.
+	/// <para>
+	/// Signatures are always given, unlike an outline's default, because a metadata member has no line:
+	/// overloads would otherwise be the same name listed several times, and which ones exist is the
+	/// question. Inherited members are left out, as an outline leaves them out by default; each base type
+	/// can be asked about in turn.
+	/// </para>
+	/// </summary>
+	/// <param name="snapshot">The solution the type was resolved in.</param>
+	/// <param name="type">The type, from metadata.</param>
+	/// <param name="members">Only members whose name contains this, ignoring case; null for all.</param>
+	/// <param name="maxMembers">How many to list at most; zero or less means <see cref="DefaultMaxMembers"/>.</param>
+	/// <param name="cancellationToken">Cancels the listing.</param>
+	public static MemberListing ListReachable(
+		WorkspaceSnapshot snapshot,
+		INamedTypeSymbol type,
+		string? members,
+		int maxMembers,
+		CancellationToken cancellationToken)
+	{
+		var filter = string.IsNullOrWhiteSpace(members) ? null : members.Trim();
+		var listing = new Listing(maxMembers <= 0 ? DefaultMaxMembers : maxMembers);
+		var detail = new OutlineDetail(Documentation: false, Signatures: true, Inherited: false, filter);
+
+		var all = Members(type, includeInherited: false).Where(IsReachableFromOutside).ToList();
+		var matching = all.Where(detail.Matches).ToList();
+
+		listing.Unfiltered = all.Count;
+
+		var listed = new List<OutlinedMember>();
+
+		foreach (var member in listing.Take(matching))
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			listed.Add(DescribeMember(snapshot, type, member, home: null, typeSummary: null, detail, cancellationToken));
+		}
+
+		return new MemberListing
+		{
+			Members = listed,
+			Total = matching.Count,
+			Truncated = listing.Truncated,
+			Notices = [.. listing.Notices(filter, matching.Count)],
 		};
 	}
 
@@ -136,6 +173,30 @@ public static class OutlineService
 			Listed += taken.Count;
 
 			return taken;
+		}
+
+		/// <summary>
+		/// What the narrowing left out, said, since a short or empty list otherwise reads as the whole
+		/// answer: a name filter that matched nothing, and a cap that stopped the listing.
+		/// </summary>
+		/// <param name="filter">The name filter, where the caller gave one.</param>
+		/// <param name="found">How many members matched, listed or not.</param>
+		public IEnumerable<string> Notices(string? filter, int found)
+		{
+			var nothingMatched = filter is not null && found == 0;
+
+			if (nothingMatched)
+			{
+				yield return Unfiltered == 0
+					? $"No member's name contains '{filter}': there are no members to match."
+					: $"No member's name contains '{filter}', so none is listed. Leave members off to list all {Plural(Unfiltered, "member")}.";
+			}
+
+			if (Truncated)
+			{
+				yield return $"Listed {Listed} of {Plural(found, "member")}, stopping at maxMembers={Cap}. "
+					+ "Narrow by name with members, or raise maxMembers, for the rest.";
+			}
 		}
 	}
 
@@ -252,18 +313,22 @@ public static class OutlineService
 		};
 	}
 
+	/// <summary>
+	/// One member. <paramref name="home"/> is the file its type is reported against, and null for a type
+	/// from a referenced assembly, whose members have no file and so no line either.
+	/// </summary>
 	private static OutlinedMember DescribeMember(
 		WorkspaceSnapshot snapshot,
 		INamedTypeSymbol type,
 		ISymbol member,
-		SyntaxTree home,
+		SyntaxTree? home,
 		string? typeSummary,
 		OutlineDetail detail,
 		CancellationToken cancellationToken)
 	{
 		// The declaration in the type's own file where a partial member has one there, so a member
 		// split across files is reported where the caller is already looking.
-		var location = member.Locations.FirstOrDefault(candidate => candidate.SourceTree == home)
+		var location = member.Locations.FirstOrDefault(candidate => home is not null && candidate.SourceTree == home)
 			?? member.Locations.FirstOrDefault(candidate => candidate.IsInSource);
 
 		var span = location?.GetLineSpan();
@@ -288,9 +353,44 @@ public static class OutlineService
 				&& member.DeclaringSyntaxReferences.All(reference =>
 					snapshot.Solution.GetDocument(reference.SyntaxTree) is not { } owner
 							|| GeneratedCode.Is(owner, reference.GetSyntax(cancellationToken).FirstAncestorOrSelf<MemberDeclarationSyntax>() ?? reference.GetSyntax(cancellationToken))),
+			Obsolete = Obsolescence(member),
 			DeclaringType = inherited ? member.ContainingType?.ToDisplayString(SymbolSignature.Format) : null,
 			Summary = detail.Documentation ? MemberSummary(member, typeSummary, cancellationToken) : null,
 		};
+	}
+
+	/// <summary>
+	/// <c>warning</c> or <c>error</c> where the member carries <c>[Obsolete]</c>, and null otherwise.
+	/// The marks a compiler writes for older compilers -- on a constructor of a type with required
+	/// members, or a ref struct -- are not among the attributes Roslyn reads back, so what is left is
+	/// what a current build acts on.
+	/// </summary>
+	private static string? Obsolescence(ISymbol member)
+	{
+		var obsolete = member.GetAttributes().FirstOrDefault(attribute =>
+			attribute.AttributeClass is { Name: nameof(ObsoleteAttribute), ContainingNamespace.Name: "System" });
+
+		if (obsolete is null) return null;
+
+		var isError = obsolete.ConstructorArguments is [_, { Value: true }];
+
+		return isError ? "error" : "warning";
+	}
+
+	/// <summary>
+	/// Whether code outside the type's assembly can use the member: public, protected or protected
+	/// internal, and named something it can write. Metadata carries members a compiler emitted under
+	/// names no source can spell -- a record's <c>&lt;Clone&gt;$</c>, a lambda's closure class -- which
+	/// are public and still not part of anything a caller can call. The compiler's
+	/// <c>[CompilerGenerated]</c> is not the test, because a record's <c>Equals</c>, <c>ToString</c> and
+	/// <c>Deconstruct</c> carry it too and are called like any other member.
+	/// </summary>
+	private static bool IsReachableFromOutside(ISymbol member)
+	{
+		var accessible = member.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal;
+		var speakable = member is IMethodSymbol { MethodKind: MethodKind.Constructor } || SyntaxFacts.IsValidIdentifier(member.Name);
+
+		return accessible && speakable;
 	}
 
 	/// <summary>

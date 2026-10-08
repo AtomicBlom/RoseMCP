@@ -31,3 +31,14 @@ totals, so a caller can see what is there and narrow to it.
 
 **What the ratchet holds.** `ResultBudgetTests.PerOutlinedMember` measures the members alone, as the
 MCP layer serialises them, so a field every member shares, added back per member, fails it.
+
+**Why a referenced assembly's type is listed with signatures on.** A type from metadata has no file,
+so `rose_outline` cannot reach it, and `rose_symbol_info` -- the tool that does resolve it -- lists its
+members instead: its own public, protected and protected internal ones, through the same enumeration,
+the same `members` filter and cap and the same notices. There the signature is not optional, because
+a metadata member has no line: without one, overloads are a name repeated with nothing to tell them
+apart, and which overloads exist is usually the question. Each member also says whether it is
+obsolete, and whether as a warning or an error, since in a build that treats warnings as errors both
+decide whether the call can be written. `ResultBudgetTests.PerMetadataMember` holds what that costs.
+Inherited members are left out, as the outline leaves them out by default; a base type is a
+`rose_symbol_info` call of its own.

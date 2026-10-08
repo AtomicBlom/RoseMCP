@@ -38,6 +38,15 @@ public sealed class ResultBudgetTests
 	private const int PerOutlinedMember = 75;
 
 	/// <summary>
+	/// One member of a referenced assembly's type in rose_symbol_info, which costs 172 -- StringBuilder's
+	/// 101 come to about 17 KB. Dearer than an outlined member because its signature is always given: a
+	/// metadata member has no line, so overloads would otherwise be one name repeated. The signature is
+	/// most of it, the containing type's full name included, which is the one field this could still
+	/// shed.
+	/// </summary>
+	private const int PerMetadataMember = 180;
+
+	/// <summary>
 	/// One reference with previews off, which costs 235. Every hit repeats the absolute path and
 	/// carries four facets the tool will not filter on, which is what makes an overflow answerable
 	/// only with a bigger artefact -- so this is the number that falls when either is taken out.
@@ -96,6 +105,20 @@ public sealed class ResultBudgetTests
 			Size(references) - Size(references with { References = [], Definitions = [] }),
 			hits,
 			"a reference with previews off");
+
+		var library = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "System.Text.StringBuilder" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		var listed = library.Members.ShouldNotBeNull().Count;
+		listed.ShouldBeGreaterThan(0, "StringBuilder should have members to measure");
+
+		AssertWithin(
+			PerMetadataMember,
+			Size(library) - Size(library with { Members = [] }),
+			listed,
+			"a referenced assembly's member, which always carries its signature");
 	}
 
 	/// <summary>

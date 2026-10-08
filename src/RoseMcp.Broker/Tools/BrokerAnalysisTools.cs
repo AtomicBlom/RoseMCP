@@ -61,6 +61,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(ToolDescriptions.IncludeSourceArgument)] bool includeSource = false,
+		[Description(ToolDescriptions.OutlineMembersArgument)] string? members = null,
+		[Description(ToolDescriptions.MaxSymbolMembersArgument), ArgumentAlias("maxResults")] int maxMembers = 200,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.SymbolInfo, new()
@@ -70,6 +72,8 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["line"] = line,
 			["column"] = column,
 			["includeSource"] = includeSource,
+			["members"] = members,
+			["maxMembers"] = maxMembers,
 		}, cancellationToken, progress);
 
 	[McpServerTool(

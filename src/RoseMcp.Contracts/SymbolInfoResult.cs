@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace RoseMcp.Contracts;
 
 /// <summary>What a symbol is, in the terms an agent needs before changing it.</summary>
@@ -55,6 +57,31 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 	/// which assembly a type came from knows which package to look in and which reference to add.
 	/// </summary>
 	public string? ContainingAssembly { get; init; }
+
+	/// <summary>
+	/// For a type from a referenced assembly, the members code outside that assembly can use: its own
+	/// public and protected ones, each with its signature, in the order the assembly declares them.
+	/// Absent for anything else -- a type declared in source has rose_outline, and a member has no
+	/// members.
+	/// <para>
+	/// Here because a metadata type has no file for rose_outline to read, and the member names are
+	/// exactly what a caller asking about a library type does not know yet. Signatures are always
+	/// given, since a metadata member has no line to tell its overloads apart by.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<OutlinedMember>? Members { get; init; }
+
+	/// <summary>
+	/// How many members matched, where <see cref="Members"/> is given: more than it lists when the
+	/// listing stopped at its cap, which <see cref="Truncated"/> says.
+	/// </summary>
+	public int? TotalMembers { get; init; }
+
+	/// <summary>True where <see cref="Members"/> stopped at the cap before listing every match. Absent when false.</summary>
+	[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+	public bool Truncated { get; init; }
+
+	public IReadOnlyList<string> Notices { get; init; } = [];
 
 	/// <summary>
 	/// The declaration's own source text, when it was asked for. One entry per declaration, so a

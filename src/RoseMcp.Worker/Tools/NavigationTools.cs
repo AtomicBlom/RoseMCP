@@ -54,13 +54,15 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
 		[Description(ToolDescriptions.IncludeSourceArgument)] bool includeSource = false,
+		[Description(ToolDescriptions.OutlineMembersArgument)] string? members = null,
+		[Description(ToolDescriptions.MaxSymbolMembersArgument)] int maxMembers = OutlineService.DefaultMaxMembers,
 		CancellationToken cancellationToken = default)
 	{
 		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
 
 		return calls.ReadAsync(
 			progress,
-			snapshot => NavigationService.DescribeAsync(snapshot, target, cancellationToken, includeSource),
+			snapshot => NavigationService.DescribeAsync(snapshot, target, cancellationToken, includeSource, members, maxMembers),
 			cancellationToken);
 	}
 

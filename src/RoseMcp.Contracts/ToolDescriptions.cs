@@ -245,8 +245,7 @@ public static class ToolDescriptions
 	public const string PropertiesArgument = "Further MSBuild properties, each as Name=Value.";
 
 	public const string IncludeSourceArgument =
-		"Also return the declaration's own source text, so understanding a member does not end in a file "
-			+ "read.";
+		"Also return each declaration's source text.";
 
 	public const string OutlineTypeArgument =
 		"The type, as Namespace.Type. One of this and filePath.";
@@ -259,6 +258,14 @@ public static class ToolDescriptions
 
 	public const string MaxOutlineMembersArgument =
 		"Maximum members to list, across every type. Defaults to 200.";
+
+	/// <summary>
+	/// rose_symbol_info's cap, its own rather than the outline's because the outline's spans every type
+	/// in a file and this one has only the type asked about. The filter is shared: "only members whose
+	/// name contains this" is the same sentence whichever tool narrows by it.
+	/// </summary>
+	public const string MaxSymbolMembersArgument =
+		"Maximum members to list. Defaults to 200.";
 
 	/// <summary>
 	/// Its own rather than the outline's, which names outlining. The type argument is shared, because
@@ -610,17 +617,15 @@ public static class ToolDescriptions
 		""";
 
 	public const string SymbolInfo = """
-		What a symbol actually is: full signature, kind, accessibility, containing type, XML
-		documentation, every declaration site, and what it overrides or implements -- which is usually
-		where an override's documentation lives. Name it as Namespace.Type.Member, which needs no grep
-		first and does not go stale when an edit moves a line; a file position works too, and is the way
-		to reach a local or a parameter. Pass includeSource so understanding a member does not end in a
-		file read. Each declaration reports its first and last line, so where a member stops is known
-		rather than approximated. Resolved from the compilation, so it answers from a use site as well as
-		a declaration, and equally about a referenced assembly's types, members and constructors:
-		StringBuilder and System.Text.StringBuilder.AppendLine(string) both reach one. Overloads are
-		refused rather than guessed between -- add the parameter types. isFromSource false means it
-		cannot be renamed or edited.
+		What a symbol is: full signature, kind, accessibility, containing type, XML documentation, each
+		declaration with its first and last line, and what it overrides or implements -- usually where
+		an override's documentation lives. Name it as Namespace.Type.Member, which needs no grep and
+		survives an edit moving a line; a file position reaches a local or a parameter. includeSource
+		adds the declaration's text, so understanding it does not end in a file read. A referenced
+		assembly's types and members answer too, as StringBuilder or
+		System.Text.StringBuilder.AppendLine(string); such a type lists what can be called on it, with
+		signatures and obsolete marks, filtered by members. Overloads are refused rather than guessed --
+		add the parameter types. isFromSource false means it cannot be edited.
 		""";
 
 	public const string FindReferences = """

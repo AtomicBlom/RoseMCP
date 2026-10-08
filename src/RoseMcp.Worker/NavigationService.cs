@@ -8,11 +8,25 @@ namespace RoseMcp.Worker;
 /// <summary>Semantic navigation: what a symbol is, where it is used, and finding it by name.</summary>
 public static class NavigationService
 {
+	/// <summary>
+	/// What a symbol is, and for a type from a referenced assembly, what can be called on it.
+	/// </summary>
+	/// <param name="snapshot">The solution to resolve in.</param>
+	/// <param name="request">The symbol, named or pointed at.</param>
+	/// <param name="cancellationToken">Cancels the read.</param>
+	/// <param name="includeSource">Also return each declaration's source text.</param>
+	/// <param name="members">
+	/// For a metadata type, only members whose name contains this. Ignored, with a notice, for anything
+	/// else.
+	/// </param>
+	/// <param name="maxMembers">For a metadata type, how many members to list at most.</param>
 	public static async Task<SymbolInfoResult> DescribeAsync(
 		WorkspaceSnapshot snapshot,
 		SymbolTarget request,
 		CancellationToken cancellationToken,
-		bool includeSource = false)
+		bool includeSource = false,
+		string? members = null,
+		int maxMembers = OutlineService.DefaultMaxMembers)
 	{
 		// The one read that can say something true about a symbol it cannot edit, so it is the one that
 		// looks in metadata when nothing in source carries the name.
@@ -25,6 +39,24 @@ public static class NavigationService
 		}
 
 		var documentation = symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken);
+		var notices = new List<string>(snapshot.Notices);
+
+		// A metadata type has no file for rose_outline to read, so its members are listed here; a source
+		// type is outline's, and listing it here too would be the same answer in two shapes.
+		var listing = symbol is INamedTypeSymbol type && declarations.Count == 0
+			? OutlineService.ListReachable(snapshot, type, members, maxMembers, cancellationToken)
+			: null;
+
+		if (listing is not null)
+		{
+			notices.AddRange(listing.Notices);
+		}
+		else if (!string.IsNullOrWhiteSpace(members) || maxMembers != OutlineService.DefaultMaxMembers)
+		{
+			notices.Add(declarations.Count > 0 && symbol is INamedTypeSymbol
+				? "members and maxMembers list a referenced assembly's type, and this one is declared in source: rose_outline lists its members."
+				: "members and maxMembers list a referenced assembly's type, and this is not a type, so they were ignored.");
+		}
 
 		return new SymbolInfoResult
 		{
@@ -47,6 +79,11 @@ public static class NavigationService
 			// assembly it came from is named in its place, since that is the only place it can be looked at.
 			IsFromSource = declarations.Count > 0,
 			ContainingAssembly = declarations.Count > 0 ? null : symbol.ContainingAssembly?.Identity.Name,
+
+			Members = listing?.Members,
+			TotalMembers = listing?.Total,
+			Truncated = listing?.Truncated ?? false,
+			Notices = notices,
 
 			Source = includeSource ? await SourceOfAsync(symbol, cancellationToken) : [],
 		};

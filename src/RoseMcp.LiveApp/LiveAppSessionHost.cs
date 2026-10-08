@@ -173,9 +173,14 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 					+ "just built, the registration is stale and this session is debugging the wrong build.");
 	}
 
-	/// <summary>Adds a tracepoint to the attached target.</summary>
-	public LiveTracepoint AddTracepoint(string location, string? logMessage, int? logEveryNthHit, string? condition)
-		=> RequireSession().Bindings.AddTracepoint(location, logMessage, logEveryNthHit, condition);
+	/// <summary>
+	/// Adds tracepoints to the attached target, each request's outcome its own entry: one that does
+	/// not parse is refused there and the rest are added regardless.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">No target is attached.</exception>
+	/// <exception cref="ArgumentException">The list is empty.</exception>
+	public LiveTracepointBatch AddTracepoints(IReadOnlyList<AddTracepointRequest> tracepoints)
+		=> RequireSession().Bindings.AddTracepoints(tracepoints);
 
 	public LiveTracepointList ListTracepoints()
 	{
@@ -184,17 +189,27 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return new LiveTracepointList { Tracepoints = session?.Bindings.ListTracepoints() ?? [] };
 	}
 
-	public LiveTracepointList RemoveTracepoint(string id)
+	/// <summary>
+	/// Removes tracepoints by id and returns what is left. With no target attached nothing is held,
+	/// so every id is not found rather than the call failing: removing is safe to call speculatively.
+	/// </summary>
+	/// <exception cref="ArgumentException">The list is empty.</exception>
+	public LiveTracepointRemoval RemoveTracepoints(IReadOnlyList<string?> tracepointIds)
 	{
 		var session = Attached();
 
-		session?.Bindings.Remove(id);
-		return new LiveTracepointList { Tracepoints = session?.Bindings.ListTracepoints() ?? [] };
+		return session?.Bindings.RemoveTracepoints(tracepointIds)
+			?? new LiveTracepointRemoval { Results = TargetBreakpoints.NoneHeld(tracepointIds) };
 	}
 
-	/// <summary>Sets a stopping breakpoint on the attached target.</summary>
-	public LiveBreakpoint SetBreakpoint(string location, int? autoContinueSeconds, string? condition)
-		=> RequireSession().Bindings.AddBreakpoint(location, autoContinueSeconds, condition);
+	/// <summary>
+	/// Sets stopping breakpoints on the attached target, each request's outcome its own entry, as
+	/// <see cref="AddTracepoints"/> does.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">No target is attached.</exception>
+	/// <exception cref="ArgumentException">The list is empty.</exception>
+	public LiveBreakpointBatch SetBreakpoints(IReadOnlyList<SetBreakpointRequest> breakpoints)
+		=> RequireSession().Bindings.AddBreakpoints(breakpoints);
 
 	public LiveBreakpointList ListBreakpoints()
 	{
@@ -203,12 +218,17 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 		return new LiveBreakpointList { Breakpoints = session?.Bindings.ListBreakpoints() ?? [] };
 	}
 
-	public LiveBreakpointList RemoveBreakpoint(string id)
+	/// <summary>
+	/// Removes stopping breakpoints by id and returns what is left, as <see cref="RemoveTracepoints"/>
+	/// does. Removing the one the target is held at does not resume it.
+	/// </summary>
+	/// <exception cref="ArgumentException">The list is empty.</exception>
+	public LiveBreakpointRemoval RemoveBreakpoints(IReadOnlyList<string?> breakpointIds)
 	{
 		var session = Attached();
 
-		session?.Bindings.Remove(id);
-		return new LiveBreakpointList { Breakpoints = session?.Bindings.ListBreakpoints() ?? [] };
+		return session?.Bindings.RemoveBreakpoints(breakpointIds)
+			?? new LiveBreakpointRemoval { Results = TargetBreakpoints.NoneHeld(breakpointIds) };
 	}
 
 	/// <summary>Resumes a target held at a stopping breakpoint; false when nothing was stopped.</summary>

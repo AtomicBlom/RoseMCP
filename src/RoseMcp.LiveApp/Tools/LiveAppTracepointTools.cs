@@ -12,19 +12,16 @@ public sealed class LiveAppTracepointTools(LiveAppSessionHost host)
 {
 	[McpServerTool(
 		Name = ToolNames.LiveAppAddTracepoint,
-		Title = "Add a tracepoint",
+		Title = "Add tracepoints",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = false,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("Add a tracepoint at a method by name; it logs and auto-continues without pausing.")]
-	public LiveTracepoint Add(
-		[Description(ToolDescriptions.TracepointLocationArgument)] string location,
-		[Description(ToolDescriptions.LogMessageArgument)] string? logMessage = null,
-		[Description(ToolDescriptions.LogEveryNthHitArgument)] int? logEveryNthHit = null,
-		[Description(ToolDescriptions.TracepointConditionArgument)] string? condition = null)
-		=> host.AddTracepoint(location, logMessage, logEveryNthHit, condition);
+	[Description("Add tracepoints at methods by name; each logs and auto-continues without pausing, and each request's outcome is its own entry.")]
+	public LiveTracepointBatch Add(
+		[Description(ToolDescriptions.TracepointsArgument)] AddTracepointRequest[] tracepoints)
+		=> host.AddTracepoints(tracepoints);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppListTracepoints,
@@ -38,14 +35,14 @@ public sealed class LiveAppTracepointTools(LiveAppSessionHost host)
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppRemoveTracepoint,
-		Title = "Remove a tracepoint",
+		Title = "Remove tracepoints",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("Remove a tracepoint by id, returning the remaining set.")]
-	public LiveTracepointList Remove(
-		[Description(ToolDescriptions.TracepointIdArgument)] string tracepointId)
-		=> host.RemoveTracepoint(tracepointId);
+	[Description("Remove tracepoints by id, each id's outcome its own entry, returning the remaining set.")]
+	public LiveTracepointRemoval Remove(
+		[Description(ToolDescriptions.TracepointIdsArgument)] string[] tracepointIds)
+		=> host.RemoveTracepoints(tracepointIds);
 }

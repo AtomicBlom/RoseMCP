@@ -1,4 +1,6 @@
 using System.Text.Json;
+using ModelContextProtocol.Server;
+using RoseMcp.Broker.Tools;
 using RoseMcp.Contracts;
 
 namespace RoseMcp.UnitTests;
@@ -218,6 +220,67 @@ public sealed class ToolArgumentShapeTests
 		ToolArgumentShape.Refusal("No solution was found near D:/a", false, "rose_outline", Outline, Arguments("""{"file":"a"}"""))
 			.ShouldStartWith("No solution was found near D:/a. `file`", Case.Sensitive);
 	}
+
+	/// <summary>
+	/// A list of objects sent with a bare string inside it. The outer shape is right, so the outer
+	/// check alone would pass it over and leave the binder's account, which names a CLR type and a
+	/// JSON path; the entry is named instead, with an example entry carrying the property it needs.
+	/// </summary>
+	[Test]
+	public void Names_the_entry_of_a_list_of_objects_that_is_not_an_object()
+	{
+		var message = ToolArgumentShape.Mismatch(
+			AddTracepoint,
+			Arguments("""{"sessionId":"s","tracepoints":[{"location":"A.B.C"},"A.B.D"]}"""));
+
+		message.ShouldNotBeNull();
+		message.ShouldStartWith("tracepoints takes a list of objects, and tracepoints[1] is a string", Case.Sensitive);
+		message.ShouldContain("""[{"location": "..."}]""", Case.Sensitive);
+		message.ShouldNotContain("AddTracepointRequest", Case.Sensitive);
+	}
+
+	/// <summary>An entry that leaves out what every entry needs is named, and so is what it left out.</summary>
+	[Test]
+	public void Names_the_entry_that_leaves_out_a_required_property()
+	{
+		var message = ToolArgumentShape.Mismatch(
+			AddTracepoint,
+			Arguments("""{"sessionId":"s","tracepoints":[{"location":"A.B.C"},{"logMessage":"x"}]}"""));
+
+		message.ShouldBe("tracepoints[1] has no location, which every entry of tracepoints needs.");
+	}
+
+	/// <summary>
+	/// One entry sent bare, where a list of them was wanted: the shape a caller sends when it reaches
+	/// for a single tracepoint. The example shows the brackets around an entry.
+	/// </summary>
+	[Test]
+	public void A_bare_object_for_a_list_of_objects_is_shown_the_brackets()
+	{
+		var message = ToolArgumentShape.Mismatch(
+			AddTracepoint,
+			Arguments("""{"sessionId":"s","tracepoints":{"location":"A.B.C"}}"""));
+
+		message.ShouldBe("""tracepoints takes a list of objects, and an object was sent. Send it as [{"location": "..."}].""");
+	}
+
+	/// <summary>Entries that all match say nothing, so a refusal for some other reason keeps its own words.</summary>
+	[Test]
+	public void Says_nothing_when_every_entry_matches()
+	{
+		ToolArgumentShape.Mismatch(
+			AddTracepoint,
+			Arguments("""{"sessionId":"s","tracepoints":[{"location":"A.B.C"},{"location":"A.B.D","logMessage":"x"}]}"""))
+			.ShouldBeNull();
+	}
+
+	/// <summary>
+	/// The schema rose_debug_add_tracepoint is actually listed with, built from its declaration rather
+	/// than written out by hand, so the required list the entry check reads is the one the SDK emits.
+	/// </summary>
+	private static readonly JsonElement AddTracepoint = McpServerTool.Create(
+		typeof(LiveAppDebugTools).GetMethod(nameof(LiveAppDebugTools.AddTracepointAsync))!,
+		_ => throw new InvalidOperationException("Only the schema is read.")).ProtocolTool.InputSchema;
 
 	private static readonly JsonElement Outline = Schema(
 		"""{"symbol":{"type":["string","null"]},"filePath":{"type":["string","null"]},"includeInherited":{"type":"boolean"},"workspace":{"type":["string","null"]}}""");

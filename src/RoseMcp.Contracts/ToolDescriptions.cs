@@ -383,6 +383,20 @@ public static class ToolDescriptions
 			+ "is happening.";
 
 	/// <summary>
+	/// A list of objects rather than a list of locations sharing one message and one condition,
+	/// because neither is shared in practice: a message interpolates the locals of the method it is
+	/// in, and a condition names them, so the entry, exit and branch of one path each want their own.
+	/// No JSON example: the item schema already spells the shape, and every quote in an example costs
+	/// six characters of the surface's budget once the listing escapes it.
+	/// </summary>
+	public const string TracepointsArgument =
+		"One entry per method on the path, each with its own message and condition; only location is required.";
+
+	/// <summary>A list of objects for the reason <see cref="TracepointsArgument"/> gives.</summary>
+	public const string BreakpointsArgument =
+		"One entry per method to break on, each with its own condition and timeout; only location is required.";
+
+	/// <summary>
 	/// The debugger's location grammar, said to be the one the rest of the surface uses. It is the
 	/// same <c>Namespace.Type.Method</c> a <c>symbol</c> argument takes -- and nothing said so, so a
 	/// caller who had just addressed the same method by name for an edit had no reason to think this
@@ -405,10 +419,14 @@ public static class ToolDescriptions
 			+ "fields and elements: {count}, {state.Inner.Count}, {items[0].Name}. Read from memory, "
 			+ "so no property getters. {{ is a literal brace.";
 
-	public const string LogEveryNthHitArgument =
-		"Optional: log only every Nth hit to thin a hot path; every hit is still counted.";
+	public const string LogEveryNthHitArgument = "Optional: log only every Nth hit; every hit is still counted.";
 
-	public const string TracepointIdArgument = "The tracepoint id returned by rose_debug_add_tracepoint.";
+	/// <summary>
+	/// A list because removing is plural for the same reason adding is: the tracepoints that
+	/// instrumented one path are finished with together.
+	/// </summary>
+	public const string TracepointIdsArgument =
+		"The ids rose_debug_add_tracepoint returned. One already gone is reported as not found.";
 
 	public const string BreakpointLocationArgument =
 		"The method to break on, as the Namespace.Type.Method the rose_* tools take; it binds in whichever "
@@ -418,7 +436,8 @@ public static class ToolDescriptions
 	public const string AutoContinueSecondsArgument =
 		"Seconds a hit is held before the target auto-continues on its own; default 30.";
 
-	public const string BreakpointIdArgument = "The breakpoint id returned by rose_debug_set_breakpoint.";
+	public const string BreakpointIdsArgument =
+		"The ids rose_debug_set_breakpoint returned. One already gone is reported as not found.";
 
 	public const string StepModeArgument = "in, over, or out.";
 
@@ -512,12 +531,12 @@ public static class ToolDescriptions
 			+ "'skipped' says how many those were. A name that is not a kind is refused.";
 
 	public const string TracepointConditionArgument =
-		"Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, "
-			+ "e.g. count >= 100. Only simple value compares; expressions need eval.";
+		"Optional gate on each hit: name OP literal over the method's arguments or locals, e.g. count >= 100. "
+			+ "No expressions.";
 
 	public const string BreakpointConditionArgument =
-		"Optional condition gating each hit, as 'name OP literal' over the method's arguments/locals, "
-			+ "e.g. id == 42. Only simple value compares; expressions need eval.";
+		"Optional gate on each hit: name OP literal over the method's arguments or locals, e.g. id == 42. "
+			+ "No expressions.";
 
 	/// <summary>
 	/// Capped at 60 so the call cannot outlive the caller's own timeout, and a wait that ends empty

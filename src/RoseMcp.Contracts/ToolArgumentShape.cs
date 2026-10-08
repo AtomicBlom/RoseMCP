@@ -58,7 +58,12 @@ public static class ToolArgumentShape
 
 			var wanted = Types(declared);
 			if (wanted.Count == 0) continue;
-			if (wanted.Any(type => Matches(type, value.ValueKind))) continue;
+			if (wanted.Any(type => Matches(type, value.ValueKind)))
+			{
+				if (value.ValueKind == JsonValueKind.Array && ItemMismatch(name, declared, value) is { } item) return item;
+
+				continue;
+			}
 
 			return $"{name} takes {Article(Wanted(declared, wanted[0]))} {Wanted(declared, wanted[0])}, and "
 				+ $"{Article(Sent(value.ValueKind))} {Sent(value.ValueKind)} was sent. "
@@ -66,6 +71,52 @@ public static class ToolArgumentShape
 		}
 
 		return null;
+	}
+
+	/// <summary>
+	/// A sentence naming the first entry of a list that does not match the schema's item type, or that
+	/// leaves out a property every entry needs; null when every entry matches.
+	/// <para>
+	/// A list of objects is where a correct outer shape still gets refused: a caller sends the list,
+	/// and inside it a bare location string, or an entry without its location. The binder's account of
+	/// either names a CLR type and a JSON path, and the outer check sees a list where a list was
+	/// wanted, so without this the refusal says nothing a caller can act on.
+	/// </para>
+	/// </summary>
+	private static string? ItemMismatch(string name, JsonElement declared, JsonElement value)
+	{
+		if (!declared.TryGetProperty("items", out var items)) return null;
+
+		var wanted = Types(items);
+		if (wanted.Count == 0) return null;
+
+		var index = 0;
+		foreach (var element in value.EnumerateArray())
+		{
+			var entry = $"{name}[{index++}]";
+			if (element.ValueKind == JsonValueKind.Null) continue;
+
+			if (!wanted.Any(type => Matches(type, element.ValueKind)))
+			{
+				return $"{name} takes {Article(Wanted(declared, "array"))} {Wanted(declared, "array")}, and {entry} is "
+					+ $"{Article(Sent(element.ValueKind))} {Sent(element.ValueKind)}. Send it as {Example(declared, "array")}.";
+			}
+
+			if (element.ValueKind != JsonValueKind.Object) continue;
+
+			var missing = Required(items).FirstOrDefault(property => !element.TryGetProperty(property, out _));
+			if (missing is not null) return $"{entry} has no {missing}, which every entry of {name} needs.";
+		}
+
+		return null;
+	}
+
+	/// <summary>The property names an object schema says must be present.</summary>
+	private static IReadOnlyList<string> Required(JsonElement schema)
+	{
+		if (!schema.TryGetProperty("required", out var required) || required.ValueKind != JsonValueKind.Array) return [];
+
+		return [.. required.EnumerateArray().Where(entry => entry.ValueKind == JsonValueKind.String).Select(entry => entry.GetString()).OfType<string>()];
 	}
 
 	/// <summary>
@@ -373,16 +424,24 @@ public static class ToolArgumentShape
 
 	/// <summary>
 	/// What to send instead, spelled as JSON. A list is the case worth showing: the mistake is
-	/// sending one element bare, and seeing the brackets is the whole correction.
+	/// sending one element bare, and seeing the brackets is the whole correction. A list of objects
+	/// shows one entry with the property every entry needs, since that is what a bare string was
+	/// standing in for.
 	/// </summary>
-	private static string Example(JsonElement declared, string type) => type switch
+	private static string Example(JsonElement declared, string type)
 	{
-		"array" when declared.TryGetProperty("items", out var element) && Types(element).FirstOrDefault() == "string" =>
-			"[\"one\", \"two\"]",
-		"array" => "a JSON array",
-		"string" => "\"text\"",
-		"integer" or "number" => "12",
-		"boolean" => "true or false",
-		_ => $"{Article(type)} {type}",
-	};
+		var items = declared.TryGetProperty("items", out var element) ? element : default(JsonElement?);
+		var itemType = items is { } schema ? Types(schema).FirstOrDefault() : null;
+
+		return type switch
+		{
+			"array" when itemType == "string" => "[\"one\", \"two\"]",
+			"array" when itemType == "object" && Required(items!.Value).FirstOrDefault() is { } first => $"[{{\"{first}\": \"...\"}}]",
+			"array" => "a JSON array",
+			"string" => "\"text\"",
+			"integer" or "number" => "12",
+			"boolean" => "true or false",
+			_ => $"{Article(type)} {type}",
+		};
+	}
 }

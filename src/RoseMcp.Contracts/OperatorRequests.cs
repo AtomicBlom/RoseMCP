@@ -1,40 +1,58 @@
+using System.ComponentModel;
+
 namespace RoseMcp.Contracts;
 
 /// <summary>
 /// The request bodies the operator API takes. One file rather than one each, unlike everything else
-/// here: they are argument shapes for a single surface, none of them means anything away from it,
-/// and each is the same three lines. A result type still gets a file of its own.
+/// here: they are argument shapes, and each is the same three lines. A result type still gets a file
+/// of its own.
 /// <para>
 /// They are records in Contracts rather than inline parameters so that both ends share them. The
 /// inspector serialises exactly what the broker deserialises, and a field added to one is a compile
 /// error in the other rather than a silently ignored property.
 /// </para>
+/// <para>
+/// This one and <see cref="AddTracepointRequest"/> are also the items of the MCP tools that set
+/// breakpoints and add tracepoints, which take a list of them. So a person in the inspector and an
+/// agent describe a breakpoint with the same fields, and the descriptions on them are what the
+/// agent's schema shows.
+/// </para>
 /// </summary>
 public sealed record SetBreakpointRequest
 {
 	/// <summary>Where to stop, as <c>[Assembly!]Namespace.Type.Method</c>.</summary>
+	[Description(ToolDescriptions.BreakpointLocationArgument)]
 	public required string Location { get; init; }
 
 	/// <summary>
 	/// How long a hit is held before the target resumes itself. Null takes the session's default,
 	/// which exists so an unattended stop cannot wedge somebody's app.
 	/// </summary>
+	[Description(ToolDescriptions.AutoContinueSecondsArgument)]
 	public int? AutoContinueSeconds { get; init; }
 
 	/// <summary>A cheap value-compare (<c>name OP literal</c>) that gates each hit, if any.</summary>
+	[Description(ToolDescriptions.BreakpointConditionArgument)]
 	public string? Condition { get; init; }
 }
 
 /// <summary>A tracepoint to add: a breakpoint that logs and does not stop.</summary>
 public sealed record AddTracepointRequest
 {
+	/// <summary>Where to log, as <c>[Assembly!]Namespace.Type.Method</c>.</summary>
+	[Description(ToolDescriptions.TracepointLocationArgument)]
 	public required string Location { get; init; }
 
+	/// <summary>The message each hit logs, with the frame's values interpolated into it.</summary>
+	[Description(ToolDescriptions.LogMessageArgument)]
 	public string? LogMessage { get; init; }
 
 	/// <summary>Log only every nth hit, for a method called too often to hear every time.</summary>
+	[Description(ToolDescriptions.LogEveryNthHitArgument)]
 	public int? LogEveryNthHit { get; init; }
 
+	/// <summary>A cheap value-compare (<c>name OP literal</c>) that gates each hit, if any.</summary>
+	[Description(ToolDescriptions.TracepointConditionArgument)]
 	public string? Condition { get; init; }
 }
 

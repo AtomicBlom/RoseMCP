@@ -17,9 +17,10 @@ that project's `CLAUDE.md`:
 Use the Roslyn-backed `rose_debug_*` MCP tools to debug a live .NET process rather than adding
 print statements and rebuilding, or attaching an external debugger (which loads the solution a
 second time). `rose_debug_attach` by pid or `rose_debug_launch` to start one under the debugger;
-`rose_debug_events` for exceptions (with stack traces), logs, and breakpoint hits; a
-`rose_debug_add_tracepoint` to log a method's hits without pausing, or `rose_debug_set_breakpoint`
-to hold it and read its stack and locals, then `rose_debug_continue` / `rose_debug_step`.
+`rose_debug_events` for exceptions (with stack traces), logs, and breakpoint hits;
+`rose_debug_add_tracepoint` to log the hits of every method on a path in one call without pausing,
+or `rose_debug_set_breakpoint` to hold it and read its stack and locals, then
+`rose_debug_continue` / `rose_debug_step`.
 ```
 
 ## The surface
@@ -30,10 +31,10 @@ to hold it and read its stack and locals, then `rose_debug_continue` / `rose_deb
 | `rose_debug_launch` | Launch a local .NET executable under the debugger, from startup. |
 | `rose_debug_launch_uwp` | Activate a packaged (UWP) app under the debugger by AUMID, from birth -- startup, first OnLaunched, and all -- through an architecture-matched host. |
 | `rose_debug_events` | Read events since a cursor: exceptions (with stacks), logs, module loads, hits. Or one event whole, by `sequence`, when a page came back truncated. |
-| `rose_debug_add_tracepoint` | Log a method's hits and keep running, with the frame's values interpolated into the message (with an optional condition / hit-count filter). |
-| `rose_debug_set_breakpoint` | Hold the target on hit and record its stack and top-frame locals (with an optional condition). |
+| `rose_debug_add_tracepoint` | Log methods' hits and keep running, with the frame's values interpolated into each one's message (with an optional condition / hit-count filter). Takes a list, one entry per method. |
+| `rose_debug_set_breakpoint` | Hold the target on hit and record its stack and top-frame locals (with an optional condition). Takes a list, one entry per method. |
 | `rose_debug_continue` / `rose_debug_step` | Resume a held target, or step in / over / out. |
-| `rose_debug_list_tracepoints` / `_list_breakpoints` / `_remove_*` | Inspect and remove what is set. |
+| `rose_debug_list_tracepoints` / `_list_breakpoints` / `_remove_*` | Inspect what is set, and remove it by a list of ids. |
 | `rose_debug_detach` / `rose_debug_list` | End a session (leaving the target running); list sessions. |
 | `rose_xaml_tree` | Read a live XAML app's visual tree: a flat element list (handle, parent, child index, type, x:Name) that rebuilds into a tree; can be rooted at a named element and paged. |
 | `rose_xaml_properties` | Read one element's properties (by handle) with provenance (Local / Style / Inherited / Default …) and, when the app carries source info, the XAML file and line that set each. |
@@ -103,13 +104,25 @@ For markup with no file behind it -- something composed rather than saved -- pas
 ## Logging values without stopping
 
 A tracepoint's message interpolates the frame it fired on, so a hit says what the code was doing
-rather than only that it ran:
+rather than only that it ran. One call takes the whole path, each method with a message of its own,
+since each names the locals of the method it is in:
 
 ```
 rose_debug_add_tracepoint
-  location:   MyApp.Cache.Evict
-  logMessage: evicting {key} -- {entry.Size} bytes, {entry.Tags[0]}, {this.count} left
+  tracepoints:
+    - location:   MyApp.Cache.Evict
+      logMessage: evicting {key} -- {entry.Size} bytes, {entry.Tags[0]}, {this.count} left
+    - location:   MyApp.Cache.Compact
+      logMessage: compacting to {target} bytes
+      condition:  target < 1024
 ```
+
+The answer has one entry per request, in order, with a `status`: `added`; `added, not bound yet`
+for one whose module has not loaded, which binds when it does; or `refused: ` and the reason, for
+one whose location, message or condition does not parse. A refused entry never stops the others, so
+read the statuses rather than assuming all of them took. `rose_debug_remove_tracepoint` takes a list
+of ids the same way, and answers each one -- an id already gone is `not found` -- along with the
+tracepoints still set.
 
 A placeholder is the same path `rose_debug_evaluate` takes: an argument or local by name, or `arg:0`
 / `local:2`, then `.field` and `[3]` into the object graph. `{{` and `}}` are literal braces. The

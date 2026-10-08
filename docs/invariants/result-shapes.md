@@ -107,6 +107,15 @@ Read before adding a tool, adding a field to a result, or changing an error path
   activity log's percentages, so a poll can watch a load rather than merely wait for it. Do not
   reintroduce a second tool for this: `rose_workspace_open` was `rose_workspace_status` under another
   name, down to the same two lines of body, and not waiting is what gives it something to be.
+- **A batch answers each entry, and one entry's mistake is that entry's status.** A tool that takes
+  a list of independent requests -- tracepoints, breakpoints, ids to remove -- answers
+  with one entry per request in the order given, each with a `status` that is the outcome or the
+  reason there was none, so a caller can match an answer to what it sent without counting. Refusing
+  the whole call for one bad entry sends the caller back to retry the good ones piece by piece, which
+  is the turn count a batch exists to save; only what makes the call impossible as a whole is an
+  error, and an empty list is one, since an answer with no entries reads as a call that worked. An
+  entry that is waiting rather than wrong -- a breakpoint whose module has not loaded -- is a success
+  that says so, never a refusal. See [the decision](../decisions/a-plural-intent-is-one-call.md).
 - **A fixer that declines is the same as no fixer.** `rose_list_code_fixes` dropped a diagnostic
   whose providers offered nothing from `fixes` and from `unfixableIds` both, so it disappeared from
   the answer entirely -- which is exactly what the second list exists to prevent. CS0103 is what

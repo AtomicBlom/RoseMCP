@@ -63,6 +63,12 @@ internal sealed class BreakpointTable(DebugEventBuffer buffer, ILogger logger)
 		return binding;
 	}
 
+	/// <summary>
+	/// Whether the binding with this id stops on a hit, or null when there is no such binding -- the
+	/// question that tells a breakpoint's id from a tracepoint's before either is removed.
+	/// </summary>
+	internal bool? StopsOnHit(string id) => _bindings.FirstOrDefault(entry => entry.Id == id)?.StopOnHit;
+
 	/// <summary>Drops a binding and deactivates whatever it had bound, reporting whether it was there.</summary>
 	internal bool Remove(string id)
 	{

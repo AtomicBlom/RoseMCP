@@ -301,35 +301,99 @@ public sealed class LiveAppSession : IAsyncDisposable
 			},
 			cancellationToken);
 
-	public Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, string? condition, CancellationToken cancellationToken)
-		=> SendAsync<LiveTracepoint>(
+	/// <summary>
+	/// Adds tracepoints, each request's outcome its own entry: one the host refuses is refused there
+	/// and the rest are added regardless.
+	/// </summary>
+	public Task<LiveTracepointBatch> AddTracepointsAsync(IReadOnlyList<AddTracepointRequest> tracepoints, CancellationToken cancellationToken)
+		=> SendAsync<LiveTracepointBatch>(
 			ToolNames.LiveAppAddTracepoint,
-			new Dictionary<string, object?> { ["location"] = location, ["logMessage"] = logMessage, ["logEveryNthHit"] = logEveryNthHit, ["condition"] = condition },
+			new Dictionary<string, object?> { ["tracepoints"] = tracepoints },
 			cancellationToken);
 
 	public Task<LiveTracepointList> ListTracepointsAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveTracepointList>(ToolNames.LiveAppListTracepoints, cancellationToken);
 
-	public Task<LiveTracepointList> RemoveTracepointAsync(string id, CancellationToken cancellationToken)
-		=> SendAsync<LiveTracepointList>(
+	/// <summary>Removes tracepoints by id, each id's outcome its own entry, and returns the set left.</summary>
+	public Task<LiveTracepointRemoval> RemoveTracepointsAsync(IReadOnlyList<string> ids, CancellationToken cancellationToken)
+		=> SendAsync<LiveTracepointRemoval>(
 			ToolNames.LiveAppRemoveTracepoint,
-			new Dictionary<string, object?> { ["tracepointId"] = id },
+			new Dictionary<string, object?> { ["tracepointIds"] = ids },
 			cancellationToken);
 
-	public Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
-		=> SendAsync<LiveBreakpoint>(
+	/// <summary>Sets stopping breakpoints, each request's outcome its own entry, as <see cref="AddTracepointsAsync"/> does.</summary>
+	public Task<LiveBreakpointBatch> SetBreakpointsAsync(IReadOnlyList<SetBreakpointRequest> breakpoints, CancellationToken cancellationToken)
+		=> SendAsync<LiveBreakpointBatch>(
 			ToolNames.LiveAppSetBreakpoint,
-			new Dictionary<string, object?> { ["location"] = location, ["autoContinueSeconds"] = autoContinueSeconds, ["condition"] = condition },
+			new Dictionary<string, object?> { ["breakpoints"] = breakpoints },
 			cancellationToken);
 
 	public Task<LiveBreakpointList> ListBreakpointsAsync(CancellationToken cancellationToken)
 		=> SendAsync<LiveBreakpointList>(ToolNames.LiveAppListBreakpoints, cancellationToken);
 
-	public Task<LiveBreakpointList> RemoveBreakpointAsync(string id, CancellationToken cancellationToken)
-		=> SendAsync<LiveBreakpointList>(
+	/// <summary>Removes stopping breakpoints by id, each id's outcome its own entry, and returns the set left.</summary>
+	public Task<LiveBreakpointRemoval> RemoveBreakpointsAsync(IReadOnlyList<string> ids, CancellationToken cancellationToken)
+		=> SendAsync<LiveBreakpointRemoval>(
 			ToolNames.LiveAppRemoveBreakpoint,
-			new Dictionary<string, object?> { ["breakpointId"] = id },
+			new Dictionary<string, object?> { ["breakpointIds"] = ids },
 			cancellationToken);
+
+	/// <summary>
+	/// Adds one tracepoint, for a caller that acts on one at a time -- a person in the inspector
+	/// choosing a method. A one-entry batch underneath, so there is one way a tracepoint is added; a
+	/// refusal is thrown rather than returned, since a caller asking for one has no other entry to
+	/// keep, and the answer carries the cursor of the call that added it.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">The host refused it, or the session could not add one at all.</exception>
+	public async Task<LiveTracepoint> AddTracepointAsync(string location, string? logMessage, int? logEveryNthHit, string? condition, CancellationToken cancellationToken)
+	{
+		var request = new AddTracepointRequest { Location = location, LogMessage = logMessage, LogEveryNthHit = logEveryNthHit, Condition = condition };
+		var batch = await AddTracepointsAsync([request], cancellationToken);
+		var outcome = Single(batch.Results, ToolNames.LiveAppAddTracepoint);
+
+		return outcome.Tracepoint is { } added
+			? added with { Cursor = batch.Cursor }
+			: throw new InvalidOperationException(outcome.Status);
+	}
+
+	/// <summary>Sets one stopping breakpoint, as <see cref="AddTracepointAsync"/> adds one tracepoint.</summary>
+	/// <exception cref="InvalidOperationException">The host refused it, or the session could not set one at all.</exception>
+	public async Task<LiveBreakpoint> SetBreakpointAsync(string location, int? autoContinueSeconds, string? condition, CancellationToken cancellationToken)
+	{
+		var request = new SetBreakpointRequest { Location = location, AutoContinueSeconds = autoContinueSeconds, Condition = condition };
+		var batch = await SetBreakpointsAsync([request], cancellationToken);
+		var outcome = Single(batch.Results, ToolNames.LiveAppSetBreakpoint);
+
+		return outcome.Breakpoint is { } set
+			? set with { Cursor = batch.Cursor }
+			: throw new InvalidOperationException(outcome.Status);
+	}
+
+	/// <summary>
+	/// Removes one tracepoint and returns the set left. An id that is already gone is not an error,
+	/// for a caller removing what it is looking at in a list another caller may already have changed.
+	/// </summary>
+	public async Task<LiveTracepointList> RemoveTracepointAsync(string id, CancellationToken cancellationToken)
+	{
+		var removal = await RemoveTracepointsAsync([id], cancellationToken);
+
+		return new LiveTracepointList { Tracepoints = removal.Tracepoints, Cursor = removal.Cursor };
+	}
+
+	/// <summary>Removes one stopping breakpoint and returns the set left, as <see cref="RemoveTracepointAsync"/> does.</summary>
+	public async Task<LiveBreakpointList> RemoveBreakpointAsync(string id, CancellationToken cancellationToken)
+	{
+		var removal = await RemoveBreakpointsAsync([id], cancellationToken);
+
+		return new LiveBreakpointList { Breakpoints = removal.Breakpoints, Cursor = removal.Cursor };
+	}
+
+	/// <summary>The one entry a one-request batch answers with, or a refusal saying the host answered otherwise.</summary>
+	/// <exception cref="InvalidOperationException">The answer did not hold exactly one entry.</exception>
+	private static T Single<T>(IReadOnlyList<T> results, string tool) =>
+		results.Count == 1
+			? results[0]
+			: throw new InvalidOperationException($"{tool} answered one request with {results.Count} entries.");
 
 	/// <summary>
 	/// Resumes a held target and reports the whole outcome, not only whether anything was held.
@@ -611,9 +675,14 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// </summary>
 	private static string? DescribeTarget(IReadOnlyDictionary<string, object?> arguments)
 	{
-		foreach (var name in (string[])["location", "element", "expression", "path", "breakpointId", "tracepointId", "mode"])
+		foreach (var name in (string[])["location", "element", "expression", "path", "mode"])
 		{
 			if (arguments.TryGetValue(name, out var value) && value?.ToString() is { Length: > 0 } named) return named;
+		}
+
+		foreach (var name in (string[])["tracepoints", "breakpoints", "tracepointIds", "breakpointIds"])
+		{
+			if (arguments.TryGetValue(name, out var value) && Several(value) is { } named) return named;
 		}
 
 		if (arguments.TryGetValue("filePath", out var file) && file?.ToString() is { Length: > 0 } path)
@@ -638,6 +707,29 @@ public sealed class LiveAppSession : IAsyncDisposable
 		}
 
 		return null;
+	}
+
+	/// <summary>
+	/// A list argument in a few words: its one item when there is one, which is how a call from the
+	/// inspector reads, and otherwise its first and how many more, so a batch of six is not a row
+	/// claiming to be about one method.
+	/// </summary>
+	private static string? Several(object? value)
+	{
+		IReadOnlyList<string> items = value switch
+		{
+			IEnumerable<AddTracepointRequest?> tracepoints => [.. tracepoints.Select(request => request?.Location).OfType<string>()],
+			IEnumerable<SetBreakpointRequest?> breakpoints => [.. breakpoints.Select(request => request?.Location).OfType<string>()],
+			IEnumerable<string?> ids => [.. ids.OfType<string>()],
+			_ => [],
+		};
+
+		return items.Count switch
+		{
+			0 => null,
+			1 => items[0],
+			_ => $"{items[0]} and {items.Count - 1} more",
+		};
 	}
 
 	private async Task<T> SendAsync<T>(

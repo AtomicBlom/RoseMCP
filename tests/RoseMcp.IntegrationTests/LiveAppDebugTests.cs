@@ -684,6 +684,188 @@ public sealed class LiveAppDebugTests
 	}
 
 	/// <summary>
+	/// One call instruments a path, and an entry that cannot be added is refused in its own entry
+	/// while the rest are added. A batch that failed whole for one bad location would send the caller
+	/// back to retry the good ones piece by piece, which is the turn count the batch exists to save.
+	/// An entry waiting for a module that has not loaded is added, not refused: it binds when the
+	/// module arrives, and its status says it has not yet.
+	/// </summary>
+	[Test]
+	public async Task A_batch_of_tracepoints_adds_what_parses_and_refuses_the_rest_one_by_one()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var batch = await session.AddTracepointsAsync(
+				[
+					new AddTracepointRequest { Location = "DebugProbeTarget.Program.Beat", LogMessage = "beat" },
+					new AddTracepointRequest { Location = "not a location" },
+					new AddTracepointRequest { Location = "DebugProbeTarget.Program.Beat", LogMessage = "count={iteration" },
+					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick", LogEveryNthHit = 0 },
+					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick" },
+					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick", LogMessage = "again" },
+					new AddTracepointRequest { Location = "NotYetLoaded!Somewhere.Later.Run" },
+				],
+				cancellationToken);
+
+			batch.Total.ShouldBe(7);
+			batch.Added.ShouldBe(4);
+			batch.Cursor.ShouldBeGreaterThan(0, "a batch is an action, so it hands back the cursor");
+			batch.Results.Select(outcome => outcome.Location).ShouldBe(
+			[
+				"DebugProbeTarget.Program.Beat",
+				"not a location",
+				"DebugProbeTarget.Program.Beat",
+				"Elsewhere.Pulse.Tick",
+				"Elsewhere.Pulse.Tick",
+				"Elsewhere.Pulse.Tick",
+				"NotYetLoaded!Somewhere.Later.Run",
+			]);
+
+			batch.Results[0].Status.ShouldBe("added");
+			batch.Results[0].Tracepoint.ShouldNotBeNull().Bound.ShouldBeTrue();
+
+			// Each refusal says what was wrong with that entry, in the caller's terms rather than the
+			// parser's: the framework's "(Parameter 'spec')" names an argument nobody sent.
+			batch.Results[1].Status.ShouldStartWith("refused: ", Case.Sensitive);
+			batch.Results[1].Status.ShouldNotContain("(Parameter", Case.Sensitive);
+			batch.Results[1].Tracepoint.ShouldBeNull();
+			batch.Results[2].Status.ShouldContain("never closed", Case.Sensitive);
+			batch.Results[2].Tracepoint.ShouldBeNull();
+			batch.Results[3].Status.ShouldContain("logEveryNthHit", Case.Sensitive);
+
+			batch.Results[4].Status.ShouldBe("added");
+			batch.Results[5].Status.ShouldBe("added");
+			batch.Notes.ShouldHaveSingleItem().ShouldContain("Elsewhere.Pulse.Tick was asked for 2 times", Case.Sensitive);
+
+			batch.Results[6].Status.ShouldBe("added, not bound yet");
+			var waiting = batch.Results[6].Tracepoint.ShouldNotBeNull();
+			waiting.Bound.ShouldBeFalse();
+			waiting.Detail.ShouldNotBeNull().ShouldContain("NotYetLoaded", Case.Sensitive);
+
+			var held = await session.ListTracepointsAsync(cancellationToken);
+			held.Tracepoints.Count.ShouldBe(4);
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+			child.HasExited.ShouldBeFalse("the target runs on through a batch of tracepoints");
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A removal answers each id in its own entry and never fails for one: an id already gone is not
+	/// found, and an id of the other kind is refused rather than removed. The second is the one with
+	/// consequences -- both removals share one table, so a breakpoint's id handed to the tracepoint
+	/// removal would take the breakpoint away and answer with a tracepoint list that cannot show it.
+	/// The breakpoints are set against a module that never loads, so nothing stops while this runs.
+	/// </summary>
+	[Test]
+	public async Task A_batch_removal_answers_each_id_and_refuses_one_of_the_other_kind()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var tracepoints = await session.AddTracepointsAsync(
+				[
+					new AddTracepointRequest { Location = "DebugProbeTarget.Program.Beat" },
+					new AddTracepointRequest { Location = "Elsewhere.Pulse.Tick" },
+				],
+				cancellationToken);
+			tracepoints.Added.ShouldBe(2);
+
+			var breakpoints = await session.SetBreakpointsAsync(
+				[
+					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Run" },
+					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Stop", AutoContinueSeconds = 0 },
+					new SetBreakpointRequest { Location = "NotYetLoaded!Somewhere.Later.Walk", Condition = "this is not a condition" },
+				],
+				cancellationToken);
+			breakpoints.Total.ShouldBe(3);
+			breakpoints.Set.ShouldBe(1);
+			breakpoints.Results[0].Status.ShouldBe("set, not bound yet");
+			breakpoints.Results[1].Status.ShouldContain("autoContinueSeconds", Case.Sensitive);
+			breakpoints.Results[2].Status.ShouldStartWith("refused: ", Case.Sensitive);
+
+			var first = tracepoints.Results[0].Tracepoint.ShouldNotBeNull().Id;
+			var second = tracepoints.Results[1].Tracepoint.ShouldNotBeNull().Id;
+			var breakpoint = breakpoints.Results[0].Breakpoint.ShouldNotBeNull().Id;
+
+			var removed = await session.RemoveTracepointsAsync([first, "tp-999", breakpoint, first], cancellationToken);
+
+			removed.Total.ShouldBe(4);
+			removed.Removed.ShouldBe(1);
+			removed.Results.Select(outcome => outcome.Status).ShouldBe(
+			[
+				"removed",
+				"not found",
+				$"refused: {breakpoint} is a stopping breakpoint, which {ToolNames.DebugRemoveBreakpoint} removes",
+				"not found",
+			]);
+			removed.Tracepoints.ShouldHaveSingleItem().Id.ShouldBe(second);
+			removed.Cursor.ShouldBeGreaterThan(0);
+
+			var stillSet = await session.ListBreakpointsAsync(cancellationToken);
+			stillSet.Breakpoints.ShouldHaveSingleItem().Id.ShouldBe(breakpoint);
+
+			var cleared = await session.RemoveBreakpointsAsync([second, breakpoint], cancellationToken);
+			cleared.Results.Select(outcome => outcome.Status).ShouldBe(
+			[
+				$"refused: {second} is a tracepoint, which {ToolNames.DebugRemoveTracepoint} removes",
+				"removed",
+			]);
+			cleared.Breakpoints.ShouldBeEmpty();
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
+	/// A call that names nothing is refused whole. An empty list is a mistake in how the call was put
+	/// together, and an answer with no entries would read as a call that worked.
+	/// </summary>
+	[Test]
+	public async Task An_empty_batch_is_refused()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var session = await manager.StartAsync(AttachTo(child.Id), cancellationToken);
+
+			var adding = await Should.ThrowAsync<InvalidOperationException>(() => session.AddTracepointsAsync([], cancellationToken));
+			adding.Message.ShouldContain("Nothing was asked for", Case.Sensitive);
+
+			var removing = await Should.ThrowAsync<InvalidOperationException>(() => session.RemoveBreakpointsAsync([], cancellationToken));
+			removing.Message.ShouldContain("Nothing was asked for", Case.Sensitive);
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// A string longer than the default cap says so, and can be read whole by asking for more.
 	/// <para>
 	/// The cap keeps one frame's twenty locals from being a transfer of the target's heap, and the

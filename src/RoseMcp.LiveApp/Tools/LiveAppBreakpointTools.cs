@@ -12,18 +12,16 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 {
 	[McpServerTool(
 		Name = ToolNames.LiveAppSetBreakpoint,
-		Title = "Set a stopping breakpoint",
+		Title = "Set stopping breakpoints",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = false,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("Set a stopping breakpoint at a method by name; it holds the target on hit until continued.")]
-	public LiveBreakpoint Set(
-		[Description(ToolDescriptions.BreakpointLocationArgument)] string location,
-		[Description(ToolDescriptions.AutoContinueSecondsArgument)] int? autoContinueSeconds = null,
-		[Description(ToolDescriptions.BreakpointConditionArgument)] string? condition = null)
-		=> host.SetBreakpoint(location, autoContinueSeconds, condition);
+	[Description("Set stopping breakpoints at methods by name; each holds the target on hit until continued, and each request's outcome is its own entry.")]
+	public LiveBreakpointBatch Set(
+		[Description(ToolDescriptions.BreakpointsArgument)] SetBreakpointRequest[] breakpoints)
+		=> host.SetBreakpoints(breakpoints);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppListBreakpoints,
@@ -37,16 +35,16 @@ public sealed class LiveAppBreakpointTools(LiveAppSessionHost host)
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppRemoveBreakpoint,
-		Title = "Remove a stopping breakpoint",
+		Title = "Remove stopping breakpoints",
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
 		OpenWorld = false,
 		UseStructuredContent = true)]
-	[Description("Remove a stopping breakpoint by id, returning the remaining set.")]
-	public LiveBreakpointList Remove(
-		[Description(ToolDescriptions.BreakpointIdArgument)] string breakpointId)
-		=> host.RemoveBreakpoint(breakpointId);
+	[Description("Remove stopping breakpoints by id, each id's outcome its own entry, returning the remaining set.")]
+	public LiveBreakpointRemoval Remove(
+		[Description(ToolDescriptions.BreakpointIdsArgument)] string[] breakpointIds)
+		=> host.RemoveBreakpoints(breakpointIds);
 
 	[McpServerTool(
 		Name = ToolNames.LiveAppContinue,

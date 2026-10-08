@@ -142,12 +142,12 @@ A change that reaches files another solution also compiles is reported, not acte
 | `rose_debug_launch` | Starts an executable under the debugger | Runs as the user, exactly as launching it by hand; it ends with its host |
 | `rose_debug_launch_uwp` | Puts a package in debug mode and activates it under the debugger | Only a package the user can activate. Debug mode is lifted when the session ends; a host killed outright cannot lift it, and the package stays debuggable until a later session over it ends |
 | `rose_debug_events` | Reads captured events | Returns exception messages, stacks, log output and locals, which can hold secrets |
-| `rose_debug_add_tracepoint` | Logs each hit on a method | Conditions compare a value with a literal and run no code |
+| `rose_debug_add_tracepoint` | Logs each hit on the methods it is given | Conditions compare a value with a literal and run no code |
 | `rose_debug_list_tracepoints` | Lists tracepoints | Reads only |
-| `rose_debug_remove_tracepoint` | Removes a tracepoint | The caller's own session |
-| `rose_debug_set_breakpoint` | Stops the target on a method | Auto-continues after a timeout, 30 seconds by default, so an unattended stop cannot wedge the app |
+| `rose_debug_remove_tracepoint` | Removes tracepoints by id | The caller's own session |
+| `rose_debug_set_breakpoint` | Stops the target on the methods it is given | Auto-continues after a timeout, 30 seconds by default, so an unattended stop cannot wedge the app |
 | `rose_debug_list_breakpoints` | Lists breakpoints | Reads only |
-| `rose_debug_remove_breakpoint` | Removes a breakpoint | The caller's own session |
+| `rose_debug_remove_breakpoint` | Removes breakpoints by id | The caller's own session |
 | `rose_debug_continue` | Resumes a stopped target | Releases an operator's hold if there is one, and says so |
 | `rose_debug_step` | Steps in, over or out | As a stop |
 | `rose_debug_evaluate` | Reads a value at a stop | Memory reads only: no getter, method or `ToString` runs, so inspecting a hostile object graph cannot run its code |

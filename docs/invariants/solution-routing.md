@@ -20,6 +20,14 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   projects at a compilation not containing the file. A pin is an ambient default for the directory;
   containment is evidence about the path in hand, and evidence wins. The pin still decides a bare
   directory, and still decides between several solutions that all compile the path.
+- **A pin is the default for its directory and everything under it, and the nearest one governs.**
+  Walking up from a path stops at the first directory holding a solution, so a repository that pins
+  its everything-solution at the root and keeps smaller solutions in subfolders would have its
+  default read for nothing under those subfolders: a file both compile would be answered by the
+  nearer, smaller one. The nearest `rosemcp.json` naming a solution, at or above the path, decides it on the same
+  terms as the tie-break above -- the pinned solution is chosen where it compiles the path, and the
+  nearer one stands where it does not, because a solution without the file is no answer about it. A
+  subfolder that pins its own solution is nearer, and governs everything under it.
 - **One ordering decides which workspace a call means, in `WorkspaceManager.WorkspaceFor`.** The
   workspace argument, then paths the call carries, then the calling session's directory, then refuse.
   It was previously spread across three places that disagreed, and the worst of them was the last

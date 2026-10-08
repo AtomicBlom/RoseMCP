@@ -191,14 +191,19 @@ public static class NavigationService
 			}
 		}
 
-		var every = references
+		var uses = references
 			.Distinct()
 			.OrderBy(location => location.FilePath, StringComparer.OrdinalIgnoreCase)
 			.ThenBy(location => location.Line)
 			.ThenBy(location => location.Column)
 			.ToArray();
 
-		var kept = filter.KeepsAll ? every : every.Where(filter.Over(every).Keeps).ToArray();
+		// The search answers once for each copy of the symbol a multi-targeted project compiles, so one use
+		// comes back once per framework of the declaring project. It is one use, counted once, and merged
+		// after the filter so a project named with its framework keeps its own copy.
+		var filtered = filter.KeepsAll ? uses : uses.Where(filter.Over(uses).Keeps);
+		var kept = filtered.DistinctBy(location => (location.FilePath, location.Line, location.Column)).ToArray();
+		var every = uses.DistinctBy(location => (location.FilePath, location.Line, location.Column)).ToArray();
 
 		// Which of four answers this is. A filter that kept nothing from a symbol that is used describes
 		// every use instead, and says so: an empty list there reads as a symbol nobody uses, and the
@@ -325,11 +330,11 @@ public static class NavigationService
 
 		var distinct = found.Distinct(SymbolEqualityComparer.Default).ToArray();
 		var inSource = distinct.Where(IsInSource).ToArray();
-		var compiled = narrowed is null ? inSource : await CompiledByAsync(narrowed, inSource, cancellationToken);
+		var compiled = narrowed is null ? inSource : await CompiledByAsync(solution, narrowed, inSource, cancellationToken);
 
-		// A multi-targeted project is a compilation per framework, each with its own copy of every type in
-		// it, so one declaration is found once per framework. It is listed and counted once, after the
-		// narrowing, so a project named with its framework keeps its own copy.
+		// Keyed on the declaration rather than the symbol: a multi-targeted project compiles each type
+		// once per framework, and the copies are different symbols for one line of source, so neither the
+		// listing nor the counts may depend on how many of them the search handed back.
 		var listed = compiled.DistinctBy(Declaration).ToArray();
 		var inMetadata = distinct.Where(candidate => !IsInSource(candidate)).DistinctBy(Declaration).Count();
 		var elsewhere = inSource.DistinctBy(Declaration).Count() - listed.Length;
@@ -373,23 +378,37 @@ public static class NavigationService
 	}
 
 	/// <summary>
-	/// The candidates one of the projects compiles. Decided by the assembly each belongs to rather than
-	/// by the document it sits in, so a declaration a generator wrote counts for the project whose
-	/// generator wrote it.
+	/// The candidates one of the projects compiles. A candidate counts when it belongs to one of their
+	/// assemblies, which is what places a declaration a generator wrote, or when it is written in a file
+	/// one of them compiles -- because a multi-targeted project compiles each type once per framework and
+	/// the search hands back one of the copies, so the framework a caller named need not be the one
+	/// whose assembly the answer came from.
 	/// </summary>
 	private static async Task<IReadOnlyList<ISymbol>> CompiledByAsync(
+		Solution solution,
 		IReadOnlyList<Project> projects,
 		IReadOnlyList<ISymbol> candidates,
 		CancellationToken cancellationToken)
 	{
 		var assemblies = new HashSet<IAssemblySymbol>(SymbolEqualityComparer.Default);
+		var ids = projects.Select(project => project.Id).ToHashSet();
 
 		foreach (var project in projects)
 		{
 			if (await project.GetCompilationAsync(cancellationToken) is { } compilation) assemblies.Add(compilation.Assembly);
 		}
 
-		return [.. candidates.Where(candidate => candidate.ContainingAssembly is { } assembly && assemblies.Contains(assembly))];
+		bool IsCompiledHere(ISymbol candidate)
+		{
+			var isInOneOfTheAssemblies = candidate.ContainingAssembly is { } assembly && assemblies.Contains(assembly);
+
+			return isInOneOfTheAssemblies || candidate.Locations
+				.Where(location => location.IsInSource && location.SourceTree?.FilePath is { Length: > 0 })
+				.SelectMany(location => solution.GetDocumentIdsWithFilePath(location.SourceTree!.FilePath))
+				.Any(document => ids.Contains(document.ProjectId));
+		}
+
+		return [.. candidates.Where(IsCompiledHere)];
 	}
 
 	/// <summary>What the listing left out, counted, since a short list otherwise reads as the whole answer.</summary>

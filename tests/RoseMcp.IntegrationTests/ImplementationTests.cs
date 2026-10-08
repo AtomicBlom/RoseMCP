@@ -215,6 +215,16 @@ public sealed class ImplementationTests
 
 		core.Matches.ShouldHaveSingleItem().Name.ShouldBe("MemoryStore");
 
+		// The search hands back one framework's copy of a type, and naming the other framework still
+		// finds it: the narrowing asks which files the project compiles, not which copy came back.
+		foreach (var framework in new[] { "Core(net9.0)", "Core(net10.0)" })
+		{
+			var one = await NavigationService.FindImplementationsAsync(
+				snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: framework);
+
+			one.Matches.ShouldHaveSingleItem().Name.ShouldBe("MemoryStore");
+		}
+
 		var everywhere = await NavigationService.FindImplementationsAsync(
 			snapshot, target, 1, TestContext.Current!.Execution.CancellationToken);
 

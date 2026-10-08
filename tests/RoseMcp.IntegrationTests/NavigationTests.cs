@@ -682,10 +682,10 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
-	/// One declaration is one definition. An automatic property's accessors and backing field are
-	/// symbols the search cascades to, each declared inside the property, and a multi-targeted project
-	/// compiles the property once per framework -- so without the merge one line of source is listed as
-	/// several definitions, and a caller counting them gets a wrong answer.
+	/// One declaration is one definition, and one use one reference. An automatic property's accessors
+	/// and backing field are symbols the search cascades to, each declared inside the property, and a
+	/// multi-targeted project compiles the property once per framework -- so without the merge one line
+	/// of source is listed as several definitions, and a caller counting them gets a wrong answer.
 	/// </summary>
 	[Test]
 	public async Task Lists_a_property_declaration_once()
@@ -703,7 +703,10 @@ public sealed class NavigationTests
 		var definition = result.Definitions.ShouldHaveSingleItem();
 
 		definition.Preview.ShouldNotBeNull().ShouldContain("Capacity { get; init; }", Case.Sensitive);
-		result.References.ShouldContain(reference => reference.Project == "App");
+
+		// And one use is one reference, though the search reaches it once through each framework's copy.
+		result.References.ShouldHaveSingleItem().Project.ShouldBe("App");
+		result.TotalCount.ShouldBe(1);
 	}
 
 	/// <summary>

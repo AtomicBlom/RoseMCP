@@ -45,6 +45,15 @@ public static class ToolErrorReporting
 			{
 				return await next(context, cancellationToken);
 			}
+			catch (McpException exception) when (exception is not McpProtocolException)
+			{
+				// A refusal a tool already wrote for the wire keeps its words, and gains only what it
+				// could not know: an argument the caller sent that the binder dropped before the tool ran.
+				var named = Named(context, exception);
+				if (named == exception.Message) throw;
+
+				throw new McpException(named, exception);
+			}
 			catch (Exception exception) when (
 				exception is not OperationCanceledException
 				and not McpException
@@ -55,21 +64,31 @@ public static class ToolErrorReporting
 		}));
 
 	/// <summary>
-	/// The message to forward: the argument the caller got wrong where the binder refused one, and
-	/// the exception's own words otherwise.
+	/// The message to forward: the argument the caller got wrong where the binder refused one, the
+	/// exception's own words otherwise, and after either, any argument the call carried under a name
+	/// the tool does not declare.
 	/// <para>
 	/// The binder's account of a malformed argument names a CLR type the caller never wrote and points
 	/// at the root of the document, which is the one refusal on this surface that says nothing about
 	/// what to send instead. The tool's own schema answers it, and asking only once the call has
 	/// already been refused means a schema this cannot read costs nothing.
 	/// </para>
+	/// <para>
+	/// The arguments read are the ones the tool bound, after the alias filter has rewritten the
+	/// spellings it accepts, so a name the broker takes in place of a declared one is never reported
+	/// as unknown. A worker's refusal reaches here as the broker's own exception, so it is the
+	/// caller's original arguments that are named, not the ones the broker forwarded.
+	/// </para>
 	/// </summary>
 	private static string Named(RequestContext<CallToolRequestParams> context, Exception exception)
 	{
-		if (exception is not JsonException) return exception.Message;
 		if (context.MatchedPrimitive is not McpServerTool tool) return exception.Message;
 
-		return ToolArgumentShape.Mismatch(tool.ProtocolTool.InputSchema, context.Params?.Arguments)
-			?? exception.Message;
+		return ToolArgumentShape.Refusal(
+			exception.Message,
+			exception is JsonException,
+			tool.ProtocolTool.Name,
+			tool.ProtocolTool.InputSchema,
+			context.Params?.Arguments);
 	}
 }

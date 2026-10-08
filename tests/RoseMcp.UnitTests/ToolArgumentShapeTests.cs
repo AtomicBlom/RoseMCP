@@ -87,6 +87,140 @@ public sealed class ToolArgumentShapeTests
 			Arguments("""{"symbol":42}""")).ShouldBeNull();
 	}
 
+	/// <summary>
+	/// The reported case: <c>file</c> for <c>filePath</c>. The binder dropped it, the tool reported
+	/// the absence of a value the caller had supplied, and nothing in the refusal said why. Four edits
+	/// away, far more than a typo, and still plainly what was meant, because it is part of the name.
+	/// </summary>
+	[Test]
+	public void A_refusal_names_the_argument_it_never_saw_and_the_one_it_meant()
+	{
+		var message = ToolArgumentShape.Refusal(
+			"Name a type, as `Namespace.Type`, or give a file path.",
+			binderRefused: false,
+			"rose_outline",
+			Outline,
+			Arguments("""{"file":"src/A.cs"}"""));
+
+		message.ShouldBe(
+			"Name a type, as `Namespace.Type`, or give a file path. "
+				+ "`file` is not an argument of `rose_outline`. Did you mean `filePath`?");
+	}
+
+	/// <summary>
+	/// The expensive half: a call that ran without its argument. The notice has the same suggestion
+	/// the refusal would, because it comes from the same reading of the same schema.
+	/// </summary>
+	[Test]
+	public void A_call_that_ran_is_told_what_it_ignored()
+	{
+		var notices = ToolArgumentShape.Ignored(
+			"rose_find_references",
+			Schema("""{"symbol":{"type":["string","null"]},"filePath":{"type":["string","null"]},"project":{"type":["string","null"]}}"""),
+			Arguments("""{"symbol":"X","path":"src/A.cs"}"""));
+
+		notices.ShouldBe([
+			"Ignored an argument called `path`; `rose_find_references` has no such argument. Did you mean `filePath`?",
+		]);
+	}
+
+	/// <summary>
+	/// Nearest wins where two declared names are close, so <c>path</c> means the file rather than the
+	/// project file; equally near names are all offered rather than one picked between them.
+	/// </summary>
+	[Test]
+	public void The_nearest_declared_name_is_offered_and_ties_are_all_offered()
+	{
+		var schema = Schema("""{"filePath":{"type":"string"},"projectPath":{"type":"string"},"line":{"type":"integer"},"lines":{"type":"integer"}}""");
+
+		var undeclared = ToolArgumentShape.Undeclared(schema, Arguments("""{"path":"a","lien":1,"FilePath":"b"}"""));
+
+		undeclared.Select(argument => argument.Name).ShouldBe(["path", "lien", "FilePath"]);
+		undeclared[0].Closest.ShouldBe(["filePath"]);
+		undeclared[1].Closest.ShouldBe(["line"]);
+		undeclared[2].Closest.ShouldBe(["filePath"]);
+	}
+
+	/// <summary>
+	/// A typo is close by edits alone: a swapped pair of letters counts once, as a hand makes it.
+	/// </summary>
+	[Test]
+	public void A_typo_is_offered_its_spelling()
+	{
+		var undeclared = ToolArgumentShape.Undeclared(Outline, Arguments("""{"symbl":"A","fliePath":"b","includeInheritd":true}"""));
+
+		undeclared.Select(argument => argument.Closest.Single()).ShouldBe(["symbol", "filePath", "includeInherited"]);
+	}
+
+	/// <summary>
+	/// A name close to nothing is not matched to something anyway. The caller is given the list of
+	/// names the tool does take instead, since one that guessed wrong once will guess again without it.
+	/// </summary>
+	[Test]
+	public void Nothing_close_offers_every_name_the_tool_takes()
+	{
+		var undeclared = ToolArgumentShape.Undeclared(Outline, Arguments("""{"type":"A.B"}"""));
+		undeclared.Single().Closest.ShouldBeEmpty();
+
+		ToolArgumentShape.NotArguments("rose_outline", Outline, Arguments("""{"type":"A.B"}"""))
+			.ShouldBe(
+				"`type` is not an argument of `rose_outline`. It takes `symbol`, `filePath`, "
+					+ "`includeInherited` and `workspace`.");
+	}
+
+	/// <summary>A tool that declares no arguments says so rather than listing nothing.</summary>
+	[Test]
+	public void A_tool_with_no_arguments_says_it_takes_none()
+	{
+		ToolArgumentShape.Ignored("rose_debug_list", Schema("{}"), Arguments("""{"workspace":"A.slnx"}"""))
+			.ShouldBe(["Ignored an argument called `workspace`; `rose_debug_list` has no such argument. `rose_debug_list` takes no arguments."]);
+	}
+
+	/// <summary>
+	/// Nothing is said where every argument is declared, where there are no arguments, or where the
+	/// schema has no properties this can read -- a schema this cannot read is no evidence that a name
+	/// is wrong, and the refusal keeps its own words.
+	/// </summary>
+	[Test]
+	public void Says_nothing_where_every_name_is_declared_or_the_schema_cannot_say()
+	{
+		ToolArgumentShape.Undeclared(Outline, Arguments("""{"symbol":"A","filePath":null}""")).ShouldBeEmpty();
+		ToolArgumentShape.Undeclared(Outline, null).ShouldBeEmpty();
+		ToolArgumentShape.Undeclared(JsonDocument.Parse("""{"type":"object"}""").RootElement, Arguments("""{"file":"a"}""")).ShouldBeEmpty();
+		ToolArgumentShape.Undeclared(JsonDocument.Parse("null").RootElement, Arguments("""{"file":"a"}""")).ShouldBeEmpty();
+
+		ToolArgumentShape.NotArguments("rose_outline", Outline, Arguments("""{"symbol":"A"}""")).ShouldBeNull();
+		ToolArgumentShape.Refusal("Nothing is called A.", false, "rose_outline", Outline, Arguments("""{"symbol":"A"}"""))
+			.ShouldBe("Nothing is called A.");
+	}
+
+	/// <summary>
+	/// The binder's own refusal is still replaced by the argument whose shape was wrong, and a
+	/// misspelled name in the same call is named after it. A refusal that does not end a sentence is
+	/// ended before the next one starts.
+	/// </summary>
+	[Test]
+	public void A_binder_refusal_names_the_shape_and_then_the_name()
+	{
+		var schema = Schema("""{"symbol":{"type":"string"},"usings":{"type":["array","null"],"items":{"type":"string"}}}""");
+
+		var message = ToolArgumentShape.Refusal(
+			"The JSON value could not be converted to System.String[]. Path: $",
+			binderRefused: true,
+			"rose_add_member",
+			schema,
+			Arguments("""{"symbol":"A","usings":"System.Text","sybmol":"B"}"""));
+
+		message.ShouldStartWith("usings takes a list of strings", Case.Sensitive);
+		message.ShouldEndWith("`sybmol` is not an argument of `rose_add_member`. Did you mean `symbol`?", Case.Sensitive);
+
+		ToolArgumentShape.Refusal("No solution was found near D:/a", false, "rose_outline", Outline, Arguments("""{"file":"a"}"""))
+			.ShouldStartWith("No solution was found near D:/a. `file`", Case.Sensitive);
+	}
+
+	private static readonly JsonElement Outline = Schema(
+		"""{"symbol":{"type":["string","null"]},"filePath":{"type":["string","null"]},"includeInherited":{"type":"boolean"},"workspace":{"type":["string","null"]}}""");
+
 	private static JsonElement Schema(string properties) =>
 		JsonDocument.Parse($$"""{"type":"object","properties":{{properties}}}""").RootElement;
 

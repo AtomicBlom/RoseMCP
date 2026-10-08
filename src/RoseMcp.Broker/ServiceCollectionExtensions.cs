@@ -169,6 +169,7 @@ public static class ServiceCollectionExtensions
 
 		return builder
 			.WithArgumentAliases(aliases)
+			.WithIgnoredArgumentNotices()
 			.WithCallOrigin()
 			.WithToolErrorMessages()
 			.WithLeanListing();

@@ -212,13 +212,11 @@ read asks metadata whenever source has nothing at the address, and says when it 
 - **Why it matters:** For a BCL or framework interface -- the case the description chose to advertise -- scoping is not an optimisation, it is the only form of the question. Truncating at 200 without it returns 200 arbitrary matches from dependencies and calls itself an answer.
 - **Suggested change:** Add `project` with the same semantics and the same refusal-on-unknown-name as `rose_find_references` (`NavigationService.cs:143`), and add `sourceOnly` (default true) so metadata implementations are excluded unless asked for. Assert in `ToolParityTests` that the two navigation tools offer the same narrowing arguments.
 
-### AGT-08 A misspelled argument is dropped in silence and the error then reports the value as missing
-- **Severity:** High
-- **Effort:** M
-- **Where:** `src/RoseMcp.Contracts/ToolArgumentShape.cs:51`; issue #249
-- **What:** `ToolArgumentShape.Mismatch` skips any argument the schema does not declare (`if (!properties.TryGetProperty(name, out var declared)) continue;`), and it only runs after the binder has refused -- which an unknown argument never causes, since it binds fine with the declared arguments at their defaults. So `rose_outline(file: "...")` answers "Name a type, as `Namespace.Type`, or give a file path", which is the one thing the caller did. #249 records it costing two round trips and a read of `BrokerAnalysisTools.cs` to learn the spelling.
-- **Why it matters:** An argument name is part of a tool's vocabulary, and this surface has several near-misses an agent will plausibly guess: `file`/`filePath`; `type`/`symbol` (the help for `symbol` on `rose_outline` literally reads "The type, as Namespace.Type"); `name`/`symbol`; and three words for imports -- `usings` on the member writers, `namespaces` on `rose_add_using`, `extraUsings` on `rose_add_file`. A wrong guess produces an error pointing at the wrong bug, and a session that has to read Rose's source to call Rose has already lost to grep.
-- **Suggested change:** #249's fix exactly. Collect the undeclared names instead of skipping them, and run the helper on any refusal naming a missing argument: *"`file` is not an argument of rose_outline -- did you mean `filePath`?"*, matched by edit distance against the declared set. Then close the near-misses: accept `type` as an alias on `rose_outline`, and make one word mean imports everywhere.
+### ~~AGT-08 A misspelled argument is dropped in silence and the error then reports the value as missing~~
+**#249.** An argument sent under a name the tool did not declare was dropped, so a refusal reported
+as missing a value the caller had sent and a call that succeeded answered a different question.
+Both now name the argument and the declared name it most likely meant; the further aliases this
+suggested were declined, because an alias teaches nobody the real name.
 
 ### AGT-09 Two conventions for an enum-like argument, and the better one is used on three tools
 - **Severity:** Medium
@@ -578,9 +576,8 @@ by how often it decides a call, not by severity.
    and it does not come back.
 2. ~~**The name the caller wrote cannot be addressed** (AGT-03, #210, #233, #239).~~ **#418.** The
    four instances named here resolve by name.
-3. **The error does not say what to do** (AGT-04, AGT-08, #121, #212, #210, #249). A leaked
-   `(Parameter 'symbol')`, a dropped argument name reported as a missing value, advice to make the
-   call that just failed. Each costs one to three round trips, and the agent's next move after two
+3. **The error does not say what to do** (AGT-04, #121, #212, #210). A leaked
+   `(Parameter 'symbol')`, advice to make the call that just failed. Each costs one to three round trips, and the agent's next move after two
    failed round trips is always the tool it already trusts.
 4. ~~**The write is not trusted** (AGT-17, #195, #197, #217).~~ **#333, #427.** A write names the
    lines it changed that it was not asked to, and `rose_format` no longer calls a file clean beyond
@@ -611,13 +608,7 @@ into "an internal error in <tool>; this is a bug, please file it" with the detai
 test over all three `ToolErrorReporting` copies (which AGT-19 would make one). #121, #198 and #212
 are all this class, and nothing today can notice the fourth.
 
-**3. An unknown argument is a caller error the tool can see.**
-*Rule today:* nothing; the binder drops it and the tool reports the value as missing.
-*Mechanism:* #249's change. `ToolArgumentShape` already enumerates the supplied names against the
-schema and already skips the undeclared ones at `ToolArgumentShape.cs:51`; collect them instead, and
-run the helper on any refusal that names a missing argument, not only on a binder refusal. The
-schema is to hand at all three boundaries. This is the smallest change on this list with the largest
-effect on a first-time caller.
+**3. ~~An unknown argument is a caller error the tool can see.~~** **#249.**
 
 **4. A fixed set of values is a type, not a string.**
 *Rule today:* remember to route the string through `ArgumentValues` rather than a `switch` with a

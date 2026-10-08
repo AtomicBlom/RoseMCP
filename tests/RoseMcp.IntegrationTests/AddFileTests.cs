@@ -561,6 +561,65 @@ public sealed class AddFileTests
 	}
 
 	/// <summary>
+	/// Several requested imports into code shorter than they are, which is the ordinary new record.
+	/// Each one written grows the file the next is placed into, and the scope of each is still asked
+	/// of the file as it was added.
+	/// </summary>
+	[Test]
+	public async Task Writes_several_requested_usings_into_a_one_line_record()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Point.cs");
+
+		var result = await AddAsync(
+			session,
+			path,
+			"public sealed record Point(int X, int Y);",
+			usings: ["System.Text.Json", "System.Text.Json.Serialization", "System.Collections.Immutable"]);
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith(
+			"using System.Collections.Immutable;\r\nusing System.Text.Json;\r\nusing System.Text.Json.Serialization;\r\n\r\nnamespace Library;\r\n",
+			Case.Sensitive,
+			text);
+	}
+
+	/// <summary>
+	/// Code that keeps its imports inside a namespace block has the requested ones placed there with
+	/// them. Placed at file level, one the block already has is written a second time, which is IDE0005,
+	/// and any other lands apart from the imports it belongs with.
+	/// </summary>
+	[Test]
+	public async Task Places_requested_usings_inside_the_namespace_block_that_keeps_the_code_s_own()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Blocked.cs");
+
+		var result = await AddAsync(
+			session,
+			path,
+			"namespace Library\r\n{\r\n\tusing System.Text;\r\n\r\n\tpublic static class Blocked\r\n\t{\r\n\t\tpublic static Encoding Utf8 => Encoding.UTF8;\r\n\t}\r\n}\r\n",
+			usings: ["System.Text", "System.Globalization"]);
+
+		result.Applied.ShouldBeTrue();
+		result.Notices.ShouldContain("Did not import System.Text: already imported here.");
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith(
+			"namespace Library\r\n{\r\n\tusing System.Globalization;\r\n\tusing System.Text;\r\n\r\n\tpublic static class Blocked\r\n",
+			Case.Sensitive,
+			text);
+	}
+
+	/// <summary>
 	/// A project that lists its files is worked on in one order: name the file in the project, then create
 	/// it. The project then loads a document for the name with nothing on disk behind it, and refusing that
 	/// as a file already in the solution leaves no tool that can create it. It is written into that

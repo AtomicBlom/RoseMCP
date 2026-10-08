@@ -692,12 +692,29 @@ public static class MemberEditService
 		// trivia, in which case it is already separated and adding another gives two.
 		var followerIsSeparated = index >= type.Members.Count || StartsBlank(type.Members[index]);
 
+		// Fields written one under another with no blank line between them are a block, and a field
+		// added into one joins it: no blank line above where the field it follows is packed against a
+		// neighbour, and none below where the next field is packed against it. Spacing the new field
+		// out instead opens a gap either side of it in the middle of the block, which the overreach
+		// sentence cannot see because the lines it adds are the insertion's own.
+		var anchor = index > 0 ? type.Members[index - 1] : null;
+		var follower = index < type.Members.Count ? type.Members[index] : null;
+		var anchorIsPacked = (index > 1 && !StartsBlank(anchor!)) || (follower is not null && !followerIsSeparated);
+
+		var joinsAbove = anchor is BaseFieldDeclarationSyntax
+			&& parsed[0] is BaseFieldDeclarationSyntax
+			&& anchorIsPacked;
+
+		var joinsBelow = follower is BaseFieldDeclarationSyntax
+			&& parsed[^1] is BaseFieldDeclarationSyntax
+			&& !followerIsSeparated;
+
 		for (var position = 0; position < parsed.Count; position++)
 		{
 			prepared.Add(MemberSyntax.Prepared(
 				parsed[position],
-				blankBefore: position > 0 || index > 0,
-				blankAfter: position == parsed.Count - 1 && !followerIsSeparated,
+				blankBefore: position > 0 || (index > 0 && !joinsAbove),
+				blankAfter: position == parsed.Count - 1 && !followerIsSeparated && !joinsBelow,
 				lineEnding,
 				IndentFor(type, text, rules),
 				marker));
@@ -734,29 +751,32 @@ public static class MemberEditService
 		var options = await Whitespace.FormattingOptionsAsync(document, written.Rules, cancellationToken);
 		var formatted = await Formatter.FormatAsync(document, written.Marker, options, cancellationToken);
 
-		var root = await formatted.GetSyntaxRootAsync(cancellationToken);
-		var tree = await formatted.GetSyntaxTreeAsync(cancellationToken);
-		var text = await formatted.GetTextAsync(cancellationToken);
+		// And only the written lines keep what it did. Asked to format a node, the formatter rewrites the
+		// whitespace out to the tokens either side of it as well: the trailing spaces after the member
+		// above, a blank line holding a tab, the indentation of the member below. None of that was
+		// written, so the file's own text goes back everywhere outside the lines that were, which is
+		// what keeps those lines out of the overreach sentence rather than named in it.
+		var before = await document.GetTextAsync(cancellationToken);
+		var after = await formatted.GetTextAsync(cancellationToken);
+		var (wrote, _) = WrittenLines(await RootOf(document, cancellationToken), before, written.Marker);
+		var (laidOut, first) = WrittenLines(await RootOf(formatted, cancellationToken), after, written.Marker);
 
-		if (root is null || tree is null)
-		{
-			throw new InvalidOperationException($"{Path.GetFileName(written.Document.FilePath)} is not a C# source file.");
-		}
+		var kept = SourceText.From(
+			string.Concat(
+				before.ToString(TextSpan.FromBounds(0, wrote.Start)),
+				after.ToString(laidOut),
+				before.ToString(TextSpan.FromBounds(wrote.End, before.Length))),
+			after.Encoding,
+			after.ChecksumAlgorithm);
 
-		var nodes = root.GetAnnotatedNodes(written.Marker).ToArray();
-
-		if (nodes.Length == 0)
-		{
-			throw new InvalidOperationException("The written members could not be found again after formatting.");
-		}
-
-		var span = TextSpan.FromBounds(
-			nodes.Min(node => node.FullSpan.Start),
-			nodes.Max(node => node.FullSpan.End));
+		var spliced = formatted.WithText(kept);
+		var root = await RootOf(spliced, cancellationToken);
+		var text = await spliced.GetTextAsync(cancellationToken);
+		var span = new TextSpan(wrote.Start, laidOut.Length);
 
 		// Read before the whitespace pass, which can move every offset in the file by rewriting
 		// line endings but cannot move a line: a line is a line either way.
-		var line = text.Lines.GetLineFromPosition(nodes.Min(node => node.SpanStart)).LineNumber + 1;
+		var line = text.Lines.GetLineFromPosition(wrote.Start + (first - laidOut.Start)).LineNumber + 1;
 
 		var rules = written.Rules;
 		var final = Whitespace.Apply(root, text, rules, [span]);
@@ -764,7 +784,7 @@ public static class MemberEditService
 		// Every project holding this file gets the same text. A linked document left on the old text
 		// would answer the next question from a file that no longer exists, which is the staleness
 		// this server exists to prevent.
-		var solution = formatted.Project.Solution;
+		var solution = spliced.Project.Solution;
 
 		foreach (var id in solution.GetDocumentIdsWithFilePath(written.Document.FilePath!))
 		{
@@ -772,6 +792,35 @@ public static class MemberEditService
 		}
 
 		return new Finished(solution, line, [.. LiteralEndingNotices(root, span, text, rules)]);
+	}
+
+	/// <summary>
+	/// The lines a write wrote, and where its first declaration's own text begins: from the start of the
+	/// line the first marked node's content begins on, to the end of the last.
+	/// <para>
+	/// The blank lines at the top of a node's leading trivia are left out. On a replaced member they are
+	/// the file's own, carried across untouched, and a blank line holding a tab is exactly what the
+	/// formatter tidies; on an added member they are the separation this wrote, which is already right.
+	/// </para>
+	/// </summary>
+	/// <exception cref="InvalidOperationException">Nothing carries the marker any more.</exception>
+	private static (TextSpan Lines, int First) WrittenLines(SyntaxNode root, SourceText text, SyntaxAnnotation marker)
+	{
+		var nodes = root.GetAnnotatedNodes(marker).OrderBy(node => node.FullSpan.Start).ToArray();
+
+		if (nodes.Length == 0)
+		{
+			throw new InvalidOperationException("The written members could not be found again after formatting.");
+		}
+
+		var content = nodes[0].GetLeadingTrivia()
+			.Where(trivia => !trivia.IsKind(SyntaxKind.WhitespaceTrivia) && !trivia.IsKind(SyntaxKind.EndOfLineTrivia))
+			.Select(trivia => (int?)trivia.SpanStart)
+			.FirstOrDefault() ?? nodes[0].SpanStart;
+
+		var start = text.Lines.GetLineFromPosition(content).Start;
+
+		return (TextSpan.FromBounds(start, nodes.Max(node => node.FullSpan.End)), nodes.Min(node => node.SpanStart));
 	}
 
 	/// <summary>
@@ -1087,10 +1136,14 @@ public static class MemberEditService
 
 	/// <summary>
 	/// Whether a member already has a blank line above it, which it will have when whoever wrote the
-	/// file put one there: the break belongs to the member below rather than the one above.
+	/// file put one there: the break belongs to the member below rather than the one above. A blank line
+	/// holding nothing but whitespace is a blank line too, and reading it as none gives the member a second.
 	/// </summary>
 	internal static bool StartsBlank(MemberDeclarationSyntax member) =>
-		member.GetLeadingTrivia() is [var first, ..] && first.IsKind(SyntaxKind.EndOfLineTrivia);
+		member.GetLeadingTrivia()
+			.SkipWhile(trivia => trivia.IsKind(SyntaxKind.WhitespaceTrivia))
+			.FirstOrDefault()
+			.IsKind(SyntaxKind.EndOfLineTrivia);
 
 	/// <summary>
 	/// What a declaration is called, which for a field is every variable it declares. Used both to

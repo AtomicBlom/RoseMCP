@@ -276,6 +276,74 @@ public sealed class MemberEditFormattingTests
 	}
 
 	/// <summary>
+	/// The lines beside a write are the file's, however untidy: trailing spaces after the member above, a
+	/// blank line holding a tab, a neighbour indented with spaces. Formatting what was written reached
+	/// into the whitespace either side of it and tidied all three, which the overreach sentence then had
+	/// to name -- a write that changes lines it was not asked about, reported or not, is a diff nobody
+	/// can review as the change they made.
+	/// </summary>
+	[Test]
+	[Arguments("add")]
+	[Arguments("body")]
+	[Arguments("find")]
+	public async Task Leaves_the_untidy_lines_beside_a_write_alone(string kind)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		var original =
+			"namespace Library;\r\n\r\npublic sealed class Untidy\r\n{\r\n"
+				+ "\tpublic int First => 1;  \r\n"
+				+ "\t\r\n"
+				+ "\t/// <summary>Counts. </summary>\r\n"
+				+ "\tpublic int Count()\r\n\t{\r\n\t\tvar total = 1;\r\n\t\t\r\n\t\treturn total;\r\n\t}\r\n"
+				+ "\t\r\n"
+				+ "    public int Second { get; set; }\r\n"
+				+ "}\r\n";
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Untidy.cs"), original, TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var request = kind switch
+		{
+			"add" => new MemberEditRequest
+			{
+				Kind = MemberEditKind.Add,
+				Symbol = "Library.Untidy",
+				Code = "public int Added => 2;",
+				After = "First",
+			},
+			"body" => new MemberEditRequest
+			{
+				Kind = MemberEditKind.ReplaceBody,
+				Symbol = "Library.Untidy.Count",
+				Code = "var total = 2;\n\nreturn total;",
+			},
+			_ => new MemberEditRequest
+			{
+				Kind = MemberEditKind.ReplaceBody,
+				Symbol = "Library.Untidy.Count",
+				Find = "return total;",
+				Replace = "return total + 1;",
+			},
+		};
+
+		var result = await EditAsync(session, request);
+
+		result.Applied.ShouldBeTrue();
+		result.Notices
+			.Where(notice => notice.Contains("Nothing this was asked to do reaches them", StringComparison.Ordinal))
+			.ShouldBeEmpty();
+
+		var text = await ReadAsync(fixture, "Untidy.cs");
+
+		text.ShouldContain("\tpublic int First => 1;  \r\n", Case.Sensitive);
+		text.ShouldContain("\t/// <summary>Counts. </summary>\r\n", Case.Sensitive);
+		text.ShouldContain("\r\n\t\r\n    public int Second { get; set; }\r\n", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// An expression-bodied member added rather than edited, with its body on a line of its own.
 	/// </summary>
 	[Test]
@@ -423,11 +491,12 @@ public sealed class MemberEditFormattingTests
 		text.ShouldContain("return text.ToUpperInvariant();\n", Case.Sensitive);
 		text.ShouldEndWith("}\n", Case.Sensitive);
 
-		// Most of the file is untouched: only the written member and the lines it adjoins were
-		// rewritten, which is what keeps a one-member change reviewable.
+		// The rest of the file is untouched, the blank line above the member included: only the
+		// member's own five lines -- its comment, signature, braces and statement -- were rewritten,
+		// which is what keeps a one-member change reviewable.
 		var normalised = text.Split("\r\n").Length - 1;
 
-		normalised.ShouldBeInRange(6, 10);
+		normalised.ShouldBe(5);
 	}
 
 	/// <summary>

@@ -37,6 +37,12 @@ public sealed record ParameterPlan
 		Removed.Count == 0
 			&& Parameters.All(parameter => parameter.WasAt is null ? parameter.HasDefault : parameter.KeptItsPlace);
 
+	/// <summary>
+	/// No change to the parameters, for a change of accessibility alone. It has nothing added, removed
+	/// or retyped, and nothing reads it for a call site, since none are gathered when it is in use.
+	/// </summary>
+	public static ParameterPlan None { get; } = new() { Parameters = [], Removed = [], Retyped = [] };
+
 	public static ParameterPlan For(
 		SeparatedSyntaxList<ParameterSyntax> existing,
 		SeparatedSyntaxList<ParameterSyntax> wanted)

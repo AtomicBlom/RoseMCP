@@ -47,37 +47,57 @@ public static class ChangeSignatureService
 		var target = await DeclarationLocator.FindSymbolAsync(
 			snapshot.Solution, request.Symbol, request.FilePath, cancellationToken);
 
-		if (target.Symbol is not IMethodSymbol method || ParameterLists.Of(target.Declaration) is not { } parameters)
+		var accessibility = request.Accessibility is { } written ? AccessibilityModifiers.Parse(written) : (Accessibility?)null;
+
+		if (request.Parameters is null && accessibility is null)
 		{
 			throw new ArgumentException(
-				$"{target.Signature} has no parameter list to change. This changes a method, a constructor or an "
-					+ "operator; rose_replace_member writes any other declaration whole.");
+				"Nothing to change. Pass parameters for the parameter list, accessibility for who may see it, or both.");
 		}
 
-		var primary = target.Declaration;
-		var text = await target.Document.GetTextAsync(cancellationToken);
-		var indent = Whitespace.IndentAt(text, primary.SpanStart);
+		var plan = ParameterPlan.None;
+		var wanted = default(SeparatedSyntaxList<ParameterSyntax>);
+		IReadOnlyList<IMethodSymbol> group = [];
 
-		var wanted = MemberSyntax.ParseParameters(
-			request.Parameters,
-			target.Document.Project.ParseOptions,
-			indent,
-			(await Whitespace.RulesForAsync(target.Document, cancellationToken)).IndentUnit);
-		var plan = ParameterPlan.For(parameters.Parameters, wanted);
+		if (request.Parameters is { } requested)
+		{
+			if (target.Symbol is not IMethodSymbol method || ParameterLists.Of(target.Declaration) is not { } parameters)
+			{
+				throw new ArgumentException(
+					$"{target.Signature} has no parameter list to change. Parameters belong to a method, a constructor "
+						+ "or an operator; accessibility on its own changes anything else, and rose_replace_member "
+						+ "writes any other declaration whole.");
+			}
 
-		if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);
+			var text = await target.Document.GetTextAsync(cancellationToken);
+			var indent = Whitespace.IndentAt(text, target.Declaration.SpanStart);
+
+			wanted = MemberSyntax.ParseParameters(
+				requested,
+				target.Document.Project.ParseOptions,
+				indent,
+				(await Whitespace.RulesForAsync(target.Document, cancellationToken)).IndentUnit);
+			plan = ParameterPlan.For(parameters.Parameters, wanted);
+
+			if (plan.WhyImpossible() is { } refusal) throw new ArgumentException(refusal);
+
+			progress?.Report("Finding the declarations that move with it", 10);
+
+			group = await GroupAsync(snapshot.Solution, method, cancellationToken);
+
+			if (Clash(group, plan, cancellationToken) is { } clash) throw new ArgumentException(clash);
+		}
 
 		var supplied = Supplied(request.Arguments);
 
-		progress?.Report("Finding the declarations that move with it", 10);
+		var access = accessibility is { } wantedAccess
+			? await AccessGroupAsync(snapshot.Solution, target, wantedAccess, cancellationToken)
+			: [];
 
-		var group = await GroupAsync(snapshot.Solution, method, cancellationToken);
+		progress?.Report(request.Parameters is null ? "Finding the declarations" : "Finding the call sites", 25);
 
-		if (Clash(group, plan, cancellationToken) is { } clash) throw new ArgumentException(clash);
-
-		progress?.Report("Finding the call sites", 25);
-
-		var work = await GatherAsync(snapshot.Solution, group, method, plan, wanted, notices, cancellationToken);
+		var work = await GatherAsync(
+			snapshot.Solution, group, access, target.Symbol, plan, wanted, notices, cancellationToken);
 
 		// After the call sites and before anything is written, so a refusal still costs nothing and
 		// can be true of the sites it names. Asked of the plan alone it fired on a member nothing
@@ -103,13 +123,14 @@ public static class ChangeSignatureService
 
 		var unchanged = await DescribeUnchangedAsync(snapshot.Solution, work, applied, plan, cancellationToken);
 
-		notices.AddRange(Notices(request, plan, applied, edit.Verification, edit.Outcome, unchanged));
+		notices.AddRange(Notices(request, plan, applied, edit.Verification, edit.Outcome, unchanged, target.Symbol, access));
 
 		var result = new SignatureChangeResult
 		{
 			Revision = snapshot.Revision,
 			Symbol = target.Signature,
-			Parameters = request.Parameters.Trim(),
+			Parameters = request.Parameters?.Trim(),
+			Accessibility = accessibility is { } given ? AccessibilityModifiers.Spelled(given) : null,
 			Applied = edit.Applied,
 			Diff = edit.Outcome.Diff,
 			UpdatedDeclarations = await DescribeAsync(snapshot.Solution, work.SelectMany(w => w.DeclarationSites), cancellationToken),
@@ -294,11 +315,91 @@ public static class ChangeSignatureService
 		}
 	}
 
-	/// <summary>Which nodes in which documents have to change, worked out before anything is written.</summary>
+	/// <summary>
+	/// The declarations whose accessibility has to change together, each with the accessibility it gets:
+	/// the member, what it overrides all the way up, and everything overriding any of those.
+	/// <para>
+	/// Narrower than <see cref="GroupAsync"/>, which also follows interfaces. An override has to keep
+	/// the accessibility of what it overrides, or it is CS0507, so the chain moves as one. An interface
+	/// member and its implementations do not: an implementation is public or it is not one, so a
+	/// change that would make it anything else is refused rather than written.
+	/// </para>
+	/// <para>
+	/// One override can differ. A <c>protected internal</c> member overridden from another assembly is
+	/// overridden as <c>protected</c>, because the internal half does not reach across, and writing it as
+	/// declared is CS0507 again.
+	/// </para>
+	/// </summary>
+	private static async Task<IReadOnlyList<AccessChange>> AccessGroupAsync(
+		Solution solution,
+		DeclarationTarget target,
+		Accessibility wanted,
+		CancellationToken cancellationToken)
+	{
+		if (AccessibilityModifiers.WhyRefused(target.Symbol, target.Declaration, wanted) is { } refusal)
+		{
+			throw new ArgumentException(refusal);
+		}
+
+		var root = target.Symbol;
+		while (AccessibilityModifiers.Overridden(root) is { } above) root = above;
+
+		var chain = new List<ISymbol>();
+		var seen = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+		var pending = new Queue<ISymbol>([root]);
+
+		while (pending.TryDequeue(out var next))
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			if (!seen.Add(next)) continue;
+
+			chain.Add(next);
+
+			var overridable = next.IsVirtual || next.IsAbstract || next.IsOverride;
+			if (!overridable) continue;
+
+			foreach (var over in await SymbolFinder.FindOverridesAsync(next, solution, cancellationToken: cancellationToken))
+			{
+				pending.Enqueue(over);
+			}
+		}
+
+		if (wanted != Accessibility.Public)
+		{
+			foreach (var member in chain)
+			{
+				if (AccessibilityModifiers.ImplicitlyImplemented(member) is not { } implemented) continue;
+
+				throw new ArgumentException(
+					$"{SymbolSignature.Of(member)} implements {SymbolSignature.Of(implemented)}, and does that only while it is "
+						+ "public: anything narrower stops it implementing the interface, which is CS0737. Implement the "
+						+ "interface member explicitly to keep it off the type's own surface instead.");
+			}
+		}
+
+		return
+		[
+			.. chain.Select(member =>
+			{
+				var acrossAssemblies = wanted == Accessibility.ProtectedOrInternal
+					&& !SymbolEqualityComparer.Default.Equals(member.ContainingAssembly, root.ContainingAssembly);
+
+				return new AccessChange(member, acrossAssemblies ? Accessibility.Protected : wanted);
+			}),
+		];
+	}
+
+	/// <summary>
+	/// Which nodes in which documents have to change, worked out before anything is written. The call
+	/// sites are looked for only when the parameters change: accessibility changes no argument, and what
+	/// it does to a use is something only the compile afterwards can say.
+	/// </summary>
 	private static async Task<IReadOnlyList<DocumentWork>> GatherAsync(
 		Solution solution,
 		IReadOnlyList<IMethodSymbol> group,
-		IMethodSymbol primarySymbol,
+		IReadOnlyList<AccessChange> access,
+		ISymbol primarySymbol,
 		ParameterPlan plan,
 		SeparatedSyntaxList<ParameterSyntax> wanted,
 		List<string> notices,
@@ -313,7 +414,11 @@ public static class ChangeSignatureService
 			return found;
 		}
 
-		foreach (var symbol in group)
+		var parameterGroup = group.ToHashSet<ISymbol>(SymbolEqualityComparer.Default);
+		var accessFor = access.ToDictionary(change => change.Symbol, change => change.Accessibility, SymbolEqualityComparer.Default);
+		var symbols = group.Concat(access.Select(change => change.Symbol)).Distinct(SymbolEqualityComparer.Default);
+
+		foreach (var symbol in symbols)
 		{
 			var primary = SymbolEqualityComparer.Default.Equals(symbol, primarySymbol);
 
@@ -321,17 +426,25 @@ public static class ChangeSignatureService
 			{
 				cancellationToken.ThrowIfCancellationRequested();
 
-				var declaration = await reference.GetSyntaxAsync(cancellationToken);
-				if (ParameterLists.Of(declaration) is null) continue;
+				if (DeclarationOf(await reference.GetSyntaxAsync(cancellationToken)) is not { } declaration) continue;
 				if (solution.GetDocument(reference.SyntaxTree) is not { } document) continue;
 
+				var reshaped = parameterGroup.Contains(symbol) && ParameterLists.Of(declaration) is not null;
+				if (!reshaped && !accessFor.ContainsKey(symbol)) continue;
+
+				var change = reshaped ? ChangeFor(declaration, plan, wanted, primary, notices) : new DeclarationChange();
 				var found = For(document);
 
-				var change = ChangeFor(declaration, plan, wanted, primary, notices);
+				if (reshaped) found.Asked.Add(ParameterLists.Of(declaration)!.Span);
+
+				if (accessFor.TryGetValue(symbol, out var accessibility))
+				{
+					change = change with { Accessibility = AccessibilityModifiers.KeywordsFor(accessibility) };
+					found.Asked.Add(AccessibilityModifiers.SpanOf(declaration));
+				}
 
 				found.Declarations[declaration.Span] = change;
 				found.DeclarationSites.Add(declaration.GetLocation());
-				found.Asked.Add(ParameterLists.Of(declaration)!.Span);
 
 				if (change.Documentation is not null) found.Asked.Add(TextSpan.FromBounds(declaration.FullSpan.Start, declaration.SpanStart));
 			}
@@ -369,6 +482,17 @@ public static class ChangeSignatureService
 
 		return [.. work.Values];
 	}
+
+	/// <summary>
+	/// The declaration a symbol's syntax belongs to. A field's own syntax is its variable declarator,
+	/// and the modifiers that say who may see it are on the field declaration around that.
+	/// </summary>
+	private static MemberDeclarationSyntax? DeclarationOf(SyntaxNode node) => node switch
+	{
+		VariableDeclaratorSyntax { Parent.Parent: BaseFieldDeclarationSyntax field } => field,
+		MemberDeclarationSyntax member => member,
+		_ => null,
+	};
 
 	/// <summary>
 	/// One declaration's new parameter list, and its documentation when that had to move too.
@@ -560,7 +684,7 @@ public static class ChangeSignatureService
 
 		if (root is null || tree is null) return solution;
 
-		var spans = root.GetAnnotatedNodes(marker).Select(node => node.FullSpan).ToArray();
+		var spans = root.GetAnnotatedNodesAndTokens(marker).Select(written => written.FullSpan).ToArray();
 		if (spans.Length == 0) return solution;
 
 		var final = Whitespace.Apply(root, text, rules, spans);
@@ -694,13 +818,38 @@ public static class ChangeSignatureService
 		Applied applied,
 		Verification verification,
 		WriteOutcome outcome,
-		IReadOnlyList<UnchangedCallSite> unchanged)
+		IReadOnlyList<UnchangedCallSite> unchanged,
+		ISymbol symbol,
+		IReadOnlyList<AccessChange> access)
 	{
 		// First, because it is the only thing here that is nobody's work but this tool's.
 		foreach (var defect in Defects(applied, verification)) yield return defect;
 
 		if (!request.Apply) yield return "Preview only; nothing was written to disk.";
 		if (outcome.ChangedFiles.Count == 0) yield return "The signature already read exactly like that.";
+
+		if (access.Count > 0 && AccessibilityModifiers.Spelled(symbol.DeclaredAccessibility) is { } was)
+		{
+			var moved = access.Count - 1;
+
+			yield return $"It was {was}."
+				+ (moved > 0
+					? $" {moved} declaration(s) it overrides or that override it moved with it, since an override has to "
+						+ "keep the accessibility of what it overrides."
+					: string.Empty);
+		}
+
+		if (request.Accessibility is { } asked)
+		{
+			var wanted = AccessibilityModifiers.Parse(asked);
+
+			foreach (var change in access.Where(change => change.Accessibility != wanted))
+			{
+				yield return $"{SymbolSignature.Of(change.Symbol)} is {AccessibilityModifiers.Spelled(change.Accessibility)} "
+					+ $"rather than {AccessibilityModifiers.Spelled(wanted)}: it overrides from another assembly, which "
+					+ "the internal half does not reach.";
+			}
+		}
 
 		// What the diff could not show, which for a change reaching several files is worth saying
 		// before anything about what compiled.
@@ -971,6 +1120,9 @@ public static class ChangeSignatureService
 	/// a shape the rewriter cannot spell has to be written by hand.
 	/// </summary>
 	private sealed record RefusedCallSite(Location Location, string Reason);
+
+	/// <summary>One declaration whose accessibility changes, and what it changes to.</summary>
+	private sealed record AccessChange(ISymbol Symbol, Accessibility Accessibility);
 
 	private sealed record Applied(
 		Solution Solution,

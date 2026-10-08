@@ -144,6 +144,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   meaning at a call site is not always recoverable from its position. And the call sites that still
   compile are reported, because a forwarder that goes on passing the old default is the bug that
   hides -- "compiles" and "correct" part company exactly there.
+- **A change of accessibility moves the override chain, and nothing else in the modifier list.** An
+  override that keeps the old accessibility is CS0507, so the base all the way up and every override
+  all the way down change with the member named. Interfaces are not part of that group: an implicit
+  implementation is only an implementation while it is public, so narrowing one is refused, not
+  written. Leaving it to the compile would report CS0737 on a type the caller never touched. Only the
+  accessibility keywords are rewritten, where they stand, because `static` and `override` belong to
+  the member and the documentation comment belongs to whichever token comes first. See
+  [the decision](../decisions/accessibility-is-part-of-a-signature-change.md).
 - **An import goes where the file would have put it, and is refused when it is already in scope.**
   Writing a member is not the whole job: the code routinely needs an import the file has not got,
   and a tool that reports that and stops has handed the caller back to the text editing it was meant

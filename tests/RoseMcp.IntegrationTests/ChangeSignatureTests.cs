@@ -630,11 +630,188 @@ public sealed class ChangeSignatureTests
 		error.Message.ShouldContain("would clash with the 'item'", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// Accessibility on its own, which is a one-word change that had no tool: replacing the member meant
+	/// re-emitting all of it to change one keyword. Only the keyword moves -- the other modifiers, the
+	/// parameters and the documentation above it are as they were -- and nothing is reported about call
+	/// sites, since a change of accessibility rewrites no argument.
+	/// </summary>
+	[Test]
+	public async Task Makes_a_private_method_internal()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Greeter.Shout", parameters: null, accessibility: "internal");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
+		result.Accessibility.ShouldBe("internal");
+		result.Parameters.ShouldBeNull();
+		result.UpdatedCallSites.ShouldBeEmpty();
+		result.UnchangedCallSites.ShouldBeEmpty();
+		result.Notices.ShouldContain(notice => notice.StartsWith("It was private.", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldContain("!\";\r\n\r\n\tinternal static string Shout(string text)\r\n\t{\r\n", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A property and a field reach it the same way, since accessibility is not a method's alone. A field's
+	/// own syntax is its variable declarator, and the keyword is on the declaration around it.
+	/// </summary>
+	[Test]
+	[Arguments("Library.Greeter.Count", "\tinternal int Count { get; set; }\r\n")]
+	[Arguments("Library.Greeter._prefix", "\tinternal readonly string _prefix = \"Hello\";\r\n")]
+	public async Task Changes_the_accessibility_of_a_property_or_a_field(string symbol, string expected)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, symbol, parameters: null, accessibility: "internal");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldContain(expected, Case.Sensitive);
+	}
+
+	/// <summary>
+	/// An override has to keep the accessibility of what it overrides, or it is CS0507 -- so the base all
+	/// the way up and every override all the way down move with the one named, which is the same promise
+	/// the parameters make and for the same reason.
+	/// </summary>
+	[Test]
+	public async Task Moves_the_overrides_with_the_accessibility()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Shapes.cs"),
+			"""
+			namespace Library;
+
+			public class Shape
+			{
+				protected virtual double Area() => 0;
+
+				public double Measure() => Area();
+			}
+
+			public class Square : Shape
+			{
+				protected override double Area() => 4;
+			}
+
+			public sealed class Tile : Square
+			{
+				protected override double Area() => 1;
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Square.Area", parameters: null, accessibility: "protected internal");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
+		result.UpdatedDeclarations.Count.ShouldBe(3);
+		result.Notices.ShouldContain(notice => notice.Contains("2 declaration(s) it overrides", StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Shapes.cs");
+
+		text.ShouldContain("protected internal virtual double Area() => 0;", Case.Sensitive);
+		text.ShouldContain("protected internal override double Area() => 4;", Case.Sensitive);
+		text.ShouldContain("protected internal override double Area() => 1;", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Narrowing a member breaks whatever can no longer see it, and that is a fact about other code, so it
+	/// is the compile afterwards that names it rather than a refusal: the member's own declaration is
+	/// still exactly what was asked for. Which error the compiler gives is its own business -- with an
+	/// accessible overload beside it, it complains about that overload rather than with CS0122 -- so what
+	/// is checked is that the call site is named.
+	/// </summary>
+	[Test]
+	public async Task Names_the_uses_a_narrower_member_can_no_longer_reach()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Greeter.Greet(string)", parameters: null, accessibility: "private");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldContain(
+			diagnostic => diagnostic.FilePath!.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase));
+	}
+
+	/// <summary>
+	/// A member implements an interface by matching it only while it is public, so anything narrower
+	/// quietly stops it implementing anything and the type no longer compiles -- CS0737 at a line the
+	/// caller never asked to change. Refused before the file is touched, with the explicit
+	/// implementation as the way to hide it.
+	/// </summary>
+	[Test]
+	public async Task Refuses_to_narrow_a_member_an_interface_needs_public()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Layers.cs");
+
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.LoudNotifier.Notify(string)", parameters: null, accessibility: "internal")).OfExactType();
+
+		error.Message.ShouldContain("INotifier.Notify", Case.Sensitive);
+		error.Message.ShouldContain("CS0737", Case.Sensitive);
+		(await ReadAsync(fixture, "Layers.cs")).ShouldBe(before);
+	}
+
+	/// <summary>
+	/// Both at once is one call and one compile, which is the shape a member being made part of a surface
+	/// usually takes: it gains a parameter and the visibility to be called with it.
+	/// </summary>
+	[Test]
+	public async Task Changes_the_parameters_and_the_accessibility_together()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Greeter.Shout", "string text, bool loud = true", accessibility: "internal");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldContain(
+			"\tinternal static string Shout(string text, bool loud = true)\r\n", Case.Sensitive);
+	}
+
+	/// <summary>Neither half asked for is a request for nothing, and is told so rather than written as a no-op.</summary>
+	[Test]
+	public async Task Refuses_a_call_that_changes_nothing()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Greeter.Shout", parameters: null)).OfExactType();
+
+		error.Message.ShouldContain("Nothing to change", Case.Sensitive);
+		error.Message.ShouldContain("accessibility", Case.Sensitive);
+	}
+
 	private static Task<SignatureChangeResult> ChangeAsync(
 		WorkspaceSession session,
 		string symbol,
-		string parameters,
-		string[]? arguments = null)
+		string? parameters,
+		string[]? arguments = null,
+		string? accessibility = null)
 	{
 		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
 
@@ -642,6 +819,7 @@ public sealed class ChangeSignatureTests
 		{
 			Symbol = symbol,
 			Parameters = parameters,
+			Accessibility = accessibility,
 			Arguments = arguments ?? [],
 		};
 

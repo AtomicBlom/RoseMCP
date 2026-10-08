@@ -199,7 +199,10 @@ public static class ToolDescriptions
 	public const string BeforeArgument = "Put them before this member, by name.";
 
 	public const string ParametersArgument =
-		"The parameters it should have, written as they would go between the parentheses.";
+		"The parameters it should have, written as they would go between the parentheses. Leave it off to keep them.";
+
+	public const string AccessibilityArgument =
+		"public, internal, protected, private, protected internal or private protected. Leave it off to keep it.";
 
 	public const string ArgumentsArgument =
 		"What to pass at existing call sites for a new parameter with no default, as name=expression.";
@@ -790,17 +793,16 @@ public static class ToolDescriptions
 		""";
 
 	public const string ChangeSignature = """
-		Changes a member's parameters and everything that must change with them: the declaration you
-		named, the one it overrides or implements, every override and implementation of that, the
-		arguments at every call site, and the param tags in its documentation comment. Use it rather
-		than grep and an edit per layer -- a missed forwarder compiles at some layers and not others,
-		so a build tells you about the wrong half. Give the full parameter list as it should read
-		between the parentheses; what changed is worked out from it. Existing parameters cannot be
-		reordered: an argument's meaning at a call site is not always recoverable from its position. A
-		new one needs a default or an arguments entry. Every use left alone is listed with the reason:
-		a nameof or method group, a base or this initialiser, one that does not compile, and the ones
-		that still compile because a new parameter has a default -- a forwarder passing the old default
-		is the bug that hides. Verified against the whole solution.
+		Changes a member's parameters, its accessibility, or both, and everything that must change with
+		them: the declaration you named, what it overrides or implements, every override and
+		implementation of that, the arguments at every call site, and the param tags in its documentation
+		comment. Use it rather than grep and an edit per layer -- a missed forwarder compiles at some layers
+		and not others. Give the full parameter list as it should read between the parentheses; what
+		changed is worked out from it. Existing parameters cannot be reordered, and a new one needs a
+		default or an arguments entry. Every use left alone is listed with the reason, including the ones
+		that still compile because a new parameter has a default -- a forwarder passing the old default is
+		the bug that hides. Accessibility works on any member or type: overrides move with it, and an
+		interface implementation that would stop being one is refused. Verified against the whole solution.
 		""";
 
 	public const string BuildFreshness = """

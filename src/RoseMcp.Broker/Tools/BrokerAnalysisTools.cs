@@ -138,15 +138,19 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
+		[Description(ToolDescriptions.OutlineMembersArgument)] string? members = null,
+		[Description(ToolDescriptions.MaxOutlineMembersArgument), ArgumentAlias("maxResults")] int maxMembers = 200,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
-		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
-		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
+		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = false,
+		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = false,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
 		ForwardAsync<OutlineResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.Outline, new()
 		{
 			["symbol"] = symbol,
 			["filePath"] = filePath,
+			["members"] = members,
+			["maxMembers"] = maxMembers,
 			["includeInherited"] = includeInherited,
 			["includeDocumentation"] = includeDocumentation,
 			["includeSignatures"] = includeSignatures,

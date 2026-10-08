@@ -1,5 +1,7 @@
 using System.Text.Json;
 
+using ModelContextProtocol;
+
 namespace RoseMcp.IntegrationTests;
 
 /// <summary>
@@ -19,36 +21,37 @@ namespace RoseMcp.IntegrationTests;
 /// the diff is the record of what the work bought.
 /// </para>
 /// <para>
-/// Measured over the record as the tool returns it, serialised the way a structured result is, which
-/// is within a few percent of the wire and stable enough to compare. Attribution is added by the
-/// broker, so a real result carries about 150 bytes this does not -- once per result, not per item.
+/// Measured over the record as the tool returns it, serialised with the MCP layer's own options --
+/// which leave out nulls, so a field a result does not fill costs nothing here, as it costs nothing
+/// on the wire. Attribution is added by the broker, so a real result carries about 150 bytes this
+/// does not -- once per result, not per item.
 /// </para>
 /// </summary>
 public sealed class ResultBudgetTests
 {
 	/// <summary>
-	/// One outlined member with both of the tool's size controls off, which costs 512. The tool's own
-	/// description says to use it "instead of reading the file to find out what is in it", and at
-	/// this size a grep answers the same question for a twentieth of it, because the location record
-	/// on each member carries the absolute path, the whole source line, the containing member, the
-	/// project and its test-ness. Card 11's target is under 120.
+	/// One outlined member at the tool's defaults, which costs 70: its name, kind, line and
+	/// accessibility, and nothing else. Measured over the members alone, the type they belong to taken
+	/// out, because what the type says once -- the file, the project, its declarations -- is the cost
+	/// the members no longer pay. A field that every member of a type shares, added back per member,
+	/// is what this exists to catch: the absolute path alone is longer than the rest of an entry.
 	/// </summary>
-	private const int PerOutlinedMember = 520;
+	private const int PerOutlinedMember = 75;
 
 	/// <summary>
-	/// One reference with previews off, which costs 275. Every hit repeats the absolute path and
+	/// One reference with previews off, which costs 235. Every hit repeats the absolute path and
 	/// carries four facets the tool will not filter on, which is what makes an overflow answerable
 	/// only with a bigger artefact. Card 11e is where both halves of that go.
 	/// </summary>
-	private const int PerReference = 280;
+	private const int PerReference = 240;
 
 	/// <summary>
-	/// A whole write result for adding a doc comment, which costs 1,895 -- the floor for an edit that
+	/// A whole write result for adding a doc comment, which costs 1,499 -- the floor for an edit that
 	/// introduces no diagnostic at all, where card 11b measured about 4,000 for one that did. Most of
 	/// it is the doc comment the caller composed, read back in the diff. An edit loop pays this per
 	/// edit, so it is the number tier 3 moves furthest.
 	/// </summary>
-	private const int PerWriteResult = 1950;
+	private const int PerWriteResult = 1550;
 
 	/// <summary>
 	/// The read shapes, measured against one loaded fixture because a load is the expensive part and
@@ -75,7 +78,7 @@ public sealed class ResultBudgetTests
 
 		AssertWithin(
 			PerOutlinedMember,
-			Size(outline) - Size(outline with { Types = [] }),
+			Size(outline) - Size(outline with { Types = [.. outline.Types.Select(type => type with { Members = [] })] }),
 			members,
 			"an outlined member with signatures and documentation off");
 
@@ -138,5 +141,5 @@ public sealed class ResultBudgetTests
 	}
 
 	private static int Size<T>(T result) =>
-		JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)).Length;
+		JsonSerializer.Serialize(result, McpJsonUtilities.DefaultOptions).Length;
 }

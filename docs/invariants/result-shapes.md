@@ -95,3 +95,11 @@ Read before adding a tool, adding a field to a result, or changing an error path
   emptying of the word that narrowed the MSBuild-failure count and took `targetFramework` out of the
   project name. It is still said, because what it warns about does not present as a build failure:
   it presents as a test failing for a reason that has nothing to do with the change.
+- **What every item of a list shares is said once, and a narrowing says what it left out.** An
+  outline that repeated its file, project and source line on every member cost ten times what the
+  member names did, and on a large type overran what a client accepts -- so the caller read the file,
+  which is the read the tool exists to replace. Put a field that is constant across a result's items
+  on the result, or on the thing the items belong to, and leave out a flag an item does not have.
+  The other half is the one a cap or a filter breaks: an empty or short list reads as the whole
+  answer, so whatever narrowed it carries a total and a notice. `ResultBudgetTests` holds the per-item
+  cost. See [the decision](../decisions/an-outline-is-cheap-by-default.md).

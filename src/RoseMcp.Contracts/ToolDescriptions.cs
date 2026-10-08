@@ -139,11 +139,10 @@ public static class ToolDescriptions
 	public const string IncludeInheritedArgument = "Also list what the base classes contribute. Off by default.";
 
 	public const string IncludeDocumentationArgument =
-		"Give each type and member the first line of its documentation. On by default; off is much smaller.";
+		"Add each type's and member's documentation summary. Off by default.";
 
 	public const string IncludeSignaturesArgument =
-		"Give each member its full signature. On by default; off leaves the name, kind and location, "
-			+ "which is what a search through a large type needs.";
+		"Add each member's full signature, which tells overloads apart. Off by default.";
 
 	public const string IncludeTriviaArgument =
 		"Match the body's text, not its tokens, so find can lie inside a // comment or string, or take "
@@ -250,7 +249,13 @@ public static class ToolDescriptions
 		"The type, as Namespace.Type. One of this and filePath.";
 
 	public const string OutlineFilePathArgument =
-		"The file to outline. One of this and type; also narrows a partial type to one of its files.";
+		"The file to outline. One of this and symbol.";
+
+	public const string OutlineMembersArgument =
+		"Only members whose name contains this, ignoring case.";
+
+	public const string MaxOutlineMembersArgument =
+		"Maximum members to list, across every type. Defaults to 200.";
 
 	/// <summary>
 	/// Its own rather than the outline's, which names outlining. The type argument is shared, because
@@ -841,14 +846,12 @@ public static class ToolDescriptions
 		""";
 
 	public const string Outline = """
-		What a type or a file declares: every member with its full signature, kind, accessibility,
-		whether it is abstract or static, where it is, and the first line of its documentation. Name a
-		type or give a file path -- one of the two. Use it instead of reading the file to find out what
-		is in it, which is the read that comes before most edits and the one that puts the file in front
-		of you: once it is open, the edit goes through a text tool. The signatures are the compiler's,
-		so an interface implementation can be written from this alone. Members a generator wrote are
-		marked, since there is no file to edit for those. Pass includeInherited for what the base
-		classes contribute.
+		What a type or a file declares: each member's name, kind, accessibility and line. Name a type
+		or give a file path -- one of the two. Use it instead of reading the file to find out what is
+		in it, which is the read before most edits and the one that puts the file in front of you.
+		members filters a large type by name. includeSignatures adds the compiler's signatures, enough
+		to implement an interface from; includeDocumentation adds summaries. Generated members are
+		marked, having no file to edit. includeInherited adds what base classes contribute.
 		""";
 
 	public const string FindSplitOptions = """

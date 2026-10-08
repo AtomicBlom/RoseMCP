@@ -178,9 +178,11 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
+		[Description(ToolDescriptions.OutlineMembersArgument)] string? members = null,
+		[Description(ToolDescriptions.MaxOutlineMembersArgument)] int maxMembers = OutlineService.DefaultMaxMembers,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
-		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = true,
-		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = true,
+		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = false,
+		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = false,
 		CancellationToken cancellationToken = default) =>
 		calls.ReadAsync(
 			progress,
@@ -191,7 +193,9 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 				includeInherited,
 				includeDocumentation,
 				includeSignatures,
-				cancellationToken),
+				cancellationToken,
+				members,
+				maxMembers),
 			cancellationToken);
 
 	[McpServerTool(

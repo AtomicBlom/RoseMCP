@@ -70,6 +70,14 @@ public sealed record OutlinedType
 	/// </summary>
 	public required int TotalMembers { get; init; }
 
+	/// <summary>
+	/// How many of its own members a file outline left out because they are declared in another of
+	/// the type's files -- a partial's other parts, or a code-behind's generated half -- which
+	/// <see cref="Declarations"/> names. Outlining the type by name lists them. Absent when none were.
+	/// </summary>
+	[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+	public int DeclaredElsewhere { get; init; }
+
 	/// <summary>Its members in the order they are declared, inherited ones after its own.</summary>
 	public required IReadOnlyList<OutlinedMember> Members { get; init; }
 }

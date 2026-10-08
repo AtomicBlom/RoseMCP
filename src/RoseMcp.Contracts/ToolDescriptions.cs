@@ -266,7 +266,7 @@ public static class ToolDescriptions
 		"The type, as Namespace.Type. One of this and filePath.";
 
 	public const string OutlineFilePathArgument =
-		"The file to outline. One of this and symbol.";
+		"The file to outline, only what it declares. One of this and symbol.";
 
 	public const string OutlineMembersArgument =
 		"Only members whose name contains this, ignoring case.";

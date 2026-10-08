@@ -42,3 +42,14 @@ obsolete, and whether as a warning or an error, since in a build that treats war
 decide whether the call can be written. `ResultBudgetTests.PerMetadataMember` holds what that costs.
 Inherited members are left out, as the outline leaves them out by default; a base type is a
 `rose_symbol_info` call of its own.
+
+**Why a file outline lists only what the file declares.** A file is asked about as a file, and the
+type it declares is often bigger than it: a XAML code-behind's type is mostly its generated half --
+every named element, `InitializeComponent`, the connection plumbing -- none of which is in the file or
+can be edited, and listing it made a code-behind's outline cost more than reading the file. So a
+member is listed only where some part of it is written in that file, and each type says in
+`declaredElsewhere`, and a notice, how many of its own members were left out for being declared in
+its other files, which `declarations` names. The type outlined by name lists them all, a partial
+declared in several hand-written files included: a read has no reason to make the caller choose one
+of the files, as a write must. Members inherited through `includeInherited` are listed whatever the
+file, since they belong to no file of the type and asking for them was explicit.

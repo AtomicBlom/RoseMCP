@@ -381,6 +381,41 @@ public sealed class OutlineTests
 
 		var result = await OutlineService.OutlineAsync(
 			snapshot,
+			"Library.Split",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Declarations.Count.ShouldBe(2);
+		type.DeclaredElsewhere.ShouldBe(0);
+
+		var home = Path.GetFileName(type.FilePath);
+		var away = home == "Split.cs" ? "SplitAgain.cs" : "Split.cs";
+		var listed = type.Members.ToDictionary(member => member.Name);
+
+		listed.Keys.ShouldBe(["First", "Second"], ignoreOrder: true);
+		listed.Values.Where(member => member.FilePath is null).ShouldHaveSingleItem();
+		listed.Values.Where(member => member.FilePath is not null).ShouldHaveSingleItem().FilePath.ShouldEndWith(away);
+	}
+
+	/// <summary>
+	/// A file outline lists what the file declares. A partial's other files are named among its
+	/// declarations and their members counted, so the short list does not read as the whole type, and
+	/// the notice says how to ask for all of it.
+	/// </summary>
+	[Test]
+	public async Task Lists_only_what_a_file_declares_and_counts_the_rest_of_a_partial()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
 			type: null,
 			fixture.Path("Members", "Library", "Split.cs"),
 			includeInherited: false,
@@ -390,15 +425,49 @@ public sealed class OutlineTests
 
 		var type = result.Types.ShouldHaveSingleItem();
 
-		Path.GetFileName(type.FilePath).ShouldBe("Split.cs");
+		type.Members.ShouldHaveSingleItem().Name.ShouldBe("First");
+		type.TotalMembers.ShouldBe(1);
+		type.DeclaredElsewhere.ShouldBe(1);
 		type.Declarations.Count.ShouldBe(2);
+		result.Notices.ShouldContain(notice => notice.Contains("1 member of Library.Split declared in its other files is not listed"));
+	}
 
-		var first = type.Members.Where(member => member.Name == "First").ShouldHaveSingleItem();
-		var second = type.Members.Where(member => member.Name == "Second").ShouldHaveSingleItem();
+	/// <summary>
+	/// The case that makes it matter: a XAML code-behind's type is mostly its generated half, whose
+	/// members are none of what a caller outlining the code-behind is about to edit.
+	/// </summary>
+	[Test]
+	public async Task Leaves_a_code_behinds_generated_half_out_of_its_file_outline()
+	{
+		using var fixture = FixtureSolution.Copy("XamlStub", "XamlStub.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
 
-		first.FilePath.ShouldBeNull();
-		Path.GetFileName(second.FilePath).ShouldBe("SplitAgain.cs");
-		second.Line.ShouldBe(5);
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			type: null,
+			fixture.Path("XamlStub", "Ui", "Widget.xaml.cs"),
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		var type = result.Types.ShouldHaveSingleItem();
+
+		type.Members.Select(member => member.Name).ShouldBe([".ctor", "Caption"], ignoreOrder: true);
+		type.Members.ShouldAllBe(member => member.FilePath == null && !member.IsGenerated);
+		type.DeclaredElsewhere.ShouldBeGreaterThan(0, "the generated half declares InitializeComponent and the named element");
+
+		var whole = await OutlineService.OutlineAsync(
+			snapshot,
+			"Ui.Widget",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: false,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		whole.Types.ShouldHaveSingleItem().Members.ShouldContain(member => member.Name == "InitializeComponent");
 	}
 
 	/// <summary>

@@ -64,10 +64,18 @@ public static class OutlineService
 		var detail = new OutlineDetail(includeDocumentation, includeSignatures, includeInherited, filter);
 
 		var types = named
-			? [await OfTypeAsync(snapshot, type!, filePath, detail, listing, cancellationToken)]
+			? [await OfTypeAsync(snapshot, type!, detail, listing, cancellationToken)]
 			: await OfFileAsync(snapshot, filePath!, detail, listing, cancellationToken);
 
 		if (types.Count == 0) notices.Add("The file declares no types.");
+
+		foreach (var split in types.Where(outlined => outlined.DeclaredElsewhere > 0))
+		{
+			var verb = split.DeclaredElsewhere == 1 ? "is" : "are";
+
+			notices.Add($"{Plural(split.DeclaredElsewhere, "member")} of {split.Name} declared in its other files "
+				+ $"{verb} not listed. Outline it by symbol for all of them.");
+		}
 
 		var found = types.Sum(outlined => outlined.TotalMembers);
 		if (types.Count > 0) notices.AddRange(listing.Notices(filter, found));
@@ -203,12 +211,11 @@ public static class OutlineService
 	private static async Task<OutlinedType> OfTypeAsync(
 		WorkspaceSnapshot snapshot,
 		string type,
-		string? filePath,
 		OutlineDetail detail,
 		Listing listing,
 		CancellationToken cancellationToken)
 	{
-		var target = await DeclarationLocator.FindTypeAsync(snapshot.Solution, type, filePath, cancellationToken);
+		var target = await DeclarationLocator.FindTypeToReadAsync(snapshot.Solution, type, cancellationToken);
 
 		return await DescribeAsync(snapshot, target.Symbol, target.Declaration.SyntaxTree, detail, listing, cancellationToken);
 	}
@@ -245,7 +252,7 @@ public static class OutlineService
 			// spend the member cap on it twice and count its members twice in the totals.
 			if (!seen.Add(symbol)) continue;
 
-			described.Add(await DescribeAsync(snapshot, symbol, root.SyntaxTree, detail, listing, cancellationToken));
+			described.Add(await DescribeAsync(snapshot, symbol, root.SyntaxTree, detail, listing, cancellationToken, onlyHome: true));
 		}
 
 		return described;
@@ -254,6 +261,12 @@ public static class OutlineService
 	/// <summary>
 	/// One type. <paramref name="home"/> is the file its members are reported against: a member
 	/// declared there gives only its line, and one declared anywhere else names its file too.
+	/// <para>
+	/// Where the caller gave a file, <paramref name="onlyHome"/> lists only the type's own members
+	/// declared in it, and counts the rest. A file outline is asked about a file: a XAML code-behind's
+	/// generated half is most of its type's members and none of what the caller is about to edit, and a
+	/// partial's other files are named in the declarations, where an outline by name lists them all.
+	/// </para>
 	/// </summary>
 	private static async Task<OutlinedType> DescribeAsync(
 		WorkspaceSnapshot snapshot,
@@ -261,9 +274,18 @@ public static class OutlineService
 		SyntaxTree home,
 		OutlineDetail detail,
 		Listing listing,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		bool onlyHome = false)
 	{
-		var all = Members(symbol, detail.Inherited).ToList();
+		var every = Members(symbol, detail.Inherited).ToList();
+
+		// Inherited members belong to no file of this type, so including them was asked for whatever the
+		// file: only the type's own are held to the file.
+		var all = onlyHome
+			? every.Where(member => !IsOwn(member, symbol) || IsDeclaredIn(member, home)).ToList()
+			: every;
+		var elsewhere = every.Count - all.Count;
+
 		var matching = all.Where(detail.Matches).ToList();
 
 		listing.Unfiltered += all.Count;
@@ -309,8 +331,28 @@ public static class OutlineService
 			FilePath = home.FilePath,
 			Declarations = declarations,
 			TotalMembers = matching.Count,
+			DeclaredElsewhere = elsewhere,
 			Members = members,
 		};
+	}
+
+	private static bool IsOwn(ISymbol member, INamedTypeSymbol type) =>
+		SymbolEqualityComparer.Default.Equals(member.ContainingType, type);
+
+	/// <summary>
+	/// Whether any part of the member is written in <paramref name="tree"/>: a partial method or property
+	/// is two symbols, and the one a type lists may be the half declared in another file.
+	/// </summary>
+	private static bool IsDeclaredIn(ISymbol member, SyntaxTree tree)
+	{
+		var parts = member switch
+		{
+			IMethodSymbol method => [method, method.PartialImplementationPart, method.PartialDefinitionPart],
+			IPropertySymbol property => [property, property.PartialImplementationPart, property.PartialDefinitionPart],
+			_ => new ISymbol?[] { member },
+		};
+
+		return parts.OfType<ISymbol>().SelectMany(part => part.Locations).Any(location => location.SourceTree == tree);
 	}
 
 	/// <summary>

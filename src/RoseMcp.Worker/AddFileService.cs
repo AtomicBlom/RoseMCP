@@ -280,6 +280,18 @@ public static class AddFileService
 	/// </summary>
 	private static string Namespace(CompilationUnitSyntax unit, Project project, string path, List<string> notices)
 	{
+		// Top-level statements run in the global namespace and can follow no namespace declaration, so
+		// a file of them is given none: wrapped in the folder's, its statements become members a
+		// namespace cannot hold and every type beside them lands in the global namespace anyway -- so
+		// the file does not compile and the namespace reported is not the one anything is declared in.
+		if (HasTopLevelStatements(unit))
+		{
+			notices.Add("The code is top-level statements, so the file declares no namespace: they run in the "
+				+ "global namespace, and so do the types declared beside them.");
+
+			return string.Empty;
+		}
+
 		var derived = Derived(project, path);
 
 		var declared = unit.Members
@@ -298,6 +310,10 @@ public static class AddFileService
 
 		return declared;
 	}
+
+	/// <summary>Whether the code is a program's top-level statements rather than declarations alone.</summary>
+	private static bool HasTopLevelStatements(CompilationUnitSyntax unit) =>
+		unit.Members.OfType<GlobalStatementSyntax>().Any();
 
 	/// <summary>
 	/// What the folder says the namespace should be: the project's own default, plus a segment for
@@ -342,7 +358,7 @@ public static class AddFileService
 		// between members and inside a body, the wrapping of a chained call, and the spacing inside a
 		// documentation tag -- none of which any rule here has an opinion about. What the repository
 		// does enforce is applied afterwards by the formatter and the whitespace pass.
-		unit.Members.OfType<BaseNamespaceDeclarationSyntax>().Any()
+		unit.Members.OfType<BaseNamespaceDeclarationSyntax>().Any() || HasTopLevelStatements(unit)
 			? unit.ToFullString()
 			: WithNamespace(unit, space);
 

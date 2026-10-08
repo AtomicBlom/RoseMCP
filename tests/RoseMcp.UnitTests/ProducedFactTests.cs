@@ -10,9 +10,9 @@ namespace RoseMcp.UnitTests;
 /// <para>
 /// Four reviewers found the same shape in four subsystems without looking for it: the expensive
 /// half was built and the cheap half was not, and nothing failed, because a producer with no
-/// consumer breaks nothing. <c>WorkspaceKey</c> is on every result and its summary says it is "fit
-/// for a caller to quote back", and no argument accepts it. <c>ContainingMember</c> carries a
-/// docstring naming "the question a caller actually had", and nothing filters on it.
+/// consumer breaks nothing. A workspace key on every result, described as fit for a caller to
+/// quote back, is worth its characters only where an argument accepts it back.
+/// <c>ContainingMember</c> carries a docstring naming "the question a caller actually had", and nothing filters on it.
 /// <c>InfoAge</c> and <c>InstallLocation</c> are computed for a window that does not render them.
 /// </para>
 /// <para>
@@ -76,10 +76,6 @@ public sealed class ProducedFactTests
 		["SourceLocation.ContainingMember"] = "Card 11e: the grouping an overflow should be answered with.",
 		["SourceLocation.IsTestProject"] = "Card 11e: the narrowing that separates 380 test hits from 32 real ones.",
 		["SourceLocation.GeneratedHintName"] = "Card 11e: generated hits are not separable from written ones.",
-
-		// Card 11c: sixteen characters an agent will echo, where a sixty-character absolute path is
-		// what it drops.
-		["WorkspaceScopedResult.WorkspaceKey"] = "Card 11c: the anchor every result carries and no argument accepts.",
 
 		// Card 22: the cheapest wins in the repository, and the reason a window can report a healthy
 		// workspace that is not one.

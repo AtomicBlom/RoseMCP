@@ -81,6 +81,28 @@ public sealed class ArgumentAliasTests
 		}
 	}
 
+	/// <summary>
+	/// Every tool that routes by workspace accepts the key a result carried, except the one that
+	/// starts a load: a key resolves only to a workspace already loaded, so there it could only name
+	/// one with nothing left to start. Asserted as an exact set of exceptions, so a tool added later
+	/// without the key fails here rather than leaving a caller holding an anchor it cannot use.
+	/// </summary>
+	[Test]
+	public void Every_workspace_argument_has_a_workspaceKey_beside_it()
+	{
+		var (_, tools) = Registered();
+		var routed = tools.Where(tool => Arguments(tool).Contains("workspace")).ToArray();
+
+		routed.ShouldNotBeEmpty();
+
+		var withoutKey = routed
+			.Where(tool => !Arguments(tool).Contains("workspaceKey"))
+			.Select(tool => tool.Name)
+			.ToArray();
+
+		withoutKey.ShouldBe([ToolNames.WorkspaceOpen]);
+	}
+
 	/// <summary>Every file path accepts <c>file</c>, with no exceptions.</summary>
 	[Test]
 	public void Every_file_path_accepts_file()

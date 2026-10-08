@@ -21,7 +21,8 @@ public abstract record WorkspaceScopedResult
 	public string Workspace { get; init; } = string.Empty;
 
 	/// <summary>
-	/// Short stable name for that workspace, safe to pass back as the <c>workspace</c> argument.
+	/// Short stable name for that workspace, accepted back as the <c>workspaceKey</c> argument by every
+	/// tool that takes <c>workspace</c> except <c>rose_workspace_open</c>, while the workspace stays loaded.
 	/// Survives the worker being restarted, because it is derived from the path.
 	/// </summary>
 	public string WorkspaceKey { get; init; } = string.Empty;

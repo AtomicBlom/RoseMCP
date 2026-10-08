@@ -1,4 +1,7 @@
+using ModelContextProtocol;
+
 using RoseMcp.Broker;
+using RoseMcp.Broker.Tools;
 using RoseMcp.TestSupport;
 
 namespace RoseMcp.IntegrationTests;
@@ -310,6 +313,126 @@ public sealed class WorkspaceRoutingTests
 		said.ShouldContain($"2 solutions in {repository.Root} compile it: Beta.slnx, Delta.slnx.", Case.Sensitive);
 		said.ShouldNotContain("Gamma", Case.Sensitive);
 		said.ShouldContain("workspace argument", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The key a result carried names the workspace that produced it, which is what makes it worth
+	/// carrying: a short name an agent echoes, where the absolute path is what it drops.
+	/// </summary>
+	[Test]
+	public async Task A_key_names_the_loaded_workspace_it_came_from()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = Manager(rootedAt: NowhereDirectory.Path());
+
+		var worker = await manager.GetOrStartAsync(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
+
+		manager.WorkspaceFor(WorkspaceHints.From(null, worker.Key)).ShouldBe(
+			fixture.SolutionPath, StringCompareShould.IgnoreCase);
+	}
+
+	/// <summary>
+	/// A key is the caller naming a workspace, so it outranks a path the call carries for its own
+	/// reasons exactly as the workspace argument does -- a file in another checkout included, which the
+	/// worker the key named then says it does not compile.
+	/// </summary>
+	[Test]
+	public async Task A_key_beats_a_path_in_another_checkout()
+	{
+		using var main = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var worktree = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = Manager(rootedAt: NowhereDirectory.Path());
+
+		var worker = await manager.GetOrStartAsync(
+			WorkspaceHints.From(RootedPath.Absolute(worktree.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
+		var elsewhere = RootedPath.Absolute(main.Path("Simple", "Core", "Calculator.cs"));
+
+		manager.WorkspaceFor(WorkspaceHints.From(null, elsewhere)).ShouldBe(
+			main.SolutionPath, StringCompareShould.IgnoreCase);
+		manager.WorkspaceFor(WorkspaceHints.From(null, worker.Key, elsewhere)).ShouldBe(
+			worktree.SolutionPath, StringCompareShould.IgnoreCase);
+	}
+
+	/// <summary>
+	/// A key nothing loaded carries is refused naming the keys that are loaded and the argument that
+	/// works regardless -- never passed over for the path beside it, which would answer from a
+	/// workspace the caller did not name.
+	/// </summary>
+	[Test]
+	public async Task An_unknown_key_is_refused_naming_the_loaded_keys()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = Manager(rootedAt: NowhereDirectory.Path());
+
+		var worker = await manager.GetOrStartAsync(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
+		var file = RootedPath.Absolute(fixture.Path("Simple", "Core", "Calculator.cs"));
+
+		var error = Should.Throw<McpException>(
+			() => manager.WorkspaceFor(WorkspaceHints.From(null, "Simple-00000000", file))).ShouldBeOfType<McpException>();
+
+		error.Message.ShouldContain("Simple-00000000", Case.Sensitive);
+		error.Message.ShouldContain(worker.Key, Case.Sensitive);
+		error.Message.ShouldContain("workspace with the solution's path", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A path and a key in one call are two answers to one question, and nothing here can say which
+	/// the caller meant, so the call is refused naming both.
+	/// </summary>
+	[Test]
+	public void A_key_and_a_workspace_together_are_refused()
+	{
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		var manager = Manager(rootedAt: NowhereDirectory.Path());
+		var key = Solutions.WorkspaceKey.For(fixture.SolutionPath);
+
+		var error = Should.Throw<McpException>(
+			() => manager.WorkspaceFor(WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath), key)))
+			.ShouldBeOfType<McpException>();
+
+		error.Message.ShouldContain(fixture.SolutionPath, Case.Sensitive);
+		error.Message.ShouldContain(key, Case.Sensitive);
+		error.Message.ShouldContain("Send only one", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The round trip, through the broker's own tool: a result names its file absolutely, a caller
+	/// makes that relative to where it stands and sends it back with the result's key, and the same
+	/// file in the same workspace answers. A key decides which worker answers and not where a
+	/// relative path is measured from, so the session's directory still measures it.
+	/// </summary>
+	[Test]
+	public async Task A_relative_path_sent_back_with_a_key_names_the_file_the_result_did()
+	{
+		using var main = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var worktree = FixtureSolution.Copy("Simple", "Simple.sln");
+		var here = Path.GetDirectoryName(worktree.SolutionPath)!;
+
+		await using var manager = Manager(rootedAt: Path.GetDirectoryName(main.SolutionPath)!);
+		var tools = new BrokerAnalysisTools(manager, Paths(rootedAt: Path.GetDirectoryName(main.SolutionPath)!));
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var origin = CallOrigin.Use(here);
+
+		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(worktree.SolutionPath)), cancellationToken);
+
+		var first = await tools.OutlineAsync(
+			new Progress<ProgressNotificationValue>(), symbol: "Core.Calculator", workspaceKey: worker.Key, cancellationToken: cancellationToken);
+		var absolute = first.Types.ShouldHaveSingleItem().FilePath.ShouldNotBeNull();
+
+		absolute.ShouldBe(worktree.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
+
+		var second = await tools.OutlineAsync(
+			new Progress<ProgressNotificationValue>(),
+			filePath: Path.GetRelativePath(here, absolute),
+			workspaceKey: first.WorkspaceKey,
+			cancellationToken: cancellationToken);
+
+		second.WorkspaceKey.ShouldBe(first.WorkspaceKey);
+		second.Workspace.ShouldBe(worktree.SolutionPath, StringCompareShould.IgnoreCase);
+		second.Types.ShouldHaveSingleItem().FilePath.ShouldBe(absolute, StringCompareShould.IgnoreCase);
 	}
 
 	private static WorkspaceManager Manager(string rootedAt) => BrokerHarness.CreateManager(rootedAt);

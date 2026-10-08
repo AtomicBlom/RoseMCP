@@ -355,23 +355,43 @@ public sealed class WorkspaceManager(
 	/// tool that loses to grep before it is ever tried.
 	/// </para>
 	/// <para>
-	/// What is deliberately absent is the set of loaded workspaces. This used to answer a bare call
-	/// from the single open worker, which is not a fact about the question at all but about what some
-	/// other session did earlier: a session in one repository could be answered, plausibly and
-	/// silently, from another. It is only ever named in the failure below, where it helps.
+	/// The caller names a workspace one of two ways: <c>workspace</c>, a path, or <c>workspaceKey</c>,
+	/// the key a result carried. They are alternatives, so a call sending both is refused rather than
+	/// having one of them win: a key and a path that disagree are a mistake nothing here can settle,
+	/// and a pair that agrees says nothing either one does not.
 	/// </para>
 	/// <para>
-	/// Both failures throw McpException rather than ArgumentException, and the difference is the whole
+	/// The set of loaded workspaces is never an answer in itself. A bare call answered from the single
+	/// open worker would be answered from what some other session did earlier rather than from the
+	/// question: a session in one repository could be answered, plausibly and silently, from another.
+	/// The set is consulted only to look up a key the caller sent, which is the caller naming the
+	/// workspace, and is otherwise named only in the failures, where it helps.
+	/// </para>
+	/// <para>
+	/// The failures throw McpException rather than ArgumentException, and the difference is the whole
 	/// point: the SDK turns an unrecognised exception into "An error occurred invoking
 	/// 'rose_diagnostics'." and drops the message, so a caller that could have fixed the call itself
-	/// is told nothing. Both of these know what the caller should do next, and both say so.
+	/// is told nothing. Each of these knows what the caller should do next, and says so.
 	/// </para>
 	/// </summary>
 	public string WorkspaceFor(WorkspaceHints hints)
 	{
+		var isNamedTwice = hints.Workspace is not null && hints.WorkspaceKey is not null;
+		if (isNamedTwice)
+		{
+			throw new McpException(
+				$"Both workspace ({hints.Workspace!.Value}) and workspaceKey ({hints.WorkspaceKey}) were given, and each "
+					+ "names a workspace on its own. Send only one: workspaceKey to name a loaded workspace by the key "
+					+ "a result carried, or workspace to name a solution, project or file by its path.");
+		}
+
 		// The caller named it. A name that resolves to nothing is theirs to hear about, so nothing
 		// here is caught -- falling through to a guess would answer a different question than asked.
 		if (hints.Workspace is { } named) return Resolved(named.Value);
+
+		// Named by the key a result carried, and strict for the same reason. Only a loaded workspace
+		// can be found that way, since a key cannot be turned back into the path it was taken from.
+		if (hints.WorkspaceKey is { } key) return ByKey(key, [.. _workers.Keys]);
 
 		// Paths the call carries for its own reasons. The first that decides wins; an ambiguous one is
 		// remembered rather than thrown, because a later hint may still settle it and, failing that,
@@ -411,6 +431,61 @@ public sealed class WorkspaceManager(
 			throw new McpException(
 				$"No solution or project was found near {origin}{OpenWorkspacesSuffix()}", exception);
 		}
+	}
+
+	/// <summary>
+	/// The loaded solution carrying <paramref name="key"/>, the way <see cref="Solutions.WorkspaceKey"/>
+	/// derives it.
+	/// <para>
+	/// Only what is loaded can answer, because a key is a hash and cannot be turned back into the path
+	/// it came from. That is enough for the caller the key exists for: one that read it off a result,
+	/// which a loaded worker produced. A broker that has restarted since has forgotten it, which is a
+	/// failure naming what is loaded and the argument that works regardless, not a guess.
+	/// </para>
+	/// <para>
+	/// The hash is four bytes, so two loaded solutions can share a key, however rarely; that is refused
+	/// with both paths rather than settled by whichever the dictionary yielded first. Matched without
+	/// regard to case, since the hex half is never upper case and a solution name differing only in
+	/// case already differs in its hash.
+	/// </para>
+	/// <para>
+	/// Static and public so the matching can be tested without starting a worker for every solution it
+	/// is asked to tell apart.
+	/// </para>
+	/// </summary>
+	/// <param name="key">The key the caller sent.</param>
+	/// <param name="loaded">The solution paths of the loaded workers.</param>
+	/// <exception cref="McpException">No loaded solution carries the key, or more than one does.</exception>
+	public static string ByKey(string key, IReadOnlyCollection<string> loaded)
+	{
+		var wanted = key.Trim();
+		var matching = loaded
+			.Where(path => string.Equals(Solutions.WorkspaceKey.For(path), wanted, StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+
+		if (matching.Length == 1) return matching[0];
+
+		if (matching.Length > 1)
+		{
+			throw new McpException(
+				$"The workspaceKey {wanted} belongs to {matching.Length} loaded workspaces, which happen to hash alike: "
+					+ $"{string.Join(", ", matching)}. Pass workspace with the path of the one you mean instead.");
+		}
+
+		if (loaded.Count == 0)
+		{
+			throw new McpException(
+				$"No loaded workspace has the workspaceKey {wanted}, and none is loaded: a key names a workspace only "
+					+ "while the broker that issued it has it loaded, and this one has restarted or closed it since. "
+					+ "Pass workspace with the solution's path instead, which loads it.");
+		}
+
+		var known = loaded.Select(path => $"{Solutions.WorkspaceKey.For(path)} ({path})");
+
+		throw new McpException(
+			$"No loaded workspace has the workspaceKey {wanted}. A key names a workspace only while it is loaded, and "
+				+ $"the loaded ones are: {string.Join(", ", known)}. Pass one of those keys, or workspace with the "
+				+ "solution's path, which loads it if it is not.");
 	}
 
 	/// <summary>
@@ -474,8 +549,8 @@ public sealed class WorkspaceManager(
 
 	/// <summary>
 	/// Names the loaded workspaces when resolution has failed. They are no basis for choosing, but
-	/// once choosing has failed they are the shortest route to a call that works -- each result
-	/// carries the key needed to name one.
+	/// once choosing has failed they are the shortest route to a call that works, so each is given
+	/// with the key that names it in far fewer characters than its path.
 	/// </summary>
 	private string OpenWorkspacesSuffix()
 	{
@@ -486,8 +561,10 @@ public sealed class WorkspaceManager(
 			return ". Pass the workspace argument naming a solution, project, or any file inside one.";
 		}
 
-		return ". Pass the workspace argument naming a solution, project, or any file inside one. "
-			+ $"Already open: {string.Join(", ", open)}.";
+		var named = open.Select(path => $"{Solutions.WorkspaceKey.For(path)} ({path})");
+
+		return ". Pass the workspace argument naming a solution, project, or any file inside one, or "
+			+ $"workspaceKey naming one already open: {string.Join(", ", named)}.";
 	}
 
 	/// <summary>

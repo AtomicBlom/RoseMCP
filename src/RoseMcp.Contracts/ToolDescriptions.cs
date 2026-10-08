@@ -59,6 +59,14 @@ public static class ToolDescriptions
 		"Solution, project or file path that picks the workspace. Usually omitted: inferred from the "
 			+ "other arguments or the working directory.";
 
+	/// <summary>
+	/// The key every result carries, accepted wherever <see cref="WorkspaceArgument"/> is. Short for
+	/// the same reason that one is: it appears on every routed tool. Why a key resolves only while its
+	/// workspace is loaded, and what to do when it does not, is in the error that says so.
+	/// </summary>
+	public const string WorkspaceKeyArgument =
+		"Instead of workspace, the workspaceKey an earlier result carried.";
+
 	/// <summary>Which live-app session, on every tool that works against one.</summary>
 	public const string SessionArgument = "The session id returned by rose_debug_attach.";
 

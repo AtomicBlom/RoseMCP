@@ -417,20 +417,11 @@ that a file is formatted.
   with a field beside it. Fixing WRK-01 gives notice discipline somewhere to live, which is the
   same argument `WorkspaceManager.Attribute<T>` already won for attribution.
 
-- **The anchor already exists and is refused as input.** Every result carries `workspace` *and*
-  `workspaceKey` (`WorkspaceManager.cs:192`), and `WorkspaceKey`'s own summary says it is "a short,
-  stable name for one loaded solution, **fit for a caller to quote back**", derived from the path
-  rather than minted per process so it survives a worker restart, and hashed because "six worktrees
-  of one repository is the ordinary case, not a corner one". It is written on every result and
-  **read as input nowhere** -- the same shape as `HostVersion` (IPC-02) and `InfoAge` (USE-03): a
-  fact computed for a consumer that never consumes it.
-
-  This matters for the path question. A relative path is ambiguous only when it arrives with no
-  anchor, and an anchor that costs sixteen characters will actually be carried where a sixty-
-  character absolute path will not. Accept `workspaceKey` wherever `workspace` is accepted, return
-  paths relative to the workspace, and the round trip is unambiguous by construction: the agent
-  quotes back the pair it was handed, and no resolution against a process working directory happens
-  at all.
+- **The anchor is accepted as input (#376).** A result's workspace key was written on every result
+  and read nowhere; it is accepted back wherever a workspace is named. What is left is the paths: a
+  relative path is ambiguous only when it arrives with no anchor, so return paths relative to the
+  workspace and measure one that arrives with a key from that key's workspace, and the round trip is
+  unambiguous by construction -- the agent quotes back the pair it was handed.
 - **The gate this card had is open (#305).** Returning relative paths makes an agent send relative
   paths -- results are where agents get their arguments -- so the size fix could not land before the
   resolution fix, on pain of turning a latent hazard into a routine one. A relative path is measured
@@ -445,7 +436,8 @@ that a file is formatted.
   the calling session's directory, and the silent write into another checkout with it. What is left
   is the session that never says where it is -- an http client with no relay in front of it -- whose
   relative path is measured from the broker's own directory and now fails loudly there rather than
-  finding a plausible file. An anchor a caller will actually carry is what closes that case too.
+  finding a plausible file. The key it can now send names its workspace; measuring its relative
+  paths from there is what closes that case too.
 
 ### AGT-22 Tools that are plural by intent are singular by signature, and the cost is model turns rather than round trips
 

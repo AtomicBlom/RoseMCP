@@ -40,6 +40,7 @@ public sealed class OutlineToolTests
 
 		// The broker alone picks the workspace; everything else it forwards.
 		broker.Remove("workspace");
+		broker.Remove("workspaceKey");
 
 		worker.Keys.Order().ShouldBe(broker.Keys.Order());
 

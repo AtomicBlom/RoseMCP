@@ -254,6 +254,7 @@ public sealed class MetadataMembersTests
 		var worker = Defaults(typeof(NavigationTools));
 
 		broker.Remove("workspace");
+		broker.Remove("workspaceKey");
 
 		worker.Keys.Order().ShouldBe(broker.Keys.Order());
 

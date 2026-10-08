@@ -128,9 +128,9 @@ public sealed class ToolDescriptionTests
 	/// <summary>
 	/// Each tool's arguments as a client is shown them: name and description, in order.
 	/// <para>
-	/// Three are dropped rather than compared. <c>workspace</c> and <c>sessionId</c> are how the broker
-	/// routes a call and exist only on the end that routes; <c>progress</c> and
-	/// <c>cancellationToken</c> are the SDK's own and never reach the schema.
+	/// Some are dropped rather than compared. <c>workspace</c>, <c>workspaceKey</c> and
+	/// <c>sessionId</c> are how the broker routes a call and exist only on the end that routes;
+	/// <c>progress</c> and <c>cancellationToken</c> are the SDK's own and never reach the schema.
 	/// </para>
 	/// </summary>
 	private static Dictionary<string, string[]> Parameters(Assembly assembly)
@@ -148,7 +148,7 @@ public sealed class ToolDescriptionTests
 				declared[name] =
 				[
 					.. method.GetParameters()
-						.Where(parameter => parameter.Name is not ("workspace" or "sessionId" or "progress" or "cancellationToken"))
+						.Where(parameter => parameter.Name is not ("workspace" or "workspaceKey" or "sessionId" or "progress" or "cancellationToken"))
 						.Select(parameter =>
 							$"{parameter.Name}: {parameter.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty}"),
 				];

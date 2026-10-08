@@ -50,8 +50,15 @@ public sealed class ToolBudgetTests
 	/// usings argument on rose_change_signature is about 200 of it, since the import a new parameter's
 	/// type needs is otherwise a second call to a second tool.
 	/// </para>
+	/// <para>
+	/// The <c>workspaceKey</c> argument is about 4,300 of it: some 140 characters of schema on each of
+	/// the thirty-one tools that take <c>workspace</c>, nearly all of it the property's own shape rather
+	/// than its help, which is already one short sentence. It is spent rather than traded because the
+	/// key is what lets a caller name its workspace in a few characters on every later call, where the
+	/// absolute path it replaces is the argument agents drop.
+	/// </para>
 	/// </summary>
-	private const int ModelFacing = 76700;
+	private const int ModelFacing = 81000;
 
 	[Test]
 	public void No_description_is_longer_than_its_ceiling()

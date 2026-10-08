@@ -31,8 +31,16 @@ public sealed record WorkspaceHints
 	public RootedPath? Workspace { get; init; }
 
 	/// <summary>
-	/// Paths the call named for its own reasons, best first, tried only if the workspace argument was
-	/// omitted.
+	/// The <c>workspaceKey</c> argument, quoted back from an earlier result. As strict as
+	/// <see cref="Workspace"/>, and an alternative to it rather than a second opinion: a call naming
+	/// both is refused, and a key no loaded workspace carries fails rather than falling through to the
+	/// paths, because a hash cannot be turned back into the path it was taken from.
+	/// </summary>
+	public string? WorkspaceKey { get; init; }
+
+	/// <summary>
+	/// Paths the call named for its own reasons, best first, tried only if neither workspace argument
+	/// was given.
 	/// <para>
 	/// Best-effort, and the reason is <c>rose_diagnostics</c>: its <c>target</c> is a file path under
 	/// document scope and a <em>project name</em> under project scope. "Db.App" measured from the
@@ -63,6 +71,28 @@ public sealed record WorkspaceHints
 	/// </summary>
 	public static WorkspaceHints From(RootedPath? workspace, params RootedPath?[] paths) =>
 		new() { Workspace = workspace, Paths = paths };
+
+	/// <summary>
+	/// What a tool was sent: the two ways of naming a workspace, then any paths the call carries.
+	/// Every routed tool builds its hints here, and the unit suite calls each one with both names to
+	/// prove the key reaches the routing rather than stopping at the parameter.
+	/// </summary>
+	public static WorkspaceHints From(RootedPath? workspace, string? workspaceKey, params RootedPath?[] paths) =>
+		new() { Workspace = workspace, WorkspaceKey = Given(workspaceKey), Paths = paths };
+
+	/// <summary>
+	/// The two ways of naming a workspace, then a path the call will create, which is routed by where
+	/// it is going rather than passed over for not being there yet.
+	/// </summary>
+	public static WorkspaceHints ForNewFile(RootedPath? workspace, string? workspaceKey, RootedPath? path) =>
+		new() { Workspace = workspace, WorkspaceKey = Given(workspaceKey), Creating = [path] };
+
+	/// <summary>
+	/// A key that says something, or null. An empty string is what a client sends for an argument it
+	/// filled in without meaning to, and treating it as a key would refuse a call that named nothing.
+	/// </summary>
+	private static string? Given(string? workspaceKey) =>
+		string.IsNullOrWhiteSpace(workspaceKey) ? null : workspaceKey.Trim();
 
 	/// <summary>
 	/// The workspace argument, then a path the call will create, which is routed by where it is going

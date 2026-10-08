@@ -37,6 +37,11 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 	/// Every field it carries is broker-side, so nothing here goes through the read barrier and
 	/// polling cannot block on the load it is describing. That is the whole trick.
 	/// </para>
+	/// <para>
+	/// The one routed tool without <c>workspaceKey</c>. A key resolves only to a workspace already
+	/// loaded, because it is a hash of a path and cannot be turned back into one, so on the tool whose
+	/// job is to start a load it could only ever name a workspace with nothing left to start.
+	/// </para>
 	/// </summary>
 	[McpServerTool(
 		Name = ToolNames.WorkspaceOpen,
@@ -100,9 +105,10 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 	public async Task<WorkspaceStatusReport> StatusAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default)
 	{
-		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
+		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(paths.Of(workspace), workspaceKey), cancellationToken);
 		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
 	}
 
@@ -118,13 +124,14 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 	public async Task<WorkspaceStatusReport> ReloadAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		[Description(ToolDescriptions.ConfigurationArgument)] string? configuration = null,
 		[Description(ToolDescriptions.PlatformArgument)] string? platform = null,
 		[Description(ToolDescriptions.PropertiesArgument)] string[]? properties = null,
 		CancellationToken cancellationToken = default)
 	{
 		var worker = await workspaces.RestartAsync(
-			WorkspaceHints.From(paths.Of(workspace)),
+			WorkspaceHints.From(paths.Of(workspace), workspaceKey),
 			cancellationToken,
 			WorkspaceBuildOverrides.From(configuration, platform, properties));
 		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
@@ -141,6 +148,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 	[Description(ToolDescriptions.WorkspaceClose)]
 	public Task<WorkspaceClosed> CloseAsync(
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
+		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		workspaces.CloseAsync(WorkspaceHints.From(paths.Of(workspace)), cancellationToken);
+		workspaces.CloseAsync(WorkspaceHints.From(paths.Of(workspace), workspaceKey), cancellationToken);
 }

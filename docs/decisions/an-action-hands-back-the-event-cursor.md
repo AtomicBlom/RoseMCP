@@ -1,7 +1,8 @@
 # An action hands back the event cursor, so nobody has to go and find one
 
 **Decision.** Every answer the live-app host produces carries `cursor`: where that session's event
-stream stood when the answer was written. A caller that acts and then wants to know what its action
+stream stood when the answer was written, or, for an action the target answers on its own time, when
+the action began. A caller that acts and then wants to know what its action
 caused passes that number back as `after`. Nobody computes a cursor, and nobody reads the stream in
 order to find out where it is.
 
@@ -42,6 +43,15 @@ in `WorkspaceManager`: what a tool never has to remember, a tool added later can
 cannot do it alone, because the broker deserializes the host's answer into the tool's own result type
 and re-serializes that -- a property the type does not declare is dropped there, silently. So every
 live-app result derives from `LiveResult`, and a test over the host's tools fails when one does not.
+
+**An action whose effect the target produces reads the number before it acts.** The stamp reads the
+stream after the tool has returned, which is right for an answer that only reports. It is wrong for
+a resume, a step, or a breakpoint or tracepoint that binds at once: each lets the target produce the
+effect on its own time -- the StepComplete a step exists for, the next hit in a loop -- and that can
+be recorded before the stamp reads, leaving the caller a cursor past the event it is about to wait
+for, and a wait that times out on something that happened. So those read the position before they
+release or arm the target and answer with it, and the stamp keeps a cursor a tool has set. A cursor
+read early can only show the caller an event twice, never hide one, which is the direction to err.
 
 **Zero keeps one honest meaning.** It is the beginning of the stream, and it is the right cursor
 exactly once: at a session's birth, where everything the target has ever done is also everything it

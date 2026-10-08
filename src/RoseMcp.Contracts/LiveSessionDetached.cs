@@ -25,9 +25,10 @@ public sealed record LiveSessionDetached
 	public required string SessionId { get; init; }
 
 	/// <summary>
-	/// Whether there was an open session to detach. False is not a failure: it says the session was
-	/// already closed, or never existed, which is what makes detaching twice harmless. True means the
-	/// session is closed and the target was left running with nothing attached to it.
+	/// Whether this caller had an open session by that id to detach. False is not a failure: the session
+	/// was already closed, never existed, or belongs to another client of the broker and so was left alone,
+	/// which is what makes detaching twice harmless. True means the session is closed and the target was
+	/// left running with nothing attached to it.
 	/// </summary>
 	public required bool Detached { get; init; }
 }

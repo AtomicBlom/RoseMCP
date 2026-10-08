@@ -418,6 +418,78 @@ public sealed class LiveAppDebugTests
 	}
 
 	/// <summary>
+	/// A step and a continue each answer with a cursor from before what they caused, so waiting from
+	/// it finds the effect. The answer leaves the host after the target is running again, and the
+	/// StepComplete a step exists for -- or the notice a continue records before it returns -- can be in
+	/// the stream by then; a cursor read on the way out would sit past it, and a caller waiting from it
+	/// would time out on a step that landed.
+	/// <para>
+	/// The continue half is the deterministic one: its notice is recorded before the answer is built, so
+	/// a cursor read any later than the resume is at or past it every time.
+	/// </para>
+	/// </summary>
+	[Test]
+	public async Task A_step_and_a_continue_answer_with_a_cursor_from_before_what_they_caused()
+	{
+		await using var manager = CreateManager();
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		using var child = StartProbeTarget();
+		try
+		{
+			var target = new LiveAppTarget
+			{
+				Kind = LiveAppTargetKind.AttachProcess,
+				ProcessId = child.Id,
+				Description = "probe target",
+			};
+
+			var session = await manager.StartAsync(target, cancellationToken);
+			session.Describe().State.ShouldBe(LiveAppSessionState.Ready);
+
+			var breakpoint = await session.SetBreakpointAsync("DebugProbeTarget.Program.Beat", autoContinueSeconds: null, condition: null, cancellationToken);
+			breakpoint.Bound.ShouldBeTrue($"breakpoint should bind; detail: {breakpoint.Detail}");
+
+			var stop = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.BreakpointHit && entry.Message.Contains("stopped"),
+				cancellationToken,
+				startCursor: breakpoint.Cursor);
+			stop.ShouldNotBeNull("the hit should be found waiting from the cursor the breakpoint answered with");
+
+			await session.RemoveBreakpointAsync(breakpoint.Id, cancellationToken);
+
+			var stepped = await session.StepDetailedAsync("over", cancellationToken);
+			stepped.Continued.ShouldBeTrue();
+			stepped.Cursor.ShouldBeGreaterThanOrEqualTo(stop!.Sequence);
+
+			var stepComplete = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.StepComplete,
+				cancellationToken,
+				startCursor: stepped.Cursor);
+			stepComplete.ShouldNotBeNull($"no StepComplete after the step's cursor {stepped.Cursor}");
+
+			var resumed = await session.ResumeAsync(cancellationToken);
+			resumed.Continued.ShouldBeTrue();
+			resumed.Cursor.ShouldBeGreaterThanOrEqualTo(stepComplete!.Sequence);
+
+			var notice = await WaitForEventAsync(
+				session,
+				entry => entry.Kind == LiveDebugEventKind.SessionNotice && entry.Message.StartsWith("Continued from", StringComparison.Ordinal),
+				cancellationToken,
+				startCursor: resumed.Cursor);
+			notice.ShouldNotBeNull($"the continue's own notice should be past its cursor {resumed.Cursor}");
+
+			(await manager.CloseAsync(session.SessionId, cancellationToken)).ShouldBeTrue();
+		}
+		finally
+		{
+			if (!child.HasExited) child.Kill(entireProcessTree: true);
+		}
+	}
+
+	/// <summary>
 	/// A target that dies while the debugger holds it stops being stopped. The stop went with the
 	/// process, and a session still reporting one sends a reader to resume something that is not
 	/// there.

@@ -35,6 +35,14 @@ internal static class CursorStamp
 	/// The call-tool filter that stamps the cursor. An answer with no structured content -- a refusal,
 	/// or a tool that returns none -- is passed through untouched: there is nothing there to say it in,
 	/// and inventing an object to hold it would turn a failure into something that parses.
+	/// <para>
+	/// A cursor the tool set itself is kept. The stamp reads the stream after the tool has returned,
+	/// which for an answer that only reports is the right moment. For an action whose effect the target
+	/// produces on its own time -- a resume, a step, a breakpoint or tracepoint that binds at once --
+	/// that effect can be recorded before the stamp reads, and a cursor past it hides it from the
+	/// caller waiting for it. Those actions read the position before they act. Zero is never mistaken
+	/// for one: it is what a result that set nothing carries.
+	/// </para>
 	/// </summary>
 	internal static McpRequestFilter<CallToolRequestParams, CallToolResult> Filter =>
 		next => async (context, cancellationToken) =>
@@ -44,6 +52,11 @@ internal static class CursorStamp
 			if (result.StructuredContent is not { } content) return result;
 			if (context.Services?.GetService<LiveAppSessionHost>() is not { } host) return result;
 			if (JsonNode.Parse(content.GetRawText()) is not JsonObject answer) return result;
+
+			var setByTheTool = answer[Cursor] is JsonValue set
+				&& set.TryGetValue<long>(out var position)
+				&& position > 0;
+			if (setByTheTool) return result;
 
 			answer[Cursor] = host.EventCursor;
 			result.StructuredContent = JsonSerializer.SerializeToElement(answer);

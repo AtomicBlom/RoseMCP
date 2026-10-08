@@ -175,12 +175,21 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	/// <summary>
 	/// Adds tracepoints to the attached target, each request's outcome its own entry: one that does
-	/// not parse is refused there and the rest are added regardless.
+	/// not parse is refused there and the rest are added regardless. Answers with the cursor from
+	/// before any tracepoint was bound, since a first hit can be recorded before the answer leaves;
+	/// see <see cref="CursorStamp"/>.
 	/// </summary>
 	/// <exception cref="InvalidOperationException">No target is attached.</exception>
 	/// <exception cref="ArgumentException">The list is empty.</exception>
 	public LiveTracepointBatch AddTracepoints(IReadOnlyList<AddTracepointRequest> tracepoints)
-		=> RequireSession().Bindings.AddTracepoints(tracepoints);
+	{
+		var before = EventCursor;
+
+		return RequireSession().Bindings.AddTracepoints(tracepoints) with
+		{
+			Cursor = before,
+		};
+	}
 
 	public LiveTracepointList ListTracepoints()
 	{
@@ -204,12 +213,20 @@ public sealed class LiveAppSessionHost(LiveAppOptions options, ILogger<LiveAppSe
 
 	/// <summary>
 	/// Sets stopping breakpoints on the attached target, each request's outcome its own entry, as
-	/// <see cref="AddTracepoints"/> does.
+	/// <see cref="AddTracepoints"/> does, and answers with the cursor from before any was bound for
+	/// the same reason.
 	/// </summary>
 	/// <exception cref="InvalidOperationException">No target is attached.</exception>
 	/// <exception cref="ArgumentException">The list is empty.</exception>
 	public LiveBreakpointBatch SetBreakpoints(IReadOnlyList<SetBreakpointRequest> breakpoints)
-		=> RequireSession().Bindings.AddBreakpoints(breakpoints);
+	{
+		var before = EventCursor;
+
+		return RequireSession().Bindings.AddBreakpoints(breakpoints) with
+		{
+			Cursor = before,
+		};
+	}
 
 	public LiveBreakpointList ListBreakpoints()
 	{

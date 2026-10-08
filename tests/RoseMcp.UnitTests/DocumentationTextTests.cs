@@ -86,6 +86,47 @@ public sealed class DocumentationTextTests
 		DocumentationText.Summary(Xml).ShouldBe("The first sentence. The second, about Thing. The third.");
 	}
 
+	/// <summary>
+	/// An outline promises one sentence per member, so the cut has to find the sentence's end and not a
+	/// full stop that ends nothing: an abbreviation, a version number, or one inside code or a name.
+	/// </summary>
+	[Test]
+	[Arguments("""<member name="T:A"><summary>Reads the file. Then writes it.</summary></member>""", "Reads the file.")]
+	[Arguments("""<member name="T:A"><summary>Is it open? It says so.</summary></member>""", "Is it open?")]
+	[Arguments("""<member name="T:A"><summary>Takes a list, e.g. Every one of them. Then stops.</summary></member>""", "Takes a list, e.g. Every one of them.")]
+	[Arguments("""<member name="T:A"><summary>Takes names, i.e. the declared ones. Then stops.</summary></member>""", "Takes names, i.e. the declared ones.")]
+	[Arguments("""<member name="T:A"><summary>Needs version 1.0 or later. Then stops.</summary></member>""", "Needs version 1.0 or later.")]
+	[Arguments("""<member name="T:A"><summary>Calls <c>Path. GetFileName</c> on it. Then stops.</summary></member>""", "Calls Path. GetFileName on it.")]
+	[Arguments("""<member name="T:A"><summary>Goes after <see cref="M:A.B">the step. Before</see> it. Then stops.</summary></member>""", "Goes after the step. Before it.")]
+	[Arguments("""<member name="T:A"><summary>Lists them. and then carries on.</summary></member>""", "Lists them. and then carries on.")]
+	[Arguments("""<member name="T:A"><summary>The first paragraph<para>The second.</para></summary></member>""", "The first paragraph")]
+	[Arguments("""<member name="T:A"><summary><para>The first.</para><para>The second.</para></summary></member>""", "The first.")]
+	[Arguments("""<member name="T:A"><summary>Has no full stop at all</summary></member>""", "Has no full stop at all")]
+	public void Gives_the_first_sentence_of_a_summary(string xml, string expected)
+	{
+		DocumentationText.FirstSentence(xml).ShouldBe(expected);
+	}
+
+	[Test]
+	public void Cuts_a_first_sentence_that_runs_past_its_ceiling_at_a_word()
+	{
+		var words = string.Join(" ", Enumerable.Repeat("word", 100));
+		var xml = $"""<member name="T:A"><summary>{words}.</summary></member>""";
+
+		var sentence = DocumentationText.FirstSentence(xml).ShouldNotBeNull();
+
+		sentence.Length.ShouldBeLessThanOrEqualTo(DocumentationText.MaxSentence);
+		sentence.ShouldEndWith("word…");
+	}
+
+	[Test]
+	public void Bounds_a_summary_at_the_last_sentence_that_fits()
+	{
+		DocumentationText.Bounded("One. Two. Three.", 12).ShouldBe("One. Two.");
+		DocumentationText.Bounded("One two three four", 12).ShouldBe("One two…");
+		DocumentationText.Bounded("Short.", 12).ShouldBe("Short.");
+	}
+
 	[Test]
 	[Arguments(null)]
 	[Arguments("")]

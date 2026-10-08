@@ -456,10 +456,11 @@ public static class OutlineService
 	private static string Plural(int count, string noun) => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 
 	/// <summary>
-	/// The summary text out of the documentation XML, flattened to one line. Flattened because an
-	/// outline is a list and a fifteen-line comment in a list is not a list -- the whole comment is
-	/// a rose_symbol_info call away for a member that turns out to matter.
+	/// The first sentence of the summary, rendered. One sentence because an outline is a list and a
+	/// paragraph per member is not a list -- on a well-documented type the summaries would be most of the
+	/// answer -- and the whole summary is a rose_symbol_info call away for a member that turns out to
+	/// matter.
 	/// </summary>
 	private static string? Summary(ISymbol symbol, CancellationToken cancellationToken) =>
-		DocumentationText.Summary(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken));
+		DocumentationText.FirstSentence(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken));
 }

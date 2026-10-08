@@ -157,7 +157,7 @@ public static class ToolDescriptions
 	public const string IncludeInheritedArgument = "Also list what the base classes contribute. Off by default.";
 
 	public const string IncludeDocumentationArgument =
-		"Add each type's and member's documentation summary. Off by default.";
+		"Add the first sentence of each type's and member's summary. Off by default.";
 
 	public const string IncludeSignaturesArgument =
 		"Add each member's full signature, which tells overloads apart. Off by default.";
@@ -651,7 +651,7 @@ public static class ToolDescriptions
 		""";
 
 	public const string SymbolInfo = """
-		What a symbol is: full signature, kind, accessibility, containing type, XML documentation, each
+		What a symbol is: full signature, kind, accessibility, containing type, documented summary, each
 		declaration with its first and last line, and what it overrides or implements -- usually where
 		an override's documentation lives. Name it as Namespace.Type.Member, which needs no grep and
 		survives an edit moving a line; a file position reaches a local or a parameter. includeSource
@@ -892,7 +892,7 @@ public static class ToolDescriptions
 		or give a file path -- one of the two. Use it instead of reading the file to find out what is
 		in it, which is the read before most edits and the one that puts the file in front of you.
 		members filters a large type by name. includeSignatures adds the compiler's signatures, enough
-		to implement an interface from; includeDocumentation adds summaries. Generated members are
+		to implement an interface from; includeDocumentation adds each summary's first sentence. Generated members are
 		marked, having no file to edit. includeInherited adds what base classes contribute.
 		""";
 

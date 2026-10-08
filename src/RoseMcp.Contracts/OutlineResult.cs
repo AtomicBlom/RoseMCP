@@ -44,7 +44,10 @@ public sealed record OutlinedType
 	/// <summary>Base class and interfaces, so implementing one does not need a second call.</summary>
 	public IReadOnlyList<string> BaseTypes { get; init; } = [];
 
-	/// <summary>Its documentation's summary, where the caller asked for documentation and it has one.</summary>
+	/// <summary>
+	/// The first sentence of its documentation's summary, where the caller asked for documentation and it
+	/// has one.
+	/// </summary>
 	public string? Summary { get; init; }
 
 	/// <summary>
@@ -135,6 +138,9 @@ public sealed record OutlinedMember
 	/// </summary>
 	public string? DeclaringType { get; init; }
 
-	/// <summary>Its documentation's summary, where the caller asked for documentation and it has one.</summary>
+	/// <summary>
+	/// The first sentence of its documentation's summary, where the caller asked for documentation and it
+	/// has one.
+	/// </summary>
 	public string? Summary { get; init; }
 }

@@ -9,6 +9,13 @@ namespace RoseMcp.Worker;
 public static class NavigationService
 {
 	/// <summary>
+	/// The most of a summary rose_symbol_info gives: several sentences, which is more than a summary is
+	/// meant to hold. A longer one is remarks written into the summary, most often in a referenced
+	/// assembly, and the cut is said in a notice so that it does not read as the whole.
+	/// </summary>
+	public const int MaxSummary = 1000;
+
+	/// <summary>
 	/// What a symbol is, and for a type from a referenced assembly, what can be called on it.
 	/// </summary>
 	/// <param name="snapshot">The solution to resolve in.</param>
@@ -38,8 +45,15 @@ public static class NavigationService
 			declarations.Add(await SymbolLocator.DescribeAsync(snapshot.Solution, location, cancellationToken));
 		}
 
-		var documentation = symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken);
 		var notices = new List<string>(snapshot.Notices);
+
+		var written = DocumentationText.Summary(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken));
+		var summary = written is null ? null : DocumentationText.Bounded(written, MaxSummary);
+
+		if (written is not null && summary!.Length < written.Length)
+		{
+			notices.Add($"The summary is {written.Length} characters, and the first {summary.Length} are given.");
+		}
 
 		// A metadata type has no file for rose_outline to read, so its members are listed here; a source
 		// type is outline's, and listing it here too would be the same answer in two shapes.
@@ -70,7 +84,7 @@ public static class NavigationService
 			Namespace = symbol.ContainingNamespace?.IsGlobalNamespace == false
 				? symbol.ContainingNamespace.ToDisplayString()
 				: null,
-			Documentation = string.IsNullOrWhiteSpace(documentation) ? null : documentation,
+			Summary = summary,
 			Declarations = declarations,
 			DeclarationSpans = await SymbolLocator.SpansOfAsync(symbol, cancellationToken),
 			BaseDefinitions = await DescribeAllAsync(snapshot, BaseDefinitions(symbol), cancellationToken),
@@ -85,7 +99,7 @@ public static class NavigationService
 			Truncated = listing?.Truncated ?? false,
 			Notices = notices,
 
-			Source = includeSource ? await SourceOfAsync(symbol, cancellationToken) : [],
+			Source = includeSource ? await SourceOfAsync(symbol, cancellationToken) : null,
 		};
 	}
 

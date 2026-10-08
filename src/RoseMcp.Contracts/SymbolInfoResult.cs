@@ -26,8 +26,12 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 
 	public string? Namespace { get; init; }
 
-	/// <summary>XML documentation comment, when the symbol has one.</summary>
-	public string? Documentation { get; init; }
+	/// <summary>
+	/// The documentation's summary as prose, every reference rendered as the name it points at, where the
+	/// symbol has one. The XML itself is never given: its markup and fully qualified references are most
+	/// of its length and none of its meaning. Cut at a sentence past a ceiling, which the notices say.
+	/// </summary>
+	public string? Summary { get; init; }
 
 	/// <summary>
 	/// Where the symbol is declared. Empty for symbols that come from metadata rather than source,
@@ -89,13 +93,14 @@ public sealed record SymbolInfoResult : WorkspaceScopedResult
 	public IReadOnlyList<string> Notices { get; init; } = [];
 
 	/// <summary>
-	/// The declaration's own source text, when it was asked for. One entry per declaration, so a
-	/// partial comes back in the several pieces it is written in.
+	/// The declaration's own source text, when it was asked for, and absent when it was not. One entry
+	/// per declaration, so a partial comes back in the several pieces it is written in; empty for a symbol
+	/// with no source to give.
 	/// <para>
 	/// Here so that understanding a member does not end in a file read. Reading the file is what puts
 	/// the file in front of the caller, and the next edit then goes through a text tool -- which is
 	/// the moment every other tool here stops being worth reaching for.
 	/// </para>
 	/// </summary>
-	public IReadOnlyList<string> Source { get; init; } = [];
+	public IReadOnlyList<string>? Source { get; init; }
 }

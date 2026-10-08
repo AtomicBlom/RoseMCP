@@ -483,6 +483,31 @@ public sealed class OutlineTests
 	}
 
 	/// <summary>
+	/// A summary in an outline is its first sentence, as the argument promises: a type documented in two
+	/// paragraphs costs one sentence, and the rest is a rose_symbol_info call away.
+	/// </summary>
+	[Test]
+	public async Task Gives_each_summary_as_its_first_sentence()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var result = await OutlineService.OutlineAsync(
+			snapshot,
+			"Library.Literal",
+			filePath: null,
+			includeInherited: false,
+			includeDocumentation: true,
+			includeSignatures: false,
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Types.ShouldHaveSingleItem().Summary.ShouldBe(
+			"A multi-line raw string literal already on disk, indented more deeply than any write path would "
+				+ "place it, so every write to this file moves it and none of them can pass by leaving it alone.");
+	}
+
+	/// <summary>
 	/// What the projects can see, and what a change to one of them reaches. The transitive half is
 	/// the point: the set that breaks is everything depending on the project, not everything naming
 	/// the member.

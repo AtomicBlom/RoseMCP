@@ -997,7 +997,39 @@ public sealed class NavigationTests
 		source.ShouldContain("<summary>The greeting for one name.</summary>", Case.Sensitive);
 	}
 
-	/// <summary>Not asked for, not paid for: the field stays empty rather than always carrying a body.</summary>
+	/// <summary>
+	/// The documentation is its summary as prose, never the XML: the markup and the fully qualified
+	/// references are most of the XML's length and none of its meaning, and a reference rendered as its
+	/// name keeps the sentence whole. Every paragraph of it, unlike an outline's one sentence.
+	/// </summary>
+	[Test]
+	public async Task Gives_the_summary_rendered_rather_than_its_xml()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var greet = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Greeter.Greet(string, string)" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		greet.Summary.ShouldBe("The greeting for name with a title, its prefix PrefixLength characters long.");
+
+		var literal = await NavigationService.DescribeAsync(
+			snapshot,
+			new SymbolTarget { Symbol = "Library.Literal" },
+			TestContext.Current!.Execution.CancellationToken);
+
+		literal.Summary.ShouldNotBeNull().ShouldStartWith("A multi-line raw string literal");
+		literal.Summary.ShouldEndWith("no formatter and no analyzer has an opinion about.");
+		literal.Summary.ShouldNotContain("<");
+	}
+
+	/// <summary>
+	/// Not asked for, not paid for: the field is absent rather than empty, since an empty list reads as a
+	/// symbol with no source rather than a question nobody asked.
+	/// </summary>
 	[Test]
 	public async Task Leaves_the_source_out_unless_it_is_asked_for()
 	{
@@ -1010,6 +1042,6 @@ public sealed class NavigationTests
 			new SymbolTarget { Symbol = "Library.Greeter.Greet(string)" },
 			TestContext.Current!.Execution.CancellationToken);
 
-		info.Source.ShouldBeEmpty();
+		info.Source.ShouldBeNull();
 	}
 }

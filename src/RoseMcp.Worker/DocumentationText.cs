@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -15,14 +14,70 @@ namespace RoseMcp.Worker;
 /// <c>&lt;see cref/&gt;</c> carries its target in an attribute -- has a hole where the subject was.
 /// </para>
 /// </summary>
-public static partial class DocumentationText
+public static class DocumentationText
 {
+	/// <summary>
+	/// The longest first sentence <see cref="FirstSentence"/> gives. A summary is one sentence by
+	/// convention and not by rule, and one written as a single run-on paragraph would otherwise put the
+	/// whole paragraph on every member of an outline.
+	/// </summary>
+	public const int MaxSentence = 300;
+
 	/// <summary>
 	/// The <c>&lt;summary&gt;</c> of <paramref name="xml"/>, rendered and flattened to one line, or null
 	/// when there is none, it renders to nothing, or the XML does not parse.
 	/// </summary>
 	/// <param name="xml">Documentation XML as <c>ISymbol.GetDocumentationCommentXml</c> returns it.</param>
-	public static string? Summary(string? xml)
+	public static string? Summary(string? xml) => Render(xml)?.Text;
+
+	/// <summary>
+	/// The first sentence of <paramref name="xml"/>'s summary, rendered as <see cref="Summary"/> renders
+	/// it, or null where there is no summary.
+	/// <para>
+	/// A sentence ends at a full stop, question or exclamation mark followed by a space and anything but a
+	/// lower-case letter, and at the edge of a paragraph or list, whichever comes first. Never inside a
+	/// <c>&lt;c&gt;</c>, <c>&lt;code&gt;</c> or a reference, whose text is a name rather than prose, and
+	/// never after an abbreviation such as <c>e.g.</c>, which is a full stop that ends nothing. A number
+	/// such as <c>1.0</c> has no space after its point, so it never ends one. Cut to
+	/// <see cref="MaxSentence"/> at a word, marked with an ellipsis, where the sentence runs longer.
+	/// </para>
+	/// </summary>
+	/// <param name="xml">Documentation XML as <c>ISymbol.GetDocumentationCommentXml</c> returns it.</param>
+	public static string? FirstSentence(string? xml)
+	{
+		if (Render(xml) is not { } prose) return null;
+
+		var sentence = prose.Text[..prose.FirstSentenceEnd()].TrimEnd();
+
+		return Bounded(sentence, MaxSentence);
+	}
+
+	/// <summary>
+	/// <paramref name="text"/> where it is no longer than <paramref name="limit"/>, and otherwise cut at the
+	/// last sentence that ends within it, or failing one at the last word, with an ellipsis where the cut
+	/// falls mid-sentence. A cut at a sentence needs no mark, since what is given reads as a whole.
+	/// </summary>
+	/// <param name="text">Rendered prose, as <see cref="Summary"/> gives it.</param>
+	/// <param name="limit">The most characters to give.</param>
+	public static string Bounded(string text, int limit)
+	{
+		if (text.Length <= limit) return text;
+
+		var sentenceEnd = text.LastIndexOfAny(['.', '!', '?'], limit - 1);
+		var endsASentence = sentenceEnd > 0 && sentenceEnd + 1 < text.Length && text[sentenceEnd + 1] == ' ';
+		if (endsASentence) return text[..(sentenceEnd + 1)];
+
+		var space = text.LastIndexOf(' ', limit - 1);
+		var cut = space > 0 ? space : limit - 1;
+
+		return text[..cut].TrimEnd() + "…";
+	}
+
+	/// <summary>
+	/// The summary rendered, with which characters came from a name rather than prose and where each
+	/// paragraph or list item begins; null where there is no summary or it renders to nothing.
+	/// </summary>
+	private static Prose? Render(string? xml)
 	{
 		if (string.IsNullOrWhiteSpace(xml)) return null;
 
@@ -40,11 +95,11 @@ public static partial class DocumentationText
 
 		if (summary is null) return null;
 
-		var builder = new StringBuilder();
-		AppendContent(builder, summary);
+		var prose = new Prose();
+		AppendContent(prose, summary);
+		prose.Finish();
 
-		var text = Whitespace().Replace(builder.ToString(), " ").Trim();
-		return text.Length == 0 ? null : text;
+		return prose.Text.Length == 0 ? null : prose;
 	}
 
 	/// <summary>
@@ -88,41 +143,45 @@ public static partial class DocumentationText
 		return last;
 	}
 
-	private static void AppendContent(StringBuilder builder, XElement element)
+	private static void AppendContent(Prose prose, XElement element)
 	{
 		foreach (var node in element.Nodes())
 		{
 			switch (node)
 			{
 				case XText text:
-					builder.Append(text.Value);
+					prose.Append(text.Value);
 					break;
 				case XElement child:
-					AppendElement(builder, child);
+					AppendElement(prose, child);
 					break;
 			}
 		}
 	}
 
-	private static void AppendElement(StringBuilder builder, XElement element)
+	private static void AppendElement(Prose prose, XElement element)
 	{
 		switch (element.Name.LocalName)
 		{
 			case "see" or "seealso":
-				AppendReference(builder, element);
+				prose.Literal(() => AppendReference(prose, element));
 				break;
 			case "paramref" or "typeparamref":
-				builder.Append((string?)element.Attribute("name"));
+				prose.Literal(() => prose.Append((string?)element.Attribute("name")));
+				break;
+			case "c" or "code":
+				prose.Literal(() => AppendContent(prose, element));
 				break;
 			case "para" or "list" or "listheader" or "item" or "term" or "description" or "br":
 				// Block elements sit between sentences, so their edges are word breaks the whitespace
-				// collapse turns into one space rather than run two sentences together.
-				builder.Append(' ');
-				AppendContent(builder, element);
-				builder.Append(' ');
+				// collapse turns into one space rather than run two sentences together, and the place a
+				// first sentence ends if no full stop ended it sooner.
+				prose.Block();
+				AppendContent(prose, element);
+				prose.Block();
 				break;
 			default:
-				AppendContent(builder, element);
+				AppendContent(prose, element);
 				break;
 		}
 	}
@@ -131,23 +190,115 @@ public static partial class DocumentationText
 	/// A <c>&lt;see&gt;</c>: the text the author put inside it when there is any, since that is the
 	/// wording they chose, and otherwise the name, keyword or address it points at.
 	/// </summary>
-	private static void AppendReference(StringBuilder builder, XElement element)
+	private static void AppendReference(Prose prose, XElement element)
 	{
 		var hasText = element.Nodes().Any(node => node is XElement || node is XText text && !string.IsNullOrWhiteSpace(text.Value));
 		if (hasText)
 		{
-			AppendContent(builder, element);
+			AppendContent(prose, element);
 			return;
 		}
 
 		var cref = (string?)element.Attribute("cref");
 		if (!string.IsNullOrWhiteSpace(cref))
 		{
-			builder.Append(CrefName(cref));
+			prose.Append(CrefName(cref));
 			return;
 		}
 
-		builder.Append((string?)element.Attribute("langword") ?? (string?)element.Attribute("href"));
+		prose.Append((string?)element.Attribute("langword") ?? (string?)element.Attribute("href"));
+	}
+
+	/// <summary>
+	/// Rendered summary text as it is written: whitespace collapsed to single spaces as it arrives, with a
+	/// record of which characters are a name or code rather than prose, and where each block begins.
+	/// <para>
+	/// Kept while rendering rather than worked out from the finished string, because by then a full stop
+	/// inside <c>&lt;c&gt;Path.GetFileName&lt;/c&gt;</c> and one ending a sentence look the same.
+	/// </para>
+	/// </summary>
+	private sealed class Prose
+	{
+		private static readonly string[] Abbreviations = ["e.g", "i.e", "etc", "vs", "cf", "viz", "approx", "incl"];
+
+		private readonly StringBuilder _builder = new();
+		private readonly List<bool> _literal = [];
+		private readonly List<int> _blocks = [];
+		private int _depth;
+
+		public string Text { get; private set; } = "";
+
+		public void Append(string? text)
+		{
+			if (text is null) return;
+
+			foreach (var character in text)
+			{
+				var isSpace = char.IsWhiteSpace(character);
+				var collapses = isSpace && (_builder.Length == 0 || _builder[^1] == ' ');
+				if (collapses) continue;
+
+				_builder.Append(isSpace ? ' ' : character);
+				_literal.Add(_depth > 0 && !isSpace);
+			}
+		}
+
+		/// <summary>Writes what <paramref name="write"/> appends as a name or code, which no sentence ends inside.</summary>
+		public void Literal(Action write)
+		{
+			_depth++;
+			write();
+			_depth--;
+		}
+
+		/// <summary>The edge of a paragraph or list entry: a word break, and a place a first sentence may end.</summary>
+		public void Block()
+		{
+			Append(" ");
+			if (_builder.Length > 0) _blocks.Add(_builder.Length);
+		}
+
+		public void Finish() => Text = _builder.ToString().Trim();
+
+		/// <summary>Where the first sentence ends, as a length of <see cref="Text"/>; the whole text where none ends sooner.</summary>
+		public int FirstSentenceEnd()
+		{
+			// The builder never starts with a space, since collapsing drops one written first, so a position
+			// in it is the same position in Text.
+			var block = _blocks.Where(edge => edge < Text.Length).DefaultIfEmpty(Text.Length).Min();
+
+			for (var index = 0; index < block; index++)
+			{
+				if (EndsASentence(index)) return index + 1;
+			}
+
+			return block;
+		}
+
+		private bool EndsASentence(int index)
+		{
+			var character = Text[index];
+			if (character is not ('.' or '!' or '?')) return false;
+			if (_literal[index]) return false;
+
+			var atEnd = index + 1 == Text.Length;
+			if (atEnd) return true;
+
+			var followedBySpace = Text[index + 1] == ' ';
+			var nextStartsLowerCase = index + 2 < Text.Length && char.IsLower(Text[index + 2]);
+			if (!followedBySpace || nextStartsLowerCase) return false;
+
+			return character != '.' || !IsAbbreviation(index);
+		}
+
+		/// <summary>Whether the word the full stop at <paramref name="index"/> ends is an abbreviation.</summary>
+		private bool IsAbbreviation(int index)
+		{
+			var start = Text.LastIndexOf(' ', index) + 1;
+			var word = Text[start..index].TrimStart('(');
+
+			return Abbreviations.Contains(word, StringComparer.OrdinalIgnoreCase);
+		}
 	}
 
 	private static string WithoutGroups(string text, char open, char close)
@@ -181,7 +332,4 @@ public static partial class DocumentationText
 		var tick = segment.IndexOf('`');
 		return tick > 0 ? segment[..tick] : segment;
 	}
-
-	[GeneratedRegex(@"\s+")]
-	private static partial Regex Whitespace();
 }

@@ -35,6 +35,28 @@ public sealed class DeclarationEditTests
 	}
 
 	/// <summary>
+	/// Plain text written over several lines keeps them, under a summary tag of its own, the way every
+	/// multi-line summary in a repository like this one is written. Squeezed onto one line it reads as a
+	/// change to the comment's shape nobody asked for, and runs past the width of everything around it.
+	/// </summary>
+	[Test]
+	public async Task Keeps_the_lines_of_a_plain_text_summary()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await CommentAsync(
+			session, "Library.Greeter.Greet(string)", "The greeting for one name,\nshouted across the room.");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldContain(
+			"\t/// <summary>\r\n\t/// The greeting for one name,\r\n\t/// shouted across the room.\r\n\t/// </summary>\r\n",
+			Case.Sensitive);
+	}
+
+	/// <summary>
 	/// XML is passed through as written, one line per line, with the file's own indentation and
 	/// prefix. A repository that writes long comments needs the multi-line form to be the easy one.
 	/// </summary>

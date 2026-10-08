@@ -39,8 +39,8 @@ public static class DocComment
 		string indent,
 		string lineEnding)
 	{
-		var written = Lines(comment, indent, lineEnding);
-		var (above, below) = Around(leading, lineEnding);
+		var (above, below, old) = Around(leading, lineEnding);
+		var written = Lines(comment, indent, lineEnding, old);
 
 		// The new comment goes exactly where the old one was, which is what keeps a blank line above the
 		// member above it and a licence header or region directive over the top of both. Writing the
@@ -90,11 +90,11 @@ public static class DocComment
 	/// The comment as source lines: each one indented, prefixed and terminated the way the file
 	/// does it.
 	/// </summary>
-	private static string Lines(string comment, string indent, string lineEnding)
+	private static string Lines(string comment, string indent, string lineEnding, IReadOnlyList<string> old)
 	{
 		var body = comment.TrimStart().StartsWith('<')
 			? comment
-			: $"<summary>{comment.Trim()}</summary>";
+			: Summary(comment, indent, old);
 
 		var written = new StringBuilder();
 
@@ -115,8 +115,102 @@ public static class DocComment
 	}
 
 	/// <summary>
+	/// Plain text as a <c>&lt;summary&gt;</c>, laid out the way the repository writes one.
+	/// <para>
+	/// A sentence short enough for one line goes on one, tags and all. Anything else gets the tags on
+	/// lines of their own and its text wrapped beneath them: text the caller broke over several lines,
+	/// text too long for one, and a summary replacing one that was written that way -- because a rewrite
+	/// that turns a block back into one long line is the change to the comment's shape nobody asked for.
+	/// The caller's own line breaks are kept, and a line is only ever broken where it is too long.
+	/// </para>
+	/// </summary>
+	private static string Summary(string comment, string indent, IReadOnlyList<string> old)
+	{
+		var lines = comment.Replace("\r\n", "\n", StringComparison.Ordinal)
+			.Split('\n')
+			.Select(line => line.Trim())
+			.SkipWhile(line => line.Length == 0)
+			.Reverse()
+			.SkipWhile(line => line.Length == 0)
+			.Reverse()
+			.ToArray();
+
+		var width = Math.Max(Width, old.Count == 0 ? 0 : old.Max(Columns));
+		var room = width - Columns(indent + Marker + " ");
+		var single = lines.Length == 1 ? $"<summary>{lines[0]}</summary>" : null;
+
+		var block = single is null
+			|| old.Any(line => line.Trim() == $"{Marker} <summary>")
+			|| single.Length > room;
+
+		if (!block) return single!;
+
+		var wrapped = lines.SelectMany(line => line.Length == 0 ? [string.Empty] : Wrapped(line, room));
+
+		return $"<summary>\n{string.Join("\n", wrapped)}\n</summary>";
+	}
+
+	/// <summary>
+	/// The widest a documentation line runs when nothing says otherwise, in columns with a tab as four:
+	/// where this repository's own comments wrap. A comment being replaced that ran wider sets its own.
+	/// </summary>
+	private const int Width = 104;
+
+	/// <summary>How many columns some text takes, with a tab as four.</summary>
+	private static int Columns(string text) => text.Sum(character => character == '\t' ? 4 : 1);
+
+	/// <summary>A line broken between words wherever it would run past <paramref name="room"/>.</summary>
+	private static IEnumerable<string> Wrapped(string line, int room)
+	{
+		var current = new StringBuilder();
+
+		foreach (var word in Words(line))
+		{
+			if (current.Length > 0 && current.Length + 1 + word.Length > room)
+			{
+				yield return current.ToString();
+				current.Clear();
+			}
+
+			if (current.Length > 0) current.Append(' ');
+
+			current.Append(word);
+		}
+
+		if (current.Length > 0) yield return current.ToString();
+	}
+
+	/// <summary>
+	/// The words of a line, a tag counted as one however many spaces it holds: breaking
+	/// <c>&lt;see cref="X"/&gt;</c> after "see" leaves a tag split over two comment lines.
+	/// </summary>
+	private static IEnumerable<string> Words(string line)
+	{
+		var word = new StringBuilder();
+		var depth = 0;
+
+		foreach (var character in line)
+		{
+			if (character == '<') depth++;
+			else if (character == '>' && depth > 0) depth--;
+
+			if (character == ' ' && depth == 0)
+			{
+				if (word.Length > 0) yield return word.ToString();
+
+				word.Clear();
+				continue;
+			}
+
+			word.Append(character);
+		}
+
+		if (word.Length > 0) yield return word.ToString();
+	}
+
+	/// <summary>
 	/// The leading trivia either side of the documentation comment, as text, so a new one can go
-	/// exactly where the old one was.
+	/// exactly where the old one was, and the old comment's own lines, which say how it was laid out.
 	/// <para>
 	/// Everything above stays above and everything below stays below. A licence header, a region
 	/// directive or an ordinary comment above the member all mean something to a reader or to another
@@ -130,18 +224,20 @@ public static class DocComment
 	/// below or the member lands at column zero.
 	/// </para>
 	/// </summary>
-	private static (string Above, string Below) Around(SyntaxTriviaList leading, string lineEnding)
+	private static (string Above, string Below, IReadOnlyList<string> Old) Around(SyntaxTriviaList leading, string lineEnding)
 	{
 		var lines = leading.ToFullString().Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
 
 		var first = Array.FindIndex(lines, IsDocumentation);
 		var last = Array.FindLastIndex(lines, IsDocumentation);
 
+		string[] old = first < 0 ? [] : lines[first..(last + 1)];
+
 		if (first < 0) (first, last) = (lines.Length - 1, lines.Length - 2);
 
 		var above = first == 0 ? string.Empty : string.Join(lineEnding, lines.Take(first)) + lineEnding;
 
-		return (above, string.Join(lineEnding, lines.Skip(last + 1)));
+		return (above, string.Join(lineEnding, lines.Skip(last + 1)), old);
 	}
 
 	/// <summary>One line of a documentation comment, told from any other trivia line by its marker.</summary>

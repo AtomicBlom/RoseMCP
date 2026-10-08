@@ -418,6 +418,35 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
+	/// A parameter added between two documented ones gets its tag between theirs, in parameter order.
+	/// After the last tag it would read as documenting the last parameter, and putting it right is the
+	/// reorder by hand the tool was called to save.
+	/// </summary>
+	[Test]
+	public async Task Writes_the_tag_for_a_parameter_added_in_the_middle_between_its_neighbours()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session,
+			"Library.Arrowed.Describe(string, string)",
+			"string first, string middle, string second",
+			["middle=\"between\""]);
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var text = await ReadAsync(fixture, "Arrowed.cs");
+
+		text.ShouldContain(
+			"\t/// <param name=\"first\">The first part.</param>\r\n"
+				+ "\t/// <param name=\"middle\"></param>\r\n"
+				+ "\t/// <param name=\"second\">The second part.</param>\r\n",
+			Case.Sensitive);
+	}
+
+	/// <summary>
 	/// Removing a parameter takes its argument and its tag with it -- and reports the bodies that
 	/// were using it, which is a thing no tool can fix and the caller has to decide about. The
 	/// value is that it is one answer rather than a build, and it names both places.

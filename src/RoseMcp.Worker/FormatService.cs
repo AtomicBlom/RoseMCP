@@ -17,9 +17,10 @@ namespace RoseMcp.Worker;
 /// judgement call, it is written down in a file the compiler already reads.
 /// </para>
 /// <para>
-/// What it applies is what <c>dotnet format</c> checks, so it answers whether the build will accept a
-/// file, not whether a reviewer will. Where a line wraps and how deep a wrapped line sits are rules
-/// neither has; the result says so rather than calling a file formatted, and names the one shape of
+/// What it applies is what <c>dotnet format</c>'s whitespace check, IDE0055, applies, so it answers
+/// whether that check will pass a file, not whether a reviewer will. It runs none of
+/// <c>dotnet format</c>'s style or analyzer passes. Where a line wraps and how deep a wrapped line sits
+/// are rules neither the formatter nor IDE0055 has; the result says so rather than calling a file formatted, and names the one shape of
 /// that layout it can tell mechanically, a wrapped list whose items begin at different depths.
 /// </para>
 /// </summary>
@@ -176,7 +177,8 @@ public static class FormatService
 	/// files are formatted.
 	/// <para>
 	/// The formatter's rules and the file's whitespace rules are what this applies, and they are what
-	/// <c>dotnet format</c> checks -- which makes them a check of the build, not of the layout. Neither has
+	/// <c>dotnet format</c>'s whitespace check, IDE0055, applies -- which makes them a check of what that
+	/// rule will pass, not of the layout. Neither has
 	/// a rule for where a line wraps or how deep a wrapped line sits, so a list written two levels deep,
 	/// or a parameter list joined onto one line, passes both. Calling such a file formatted is the answer
 	/// a reviewer contradicts, from the tool whose description sends a caller to it after every write. Of
@@ -205,7 +207,7 @@ public static class FormatService
 		}
 
 		return "Every file already met the formatter's rules and its own whitespace rules, which is what dotnet "
-			+ "format checks. Neither covers where a line wraps or how deep a wrapped line sits; of that, this "
+			+ "format's whitespace check (IDE0055) applies. Neither covers where a line wraps or how deep a wrapped line sits; of that, this "
 			+ "checks only that a wrapped list's items begin at one depth.";
 	}
 

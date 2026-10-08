@@ -293,7 +293,7 @@ degraded. Each analyzer directory has a context of its own.
 nothing to the whole solution. One helper does it for every tool, and refuses.
 
 ### ~~WRK-15 `BodyEdit.Inserted` rebuilds the whole body from trimmed statements~~
-**#427.** Inserting at the start or end of a body rebuilt every statement in it, so blank lines went
+**#424.** Inserting at the start or end of a body rebuilt every statement in it, so blank lines went
 and wrapped arguments were re-indented across the whole member. Only the place the new code goes
 changes; the rest of the body is kept as it was.
 

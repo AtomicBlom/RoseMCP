@@ -6,7 +6,7 @@ namespace RoseMcp.Worker;
 
 /// <summary>
 /// Finds wrapped lists whose items begin their lines at different depths: arguments, parameters,
-/// collection elements and the like, laid out one or more to a line.
+/// collection elements and the like, laid out one to a line.
 /// <para>
 /// A continuation line is layout neither Roslyn's formatter nor IDE0055 has a rule about, so a list
 /// whose items were written two levels deep beside neighbours one level deep formats clean and passes
@@ -19,7 +19,8 @@ namespace RoseMcp.Worker;
 /// <para>
 /// Reported, never rewritten, because which of the depths was meant is exactly what cannot be told.
 /// A list holding a preprocessor directive is passed over, since its branches may be laid out for
-/// different builds.
+/// different builds, and so is a list with more than one item on any line: that is a table, and a
+/// table right-aligned by hand begins its rows at whatever column lines its numbers up.
 /// </para>
 /// </summary>
 public static class WrappedLists
@@ -41,7 +42,11 @@ public static class WrappedLists
 			if (ItemsOf(node) is not { } items) continue;
 			if (node.ContainsDirectives) continue;
 
-			var starts = items
+			var listed = items.ToList();
+
+			if (SharesALine(listed, text)) continue;
+
+			var starts = listed
 				.Select(item => Start(item, text, tabSize))
 				.OfType<(int Line, int Column)>()
 				.ToList();
@@ -100,6 +105,22 @@ public static class WrappedLists
 		AttributeListSyntax list => list.Attributes,
 		_ => null,
 	};
+
+	/// <summary>
+	/// Whether two items of the list begin on one line, which makes it a table laid out by hand rather
+	/// than a list wrapped one item to a line.
+	/// </summary>
+	private static bool SharesALine(IReadOnlyList<SyntaxNode> items, SourceText text)
+	{
+		var seen = new HashSet<int>();
+
+		foreach (var item in items)
+		{
+			if (!seen.Add(text.Lines.GetLineFromPosition(item.GetFirstToken().SpanStart).LineNumber)) return true;
+		}
+
+		return false;
+	}
 
 	/// <summary>
 	/// The zero-based line and the column an item begins at, or null where something other than

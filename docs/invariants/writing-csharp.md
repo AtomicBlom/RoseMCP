@@ -64,20 +64,23 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   tell that from a reflow. It says nothing about what happens inside the spans: a replacement
   written at the wrong depth is still the replacement the caller asked for.
 - **`rose_format` says what it checked, never that a file is formatted.** It applies Roslyn's
-  formatter and the whitespace pass, which is what `dotnet format` checks, so a clean result means
-  the build will accept the file, not that a reviewer will. Neither has a rule for where a line
-  wraps or how deep a wrapped line sits: a list written two levels deep, a parameter list joined
-  onto one long line and a continuation indented twice all pass both. So a run with nothing to
-  change says that it met those rules and that wrapping is outside them, and the description says
-  the same. Giving it `dotnet format --verify-no-changes` semantics instead would add nothing:
-  its whitespace check is the same formatter, so it passes every one of those shapes, and the one
-  it does catch, a run of whitespace between two tokens on a line, the formatter already rewrites
-  here. Of the layout nothing has a rule for, one shape is told mechanically and reported by line:
-  items of one wrapped list beginning at different depths, which no file does on purpose and which
-  is what a splice leaves when it adds the destination's indentation to code that already had it.
-  Depth on its own is not judged, since a list two levels deep throughout is a convention some
-  repositories choose, and nothing is rewritten, since which depth was meant is exactly what
-  cannot be told. While anything is reported, the headline does not call the file clean.
+  formatter and the whitespace pass, which is what `dotnet format`'s whitespace check, IDE0055,
+  applies, so a clean result means that check will pass the file, not that a reviewer will. It
+  runs none of `dotnet format`'s style or analyzer passes. Neither the formatter nor IDE0055 has a
+  rule for where a line wraps or how deep a wrapped line sits: a list written two levels deep, a
+  parameter list joined onto one long line and a continuation indented twice all pass both. So a
+  run with nothing to change says that it met those rules and that wrapping is outside them, and
+  the description says the same. Giving it the whitespace half of
+  `dotnet format --verify-no-changes` would add nothing: that check is the same formatter, so it
+  passes every one of those shapes, and the one it does catch, a run of whitespace between two tokens on a line,
+  the formatter already rewrites here. Of the layout nothing has a rule for, one shape is told
+  mechanically and reported by line: items of one list wrapped one to a line beginning at
+  different depths, which no file does on purpose and which is what a splice leaves when it adds
+  the destination's indentation to code that already had it. Depth on its own is not judged, since
+  a list two levels deep throughout is a convention some repositories choose, and a list with more
+  than one item on a line is passed over, since a table aligned by hand starts its rows wherever
+  its columns line up. Nothing is rewritten, since which depth was meant is exactly what cannot be
+  told. While anything is reported, the headline does not call the file clean.
 - **A file goes back in the encoding it arrived in.** A byte order mark is part of the file, and the
   two calls that look like the obvious way to do this get it wrong in opposite directions.
   `File.WriteAllText` is UTF-8 *without* a mark whatever the file was, so a rewrite routed through it

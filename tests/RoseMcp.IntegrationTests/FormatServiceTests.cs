@@ -159,6 +159,7 @@ public sealed class FormatServiceTests
 
 		// Says what it checked, and that wrapping was not part of it, rather than that the file is formatted.
 		notices.ShouldContain("Every file already met the formatter's rules", Case.Sensitive);
+		notices.ShouldContain("dotnet format's whitespace check (IDE0055)", Case.Sensitive);
 		notices.ShouldContain("where a line wraps", Case.Sensitive);
 	}
 

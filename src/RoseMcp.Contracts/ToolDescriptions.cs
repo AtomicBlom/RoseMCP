@@ -680,13 +680,13 @@ public static class ToolDescriptions
 		""";
 
 	public const string FormatDocuments = """
-		Formats C# files to their repository's .editorconfig: indentation, braces, line endings,
-		trailing whitespace and final newline. Call this after writing or editing a C# file
+		Formats C# files to their .editorconfig: indentation, braces, line endings, trailing
+		whitespace and final newline. Call this after writing or editing a C# file
 		by any other means: hand-written C# routinely lands with spaces where the repository wants
 		tabs and LF where it wants CRLF, a failed build wherever IDE0055 is an error. Returns a
-		unified diff; apply=false checks without writing. It checks what dotnet format checks, and
-		neither has a rule for where a line wraps or how deep a wrapped line sits, so clean does not
-		vouch for those. A wrapped list whose items begin at different depths is reported, as is a
+		unified diff; apply=false checks without writing. It applies dotnet format's whitespace
+		check (IDE0055), which has no rule for where a line wraps or how deep a wrapped line sits,
+		so clean does not vouch for those. A wrapped list whose items begin at different depths is reported, as is a
 		multi-line literal whose endings dotnet format will reject; neither is rewritten.
 		""";
 

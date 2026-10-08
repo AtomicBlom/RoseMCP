@@ -71,8 +71,8 @@ public sealed class WrappedListsTests
 	}
 
 	/// <summary>
-	/// Only an item that begins its line has a depth. One following a comma on a shared line, or the
-	/// first argument kept on the line that opens the call, is not compared with anything.
+	/// Only an item that begins its line has a depth. The first argument kept on the line that opens the
+	/// call is not compared with the ones wrapped under it.
 	/// </summary>
 	[Test]
 	public void Compares_only_the_items_that_begin_a_line()
@@ -81,9 +81,44 @@ public sealed class WrappedListsTests
 			"class C",
 			"{",
 			"\tint M() => Sum(1,",
-			"\t\t2, 3) + Sum(",
-			"\t\t4, 5,",
-			"\t\t6);",
+			"\t\t\t\t2,",
+			"\t\t\t\t3);",
+			"\tint Sum(int a, int b, int c) => a + b + c;",
+			"}");
+
+		Disagreeing(source).ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// A table right-aligned by hand begins each row at whatever column lines its numbers up, so a list
+	/// with more than one item on a line is not judged at all.
+	/// </summary>
+	[Test]
+	public void Passes_over_a_table_aligned_by_hand()
+	{
+		var source = Lines(
+			"class C",
+			"{",
+			"\tint[] Values =",
+			"\t[",
+			"\t  0,   1,",
+			"\t100, 101,",
+			"\t];",
+			"}");
+
+		Disagreeing(source).ShouldBeEmpty();
+	}
+
+	/// <summary>Several arguments sharing continuation lines are a table too, whatever depth each row is at.</summary>
+	[Test]
+	public void Passes_over_a_list_sharing_its_continuation_lines()
+	{
+		var source = Lines(
+			"class C",
+			"{",
+			"\tint M() => Sum(",
+			"\t\t1, 2,",
+			"\t\t\t\t3);",
 			"\tint Sum(int a, int b, int c) => a + b + c;",
 			"}");
 

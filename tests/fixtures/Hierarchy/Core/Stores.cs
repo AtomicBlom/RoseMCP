@@ -18,3 +18,22 @@ public sealed class MemoryStore : IStore, IDisposable
 	{
 	}
 }
+
+#if !NET10_0_OR_GREATER
+/// <summary>Compiled only for the older framework, so one framework of this project implements IStore once more than the other.</summary>
+public sealed class LegacyStore : IStore
+{
+	public string Name => "legacy";
+}
+#endif
+
+/// <summary>
+/// What a store is called. Used here, where each framework's copy reaches the one use, and in a file
+/// App and App.Tests both compile, where the one line is a use in each project.
+/// </summary>
+public static class Labels
+{
+	public static string Of(IStore store) => store.Name;
+
+	public static string OfMemory() => Of(new MemoryStore());
+}

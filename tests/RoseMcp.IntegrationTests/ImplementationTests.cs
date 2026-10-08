@@ -213,24 +213,43 @@ public sealed class ImplementationTests
 		var core = await NavigationService.FindImplementationsAsync(
 			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core");
 
-		core.Matches.ShouldHaveSingleItem().Name.ShouldBe("MemoryStore");
-
-		// The search hands back one framework's copy of a type, and naming the other framework still
-		// finds it: the narrowing asks which files the project compiles, not which copy came back.
-		foreach (var framework in new[] { "Core(net9.0)", "Core(net10.0)" })
-		{
-			var one = await NavigationService.FindImplementationsAsync(
-				snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: framework);
-
-			one.Matches.ShouldHaveSingleItem().Name.ShouldBe("MemoryStore");
-		}
+		// Core without a framework is both of them, so it lists what either compiles.
+		core.Matches.Select(match => match.Name).ShouldBe(["LegacyStore", "MemoryStore"], ignoreOrder: true);
 
 		var everywhere = await NavigationService.FindImplementationsAsync(
 			snapshot, target, 1, TestContext.Current!.Execution.CancellationToken);
 
 		everywhere.Matches.Count.ShouldBe(1);
-		everywhere.TotalCount.ShouldBe(2);
+		everywhere.TotalCount.ShouldBe(3);
 		everywhere.Truncated.ShouldBeTrue();
+	}
+
+	/// <summary>
+	/// A project named with its framework lists what that framework's compilation declares, as that
+	/// framework's copy. The search hands back one framework's copy of a type, so naming the other still
+	/// has to find it; and a file both frameworks compile can declare a type for only one of them, behind
+	/// <c>#if</c>, which the file alone would list for both.
+	/// </summary>
+	[Test]
+	public async Task Narrows_a_multi_targeted_project_to_what_one_framework_declares()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+		var target = new SymbolTarget { Symbol = "Core.IStore" };
+
+		var older = await NavigationService.FindImplementationsAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core(net9.0)");
+
+		older.Matches.Select(match => match.Name).ShouldBe(["LegacyStore", "MemoryStore"], ignoreOrder: true);
+		older.Matches.ShouldAllBe(match => match.Project == "Core(net9.0)");
+
+		var newer = await NavigationService.FindImplementationsAsync(
+			snapshot, target, 200, TestContext.Current!.Execution.CancellationToken, project: "Core(net10.0)");
+
+		newer.Matches.ShouldHaveSingleItem().Name.ShouldBe("MemoryStore");
+		newer.Matches.ShouldAllBe(match => match.Project == "Core(net10.0)");
+		newer.TotalCount.ShouldBe(1);
 	}
 
 	/// <summary>

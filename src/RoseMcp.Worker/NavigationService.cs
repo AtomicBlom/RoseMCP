@@ -191,19 +191,17 @@ public static class NavigationService
 			}
 		}
 
-		var uses = references
-			.Distinct()
-			.OrderBy(location => location.FilePath, StringComparer.OrdinalIgnoreCase)
-			.ThenBy(location => location.Line)
-			.ThenBy(location => location.Column)
-			.ToArray();
+		var uses = InPlaceOrder(references.Distinct()).ToArray();
 
 		// The search answers once for each copy of the symbol a multi-targeted project compiles, so one use
 		// comes back once per framework of the declaring project. It is one use, counted once, and merged
-		// after the filter so a project named with its framework keeps its own copy.
+		// after the filter so a project named with its framework keeps its own copy. Only copies of one
+		// project merge: a file compiled by two projects is a use in each, and merging those would drop a
+		// project from the shape and count the use on only one side of isTestProject.
+		var samePlace = SamePlaceIn(snapshot.Solution);
 		var filtered = filter.KeepsAll ? uses : uses.Where(filter.Over(uses).Keeps);
-		var kept = filtered.DistinctBy(location => (location.FilePath, location.Line, location.Column)).ToArray();
-		var every = uses.DistinctBy(location => (location.FilePath, location.Line, location.Column)).ToArray();
+		var kept = filtered.DistinctBy(samePlace).ToArray();
+		var every = uses.DistinctBy(samePlace).ToArray();
 
 		// Which of four answers this is. A filter that kept nothing from a symbol that is used describes
 		// every use instead, and says so: an empty list there reads as a symbol nobody uses, and the
@@ -228,9 +226,10 @@ public static class NavigationService
 			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
 
 			// One declaration is still reached more than once: a positional record's property shares its
-			// parameter's position, and a multi-targeted project compiles it once per framework.
-			Definitions = [.. definitions
-				.DistinctBy(location => (location.FilePath, location.Line, location.Column))
+			// parameter's position, and a multi-targeted project compiles it once per framework. A file two
+			// projects compile declares it in each, and each is listed.
+			Definitions = [.. InPlaceOrder(definitions)
+				.DistinctBy(samePlace)
 				.Select(location => Previewed(location, includePreviews))],
 			Files = ReferenceShapes.ByFile(listed, includePreviews),
 			TotalCount = kept.Length,
@@ -260,6 +259,40 @@ public static class NavigationService
 	/// </summary>
 	private static SourceLocation Previewed(SourceLocation location, bool includePreviews) =>
 		includePreviews ? location : location with { Preview = null };
+
+	/// <summary>
+	/// Locations in the order a reader meets them, and among copies of one location by project name, so
+	/// the copy a merge keeps is the same one on every call rather than whichever the search reached first.
+	/// </summary>
+	private static IEnumerable<SourceLocation> InPlaceOrder(IEnumerable<SourceLocation> locations) =>
+		locations
+			.OrderBy(location => location.FilePath, StringComparer.OrdinalIgnoreCase)
+			.ThenBy(location => location.Line)
+			.ThenBy(location => location.Column)
+			.ThenBy(location => location.Project, StringComparer.Ordinal);
+
+	/// <summary>
+	/// What makes two locations one use or one declaration: the place in the file, and the project file
+	/// that compiles it. MSBuild loads a multi-targeted project once per framework, each a Roslyn project
+	/// of its own with the one project file, so their copies of a location merge; a file linked into two
+	/// projects is compiled by each of them, and stays a location in each.
+	/// </summary>
+	private static Func<SourceLocation, (string FilePath, int Line, int Column, string? Project)> SamePlaceIn(Solution solution)
+	{
+		var projectFiles = solution.Projects
+			.Where(project => project.FilePath is { Length: > 0 })
+			.GroupBy(project => project.Name, StringComparer.Ordinal)
+			.ToDictionary(group => group.Key, group => group.First().FilePath!, StringComparer.Ordinal);
+
+		return location =>
+		{
+			var compiledBy = location.Project is { } name && projectFiles.TryGetValue(name, out var file)
+				? file.ToUpperInvariant()
+				: location.Project;
+
+			return (location.FilePath.ToUpperInvariant(), location.Line, location.Column, compiledBy);
+		};
+	}
 
 	/// <summary>
 	/// What implements, overrides, or derives from the symbol at a position.
@@ -303,39 +336,36 @@ public static class NavigationService
 		var symbol = await target.ResolveAsync(snapshot, cancellationToken, includeMetadata: true);
 		var solution = snapshot.Solution;
 		var found = new List<ISymbol>();
-		string relationship;
 
-		if (symbol is INamedTypeSymbol type)
+		var relationship = symbol switch
 		{
-			if (type.TypeKind == TypeKind.Interface)
-			{
-				relationship = "types implementing this interface, and interfaces extending it";
-				found.AddRange(await SymbolFinder.FindImplementationsAsync(type, solution, cancellationToken: cancellationToken));
-				found.AddRange(await SymbolFinder.FindDerivedInterfacesAsync(type, solution, cancellationToken: cancellationToken));
-			}
-			else
-			{
-				relationship = "types derived from this one";
-				found.AddRange(await SymbolFinder.FindDerivedClassesAsync(type, solution, cancellationToken: cancellationToken));
-			}
-		}
-		else
-		{
+			INamedTypeSymbol { TypeKind: TypeKind.Interface } => "types implementing this interface, and interfaces extending it",
+			INamedTypeSymbol => "types derived from this one",
+
 			// A member can be both overridden and an interface implementation, and a caller asking
 			// about one usually wants the other too.
-			relationship = "members overriding or implementing this one";
-			found.AddRange(await SymbolFinder.FindOverridesAsync(symbol, solution, cancellationToken: cancellationToken));
-			found.AddRange(await SymbolFinder.FindImplementationsAsync(symbol, solution, cancellationToken: cancellationToken));
+			_ => "members overriding or implementing this one",
+		};
+
+		// Searched from every copy, because the search from one copy finds only what derives from that
+		// copy: a type one framework declares behind #if implements that framework's interface alone.
+		foreach (var copy in await CopiesAsync(solution, symbol, cancellationToken))
+		{
+			found.AddRange(await RelatedAsync(solution, copy, cancellationToken));
 		}
 
 		var distinct = found.Distinct(SymbolEqualityComparer.Default).ToArray();
 		var inSource = distinct.Where(IsInSource).ToArray();
-		var compiled = narrowed is null ? inSource : await CompiledByAsync(solution, narrowed, inSource, cancellationToken);
+		var compiled = narrowed is null ? inSource : await CompiledByAsync(narrowed, inSource, cancellationToken);
 
 		// Keyed on the declaration rather than the symbol: a multi-targeted project compiles each type
 		// once per framework, and the copies are different symbols for one line of source, so neither the
-		// listing nor the counts may depend on how many of them the search handed back.
-		var listed = compiled.DistinctBy(Declaration).ToArray();
+		// listing nor the counts may depend on how many of them the search handed back. The copy kept is
+		// the one whose project sorts first, so a match names the same project on every call.
+		var listed = compiled
+			.OrderBy(candidate => ProjectNameOf(solution, candidate), StringComparer.Ordinal)
+			.DistinctBy(Declaration)
+			.ToArray();
 		var inMetadata = distinct.Where(candidate => !IsInSource(candidate)).DistinctBy(Declaration).Count();
 		var elsewhere = inSource.DistinctBy(Declaration).Count() - listed.Length;
 
@@ -360,7 +390,63 @@ public static class NavigationService
 		};
 	}
 
+	/// <summary>What implements, overrides, or derives from one symbol, by the search its kind calls for.</summary>
+	private static async Task<IReadOnlyList<ISymbol>> RelatedAsync(Solution solution, ISymbol symbol, CancellationToken cancellationToken)
+	{
+		var found = new List<ISymbol>();
+
+		if (symbol is INamedTypeSymbol { TypeKind: TypeKind.Interface } @interface)
+		{
+			found.AddRange(await SymbolFinder.FindImplementationsAsync(@interface, solution, cancellationToken: cancellationToken));
+			found.AddRange(await SymbolFinder.FindDerivedInterfacesAsync(@interface, solution, cancellationToken: cancellationToken));
+		}
+		else if (symbol is INamedTypeSymbol type)
+		{
+			found.AddRange(await SymbolFinder.FindDerivedClassesAsync(type, solution, cancellationToken: cancellationToken));
+		}
+		else
+		{
+			found.AddRange(await SymbolFinder.FindOverridesAsync(symbol, solution, cancellationToken: cancellationToken));
+			found.AddRange(await SymbolFinder.FindImplementationsAsync(symbol, solution, cancellationToken: cancellationToken));
+		}
+
+		return found;
+	}
+
+	/// <summary>
+	/// The symbol as each project compiling its declaration has it: once per framework of a multi-targeted
+	/// project, each a symbol of its own. A symbol from a referenced assembly, or one with no file a project
+	/// lists, is its only copy.
+	/// </summary>
+	private static async Task<IReadOnlyList<ISymbol>> CopiesAsync(Solution solution, ISymbol symbol, CancellationToken cancellationToken)
+	{
+		var path = symbol.Locations.FirstOrDefault(location => location.IsInSource)?.SourceTree?.FilePath;
+		if (path is not { Length: > 0 }) return [symbol];
+
+		var copies = new List<ISymbol> { symbol };
+
+		foreach (var projectId in solution.GetDocumentIdsWithFilePath(path).Select(document => document.ProjectId).Distinct())
+		{
+			var compilation = solution.GetProject(projectId) is { } project
+				? await project.GetCompilationAsync(cancellationToken)
+				: null;
+
+			if (compilation is not null && CopyIn(compilation, symbol, cancellationToken) is { } copy) copies.Add(copy);
+		}
+
+		return [.. copies.Distinct(SymbolEqualityComparer.Default)];
+	}
+
 	private static bool IsInSource(ISymbol symbol) => symbol.Locations.Any(location => location.IsInSource);
+
+	/// <summary>The project a symbol's first source declaration is compiled by, or its assembly where no document holds it.</summary>
+	private static string? ProjectNameOf(Solution solution, ISymbol symbol)
+	{
+		var tree = symbol.Locations.FirstOrDefault(location => location.IsInSource)?.SourceTree;
+		var document = tree is null ? null : solution.GetDocument(tree);
+
+		return document?.Project.Name ?? symbol.ContainingAssembly?.Name;
+	}
 
 	/// <summary>
 	/// What makes two symbols one declaration: the signature, and where it is written -- or, for a
@@ -378,37 +464,57 @@ public static class NavigationService
 	}
 
 	/// <summary>
-	/// The candidates one of the projects compiles. A candidate counts when it belongs to one of their
-	/// assemblies, which is what places a declaration a generator wrote, or when it is written in a file
-	/// one of them compiles -- because a multi-targeted project compiles each type once per framework and
-	/// the search hands back one of the copies, so the framework a caller named need not be the one
-	/// whose assembly the answer came from.
+	/// Each candidate as one of the projects compiles it, leaving out the candidates none of them does.
+	/// <para>
+	/// Decided by whether a project's compilation declares the symbol, not by whether it compiles the file
+	/// the candidate is written in. A multi-targeted project compiles each type once per framework and the
+	/// search hands back one of the copies, so the copy found need not be the framework a caller named --
+	/// but a file both frameworks compile can still declare a type for only one of them, behind
+	/// <c>#if</c>, and the file alone would list it for both. The copy returned is the named project's own,
+	/// so the match says the project the caller asked about. A declaration a generator wrote has no file
+	/// to find, and is placed by the assembly it belongs to like any other.
+	/// </para>
 	/// </summary>
 	private static async Task<IReadOnlyList<ISymbol>> CompiledByAsync(
-		Solution solution,
 		IReadOnlyList<Project> projects,
 		IReadOnlyList<ISymbol> candidates,
 		CancellationToken cancellationToken)
 	{
-		var assemblies = new HashSet<IAssemblySymbol>(SymbolEqualityComparer.Default);
-		var ids = projects.Select(project => project.Id).ToHashSet();
+		var compilations = new List<Compilation>();
 
 		foreach (var project in projects)
 		{
-			if (await project.GetCompilationAsync(cancellationToken) is { } compilation) assemblies.Add(compilation.Assembly);
+			if (await project.GetCompilationAsync(cancellationToken) is { } compilation) compilations.Add(compilation);
 		}
 
-		bool IsCompiledHere(ISymbol candidate)
+		var copies = new List<ISymbol>();
+
+		foreach (var candidate in candidates)
 		{
-			var isInOneOfTheAssemblies = candidate.ContainingAssembly is { } assembly && assemblies.Contains(assembly);
+			cancellationToken.ThrowIfCancellationRequested();
 
-			return isInOneOfTheAssemblies || candidate.Locations
-				.Where(location => location.IsInSource && location.SourceTree?.FilePath is { Length: > 0 })
-				.SelectMany(location => solution.GetDocumentIdsWithFilePath(location.SourceTree!.FilePath))
-				.Any(document => ids.Contains(document.ProjectId));
+			var copy = compilations
+				.Select(compilation => CopyIn(compilation, candidate, cancellationToken))
+				.FirstOrDefault(found => found is not null);
+
+			if (copy is not null) copies.Add(copy);
 		}
 
-		return [.. candidates.Where(IsCompiledHere)];
+		return copies;
+	}
+
+	/// <summary>
+	/// The symbol as this compilation declares it, or null where it declares no such symbol. The copy a
+	/// symbol key resolves to has to belong to the compilation's own assembly: resolved in a project that
+	/// references the declaring one, the key finds the referenced type, which that project uses and does
+	/// not compile.
+	/// </summary>
+	private static ISymbol? CopyIn(Compilation compilation, ISymbol candidate, CancellationToken cancellationToken)
+	{
+		if (SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, compilation.Assembly)) return candidate;
+
+		return SymbolFinder.FindSimilarSymbols(candidate, compilation, cancellationToken)
+			.FirstOrDefault(similar => SymbolEqualityComparer.Default.Equals(similar.ContainingAssembly, compilation.Assembly));
 	}
 
 	/// <summary>What the listing left out, counted, since a short list otherwise reads as the whole answer.</summary>

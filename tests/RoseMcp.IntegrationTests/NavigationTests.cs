@@ -712,6 +712,61 @@ public sealed class NavigationTests
 	}
 
 	/// <summary>
+	/// A file two projects compile holds a use in each, and the two stay two: merged, one project drops
+	/// out of the shape and the use counts on only one side of isTestProject, so the two sides no longer
+	/// add up to the whole. The copies one multi-targeted project reaches do merge, into the same project
+	/// on every call.
+	/// </summary>
+	[Test]
+	public async Task Keeps_a_use_in_a_file_two_projects_compile_once_in_each()
+	{
+		using var fixture = FixtureSolution.Copy("Hierarchy", "Hierarchy.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var snapshot = await session.ReadAsync(cancellationToken);
+		var target = new SymbolTarget { Symbol = "Core.Labels.Of" };
+
+		var all = await NavigationService.FindReferencesAsync(snapshot, target, 200, cancellationToken);
+
+		all.TotalCount.ShouldBe(3);
+		all.Files.ShouldAllBe(file => file.References.Count == 1);
+		all.Files
+			.Where(file => file.FilePath.EndsWith("Shelf.cs", StringComparison.Ordinal))
+			.Select(file => file.Project)
+			.ShouldBe(["App", "App.Tests"], ignoreOrder: true);
+		all.Definitions.ShouldHaveSingleItem();
+
+		var shape = (await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, cancellationToken, definitionsOnly: true)).Shape.ShouldNotBeNull();
+
+		shape.Total.ShouldBe(all.TotalCount);
+		shape.InTestProjects.ShouldBe(1);
+		shape.Projects.Select(project => project.Project).ShouldContain("App");
+		shape.Projects.Select(project => project.Project).ShouldContain("App.Tests");
+
+		var tests = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, cancellationToken, isTestProject: true);
+		var product = await NavigationService.FindReferencesAsync(
+			snapshot, target, 200, cancellationToken, isTestProject: false);
+
+		tests.TotalCount.ShouldBe(1);
+		(tests.TotalCount + product.TotalCount).ShouldBe(all.TotalCount);
+
+		// Core's own use is reached through each framework's copy and kept as one of them, the same one
+		// every time, so a caller narrowing to the project a reference named finds it there again.
+		var inCore = all.Files.Where(file => file.FilePath.EndsWith("Stores.cs", StringComparison.Ordinal)).ShouldHaveSingleItem();
+		inCore.Project.ShouldBe("Core(net10.0)");
+
+		for (var call = 0; call < 3; call++)
+		{
+			var again = await NavigationService.FindReferencesAsync(snapshot, target, 200, cancellationToken);
+
+			again.Files.Where(file => file.FilePath.EndsWith("Stores.cs", StringComparison.Ordinal)).ShouldHaveSingleItem()
+				.Project.ShouldBe(inCore.Project);
+		}
+	}
+
+	/// <summary>
 	/// A positional record's property is declared by its parameter, at the same place, and the search
 	/// finds both. It is still one definition.
 	/// </summary>

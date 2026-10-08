@@ -387,7 +387,11 @@ public sealed class WorkspaceManager(
 
 		// The caller named it. A name that resolves to nothing is theirs to hear about, so nothing
 		// here is caught -- falling through to a guess would answer a different question than asked.
-		if (hints.Workspace is { } named) return Resolved(named.Value);
+		if (hints.Workspace is { } named)
+		{
+			RefuseAKeySentAsAPath(named);
+			return Resolved(named.Value);
+		}
 
 		// Named by the key a result carried, and strict for the same reason. Only a loaded workspace
 		// can be found that way, since a key cannot be turned back into the path it was taken from.
@@ -431,6 +435,34 @@ public sealed class WorkspaceManager(
 			throw new McpException(
 				$"No solution or project was found near {origin}{OpenWorkspacesSuffix()}", exception);
 		}
+	}
+
+	/// <summary>
+	/// Refuses a workspace key sent as the <c>workspace</c> argument.
+	/// <para>
+	/// The two arguments sit side by side and the key is what a result hands back, so a caller will
+	/// sometimes send it under the wrong name. Taken as a path it is measured from the session's
+	/// directory, names nothing there, and resolution walks up from it to the session's own solution
+	/// -- an answer from a workspace that may not be the one the key named, with nothing in it saying
+	/// the argument was misread. A path that exists is honoured whatever its name looks like; only one
+	/// naming nothing on disk whose last segment has the key's shape is refused, and it is named as the
+	/// key of a loaded workspace where it is one.
+	/// </para>
+	/// </summary>
+	private void RefuseAKeySentAsAPath(RootedPath named)
+	{
+		var exists = File.Exists(named.Value) || Directory.Exists(named.Value);
+		var sent = Path.GetFileName(named.Value);
+		var isShapedLikeAKey = !exists && Solutions.WorkspaceKey.HasShape(sent);
+		if (!isShapedLikeAKey) return;
+
+		var owner = _workers.Keys.FirstOrDefault(
+			path => string.Equals(Solutions.WorkspaceKey.For(path), sent, StringComparison.OrdinalIgnoreCase));
+		var whose = owner is null ? string.Empty : $" It is the key of {owner}, which is loaded.";
+
+		throw new McpException(
+			$"workspace was given {sent}, which names nothing on disk and is shaped like a workspace key.{whose} "
+				+ "Send a key as workspaceKey, and workspace as the path of a solution, project or file.");
 	}
 
 	/// <summary>

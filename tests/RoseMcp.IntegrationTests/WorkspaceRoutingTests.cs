@@ -398,41 +398,74 @@ public sealed class WorkspaceRoutingTests
 	}
 
 	/// <summary>
-	/// The round trip, through the broker's own tool: a result names its file absolutely, a caller
-	/// makes that relative to where it stands and sends it back with the result's key, and the same
-	/// file in the same workspace answers. A key decides which worker answers and not where a
-	/// relative path is measured from, so the session's directory still measures it.
+	/// The round trip, through the broker's own tool, from a session standing in another checkout of
+	/// the same repository. The key outranks the session's directory, so the worktree it names
+	/// answers; the path it hands back is absolute, and sent back with the key it names the same file.
+	/// A key decides which worker answers and not where a relative path is measured from: the same
+	/// file's path made relative and sent with the key is measured from the session's directory,
+	/// names the other checkout's copy, and the worktree refuses it naming the solution it is in.
 	/// </summary>
 	[Test]
-	public async Task A_relative_path_sent_back_with_a_key_names_the_file_the_result_did()
+	public async Task A_key_beats_the_session_directory_and_leaves_relative_paths_measured_from_it()
 	{
 		using var main = FixtureSolution.Copy("Simple", "Simple.sln");
 		using var worktree = FixtureSolution.Copy("Simple", "Simple.sln");
-		var here = Path.GetDirectoryName(worktree.SolutionPath)!;
+		var standing = Path.GetDirectoryName(main.SolutionPath)!;
+		var there = Path.GetDirectoryName(worktree.SolutionPath)!;
 
-		await using var manager = Manager(rootedAt: Path.GetDirectoryName(main.SolutionPath)!);
-		var tools = new BrokerAnalysisTools(manager, Paths(rootedAt: Path.GetDirectoryName(main.SolutionPath)!));
+		await using var manager = Manager(rootedAt: NowhereDirectory.Path());
+		var tools = new BrokerAnalysisTools(manager, Paths(rootedAt: NowhereDirectory.Path()));
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
-		using var origin = CallOrigin.Use(here);
-
 		var worker = await manager.GetOrStartAsync(WorkspaceHints.From(RootedPath.Absolute(worktree.SolutionPath)), cancellationToken);
+
+		using var origin = CallOrigin.Use(standing);
 
 		var first = await tools.OutlineAsync(
 			new Progress<ProgressNotificationValue>(), symbol: "Core.Calculator", workspaceKey: worker.Key, cancellationToken: cancellationToken);
 		var absolute = first.Types.ShouldHaveSingleItem().FilePath.ShouldNotBeNull();
 
+		first.Workspace.ShouldBe(worktree.SolutionPath, StringCompareShould.IgnoreCase);
 		absolute.ShouldBe(worktree.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
 
-		var second = await tools.OutlineAsync(
-			new Progress<ProgressNotificationValue>(),
-			filePath: Path.GetRelativePath(here, absolute),
-			workspaceKey: first.WorkspaceKey,
-			cancellationToken: cancellationToken);
+		var again = await tools.OutlineAsync(
+			new Progress<ProgressNotificationValue>(), filePath: absolute, workspaceKey: first.WorkspaceKey, cancellationToken: cancellationToken);
 
-		second.WorkspaceKey.ShouldBe(first.WorkspaceKey);
-		second.Workspace.ShouldBe(worktree.SolutionPath, StringCompareShould.IgnoreCase);
-		second.Types.ShouldHaveSingleItem().FilePath.ShouldBe(absolute, StringCompareShould.IgnoreCase);
+		again.Workspace.ShouldBe(worktree.SolutionPath, StringCompareShould.IgnoreCase);
+		again.Types.ShouldHaveSingleItem().FilePath.ShouldBe(absolute, StringCompareShould.IgnoreCase);
+
+		var error = await Should.ThrowAsync<InvalidOperationException>(() => tools.OutlineAsync(
+			new Progress<ProgressNotificationValue>(),
+			filePath: Path.GetRelativePath(there, absolute),
+			workspaceKey: first.WorkspaceKey,
+			cancellationToken: cancellationToken)).OfExactType();
+
+		error.Message.ShouldContain($"inside a project of {main.SolutionPath}", Case.Insensitive);
+	}
+
+	/// <summary>
+	/// A key sent under the other argument's name is refused rather than read as a path. Measured from
+	/// the session's directory it names nothing, and resolution would walk up from it to the session's
+	/// own solution: here another checkout, answering for a workspace the key did not name.
+	/// </summary>
+	[Test]
+	public async Task A_key_sent_as_workspace_is_refused_naming_the_right_argument()
+	{
+		using var main = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var worktree = FixtureSolution.Copy("Simple", "Simple.sln");
+		await using var manager = Manager(rootedAt: NowhereDirectory.Path());
+		var paths = Paths(rootedAt: NowhereDirectory.Path());
+
+		var worker = await manager.GetOrStartAsync(
+			WorkspaceHints.From(RootedPath.Absolute(worktree.SolutionPath)), TestContext.Current!.Execution.CancellationToken);
+
+		using var origin = CallOrigin.Use(Path.GetDirectoryName(main.SolutionPath)!);
+
+		var error = Should.Throw<McpException>(() => manager.WorkspaceFor(WorkspaceHints.From(paths.Of(worker.Key))))
+			.ShouldBeOfType<McpException>();
+
+		error.Message.ShouldContain("workspaceKey", Case.Sensitive);
+		error.Message.ShouldContain($"key of {worktree.SolutionPath}", Case.Insensitive);
 	}
 
 	private static WorkspaceManager Manager(string rootedAt) => BrokerHarness.CreateManager(rootedAt);

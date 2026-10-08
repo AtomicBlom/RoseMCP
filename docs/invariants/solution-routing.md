@@ -49,7 +49,11 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   carries, as after a broker restart, is refused naming the keys that are loaded and saying to pass
   `workspace`; passing it over for the paths would answer from a workspace the caller did not name.
   Four bytes of hash can collide, so two loaded solutions sharing a key are refused naming both
-  rather than settled by whichever the dictionary yields first.
+  rather than settled by whichever the dictionary yields first. A key sent as `workspace` is refused
+  too, saying to send it as `workspaceKey`: read as a path it names nothing under the session's
+  directory, and resolution walks up from it to the session's own solution, which answers for a
+  workspace the key did not name. Only a `workspace` naming nothing on disk whose last segment has
+  the key's shape is refused, so a real path is honoured whatever it is called.
 - **A path the call will create routes by its nearest existing ancestor, and only such a path.**
   `rose_add_file`'s `filePath` names nothing on disk by definition and is the one argument saying
   where the call belongs, so passing it over like any other hint sends every new file in another

@@ -139,6 +139,25 @@ public sealed class WorkspaceKeyRoutingTests
 	}
 
 	/// <summary>
+	/// What a key looks like, which is how one sent as <c>workspace</c> is told from a path naming
+	/// nothing: every key the broker makes has the shape, and a file name or a bare word does not.
+	/// </summary>
+	[Test]
+	public void A_key_is_told_from_a_path_by_its_shape()
+	{
+		WorkspaceKey.HasShape(WorkspaceKey.For(Alpha)).ShouldBeTrue();
+		WorkspaceKey.HasShape("My-Shop-1A2B3C4D").ShouldBeTrue();
+		WorkspaceKey.HasShape(" Shop-1a2b3c4d ").ShouldBeTrue();
+
+		WorkspaceKey.HasShape("Shop.slnx").ShouldBeFalse();
+		WorkspaceKey.HasShape("Shop-1a2b3c4").ShouldBeFalse();
+		WorkspaceKey.HasShape("Shop-1a2b3c4g").ShouldBeFalse();
+		WorkspaceKey.HasShape("-1a2b3c4d").ShouldBeFalse();
+		WorkspaceKey.HasShape("Shop_1a2b3c4d").ShouldBeFalse();
+		WorkspaceKey.HasShape(null).ShouldBeFalse();
+	}
+
+	/// <summary>
 	/// Every tool that declares <c>workspaceKey</c> hands it to the routing. Sending it beside
 	/// <c>workspace</c> is refused there, before any worker is started, so a tool that declared the
 	/// parameter and built its hints without it would answer from the path instead -- and the refusal

@@ -39,6 +39,17 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   to one `workspace ?? filePaths.FirstOrDefault()`, and one of those hints is not even a path
   (`rose_diagnostics`' `target` is a project name under project scope), so a hint naming nothing on
   disk where the caller is standing is passed over rather than followed somewhere arbitrary.
+- **A path the call will create routes by its nearest existing ancestor, and only such a path.**
+  `rose_add_file`'s `filePath` names nothing on disk by definition and is the one argument saying
+  where the call belongs, so passing it over like any other hint sends every new file in another
+  checkout to the session's own workspace -- whose worker then truthfully says the path is in none of
+  its projects, about a file that sits inside a project of a solution open beside it. The directory
+  the file will be placed under is a fact about the call, so `WorkspaceHints.Creating` is routed by
+  it, in the paths stage after the ordinary hints. Widening that to every hint would follow
+  `rose_diagnostics`' "Db.App" up to the session's directory and call it evidence, so the ancestor
+  walk is reserved for a tool that creates its path. A failure answered by a solution that does not
+  compile the call's path says which solution does, or which several share its directory, and to
+  pass `workspace`: the worker can only describe its own solution, and only the broker chose it.
 - **A relative path is measured from the calling session's directory, and from nowhere else.** The
   broker's own directory is no answer: in http mode it is the tray's install directory, and in stdio
   mode it is whichever checkout the process was started in. Six worktrees of one repository is the

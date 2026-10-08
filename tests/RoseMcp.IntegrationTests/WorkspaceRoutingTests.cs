@@ -152,6 +152,148 @@ public sealed class WorkspaceRoutingTests
 		error.Directory.ShouldBe(repository.Root, StringCompareShould.IgnoreCase);
 	}
 
+	/// <summary>
+	/// rose_add_file's path names nothing on disk by definition, and it is the only argument saying
+	/// where the call belongs. Passed over like any hint naming nothing, a new file in another checkout
+	/// is answered by the session's own workspace; routed by the directory it will be placed under,
+	/// it reaches the solution whose project will compile it, folders not yet made included.
+	/// </summary>
+	[Test]
+	public void A_new_file_routes_by_the_directory_it_will_be_placed_under()
+	{
+		using var origin = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var elsewhere = new SeveralSolutions();
+		var manager = Manager(rootedAt: Path.GetDirectoryName(origin.SolutionPath)!);
+
+		var file = RootedPath.Absolute(Path.Combine(elsewhere.Root, "Second", "Made", "Later", "Thing2.cs"));
+
+		manager.WorkspaceFor(WorkspaceHints.ForNewFile(null, file)).ShouldBe(
+			elsewhere.Second, StringCompareShould.IgnoreCase);
+	}
+
+	/// <summary>
+	/// The same path as an ordinary hint is still passed over: only a path the call will create is
+	/// routed by where it is going, so a hint that is not a path at all keeps falling through.
+	/// </summary>
+	[Test]
+	public void A_missing_path_that_the_call_will_not_create_is_still_passed_over()
+	{
+		using var origin = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var elsewhere = new SeveralSolutions();
+		var manager = Manager(rootedAt: Path.GetDirectoryName(origin.SolutionPath)!);
+
+		var file = RootedPath.Absolute(Path.Combine(elsewhere.Root, "Second", "Thing2.cs"));
+
+		manager.WorkspaceFor(WorkspaceHints.From(null, file)).ShouldBe(
+			origin.SolutionPath, StringCompareShould.IgnoreCase);
+	}
+
+	/// <summary>
+	/// A new file nothing encloses says nothing about the call, so the session's directory answers it,
+	/// as it does for an existing path with no solution near it.
+	/// </summary>
+	[Test]
+	public void A_new_file_with_no_solution_above_it_falls_back_to_the_origin()
+	{
+		using var origin = FixtureSolution.Copy("Simple", "Simple.sln");
+		var manager = Manager(rootedAt: Path.GetDirectoryName(origin.SolutionPath)!);
+
+		var empty = Path.Combine(Path.GetTempPath(), "rosemcp-tests", $"empty-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(empty);
+
+		try
+		{
+			var file = RootedPath.Absolute(Path.Combine(empty, "Made", "Thing.cs"));
+			var nowhere = RootedPath.Absolute(Path.Combine(NowhereDirectory.Path(), "Thing.cs"));
+
+			manager.WorkspaceFor(WorkspaceHints.ForNewFile(null, file)).ShouldBe(
+				origin.SolutionPath, StringCompareShould.IgnoreCase);
+			manager.WorkspaceFor(WorkspaceHints.ForNewFile(null, nowhere)).ShouldBe(
+				origin.SolutionPath, StringCompareShould.IgnoreCase);
+		}
+		finally
+		{
+			Directory.Delete(empty, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// A new file whose nearest directory holds several solutions, none compiling it, is no basis for
+	/// a guess: with nowhere else to go it is the ambiguity about that directory the caller hears.
+	/// </summary>
+	[Test]
+	public void A_new_file_among_several_solutions_still_raises_the_ambiguity()
+	{
+		using var repository = new SeveralSolutions();
+		var manager = Manager(rootedAt: NowhereDirectory.Path());
+
+		var file = RootedPath.Absolute(Path.Combine(repository.Root, "Made", "Loose.cs"));
+
+		var error = Should.Throw<AmbiguousSolutionException>(
+			() => manager.WorkspaceFor(WorkspaceHints.ForNewFile(null, file))).ShouldBeOfType<AmbiguousSolutionException>();
+
+		error.Directory.ShouldBe(repository.Root, StringCompareShould.IgnoreCase);
+	}
+
+	/// <summary>
+	/// A failure answered by a workspace the path is not in says which one it is in and what to pass,
+	/// since the worker can only describe its own solution and its "not inside any project" is false
+	/// about the path itself.
+	/// </summary>
+	[Test]
+	public void A_failure_answered_by_another_workspace_names_the_one_the_path_is_in()
+	{
+		using var origin = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var elsewhere = new SeveralSolutions();
+		var manager = Manager(rootedAt: Path.GetDirectoryName(origin.SolutionPath)!);
+
+		var file = RootedPath.Absolute(Path.Combine(elsewhere.Root, "Second", "Made", "Thing2.cs"));
+		var hints = WorkspaceHints.ForNewFile(RootedPath.Absolute(origin.SolutionPath), file);
+
+		var said = manager.Elsewhere(hints, origin.SolutionPath).ShouldNotBeNull();
+
+		said.ShouldContain($"inside a project of {elsewhere.Second}", Case.Sensitive);
+		said.ShouldContain("workspace argument", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// Nothing is added where the workspace that answered compiles the path: the failure was about
+	/// something else, and a sentence pointing elsewhere would send the caller the wrong way.
+	/// </summary>
+	[Test]
+	public void A_failure_answered_by_the_workspace_the_path_is_in_gains_nothing()
+	{
+		using var repository = new SeveralSolutions();
+		var manager = Manager(rootedAt: NowhereDirectory.Path());
+
+		var file = RootedPath.Absolute(Path.Combine(repository.Root, "Second", "Thing2.cs"));
+
+		manager.Elsewhere(WorkspaceHints.ForNewFile(null, file), repository.Second).ShouldBeNull();
+	}
+
+	/// <summary>
+	/// Where the path's own directory could not decide, the session's directory answered, and the
+	/// caller hears both that and the candidates -- not "outside any project" about a path that is in
+	/// one of them.
+	/// </summary>
+	[Test]
+	public void A_failure_for_a_path_among_several_solutions_names_them()
+	{
+		using var origin = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var elsewhere = new SeveralSolutions();
+		var manager = Manager(rootedAt: Path.GetDirectoryName(origin.SolutionPath)!);
+
+		var file = RootedPath.Absolute(Path.Combine(elsewhere.Root, "Loose.cs"));
+
+		manager.WorkspaceFor(WorkspaceHints.ForNewFile(null, file)).ShouldBe(
+			origin.SolutionPath, StringCompareShould.IgnoreCase);
+
+		var said = manager.Elsewhere(WorkspaceHints.ForNewFile(null, file), origin.SolutionPath).ShouldNotBeNull();
+
+		said.ShouldContain("inside no project of Simple.sln", Case.Sensitive);
+		said.ShouldContain("3 solutions share", Case.Sensitive);
+	}
+
 	private static WorkspaceManager Manager(string rootedAt) => BrokerHarness.CreateManager(rootedAt);
 
 	/// <summary>What a tool uses to make its path arguments absolute, rooted where the manager is.</summary>

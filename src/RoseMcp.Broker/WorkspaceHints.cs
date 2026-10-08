@@ -44,9 +44,70 @@ public sealed record WorkspaceHints
 	public IReadOnlyList<RootedPath?> Paths { get; init; } = [];
 
 	/// <summary>
+	/// Paths the call is going to create, tried after <see cref="Paths"/> and before the calling
+	/// session's directory.
+	/// <para>
+	/// Kept apart from <see cref="Paths"/> because passing over what names nothing on disk is right for
+	/// a hint that may not be a path at all, and wrong for one that names nothing by definition:
+	/// <c>rose_add_file</c>'s <c>filePath</c> is the only argument saying where that call belongs, and
+	/// treated as an ordinary hint it is always passed over, so a new file in another checkout is
+	/// answered by the session's own workspace. One of these routes by its nearest existing ancestor
+	/// instead, which is the directory the file will be placed under.
+	/// </para>
+	/// </summary>
+	public IReadOnlyList<RootedPath?> Creating { get; init; } = [];
+
+	/// <summary>
 	/// The workspace argument, then any paths the call carries. Reads at the call site the way the
 	/// hand-written <c>workspace ?? filePath</c> it replaces did.
 	/// </summary>
 	public static WorkspaceHints From(RootedPath? workspace, params RootedPath?[] paths) =>
 		new() { Workspace = workspace, Paths = paths };
+
+	/// <summary>
+	/// The workspace argument, then a path the call will create, which is routed by where it is going
+	/// rather than passed over for not being there yet.
+	/// </summary>
+	public static WorkspaceHints ForNewFile(RootedPath? workspace, RootedPath? path) =>
+		new() { Workspace = workspace, Creating = [path] };
+
+	/// <summary>
+	/// Every path the call carries that says something about where it belongs, best first, each as
+	/// the path routing asks about: the hint itself where it names something on disk, and a path the
+	/// call will create by its nearest existing ancestor. A hint naming nothing on disk is left out,
+	/// for the reason <see cref="Paths"/> gives.
+	/// </summary>
+	public IEnumerable<(RootedPath Hint, string Routed)> Routable()
+	{
+		foreach (var path in Paths)
+		{
+			if (path is null) continue;
+
+			var exists = File.Exists(path.Value) || Directory.Exists(path.Value);
+			if (exists) yield return (path, path.Value);
+		}
+
+		foreach (var path in Creating)
+		{
+			if (path is null) continue;
+
+			if (NearestExisting(path.Value) is { } ancestor) yield return (path, ancestor);
+		}
+	}
+
+	/// <summary>
+	/// The path itself where it exists, else the nearest directory above it that does; null where not
+	/// even its root does, as on a drive that is not there.
+	/// </summary>
+	private static string? NearestExisting(string path)
+	{
+		if (File.Exists(path) || Directory.Exists(path)) return path;
+
+		for (var directory = Path.GetDirectoryName(path); directory is not null; directory = Path.GetDirectoryName(directory))
+		{
+			if (Directory.Exists(directory)) return directory;
+		}
+
+		return null;
+	}
 }

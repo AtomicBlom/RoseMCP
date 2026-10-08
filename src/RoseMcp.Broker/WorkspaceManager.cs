@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Xml;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -168,20 +169,31 @@ public sealed class WorkspaceManager(
 
 		try
 		{
-			return Attribute(await worker.CallAsync<T>(tool, arguments, cancellationToken, progress), worker);
+			try
+			{
+				return Attribute(await worker.CallAsync<T>(tool, arguments, cancellationToken, progress), worker);
+			}
+			catch (WorkerUnavailableException) when (retryIfWorkerDied)
+			{
+				logger.LogInformation("Replacing the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
+
+				// GetOrStart rather than Restart, because Restart closes whatever is registered for the
+				// path rather than the instance that just died. Two callers on one dead worker and the
+				// second closes the replacement the first is already loading a solution into, mid-load.
+				// GetOrStart replaces only an instance that is not alive, which is exactly this case.
+				var replacement = await GetOrStartResolvedAsync(worker.SolutionPath, cancellationToken);
+
+				return Attribute(
+					await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
+			}
 		}
-		catch (WorkerUnavailableException) when (retryIfWorkerDied)
+		catch (InvalidOperationException exception) when (
+			exception is not WorkerUnavailableException
+			&& Elsewhere(hints, worker.SolutionPath) is { } elsewhere)
 		{
-			logger.LogInformation("Replacing the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
-
-			// GetOrStart rather than Restart, because Restart closes whatever is registered for the
-			// path rather than the instance that just died. Two callers on one dead worker and the
-			// second closes the replacement the first is already loading a solution into, mid-load.
-			// GetOrStart replaces only an instance that is not alive, which is exactly this case.
-			var replacement = await GetOrStartResolvedAsync(worker.SolutionPath, cancellationToken);
-
-			return Attribute(
-				await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
+			// The worker's refusal is true about its own solution and says nothing about the one the path
+			// is in. Same type, so nothing further in decides differently for the sentence added to it.
+			throw new InvalidOperationException($"{exception.Message} {elsewhere}", exception);
 		}
 	}
 
@@ -366,18 +378,11 @@ public sealed class WorkspaceManager(
 		// an ambiguity about a path the caller actually named explains more than one about a directory.
 		AmbiguousSolutionException? ambiguity = null;
 
-		foreach (var path in hints.Paths)
+		foreach (var (_, routed) in hints.Routable())
 		{
-			if (path is null) continue;
-
-			// A hint need not be a path at all: diagnostics' target is a project name under project
-			// scope, and a name that describes nothing where the caller is standing says nothing about
-			// which workspace they meant.
-			if (!File.Exists(path.Value) && !Directory.Exists(path.Value)) continue;
-
 			try
 			{
-				return Resolved(path.Value);
+				return Resolved(routed);
 			}
 			catch (AmbiguousSolutionException exception)
 			{
@@ -406,6 +411,56 @@ public sealed class WorkspaceManager(
 			throw new McpException(
 				$"No solution or project was found near {origin}{OpenWorkspacesSuffix()}", exception);
 		}
+	}
+
+	/// <summary>
+	/// What to add to a failure answered by <paramref name="answeredBy"/> when the path the call carries
+	/// belongs to a different solution; null where it belongs to that one, or to nothing this can name.
+	/// <para>
+	/// A worker can only describe its own solution, so a path in another checkout comes back as a
+	/// refusal that is true there and misleading here: "not inside any project's directory" about a
+	/// file that sits inside a project of a solution open beside it. The caller reaches that state by
+	/// naming the wrong workspace, or by a path whose own directory could not decide between several
+	/// solutions so the session's directory answered instead, and either way the fix is the
+	/// workspace argument -- which only this side knows to suggest, since only this side chose.
+	/// </para>
+	/// <para>
+	/// Only the first path routing would have used is asked about, and the advice names a solution
+	/// only where that solution compiles the path, so following it cannot bounce off the same refusal
+	/// from the other side. Public for the reason <see cref="WorkspaceFor"/> is.
+	/// </para>
+	/// </summary>
+	/// <param name="hints">What the call carried.</param>
+	/// <param name="answeredBy">The solution whose worker answered.</param>
+	public string? Elsewhere(WorkspaceHints hints, string answeredBy)
+	{
+		foreach (var (hint, routed) in hints.Routable())
+		{
+			try
+			{
+				if (SolutionResolver.Compiles(answeredBy, hint.Value)) return null;
+
+				var owner = SolutionResolver.Resolve(routed);
+				var isAnotherSolution = !PathCasing.Comparer.Equals(owner, answeredBy);
+				var ownerCompilesIt = isAnotherSolution && SolutionResolver.Compiles(owner, hint.Value);
+				if (!ownerCompilesIt) return null;
+
+				return $"{hint.Value} is inside a project of {owner}, and {Path.GetFileName(answeredBy)} answered this "
+					+ $"call. Pass the workspace argument (or solution) naming {owner}.";
+			}
+			catch (AmbiguousSolutionException ambiguity)
+			{
+				return $"{hint.Value} is inside no project of {Path.GetFileName(answeredBy)}, which answered this "
+					+ $"call, and its own directory does not decide between solutions: {ambiguity.Message}";
+			}
+			catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or XmlException)
+			{
+				// Nothing to load near it, or a solution file that cannot be read: the next path may say
+				// more, and a caveat that cannot be worked out must not replace the failure it explains.
+			}
+		}
+
+		return null;
 	}
 
 	/// <summary>

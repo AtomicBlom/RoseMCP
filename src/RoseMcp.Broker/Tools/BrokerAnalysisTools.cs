@@ -749,7 +749,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<AddFileResult>(WorkspaceHints.From(paths.Of(workspace), paths.Of(filePath)), ToolNames.AddFile, new()
+		ForwardAsync<AddFileResult>(WorkspaceHints.ForNewFile(paths.Of(workspace), paths.Of(filePath)), ToolNames.AddFile, new()
 		{
 			["filePath"] = filePath,
 			["code"] = code,

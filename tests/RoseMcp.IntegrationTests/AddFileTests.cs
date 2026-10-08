@@ -292,7 +292,8 @@ public sealed class AddFileTests
 		var thrown = await Should.ThrowAsync<ArgumentException>(
 			() => AddAsync(session, path, "public sealed class Loose;")).OfExactType();
 
-		thrown.Message.ShouldContain("not inside any project's directory", Case.Sensitive);
+		thrown.Message.ShouldContain("not inside the directory of any project in Members.slnx", Case.Sensitive);
+		thrown.Message.ShouldContain("workspace argument", Case.Sensitive);
 	}
 
 	/// <summary>A preview writes nothing and still answers the question a preview is asking.</summary>

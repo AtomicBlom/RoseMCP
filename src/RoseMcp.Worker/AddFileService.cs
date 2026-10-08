@@ -220,8 +220,9 @@ public static class AddFileService
 		if (files.Length == 0)
 		{
 			throw new ArgumentException(
-				$"{path} is not inside any project's directory, so nothing would compile it. Put it under a "
-					+ "project, or name one with the project argument.");
+				$"{path} is not inside the directory of any project in {SolutionName(solution)}, so nothing here would "
+					+ "compile it. Put it under one of its projects, name one with the project argument, or, where it "
+					+ "belongs to another solution, name that solution with the workspace argument.");
 		}
 
 		if (files.Length > 1)
@@ -236,6 +237,14 @@ public static class AddFileService
 		// compilations of it are multi-targeting, and the first serves for placing a file.
 		return containing[0];
 	}
+
+	/// <summary>
+	/// The solution's file name, for a refusal that is only true of this solution: a path outside every
+	/// project here may sit inside a project of another solution, and a sentence that says "any project"
+	/// tells a caller who routed to the wrong one that the path itself is the mistake.
+	/// </summary>
+	private static string SolutionName(Solution solution) =>
+		solution.FilePath is { Length: > 0 } file ? Path.GetFileName(file) : "this solution";
 
 	private static bool Contains(string directory, string path) =>
 		Path.GetFullPath(path).StartsWith(

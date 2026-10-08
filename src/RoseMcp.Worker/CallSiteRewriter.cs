@@ -47,6 +47,7 @@ public static class CallSiteRewriter
 	{
 		refusal = string.Empty;
 		arguments = WithInlineCommentsOnTheirArgument(arguments);
+		arguments = WithoutClosingLine(arguments, out var closingComment, out var closingLayout);
 
 		var emitted = new List<ArgumentSyntax>();
 
@@ -101,16 +102,22 @@ public static class CallSiteRewriter
 			if (!positional) allPositionalSoFar = false;
 		}
 
-		var separators = Separators(origins, arguments).ToArray();
+		var comments = LineEndComments(arguments, closingComment);
+		var separators = Separators(origins, arguments, comments).ToArray();
 		var indentation = Indentation(arguments);
 
 		var laidOut = emitted
 			.Select((argument, index) => origins[index] == index
 				? argument
-				: InSlot(argument, index == 0 ? arguments.OpenParenToken : separators[index - 1], indentation))
+				: InSlot(argument, index == 0 ? arguments.OpenParenToken : separators[index - 1], indentation, arguments))
 			.ToList();
 
-		if (laidOut.Count > 0) laidOut[^1] = WithStrandedComment(laidOut[^1], origins[^1], arguments, indentation);
+		if (laidOut.Count > 0)
+		{
+			var comment = origins[^1] < 0 ? default : comments[origins[^1]];
+
+			laidOut[^1] = Closing(laidOut[^1], comment, closingLayout, arguments, indentation);
+		}
 
 		return arguments.WithArguments(SyntaxFactory.SeparatedList(laidOut, separators));
 	}
@@ -135,7 +142,8 @@ public static class CallSiteRewriter
 	/// </summary>
 	/// <param name="origins">Where each emitted argument stood in the list as written, or -1 for one that is new.</param>
 	/// <param name="existing">The list as written.</param>
-	private static IEnumerable<SyntaxToken> Separators(IReadOnlyList<int> origins, ArgumentListSyntax existing)
+	/// <param name="comments">The comment that ended the line after each argument as written, by its position there.</param>
+	private static IEnumerable<SyntaxToken> Separators(IReadOnlyList<int> origins, ArgumentListSyntax existing, SyntaxTriviaList[] comments)
 	{
 		var already = existing.Arguments.GetSeparators().ToArray();
 
@@ -147,7 +155,9 @@ public static class CallSiteRewriter
 		{
 			var comma = index < already.Length ? already[index].WithTrailingTrivia(Layout(already[index])) : gained;
 
-			yield return comma.WithTrailingTrivia(ClosingComment(origins[index], already).Concat(comma.TrailingTrivia));
+			var comment = origins[index] < 0 ? default : comments[origins[index]];
+
+			yield return comma.WithTrailingTrivia(comment.Concat(comma.TrailingTrivia));
 		}
 	}
 
@@ -195,11 +205,20 @@ public static class CallSiteRewriter
 	/// break there would strand a trailing space after the comma.
 	/// </para>
 	/// </summary>
-	private static ArgumentSyntax InSlot(ArgumentSyntax argument, SyntaxToken before, SyntaxTriviaList indentation)
+	private static ArgumentSyntax InSlot(ArgumentSyntax argument, SyntaxToken before, SyntaxTriviaList indentation, ArgumentListSyntax arguments)
 	{
 		var leading = argument.GetLeadingTrivia();
 
-		if (!EndsLine(before)) return argument.WithLeadingTrivia(leading.SkipWhile(IsLayout));
+		if (!EndsLine(before))
+		{
+			var written = leading.SkipWhile(IsLayout).ToArray();
+
+			// A directive has to begin its line, so one that would now follow the comma keeps a break in
+			// front of it; without one it is CS1040.
+			var opensWithDirective = written.Length > 0 && written[0].IsDirective;
+
+			return argument.WithLeadingTrivia(opensWithDirective ? written.Prepend(LineBreakIn(arguments)) : written);
+		}
 
 		var own = leading.SkipWhile(IsWhitespace).ToArray();
 		var opensWithBlankLine = own.Length > 0 && own[0].IsKind(SyntaxKind.EndOfLineTrivia);
@@ -243,14 +262,8 @@ public static class CallSiteRewriter
 		if (!EndsLine(separator)) return default;
 
 		var trailing = separator.TrailingTrivia;
-		var last = -1;
 
-		for (var index = 0; index < trailing.Count; index++)
-		{
-			if (!IsLayout(trailing[index])) last = index;
-		}
-
-		return [.. trailing.Take(last + 1)];
+		return [.. trailing.Take(LastWritten(trailing) + 1)];
 	}
 
 	/// <summary>A comma's trailing trivia without the comment ending its line: the position's layout alone.</summary>
@@ -258,44 +271,113 @@ public static class CallSiteRewriter
 		separator.TrailingTrivia.Skip(LineEndComment(separator).Count);
 
 	/// <summary>
-	/// The comment that ended the line after an argument as it was written, or nothing for an argument
-	/// that is new or was written last.
-	/// </summary>
-	private static SyntaxTriviaList ClosingComment(int origin, SyntaxToken[] separators) =>
-		origin >= 0 && origin < separators.Length ? LineEndComment(separators[origin]) : default;
-
-	/// <summary>
-	/// The last argument with the comment that ended its line kept after it, where the comma that
-	/// carried that comment is gone -- which is what taking out the parameters after it does. Dropping
-	/// the comma's trivia with the comma deletes the caller's comment, and nothing says so.
+	/// The argument that ends the list, with what ends the list after it: the comment that ended its
+	/// line where the comma carrying that comment is gone, and the line break in front of a closing
+	/// parenthesis written on a line of its own.
 	/// <para>
-	/// A line comment runs to the end of its line, so one kept there needs the break after it, or it
-	/// would swallow the closing parenthesis. The parenthesis goes on the next line at the call's
-	/// continuation indentation, the line the argument after the comment was on.
+	/// Both belong to a position rather than to an argument as Roslyn hands them over. The break before
+	/// a parenthesis on its own line is the last argument's trailing trivia, so left there it follows
+	/// that argument when something is appended after it, and the comma lands at column zero on the
+	/// line the parenthesis was on. A comment ending the line after a comma is the comma's, so taking
+	/// out the parameters after it would delete it without a word.
+	/// </para>
+	/// <para>
+	/// A line comment runs to the end of its line, so one kept here needs a break after it or it would
+	/// swallow the parenthesis. Where the list had none to give, the parenthesis goes on the next line
+	/// at the call's continuation indentation -- unless something in front of it already indents it.
 	/// </para>
 	/// </summary>
-	private static ArgumentSyntax WithStrandedComment(
+	private static ArgumentSyntax Closing(
 		ArgumentSyntax argument,
-		int origin,
+		SyntaxTriviaList comment,
+		SyntaxTriviaList layout,
 		ArgumentListSyntax arguments,
 		SyntaxTriviaList indentation)
 	{
-		var separators = arguments.Arguments.GetSeparators().ToArray();
-		var comment = ClosingComment(origin, separators);
-
-		if (comment.Count == 0) return argument;
-
-		var trailing = argument.GetTrailingTrivia().Concat(comment);
+		var trailing = argument.GetTrailingTrivia().Concat(comment).Concat(layout);
 		var isLineComment = comment.Any(trivia => trivia.IsKind(SyntaxKind.SingleLineCommentTrivia));
+		var needsBreak = isLineComment && !layout.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
 
-		if (isLineComment)
+		if (needsBreak)
 		{
-			var lineBreak = separators[origin].TrailingTrivia.First(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+			var indented = arguments.CloseParenToken.LeadingTrivia.Any(IsWhitespace);
 
-			trailing = trailing.Append(lineBreak).Concat(indentation);
+			trailing = trailing.Append(LineBreakIn(arguments)).Concat(indented ? [] : indentation);
 		}
 
 		return argument.WithTrailingTrivia(trailing);
+	}
+
+	/// <summary>
+	/// The list with the line ending after its last argument taken off that argument: the comment on
+	/// that line, which is the argument's and goes where it goes, and the break and whitespace after it,
+	/// which are the closing parenthesis's and go to whichever argument ends up last. Nothing is taken
+	/// where the last argument and the parenthesis share a line.
+	/// </summary>
+	private static ArgumentListSyntax WithoutClosingLine(
+		ArgumentListSyntax arguments,
+		out SyntaxTriviaList comment,
+		out SyntaxTriviaList layout)
+	{
+		comment = default;
+		layout = default;
+
+		if (arguments.Arguments.Count == 0) return arguments;
+
+		var last = arguments.Arguments[^1];
+		var trailing = last.GetTrailingTrivia();
+
+		if (!trailing.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia))) return arguments;
+
+		var end = LastWritten(trailing);
+
+		comment = [.. trailing.Take(end + 1)];
+		layout = [.. trailing.Skip(end + 1)];
+
+		return arguments.WithArguments(arguments.Arguments.Replace(last, last.WithTrailingTrivia()));
+	}
+
+	/// <summary>
+	/// The comment that ended the line after each argument as written, by position: the one after its
+	/// comma, or for the last argument the one before the closing parenthesis's line break.
+	/// </summary>
+	private static SyntaxTriviaList[] LineEndComments(ArgumentListSyntax arguments, SyntaxTriviaList last)
+	{
+		var separators = arguments.Arguments.GetSeparators().ToArray();
+		var comments = new SyntaxTriviaList[arguments.Arguments.Count];
+
+		for (var index = 0; index < comments.Length; index++)
+		{
+			comments[index] = index < separators.Length ? LineEndComment(separators[index]) : last;
+		}
+
+		return comments;
+	}
+
+	/// <summary>The index of the last trivia that is not layout, or -1 where all of it is.</summary>
+	private static int LastWritten(SyntaxTriviaList trivia)
+	{
+		var last = -1;
+
+		for (var index = 0; index < trivia.Count; index++)
+		{
+			if (!IsLayout(trivia[index])) last = index;
+		}
+
+		return last;
+	}
+
+	/// <summary>
+	/// A line break as this call site writes them, so one the rewrite has to add matches the file's
+	/// endings. Every caller of this has a break somewhere in the list, since it is only asked for where
+	/// a comment or a directive came with one; directives hold theirs inside their own structure.
+	/// </summary>
+	private static SyntaxTrivia LineBreakIn(ArgumentListSyntax arguments)
+	{
+		var found = arguments.DescendantTrivia(descendIntoTrivia: true)
+			.FirstOrDefault(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+
+		return found.IsKind(SyntaxKind.EndOfLineTrivia) ? found : SyntaxFactory.CarriageReturnLineFeed;
 	}
 
 	/// <summary>

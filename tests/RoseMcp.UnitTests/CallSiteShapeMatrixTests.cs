@@ -459,6 +459,86 @@ public sealed class CallSiteShapeMatrixTests
 		Rewrite(Calling("Target(a, /* the b */ b)"), Inserted, Dash).ShouldBe("""(a, "-", /* the b */ b)""");
 	}
 
+	/// <summary>
+	/// A comment kept after the last argument when its comma goes, where the parenthesis is on a line
+	/// of its own. The parenthesis keeps its own indentation; the call's continuation indentation is
+	/// only for one that has none, and added to its own it pushes the parenthesis a level too deep.
+	/// </summary>
+	[Test]
+	public void Keeps_the_indentation_of_a_closing_parenthesis_on_its_own_line_after_a_kept_comment()
+	{
+		var call = Calling("Target(\n\t\ta, // the a\n\t\tb\n\t)");
+
+		Rewrite(call, "string first").ShouldBe("(\n\t\ta // the a\n\t)");
+	}
+
+	/// <summary>
+	/// An argument appended to a call whose closing parenthesis is on a line of its own -- the shape a
+	/// cancellation token added on the end meets most. The break in front of the parenthesis stays in
+	/// front of the parenthesis; left on the argument that was last, it puts the new comma at column
+	/// zero and the parenthesis's indentation after the new argument.
+	/// </summary>
+	[Test]
+	public void Appends_before_a_closing_parenthesis_on_its_own_line()
+	{
+		Rewrite(OwnLineParenthesis(string.Empty), "string first, string second, string separator", Dash).ShouldBe(
+			"(\n\t\ta,\n\t\tb,\n\t\t\"-\"\n\t)");
+	}
+
+	/// <summary>
+	/// The same, with a comment ending the line of the argument that was last. It stays beside that
+	/// argument, after the comma the argument gains, rather than ahead of it.
+	/// </summary>
+	[Test]
+	public void Appends_before_a_closing_parenthesis_on_its_own_line_keeping_the_last_comment()
+	{
+		var text = Rewrite(OwnLineParenthesis(" // the b"), "string first, string second, string separator", Dash);
+
+		text.ShouldBe("(\n\t\ta,\n\t\tb, // the b\n\t\t\"-\"\n\t)");
+		CountOf(text, "// the b").ShouldBe(1);
+	}
+
+	/// <summary>
+	/// The last argument taken out of a call whose closing parenthesis is on a line of its own. The
+	/// argument left last takes the break in front of the parenthesis, rather than the parenthesis
+	/// following it on its line behind its own indentation.
+	/// </summary>
+	[Test]
+	[Arguments("")]
+	[Arguments(" // the b")]
+	public void Removes_the_last_argument_before_a_closing_parenthesis_on_its_own_line(string comment)
+	{
+		Rewrite(OwnLineParenthesis(comment), "string first").ShouldBe("(\n\t\ta\n\t)");
+	}
+
+	/// <summary>
+	/// A call with its parenthesis on a line of its own that the change does not touch comes back
+	/// exactly as written: what is taken off the last argument to be placed is put back.
+	/// </summary>
+	[Test]
+	public void Leaves_a_call_with_its_closing_parenthesis_on_its_own_line_as_written()
+	{
+		Rewrite(OwnLineParenthesis(" // the b"), "string first, string second, string separator = \"\"").ShouldBe(
+			"(\n\t\ta,\n\t\tb // the b\n\t)");
+	}
+
+	/// <summary>
+	/// An argument whose line opens with a directive, moved up behind the parenthesis by taking out
+	/// the argument before it. A directive has to begin its line, so the break in front of it stays:
+	/// directly after the parenthesis, it is CS1040.
+	/// </summary>
+	[Test]
+	public void Keeps_a_directive_in_front_of_a_moved_argument_on_a_line_of_its_own()
+	{
+		var call = Calling("Target(a,\n#region r\n\t\tb\n#endregion\n\t)");
+
+		Rewrite(call, "string second").ShouldBe("(\n#region r\n\t\tb\n#endregion\n\t)");
+	}
+
+	/// <summary>A call wrapped one argument to a line with its closing parenthesis on a line of its own.</summary>
+	/// <param name="comment">Written after the last argument, before the parenthesis's line.</param>
+	private static string OwnLineParenthesis(string comment) => Calling($"Target(\n\t\ta,\n\t\tb{comment}\n\t)");
+
 	/// <summary>How many times a piece of text occurs, so a duplicated comment is caught by name.</summary>
 	private static int CountOf(string? text, string piece) =>
 		text is null ? 0 : (text.Length - text.Replace(piece, string.Empty, StringComparison.Ordinal).Length) / piece.Length;

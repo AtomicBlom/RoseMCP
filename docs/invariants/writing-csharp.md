@@ -166,7 +166,11 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   that argument. A comma the list gains copies the last one's layout but not its comment, and an
   argument that ends up last keeps the comment its comma carried, with the line break a line
   comment needs. Copying the comma whole writes the comment twice; dropping it with the comma
-  deletes it, and neither is reported.
+  deletes it, and neither is reported. The line break in front of a closing parenthesis written on
+  its own line is the parenthesis's, though Roslyn hangs it on the last argument: it goes to
+  whichever argument ends up last, or an argument appended after it puts its comma at column zero.
+  A directive in front of an argument keeps a line break before it wherever the argument lands,
+  since a directive that does not begin its line is CS1040.
 - **A change of accessibility moves the override chain, and nothing else in the modifier list.** An
   override that keeps the old accessibility is CS0507, so the base all the way up and every override
   all the way down change with the member named. Interfaces are not part of that group: an implicit

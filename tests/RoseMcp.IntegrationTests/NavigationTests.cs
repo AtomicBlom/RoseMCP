@@ -705,7 +705,9 @@ public sealed class NavigationTests
 		definition.Preview.ShouldNotBeNull().ShouldContain("Capacity { get; init; }", Case.Sensitive);
 
 		// And one use is one reference, though the search reaches it once through each framework's copy.
-		result.References.ShouldHaveSingleItem().Project.ShouldBe("App");
+		var file = result.Files.ShouldHaveSingleItem();
+		file.Project.ShouldBe("App");
+		file.References.ShouldHaveSingleItem();
 		result.TotalCount.ShouldBe(1);
 	}
 

@@ -27,6 +27,9 @@ public sealed class WorkspaceHost(
 	private volatile WorkspaceStatusReport? _faulted;
 	private int _disposed;
 
+	private readonly List<AssemblyLoadFault> _assemblyLoadFaults = [];
+	private readonly Lock _faultGate = new();
+
 	public Task StartAsync(CancellationToken cancellationToken)
 	{
 		_start = Task.Run(StartSessionAsync, CancellationToken.None);
@@ -70,10 +73,10 @@ public sealed class WorkspaceHost(
 			// already been computed from the reasons the reporter found. Staleness is the exception
 			// that belongs there: a snapshot served while the solution file is missing is the last
 			// good one rather than current truth, which is exactly what Degraded means.
-			// The assembly faults belong to the process rather than to the load or the snapshot, so they are read
-			// off the session here, where the session is in hand, and survive every reload.
+			// The assembly faults belong to the process rather than to the load or the snapshot, so they are held
+			// here and survive every reload.
 			var reasons = new List<string>(report.DegradedReasons);
-			if (WorkspaceStatusReporter.AssemblyLoadReason(session.AssemblyLoadFaults) is { } faults) reasons.Add(faults);
+			if (WorkspaceStatusReporter.AssemblyLoadReason(AssemblyLoadFaults) is { } faults) reasons.Add(faults);
 			if (snapshot.Stale) reasons.AddRange(snapshot.Notices);
 
 			var notices = snapshot.Stale
@@ -109,9 +112,10 @@ public sealed class WorkspaceHost(
 	public async Task<WorkspaceSession> SessionAsync() => await StartedAsync();
 
 	/// <summary>
-	/// Remembers on the session that a tool call failed to load an assembly, so every status from here on is
-	/// <see cref="WorkspaceState.Degraded"/> and says why. Nothing to record against when the session never
-	/// started: that status is already <see cref="WorkspaceState.Faulted"/> and names the load's own failure.
+	/// Remembers that a tool call failed to load an assembly, so every status from here on is
+	/// <see cref="WorkspaceState.Degraded"/> and says why rather than leaving it to whoever next calls the same
+	/// tool to find out. Kept here, for the life of the process, and never cleared by a reload: a reload replaces
+	/// the workspace inside this process, and it is the process that cannot load them.
 	/// </summary>
 	public void RecordAssemblyLoadFault(AssemblyLoadFault fault)
 	{
@@ -121,7 +125,26 @@ public sealed class WorkspaceHost(
 			fault.Assembly,
 			fault.Message);
 
-		if (_start is { IsCompletedSuccessfully: true } started) started.Result.RecordAssemblyLoadFault(fault);
+		lock (_faultGate)
+		{
+			var known = _assemblyLoadFaults.Any(existing =>
+				string.Equals(existing.Assembly, fault.Assembly, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(existing.Tool, fault.Tool, StringComparison.Ordinal));
+
+			if (!known) _assemblyLoadFaults.Add(fault);
+		}
+	}
+
+	/// <summary>Every assembly a tool call failed to load for this worker's own code, one entry per assembly and tool.</summary>
+	public IReadOnlyList<AssemblyLoadFault> AssemblyLoadFaults
+	{
+		get
+		{
+			lock (_faultGate)
+			{
+				return [.. _assemblyLoadFaults];
+			}
+		}
 	}
 
 	private async Task<WorkspaceSession> StartSessionAsync()

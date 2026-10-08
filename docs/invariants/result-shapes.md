@@ -161,7 +161,7 @@ Read before adding a tool, adding a field to a result, or changing an error path
   code, while the tools that do not reach it answer normally -- so the workspace reads `Loaded` while two
   tools are dead, and the loader's message names a file and nothing else. The worker's call-tool filter
   reads it off the exception (`AssemblyLoadFault`), says what it means and that `rose_workspace_reload`
-  starts a fresh worker, and records it on the session, which status reads on every call and a reload does
+  starts a fresh worker, and records it on the `WorkspaceHost`, which status reads on every call and a reload does
   not clear. A missing source file throws the same exception type naming a path, and a code fixer's or
   generator's own dependency names an assembly the worker was not started with -- decided by the missing
   assembly against the trusted platform list and the worker's directory, not by the throwing frame, since

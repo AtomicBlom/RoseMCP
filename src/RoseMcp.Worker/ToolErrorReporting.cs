@@ -1,6 +1,7 @@
 using System.Text.Json;
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -33,7 +34,7 @@ public static class ToolErrorReporting
 	/// the failures worth explaining are mostly a file that belongs to some other solution.
 	/// <para>
 	/// An assembly the worker's own code could not load is explained rather than forwarded, and recorded
-	/// on the session so status says so too: the loader's message names a file, and says nothing of the
+	/// on the workspace host so status says so too: the loader's message names a file, and says nothing of the
 	/// worker being unable to answer that tool again until it is replaced.
 	/// </para>
 	/// </summary>
@@ -62,7 +63,7 @@ public static class ToolErrorReporting
 		&& !string.IsNullOrWhiteSpace(exception.Message);
 
 	/// <summary>
-	/// The assembly the call failed to load for this worker's own code, recorded on the session, or null when
+	/// The assembly the call failed to load for this worker's own code, recorded on the workspace host, or null when
 	/// the failure was anything else.
 	/// </summary>
 	private static AssemblyLoadFault? Recorded(RequestContext<CallToolRequestParams> context, Exception exception)
@@ -70,7 +71,21 @@ public static class ToolErrorReporting
 		var fault = AssemblyLoadFault.From(exception, context.Params?.Name ?? "The tool");
 		if (fault is null) return null;
 
-		context.Services?.GetService<WorkspaceHost>()?.RecordAssemblyLoadFault(fault);
+		// Said rather than skipped when there is no host to record on: unrecorded, the workspace goes on calling
+		// itself healthy, which is the failure this exists to prevent.
+		if (context.Services?.GetService<WorkspaceHost>() is { } host)
+		{
+			host.RecordAssemblyLoadFault(fault);
+		}
+		else
+		{
+			context.Services?.GetService<ILoggerFactory>()
+				?.CreateLogger(typeof(ToolErrorReporting).FullName!)
+				.LogWarning(
+					"{Tool} failed to load {Assembly}, and there is no workspace host to record it on, so status will not say so.",
+					fault.Tool,
+					fault.Assembly);
+		}
 
 		return fault;
 	}

@@ -48,8 +48,10 @@ Read before changing how a call picks its workspace: `SolutionResolver`, `Worksp
   it, in the paths stage after the ordinary hints. Widening that to every hint would follow
   `rose_diagnostics`' "Db.App" up to the session's directory and call it evidence, so the ancestor
   walk is reserved for a tool that creates its path. A failure answered by a solution that does not
-  compile the call's path says which solution does, or which several share its directory, and to
-  pass `workspace`: the worker can only describe its own solution, and only the broker chose it.
+  compile the call's path says which solution does, or which of several sharing its directory do,
+  and to pass `workspace`: the worker can only describe its own solution, and only the broker chose
+  it. It names only solutions that compile the path, and says nothing where none does, because
+  advice naming one that does not sends the caller to the same refusal from the other side.
 - **A relative path is measured from the calling session's directory, and from nowhere else.** The
   broker's own directory is no answer: in http mode it is the tray's install directory, and in stdio
   mode it is whichever checkout the process was started in. Six worktrees of one repository is the

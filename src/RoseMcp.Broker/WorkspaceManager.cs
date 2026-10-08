@@ -426,8 +426,9 @@ public sealed class WorkspaceManager(
 	/// </para>
 	/// <para>
 	/// Only the first path routing would have used is asked about, and the advice names a solution
-	/// only where that solution compiles the path, so following it cannot bounce off the same refusal
-	/// from the other side. Public for the reason <see cref="WorkspaceFor"/> is.
+	/// only where that solution compiles the path -- of several sharing a directory, only those that
+	/// do, and nothing where none does -- so following it cannot bounce off the same refusal from the
+	/// other side. Public for the reason <see cref="WorkspaceFor"/> is.
 	/// </para>
 	/// </summary>
 	/// <param name="hints">What the call carried.</param>
@@ -450,8 +451,16 @@ public sealed class WorkspaceManager(
 			}
 			catch (AmbiguousSolutionException ambiguity)
 			{
+				var compiling = ambiguity.Candidates
+					.Where(candidate => !PathCasing.Comparer.Equals(candidate, answeredBy) && SolutionResolver.Compiles(candidate, hint.Value))
+					.ToArray();
+				if (compiling.Length == 0) return null;
+
 				return $"{hint.Value} is inside no project of {Path.GetFileName(answeredBy)}, which answered this "
-					+ $"call, and its own directory does not decide between solutions: {ambiguity.Message}";
+					+ $"call. {compiling.Length} solutions in {ambiguity.Directory} compile it: "
+					+ $"{string.Join(", ", compiling.Select(Path.GetFileName))}. Pass the workspace argument (or solution) "
+					+ $"naming the one you mean, or pin it for good with a \"solution\" entry in "
+					+ $"{Path.Combine(ambiguity.Directory, "rosemcp.json")}.";
 			}
 			catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or XmlException)
 			{

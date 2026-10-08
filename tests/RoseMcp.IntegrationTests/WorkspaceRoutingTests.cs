@@ -272,12 +272,12 @@ public sealed class WorkspaceRoutingTests
 	}
 
 	/// <summary>
-	/// Where the path's own directory could not decide, the session's directory answered, and the
-	/// caller hears both that and the candidates -- not "outside any project" about a path that is in
-	/// one of them.
+	/// Where the path's own directory holds several solutions and none compiles it, the session's
+	/// directory answers and nothing is added: naming any of them would send the caller to the same
+	/// refusal from the other side.
 	/// </summary>
 	[Test]
-	public void A_failure_for_a_path_among_several_solutions_names_them()
+	public void A_failure_for_a_path_no_solution_compiles_gains_nothing()
 	{
 		using var origin = FixtureSolution.Copy("Simple", "Simple.sln");
 		using var elsewhere = new SeveralSolutions();
@@ -288,10 +288,28 @@ public sealed class WorkspaceRoutingTests
 		manager.WorkspaceFor(WorkspaceHints.ForNewFile(null, file)).ShouldBe(
 			origin.SolutionPath, StringCompareShould.IgnoreCase);
 
-		var said = manager.Elsewhere(WorkspaceHints.ForNewFile(null, file), origin.SolutionPath).ShouldNotBeNull();
+		manager.Elsewhere(WorkspaceHints.ForNewFile(null, file), origin.SolutionPath).ShouldBeNull();
+	}
 
-		said.ShouldContain("inside no project of Simple.sln", Case.Sensitive);
-		said.ShouldContain("3 solutions share", Case.Sensitive);
+	/// <summary>
+	/// Where several solutions sharing the path's directory compile it, the caller hears which, and
+	/// only those: the ones beside them that do not compile it are no answer about it.
+	/// </summary>
+	[Test]
+	public void A_failure_for_a_path_several_solutions_compile_names_only_those()
+	{
+		using var repository = new SeveralSolutions();
+		repository.Solution("Delta.slnx", "Second", "Third");
+		var manager = Manager(rootedAt: NowhereDirectory.Path());
+
+		var file = RootedPath.Absolute(Path.Combine(repository.Root, "Second", "Made", "New.cs"));
+
+		var said = manager.Elsewhere(WorkspaceHints.ForNewFile(null, file), repository.First).ShouldNotBeNull();
+
+		said.ShouldContain("inside no project of Alpha.slnx", Case.Sensitive);
+		said.ShouldContain($"2 solutions in {repository.Root} compile it: Beta.slnx, Delta.slnx.", Case.Sensitive);
+		said.ShouldNotContain("Gamma", Case.Sensitive);
+		said.ShouldContain("workspace argument", Case.Sensitive);
 	}
 
 	private static WorkspaceManager Manager(string rootedAt) => BrokerHarness.CreateManager(rootedAt);
@@ -347,7 +365,8 @@ public sealed class WorkspaceRoutingTests
 			File.WriteAllText(Path.Combine(directory, "Thing.cs"), "public sealed class Thing;");
 		}
 
-		private string Solution(string fileName, params string[] projects)
+		/// <summary>A solution at the root over the named projects, beside whatever is already there.</summary>
+		public string Solution(string fileName, params string[] projects)
 		{
 			var entries = projects.Select(name => $"  <Project Path=\"{name}/{name}.csproj\" />");
 			var path = Path.Combine(Root, fileName);

@@ -5,6 +5,7 @@ using ModelContextProtocol;
 using RoseMcp.Broker;
 using RoseMcp.Broker.Tools;
 using RoseMcp.Contracts;
+using RoseMcp.TestSupport;
 
 using static RoseMcp.IntegrationTests.BrokerHarness;
 
@@ -45,6 +46,33 @@ public sealed class BrokerForwardingTests
 
 		error.Message.ShouldContain(elsewhere, Case.Insensitive);
 		error.Message.ShouldContain(fixture.SolutionPath, Case.Insensitive);
+	}
+
+	/// <summary>
+	/// A refusal from a workspace the path is not in gains the solution it is in. The worker can only
+	/// say the path is in none of its own projects, which is true and sends the caller nowhere; the
+	/// broker chose that worker, so the broker is what says which solution would take the path.
+	/// </summary>
+	[Test]
+	public async Task A_refusal_from_another_workspace_names_the_solution_the_path_is_in()
+	{
+		using var simple = FixtureSolution.Copy("Simple", "Simple.sln");
+		using var members = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var file = Path.Combine(Path.GetDirectoryName(members.SolutionPath)!, "Library", "Made", "Placed.cs");
+
+		var error = await Should.ThrowAsync<InvalidOperationException>(() => manager.CallAsync<AddFileResult>(
+			WorkspaceHints.ForNewFile(RootedPath.Absolute(simple.SolutionPath), RootedPath.Absolute(file)),
+			ToolNames.AddFile,
+			new Dictionary<string, object?> { ["filePath"] = file, ["code"] = "public sealed class Placed;" },
+			retryIfWorkerDied: false,
+			TestContext.Current!.Execution.CancellationToken)).OfExactType();
+
+		error.Message.ShouldContain("not inside the directory of any project in Simple.sln", Case.Sensitive);
+		error.Message.ShouldContain($"is inside a project of {members.SolutionPath}", Case.Insensitive);
+		error.Message.ShouldContain("workspace argument", Case.Sensitive);
+		File.Exists(file).ShouldBeFalse("a refusal writes nothing");
 	}
 
 	/// <summary>

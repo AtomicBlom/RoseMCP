@@ -47,4 +47,43 @@ public sealed class BrokerOptions
 	/// </para>
 	/// </summary>
 	public TimeSpan WorkerHandshakeTimeout { get; set; } = TimeSpan.FromMinutes(3);
+
+	/// <summary>
+	/// What a long-lived broker -- the tray, or the server over http -- sets
+	/// <see cref="IdleEvictionAfter"/> to. Long enough that a session stepping away for a meeting comes
+	/// back to a warm solution, short enough that several sessions ended over a day do not leave a
+	/// gigabyte or more each behind them.
+	/// </summary>
+	public static readonly TimeSpan LongLivedIdleEviction = TimeSpan.FromMinutes(30);
+
+	/// <summary>
+	/// How long a worker may go unused before it is stopped to free its memory, or null to keep every
+	/// worker until the broker goes.
+	/// <para>
+	/// Null by default, because a broker serving one client over stdio ends its workers when that client
+	/// ends, which is already the bound. A broker that outlives its clients sets it: there, a warm worker
+	/// per solution is the design, and nothing else stops a machine collecting one per solution any
+	/// session ever opened. Only tool calls routed to a worker count as use; listing, status and opening
+	/// a workspace that is already open do not, so watching one does not keep it warm.
+	/// </para>
+	/// <para>
+	/// Also how long a stopped worker's row stays visible, so a person can see that it was evicted, and
+	/// why, before it goes.
+	/// </para>
+	/// </summary>
+	public TimeSpan? IdleEvictionAfter { get; set; }
+
+	/// <summary>
+	/// How long a worker's solution file may be missing before the worker is stopped, when eviction is
+	/// on. Not immediately, because a branch switch removes and restores a solution file within seconds
+	/// and the worker rides that out on its last good snapshot; minutes, because a removed worktree is
+	/// not coming back and its worker is memory nobody can use.
+	/// </summary>
+	public TimeSpan SolutionGoneGrace { get; set; } = TimeSpan.FromMinutes(2);
+
+	/// <summary>
+	/// How often the eviction sweep looks, when eviction is on. A minute is far finer than limits
+	/// counted in minutes need, and costs a file-existence check per worker.
+	/// </summary>
+	public TimeSpan EvictionSweepInterval { get; set; } = TimeSpan.FromMinutes(1);
 }

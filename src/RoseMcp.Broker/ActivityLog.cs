@@ -79,6 +79,21 @@ public sealed class ActivityLog
 		}
 	}
 
+	/// <summary>
+	/// Files something the broker did to a workspace on its own initiative as an operation that has
+	/// already finished, with the reason as its message. Nobody called it, so there is no scope to
+	/// complete; what matters is that the row is there afterwards for a person wondering why a
+	/// workspace went cold.
+	/// </summary>
+	public void Note(string solutionPath, string operation, string message)
+	{
+		var tracked = new TrackedActivity(Interlocked.Increment(ref _nextId), operation, target: null);
+		tracked.Update(message, percentComplete: null);
+		tracked.Finish(ActivityOutcome.Succeeded, error: null);
+
+		MoveToRecent(solutionPath, tracked);
+	}
+
 	private void MoveToRecent(string solutionPath, TrackedActivity activity)
 	{
 		lock (_gate)

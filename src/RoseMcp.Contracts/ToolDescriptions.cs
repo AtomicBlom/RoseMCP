@@ -658,6 +658,15 @@ public static class ToolDescriptions
 		solution costs a gigabyte or more, so this is worth doing when moving off one for good.
 		""";
 
+	public const string WorkspaceList = """
+		Every solution this broker holds a worker for, warm or stopped, without loading or waking any of
+		them: each one's key to pass back as the workspace argument, its state, how long it has been idle
+		and how many calls are running on it. Use it to see what is already open before choosing a
+		workspace, or to find out why a solution is cold again. A worker idle past idleEvictionAfter is
+		stopped to free its memory and listed as Evicted; the next call on it starts a fresh one by
+		itself, so there is nothing to reopen.
+		""";
+
 	public const string Diagnostics = """
 		Compiler diagnostics, and optionally analyzer ones, from a live Roslyn compilation of the
 		current state of disk -- edits by other tools are absorbed before the analysis runs, so results

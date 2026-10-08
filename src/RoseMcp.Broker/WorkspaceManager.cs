@@ -45,6 +45,14 @@ public sealed class WorkspaceManager(
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly BrokerOptions _options = options.Value;
 
+	/// <summary>Cancelled when the manager goes, which ends the eviction sweep before the gate it takes is disposed.</summary>
+	private readonly CancellationTokenSource _stopping = new();
+
+	/// <summary>The eviction sweep, once a worker has started with eviction on. Started under the gate, so once.</summary>
+	private Task? _sweeping;
+
+	private int _disposed;
+
 	private static readonly Dictionary<string, object?> NoArguments = [];
 
 	/// <summary>
@@ -64,6 +72,24 @@ public sealed class WorkspaceManager(
 	public IReadOnlyList<Contracts.WorkspaceSummary> Describe() => [.. Workers.Select(worker => worker.Describe())];
 
 	/// <summary>
+	/// Every workspace this broker holds a worker for, as <c>rose_workspace_list</c> answers. Read
+	/// from the registry without the gate and without calling any worker, so a list made while a
+	/// solution is loading answers at once, and listing never counts as using a workspace.
+	/// </summary>
+	public Contracts.WorkspaceList List()
+	{
+		var now = DateTime.UtcNow;
+
+		return new Contracts.WorkspaceList
+		{
+			Workspaces = [.. Workers
+				.OrderBy(worker => worker.SolutionPath, PathCasing.Comparer)
+				.Select(worker => worker.ListEntry(now))],
+			IdleEvictionAfter = _options.IdleEvictionAfter,
+		};
+	}
+
+	/// <summary>
 	/// The worker for whichever workspace <paramref name="hints"/> resolves to, starting one if
 	/// needed.
 	/// </summary>
@@ -74,8 +100,8 @@ public sealed class WorkspaceManager(
 	/// The worker for a solution path already decided on.
 	/// <para>
 	/// A dead worker is replaced rather than reported. Workers die for ordinary reasons -- the
-	/// solution was deleted and has come back, a hard reload killed one, memory ran out -- and
-	/// making the caller retry after each of those would be needless ceremony.
+	/// solution was deleted and has come back, a hard reload killed one, memory ran out, the sweep
+	/// evicted it -- and making the caller retry after each of those would be needless ceremony.
 	/// </para>
 	/// </summary>
 	private async Task<WorkspaceWorker> GetOrStartResolvedAsync(
@@ -85,34 +111,69 @@ public sealed class WorkspaceManager(
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
-			if (_workers.TryGetValue(solutionPath, out var existing))
-			{
-				if (existing.IsAlive) return existing;
-
-				logger.LogInformation(
-					"Replacing the worker for {SolutionPath}; it stopped with {Reason}.",
-					solutionPath,
-					existing.ExitReason);
-
-				await existing.DisposeAsync();
-				_workers.TryRemove(solutionPath, out _);
-				Activities.Forget(solutionPath);
-			}
-
-			if (!File.Exists(solutionPath))
-			{
-				throw new InvalidOperationException($"The solution no longer exists at {solutionPath}.");
-			}
-
-			var worker = await StartAsync(solutionPath, cancellationToken);
-
-			_workers[solutionPath] = worker;
-			return worker;
+			return await GetOrStartUnderGateAsync(solutionPath, cancellationToken);
 		}
 		finally
 		{
 			_gate.Release();
 		}
+	}
+
+	/// <summary>
+	/// The worker for a solution path, held for a call until the hold is disposed. Taken under the
+	/// gate the eviction sweep decides under, so the sweep either stops the worker before this finds
+	/// it -- and this starts a fresh one -- or sees it held and leaves it. There is no moment between
+	/// a caller being handed a worker and calling it in which the sweep can stop it.
+	/// <para>
+	/// <paramref name="use"/> says whether the call counts as use and restarts the idle clock. Only
+	/// tool calls do; a status call holds the worker without keeping it warm.
+	/// </para>
+	/// </summary>
+	private async Task<(WorkspaceWorker Worker, IDisposable Hold)> HoldResolvedAsync(
+		string solutionPath,
+		bool use,
+		CancellationToken cancellationToken)
+	{
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var worker = await GetOrStartUnderGateAsync(solutionPath, cancellationToken);
+			return (worker, worker.Hold(use));
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
+	/// <summary>Only call while holding <see cref="_gate"/>.</summary>
+	private async Task<WorkspaceWorker> GetOrStartUnderGateAsync(string solutionPath, CancellationToken cancellationToken)
+	{
+		if (_workers.TryGetValue(solutionPath, out var existing))
+		{
+			if (existing.IsAlive) return existing;
+
+			logger.LogInformation(
+				"Replacing the worker for {SolutionPath}; it stopped with {Reason}.",
+				solutionPath,
+				existing.ExitReason);
+
+			await existing.DisposeAsync();
+			_workers.TryRemove(solutionPath, out _);
+			Activities.Forget(solutionPath);
+		}
+
+		if (!File.Exists(solutionPath))
+		{
+			throw new InvalidOperationException($"The solution no longer exists at {solutionPath}.");
+		}
+
+		var worker = await StartAsync(solutionPath, cancellationToken);
+
+		_workers[solutionPath] = worker;
+		EnsureSweeping();
+
+		return worker;
 	}
 
 	/// <summary>
@@ -165,7 +226,7 @@ public sealed class WorkspaceManager(
 		IProgress<ProgressNotificationValue>? progress = null)
 		where T : Contracts.WorkspaceScopedResult
 	{
-		var worker = await GetOrStartAsync(hints, cancellationToken);
+		var (worker, hold) = await HoldResolvedAsync(WorkspaceFor(hints), use: true, cancellationToken);
 
 		try
 		{
@@ -177,14 +238,20 @@ public sealed class WorkspaceManager(
 			{
 				logger.LogInformation("Replacing the worker for {SolutionPath} and retrying {Tool}.", worker.SolutionPath, tool);
 
+				// Let go of the dead one first: a hold on a worker nobody can call keeps nothing alive.
+				hold.Dispose();
+
 				// GetOrStart rather than Restart, because Restart closes whatever is registered for the
 				// path rather than the instance that just died. Two callers on one dead worker and the
 				// second closes the replacement the first is already loading a solution into, mid-load.
 				// GetOrStart replaces only an instance that is not alive, which is exactly this case.
-				var replacement = await GetOrStartResolvedAsync(worker.SolutionPath, cancellationToken);
+				var (replacement, replacementHold) = await HoldResolvedAsync(worker.SolutionPath, use: true, cancellationToken);
 
-				return Attribute(
-					await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
+				using (replacementHold)
+				{
+					return Attribute(
+						await replacement.CallAsync<T>(tool, arguments, cancellationToken, progress), replacement);
+				}
 			}
 		}
 		catch (InvalidOperationException exception) when (
@@ -194,6 +261,10 @@ public sealed class WorkspaceManager(
 			// The worker's refusal is true about its own solution and says nothing about the one the path
 			// is in. Same type, so nothing further in decides differently for the sentence added to it.
 			throw new InvalidOperationException($"{exception.Message} {elsewhere}", exception);
+		}
+		finally
+		{
+			hold.Dispose();
 		}
 	}
 
@@ -272,6 +343,27 @@ public sealed class WorkspaceManager(
 			await worker.CallAsync<Contracts.WorkspaceStatusReport>(
 				Contracts.ToolNames.WorkspaceStatus, NoArguments, cancellationToken, progress),
 			worker);
+
+	/// <summary>
+	/// Status for whichever workspace <paramref name="hints"/> resolves to, starting it if needed.
+	/// <para>
+	/// Held for the call, so the sweep cannot stop the worker between finding it and asking it, but
+	/// not counted as use: a session polling status to see whether a workspace is healthy is watching
+	/// it, and watching must not keep a workspace nobody is working in warm forever.
+	/// </para>
+	/// </summary>
+	public async Task<Contracts.WorkspaceStatusReport> StatusAsync(
+		WorkspaceHints hints,
+		CancellationToken cancellationToken,
+		IProgress<ProgressNotificationValue>? progress = null)
+	{
+		var (worker, hold) = await HoldResolvedAsync(WorkspaceFor(hints), use: false, cancellationToken);
+
+		using (hold)
+		{
+			return await StatusOfAsync(worker, cancellationToken, progress);
+		}
+	}
 
 	/// <summary>
 	/// Stops a worker and forgets it. Reopening starts a fresh process.
@@ -625,8 +717,157 @@ public sealed class WorkspaceManager(
 		return choice.SolutionPath;
 	}
 
+	/// <summary>How an eviction is labelled in the activity log, beside "start worker" and "load solution".</summary>
+	public const string EvictOperation = "evict worker";
+
+	/// <summary>
+	/// Starts the eviction sweep, when eviction is on and it is not already running. Only call while
+	/// holding <see cref="_gate"/>, which is what makes the check and the start one step.
+	/// <para>
+	/// Started by the first worker rather than by the constructor, so a broker that never opens a
+	/// solution -- every unit test that builds the registration, and a tray nobody has used yet -- runs
+	/// no timer at all.
+	/// </para>
+	/// </summary>
+	private void EnsureSweeping()
+	{
+		if (_sweeping is not null || _options.IdleEvictionAfter is not { } idleAfter) return;
+
+		// Read here rather than inside the task, so the loop holds the token it was started with.
+		var stopping = _stopping.Token;
+		_sweeping = Task.Run(() => SweepLoopAsync(idleAfter, stopping));
+	}
+
+	/// <summary>
+	/// Sweeps on a timer for as long as this manager lives, and stops when it is disposed.
+	/// <para>
+	/// One sweep failing does not end the loop: it has changed nothing it did not finish, and a
+	/// broker that silently stopped evicting after one bad tick would collect workers for the rest of
+	/// its life, which is the failure this exists to prevent.
+	/// </para>
+	/// </summary>
+	private async Task SweepLoopAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
+	{
+		using var timer = new PeriodicTimer(_options.EvictionSweepInterval);
+
+		try
+		{
+			while (await timer.WaitForNextTickAsync(cancellationToken))
+			{
+				try
+				{
+					await SweepAsync(idleAfter, cancellationToken);
+				}
+				catch (Exception exception) when (exception is not OperationCanceledException)
+				{
+					logger.LogWarning(exception, "The eviction sweep failed; the next one is in {Interval}.", _options.EvictionSweepInterval);
+				}
+			}
+		}
+		catch (OperationCanceledException)
+		{
+			// The manager is going away, and its workers with it.
+		}
+	}
+
+	/// <summary>
+	/// One pass over the registry. Deciding needs a file check per worker, so it is done outside the
+	/// gate, and only a worker the decision would act on waits for it -- where it is decided again,
+	/// because a call may have taken the worker in the meantime.
+	/// </summary>
+	private async Task SweepAsync(TimeSpan idleAfter, CancellationToken cancellationToken)
+	{
+		var now = DateTime.UtcNow;
+
+		foreach (var worker in Workers)
+		{
+			worker.ObserveSolution(File.Exists(worker.SolutionPath), now);
+
+			var verdict = WorkerEviction.Decide(worker.EvictionFacts(), idleAfter, _options.SolutionGoneGrace, now);
+			if (verdict == EvictionVerdict.Keep) continue;
+
+			await EvictAsync(worker, idleAfter, cancellationToken);
+		}
+	}
+
+	/// <summary>
+	/// Acts on one worker the sweep picked, under the gate every call takes its worker under.
+	/// <para>
+	/// Everything is read again here. Holding the gate, nobody can be handed this worker, so a worker
+	/// nobody holds, with nothing running, idle past the limit, is a worker no call is about to use --
+	/// and one somebody took between the first look and this one is seen held and left alone. A worker
+	/// already replaced by a fresh one is not the one in the registry any more, and is left too.
+	/// </para>
+	/// <para>
+	/// An evicted worker stays registered, stopped, rather than being removed. Its row and its
+	/// activity history are what tell a person -- in the tray, in <c>GET /admin/workspaces</c>, and in
+	/// <c>rose_workspace_list</c> -- that it was evicted and why, and the next call replaces it exactly
+	/// as it replaces a crashed one. The row goes once it has been stopped as long as the idle limit.
+	/// </para>
+	/// </summary>
+	private async Task EvictAsync(WorkspaceWorker worker, TimeSpan idleAfter, CancellationToken cancellationToken)
+	{
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var stillRegistered = _workers.TryGetValue(worker.SolutionPath, out var current) && ReferenceEquals(current, worker);
+			if (!stillRegistered) return;
+
+			var now = DateTime.UtcNow;
+			var facts = worker.EvictionFacts();
+			var verdict = WorkerEviction.Decide(facts, idleAfter, _options.SolutionGoneGrace, now);
+
+			if (verdict == EvictionVerdict.Forget)
+			{
+				_workers.TryRemove(new KeyValuePair<string, WorkspaceWorker>(worker.SolutionPath, worker));
+				await worker.DisposeAsync();
+				Activities.Forget(worker.SolutionPath);
+
+				logger.LogDebug(
+					"Dropped the row for {SolutionPath}, stopped with {Reason} at {StoppedUtc}.",
+					worker.SolutionPath,
+					worker.ExitReason,
+					worker.StoppedUtc);
+				return;
+			}
+
+			var evicting = verdict is EvictionVerdict.EvictIdle or EvictionVerdict.EvictSolutionGone;
+			if (!evicting) return;
+
+			var reason = WorkerEviction.Explain(verdict, facts, idleAfter, now);
+
+			// Marked before it is disposed, so the reason recorded is this one rather than the
+			// StoppedByBroker that disposing would record.
+			worker.MarkStopped(WorkerExitReason.Evicted);
+			Activities.Note(worker.SolutionPath, EvictOperation, reason);
+
+			await worker.DisposeAsync();
+
+			logger.LogInformation(
+				"Evicted the worker for {SolutionPath} ({WorkspaceKey}), idle for {Idle}: {Reason}",
+				worker.SolutionPath,
+				worker.Key,
+				WorkerEviction.Duration(now - facts.LastUsedUtc),
+				reason);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
 	public async ValueTask DisposeAsync()
 	{
+		// Once: a second CancelAsync on a disposed source throws, and a host and its container can both
+		// reach this.
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
+		// The sweep first, and awaited: it takes the gate disposed below, and acts on the workers
+		// disposed below, so it has to have stopped before either goes.
+		await _stopping.CancelAsync();
+
+		if (_sweeping is { } sweeping) await sweeping;
+
 		foreach (var worker in Workers)
 		{
 			await worker.DisposeAsync();
@@ -635,5 +876,6 @@ public sealed class WorkspaceManager(
 		_workers.Clear();
 
 		_gate.Dispose();
+		_stopping.Dispose();
 	}
 }

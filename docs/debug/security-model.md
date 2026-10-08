@@ -88,6 +88,7 @@ One entry per tool a client is offered. Every tool runs as the user; the column 
 | `rose_workspace_status` | Reports load state, health and the properties in use | Reads only |
 | `rose_workspace_reload` | Restarts the worker, optionally under a different configuration, platform or properties | As `rose_workspace_open`, with the global properties the caller supplies |
 | `rose_workspace_close` | Stops a worker | Only affects RoseMCP's own process |
+| `rose_workspace_list` | Lists the workspaces the broker holds a worker for, with each one's state and idle time | Reads only the broker's own registry; starts nothing. Names every solution path the broker holds, whichever session opened it |
 
 ### Reading and navigation
 

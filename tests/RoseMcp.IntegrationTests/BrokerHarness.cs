@@ -23,9 +23,11 @@ internal static class BrokerHarness
 {
 	internal static WorkspaceManager CreateManager(
 		string? defaultRoot = null,
-		TimeSpan? workerHandshakeTimeout = null)
+		TimeSpan? workerHandshakeTimeout = null,
+		Action<BrokerOptions>? configure = null)
 	{
 		var options = Configured(defaultRoot, workerHandshakeTimeout);
+		configure?.Invoke(options.Value);
 
 		return new(
 			options,

@@ -120,6 +120,18 @@ public sealed class ToolResultShapeTests
 	}
 
 	/// <summary>
+	/// Tools that answer about every workspace rather than one, and why each is honest without
+	/// naming one at its root. Each row of such an answer names its own workspace instead; a root
+	/// naming one of them would be attribution that says something false.
+	/// </summary>
+	private static readonly Dictionary<string, string> AcrossWorkspaces = new(StringComparer.Ordinal)
+	{
+		[ToolNames.WorkspaceList] =
+			"rose_workspace_list reports every workspace the broker holds a worker for, and each row is "
+				+ "attributed to its own.",
+	};
+
+	/// <summary>
 	/// Every tool that answers about a solution answers with something the broker can attribute.
 	/// The run-time half of attribution is a type test, and a result that fails it is passed through
 	/// silently, so this is the only thing standing between "attributed" and "attributed in
@@ -171,6 +183,38 @@ public sealed class ToolResultShapeTests
 	}
 
 	/// <summary>
+	/// A tool exempt from attribution at its root is a tool that exists, has a reason, and answers
+	/// with rows that are attributed themselves -- otherwise the exemption has excused a result that
+	/// names no workspace anywhere, which is the defect the attribution rule is about.
+	/// </summary>
+	[Test]
+	public void A_tool_answering_across_workspaces_attributes_every_row()
+	{
+		var declared = DeclaredSurface.Tools().ToDictionary(tool => tool.Name, tool => tool.Method, StringComparer.Ordinal);
+
+		foreach (var (name, reason) in AcrossWorkspaces)
+		{
+			reason.ShouldNotBeEmpty();
+			declared.ShouldContainKey(name);
+
+			var result = DeclaredSurface.Returned(declared[name]);
+			var rows = result.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+				.Select(property => property.PropertyType)
+				.Where(type => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IReadOnlyList<>))
+				.Select(type => type.GetGenericArguments().Single())
+				.ToList();
+
+			rows.ShouldNotBeEmpty($"{name} answers with {result.Name}, which carries no list of rows.");
+
+			foreach (var row in rows)
+			{
+				typeof(WorkspaceScopedResult).IsAssignableFrom(row).ShouldBeTrue(
+					$"{name} answers with rows of {row.Name}, which do not say which workspace each describes.");
+			}
+		}
+	}
+
+	/// <summary>
 	/// The compile-time half. <c>WorkspaceManager.CallAsync</c> constrains its result to something
 	/// attributable, so a tool answering with anything else fails to build rather than answering
 	/// without attribution -- which is what "a tool added later cannot forget it" has to mean to be
@@ -211,6 +255,7 @@ public sealed class ToolResultShapeTests
 	private static IEnumerable<(string Name, Type Result)> WorkspaceScopedTools() =>
 		DeclaredSurface.Tools()
 			.Where(tool => !IsLiveApp(tool.Name))
+			.Where(tool => !AcrossWorkspaces.ContainsKey(tool.Name))
 			.Select(tool => (tool.Name, Result: DeclaredSurface.Returned(tool.Method)));
 
 	/// <summary>

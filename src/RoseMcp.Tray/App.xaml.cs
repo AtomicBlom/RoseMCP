@@ -73,8 +73,14 @@ public partial class App : Application
 				services.GetRequiredService<ILogger<OperatorInspector>>(),
 				Options.InspectorPath));
 
+			// Idle workers are evicted here because the tray outlives every session it serves: without
+			// it, each solution any session ever opened stays loaded until the tray is closed.
 			builder.Services
-				.AddRoseMcpBroker(broker => broker.WorkerPath = Options.WorkerPath)
+				.AddRoseMcpBroker(broker =>
+				{
+					broker.WorkerPath = Options.WorkerPath;
+					broker.IdleEvictionAfter = BrokerOptions.LongLivedIdleEviction;
+				})
 				.WithHttpTransport();
 
 			_broker = builder.Build();

@@ -60,6 +60,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.SetAttribute,
 		ToolNames.SymbolInfo,
 		ToolNames.WorkspaceClose,
+		ToolNames.WorkspaceList,
 		ToolNames.WorkspaceOpen,
 		ToolNames.WorkspaceReload,
 		ToolNames.WorkspaceStatus,
@@ -168,6 +169,7 @@ public sealed class ToolSurfaceTests
 		ToolNames.ResolveName,
 		ToolNames.SearchSymbols,
 		ToolNames.SymbolInfo,
+		ToolNames.WorkspaceList,
 		ToolNames.WorkspaceStatus,
 		ToolNames.XamlProperties,
 		ToolNames.XamlSelection,
@@ -355,6 +357,11 @@ public sealed class ToolSurfaceTests
 	/// <summary>
 	/// The instructions are always in context, whether or not C# comes up, so their length is a budget
 	/// rather than a preference. They were 11,340 characters restating the descriptions line for line.
+	/// <para>
+	/// 4,100 rather than 4,000 to route rose_workspace_list, which is the one way a session learns what
+	/// is already loaded without loading anything; the alternative was leaving it unrouted, and a tool
+	/// missing from the instructions is a tool that is never reached for.
+	/// </para>
 	/// </summary>
 	[Test]
 	public void The_instructions_stay_within_their_budget()
@@ -366,7 +373,7 @@ public sealed class ToolSurfaceTests
 
 		var instructions = provider.GetRequiredService<IOptions<McpServerOptions>>().Value.ServerInstructions ?? string.Empty;
 
-		instructions.Length.ShouldBeInRange(1, 4000);
+		instructions.Length.ShouldBeInRange(1, 4100);
 	}
 
 	/// <summary>

@@ -108,8 +108,7 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default)
 	{
-		var worker = await workspaces.GetOrStartAsync(WorkspaceHints.From(paths.Of(workspace), workspaceKey), cancellationToken);
-		return await workspaces.StatusOfAsync(worker, cancellationToken, progress);
+		return await workspaces.StatusAsync(WorkspaceHints.From(paths.Of(workspace), workspaceKey), cancellationToken, progress);
 	}
 
 	[McpServerTool(
@@ -151,4 +150,20 @@ public sealed class BrokerTools(WorkspaceManager workspaces, CallerPaths paths)
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
 		workspaces.CloseAsync(WorkspaceHints.From(paths.Of(workspace), workspaceKey), cancellationToken);
+
+	/// <summary>
+	/// What is loaded, from the broker's registry alone. It takes no workspace argument because it is
+	/// about all of them, and it never starts, wakes or waits on a worker: a session asking what is
+	/// warm should not pay a load to find out, and asking must not count as using a workspace, or a
+	/// session that lists on every turn would keep every solution on the machine loaded.
+	/// </summary>
+	[McpServerTool(
+		Name = ToolNames.WorkspaceList,
+		Title = "List loaded workspaces",
+		ReadOnly = true,
+		Idempotent = true,
+		OpenWorld = false,
+		UseStructuredContent = true)]
+	[Description(ToolDescriptions.WorkspaceList)]
+	public WorkspaceList List() => workspaces.List();
 }

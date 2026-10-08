@@ -81,3 +81,20 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   solution in memory are invisible until the machine is out of RAM; an orphaned probe app is worse
   than invisible, because the probe is single-instance and the next run finds an app it did not
   launch and treats it as its own.
+- **A long-lived broker evicts an idle worker only when nothing can be about to call it, and
+  watching a workspace is not using it.** `BrokerOptions.IdleEvictionAfter` is set by the tray and
+  by the http server, which outlive every client, and left off over stdio, where the workers end
+  with their one client anyway. A sweep stops a worker unused past that limit, and one whose
+  solution file has been missing past `SolutionGoneGrace` -- a removed worktree, whose worker
+  otherwise runs on against nothing for the life of the broker. Use is a tool call routed through
+  `CallAsync`; `rose_workspace_status`, `rose_workspace_list`, the tray's `Describe` polling,
+  opening a workspace that is already open and the priming status call never restart the idle
+  clock, or a session that polls would keep every solution on the machine warm. A caller takes its
+  worker *held*, under the gate the sweep decides under, and the sweep reads everything again
+  under that gate before acting, so a worker is never stopped between being handed to a call and
+  being called -- for a write, which is not retried, that would be a failure with nothing wrong. A
+  busy or loading worker is never evicted. An evicted worker stays registered, stopped as
+  `Evicted`, with the reason filed in its activity history, so the tray, `GET /admin/workspaces`
+  and `rose_workspace_list` can say why a workspace went cold; the next call replaces it as it
+  replaces a crashed one, and the row goes once it has been stopped as long as the idle limit. The
+  manager stops the sweep, and waits for it, before it disposes the gate the sweep takes.

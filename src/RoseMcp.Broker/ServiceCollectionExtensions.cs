@@ -80,7 +80,7 @@ public static class ServiceCollectionExtensions
 
 		No setup call: every tool finds the enclosing solution from a path or your session's directory,
 		which a relative path is measured from too. The first call loads it; rose_workspace_open starts
-		a large one early without waiting. Every
+		a large one early without waiting, and rose_workspace_list says what is already warm. Every
 		result names the workspace that answered and carries a revision, and a directory holding several
 		solutions refuses and lists them rather than guessing. Edits by other tools are absorbed on the
 		next call; only a rebuilt analyzer or generator needs rose_workspace_reload. If answers look

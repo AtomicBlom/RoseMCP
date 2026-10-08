@@ -65,8 +65,12 @@ public sealed class ToolBudgetTests
 	/// what an answer past its cap gives. Without them an answer past its cap is a sample of the first few,
 	/// which reads as the whole and cannot be narrowed except by reading all of it.
 	/// </para>
+	/// <para>
+	/// rose_workspace_list costs about 550 more, the price of a session being able to see what is
+	/// loaded without loading it.
+	/// </para>
 	/// </summary>
-	private const int ModelFacing = 82600;
+	private const int ModelFacing = 83200;
 
 	[Test]
 	public void No_description_is_longer_than_its_ceiling()

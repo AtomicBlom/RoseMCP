@@ -54,9 +54,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.SymbolInfo)]
-	public Task<SymbolInfoResult> SymbolInfoAsync(
+	public Task<ReadBatch<SymbolInfoResult>> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.SymbolsArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.FilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
@@ -67,9 +67,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<SymbolInfoResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.SymbolInfo, new()
+		ForwardAsync<ReadBatch<SymbolInfoResult>>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.SymbolInfo, new()
 		{
-			["symbol"] = symbol,
+			["symbols"] = symbols,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -86,9 +86,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.FindReferences)]
-	public async Task<ReferencesResult> FindReferencesAsync(
+	public async Task<ReadBatch<ReferencesResult>> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.SymbolsArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.FilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
@@ -104,9 +104,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default)
 	{
-		var found = await ForwardAsync<ReferencesResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.FindReferences, new()
+		var found = await ForwardAsync<ReadBatch<ReferencesResult>>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.FindReferences, new()
 		{
-			["symbol"] = symbol,
+			["symbols"] = symbols,
 			["filePath"] = filePath,
 			["line"] = line,
 			["column"] = column,
@@ -151,9 +151,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.Outline)]
-	public Task<OutlineResult> OutlineAsync(
+	public Task<ReadBatch<OutlineResult>> OutlineAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
+		[Description(ToolDescriptions.OutlineTypesArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.OutlineMembersArgument)] string? members = null,
@@ -164,9 +164,9 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		[Description(ToolDescriptions.WorkspaceKeyArgument)] string? workspaceKey = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<OutlineResult>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.Outline, new()
+		ForwardAsync<ReadBatch<OutlineResult>>(WorkspaceHints.From(paths.Of(workspace), workspaceKey, paths.Of(filePath)), ToolNames.Outline, new()
 		{
-			["symbol"] = symbol,
+			["symbols"] = symbols,
 			["filePath"] = filePath,
 			["members"] = members,
 			["maxMembers"] = maxMembers,

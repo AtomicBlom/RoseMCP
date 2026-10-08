@@ -374,7 +374,7 @@ public sealed class BrokerWorkerTests
 
 		var result = await worker.CallToolAsync(
 			ToolNames.SymbolInfo,
-			new Dictionary<string, object?> { ["symbol"] = "Core.Calculator.Add", ["includeSource"] = true },
+			new Dictionary<string, object?> { ["symbols"] = new[] { "Core.Calculator.Add" }, ["includeSource"] = true },
 			cancellationToken: cancellationToken);
 
 		result.IsError.ShouldNotBe(true);

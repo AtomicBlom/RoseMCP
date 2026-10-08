@@ -74,7 +74,6 @@ public static class NavigationService
 
 		return new SymbolInfoResult
 		{
-			Revision = snapshot.Revision,
 			Address = SymbolAddress.Of(symbol),
 			Name = symbol.Name,
 			Kind = symbol.Kind.ToString(),
@@ -235,7 +234,6 @@ public static class NavigationService
 
 		return new ReferencesResult
 		{
-			Revision = snapshot.Revision,
 			Address = SymbolAddress.Of(symbol),
 			Symbol = symbol.ToDisplayString(SymbolSignature.Format),
 

@@ -88,9 +88,10 @@ nothing needs a grep first and nothing goes stale when an earlier edit moves a l
 
 **Reading and navigation**, 9 tools. `rose_outline` for what a type or a file contains,
 `rose_find_split_options` for where it could be split and what each piece would take with it,
-`rose_symbol_info` for one member and its source, `rose_find_references` for usages grouped by the
-member each sits inside, `rose_find_implementations` for the other direction, `rose_search_symbols`,
-`rose_project_graph`, and the two generated-document tools, which are the only way to read
+`rose_symbol_info` for what a member is and its source, `rose_find_references` for usages grouped by
+the member each sits inside -- those three take several symbols in one call --
+`rose_find_implementations` for the other direction, `rose_search_symbols`, `rose_project_graph`,
+and the two generated-document tools, which are the only way to read
 source-generated code at all.
 
 **Writing C#**, 13 tools. `rose_add_file` starts a file in the right project, with the namespace its

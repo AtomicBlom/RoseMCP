@@ -10,13 +10,8 @@ namespace RoseMcp.Contracts;
 /// of the caller, and the next edit then goes through a text tool.
 /// </para>
 /// </summary>
-public sealed record OutlineResult : WorkspaceScopedResult
+public sealed record OutlineResult
 {
-	public required long Revision { get; init; }
-
-	/// <summary>What was asked about: a type name or a file path, as the caller wrote it.</summary>
-	public required string Target { get; init; }
-
 	/// <summary>The types found, outermost first, each with its members.</summary>
 	public required IReadOnlyList<OutlinedType> Types { get; init; }
 

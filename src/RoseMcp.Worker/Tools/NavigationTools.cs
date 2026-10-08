@@ -48,9 +48,9 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.SymbolInfo)]
-	public Task<SymbolInfoResult> SymbolInfoAsync(
+	public Task<ReadBatch<SymbolInfoResult>> SymbolInfoAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.SymbolsArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
@@ -59,13 +59,44 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		[Description(ToolDescriptions.MaxSymbolMembersArgument)] int maxMembers = OutlineService.DefaultMaxMembers,
 		CancellationToken cancellationToken = default)
 	{
-		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
+		var requested = Requested(symbols, filePath, line, column);
 
 		return calls.ReadAsync(
 			progress,
-			snapshot => NavigationService.DescribeAsync(snapshot, target, cancellationToken, includeSource, members, maxMembers),
+			snapshot => ReadBatches.EachAsync(
+				snapshot,
+				requested,
+				request => NavigationService.DescribeAsync(
+					snapshot, Target(symbols, request, filePath, line, column), cancellationToken, includeSource, members, maxMembers),
+				(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
+				cancellationToken,
+				listed: symbols is not null),
 			cancellationToken);
 	}
+
+	/// <summary>
+	/// What a call taking <c>symbols</c> asks about: each name, or the one position it points at. A
+	/// position is named in its entry as <c>file:line:column</c>.
+	/// </summary>
+	private static IReadOnlyList<string> Requested(string[]? symbols, string? filePath, int? line, int? column)
+	{
+		var pointed = new SymbolTarget { FilePath = filePath, Line = line, Column = column };
+
+		return ReadBatches.Requested(
+			symbols,
+			"symbols",
+			pointed.IsByPosition ? $"{filePath}:{line}:{column}" : null,
+			"Name the symbols, as a list of Namespace.Type.Member, or give filePath with line and column. "
+				+ "A name needs no position and does not go stale when the file is edited. A local variable or "
+				+ "a parameter is declared inside a member rather than as one, so it has no name to give here and "
+				+ "needs the position.");
+	}
+
+	/// <summary>One request of a call taking <c>symbols</c>, as the target it names.</summary>
+	private static SymbolTarget Target(string[]? symbols, string request, string? filePath, int? line, int? column) =>
+		symbols is null
+			? new SymbolTarget { FilePath = filePath, Line = line, Column = column }
+			: new SymbolTarget { Symbol = request, FilePath = filePath };
 
 	[McpServerTool(
 		Name = ToolNames.FindReferences,
@@ -75,9 +106,9 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.FindReferences)]
-	public Task<ReferencesResult> FindReferencesAsync(
+	public Task<ReadBatch<ReferencesResult>> FindReferencesAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.SymbolArgument)] string? symbol = null,
+		[Description(ToolDescriptions.SymbolsArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.FilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.LineArgument)] int? line = null,
 		[Description(ToolDescriptions.ColumnArgument)] int? column = null,
@@ -90,28 +121,41 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		[Description(ToolDescriptions.IsGeneratedArgument)] bool? isGenerated = null,
 		CancellationToken cancellationToken = default)
 	{
-		var target = new SymbolTarget { Symbol = symbol, FilePath = filePath, Line = line, Column = column };
+		var requested = Requested(symbols, filePath, line, column);
 
 		return calls.ReadAsync(
 			progress,
 			(snapshot, working) =>
 			{
-				// Reported without a percentage, deliberately. Roslyn's reference search offers no
-				// progress and cannot say up front how much of the solution it will visit, so an
-				// honest "working on it" beats a number that would be invented here.
-				working.Report($"Searching the solution for references to {target.Describe()}");
+				// A project no project carries is the call's mistake rather than any one symbol's, so it is
+				// refused once, before the search, rather than on every entry.
+				if (project is { Length: > 0 }) ProjectNames.Resolve(snapshot.Solution, project);
 
-				return NavigationService.FindReferencesAsync(
+				return ReadBatches.EachAsync(
 					snapshot,
-					target,
-					maxResults <= 0 ? 200 : maxResults,
+					requested,
+					request =>
+					{
+						// Reported without a percentage, deliberately. Roslyn's reference search offers no
+						// progress and cannot say up front how much of the solution it will visit, so an
+						// honest "working on it" beats a number that would be invented here.
+						working.Report($"Searching the solution for references to {request}");
+
+						return NavigationService.FindReferencesAsync(
+							snapshot,
+							Target(symbols, request, filePath, line, column),
+							maxResults <= 0 ? 200 : maxResults,
+							cancellationToken,
+							definitionsOnly,
+							project,
+							includePreviews,
+							containingMember,
+							isTestProject,
+							isGenerated);
+					},
+					(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
 					cancellationToken,
-					definitionsOnly,
-					project,
-					includePreviews,
-					containingMember,
-					isTestProject,
-					isGenerated);
+					listed: symbols is not null);
 			},
 			cancellationToken);
 	}
@@ -183,29 +227,47 @@ public sealed class NavigationTools(WorkspaceCalls calls)
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.Outline)]
-	public Task<OutlineResult> OutlineAsync(
+	public Task<ReadBatch<OutlineResult>> OutlineAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.OutlineTypeArgument)] string? symbol = null,
+		[Description(ToolDescriptions.OutlineTypesArgument)] string[]? symbols = null,
 		[Description(ToolDescriptions.OutlineFilePathArgument)] string? filePath = null,
 		[Description(ToolDescriptions.OutlineMembersArgument)] string? members = null,
 		[Description(ToolDescriptions.MaxOutlineMembersArgument)] int maxMembers = OutlineService.DefaultMaxMembers,
 		[Description(ToolDescriptions.IncludeInheritedArgument)] bool includeInherited = false,
 		[Description(ToolDescriptions.IncludeDocumentationArgument)] bool includeDocumentation = false,
 		[Description(ToolDescriptions.IncludeSignaturesArgument)] bool includeSignatures = false,
-		CancellationToken cancellationToken = default) =>
-		calls.ReadAsync(
+		CancellationToken cancellationToken = default)
+	{
+		var pathed = !string.IsNullOrWhiteSpace(filePath);
+
+		if (symbols is not null && pathed)
+		{
+			throw new ArgumentException(
+				"Name types or give a file path, not both -- they are two ways of choosing what to outline.");
+		}
+
+		var requested = ReadBatches.Requested(symbols, "symbols", pathed ? filePath : null, "Name the types, as a list of Namespace.Type, or give a file path.");
+
+		return calls.ReadAsync(
 			progress,
-			snapshot => OutlineService.OutlineAsync(
+			snapshot => ReadBatches.EachAsync(
 				snapshot,
-				symbol,
-				filePath,
-				includeInherited,
-				includeDocumentation,
-				includeSignatures,
+				requested,
+				request => OutlineService.OutlineAsync(
+					snapshot,
+					pathed ? null : request,
+					pathed ? request : null,
+					includeInherited,
+					includeDocumentation,
+					includeSignatures,
+					cancellationToken,
+					members,
+					maxMembers),
+				(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
 				cancellationToken,
-				members,
-				maxMembers),
+				listed: symbols is not null),
 			cancellationToken);
+	}
 
 	[McpServerTool(
 		Name = ToolNames.FindSplitOptions,

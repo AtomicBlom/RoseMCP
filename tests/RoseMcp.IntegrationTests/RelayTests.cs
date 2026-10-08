@@ -128,7 +128,7 @@ public sealed class RelayTests
 
 		using var answer = await relay.Session.CallToolAsync(
 			ToolNames.SymbolInfo,
-			"""{"symbol":"Core.Calculator.Add","includeSource":true}""",
+			"""{"symbols":["Core.Calculator.Add"],"includeSource":true}""",
 			cancellationToken);
 
 		Structured(answer);

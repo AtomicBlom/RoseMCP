@@ -44,7 +44,6 @@ public sealed class ResultPathsTests
 	{
 		var result = new ReferencesResult
 		{
-			Revision = 1,
 			Symbol = "A.B",
 			Definitions = [new SourceLocation { FilePath = Path.Combine(Origin, "A.cs"), Line = 1, Column = 1 }],
 			Files =
@@ -56,9 +55,10 @@ public sealed class ResultPathsTests
 			Truncated = false,
 		};
 
-		var relative = ResultPaths.RelativeTo(result, Origin);
+		var batch = ResultPaths.RelativeTo(Batch(result), Origin);
+		var relative = batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull();
 
-		relative.RelativeTo.ShouldBe(Origin);
+		batch.RelativeTo.ShouldBe(Origin);
 		relative.Definitions.ShouldHaveSingleItem().FilePath.ShouldBe("A.cs");
 		relative.Files.Select(file => file.FilePath).ShouldBe(["B.cs", Path.Combine(Origin, "obj", "B.g.cs")]);
 	}
@@ -69,7 +69,6 @@ public sealed class ResultPathsTests
 		var elsewhere = Path.Combine(Path.GetTempPath(), "other", "A.cs");
 		var result = new ReferencesResult
 		{
-			Revision = 1,
 			Symbol = "A.B",
 			Definitions = [new SourceLocation { FilePath = elsewhere, Line = 1, Column = 1 }],
 			Files = [],
@@ -77,6 +76,12 @@ public sealed class ResultPathsTests
 			Truncated = false,
 		};
 
-		ResultPaths.RelativeTo(result, Origin).RelativeTo.ShouldBeNull();
+		ResultPaths.RelativeTo(Batch(result), Origin).RelativeTo.ShouldBeNull();
 	}
+
+	private static ReadBatch<ReferencesResult> Batch(ReferencesResult answer) => new()
+	{
+		Revision = 1,
+		Results = [new ReadEntry<ReferencesResult> { Requested = "A.B", Status = "found", Answer = answer }],
+	};
 }

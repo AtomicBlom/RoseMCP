@@ -58,6 +58,14 @@ public sealed class ResultBudgetTests
 	private const int PerReference = 75;
 
 	/// <summary>
+	/// What one entry of a read that takes a list adds to its answer: the request as sent, its status
+	/// and the nesting, which costs 69 over three names in the fixture -- most of it the
+	/// names themselves. Measured beyond the answer, which has budgets of its own, so a field every
+	/// answer of a batch shares, added back per entry, fails here.
+	/// </summary>
+	private const int PerBatchEntry = 75;
+
+	/// <summary>
 	/// A whole write result for adding a doc comment, which costs 1,499 -- the floor for an edit that
 	/// introduces no diagnostic at all; one that does costs several times more. Most of it is the doc
 	/// comment the caller composed, read back in the diff. An edit loop pays this per edit, which
@@ -105,7 +113,8 @@ public sealed class ResultBudgetTests
 				1000,
 				TestContext.Current!.Execution.CancellationToken,
 				includePreviews: false),
-			Path.GetDirectoryName(fixture.SolutionPath)!);
+			Path.GetDirectoryName(fixture.SolutionPath)!,
+			out _);
 
 		var hits = references.Files.Sum(file => file.References.Count);
 		hits.ShouldBeGreaterThan(references.Files.Count, "the fixture should have files with several references");
@@ -115,6 +124,25 @@ public sealed class ResultBudgetTests
 			Size(references) - Size(references with { Files = [] }),
 			hits,
 			"a reference with previews off");
+
+		// A list of reads costs its answers and, per entry, only what matches an answer to its request:
+		// what every answer shares -- the revision, the workspace, what the snapshot reconciled -- is on
+		// the batch once.
+		string[] asked = ["Library.Greeter.Greet(string)", "Library.Greeter.PrefixLength", "Library.Greeter.Count"];
+		var batch = await ReadBatches.EachAsync(
+			snapshot,
+			asked,
+			request => NavigationService.DescribeAsync(snapshot, new SymbolTarget { Symbol = request }, TestContext.Current!.Execution.CancellationToken),
+			(answer, shared) => answer with { Notices = ReadBatches.Own(answer.Notices, shared) },
+			TestContext.Current!.Execution.CancellationToken);
+
+		batch.Found.ShouldBe(asked.Length);
+
+		AssertWithin(
+			PerBatchEntry,
+			Size(batch) - Size(batch with { Results = [] }) - batch.Results.Sum(entry => Size(entry.Answer!)),
+			asked.Length,
+			"an entry of a read batch, beyond its answer");
 
 		var library = await NavigationService.DescribeAsync(
 			snapshot,

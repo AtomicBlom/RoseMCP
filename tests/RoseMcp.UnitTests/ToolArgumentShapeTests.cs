@@ -275,6 +275,31 @@ public sealed class ToolArgumentShapeTests
 	}
 
 	/// <summary>
+	/// The reads plural by intent take <c>symbols</c> and only that, so the singular a caller reaches
+	/// for out of habit is the commonest mistake against them. Sent as a bare string under the plural
+	/// name, the refusal names the list; sent under the singular name, the call is told which name it
+	/// meant -- against the schemas the tools are actually listed with.
+	/// </summary>
+	[Test]
+	[Arguments(nameof(BrokerAnalysisTools.SymbolInfoAsync), "rose_symbol_info")]
+	[Arguments(nameof(BrokerAnalysisTools.FindReferencesAsync), "rose_find_references")]
+	[Arguments(nameof(BrokerAnalysisTools.OutlineAsync), "rose_outline")]
+	public void Names_the_list_a_read_wanted_when_one_symbol_is_sent(string method, string tool)
+	{
+		var schema = McpServerTool.Create(
+			typeof(BrokerAnalysisTools).GetMethod(method)!,
+			_ => throw new InvalidOperationException("Only the schema is read.")).ProtocolTool.InputSchema;
+
+		ToolArgumentShape.Mismatch(schema, Arguments("""{"symbols":"A.B"}"""))
+			.ShouldNotBeNull()
+			.ShouldStartWith("symbols takes a list of strings, and a string was sent", Case.Sensitive);
+
+		ToolArgumentShape.NotArguments(tool, schema, Arguments("""{"symbol":"A.B"}"""))
+			.ShouldNotBeNull()
+			.ShouldContain("Did you mean `symbols`?", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// The schema rose_debug_add_tracepoint is actually listed with, built from its declaration rather
 	/// than written out by hand, so the required list the entry check reads is the one the SDK emits.
 	/// </summary>

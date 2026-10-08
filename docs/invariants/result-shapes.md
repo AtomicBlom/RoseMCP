@@ -134,7 +134,7 @@ Read before adding a tool, adding a field to a result, or changing an error path
   reintroduce a second tool for this: `rose_workspace_open` was `rose_workspace_status` under another
   name, down to the same two lines of body, and not waiting is what gives it something to be.
 - **A batch answers each entry, and one entry's mistake is that entry's status.** A tool that takes
-  a list of independent requests -- tracepoints, breakpoints, ids to remove -- answers
+  a list of independent requests -- tracepoints, breakpoints, ids to remove, symbols to read -- answers
   with one entry per request in the order given, each with a `status` that is the outcome or the
   reason there was none, so a caller can match an answer to what it sent without counting. Refusing
   the whole call for one bad entry sends the caller back to retry the good ones piece by piece, which

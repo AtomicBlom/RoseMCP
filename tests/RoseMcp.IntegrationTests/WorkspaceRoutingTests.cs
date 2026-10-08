@@ -422,8 +422,8 @@ public sealed class WorkspaceRoutingTests
 		using var origin = CallOrigin.Use(standing);
 
 		var first = await tools.OutlineAsync(
-			new Progress<ProgressNotificationValue>(), symbol: "Core.Calculator", workspaceKey: worker.Key, cancellationToken: cancellationToken);
-		var absolute = first.Types.ShouldHaveSingleItem().FilePath.ShouldNotBeNull();
+			new Progress<ProgressNotificationValue>(), symbols: ["Core.Calculator"], workspaceKey: worker.Key, cancellationToken: cancellationToken);
+		var absolute = first.Results.ShouldHaveSingleItem().Answer!.Types.ShouldHaveSingleItem().FilePath.ShouldNotBeNull();
 
 		first.Workspace.ShouldBe(worktree.SolutionPath, StringCompareShould.IgnoreCase);
 		absolute.ShouldBe(worktree.Path("Simple", "Core", "Calculator.cs"), StringCompareShould.IgnoreCase);
@@ -432,7 +432,7 @@ public sealed class WorkspaceRoutingTests
 			new Progress<ProgressNotificationValue>(), filePath: absolute, workspaceKey: first.WorkspaceKey, cancellationToken: cancellationToken);
 
 		again.Workspace.ShouldBe(worktree.SolutionPath, StringCompareShould.IgnoreCase);
-		again.Types.ShouldHaveSingleItem().FilePath.ShouldBe(absolute, StringCompareShould.IgnoreCase);
+		again.Results.ShouldHaveSingleItem().Answer!.Types.ShouldHaveSingleItem().FilePath.ShouldBe(absolute, StringCompareShould.IgnoreCase);
 
 		var error = await Should.ThrowAsync<InvalidOperationException>(() => tools.OutlineAsync(
 			new Progress<ProgressNotificationValue>(),

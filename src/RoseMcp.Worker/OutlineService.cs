@@ -82,8 +82,6 @@ public static class OutlineService
 
 		return new OutlineResult
 		{
-			Revision = snapshot.Revision,
-			Target = (named ? type : filePath)!,
 			Types = types,
 			Truncated = listing.Truncated,
 			Notices = notices,

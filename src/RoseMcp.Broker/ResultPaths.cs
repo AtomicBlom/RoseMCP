@@ -16,11 +16,10 @@ namespace RoseMcp.Broker;
 /// <para>
 /// Only a path under that directory is shortened. One outside it -- another checkout, a project
 /// referenced from beside the repository -- stays absolute, since a relative path climbing out of the
-/// caller's directory is longer than the one it replaces and is the shape a mistyped path takes. The
-/// broker does this and the worker never does: the worker cannot know where the caller is standing, and
-/// the hop to it is absolute-only.
-/// A generated document's path is left as it is: it names no file a caller can open, and the hint name
-/// beside it is what reads it back.
+/// caller's directory is longer than the one it replaces and is the shape a mistyped path takes. A
+/// generated document's path is left as it is: it names no file a caller can open, and the hint name
+/// beside it is what reads it back. The broker does this and the worker never does: the worker cannot
+/// know where the caller is standing, and the hop to it is absolute-only.
 /// </para>
 /// </summary>
 public static class ResultPaths
@@ -49,23 +48,58 @@ public static class ResultPaths
 
 	/// <summary>
 	/// A reference search's files and definitions with their paths relative to <paramref name="origin"/>,
-	/// and <see cref="ReferencesResult.RelativeTo"/> naming it wherever one was shortened.
+	/// and whether any was shortened.
 	/// </summary>
-	/// <param name="result">The worker's answer.</param>
+	/// <param name="result">One symbol's references, as the worker answered.</param>
 	/// <param name="origin">The calling session's directory.</param>
-	public static ReferencesResult RelativeTo(ReferencesResult result, string origin)
+	/// <param name="shortened">Whether any path was made relative.</param>
+	public static ReferencesResult RelativeTo(ReferencesResult result, string origin, out bool shortened)
 	{
-		var files = result.Files.Select(file => file.GeneratedHintName is null ? file with { FilePath = Relative(file.FilePath, origin) } : file).ToArray();
-		var definitions = result.Definitions.Select(location => location.GeneratedHintName is null ? location with { FilePath = Relative(location.FilePath, origin) } : location).ToArray();
+		var any = false;
 
-		var shortened = files.Zip(result.Files).Any(pair => !string.Equals(pair.First.FilePath, pair.Second.FilePath, StringComparison.Ordinal))
-			|| definitions.Zip(result.Definitions).Any(pair => !string.Equals(pair.First.FilePath, pair.Second.FilePath, StringComparison.Ordinal));
-
-		return result with
+		string Shorten(string path, string? hintName)
 		{
-			Files = files,
-			Definitions = definitions,
-			RelativeTo = shortened ? origin : null,
+			if (hintName is not null) return path;
+
+			var relative = Relative(path, origin);
+			any |= !string.Equals(relative, path, StringComparison.Ordinal);
+
+			return relative;
+		}
+
+		var answer = result with
+		{
+			Files = [.. result.Files.Select(file => file with { FilePath = Shorten(file.FilePath, file.GeneratedHintName) })],
+			Definitions = [.. result.Definitions.Select(location => location with { FilePath = Shorten(location.FilePath, location.GeneratedHintName) })],
 		};
+
+		shortened = any;
+		return answer;
+	}
+
+	/// <summary>
+	/// Every answer of a reference batch with its paths relative to <paramref name="origin"/>, and
+	/// <see cref="ReadBatch{T}.RelativeTo"/> naming it, once, wherever a path was shortened.
+	/// </summary>
+	/// <param name="batch">The worker's answer.</param>
+	/// <param name="origin">The calling session's directory.</param>
+	public static ReadBatch<ReferencesResult> RelativeTo(ReadBatch<ReferencesResult> batch, string origin)
+	{
+		var shortened = false;
+		var results = new List<ReadEntry<ReferencesResult>>();
+
+		foreach (var entry in batch.Results)
+		{
+			if (entry.Answer is null)
+			{
+				results.Add(entry);
+				continue;
+			}
+
+			results.Add(entry with { Answer = RelativeTo(entry.Answer, origin, out var any) });
+			shortened |= any;
+		}
+
+		return batch with { Results = results, RelativeTo = shortened ? origin : null };
 	}
 }

@@ -27,6 +27,15 @@ public static class ToolDescriptions
 			+ "Type.Type or Type..ctor for a constructor. Preferred over a position: it needs no grep "
 			+ "first and does not go stale when an earlier edit moves the line.";
 
+	/// <summary>
+	/// The reads that are plural by intent take a list, each name answered on its own, and only a list:
+	/// one spelling, so a caller with one symbol learns nothing extra to ask about several. The grammar
+	/// is <see cref="SymbolArgument"/>'s, kept short here since that is where it is explained.
+	/// </summary>
+	public const string SymbolsArgument =
+		"Symbols by name, as Namespace.Type.Member, each answered on its own. Add a parameter list to pick an "
+			+ "overload, Type..ctor for a constructor. Preferred over a position.";
+
 	public const string FilePathArgument =
 		"Path to the file: absolute, or relative to where your session is running. Give it with line and "
 			+ "column to point at a symbol, or on its own to say which file a name is declared in.";
@@ -264,6 +273,9 @@ public static class ToolDescriptions
 
 	public const string OutlineTypeArgument =
 		"The type, as Namespace.Type. One of this and filePath.";
+
+	public const string OutlineTypesArgument =
+		"Types, as Namespace.Type, each outlined on its own. One of this and filePath.";
 
 	public const string OutlineFilePathArgument =
 		"The file to outline, only what it declares. One of this and symbol.";
@@ -653,7 +665,7 @@ public static class ToolDescriptions
 	public const string SymbolInfo = """
 		What a symbol is: full signature, kind, accessibility, containing type, documented summary, each
 		declaration with its first and last line, and what it overrides or implements -- usually where
-		an override's documentation lives. Name it as Namespace.Type.Member, which needs no grep and
+		an override's documentation lives. Name several in one call as Namespace.Type.Member, which needs no grep and
 		survives an edit moving a line; a file position reaches a local or a parameter. includeSource
 		adds the declaration's text, so understanding it does not end in a file read. A referenced
 		assembly's types and members answer too, as StringBuilder or
@@ -665,7 +677,7 @@ public static class ToolDescriptions
 	public const string FindReferences = """
 		Every reference to a symbol, resolved semantically across the solution. Unlike a text search
 		this follows overrides, interface implementations and aliases, and will not match comments,
-		strings or unrelated identifiers that share a name. Name the symbol as Namespace.Type.Member;
+		strings or unrelated identifiers that share a name. Name symbols as Namespace.Type.Member, several per call;
 		a position still reaches a local or a parameter, and needs the column on the identifier itself,
 		since one on a neighbour answers completely and correctly about a different symbol. Hits are
 		listed by file, each naming its containing member. Past maxResults the answer is their shape:

@@ -3,10 +3,8 @@ using System.Text.Json.Serialization;
 namespace RoseMcp.Contracts;
 
 /// <summary>What a symbol is, in the terms an agent needs before changing it.</summary>
-public sealed record SymbolInfoResult : WorkspaceScopedResult
+public sealed record SymbolInfoResult
 {
-	public required long Revision { get; init; }
-
 	/// <summary>
 	/// This symbol as an address: pass it back as <c>symbol</c> to any rose_* tool. Null where nothing
 	/// can name it -- a local or a parameter is declared inside a member rather than as one.

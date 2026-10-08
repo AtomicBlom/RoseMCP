@@ -73,7 +73,27 @@ not six.
 than returning it, since a caller asking for one has no other entry to keep. There is one way a
 breakpoint is set; the singular form is a wrapper, not a second path.
 
-**When to revisit.** The read tools that are plural by intent -- `rose_find_references`,
-`rose_symbol_info`, `rose_outline` -- are singular on purpose: their per-item answers are
-large, and batching a read whose answer is already large multiplies the payload as well as saving the
-turns. They follow once their answers are small enough to carry several of.
+**The reads plural by intent take a list too.** `rose_symbol_info`, `rose_find_references` and
+`rose_outline` take `symbols`, and no `symbol` beside it. Understanding a change is never one symbol
+either: the method, the type it lives in and the interface it implements are asked about together, and
+so are the three members whose callers decide whether a rename is safe. Each name is answered exactly
+as a call for it alone would be, from one snapshot, and the answer is the same `ReadBatch` shape: one
+entry per name, in order, with the name as sent, a status that is `found` or `refused: ` and why, and
+the answer; a count found, a total, and once on the batch what the snapshot reconciled and the
+revision, which every answer would otherwise repeat.
+
+A list waited for the answers to shrink, since batching a read whose answer is already large
+multiplies the payload as well as saving the turns. They have: an outline member is its name, kind,
+accessibility and line, documentation is a sentence there and a bounded summary in symbol info, and a
+reference search past its cap answers with its shape rather than its list. So the arguments that bound
+an answer -- `maxResults`, `maxMembers`, the filters -- bound each entry, as they would one call. A
+list of five costs what five calls would, in one turn, and nothing more: what an entry adds beyond its
+answer is held by `ResultBudgetTests.PerBatchEntry`.
+
+What makes the whole call impossible is refused once, before any entry is answered: an empty list,
+naming it; a `project` no project carries; names given beside a position. A position, and
+`rose_outline`'s file, stay single requests rather than lists. A position is how a caller reaches a
+local or a parameter, one at a time while reading code, and a file outline already answers for every
+type the file declares -- and a call asking about one thing has no other entry to keep, so its
+refusal is the call's, which is where the broker adds the name of the solution that compiles a path
+the answering one does not.

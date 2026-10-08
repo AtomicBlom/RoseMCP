@@ -6,10 +6,8 @@ namespace RoseMcp.Contracts;
 /// Every reference to a symbol across the solution: listed by file where there are few enough to
 /// read, and described by their shape where there are not.
 /// </summary>
-public sealed record ReferencesResult : WorkspaceScopedResult
+public sealed record ReferencesResult
 {
-	public required long Revision { get; init; }
-
 	/// <summary>
 	/// The symbol these are references to, as an address: pass it back as <c>symbol</c> to any rose_*
 	/// tool. Not repeated per reference, because a location already names the member it sits inside and
@@ -46,20 +44,13 @@ public sealed record ReferencesResult : WorkspaceScopedResult
 	public ReferenceShape? Shape { get; init; }
 
 	public IReadOnlyList<string> Notices { get; init; } = [];
-
-	/// <summary>
-	/// The directory a relative <c>filePath</c> here is measured from: the one the calling session runs
-	/// in, which is also what a relative path sent back is measured from, so it names the same file in
-	/// the next call. Absent where every path is absolute.
-	/// </summary>
-	public string? RelativeTo { get; init; }
 }
 
 /// <summary>One file's references.</summary>
 public sealed record ReferenceFile
 {
 	/// <summary>
-	/// The file, relative to <see cref="ReferencesResult.RelativeTo"/> where it lies under it, and absolute
+	/// The file, relative to the batch's <c>relativeTo</c> where it lies under it, and absolute
 	/// otherwise.
 	/// </summary>
 	public required string FilePath { get; init; }

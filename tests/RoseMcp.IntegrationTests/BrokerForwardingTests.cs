@@ -37,7 +37,7 @@ public sealed class BrokerForwardingTests
 
 		var elsewhere = Path.Combine(Path.GetTempPath(), $"absent-{Guid.NewGuid():N}", "Nowhere.cs");
 
-		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
+		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<ReadBatch<SymbolInfoResult>>(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
 			new Dictionary<string, object?> { ["filePath"] = elsewhere, ["line"] = 1, ["column"] = 1 },
@@ -155,12 +155,14 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var manager = CreateManager();
 
-		var info = await manager.CallAsync<SymbolInfoResult>(
+		var batch = await manager.CallAsync<ReadBatch<SymbolInfoResult>>(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
-			new Dictionary<string, object?> { ["symbol"] = "Library.Greeter.PrefixLength" },
+			new Dictionary<string, object?> { ["symbols"] = new[] { "Library.Greeter.PrefixLength" } },
 			retryIfWorkerDied: true,
 			TestContext.Current!.Execution.CancellationToken);
+
+		var info = batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull();
 
 		info.Name.ShouldBe("PrefixLength");
 
@@ -183,20 +185,64 @@ public sealed class BrokerForwardingTests
 		await using var manager = CreateManager();
 		var tools = new BrokerAnalysisTools(manager, CreatePaths());
 
-		var info = await tools.SymbolInfoAsync(
+		var batch = await tools.SymbolInfoAsync(
 			new Progress<ProgressNotificationValue>(),
-			symbol: "System.Text.StringBuilder",
+			symbols: ["System.Text.StringBuilder"],
 			members: "Append",
 			maxMembers: 3,
 			workspace: fixture.SolutionPath,
 			cancellationToken: TestContext.Current!.Execution.CancellationToken);
 
+		var info = batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull();
 		var members = info.Members.ShouldNotBeNull();
 
 		members.Count.ShouldBe(3);
 		members.ShouldAllBe(member => member.Name.Contains("Append", StringComparison.Ordinal));
 		info.Truncated.ShouldBeTrue();
 		info.TotalMembers.ShouldNotBeNull().ShouldBeGreaterThan(3);
+	}
+
+	/// <summary>
+	/// A read plural by intent answers every name it was given, in order, each on its own: a name
+	/// nothing declares is that entry's status and the others are answered anyway, through the broker
+	/// as well as the worker.
+	/// </summary>
+	[Test]
+	public async Task Answers_each_symbol_of_a_list_and_refuses_only_the_one_that_names_nothing()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+		var tools = new BrokerAnalysisTools(manager, CreatePaths());
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+
+		var info = await tools.SymbolInfoAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: ["Library.Greeter.PrefixLength", "Library.Greeter.Nowhere", "Library.Greeter.Greet(string)"],
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken);
+
+		info.Results.Select(entry => entry.Requested)
+			.ShouldBe(["Library.Greeter.PrefixLength", "Library.Greeter.Nowhere", "Library.Greeter.Greet(string)"]);
+		info.Results.Select(entry => entry.Answer?.Name).ShouldBe(["PrefixLength", null, "Greet"]);
+		info.Results[1].Status.ShouldStartWith("refused: ");
+		info.Found.ShouldBe(2);
+		info.Total.ShouldBe(3);
+
+		var outlined = await tools.OutlineAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: ["Library.Greeter", "Library.Split"],
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken);
+
+		outlined.Results.Select(entry => entry.Answer!.Types.ShouldHaveSingleItem().Name).ShouldBe(["Library.Greeter", "Library.Split"]);
+
+		var empty = await Should.ThrowAsync<Exception>(() => tools.FindReferencesAsync(
+			new Progress<ProgressNotificationValue>(),
+			symbols: [],
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken));
+
+		empty.Message.ShouldContain("symbols is empty", Case.Sensitive);
 	}
 
 	/// <summary>
@@ -213,24 +259,26 @@ public sealed class BrokerForwardingTests
 		var tools = new BrokerAnalysisTools(manager, CreatePaths(origin));
 		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
-		var references = await tools.FindReferencesAsync(
+		var batch = await tools.FindReferencesAsync(
 			new Progress<ProgressNotificationValue>(),
-			symbol: "Library.Greeter.Greet(string)",
+			symbols: ["Library.Greeter.Greet(string)"],
 			workspace: fixture.SolutionPath,
 			cancellationToken: cancellationToken);
 
-		references.RelativeTo.ShouldBe(origin);
+		batch.RelativeTo.ShouldBe(origin);
 
-		var file = references.Files.First();
+		var file = batch.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull().Files.First();
 		Path.IsPathRooted(file.FilePath).ShouldBeFalse($"'{file.FilePath}' should be relative to the session's directory");
 
 		var site = file.References.First();
-		var described = await tools.SymbolInfoAsync(
+		var pointed = await tools.SymbolInfoAsync(
 			new Progress<ProgressNotificationValue>(),
 			filePath: file.FilePath,
 			line: site.Line,
 			column: site.Column,
 			cancellationToken: cancellationToken);
+
+		var described = pointed.Results.ShouldHaveSingleItem().Answer.ShouldNotBeNull();
 
 		described.Name.ShouldBe("Greet");
 		described.Kind.ShouldBe("Method");
@@ -608,7 +656,7 @@ public sealed class BrokerForwardingTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager();
 
-		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<SymbolInfoResult>(
+		var error = await Should.ThrowAsync<Exception>(() => manager.CallAsync<ReadBatch<SymbolInfoResult>>(
 			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
 			ToolNames.SymbolInfo,
 			new Dictionary<string, object?> { ["filePath"] = Path.Combine("Core", "Calculator.cs") },

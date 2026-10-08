@@ -1,3 +1,4 @@
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace RoseMcp.UnitTests;
 
@@ -534,6 +535,87 @@ public sealed class CallSiteShapeMatrixTests
 
 		Rewrite(call, "string second").ShouldBe("(\n#region r\n\t\tb\n#endregion\n\t)");
 	}
+
+	/// <summary>
+	/// An argument appended after one whose line ends in a comment, where the arguments share a line
+	/// and no argument begins one. The comment goes after the comma the argument gains, and that comma
+	/// ends the line: the new argument goes on the next one, a level inside the parenthesis, rather
+	/// than after the comment on the same line, where it would be part of the comment.
+	/// </summary>
+	[Test]
+	public void Appends_after_a_line_comment_on_a_line_no_argument_begins()
+	{
+		var text = Rewrite(Calling("Target(a, b // the b\n\t)"), "string first, string second, string separator", Dash);
+
+		text.ShouldBe("(a, b, // the b\n\t\t\"-\"\n\t)");
+		ArgumentCount(text).ShouldBe(3);
+	}
+
+	/// <summary>The same, where the arguments share a continuation line, which gives the indentation.</summary>
+	[Test]
+	public void Appends_after_a_line_comment_on_a_shared_continuation_line()
+	{
+		var text = Rewrite(
+			Calling("Target(\n\t\ta, b // the b\n\t)"), "string first, string second, string separator", Dash);
+
+		text.ShouldBe("(\n\t\ta, b, // the b\n\t\t\"-\"\n\t)");
+		ArgumentCount(text).ShouldBe(3);
+	}
+
+	/// <summary>
+	/// The same with a single argument and the parenthesis on a line of its own -- the shape a
+	/// cancellation token appended to a one-argument call meets.
+	/// </summary>
+	[Test]
+	public void Appends_after_a_line_comment_on_a_lone_argument()
+	{
+		var source = "public static class Fixture\n"
+			+ "{\n"
+			+ "\tpublic static string Target(string first) => first;\n"
+			+ "\n"
+			+ "\tpublic static string Use(string a) => Target(\n"
+			+ "\t\ta // the a\n"
+			+ "\t);\n"
+			+ "}\n";
+
+		var text = Rewrite(source, "string first, string separator", Dash);
+
+		text.ShouldBe("(\n\t\ta, // the a\n\t\t\"-\"\n\t)");
+		ArgumentCount(text).ShouldBe(2);
+	}
+
+	/// <summary>
+	/// The same append where the new parameter has a default and a value is passed for it. Inside the
+	/// comment the value would vanish and the call would still compile on the default, so nothing would
+	/// say it had gone; the argument count is what does.
+	/// </summary>
+	[Test]
+	public void Keeps_the_value_passed_for_a_defaulted_parameter_out_of_a_line_comment()
+	{
+		var text = Rewrite(
+			Calling("Target(a, b // the b\n\t)"), "string first, string second, string separator = \"\"", Dash);
+
+		text.ShouldBe("(a, b, // the b\n\t\t\"-\"\n\t)");
+		ArgumentCount(text).ShouldBe(3);
+	}
+
+	/// <summary>
+	/// An argument with an <c>#if</c> in front of it, taken out. The directive is in the argument's
+	/// leading trivia and would go with it, leaving the <c>#endif</c> on its own, which is CS1028; which
+	/// arguments the block was meant to hold is not something to guess, so the site is left and says so.
+	/// </summary>
+	[Test]
+	public void Refuses_to_take_out_an_argument_with_a_directive_in_front_of_it()
+	{
+		var call = Calling("Target(\n\t\ta,\n#if true\n\t\tb\n#endif\n\t)");
+
+		CallSites.Rewrite(call, "string first", out var refusal).ShouldBeNull();
+		refusal.ShouldContain("preprocessor directive", Case.Sensitive);
+	}
+
+	/// <summary>How many arguments a rewritten list parses to, so one swallowed by a comment is counted out.</summary>
+	private static int ArgumentCount(string? text) =>
+		text is null ? 0 : SyntaxFactory.ParseArgumentList(text).Arguments.Count;
 
 	/// <summary>A call wrapped one argument to a line with its closing parenthesis on a line of its own.</summary>
 	/// <param name="comment">Written after the last argument, before the parenthesis's line.</param>

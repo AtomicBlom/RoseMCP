@@ -46,6 +46,11 @@ public static class CallSiteRewriter
 		out string refusal)
 	{
 		refusal = string.Empty;
+
+		// Read before anything is taken apart: the break in front of a closing parenthesis on its own line
+		// can be the only one the list has, and it is lifted off the last argument below.
+		var lineBreak = LineBreakIn(arguments);
+
 		arguments = WithInlineCommentsOnTheirArgument(arguments);
 		arguments = WithoutClosingLine(arguments, out var closingComment, out var closingLayout);
 
@@ -102,21 +107,29 @@ public static class CallSiteRewriter
 			if (!positional) allPositionalSoFar = false;
 		}
 
+		if (LosesDirective(arguments, origins))
+		{
+			refusal = "a preprocessor directive is written in front of an argument or comma this change takes out, "
+				+ "and taking it out would leave the directive's block unbalanced";
+
+			return null;
+		}
+
 		var comments = LineEndComments(arguments, closingComment);
-		var separators = Separators(origins, arguments, comments).ToArray();
+		var separators = Separators(origins, arguments, comments, lineBreak).ToArray();
 		var indentation = Indentation(arguments);
 
 		var laidOut = emitted
 			.Select((argument, index) => origins[index] == index
 				? argument
-				: InSlot(argument, index == 0 ? arguments.OpenParenToken : separators[index - 1], indentation, arguments))
+				: InSlot(argument, index == 0 ? arguments.OpenParenToken : separators[index - 1], indentation, lineBreak))
 			.ToList();
 
 		if (laidOut.Count > 0)
 		{
 			var comment = origins[^1] < 0 ? default : comments[origins[^1]];
 
-			laidOut[^1] = Closing(laidOut[^1], comment, closingLayout, arguments, indentation);
+			laidOut[^1] = Closing(laidOut[^1], comment, closingLayout, arguments, indentation, lineBreak);
 		}
 
 		return arguments.WithArguments(SyntaxFactory.SeparatedList(laidOut, separators));
@@ -143,7 +156,12 @@ public static class CallSiteRewriter
 	/// <param name="origins">Where each emitted argument stood in the list as written, or -1 for one that is new.</param>
 	/// <param name="existing">The list as written.</param>
 	/// <param name="comments">The comment that ended the line after each argument as written, by its position there.</param>
-	private static IEnumerable<SyntaxToken> Separators(IReadOnlyList<int> origins, ArgumentListSyntax existing, SyntaxTriviaList[] comments)
+	/// <param name="lineBreak">The call site's own line ending, for a comma a carried line comment has to end.</param>
+	private static IEnumerable<SyntaxToken> Separators(
+		IReadOnlyList<int> origins,
+		ArgumentListSyntax existing,
+		SyntaxTriviaList[] comments,
+		SyntaxTrivia lineBreak)
 	{
 		var already = existing.Arguments.GetSeparators().ToArray();
 
@@ -157,7 +175,7 @@ public static class CallSiteRewriter
 
 			var comment = origins[index] < 0 ? default : comments[origins[index]];
 
-			yield return comma.WithTrailingTrivia(comment.Concat(comma.TrailingTrivia));
+			yield return comma.WithTrailingTrivia(EndingLineComment(comment.Concat(comma.TrailingTrivia), lineBreak, out _));
 		}
 	}
 
@@ -184,7 +202,7 @@ public static class CallSiteRewriter
 			}
 		}
 
-		return default;
+		return InsideClosingParenthesis(arguments);
 	}
 
 	/// <summary>
@@ -205,7 +223,11 @@ public static class CallSiteRewriter
 	/// break there would strand a trailing space after the comma.
 	/// </para>
 	/// </summary>
-	private static ArgumentSyntax InSlot(ArgumentSyntax argument, SyntaxToken before, SyntaxTriviaList indentation, ArgumentListSyntax arguments)
+	private static ArgumentSyntax InSlot(
+		ArgumentSyntax argument,
+		SyntaxToken before,
+		SyntaxTriviaList indentation,
+		SyntaxTrivia lineBreak)
 	{
 		var leading = argument.GetLeadingTrivia();
 
@@ -217,7 +239,7 @@ public static class CallSiteRewriter
 			// front of it; without one it is CS1040.
 			var opensWithDirective = written.Length > 0 && written[0].IsDirective;
 
-			return argument.WithLeadingTrivia(opensWithDirective ? written.Prepend(LineBreakIn(arguments)) : written);
+			return argument.WithLeadingTrivia(opensWithDirective ? written.Prepend(lineBreak) : written);
 		}
 
 		var own = leading.SkipWhile(IsWhitespace).ToArray();
@@ -292,20 +314,13 @@ public static class CallSiteRewriter
 		SyntaxTriviaList comment,
 		SyntaxTriviaList layout,
 		ArgumentListSyntax arguments,
-		SyntaxTriviaList indentation)
+		SyntaxTriviaList indentation,
+		SyntaxTrivia lineBreak)
 	{
-		var trailing = argument.GetTrailingTrivia().Concat(comment).Concat(layout);
-		var isLineComment = comment.Any(trivia => trivia.IsKind(SyntaxKind.SingleLineCommentTrivia));
-		var needsBreak = isLineComment && !layout.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+		var trailing = EndingLineComment(argument.GetTrailingTrivia().Concat(comment).Concat(layout), lineBreak, out var broke);
+		var indented = arguments.CloseParenToken.LeadingTrivia.Any(IsWhitespace);
 
-		if (needsBreak)
-		{
-			var indented = arguments.CloseParenToken.LeadingTrivia.Any(IsWhitespace);
-
-			trailing = trailing.Append(LineBreakIn(arguments)).Concat(indented ? [] : indentation);
-		}
-
-		return argument.WithTrailingTrivia(trailing);
+		return argument.WithTrailingTrivia(broke && !indented ? trailing.AddRange(indentation) : trailing);
 	}
 
 	/// <summary>
@@ -368,9 +383,9 @@ public static class CallSiteRewriter
 	}
 
 	/// <summary>
-	/// A line break as this call site writes them, so one the rewrite has to add matches the file's
-	/// endings. Every caller of this has a break somewhere in the list, since it is only asked for where
-	/// a comment or a directive came with one; directives hold theirs inside their own structure.
+	/// A line break as this call site writes them, so one the rewrite adds matches the file's endings.
+	/// Directives hold theirs inside their own structure. A list with none never needs one: a break is
+	/// only added after a line comment or in front of a directive, and both bring a break of their own.
 	/// </summary>
 	private static SyntaxTrivia LineBreakIn(ArgumentListSyntax arguments)
 	{
@@ -378,6 +393,75 @@ public static class CallSiteRewriter
 			.FirstOrDefault(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
 
 		return found.IsKind(SyntaxKind.EndOfLineTrivia) ? found : SyntaxFactory.CarriageReturnLineFeed;
+	}
+
+	/// <summary>
+	/// Trailing trivia that ends its line wherever a line comment is the last thing in it, with any
+	/// whitespace after the comment replaced by the break.
+	/// <para>
+	/// A line comment runs to the end of its line, so whatever the rewrite puts after it on that line
+	/// is inside the comment: an argument appended there vanishes, and when its parameter has a default
+	/// the call still compiles without it. Every token the rewrite gives a comment it carried from
+	/// somewhere else goes through here, so no path can leave one followed by code.
+	/// </para>
+	/// </summary>
+	/// <param name="trivia">The trailing trivia as composed.</param>
+	/// <param name="lineBreak">The call site's own line ending, which is the break it writes.</param>
+	/// <param name="broke">Whether a break was added, so the caller can indent what follows it.</param>
+	private static SyntaxTriviaList EndingLineComment(
+		IEnumerable<SyntaxTrivia> trivia,
+		SyntaxTrivia lineBreak,
+		out bool broke)
+	{
+		SyntaxTriviaList list = [.. trivia];
+		var last = LastWritten(list);
+
+		broke = last >= 0
+			&& list[last].IsKind(SyntaxKind.SingleLineCommentTrivia)
+			&& !list.Skip(last + 1).Any(item => item.IsKind(SyntaxKind.EndOfLineTrivia));
+
+		return broke ? [.. list.Take(last + 1), lineBreak] : list;
+	}
+
+	/// <summary>
+	/// The indentation for an argument a line break puts on a line of its own where no argument began
+	/// one: a level inside a closing parenthesis on a line of its own, or column zero where the
+	/// parenthesis does not say how deep the call is.
+	/// </summary>
+	private static SyntaxTriviaList InsideClosingParenthesis(ArgumentListSyntax arguments)
+	{
+		var own = AfterLastBreak(arguments.CloseParenToken.LeadingTrivia).TakeWhile(IsWhitespace).ToArray();
+
+		if (own.Length == 0) return default;
+
+		var tabbed = own.All(trivia => trivia.ToString().All(character => character == '\t'));
+
+		return [.. own, SyntaxFactory.Whitespace(tabbed ? "\t" : "    ")];
+	}
+
+	/// <summary>
+	/// Whether an argument or comma this change takes out carries a preprocessor directive. A directive
+	/// sits in the leading trivia of the token after it, so taking that token out takes the directive
+	/// too -- an <c>#if</c> written in front of a removed argument goes and leaves its <c>#endif</c>,
+	/// which is CS1028. Which arguments a conditional block was meant to hold is not something to
+	/// guess, so the site is left to a person.
+	/// </summary>
+	/// <param name="arguments">The list as written.</param>
+	/// <param name="origins">Where each emitted argument stood in the list as written, or -1 for one that is new.</param>
+	private static bool LosesDirective(ArgumentListSyntax arguments, IReadOnlyList<int> origins)
+	{
+		var kept = origins.Where(origin => origin >= 0).ToHashSet();
+
+		var argumentGoes = arguments.Arguments
+			.Where((_, index) => !kept.Contains(index))
+			.Any(argument => argument.ContainsDirectives);
+
+		// Commas are kept by position, so the ones past the new count are the ones that go.
+		var commaGoes = arguments.Arguments.GetSeparators()
+			.Skip(Math.Max(origins.Count - 1, 0))
+			.Any(separator => separator.ContainsDirectives);
+
+		return argumentGoes || commaGoes;
 	}
 
 	/// <summary>

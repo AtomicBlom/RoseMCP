@@ -171,6 +171,12 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   whichever argument ends up last, or an argument appended after it puts its comma at column zero.
   A directive in front of an argument keeps a line break before it wherever the argument lands,
   since a directive that does not begin its line is CS1040.
+  Nothing the rewrite writes may follow a line comment on its line. Every comma or argument given
+  a comment carried from elsewhere ends its line after it, so the next argument starts a new line;
+  otherwise the argument lands inside the comment, and a parameter with a default compiles without
+  the value the caller passed. A call whose removed argument or comma carries a directive is left
+  to a person and reported: the directive goes with the token it sits in front of, and an `#if`
+  taken out without its `#endif` is CS1028.
 - **A change of accessibility moves the override chain, and nothing else in the modifier list.** An
   override that keeps the old accessibility is CS0507, so the base all the way up and every override
   all the way down change with the member named. Interfaces are not part of that group: an implicit

@@ -1,5 +1,7 @@
 using Microsoft.Build.Evaluation;
+using Microsoft.Build.Exceptions;
 using Microsoft.Extensions.Logging;
+using RoseMcp.Contracts;
 
 namespace RoseMcp.Worker;
 
@@ -26,18 +28,19 @@ public sealed class EvaluationInputs
 
 	/// <summary>What was learned from evaluating a solution's projects.</summary>
 	/// <param name="imports">Each evaluated project's imports, keyed by the full path of its project file.</param>
-	/// <param name="unevaluated">Projects whose evaluation failed.</param>
+	/// <param name="failures">Projects whose evaluation failed, each with what MSBuild said.</param>
 	/// <param name="discovery">
 	/// Which analyzer config files each evaluated project discovers, keyed like <paramref name="imports"/>, where
 	/// it differs from <see cref="ConfigDiscovery.Both"/>. Null or missing an entry means both.
 	/// </param>
 	public EvaluationInputs(
 		IReadOnlyDictionary<string, IReadOnlySet<string>> imports,
-		IReadOnlyList<string> unevaluated,
+		IReadOnlyList<ProjectEvaluationFailure> failures,
 		IReadOnlyDictionary<string, ConfigDiscovery>? discovery = null)
 	{
 		Imports = imports;
-		Unevaluated = unevaluated;
+		Failures = failures;
+		Unevaluated = [.. failures.Select(failure => failure.Project)];
 		_discovery = discovery ?? new Dictionary<string, ConfigDiscovery>();
 	}
 
@@ -53,6 +56,12 @@ public sealed class EvaluationInputs
 	/// there and not against the SDK.
 	/// </summary>
 	public IReadOnlyList<string> Unevaluated { get; }
+
+	/// <summary>
+	/// Each project in <see cref="Unevaluated"/>, with what MSBuild said and whether the project names an
+	/// SDK, which decides whether its failure is expected.
+	/// </summary>
+	public IReadOnlyList<ProjectEvaluationFailure> Failures { get; }
 
 	/// <summary>Every file any project imported, each once.</summary>
 	public IEnumerable<string> Files =>
@@ -81,7 +90,7 @@ public sealed class EvaluationInputs
 		CancellationToken cancellationToken)
 	{
 		var imports = new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase);
-		var unevaluated = new List<string>();
+		var failures = new List<ProjectEvaluationFailure>();
 		var discovery = new Dictionary<string, ConfigDiscovery>(StringComparer.OrdinalIgnoreCase);
 
 		using var collection = new ProjectCollection(
@@ -110,7 +119,7 @@ public sealed class EvaluationInputs
 				// unknown, and only the ambient walk watches its build files. An invalid project, a
 				// missing SDK and a resolver error all end up here, and none of them should fail a
 				// load the design-time build has already completed.
-				unevaluated.Add(path);
+				failures.Add(Failure(path, exception));
 				logger.LogWarning(
 					exception,
 					"Could not evaluate {Project} to read its imports; only its ambient build files are tracked.",
@@ -118,7 +127,32 @@ public sealed class EvaluationInputs
 			}
 		}
 
-		return new EvaluationInputs(imports, unevaluated, discovery);
+		return new EvaluationInputs(imports, failures, discovery);
+	}
+
+	/// <summary>
+	/// What a failed evaluation reports: MSBuild's message without the project path it appends, so one
+	/// cause failing every project folds to one message, and whether the project names an SDK.
+	/// <para>
+	/// A project file that cannot be read is counted as naming one. Such a project fails the design-time
+	/// build too, so calling it expected would hide the one evaluation failure nobody can explain away.
+	/// </para>
+	/// </summary>
+	private static ProjectEvaluationFailure Failure(string path, Exception exception)
+	{
+		var message = exception is InvalidProjectFileException invalid ? invalid.BaseMessage : exception.Message;
+
+		bool namesSdk;
+		try
+		{
+			namesSdk = ProjectItemStyle.NamesSdk(File.ReadAllText(path));
+		}
+		catch (Exception unreadable) when (unreadable is IOException or UnauthorizedAccessException)
+		{
+			namesSdk = true;
+		}
+
+		return new ProjectEvaluationFailure { Project = path, Message = message, NamesSdk = namesSdk };
 	}
 
 	/// <summary>

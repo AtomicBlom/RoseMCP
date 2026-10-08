@@ -58,6 +58,35 @@ public static class ProjectItemStyle
 	}
 
 	/// <summary>
+	/// True when the project's own text names an SDK, in any of the three spellings: the attribute on
+	/// <c>Project</c>, an <c>Sdk</c> element, or an <c>Import</c> carrying an <c>Sdk</c> attribute.
+	/// <para>
+	/// Text that will not parse, or is empty, answers true: this cannot tell what such a project is, and
+	/// both callers are wrong in the more visible direction that way -- a file added rather than declined,
+	/// an evaluation failure reported as degrading rather than expected.
+	/// </para>
+	/// </summary>
+	public static bool NamesSdk(string projectFileText)
+	{
+		if (string.IsNullOrWhiteSpace(projectFileText)) return true;
+
+		try
+		{
+			var root = XDocument.Parse(projectFileText).Root;
+			if (root is null) return true;
+
+			if (root.Attribute("Sdk") is not null) return true;
+
+			return root.Descendants().Any(element =>
+				element.Name.LocalName == "Sdk" || element.Attribute("Sdk") is not null);
+		}
+		catch (System.Xml.XmlException)
+		{
+			return true;
+		}
+	}
+
+	/// <summary>
 	/// Whether the project's own text names <paramref name="path"/> in a <c>Compile</c> item and does not
 	/// remove it again, which puts the file in the build of a project that lists its files whether it is
 	/// on disk yet or not.

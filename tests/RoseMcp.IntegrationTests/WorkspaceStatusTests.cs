@@ -93,7 +93,7 @@ public sealed class WorkspaceStatusTests
 		var token = TestContext.Current!.Execution.CancellationToken;
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 
-		await File.WriteAllTextAsync(fixture.Path("Core", "Core.csproj"), """
+		await File.WriteAllTextAsync(fixture.Path("Simple", "Core", "Core.csproj"), """
 			<Project>
 			  <PropertyGroup>
 			    <InWorkerEvaluation>true</InWorkerEvaluation>

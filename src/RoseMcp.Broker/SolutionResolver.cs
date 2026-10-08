@@ -59,6 +59,8 @@ public static class SolutionResolver
 		{
 			var solutions = SolutionsIn(current);
 
+			if (solutions.Length > 0 && PinnedAbove(directory, current.FullName, solutions, full) is { } pinned) return pinned;
+
 			if (solutions.Length == 1)
 			{
 				return new SolutionChoice
@@ -93,6 +95,49 @@ public static class SolutionResolver
 
 		throw new ArgumentException(
 			$"No solution or project found at or above '{path}'. Pass the path to a .sln, .slnx, or .csproj.");
+	}
+
+	/// <summary>
+	/// The solution a <c>rosemcp.json</c> further from the path pins, where it compiles the path and the
+	/// nearest solutions sit in a directory of their own; null leaves the choice to those.
+	/// <para>
+	/// A pin is the default for its directory and everything under it, and the nearest one governs. A
+	/// repository that pins its everything-solution at the root also keeps smaller solutions in its
+	/// subfolders, and walking up stops at the first directory holding any: without this, a file under
+	/// one of those is answered by the small solution while the default the repository committed is never
+	/// read. Containment still decides first, the same as between solutions sharing a directory -- a pinned
+	/// solution that does not compile the path is no answer about it, and the nearer one stands.
+	/// </para>
+	/// <para>
+	/// A pin in the nearest solutions' own directory is left to the tie-break there, which already
+	/// weighs it after containment.
+	/// </para>
+	/// </summary>
+	/// <param name="start">The directory the walk began in: the path's own, or the path itself.</param>
+	/// <param name="nearest">The nearest directory holding a solution.</param>
+	/// <param name="solutions">The solutions in <paramref name="nearest"/>.</param>
+	/// <param name="requested">The full path the caller named.</param>
+	private static SolutionChoice? PinnedAbove(string start, string nearest, string[] solutions, string requested)
+	{
+		for (var current = new DirectoryInfo(start); current is not null; current = current.Parent)
+		{
+			var config = WorkspaceConfigFile.FindInDirectory(current.FullName);
+			if (config?.Solution is not { Length: > 0 } wanted) continue;
+
+			if (current.FullName.Equals(nearest, StringComparison.OrdinalIgnoreCase)) return null;
+
+			var pinned = Path.GetFullPath(Path.Combine(current.FullName, wanted));
+			if (!File.Exists(pinned) || !Contains(pinned, requested)) return null;
+
+			return new SolutionChoice
+			{
+				SolutionPath = pinned,
+				Candidates = [.. solutions.Append(pinned).Distinct(StringComparer.OrdinalIgnoreCase)],
+				Reason = $"pinned by {config.Path} for everything under {current.FullName}, and it compiles that path",
+			};
+		}
+
+		return null;
 	}
 
 	/// <summary>

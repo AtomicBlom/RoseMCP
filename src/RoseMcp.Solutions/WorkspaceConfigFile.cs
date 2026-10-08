@@ -45,13 +45,16 @@ public sealed record WorkspaceConfigFile
 	public string? Platform { get; init; }
 
 	/// <summary>
-	/// Which solution in this directory a call means when it names no workspace of its own, given as
-	/// a file name beside this file.
+	/// Which solution a call means when it names no workspace of its own, given as a path relative to
+	/// this file: the default for this directory and everything under it, where the solution compiles
+	/// the path in question and no nearer file pins another.
 	/// <para>
 	/// Read only from the directory-level file, never from the per-solution one: a file named after
 	/// a solution has already answered the question of which solution, so a pin there could only
 	/// contradict its own name. It is the one setting here that belongs to a directory rather than
-	/// to a solution, because it is the only one whose subject is the choice between them.
+	/// to a solution, because it is the only one whose subject is the choice between them -- and the
+	/// only one read on the way up from a path, since the configuration settings above are a property
+	/// of one solution and would be wrong for its neighbours.
 	/// </para>
 	/// </summary>
 	public string? Solution { get; init; }

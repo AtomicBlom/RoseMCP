@@ -205,6 +205,113 @@ public sealed class SolutionResolverTests
 	}
 
 	/// <summary>
+	/// A repository pins its everything-solution at the root and keeps a smaller solution in a
+	/// subfolder. A file under that subfolder is compiled by both, and the walk up from it finds the
+	/// small one first -- so without reading the pin above, the root's committed default never decides
+	/// anything under a folder holding a solution of its own.
+	/// </summary>
+	[Test]
+	public void A_pin_above_the_nearest_solution_decides_a_path_both_compile()
+	{
+		using var repository = new NestedRepository();
+
+		var choice = SolutionResolver.Choose(Path.Combine(repository.Root, "Tools", "Shared", "Thing.cs"));
+
+		choice.SolutionPath.ShouldBe(repository.Everything, StringCompareShould.IgnoreCase);
+		choice.Reason.ShouldContain("pinned by", Case.Sensitive);
+		choice.Candidates.ShouldContain(repository.Area);
+	}
+
+	/// <summary>
+	/// Containment still comes first: a project only the nearer solution compiles is answered by it, since
+	/// a pinned solution without the file is no answer about it.
+	/// </summary>
+	[Test]
+	public void The_nearer_solution_stands_where_the_pinned_one_does_not_compile_the_path()
+	{
+		using var repository = new NestedRepository();
+
+		var choice = SolutionResolver.Choose(Path.Combine(repository.Root, "Tools", "Runner", "Main.cs"));
+
+		choice.SolutionPath.ShouldBe(repository.Area, StringCompareShould.IgnoreCase);
+	}
+
+	/// <summary>The nearest pin governs, so a subfolder can pin its own solution under a root that pins another.</summary>
+	[Test]
+	public void A_nearer_pin_governs_its_own_folder()
+	{
+		using var repository = new NestedRepository();
+		repository.PinArea();
+
+		var choice = SolutionResolver.Choose(Path.Combine(repository.Root, "Tools", "Shared", "Thing.cs"));
+
+		choice.SolutionPath.ShouldBe(repository.Area, StringCompareShould.IgnoreCase);
+	}
+
+	/// <summary>
+	/// A root solution pinned in the root's rosemcp.json, and a smaller solution in a subfolder sharing one
+	/// of its projects and holding one of its own -- the shape of a repository with an everything-solution
+	/// beside per-area ones.
+	/// </summary>
+	private sealed class NestedRepository : IDisposable
+	{
+		public NestedRepository()
+		{
+			Root = Path.Combine(Path.GetTempPath(), "rosemcp-tests", $"nested-{Guid.NewGuid():N}");
+
+			Project("Core");
+			Project(Path.Combine("Tools", "Shared"));
+			Project(Path.Combine("Tools", "Runner"));
+
+			Everything = Solution("Repo.slnx", "Core/Core.csproj", "Tools/Shared/Shared.csproj");
+			Area = Solution(Path.Combine("Tools", "Tools.slnx"), "Shared/Shared.csproj", "Runner/Runner.csproj");
+
+			File.WriteAllText(Path.Combine(Root, "rosemcp.json"), """{ "solution": "Repo.slnx" }""");
+		}
+
+		public string Root { get; }
+
+		/// <summary>The everything-solution, pinned at the root.</summary>
+		public string Everything { get; }
+
+		/// <summary>The smaller solution in a subfolder, nearer to everything under it.</summary>
+		public string Area { get; }
+
+		public void PinArea() => File.WriteAllText(
+			Path.Combine(Root, "Tools", "rosemcp.json"), """{ "solution": "Tools.slnx" }""");
+
+		public void Dispose()
+		{
+			try
+			{
+				Directory.Delete(Root, recursive: true);
+			}
+			catch (IOException)
+			{
+				// A temp directory that outlives the run is not worth failing a test over.
+			}
+		}
+
+		private void Project(string relative)
+		{
+			var directory = Path.Combine(Root, relative);
+			Directory.CreateDirectory(directory);
+			File.WriteAllText(
+				Path.Combine(directory, $"{Path.GetFileName(relative)}.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+		}
+
+		private string Solution(string relative, params string[] projects)
+		{
+			var entries = projects.Select(project => $"  <Project Path=\"{project}\" />");
+			var path = Path.Combine(Root, relative);
+
+			File.WriteAllText(path, $"<Solution>\n{string.Join("\n", entries)}\n</Solution>");
+
+			return path;
+		}
+	}
+
+	/// <summary>
 	/// Two solutions in one directory, shaped like the repository that produced the bug: a large one
 	/// beside a small installer whose name sorts first.
 	/// </summary>

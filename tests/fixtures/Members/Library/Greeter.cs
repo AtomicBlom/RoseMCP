@@ -16,7 +16,7 @@ public sealed class Greeter
 		return $"{_prefix}, {name}!";
 	}
 
-	/// <summary>The greeting for someone with a title.</summary>
+	/// <summary>The greeting for <paramref name="name"/> with a <paramref name="title"/>, its prefix <see cref="PrefixLength"/> characters long.</summary>
 	public string Greet(string title, string name) => $"{_prefix}, {title} {name}!";
 
 	private static string Shout(string text)

@@ -48,6 +48,11 @@ public sealed class OutlineTests
 		type.TotalMembers.ShouldBe(type.Members.Count);
 		result.Truncated.ShouldBeFalse();
 
+		// A reference in a summary is the name it points at, which is usually the subject of the
+		// sentence, rather than a hole where that name was.
+		type.Members.Single(member => member.Signature == "string Library.Greeter.Greet(string title, string name)")
+			.Summary.ShouldBe("The greeting for name with a title, its prefix PrefixLength characters long.");
+
 		foreach (var member in type.Members)
 		{
 			member.Line.ShouldNotBeNull();

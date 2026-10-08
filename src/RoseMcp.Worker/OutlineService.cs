@@ -1,6 +1,3 @@
-using System.Text.RegularExpressions;
-using System.Xml.Linq;
-
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -29,7 +26,7 @@ namespace RoseMcp.Worker;
 /// narrow to the members it cares about.
 /// </para>
 /// </summary>
-public static partial class OutlineService
+public static class OutlineService
 {
 	/// <summary>
 	/// How many members an outline lists when the caller does not say. The same as rose_find_references'
@@ -355,28 +352,6 @@ public static partial class OutlineService
 	/// outline is a list and a fifteen-line comment in a list is not a list -- the whole comment is
 	/// a rose_symbol_info call away for a member that turns out to matter.
 	/// </summary>
-	private static string? Summary(ISymbol symbol, CancellationToken cancellationToken)
-	{
-		var xml = symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken);
-		if (string.IsNullOrWhiteSpace(xml)) return null;
-
-		try
-		{
-			var summary = XDocument.Parse(xml).Descendants("summary").FirstOrDefault();
-			if (summary is null) return null;
-
-			var text = Whitespace().Replace(summary.Value.Trim(), " ");
-
-			return text.Length == 0 ? null : text;
-		}
-		catch (System.Xml.XmlException)
-		{
-			// Malformed documentation is the author's problem and not this call's: an outline that
-			// throws over a comment answers nothing about the members the caller asked for.
-			return null;
-		}
-	}
-
-	[GeneratedRegex(@"\s+")]
-	private static partial Regex Whitespace();
+	private static string? Summary(ISymbol symbol, CancellationToken cancellationToken) =>
+		DocumentationText.Summary(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken));
 }

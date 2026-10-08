@@ -186,6 +186,42 @@ public sealed class ReplacePatternTests
 		text.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// A file with sibling namespace blocks has a rule's imports added at the top, and one the code
+	/// binds through a block's own copy instead is taken back out even though the block imports the
+	/// same namespace: an import is the rewrite's by where it came from, not by what it says.
+	/// </summary>
+	[Test]
+	public async Task Takes_an_added_import_back_out_when_a_namespace_block_already_says_the_same()
+	{
+		using var fixture = FixtureSolution.Copy("Assertions", "Assertions.slnx");
+
+		var path = fixture.Path("Assertions", "NoGlobal", "Siblings.cs");
+
+		await File.WriteAllTextAsync(
+			path,
+			"namespace First\r\n{\r\n\tusing Shouldly;\r\n\tusing Xunit;\r\n\r\n\tpublic static class Checked\r\n\t{\r\n\t\tpublic static void Cases(int count)\r\n\t\t{\r\n\t\t\tAssert.Equal(1, count);\r\n\t\t\tcount.ShouldBePositive();\r\n\t\t}\r\n\t}\r\n}\r\n\r\n"
+				+ "namespace Second\r\n{\r\n\tpublic static class Plain\r\n\t{\r\n\t}\r\n}\r\n",
+			TestContext.Current!.Execution.CancellationToken);
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await RunAsync(session, new ReplacePatternRequest
+		{
+			Rules = [Rule("Assert.Equal($e$, $a$)", "$a$.ShouldBe($e$)")],
+			Usings = ["Shouldly", "Xunit"],
+			FilePaths = [path],
+		});
+
+		var text = await ReadAsync(fixture, "NoGlobal", "Siblings.cs");
+
+		result.TotalErrorCount.ShouldBe(0);
+		// Trimmed, because taking an import back out leaves the blank line it put above the first
+		// declaration, which is the removal's trivia and not what this is about.
+		text.TrimStart().ShouldStartWith("namespace First\r\n{\r\n\tusing Shouldly;\r\n", Case.Sensitive, text);
+		text.ShouldContain("count.ShouldBe(1);", Case.Sensitive);
+	}
+
 	/// <summary>A preview builds and checks everything and writes nothing.</summary>
 	[Test]
 	public async Task A_preview_writes_nothing()

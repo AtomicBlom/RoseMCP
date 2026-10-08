@@ -577,6 +577,10 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["expectedRevision"] = expectedRevision,
 		}, cancellationToken, progress, retryIfWorkerDied: false);
 
+	/// <remarks>
+	/// Narrowed after the manager has answered, since the manager reads every changed file for its
+	/// sibling-solution notice before anything here may drop one. See <see cref="PatternRewriteForCaller"/>.
+	/// </remarks>
 	[McpServerTool(
 		Name = ToolNames.ReplacePattern,
 		Title = "Rewrite a code pattern everywhere",
@@ -586,7 +590,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.ReplacePattern)]
-	public Task<PatternRewriteResult> ReplacePatternAsync(
+	public async Task<PatternRewriteResult> ReplacePatternAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.RulesArgument)] PatternRule[] rules,
 		[Description(ToolDescriptions.PatternUsingsArgument)] string[]? usings = null,
@@ -596,7 +600,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.ExpectedRevisionArgument)] long? expectedRevision = null,
 		[Description(ToolDescriptions.WorkspaceArgument), ArgumentAlias("solution")] string? workspace = null,
 		CancellationToken cancellationToken = default) =>
-		ForwardAsync<PatternRewriteResult>(WorkspaceHints.From(paths.Of(workspace), paths.Each(filePaths ?? [])), ToolNames.ReplacePattern, new()
+		PatternRewriteForCaller.Narrow(await ForwardAsync<PatternRewriteResult>(WorkspaceHints.From(paths.Of(workspace), paths.Each(filePaths ?? [])), ToolNames.ReplacePattern, new()
 		{
 			["rules"] = rules,
 			["usings"] = usings,
@@ -604,7 +608,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["apply"] = apply,
 			["verify"] = verify,
 			["expectedRevision"] = expectedRevision,
-		}, cancellationToken, progress, retryIfWorkerDied: false);
+		}, cancellationToken, progress, retryIfWorkerDied: false));
 
 	[McpServerTool(
 		Name = ToolNames.BuildFreshness,

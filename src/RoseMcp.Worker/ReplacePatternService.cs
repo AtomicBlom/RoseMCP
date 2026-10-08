@@ -45,6 +45,7 @@ public static class ReplacePatternService
 		var sites = new List<SiteRecord>();
 		var misses = new List<MissRecord>();
 		var boundTo = new Dictionary<int, SortedSet<string>>();
+		var boundGroups = new HashSet<string>(StringComparer.Ordinal);
 		var unbound = new Dictionary<int, string>();
 		var seen = new HashSet<(string Path, int Start)>();
 		var solution = snapshot.Solution;
@@ -71,7 +72,11 @@ public static class ReplacePatternService
 					boundTo[rule.Rule.Number] = addresses = new SortedSet<string>(StringComparer.Ordinal);
 				}
 
-				foreach (var method in rule.Methods) addresses.Add(Address(method));
+				foreach (var method in rule.Methods)
+				{
+					addresses.Add(Address(method));
+					boundGroups.Add(Group(method));
+				}
 			}
 
 			if (bound.Bound.Count == 0) continue;
@@ -93,7 +98,7 @@ public static class ReplacePatternService
 
 				foreach (var miss in scan.Unmatched.Where(miss => seen.Add((path, miss.Node.SpanStart))))
 				{
-					misses.Add(new MissRecord(Address(miss.Method), Locate(miss.Node, path, text, isTest), miss.Binds));
+					misses.Add(new MissRecord(Address(miss.Method), Group(miss.Method), Locate(miss.Node, path, text, isTest), miss.Binds));
 				}
 
 				if (fresh.Count == 0) continue;
@@ -159,6 +164,7 @@ public static class ReplacePatternService
 		var summary = PatternReport.Build(
 			catalog.Rules.Count,
 			boundTo.ToDictionary(entry => entry.Key, entry => (IReadOnlyList<string>)[.. entry.Value]),
+			boundGroups,
 			sites,
 			misses,
 			preview: !request.Apply);
@@ -200,7 +206,10 @@ public static class ReplacePatternService
 			Unmatched = summary.Unmatched,
 			Files = summary.Files,
 			FileCount = summary.FileCount,
+			FilesChanged = edit.Outcome.ChangedFiles.Count,
 			Diff = diff,
+			// Every one: the broker reads the whole list to warn about a sibling solution compiling the same
+			// files, and only then caps what the caller is shown.
 			ChangedFiles = edit.Outcome.ChangedFiles,
 			Verified = edit.Verification.Ran,
 			IntroducedDiagnostics = edit.Introduced,
@@ -327,6 +336,18 @@ public static class ReplacePatternService
 
 	/// <summary>A method as an address a caller can pass back to another tool.</summary>
 	private static string Address(IMethodSymbol method) => SymbolAddress.Of(method) ?? method.ToDisplayString();
+
+	/// <summary>
+	/// A method's type and name, the same for each of its overloads: an extension call by its static form
+	/// and a generic one by its definition, as a miss is reported.
+	/// </summary>
+	private static string Group(IMethodSymbol method)
+	{
+		var definition = (method.ReducedFrom ?? method).OriginalDefinition;
+		var type = SymbolAddress.Of(definition.ContainingType.OriginalDefinition) ?? definition.ContainingType.ToDisplayString();
+
+		return $"{type}.{definition.Name}";
+	}
 
 	/// <summary>Where a node starts, with its line of source and whether its project is a test project.</summary>
 	private static SourceLocation Locate(SyntaxNode node, string path, SourceText text, bool isTest)

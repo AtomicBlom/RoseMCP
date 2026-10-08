@@ -703,8 +703,8 @@ public static class ToolDescriptions
 		replace written as C# with placeholders; the first rule to match a site wins, and a rule an
 		earlier one hides is refused. A capture keeps its own text. A replacement that would not compile
 		at its site is left alone and reported with the compiler's reason. The result is a summary, not a
-		diff: counts per rule with the overloads it covers, skipped sites by reason, and the calls into
-		the same types that no rule matched. Preview with apply=false first.
+		diff: counts per rule with the overloads it covers, skipped sites by reason, and the calls to
+		the rules' methods that no rule matched. Preview with apply=false first.
 		""";
 
 	/// <summary>

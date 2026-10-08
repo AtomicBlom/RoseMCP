@@ -40,12 +40,18 @@ public static class PatternReport
 	/// <summary>The summary of <paramref name="sites"/> and <paramref name="misses"/>.</summary>
 	/// <param name="ruleCount">How many rules there are, so a rule that matched nothing is still listed.</param>
 	/// <param name="boundTo">The overloads each rule covers, by rule number, as addresses.</param>
+	/// <param name="boundGroups">
+	/// The <see cref="MissRecord.Group"/> of every method a rule binds to. A miss in one of these is a call
+	/// to another overload of a method the catalog is about, which is the gap a caller wants listed; a miss
+	/// in any other is a method on the same type that no rule names, and is counted rather than listed.
+	/// </param>
 	/// <param name="sites">Every site a rule won.</param>
 	/// <param name="misses">Every call into the rules' types that no rule matched.</param>
 	/// <param name="preview">Whether this is a preview, which is when a sample is worth its space.</param>
 	public static PatternSummary Build(
 		int ruleCount,
 		IReadOnlyDictionary<int, IReadOnlyList<string>> boundTo,
+		IReadOnlySet<string> boundGroups,
 		IReadOnlyList<SiteRecord> sites,
 		IReadOnlyList<MissRecord> misses,
 		bool preview)
@@ -72,7 +78,18 @@ public static class PatternReport
 
 		Overflow(notices, skipGroups.Count, skipGroups.Skip(Groups).Sum(group => group.Count()), "skipped");
 
-		var missGroups = misses
+		var listable = misses.Where(miss => boundGroups.Contains(miss.Group)).ToList();
+		var unnamed = misses.Where(miss => !boundGroups.Contains(miss.Group)).ToList();
+
+		if (unnamed.Count > 0)
+		{
+			var methods = unnamed.Select(miss => miss.Group).Distinct(StringComparer.Ordinal).Count();
+
+			notices.Add($"{unnamed.Count} unmatched call(s), to {methods} method(s) on the rules' types that no rule is "
+				+ "written for, are counted in sitesUnmatched and left out of unmatched and files.");
+		}
+
+		var missGroups = listable
 			.GroupBy(miss => miss.Method, StringComparer.Ordinal)
 			.OrderByDescending(group => group.Count())
 			.ThenBy(group => group.Key, StringComparer.Ordinal)
@@ -88,7 +105,7 @@ public static class PatternReport
 
 		Overflow(notices, missGroups.Count, missGroups.Skip(Groups).Sum(group => group.Count()), "unmatched");
 
-		var (files, fileCount) = Files(sites, misses);
+		var (files, fileCount) = Files(sites, listable);
 
 		if (fileCount > files.Count)
 		{
@@ -114,7 +131,11 @@ public static class PatternReport
 	/// <summary>Whether a site's replacement was written, or would be.</summary>
 	private static bool IsRewritten(SiteRecord site) => site.SkippedId is null && site.After is not null;
 
-	/// <summary>What one rule did.</summary>
+	/// <summary>
+	/// What one rule did. A rule that matched nothing names one overload rather than several: a catalog
+	/// is mostly rules that matched nothing when it runs over less than it was written for, and what
+	/// such a rule needs to say is that it bound, which one address and the count do.
+	/// </summary>
 	private static PatternRuleOutcome Rule(
 		int number,
 		IReadOnlyDictionary<int, IReadOnlyList<string>> boundTo,
@@ -127,7 +148,7 @@ public static class PatternReport
 		return new PatternRuleOutcome
 		{
 			Rule = number,
-			BoundTo = [.. (boundTo.GetValueOrDefault(number) ?? []).Take(Overloads)],
+			BoundTo = [.. (boundTo.GetValueOrDefault(number) ?? []).Take(won.Count == 0 ? 1 : Overloads)],
 			Overloads = boundTo.GetValueOrDefault(number)?.Count ?? 0,
 			Matched = won.Count,
 			Rewritten = won.Count(IsRewritten),
@@ -217,9 +238,13 @@ public sealed record SiteRecord
 
 /// <summary>A call into one of the rules' types that no rule matched.</summary>
 /// <param name="Method">The method it calls, as an address.</param>
+/// <param name="Group">
+/// The method's type and name, which every overload of it shares: what says whether a rule binds some
+/// overload of the method this calls. Compared, never shown.
+/// </param>
 /// <param name="Location">Where it is.</param>
 /// <param name="Binds">Whether it compiles at all.</param>
-public sealed record MissRecord(string Method, SourceLocation Location, bool Binds);
+public sealed record MissRecord(string Method, string Group, SourceLocation Location, bool Binds);
 
 /// <summary>The parts of a result that <see cref="PatternReport"/> works out.</summary>
 public sealed record PatternSummary
@@ -236,7 +261,7 @@ public sealed record PatternSummary
 	/// <summary>The files that are listed.</summary>
 	public required IReadOnlyList<PatternFileOutcome> Files { get; init; }
 
-	/// <summary>How many files a site or an unmatched call was in, listed or not.</summary>
+	/// <summary>How many files a site or an unmatched call to a method a rule binds was in, listed or not.</summary>
 	public required int FileCount { get; init; }
 
 	/// <summary>Every site a rule won.</summary>
@@ -248,7 +273,7 @@ public sealed record PatternSummary
 	/// <summary>The sites whose replacement would not compile.</summary>
 	public required int SkippedCount { get; init; }
 
-	/// <summary>Every unmatched call, listed or not.</summary>
+	/// <summary>Every unmatched call, listed or not, whatever method it calls.</summary>
 	public required int UnmatchedCount { get; init; }
 
 	/// <summary>What the caps left out, said in words.</summary>

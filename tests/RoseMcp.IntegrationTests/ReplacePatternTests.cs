@@ -49,10 +49,15 @@ public sealed class ReplacePatternTests
 		result.SitesMatched.ShouldBe(12);
 
 		// The precision Equal, the ignore-case Contains, DoesNotContain, Single and All: five calls into
-		// Assert, each named by the overload it calls so the gap in the catalog is listed, not guessed.
+		// Assert. The first two call other overloads of methods a rule binds, so each is listed by the
+		// overload it calls and the gap in the catalog is named, not guessed; no rule is written for the
+		// other three methods at all, so their calls are counted and left out of the list.
 		result.SitesUnmatched.ShouldBe(5);
+		result.Unmatched.Sum(group => group.Count).ShouldBe(2);
 		result.Unmatched.ShouldContain(group => group.Method.Contains("Equal(double, double, int)", StringComparison.Ordinal));
-		result.Unmatched.ShouldContain(group => group.Method.Contains(".Single", StringComparison.Ordinal));
+		result.Unmatched.ShouldContain(group => group.Method.Contains(".Contains(", StringComparison.Ordinal));
+		result.Unmatched.ShouldNotContain(group => group.Method.Contains(".Single", StringComparison.Ordinal));
+		result.Notices.ShouldContain("3 unmatched call(s), to 3 method(s) on the rules' types that no rule is written for, are counted in sitesUnmatched and left out of unmatched and files.");
 		result.Notices.ShouldContain("Preview only; nothing was written to disk.");
 	}
 

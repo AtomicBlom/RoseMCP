@@ -95,6 +95,29 @@ same methods that no rule matched, grouped by overload. The last is how a caller
 complete -- matched plus unmatched adds up to every call, and an overload nobody wrote a rule for
 shows up by name. The diff is included only while it is small enough to read.
 
+**The summary is held to what a client accepts, at the size of a migration.** A preview of 44 rules
+over three test projects, 3,859 sites in 161 files, was refused by the client at 57,875 characters,
+and a summary the caller cannot read has bought nothing. Three things grew with the scope rather than
+with what the caller needed to know, and each is narrowed with a total beside it:
+
+- *The changed files* are named up to a cap, with `filesChanged` the whole number and a notice past
+  it. They repeated what `files` and its count already say, and were the largest field. The cut is
+  the broker's, after `WorkspaceManager` has read every path for its sibling-solution notice: cut in
+  the worker, a sibling whose shared files fell past the cap would go unmentioned. Every other write
+  tool names the handful of files it touched and keeps naming them all.
+- *A rule that matched nothing* names one overload, with the count of all it covers. It still has to
+  say that it bound, and to what, but a catalog run over less than it was written for is mostly such
+  rules.
+- *The unmatched calls* are listed only for methods some rule binds -- by type and name, so the
+  precision `Equal` stays listed beside a rule for the two-argument one, which is exactly the gap a
+  catalog wants named. A call to a method no rule names is counted in `sitesUnmatched` and a notice:
+  for a full catalog there are few, and for a narrow one over a wide scope they were every other
+  method on the same types, which nobody asked about.
+
+Dropping the changed files outright lost, because a rewrite of three files then answers with an empty
+list beside `applied: true`, which reads as nothing written. `PatternReportTests` holds the whole
+result, attribution included, at the migration's scale.
+
 **Rules are given with the call, not read from a file.** A file of rules is the format rules take
 when they are reported as diagnostics, which is a design of its own; choosing it here would decide
 that by accident.

@@ -103,3 +103,8 @@ Read before adding a tool, adding a field to a result, or changing an error path
   The other half is the one a cap or a filter breaks: an empty or short list reads as the whole
   answer, so whatever narrowed it carries a total and a notice. `ResultBudgetTests` holds the per-item
   cost. See [the decision](../decisions/an-outline-is-cheap-by-default.md).
+  <br>
+  A write's `changedFiles` is the one list a narrowing must not reach early: `WorkspaceManager` reads
+  all of it to say which sibling solution compiles the same files, so a worker that cut it would hide
+  a sibling whose files fell past the cut. Where a tool names fewer, as `rose_replace_pattern` does past
+  twenty, the broker cuts it after the manager has answered.

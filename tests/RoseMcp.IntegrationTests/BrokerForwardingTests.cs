@@ -3,6 +3,7 @@ using System.Text.Json;
 using ModelContextProtocol;
 
 using RoseMcp.Broker;
+using RoseMcp.Broker.Tools;
 using RoseMcp.Contracts;
 
 using static RoseMcp.IntegrationTests.BrokerHarness;
@@ -381,6 +382,52 @@ public sealed class BrokerForwardingTests
 		renamed.Notices.ShouldContain(
 			notice => notice.Contains("Repo.Installer.slnx", StringComparison.Ordinal)
 				&& notice.Contains("also compiles", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A structural rewrite into files another solution also compiles says so too, counting every one of
+	/// them. The rewrite is the one write whose changed files the broker cuts before the caller sees them,
+	/// and the sibling notice is worked out from that same list, so this holds the order: with more shared
+	/// files than the cut keeps, the notice still counts them all.
+	/// </summary>
+	[Test]
+	public async Task A_rewrite_that_another_solution_also_compiles_says_so_past_the_changed_file_cap()
+	{
+		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		var callers = PatternRewriteForCaller.ChangedFileRows + 1;
+
+		await File.WriteAllTextAsync(
+			fixture.Path("Siblings", "Shared", "Text.cs"),
+			"namespace Shared;\r\n\r\npublic static class Text\r\n{\r\n\tpublic static string Shout(string value) => value.ToUpperInvariant();\r\n}\r\n",
+			cancellationToken);
+
+		for (var index = 0; index < callers; index++)
+		{
+			await File.WriteAllTextAsync(
+				fixture.Path("Siblings", "Shared", $"Caller{index:D2}.cs"),
+				$"namespace Shared;\r\n\r\npublic static class Caller{index:D2}\r\n{{\r\n\tpublic static string Greet(string name) => Text.Shout(name);\r\n}}\r\n",
+				cancellationToken);
+		}
+
+		await using var manager = CreateManager();
+		var tools = new BrokerAnalysisTools(manager, CreatePaths());
+
+		var rewritten = await tools.ReplacePatternAsync(
+			new Progress<ProgressNotificationValue>(),
+			rules: [new PatternRule { Find = "Shared.Text.Shout($v$)", Replace = "$v$.ToUpperInvariant()" }],
+			apply: true,
+			workspace: fixture.SolutionPath,
+			cancellationToken: cancellationToken);
+
+		rewritten.Applied.ShouldBeTrue();
+		rewritten.FilesChanged.ShouldBe(callers);
+		rewritten.ChangedFiles.Count.ShouldBe(PatternRewriteForCaller.ChangedFileRows);
+
+		rewritten.Notices.ShouldContain(
+			notice => notice.StartsWith($"Repo.Installer.slnx also compiles {callers} of the file(s) this changed", StringComparison.Ordinal),
+			string.Join(Environment.NewLine, rewritten.Notices));
+		rewritten.Notices.ShouldContain(notice => notice.StartsWith("changedFiles names ", StringComparison.Ordinal));
 	}
 
 	/// <summary>

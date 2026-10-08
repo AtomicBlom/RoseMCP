@@ -39,19 +39,20 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 9 | WRK-01 | #275, #276, #278 |
 | 9b | WRK-23 | #418 |
 | 10 | WRK-04, WRK-05, WRK-14, AGT-03 | #418 |
-| 8 (part) | AGT-17 (the overreach half) | #333 |
-| 8 (part) | WRK-03, WRK-19 | #361 |
+| 8 | AGT-17, WRK-03, WRK-15, WRK-19, and the issues WRK-02 named | #333, #361, #427 |
 | 1c, 1d | filed after the review | #366 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
 **Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, all
-seven of tier 1's original wrong-answer cards, two of tier 2's three refactors, and eleven of the 27
-High findings -- including **the debugger core and the write pipeline**, which were the two
-concentrations of duplication the review named, and the only wrong side effect in the corpus.
+seven of tier 1's original wrong-answer cards, two of tier 2's three refactors and every issue of the
+third, and twelve of the 27 High findings -- including **the debugger core and the write pipeline**,
+which were the two concentrations of duplication the review named, and the only wrong side effect in
+the corpus.
 
-**Tier 1 is done in full**, including the two wrong answers filed after the review (#366). Next is
-the rest of **card 8**, four slices in (#333, #361, #331, #332). Card 1
-opened the gate on **11b** and **11c**.
+**Tier 1 is done in full**, including the two wrong answers filed after the review (#366). **Card 8's
+issues are closed**, AGT-17 with them (#427). What is left of it is the structural refactor WRK-02
+argues for, card **8b**, which nothing known is broken without, so whether to do it or decline it is
+still to decide. Card 1 opened the gate on **11b** and **11c**.
 
 Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
 are listed after tier 6, so none of them is re-derived from scratch.
@@ -330,7 +331,8 @@ Each closes a class of bug rather than a bug, and each is a prerequisite for som
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Four open fidelity issues close as a consequence;** #200 closed on its own, the `usings` argument of `rose_add_file` taking `rose_add_using`'s placement. A write names the lines it changed that nothing asked for (#333), so each fix is done when its sentence stops appearing. It also decides each file's layout once, from what declares it and then from the file (#361). A rewritten bare LF is said only where it changed a literal's value, naming the literal's line (#331), and `rose_add_file` rewrites an all-LF payload's literals as the member tools do (#332). `OverreachReportTests` pins #217's three shapes and #195's dropped comment. The sentence cannot see #197, whose list the caller writes whole, or damage inside a span the caller asked for (#217's doubled indentation, #199). AGT-17's `rose_format` half is left. **Filed since, in the same territory:** #336 is #217's doubled indentation again, on a replace that starts mid-line. #338 reflows a collection's `[` outside the find and the sentence does not name it. #360 writes a run of tabs mid-line into an argument list, inside a span the caller asked for. #362 puts a new `<param>` tag last rather than in parameter order. #343 is #197 and #354 is #199, filed again: close each as a duplicate. | WRK-02, AGT-17 | #195 #197 #199 #217 #336 #338 #360 #362 | M-L |
+| ~~8~~ | **#333, #361, #427.** Writes damaged layout and comments nobody asked them to change, each in its own way, and `rose_format` called the result formatted. Each damaged path is fixed where it arose, a write names every line it changed outside what it was asked, and `rose_format` says what it checked. | AGT-17 | — | — |
+| 8b | **Draw the text/syntax line once in the writing stack.** Card 8's issues are closed by fixes local to each path, and those paths still handle source as text before the formatter sees it: a body edit splices strings, a signature change takes the caller's separators when the caller wraps its list, a doc comment is told from prose by its first character, and four string re-indenters in `MemberSyntax` reconcile the caller's indentation with the file's. Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing the re-indenters. Nothing known is broken without it, so it closes a class rather than a bug, and **whether to do it or decline it is undecided**. A write names the lines it changed outside what it was asked, and `rose_format` names a wrapped list whose items begin at different depths; damage of any other shape inside a span the caller asked for is seen by neither. | WRK-02 | — | M-L |
 | ~~9~~ | **#275, #276, #278.** Six services each carried their own copy of the write conventions, and four tools on them reported a project clean while the caller's errors sat in it. One pipeline owns the conventions. | WRK-01 | — | — |
 | ~~9b~~ | **#418.** Most tools wrote out their own wait for the workspace beside two helpers that did it, so a new tool could copy one that let a cold load go unreported. Every tool reaches the workspace through one helper, and a test refuses a tool given the means to go round it. | WRK-23 | — | — |
 | ~~10~~ | **#418.** Two and a half resolvers disagreed about what a name meant, so a positional record property, a type named for its namespace and a library member sharing a source name's last segment were each unreachable from some tool; the import search answered a call with a type and a namespace-qualified name with its first segment. One resolver asks the compilation for every tool, and the import search asks it how the name is used. | — | — | — |

@@ -113,41 +113,50 @@ tools on them reported a project clean while the caller's errors sat in it. One 
 conventions.
 
 ### WRK-02 Two tiers write source, and every open fidelity bug is in the text tier
+- **Amended, #427.** Every issue this named is closed by a fix local to its own path, and each of
+  those paths still handles source as text before the formatter sees it, so the line between text
+  and syntax is drawn in as many places as it was. What is still true: a body edit splices strings,
+  a signature change takes the caller's separators when the caller wraps, a doc comment is told
+  from prose by its first character, and four string re-indenters reconcile the caller's indentation
+  with the file's. What is not: nothing reads the payload's own line ending any more, and a write
+  now says which lines it changed outside what it was asked, which is how a fix in this class is
+  known to be done.
 - **Severity:** High
 - **Effort:** M
-- **Where:** `BodyEdit.cs:123` (string splice by token span), `BodyEdit.cs:203` (text splice),
-  `BodyEdit.cs:406-426` (`Inserted` rebuilds a body from `statement.ToFullString().Trim()` joined with
-  `\n`), `ChangeSignatureService.cs:332` and `:347` (primary declaration takes the caller's separators
-  and an `Unbroken` parenthesis),
-  `DocComment.cs:95-97` (`StartsWith('<')` decides XML vs prose), `Whitespace.cs:32` (falls back to the
-  payload's own dominant ending). Unaffected by WRK-01: `EditPipeline` owns the sequence around these,
-  not the text handling inside them, so card 8 is exactly as large as it was.
+- **Where:** `BodyEdit.cs:78-146` (`Anchored` splices `body[..start] + placed + body[end..]` on token
+  spans), `BodyEdit.cs:468-560` (`Inserted` and `Composed` splice the new statements into the block's
+  own text), `ChangeSignatureService.cs:576-581` (the declaration named takes the caller's separators
+  and an `Unbroken` parenthesis when the caller wraps its list), `DocComment.cs:88` (`StartsWith('<')`
+  decides XML vs prose), and the re-indenters in `MemberSyntax.cs` (`Reindented` `:485`, `Shift` `:637`,
+  `Arranged` `:892`, with `Written`, `Moved`, `Copied`, `Stripped` and `MixedIndentation` deciding
+  which baseline a payload was written at), reached through `BodyEdit.Placed` (`:691`),
+  `BodyEdit.Composed` (`:534`) and `AttributeEdit.cs:137`. Unaffected by WRK-01: `EditPipeline` owns
+  the sequence around these, not the text handling inside them.
 - **What:** `rose_add_member` and `rose_replace_member` go syntax-in, syntax-out: parse in a container,
   `MemberSyntax.Prepared` sets trivia, `Formatter.FormatAsync` over the annotation, `Whitespace.Apply`
   over the span. Those two tools are the ones the invariants document and the ones that work. The paths
-  above manipulate source as strings before the formatter sees it, and each open issue maps onto one:
-  #195 (interior trivia dropped, leading trivia kept -- `Anchored` splices `body[..start] + replace +
-  body[end..]` on token spans), #217 (`Inserted` discards every existing statement's leading trivia
-  and hands the formatter a body to re-indent, which re-indents statements and not their wrapped
-  arguments), #197 (`Separated(built, primary ? wanted : own)` throws the file's own layout away for
-  the one declaration the caller named), #199 (a comment arriving with
-  `///` starts with `/`, so it is wrapped in `<summary>` and prefixed again).
-  `MemberSyntax` then carries five string re-indenters (`Shift`, `Reindented`, `Arranged`, `Placed`
-  via `BodyEdit`, `Written`/`MixedIndentation` heuristics) whose job is to reconcile the caller's
-  coordinate system with the file's before the formatter runs.
+  above manipulate source as strings before the formatter sees it, and each issue filed against them
+  mapped onto one: #195 (interior trivia dropped, leading trivia kept -- `Anchored` splices on token
+  spans), #217 (`Inserted` discarded every existing statement's leading trivia and handed the formatter
+  a body to re-indent, which re-indents statements and not their wrapped arguments), #197 (`Separated`
+  threw the file's own layout away for the one declaration the caller named), #199 (a comment arriving
+  with `///` started with `/`, so it was wrapped in `<summary>` and prefixed again). Each was fixed
+  where it arose: a splice instead of a rebuild, the file's separators unless the caller wraps, a
+  refusal of a comment carrying its own markers. `MemberSyntax` still carries the string
+  re-indenters whose job is to reconcile the caller's coordinate system with the file's before the
+  formatter runs.
 - **Why it matters:** This is the class of bug the brief asks about. It is not five bugs; it is one
   architectural line -- where text stops and syntax starts -- drawn in five different places. Each fix
-  so far has added a heuristic (`Written`, `Copied`, `baseline`, `MixedIndentation`) rather than moving
-  the line, and `#189` is acknowledged inside `MemberSyntax.cs:548` as a shape the heuristics cannot
-  reach.
+  so far has added a heuristic (`Written`, `Copied`, `baseline`, `MixedIndentation`) or a local
+  splice rather than moving the line, so the next shape filed against any of these paths is fixed the
+  same way, one at a time.
 - **Suggested change:** Draw the line once: **syntax in, syntax out, text only inside
   `Whitespace.Apply`.** Concretely: `BodyEdit.Anchored` matches tokens (as now) but replaces the
   *statements* those tokens belong to with parsed statements via `ReplaceNodes`, so interior trivia is
   a decision (keep or replace) rather than a casualty; `BodyEdit.Inserted` becomes
   `block.WithStatements(block.Statements.Insert(index, prepared))` and touches no existing statement;
-  `ChangeSignatureService.ChangeFor` uses `own` as the separator pattern for the primary too and gives
-  a new parameter the trivia of its neighbour, exactly as `CallSiteRewriter.Continuation` already does
-  on the call-site side (`CallSiteRewriter.cs:136-146`); `DocComment.Lines` parses with
+  `ChangeSignatureService.ChangeFor` gives a new parameter the trivia of the token in front of it,
+  as `CallSiteRewriter.InSlot` already does on the call-site side; `DocComment.Lines` parses with
   `SyntaxFactory.ParseLeadingTrivia` and branches on `DocumentationCommentTriviaSyntax`. Then replace
   the string re-indenters with **one trivia pass after the formatter**: for each token that begins a
   line inside the annotated span, set its leading whitespace to the destination indent plus the
@@ -283,19 +292,10 @@ degraded. Each analyzer directory has a context of its own.
 **#418.** Each tool turned a project name into projects its own way, and one widened a name matching
 nothing to the whole solution. One helper does it for every tool, and refuses.
 
-### WRK-15 `BodyEdit.Inserted` rebuilds the whole body from trimmed statements
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `BodyEdit.cs:406-426`
-- **What:** `position: start|end` joins `statement.ToFullString().Trim()` for every existing
-  statement with `\n`, then relies on the formatter to re-indent. Blank lines between statements are
-  lost and wrapped continuations inside existing statements are re-based -- #217's "nine registrations
-  all rewritten". Listed separately from WRK-02 because it is a one-afternoon fix with a test already
-  in place (`MemberEditTests.Inserts_before_a_closing_return`).
-- **Why it matters:** The damage scales with the member being appended to and is invisible in the
-  tool's success report.
-- **Suggested change:** Insert parsed statements into `block.Statements` and leave the others' trivia
-  untouched; only the new statements get `Prepared` trivia and the annotation.
+### ~~WRK-15 `BodyEdit.Inserted` rebuilds the whole body from trimmed statements~~
+**#427.** Inserting at the start or end of a body rebuilt every statement in it, so blank lines went
+and wrapped arguments were re-indented across the whole member. Only the place the new code goes
+changes; the rest of the body is kept as it was.
 
 ### WRK-16 `SymbolLocator.FindDocument` scans every document with `Path.GetFullPath`, once per diagnostic
 - **Severity:** Low

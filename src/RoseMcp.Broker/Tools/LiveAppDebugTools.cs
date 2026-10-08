@@ -320,8 +320,7 @@ public sealed class LiveAppDebugTools(
 		UseStructuredContent = true)]
 	[Description(
 		"Remove tracepoints by id and return the remaining set. Use it to stop the tracepoints once you "
-			+ "have seen what you needed, rather than leaving hot-path logs running for the life of the "
-			+ "session.")]
+			+ "have seen what you needed, rather than leaving hot-path logs running all session.")]
 	public async Task<LiveTracepointRemoval> RemoveTracepointAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.TracepointIdsArgument)] string[] tracepointIds,
@@ -384,8 +383,8 @@ public sealed class LiveAppDebugTools(
 		UseStructuredContent = true)]
 	[Description(
 		"Remove stopping breakpoints by id and return the remaining set. Use it once you have seen what "
-			+ "you needed so execution stops passing through those methods; removing one the target is "
-			+ "currently held at does not itself resume -- call rose_debug_continue for that.")]
+			+ "you needed; removing one the target is currently held at does not itself resume -- call "
+			+ "rose_debug_continue for that.")]
 	public async Task<LiveBreakpointRemoval> RemoveBreakpointAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.BreakpointIdsArgument)] string[] breakpointIds,

@@ -89,12 +89,21 @@ Read before touching stdio or http transport, `TrayRelay`, progress reporting, c
   otherwise runs on against nothing for the life of the broker. Use is a tool call routed through
   `CallAsync`; `rose_workspace_status`, `rose_workspace_list`, the tray's `Describe` polling,
   opening a workspace that is already open and the priming status call never restart the idle
-  clock, or a session that polls would keep every solution on the machine warm. A caller takes its
+  clock, or a session that polls would keep every solution on the machine warm. The clock starts
+  when the first load finishes -- not as use, but because that is when there was first something
+  to use; counted from process start, a slow load would be evicted soon after it became ready, and
+  one longer than the limit the moment it did. A caller takes its
   worker *held*, under the gate the sweep decides under, and the sweep reads everything again
   under that gate before acting, so a worker is never stopped between being handed to a call and
   being called -- for a write, which is not retried, that would be a failure with nothing wrong. A
   busy or loading worker is never evicted. An evicted worker stays registered, stopped as
   `Evicted`, with the reason filed in its activity history, so the tray, `GET /admin/workspaces`
   and `rose_workspace_list` can say why a workspace went cold; the next call replaces it as it
-  replaces a crashed one, and the row goes once it has been stopped as long as the idle limit. The
-  manager stops the sweep, and waits for it, before it disposes the gate the sweep takes.
+  replaces a crashed one, and the row goes once it has been stopped as long as the idle limit.
+  Status on a stopped row answers from the row -- `Unloaded`, the reason, and that nothing was
+  started -- because starting a worker there would reload the solution and wipe the reason, and
+  a session checking status now and then would keep it warm and never learn it was evicted. A
+  stopped row is not *open*: anything saying which workspaces are open or loaded -- the routing
+  failure's list, a change's sibling notice, the tray's headline -- reads `IsAlive`, not the
+  registry. The manager stops the sweep, and waits for it, before it disposes the gate the sweep
+  takes.

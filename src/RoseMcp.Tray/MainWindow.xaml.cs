@@ -240,7 +240,8 @@ public sealed partial class MainWindow : Window
 		var running = workspaces.Sum(summary => summary.Running.Count) + sessions.Sum(summary => summary.Running.Count);
 		Headline.Text = DescribeHeadline(workspaces, sessions);
 		Subtitle.Text = DescribeSubtitle(workspaces, sessions, running);
-		Tray.ToolTipText = DescribeTooltip(workspaces.Count, sessions.Count, running);
+		// Loaded ones only: a stopped row is listed in the window, but the icon says what is in memory.
+		Tray.ToolTipText = DescribeTooltip(workspaces.Count(summary => summary.Alive), sessions.Count, running);
 
 		// Empty only when there is neither kind of thing. A machine with a debug session and no
 		// loaded solution is not idle, and telling it how to register an endpoint would be answering
@@ -499,22 +500,30 @@ public sealed partial class MainWindow : Window
 
 	/// <summary>
 	/// The one line to read: how much is loaded, whether it is up yet, and how many targets are
-	/// being debugged.
+	/// being debugged. A stopped row -- evicted or crashed -- is counted apart rather than as loaded:
+	/// it stays listed so a person can read why it stopped, and it holds no memory.
 	/// </summary>
 	public static string DescribeHeadline(
 		IReadOnlyList<WorkspaceSummary> workspaces,
 		IReadOnlyList<LiveAppSessionSummary> sessions)
 	{
 		var debugging = sessions.Count > 0 ? Format.Count(sessions.Count, "session") : null;
+		var live = workspaces.Where(summary => summary.Alive).ToList();
+		var stopped = workspaces.Count - live.Count;
 
 		if (workspaces.Count == 0)
 		{
 			return debugging is null ? "Nothing loaded" : $"Debugging {debugging}";
 		}
 
-		var solutions = Format.Count(workspaces.Count, "solution");
-		var allLoading = workspaces.All(summary => summary.State == WorkspaceState.Loading);
-		var loaded = allLoading ? $"Loading {solutions}" : $"{solutions} loaded";
+		var solutions = Format.Count(live.Count, "solution");
+		var allLoading = live.All(summary => summary.State == WorkspaceState.Loading);
+
+		var loaded = $"{solutions} loaded";
+		if (live.Count == 0) loaded = "Nothing loaded";
+		else if (allLoading) loaded = $"Loading {solutions}";
+
+		if (stopped > 0) loaded += $", {stopped} stopped";
 
 		return debugging is null ? loaded : $"{loaded}, debugging {debugging}";
 	}

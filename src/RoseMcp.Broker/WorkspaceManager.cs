@@ -97,6 +97,19 @@ public sealed class WorkspaceManager(
 		GetOrStartResolvedAsync(WorkspaceFor(hints), cancellationToken);
 
 	/// <summary>
+	/// The worker for whichever workspace <paramref name="hints"/> resolves to, starting one if
+	/// needed, held against eviction until the returned hold is disposed. Taken under the gate the
+	/// eviction sweep decides under, for something that calls the worker directly rather than
+	/// through <see cref="CallAsync{T}"/>. <paramref name="use"/> says whether that counts as use and
+	/// restarts the idle clock.
+	/// </summary>
+	public Task<(WorkspaceWorker Worker, IDisposable Hold)> HoldAsync(
+		WorkspaceHints hints,
+		bool use,
+		CancellationToken cancellationToken) =>
+		HoldResolvedAsync(WorkspaceFor(hints), use, cancellationToken);
+
+	/// <summary>
 	/// The worker for a solution path already decided on.
 	/// <para>
 	/// A dead worker is replaced rather than reported. Workers die for ordinary reasons -- the
@@ -316,7 +329,14 @@ public sealed class WorkspaceManager(
 
 		return [.. overlaps.Select(overlap =>
 		{
-			var open = _workers.ContainsKey(overlap.SolutionPath) ? "open" : "not open";
+			// A stopped row is still registered, so being registered is not being open: an evicted
+			// worker holds nothing, and calling it open would say the sibling has the new text loaded.
+			var open = _workers.TryGetValue(overlap.SolutionPath, out var sibling) switch
+			{
+				true when sibling.IsAlive => "open",
+				true => $"not open (its worker stopped: {sibling.ExitReason})",
+				false => "not open",
+			};
 
 			return $"{Path.GetFileName(overlap.SolutionPath)} also compiles {overlap.SharedFileCount} of the "
 				+ $"file(s) this changed, and is {open}. This ran against "
@@ -345,11 +365,19 @@ public sealed class WorkspaceManager(
 			worker);
 
 	/// <summary>
-	/// Status for whichever workspace <paramref name="hints"/> resolves to, starting it if needed.
+	/// Status for whichever workspace <paramref name="hints"/> resolves to, starting it if nothing
+	/// has been started for it.
 	/// <para>
 	/// Held for the call, so the sweep cannot stop the worker between finding it and asking it, but
 	/// not counted as use: a session polling status to see whether a workspace is healthy is watching
 	/// it, and watching must not keep a workspace nobody is working in warm forever.
+	/// </para>
+	/// <para>
+	/// A workspace whose worker has stopped -- evicted, crashed, stopped by the broker -- is answered
+	/// from its stopped row, and nothing is started. Starting one would reload the solution and wipe
+	/// the record of why it stopped, so a session checking status every so often would keep an
+	/// evicted workspace warm and never be told it had been evicted. The next call that needs the
+	/// workspace starts it, as it always has.
 	/// </para>
 	/// </summary>
 	public async Task<Contracts.WorkspaceStatusReport> StatusAsync(
@@ -357,7 +385,24 @@ public sealed class WorkspaceManager(
 		CancellationToken cancellationToken,
 		IProgress<ProgressNotificationValue>? progress = null)
 	{
-		var (worker, hold) = await HoldResolvedAsync(WorkspaceFor(hints), use: false, cancellationToken);
+		var solutionPath = WorkspaceFor(hints);
+
+		WorkspaceWorker worker;
+		IDisposable hold;
+
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var stopped = _workers.TryGetValue(solutionPath, out var registered) && !registered.IsAlive;
+			if (stopped) return Attribute(registered!.StoppedStatus(), registered);
+
+			worker = await GetOrStartUnderGateAsync(solutionPath, cancellationToken);
+			hold = worker.Hold(use: false);
+		}
+		finally
+		{
+			_gate.Release();
+		}
 
 		using (hold)
 		{
@@ -678,7 +723,10 @@ public sealed class WorkspaceManager(
 	/// </summary>
 	private string OpenWorkspacesSuffix()
 	{
-		var open = _workers.Keys;
+		// Only workers that are serving. A stopped row stays registered for a while so a person can
+		// read why it stopped, and calling it open would promise a warm answer where the next call
+		// on it pays a full load.
+		var open = _workers.Values.Where(worker => worker.IsAlive).Select(worker => worker.SolutionPath).ToList();
 
 		if (open.Count == 0)
 		{
@@ -838,7 +886,7 @@ public sealed class WorkspaceManager(
 
 			// Marked before it is disposed, so the reason recorded is this one rather than the
 			// StoppedByBroker that disposing would record.
-			worker.MarkStopped(WorkerExitReason.Evicted);
+			worker.MarkStopped(WorkerExitReason.Evicted, reason);
 			Activities.Note(worker.SolutionPath, EvictOperation, reason);
 
 			await worker.DisposeAsync();

@@ -80,14 +80,18 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	public DateTime StartedUtc { get; }
 
 	/// <summary>
-	/// When a tool call last finished with this worker, or when it started if none has. Only calls
-	/// routed to it count: status, listing and the tray's polling read it without being use, so a
-	/// workspace somebody merely watches still goes idle.
+	/// When a tool call last finished with this worker, or when its first load finished, or when it
+	/// started if neither has happened. Only calls routed to it count as use: status, listing and the
+	/// tray's polling read it without being use, so a workspace somebody merely watches still goes
+	/// idle. The load finishing is not use either; it is when there was first something to use.
 	/// </summary>
 	public DateTime LastUsedUtc => new(Volatile.Read(ref _lastUsedTicks), DateTimeKind.Utc);
 
 	/// <summary>When it stopped serving, for a worker that has. Null while it runs.</summary>
 	public DateTime? StoppedUtc { get; private set; }
+
+	/// <summary>Why it stopped, in words, where the stop had more to say than its exit reason. Null otherwise.</summary>
+	public string? StopDetail { get; private set; }
 
 	/// <summary>
 	/// When the eviction sweep first saw the solution file missing, or null while it is there. Only
@@ -307,15 +311,18 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 	/// <summary>
 	/// Records that the worker has stopped serving, and when, the first time only: the first reason
 	/// is the true one. A worker the broker stops on purpose then fails its in-flight calls and exits
-	/// the same way a crash does, and neither may relabel it.
+	/// the same way a crash does, and neither may relabel it. <paramref name="detail"/> is why, in
+	/// words, for a stop that has more to say than its reason -- an eviction says how long the worker
+	/// sat unused.
 	/// </summary>
-	public void MarkStopped(WorkerExitReason reason)
+	public void MarkStopped(WorkerExitReason reason, string? detail = null)
 	{
 		lock (_stopGate)
 		{
 			if (!IsAlive) return;
 
 			StoppedUtc = DateTime.UtcNow;
+			StopDetail = detail;
 			ExitReason = reason;
 		}
 	}
@@ -344,7 +351,7 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 		SolutionMissingSinceUtc = exists ? null : SolutionMissingSinceUtc ?? nowUtc;
 
 	/// <summary>What the eviction sweep decides on, read now.</summary>
-	internal EvictionFacts EvictionFacts() => new(
+	public EvictionFacts EvictionFacts() => new(
 		Alive: IsAlive,
 		Loading: State == WorkspaceState.Loading,
 		Busy: Volatile.Read(ref _holds) > 0 || _activities.Running(SolutionPath).Count > 0,
@@ -371,6 +378,42 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 			Running = _activities.Running(SolutionPath).Count,
 		};
 	}
+
+	/// <summary>
+	/// Status for a worker that has stopped, answered from what the broker knows rather than by
+	/// starting a fresh one. Asking whether a workspace is healthy is looking at it; starting a worker
+	/// to answer would load the solution again and wipe the record of why it stopped, so a session
+	/// that checks status now and then would keep an evicted workspace warm and never learn it had
+	/// been evicted.
+	/// <para>
+	/// The shape the worker itself gives once its solution is gone: nothing is loaded, so no project
+	/// is, and revision 0 identifies no snapshot. Why it stopped is the degraded reason, because it is
+	/// the reason there are no answers, and the notice says what brings it back.
+	/// </para>
+	/// </summary>
+	internal WorkspaceStatusReport StoppedStatus() => new()
+	{
+		SolutionPath = SolutionPath,
+		State = State,
+		Revision = 0,
+		Projects = [],
+		LoadDiagnostics = [],
+		DegradedReasons = [StopDescription()],
+		Notices =
+		[
+			"Nothing is loaded, and asking for status started nothing. The next call that needs this "
+				+ "workspace starts a fresh worker; rose_workspace_reload starts one now.",
+		],
+	};
+
+	/// <summary>Why this worker stopped, as one sentence for a person.</summary>
+	private string StopDescription() => ExitReason switch
+	{
+		WorkerExitReason.Evicted => $"The worker was evicted. {StopDetail}".TrimEnd(),
+		WorkerExitReason.Crashed => "The worker exited on its own. Its log says why.",
+		WorkerExitReason.SolutionUnloaded => "The worker unloaded the solution when its file went away.",
+		_ => "The worker was stopped.",
+	};
 
 	private void Touch() => Volatile.Write(ref _lastUsedTicks, DateTime.UtcNow.Ticks);
 
@@ -564,6 +607,11 @@ public sealed class WorkspaceWorker : IAsyncDisposable
 				CancellationToken.None,
 				operation: LoadOperation);
 
+			// The idle clock starts when the worker became usable, not when its process did. Counting
+			// the load as idle would evict a solution that loads slowly soon after it is ready, and
+			// one that loads for longer than the idle limit the moment it finishes. Before the
+			// duration, so whoever sees the load finished also sees the clock restarted.
+			Touch();
 			LoadDuration = load.Elapsed;
 		}
 		catch (Exception exception)

@@ -1,5 +1,7 @@
 using System.Diagnostics;
 
+using ModelContextProtocol;
+
 using RoseMcp.Broker;
 using RoseMcp.Contracts;
 
@@ -31,7 +33,9 @@ public sealed class IdleEvictionTests
 		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
 		await using var manager = CreateManager(configure: options =>
 		{
-			options.IdleEvictionAfter = TimeSpan.FromSeconds(5);
+			// Also how long the stopped row stays, which has to outlast stopping the process -- the
+			// sweep holds the gate while it does, and a status call waits for it.
+			options.IdleEvictionAfter = TimeSpan.FromSeconds(15);
 			options.EvictionSweepInterval = SweepInterval;
 		});
 
@@ -43,7 +47,9 @@ public sealed class IdleEvictionTests
 		var worker = manager.Workers.ShouldHaveSingleItem();
 		var processId = worker.ProcessId.ShouldNotBeNull();
 
-		// Status is a look, not a use: it must not restart the idle clock.
+		// Status is a look, not a use: it must not restart the idle clock. Read after the priming
+		// load has filed its finish, which restarts the clock itself and can land just after the call.
+		await WaitUntilAsync(() => worker.LoadDuration is not null, TimeSpan.FromSeconds(30), cancellationToken);
 		var usedBefore = worker.LastUsedUtc;
 		await manager.StatusAsync(hints, cancellationToken);
 		worker.LastUsedUtc.ShouldBe(usedBefore);
@@ -52,7 +58,7 @@ public sealed class IdleEvictionTests
 		warm.WorkspaceKey.ShouldBe(worker.Key);
 		warm.ExitReason.ShouldBeNull();
 		warm.State.ShouldBe(WorkspaceState.Loaded);
-		manager.List().IdleEvictionAfter.ShouldBe(TimeSpan.FromSeconds(5));
+		manager.List().IdleEvictionAfter.ShouldBe(TimeSpan.FromSeconds(15));
 
 		await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(60), cancellationToken);
 
@@ -65,6 +71,23 @@ public sealed class IdleEvictionTests
 		evicted.State.ShouldBe(WorkspaceState.Unloaded);
 
 		manager.Describe().ShouldHaveSingleItem().Alive.ShouldBeFalse();
+
+		// Status is answered from the stopped row: it says why, starts nothing, and leaves the
+		// reason where the tray reads it.
+		var stoppedStatus = await manager.StatusAsync(hints, cancellationToken);
+
+		stoppedStatus.State.ShouldBe(WorkspaceState.Unloaded);
+		stoppedStatus.Revision.ShouldBe(0);
+		stoppedStatus.WorkspaceKey.ShouldBe(worker.Key);
+		stoppedStatus.DegradedReasons.ShouldHaveSingleItem().ShouldContain("evicted");
+		stoppedStatus.Notices.ShouldContain(notice => notice.Contains("started nothing", StringComparison.Ordinal));
+		manager.Workers.ShouldHaveSingleItem().ShouldBeSameAs(worker);
+		worker.ExitReason.ShouldBe(WorkerExitReason.Evicted);
+		EvictionNote(manager).ShouldNotBeNull();
+
+		// A routing failure does not offer the stopped row as somewhere already open.
+		var unrouted = Should.Throw<McpException>(() => manager.WorkspaceFor(WorkspaceHints.None));
+		unrouted.Message.ShouldNotContain("Already open");
 
 		await WaitUntilAsync(() => ProcessHasExited(processId), TimeSpan.FromSeconds(30), cancellationToken);
 
@@ -115,6 +138,103 @@ public sealed class IdleEvictionTests
 		await WaitUntilAsync(() => manager.Workers.Count == 0, TimeSpan.FromSeconds(60), cancellationToken);
 
 		manager.List().Workspaces.ShouldBeEmpty();
+	}
+
+	/// <summary>
+	/// The idle clock starts when the load finishes, and a held worker is never evicted however long
+	/// it sits idle -- the hold is what keeps a worker handed to a call alive until the call starts.
+	/// Once the hold goes, the same worker is evicted on the next sweeps.
+	/// </summary>
+	[Test]
+	public async Task A_held_worker_outlives_the_idle_limit_and_is_evicted_once_released()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Simple", "Simple.sln");
+		var idleAfter = TimeSpan.FromSeconds(2);
+		await using var manager = CreateManager(configure: options =>
+		{
+			options.IdleEvictionAfter = idleAfter;
+			options.EvictionSweepInterval = SweepInterval;
+		});
+
+		var hints = WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath));
+
+		// Held from the start, not used: the load alone decides the idle clock here.
+		var (worker, hold) = await manager.HoldAsync(hints, use: false, cancellationToken);
+
+		using (hold)
+		{
+			await WaitUntilAsync(() => worker.LoadDuration is not null, TimeSpan.FromMinutes(2), cancellationToken);
+
+			// Not earlier than the end of the load, allowing for the two clocks' resolution.
+			var loadEnded = worker.StartedUtc + worker.LoadDuration!.Value;
+			worker.LastUsedUtc.ShouldBeGreaterThanOrEqualTo(loadEnded - TimeSpan.FromMilliseconds(100));
+
+			worker.EvictionFacts().Busy.ShouldBeTrue();
+
+			await Task.Delay(idleAfter + SweepInterval * 8, cancellationToken);
+
+			worker.IsAlive.ShouldBeTrue("a held worker must outlive the idle limit");
+			EvictionNote(manager).ShouldBeNull();
+		}
+
+		worker.EvictionFacts().Busy.ShouldBeFalse();
+
+		await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(30), cancellationToken);
+
+		worker.ExitReason.ShouldBe(WorkerExitReason.Evicted);
+	}
+
+	/// <summary>
+	/// A change reaching a sibling solution whose worker was evicted does not call that sibling
+	/// open: it holds nothing, so nothing there has the new text loaded.
+	/// </summary>
+	[Test]
+	public async Task A_sibling_whose_worker_was_evicted_is_not_called_open()
+	{
+		var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+		using var fixture = FixtureSolution.Copy("Siblings", "Repo.slnx");
+		await using var manager = CreateManager(configure: options =>
+		{
+			// Also how long the stopped row stays, which has to outlast stopping the process and
+			// the rename that follows.
+			options.IdleEvictionAfter = TimeSpan.FromSeconds(15);
+			options.EvictionSweepInterval = SweepInterval;
+		});
+
+		var installer = fixture.Path("Siblings", "Repo.Installer.slnx");
+
+		// The solution being edited is held, so only the sibling goes idle.
+		var (_, hold) = await manager.HoldAsync(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)), use: false, cancellationToken);
+
+		using (hold)
+		{
+			await manager.CallAsync<WorkspaceStatusReport>(
+				WorkspaceHints.From(RootedPath.Absolute(installer)),
+				ToolNames.WorkspaceStatus,
+				NoArguments,
+				retryIfWorkerDied: true,
+				cancellationToken);
+
+			await WaitUntilAsync(() => EvictionNote(manager) is not null, TimeSpan.FromSeconds(60), cancellationToken);
+
+			var tools = new RoseMcp.Broker.Tools.BrokerAnalysisTools(manager, CreatePaths());
+			var renamed = await tools.RenameSymbolAsync(
+				new Progress<ProgressNotificationValue>(),
+				symbol: "Shared.Widget.Describe",
+				newName: "Explain",
+				filePath: null,
+				workspace: fixture.SolutionPath,
+				apply: true,
+				cancellationToken: cancellationToken);
+
+			var notice = renamed.Notices
+				.Where(notice => notice.Contains("Repo.Installer.slnx", StringComparison.Ordinal))
+				.ShouldHaveSingleItem();
+
+			notice.ShouldContain("not open (its worker stopped: Evicted)");
+		}
 	}
 
 	/// <summary>

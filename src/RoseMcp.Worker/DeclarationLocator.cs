@@ -1,6 +1,5 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.FindSymbols;
 
 namespace RoseMcp.Worker;
 
@@ -15,6 +14,10 @@ namespace RoseMcp.Worker;
 /// <para>
 /// Every refusal names the candidates. A caller that has to go and read the file to find out why
 /// its call was rejected has been sent back to the tool this one exists to replace.
+/// </para>
+/// <para>
+/// What the name reaches is <see cref="SymbolResolver"/>'s answer, the same one every tool gets;
+/// this turns it into declarations and decides what counts as one.
 /// </para>
 /// </summary>
 public static class DeclarationLocator
@@ -33,11 +36,19 @@ public static class DeclarationLocator
 		string? filePath,
 		CancellationToken cancellationToken)
 	{
-		var found = await FindAsync(solution, requested, filePath, typesOnly: false, cancellationToken);
+		var resolution = await SourceAsync(solution, requested, cancellationToken);
+		var found = await FindAsync(solution, resolution, filePath, typesOnly: false, cancellationToken);
 
-		if (found.Declarations.Count == 1) return found.Declarations[0];
+		if (found.Declarations.Count != 1)
+		{
+			throw found.Declarations.Count == 0 ? found.NotFound() : found.Ambiguous();
+		}
 
-		throw found.Declarations.Count == 0 ? found.NotFound() : found.Ambiguous();
+		var target = found.Declarations[0];
+
+		if (target.DeclaredByParameter) throw Positional(target);
+
+		return target;
 	}
 
 	/// <summary>
@@ -53,9 +64,21 @@ public static class DeclarationLocator
 		Solution solution,
 		string requested,
 		string? filePath,
+		CancellationToken cancellationToken) =>
+		await FindSymbolAsync(
+			solution, await SourceAsync(solution, requested, cancellationToken), filePath, cancellationToken);
+
+	/// <summary>
+	/// The one symbol a resolution reached in source, for a caller that resolved the name itself
+	/// because it may answer from metadata when source has nothing.
+	/// </summary>
+	public static async Task<DeclarationTarget> FindSymbolAsync(
+		Solution solution,
+		SymbolResolution resolution,
+		string? filePath,
 		CancellationToken cancellationToken)
 	{
-		var found = await FindAsync(solution, requested, filePath, typesOnly: false, cancellationToken);
+		var found = await FindAsync(solution, resolution, filePath, typesOnly: false, cancellationToken);
 
 		var bySignature = found.Declarations
 			.GroupBy(target => target.Signature, StringComparer.Ordinal)
@@ -69,7 +92,8 @@ public static class DeclarationLocator
 	/// <summary>
 	/// The declaration of a type, refusing anything else. Separate from <see cref="FindMemberAsync"/>
 	/// so that naming a method where a type belongs is answered with what it actually is, rather
-	/// than with a puzzling complaint about the code much later on.
+	/// than with a puzzling complaint about the code much later on. A repeated last segment is read
+	/// only as a type here, since a constructor is never one.
 	/// </summary>
 	public static async Task<TypeTarget> FindTypeAsync(
 		Solution solution,
@@ -77,7 +101,8 @@ public static class DeclarationLocator
 		string? filePath,
 		CancellationToken cancellationToken)
 	{
-		var found = await FindAsync(solution, requested, filePath, typesOnly: true, cancellationToken);
+		var resolution = await SourceAsync(solution, requested, cancellationToken);
+		var found = await FindAsync(solution, resolution, filePath, typesOnly: true, cancellationToken);
 
 		if (found.Declarations.Count != 1)
 		{
@@ -101,28 +126,24 @@ public static class DeclarationLocator
 		};
 	}
 
+	private static Task<SymbolResolution> SourceAsync(Solution solution, string requested, CancellationToken cancellationToken) =>
+		SymbolResolver.ResolveAsync(solution, SymbolAddress.Parse(requested), includeMetadata: false, cancellationToken);
+
 	/// <summary>
-	/// Everything the search turned up, and everything needed to explain finding nothing. Kept as a
-	/// value rather than resolved here, because what counts as one answer differs between reading
-	/// and writing and only the caller knows which it is doing.
+	/// The declarations behind what the resolution reached, and everything needed to explain finding
+	/// none. Kept as a value rather than resolved here, because what counts as one answer differs
+	/// between reading and writing and only the caller knows which it is doing.
 	/// </summary>
 	private static async Task<Found> FindAsync(
 		Solution solution,
-		string requested,
+		SymbolResolution resolution,
 		string? filePath,
 		bool typesOnly,
 		CancellationToken cancellationToken)
 	{
-		var address = SymbolAddress.Parse(requested);
-
-		var named = (await SymbolFinder.FindSourceDeclarationsAsync(
-			solution, address.Name, ignoreCase: false, cancellationToken)).ToArray();
-
-		var candidates = address.Constructor == ConstructorKind.None ? named : WithConstructors(named);
-
-		var matching = candidates
-			.Where(symbol => (!typesOnly || symbol is INamedTypeSymbol) && address.Matches(symbol))
-			.ToArray();
+		var matching = typesOnly
+			? [.. resolution.Source.Where(symbol => symbol is INamedTypeSymbol)]
+			: resolution.Source;
 
 		var found = new List<DeclarationTarget>();
 		var generated = 0;
@@ -156,21 +177,26 @@ public static class DeclarationLocator
 					Symbol = symbol,
 					Document = document,
 					Declaration = declaration,
+					DeclaredByParameter = node is ParameterSyntax,
 				});
 			}
 		}
 
 		// One file can belong to several projects -- multi-targeting, or a shared project -- and each
-		// of them reports the same declaration through a symbol of its own.
+		// of them reports the same declaration through a symbol of its own. The span alone is not the
+		// declaration: a record and the positional property one of its parameters declares share the
+		// record's span, and are a type and its member.
 		var distinct = found
-			.DistinctBy(target => (Path.GetFullPath(target.FilePath).ToUpperInvariant(), target.Declaration.Span))
+			.DistinctBy(target => (
+				Path.GetFullPath(target.FilePath).ToUpperInvariant(),
+				target.Declaration.Span,
+				SymbolAddress.Of(target.Symbol) ?? target.Signature))
 			.ToArray();
 
 		return new Found
 		{
-			Address = address,
+			Resolution = resolution,
 			Declarations = distinct,
-			Named = named,
 			Matching = matching,
 			Generated = generated,
 			Elsewhere = elsewhere,
@@ -179,30 +205,12 @@ public static class DeclarationLocator
 		};
 	}
 
-	/// <summary>
-	/// The types a name search found, plus every constructor they declare.
-	/// <para>
-	/// A constructor is declared under the name of its type, so that is what a name search returns
-	/// for one. Expanding here rather than searching for <c>.ctor</c> keeps the search independent
-	/// of how the declaration index spells a name the language never writes.
-	/// </para>
-	/// </summary>
-	private static ISymbol[] WithConstructors(IReadOnlyList<ISymbol> named) =>
-		[
-			.. named,
-			.. named.OfType<INamedTypeSymbol>()
-				.SelectMany(type => type.Constructors)
-				.Where(constructor => !constructor.IsImplicitlyDeclared),
-		];
-
 	/// <summary>What the search found, and how to say that it was not enough.</summary>
 	private sealed record Found
 	{
-		public required SymbolAddress Address { get; init; }
+		public required SymbolResolution Resolution { get; init; }
 
 		public required IReadOnlyList<DeclarationTarget> Declarations { get; init; }
-
-		public required IReadOnlyList<ISymbol> Named { get; init; }
 
 		public required IReadOnlyList<ISymbol> Matching { get; init; }
 
@@ -215,9 +223,9 @@ public static class DeclarationLocator
 		public required bool TypesOnly { get; init; }
 
 		public ArgumentException NotFound() =>
-			DeclarationLocator.NotFound(Address, Named, Matching, Generated, Elsewhere, FilePath, TypesOnly);
+			DeclarationLocator.NotFound(Resolution, Matching, Generated, Elsewhere, FilePath, TypesOnly);
 
-		public ArgumentException Ambiguous() => DeclarationLocator.Ambiguous(Address, Declarations, FilePath);
+		public ArgumentException Ambiguous() => DeclarationLocator.Ambiguous(Resolution.Address, Declarations, FilePath);
 	}
 
 	/// <summary>
@@ -226,65 +234,74 @@ public static class DeclarationLocator
 	/// exists but not in the file the caller pinned it to.
 	/// <para>
 	/// A refusal meaning "source declares nothing this address reaches" is a
-	/// <see cref="SymbolNotFoundException"/>, whatever it goes on to say, because that is the one
-	/// condition under which a read may answer from metadata instead. Carrying the name somewhere is
-	/// not the same as being reached by the address: a solution of any size declares an Add, a Name
-	/// and a Document of its own, and none of them is what System.Collections.Generic.List.Add names.
-	/// Requiring the name to be absent everywhere would therefore refuse the library members most
-	/// worth asking about, and refuse more of them the larger the solution grew.
+	/// <see cref="SymbolNotFoundException"/>, whatever it goes on to say, because that is the
+	/// condition under which a read answers from metadata instead -- and a read that has already
+	/// asked says so, so a caller can tell "not in your source" from "not anywhere". Carrying the name
+	/// somewhere is not the same as being reached by the address: a solution of any size declares an
+	/// Add, a Name and a Document of its own, and none of them is what System.Collections.Generic.List.Add
+	/// names.
 	/// </para>
 	/// <para>
 	/// The rest are deliberately not that type, and each for the same reason: source did reach
 	/// something, so a referenced assembly has nothing to add and answering from one would be an
 	/// answer about a different symbol. A declaration ruled out by where it lives was still found,
-	/// and a name that turned out to be a method rather than a type is a question about this
+	/// a type reached by a constructor address is the type the caller meant whatever constructors it
+	/// declares, and a name that turned out to be a method rather than a type is a question about this
 	/// solution whichever way it is answered.
 	/// </para>
 	/// </summary>
 	private static ArgumentException NotFound(
-		SymbolAddress address,
-		IReadOnlyList<ISymbol> named,
+		SymbolResolution resolution,
 		IReadOnlyList<ISymbol> matching,
 		int generated,
 		int elsewhere,
 		string? filePath,
 		bool typesOnly)
 	{
-		if (named.Count == 0)
+		var address = resolution.Address;
+
+		var metadata = resolution.MetadataSearched
+			? " Nothing in a referenced assembly is declared there either."
+			: string.Empty;
+
+		if (resolution.Source.Count == 0 && resolution.Named.Count == 0)
 		{
 			return new SymbolNotFoundException(
-				$"Nothing in the solution is called {Quote(address.Name)}. Ask rose_search_symbols, which matches "
-					+ "names by pattern and by abbreviation and returns the qualified name this argument wants. "
-					+ "For a type in a referenced assembly, rose_resolve_name searches metadata as well as source.");
+				$"Nothing in the solution is called {Quote(address.Name)}.{metadata} Ask rose_search_symbols, which "
+					+ "matches names by pattern and by abbreviation and returns the qualified name this argument "
+					+ "wants. For a type in a referenced assembly, rose_resolve_name searches metadata as well as source.");
 		}
 
-		if (matching.Count == 0 && address.Constructor != ConstructorKind.None)
+		if (resolution.Source.Count == 0 && address.Constructor != ConstructorKind.None)
 		{
-			return NoConstructor(address, named);
+			return NoConstructor(address, resolution.Constructed, metadata);
 		}
 
-		if (matching.Count == 0)
+		if (resolution.Source.Count == 0)
 		{
-			var qualified = named
+			var qualified = resolution.Named
 				.Where(symbol => !typesOnly || symbol is INamedTypeSymbol)
 				.Select(symbol => string.Join(".", SymbolAddress.PathOf(symbol)))
 				.Distinct(StringComparer.Ordinal)
 				.Order(StringComparer.Ordinal)
 				.ToArray();
 
-			if (qualified.Length == 0)
-			{
-				return new ArgumentException(
-					$"{Quote(address.Requested)} is a {Kind(named[0])}, not a type. Only a type has members to add to.");
-			}
-
 			var overloads = address.Parameters is null
 				? string.Empty
 				: " No overload takes those parameter types; leave the parameter list off to be told what there is.";
 
+			var declaredAs = qualified.Length == 0
+				? string.Empty
+				: $" {Quote(address.Name)} is declared as {Summarise(qualified)}.";
+
 			return new SymbolNotFoundException(
-				$"Nothing is declared at {Quote(address.Requested)}. {Quote(address.Name)} is declared as "
-					+ $"{Summarise(qualified)}.{overloads}");
+				$"Nothing is declared at {Quote(address.Requested)}.{declaredAs}{overloads}{metadata}");
+		}
+
+		if (matching.Count == 0)
+		{
+			return new ArgumentException(
+				$"{Quote(address.Requested)} is a {Kind(resolution.Source[0])}, not a type. Only a type has members to add to.");
 		}
 
 		if (elsewhere > 0)
@@ -308,24 +325,32 @@ public static class DeclarationLocator
 	/// take other parameters.
 	/// <para>
 	/// Only the first of those may be answered from metadata, and the distinction is the whole
-	/// reason it carries its own type. Once a type of that name is declared here, the caller means
-	/// that type: answering about a referenced assembly's Greeter because this solution's Greeter
-	/// leaves its constructor to the compiler would be a complete, well-formed answer about
-	/// somebody else's class.
+	/// reason it carries its own type. Once a type is declared here at the path the caller wrote, the
+	/// caller means that type: answering about a referenced assembly's Greeter because this
+	/// solution's Greeter leaves its constructor to the compiler would be a complete, well-formed
+	/// answer about somebody else's class. A type of that name declared at some other path is not
+	/// that, and does not stop a library's constructor being reached.
+	/// </para>
+	/// <para>
+	/// Where the address could also be read as a type, the refusal says that reading found nothing
+	/// too, so the advice to add a constructor is never given to a caller who meant a type.
 	/// </para>
 	/// </summary>
-	private static ArgumentException NoConstructor(SymbolAddress address, IReadOnlyList<ISymbol> named)
+	private static ArgumentException NoConstructor(
+		SymbolAddress address,
+		IReadOnlyList<INamedTypeSymbol> types,
+		string metadata)
 	{
-		var types = named
-			.OfType<INamedTypeSymbol>()
-			.Where(type => string.Equals(type.Name, address.Name, StringComparison.Ordinal))
-			.ToArray();
+		var asType = address.AsType is { } other
+			? $" Read as a type instead, {Quote(other.Requested)} names nothing either: no type {Quote(other.Name)} is "
+				+ $"declared in a namespace or type ending {Quote(string.Join(".", other.Path.Take(other.Path.Count - 1)))}."
+			: string.Empty;
 
-		if (types.Length == 0)
+		if (types.Count == 0)
 		{
 			return new SymbolNotFoundException(
-				$"No type called {Quote(address.Name)} is declared in this solution, so {Quote(address.Requested)} "
-					+ "names no constructor.");
+				$"No type is declared at {Quote(string.Join(".", address.Path))} in this solution, so "
+					+ $"{Quote(address.Requested)} names no constructor.{asType}{metadata}");
 		}
 
 		if (address.Constructor == ConstructorKind.Static)
@@ -341,8 +366,8 @@ public static class DeclarationLocator
 		{
 			return new ArgumentException(
 				$"{Quote(address.Name)} declares no constructor. The parameterless one it has is written by the "
-					+ "compiler rather than by the file, so there is nothing here to change. Add one with "
-					+ "rose_add_member.");
+					+ $"compiler rather than by the file, so there is nothing here to change.{asType} To give it "
+					+ "a constructor, add one with rose_add_member.");
 		}
 
 		var signatures = declared
@@ -353,7 +378,23 @@ public static class DeclarationLocator
 
 		return new ArgumentException(
 			$"No constructor of {Quote(address.Name)} takes those parameter types. It declares "
-				+ $"{Summarise(signatures)}.");
+				+ $"{Summarise(signatures)}.{asType}");
+	}
+
+	/// <summary>
+	/// A positional record property is declared by a parameter, so the only declaration there is to
+	/// write over in its name is the whole record -- which is not what a caller naming the property
+	/// meant. The refusal names the tools that do reach it.
+	/// </summary>
+	private static ArgumentException Positional(DeclarationTarget target)
+	{
+		var record = target.Symbol.ContainingType is { } type ? SymbolAddress.Of(type) : null;
+
+		return new ArgumentException(
+			$"{Quote(SymbolAddress.Of(target.Symbol))} is a positional property, declared by a parameter of "
+				+ $"{Quote(record)} rather than as a member of its own, so there is no declaration of it to write "
+				+ "over. rose_rename_symbol renames it; rose_change_signature on the record's constructor changes "
+				+ "its type or removes it; rose_add_member can declare it explicitly instead.");
 	}
 
 	private static ArgumentException Ambiguous(
@@ -373,13 +414,25 @@ public static class DeclarationLocator
 			.Distinct(SymbolEqualityComparer.Default)
 			.Count() > 1;
 
+		// A type and a constructor, which is the one ambiguity a repeated last segment brings: the way
+		// out is a spelling only one of the readings accepts, written from the candidates themselves so
+		// that each resolves. global:: anchors the type at the root, which is what separates it from a
+		// constructor even where its full name repeats a root namespace; ..ctor is only a constructor.
+		var type = candidates.Select(candidate => candidate.Symbol).OfType<INamedTypeSymbol>().FirstOrDefault();
+		var constructor = candidates.Select(candidate => candidate.Symbol).OfType<IMethodSymbol>()
+			.FirstOrDefault(method => method.MethodKind == MethodKind.Constructor);
+
 		// One symbol in several places is a partial, which no parameter list can separate however
 		// precisely it is written. Several symbols are overloads, which one can.
-		var how = !separateSymbols
-			? "Pass filePath to say which of its declarations to write to."
-			: filePath is null
-				? "Name the parameter types to pick one, as Type.Member(int, string), or pass filePath."
-				: "Name the parameter types to pick one, as Type.Member(int, string).";
+		var how = type is not null && constructor is not null
+			? $"It reads both as a type and as a constructor. For the type write global::{SymbolAddress.Of(type)}; "
+				+ $"for the constructor write {SymbolAddress.Of(constructor.ContainingType)}..ctor, with its parameter "
+				+ "types if it has several."
+			: !separateSymbols
+				? "Pass filePath to say which of its declarations to write to."
+				: filePath is null
+					? "Name the parameter types to pick one, as Type.Member(int, string), or pass filePath."
+					: "Name the parameter types to pick one, as Type.Member(int, string).";
 
 		return new ArgumentException(
 			$"{Quote(address.Requested)} matches {candidates.Count} declarations: {listed}{more}. {how}");

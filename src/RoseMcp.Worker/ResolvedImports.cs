@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 using RoseMcp.Contracts;
@@ -58,11 +59,18 @@ public static class ResolvedImports
 			if (!SamePath(path, filePath)) continue;
 			if (asked.Count >= limit) break;
 
-			var name = await MissingImports.NameAtAsync(snapshot.Solution, path, entry.Line, entry.Column, cancellationToken);
-			if (name is null || !asked.Add(name)) continue;
+			var unresolvedAt = await MissingImports.UnresolvedAtAsync(
+				snapshot.Solution, path, entry.Line, entry.Column, cancellationToken);
 
+			if (unresolvedAt is not { } at || !asked.Add(at.Name)) continue;
+
+			var (name, use) = at;
+
+			// How the name is used rules out kinds of candidate before any is counted: a namespace
+			// holding a type called Group is no answer to a call to Group(...), and counting it as the
+			// sole candidate imports it.
 			var resolution = await NameResolver.ResolveAsync(
-				snapshot, new ResolveNameRequest { Name = name, FilePath = path }, cancellationToken);
+				snapshot, new ResolveNameRequest { Name = name, FilePath = path, Use = use }, cancellationToken);
 
 			var usable = resolution.Candidates
 				.Where(candidate => candidate.AlreadyInScope is null && candidate.Caveat is null)
@@ -110,7 +118,7 @@ public static class ResolvedImports
 
 			unresolved.Add(resolution.Candidates is [{ Caveat: { } caveat } sole]
 				? $"{name} is {sole.Symbol}, {caveat}."
-				: $"{name} resolves to nothing in scope, and no import would fix it.");
+				: use.WhyNothingFits(name) ?? $"{name} resolves to nothing in scope, and no import would fix it.");
 		}
 
 		return new Imports(add, applied, ambiguous, unresolved);
@@ -153,6 +161,59 @@ public static class ResolvedImports
 	}
 
 	/// <summary>
+	/// The solution with the imports applied, less any that did not bind the name it was fetched for.
+	/// <para>
+	/// Checked before anything is written, against the document with the imports in place, because an
+	/// import that leaves its own name failing is the wrong import: "the only namespace anything of
+	/// that name is in" was true and was not the namespace this code needs. Kept, it is a second error
+	/// -- IDE0005, an unnecessary using, which is a build error here -- in a line the caller never
+	/// wrote, on top of the one it was fetched to fix. Taken back out, the caller is left with the
+	/// error they had and a sentence saying no import fixes it.
+	/// </para>
+	/// </summary>
+	/// <param name="solution">The solution as the edit leaves it.</param>
+	/// <param name="id">The document to import into.</param>
+	/// <param name="imports">What the unresolved names turned out to want.</param>
+	/// <param name="rules">The document's layout, read from it before the edit.</param>
+	/// <param name="cancellationToken">Cancels the lookups and the binding.</param>
+	public static async Task<(Solution Solution, Imports Imports)> ApplyResolvingAsync(
+		Solution solution,
+		DocumentId id,
+		Imports imports,
+		WhitespaceRules rules,
+		CancellationToken cancellationToken)
+	{
+		if (!imports.AnythingToAdd) return (solution, imports);
+
+		var applied = await ApplyAsync(solution, id, imports.Namespaces, rules, cancellationToken);
+		var failing = await FailingNamesAsync(applied, id, cancellationToken);
+
+		var kept = imports.Applied.Where(import => !failing.Contains(import.Name)).ToArray();
+
+		if (kept.Length == imports.Applied.Count) return (applied, imports);
+
+		var namespaces = kept.Select(import => import.Namespace).Distinct(StringComparer.Ordinal).ToArray();
+
+		var dropped = imports.Applied
+			.Where(import => failing.Contains(import.Name))
+			.Select(import => namespaces.Contains(import.Namespace, StringComparer.Ordinal)
+				? $"{import.Name}: importing {import.Namespace}, the only namespace anything of that name is in, did "
+					+ $"not resolve {import.Name}. The import stays, for the other names it does resolve."
+				: $"{import.Name}: importing {import.Namespace}, the only namespace anything of that name is in, did "
+					+ $"not resolve {import.Name}, so it was taken back out. {import.Name} resolves to nothing in "
+					+ "scope, and no import would fix it.");
+
+		var reapplied = await ApplyAsync(solution, id, namespaces, rules, cancellationToken);
+
+		return (reapplied, imports with
+		{
+			Namespaces = namespaces,
+			Applied = kept,
+			Unresolved = [.. imports.Unresolved, .. dropped],
+		});
+	}
+
+	/// <summary>
 	/// The three answers, kept apart on purpose. Folding ambiguous into unresolved would tell a
 	/// caller a type does not exist when the problem is that it exists twice, which sends them off
 	/// to write one.
@@ -160,9 +221,8 @@ public static class ResolvedImports
 	/// <param name="Namespaces">Namespaces to import, each with exactly one answer behind it.</param>
 	/// <param name="Applied">
 	/// The name each import was fetched for, beside the namespace it got. A pairing rather than a
-	/// sentence, because whether the import worked is not known until the code has been compiled
-	/// again with it in place -- and an import that left its own error standing is the one thing the
-	/// caller most needs said.
+	/// sentence, because whether the import works is only known once the document has been bound with
+	/// it in place, and an import that leaves its own name failing is taken back out.
 	/// </param>
 	/// <param name="Ambiguous">Names with more than one candidate; nothing was imported for these.</param>
 	/// <param name="Unresolved">Names no import would fix, with why not.</param>
@@ -186,74 +246,40 @@ public static class ResolvedImports
 	public readonly record struct AppliedImport(string Name, string Namespace);
 
 	/// <summary>
-	/// One sentence per import that was applied, saying whether the error it was fetched for is gone.
-	/// <para>
-	/// The two halves were reported side by side without being joined: an import naming the only
-	/// namespace anything of that name is in, and, a few lines down, an error about the same name.
-	/// Joining them is decidable rather than a heuristic -- the name is known, and whether it still
-	/// fails is a question the compilation just run has already answered -- and it turns the outcome a
-	/// sole candidate is allowed to have into one sentence rather than two facts the caller has to put
-	/// together for themselves.
-	/// </para>
-	/// <para>
-	/// Asked after the code has been compiled with the import in place, which is the only moment the
-	/// question has an answer. A name that has stopped failing needs no more than the import being
-	/// named, so that sentence is the one it had before.
-	/// </para>
+	/// One sentence per import that was applied, naming the name it was fetched for. Every one of
+	/// them resolved that name, since <see cref="ApplyResolvingAsync"/> takes back any that did not.
 	/// </summary>
-	/// <param name="solution">The solution as it stands with the imports applied.</param>
-	/// <param name="imports">What was applied, each with the name it was fetched for.</param>
-	/// <param name="remaining">The errors the edit has left, compiled with the imports in place.</param>
-	/// <param name="filePath">The file the imports went into.</param>
-	/// <param name="cancellationToken">Cancels the lookups.</param>
-	public static async Task<IReadOnlyList<string>> ReportAsync(
-		Solution solution,
-		Imports imports,
-		IReadOnlyList<DiagnosticEntry> remaining,
-		string filePath,
-		CancellationToken cancellationToken)
-	{
-		if (imports.Applied.Count == 0) return [];
-
-		var failing = await FailingNamesAsync(solution, remaining, filePath, cancellationToken);
-
-		return
-		[
-			.. imports.Applied.Select(import => failing.Contains(import.Name)
-				? $"{import.Name}: imported {import.Namespace}, and it did not resolve {import.Name} -- the only "
-					+ "namespace anything of that name is in was not the one this code needs. The import is still "
-					+ "there; remove it if the name was meant to be something else."
-				: $"{import.Name}: imported {import.Namespace}, the only namespace anything of that name is in."),
-		];
-	}
+	public static IReadOnlyList<string> Report(Imports imports) =>
+	[
+		.. imports.Applied.Select(import =>
+			$"{import.Name}: imported {import.Namespace}, the only namespace anything of that name is in."),
+	];
 
 	/// <summary>
-	/// The names in <paramref name="filePath"/> that still do not work, read off the errors the edit
-	/// has left.
-	/// <para>
-	/// Wider than the set that asks for an import in the first place, and deliberately: an import that
-	/// makes an extension method visible turns "there is no Shouted here" into "Shouted exists and its
-	/// receiver is the wrong type", and that is the same import being wrong rather than a step towards
-	/// it. Every id here says the name does not do what the code asked of it, which is the question an
-	/// import answers or fails to.
-	/// </para>
+	/// The names in the document that still do not bind, read off its own diagnostics with the imports
+	/// in place.
 	/// </summary>
 	private static async Task<IReadOnlySet<string>> FailingNamesAsync(
 		Solution solution,
-		IReadOnlyList<DiagnosticEntry> remaining,
-		string filePath,
+		DocumentId id,
 		CancellationToken cancellationToken)
 	{
 		var failing = new HashSet<string>(StringComparer.Ordinal);
 
-		foreach (var entry in remaining)
-		{
-			if (!StillFailing.Contains(entry.Id, StringComparer.Ordinal)) continue;
-			if (entry.FilePath is not { Length: > 0 } path) continue;
-			if (!SamePath(path, filePath)) continue;
+		if (solution.GetDocument(id) is not { } document) return failing;
 
-			var name = await MissingImports.NameAtAsync(solution, path, entry.Line, entry.Column, cancellationToken);
-			if (name is not null) failing.Add(name);
+		var model = await document.GetSemanticModelAsync(cancellationToken);
+		var root = await document.GetSyntaxRootAsync(cancellationToken);
+
+		if (model is null || root is null) return failing;
+
+		foreach (var diagnostic in model.GetDiagnostics(cancellationToken: cancellationToken))
+		{
+			if (!StillFailing.Contains(diagnostic.Id, StringComparer.Ordinal)) continue;
+
+			var token = root.FindToken(diagnostic.Location.SourceSpan.Start);
+
+			if (token.IsKind(SyntaxKind.IdentifierToken)) failing.Add(token.ValueText);
 		}
 
 		return failing;

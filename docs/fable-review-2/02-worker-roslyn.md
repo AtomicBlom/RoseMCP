@@ -36,10 +36,8 @@ as a convention copied into six services. **That half is fixed** — `EditPipeli
 caller's own errors sat in it. **The text tier is now the whole of the problem**:
 `BodyEdit` splicing strings by token span, `ChangeSignatureService` discarding the declaration's own
 separators, `AddFileService` prepending imports as text, `DocComment` sniffing the first character. All
-five open fidelity bugs (#195, #197, #199, #200, #217) live there. Symbol
-addressing has one lossy primary resolver and a more complete fallback that is reached only on one
-exception type, which is why a positional record property is unreachable by name from every tool
-(reproduced live; broader than #233 describes). ~~The Degraded status on this repository is a Rose defect
+five open fidelity bugs (#195, #197, #199, #200, #217) live there. ~~Symbol addressing had a lossy
+primary resolver~~ — one compilation-backed resolver in PR #418 (WRK-04). ~~The Degraded status on this repository is a Rose defect
 in the analyzer loader~~ — fixed in PR #269 (WRK-08); the workspace loads clean.
 Grade: **core strong, edges adequate, editing stack fragile below the pipeline** -- and the fragile part
 is the part the project's own charter says it exists for.
@@ -163,51 +161,14 @@ conventions.
 disagreed with one another and with .editorconfig. A write decides one layout per file, and every pass
 takes it, the formatter included.
 
-### WRK-04 Two symbol resolvers, and the primary one is lossy
-- **Severity:** High
-- **Effort:** M
-- **Where:** `DeclarationLocator.cs:118-125` (`SymbolFinder.FindSourceDeclarationsAsync` by last
-  segment, then `address.Matches`), `DeclarationLocator.cs:229-286` (`NotFound` branches),
-  `SymbolTarget.cs:58-76` (metadata fallback gated on `SymbolNotFoundException`),
-  `MetadataSymbols.cs:68-87` (compilation-backed `GetTypesByMetadataName` + `GetMembers`)
-- **What:** Reproduced live in this review: `rose_symbol_info` and `rose_find_references` on
-  `RoseMcp.Contracts.SymbolLocation.TypeName` -- a positional record property -- both fail with
-  "Nothing is declared at ... 'TypeName' is declared as RoseMcp.Contracts.LiveEvaluation.TypeName, ...
-  and 7 more". The declaration index behind `FindSourceDeclarationsAsync` does not list a property
-  synthesised from a record parameter, so `matching` is empty; because *other* types declare a
-  `TypeName`, `named` is not empty, so the `matching.Count == 0` branch throws a plain
-  `ArgumentException` (`:249-271`) rather than `SymbolNotFoundException` (`:238-242`), and the
-  fallback in `SymbolTarget.ResolveAsync` never runs. #233 reported the read side working only because
-  `ModuleSimpleName` happened to be unique in the solution. The fallback resolver, `MetadataSymbols`,
-  asks the compilation (`GetTypesByMetadataName` then `GetMembers(name)`) and would find it -- it is
-  the more complete of the two and is used last. `MoveTypeService.Select:104-141` is a third
-  resolver that matches syntax identifiers in one file.
-- **Why it matters:** Positional records are the shape of every DTO in `RoseMcp.Contracts`, and their
-  properties cannot be addressed by name from any tool whenever the name is common -- which for
-  `Name`, `Path`, `Line`, `TypeName` is always. The refusal points at `rose_search_symbols`, which
-  hands back the same address. The rename tool's description tells callers to prefer names over
-  positions.
-- **Suggested change:** One resolver, compilation-backed: parse the address; for each project,
-  resolve the type path (`GetTypesByMetadataName` with the arity loop `MetadataSymbols.TypesNamed`
-  already has, *type-first* so `Namespace.Type.Type` is tried as a type before a constructor);
-  `GetMembers(last)` filtered by `ParametersMatch`; prefer symbols with `Locations.Any(IsInSource)`;
-  derive declarations from `DeclaringSyntaxReferences`. Keep `FindSourceDeclarationsAsync` only for a
-  bare single-segment name. `SymbolTarget`, `DeclarationLocator` and `MoveTypeService.Select` all call
-  it. Add positional-record property, primary-constructor parameter, and `Ns.Type.Type` cases to
-  `SymbolAddressTests` and an integration test over `tests/fixtures`.
+### ~~WRK-04 Two symbol resolvers, and the primary one is lossy~~
+**#418.** Names were resolved through a declaration index that lists no positional record property,
+with a fuller resolver asked only after one kind of refusal, so reads and writes disagreed about one
+address. One resolver asks the compilation for every tool.
 
-### WRK-05 A repeated last segment is always read as a constructor
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `SymbolAddress.cs:259-268`
-- **What:** `RoseMcp.XamlDiff.XamlDiff` parses as constructor of `XamlDiff` in namespace `RoseMcp`;
-  reproduced live: `rose_symbol_info` answers "'XamlDiff' declares no constructor ... Add one with
-  rose_add_member" (#210). The comment justifying it ("a member may not share the name of the type
-  enclosing it") is true of members and false of namespaces.
-- **Why it matters:** Every `Foo.Bar/Bar.cs` layout is unreachable by qualified name, and the error
-  recommends the call that just failed.
-- **Suggested change:** `SplitOffConstructor` returns both readings when the last two segments repeat;
-  the resolver (WRK-04) tries the type reading first. Fold into WRK-04 if that lands first.
+### ~~WRK-05 A repeated last segment is always read as a constructor~~
+**#418.** `Namespace.Type.Type` was read only as a constructor, so a type named for its namespace was
+unreachable by name. Both readings are kept, and the compilation decides.
 
 ### ~~WRK-06 `NameResolver` asks one compilation about another compilation's symbol~~
 **#306.** One compilation was asked about another's symbol, which Roslyn refuses by throwing, so
@@ -320,21 +281,9 @@ degraded. Each analyzer directory has a context of its own.
   to merge); make `WorkspaceSnapshot`'s construction `internal` to the session (a factory method on
   `WorkspaceSession`), so the only producer is the barrier. See inversion 1.
 
-### WRK-14 Five project-by-name resolvers with two different refusal policies
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `GeneratedDocumentService.Select:125-137` (widens to the whole solution with a notice),
-  `DiagnosticsService.SelectProjects:254-287` (refuses, listing names), `NavigationService.GuardProject:148-158`
-  (refuses), `AddFileService.Owner:169-178` (refuses), `ProjectGraphService.Describe:29-34` (refuses),
-  `BuildFreshness.Of:29-34` (returns empty; `AnalysisTools.cs:63` adds a notice)
-- **What:** `DiagnosticsService`'s own comment explains why widening is the worst answer ("comes
-  back clean and complete, for a question fourteen projects larger than the one asked").
-  `GeneratedDocumentService` does the thing that comment forbids. Some accept a path, some do not;
-  all are case-insensitive by their own arrangement.
-- **Why it matters:** `rose_read_generated_document project=Typo` searches every project and reports
-  documents from all of them as if they were the one asked about.
-- **Suggested change:** `Projects.Named(Solution, string)` in one place, refusing with the sorted
-  list; every service calls it.
+### ~~WRK-14 Five project-by-name resolvers with two different refusal policies~~
+**#418.** Each tool turned a project name into projects its own way, and one widened a name matching
+nothing to the whole solution. One helper does it for every tool, and refuses.
 
 ### WRK-15 `BodyEdit.Inserted` rebuilds the whole body from trimmed statements
 - **Severity:** Medium
@@ -463,20 +412,10 @@ beside it, and the format check says when nothing declared the indentation it ch
   is what changes the answer, and name `Microsoft.CodeAnalysis.ExternalAccess.HotReload` as the route
   to evaluate.
 
-### WRK-23 Tool-layer boilerplate is repeated where two helpers already exist
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `Tools/RefactoringTools.cs:37-56, 84-103, 122-138, 158-175, 319-339, 359-377, 508-530`
-  (inline `Split`/`Follow`/`SessionAsync`/`MutateAsync`), against `RunAsync:614-626` and `EditAsync:384-398`
-- **What:** The tool layer is thin, which is right: each tool builds a request record and hands it to
-  a service through `MutateAsync` or `ReadAsync`. But seven mutation tools inline the same five lines
-  that `RunAsync` wraps, and `EditAsync` is `RunAsync` specialised for one lambda shape. A new tool
-  copies whichever it sees first.
-- **Why it matters:** Low on its own, and nothing else will absorb it. It survives WRK-01 because
-  `EditPipeline` is a *service*-layer type and this preamble is in the tool layer, which the pipeline
-  never reaches: the two duplications looked like one because they sit either side of the same call.
-- **Suggested change:** Every mutation tool goes through `RunAsync`; add `ReadAsync` for the reads in
-  `NavigationTools`/`AnalysisTools` so the `Follow` handle cannot be forgotten either.
+### ~~WRK-23 Tool-layer boilerplate is repeated where two helpers already exist~~
+**#418.** Most tools wrote out their own wait for the workspace beside two helpers that did it, so a
+new tool could copy one that let a cold load go unreported. Every tool reaches the workspace through
+one helper, and a test refuses a tool given the means to go round it.
 
 ## Pit-of-success inversions
 
@@ -495,15 +434,14 @@ beside it, and the format check says when nothing declared the indentation it ch
    exception hierarchy plus a banned-API analyzer (`BannedSymbols.txt` in the worker project) that
    forbids `new ArgumentException(...)`/`new InvalidOperationException(...)` outside it; the boundary
    filter wraps anything that is not a `Refusal` as an internal error (WRK-07).
-5. **Rule today:** a name resolves one way. **Mechanism:** one `SymbolResolver.ResolveAsync(Solution,
-   SymbolAddress, ResolveOptions)` that both `SymbolTarget` and `DeclarationLocator` call; `MetadataSymbols`
-   becomes its metadata branch rather than a fallback on one exception type (WRK-04, WRK-05).
+5. ~~A name resolves one way (WRK-04, WRK-05).~~ **#418.** One resolver answers for every tool, and
+   a test refuses any other type that looks a name up.
 6. **Rule today:** analyzers are shadow-copied (tested) and two versions of one generator must both
    load (untested, broken). **Mechanism:** one `AssemblyLoadContext` per shadow directory, and a test
    in `AnalyzerLockTests` that loads two versions of one analyzer and asserts two generator sets
    (WRK-08).
-7. **Rule today:** a project name that matches nothing is refused, never widened. **Mechanism:** one
-   `Projects.Named` that every service must go through to turn a string into `Project`s (WRK-14).
+7. ~~A project name that matches nothing is refused, never widened (WRK-14).~~ **#418.** One helper
+   turns a name into projects, and a test refuses any other type that compares one.
 8. **Rule today:** comments carry no history. **Mechanism:** a unit test over `src/**/*.cs` comment
    lines for the forbidden phrases, in the same style as the repository's existing drift tests (WRK-17).
 

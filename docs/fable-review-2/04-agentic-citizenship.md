@@ -171,13 +171,9 @@ revision 1). Sizes are the raw JSON as it arrived.
 - **Why it matters:** An agent budgets from the schema. It is told documentation costs one line per member, it costs a paragraph, and `includeDocumentation=true` is the **default** -- so the setting most likely to overflow a context window is the one chosen by a caller who was told it was cheap. It is unbounded on a third-party type.
 - **Suggested change:** Return the first sentence, as the DTO says -- cut at the first `. ` outside a tag -- and add a `summaryLength` cap. Then make `IncludeDocumentationArgument`, `OutlinedType.Summary` and `OutlinedMember.Summary` quote one sentence of the same text, and assert in `ToolDescriptionTests` that a member's summary in an outline is shorter than the same member's in `rose_symbol_info`.
 
-### AGT-03 A metadata symbol is unreachable whenever any source symbol anywhere shares its *leaf* name
-- **Severity:** High
-- **Effort:** M
-- **Where:** `src/RoseMcp.Worker/SymbolTarget.cs:65-76`; `src/RoseMcp.Worker/DeclarationLocator.cs:237-271`; transcripts T2, T3a, T3b
-- **What:** `SymbolTarget.ResolveAsync` falls back to `MetadataSymbols.FindAsync` only when the source search throws `SymbolNotFoundException`, which `DeclarationLocator.NotFound` raises only on its `named.Count == 0` arm (`:237-241`). Every other arm throws a plain `ArgumentException`, and the fallback never runs. So the *leaf* name decides: `Microsoft.CodeAnalysis.Workspace.CurrentSolution` resolves because nothing in this solution is called `CurrentSolution`; `System.Collections.Generic.List` does not, because `SolutionFileReader.List` exists; `ModelContextProtocol.Server.McpServer.SessionId` does not, because five source records have a `SessionId`. The refusal then lists those five, which are in unrelated namespaces and are candidates for nothing. The caller wrote a fully qualified name that shares nothing with any of them but its last word.
-- **Why it matters:** `rose_symbol_info` promises it answers "about a type in a referenced assembly", and `rose_find_implementations` promises `"what here implements IDisposable" is one call`. Whether that promise holds is decided by a collision the caller cannot see and did not cause, and it fails *more* often the larger the solution -- `List`, `Name`, `Path`, `Value`, `Id` are the leaf names most worth asking about and the likeliest to collide. The reasoning recorded on `SymbolNotFoundException` ("An ambiguous match ... is never a reason to look in metadata") is right for a *bare* name and is being applied to a *qualified* one, which is a different question.
-- **Suggested change:** Take the metadata fallback whenever `matching.Count == 0` and the requested path is qualified -- that is, when nothing in source is declared *at the address the caller wrote*, rather than when nothing in source carries the last word of it. Keep the existing refusal for a bare leaf name, which is the ambiguity the exception was written for. Then have "Nothing is declared at" say whether a metadata search ran, so a caller can tell "not in your source" from "not anywhere".
+### ~~AGT-03 A metadata symbol is unreachable whenever any source symbol anywhere shares its *leaf* name~~
+**#418.** Whether a read could reach a referenced assembly turned on the last segment of the name. A
+read asks metadata whenever source has nothing at the address, and says when it did.
 
 ### AGT-04 A leaked Roslyn exception names an argument the tool does not have
 - **The provenance half is done (#306).** A symbol is mapped into the asking compilation before it is
@@ -583,11 +579,8 @@ by how often it decides a call, not by severity.
    the only one where the tool *worked*. `rose_outline` at 22 KB, `rose_find_implementations` at
    1,312 matches, `rose_symbol_info` at 9 KB of XML. An agent that cannot afford the answer greps,
    and it does not come back.
-2. **The name the caller wrote cannot be addressed** (AGT-03, #210, #233, #239). Positional record
-   properties, a type whose namespace ends in its own name, a metadata symbol whose leaf name
-   collides, an `out` parameter dropped from the reported symbol. The addressing grammar is the
-   product's central claim and it is not total, so the agent learns to keep a position to hand --
-   which is the grep it was meant to replace.
+2. ~~**The name the caller wrote cannot be addressed** (AGT-03, #210, #233, #239).~~ **#418.** The
+   four instances named here resolve by name.
 3. **The error does not say what to do** (AGT-04, AGT-08, #121, #212, #210, #249). A leaked
    `(Parameter 'symbol')`, a dropped argument name reported as a missing value, advice to make the
    call that just failed. Each costs one to three round trips, and the agent's next move after two

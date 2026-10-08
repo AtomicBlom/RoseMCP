@@ -12,10 +12,9 @@ namespace RoseMcp.Worker.Tools;
 /// <summary>Reading the solution: diagnostics and the generated code no file tool can reach.</summary>
 [McpServerToolType]
 public sealed class AnalysisTools(
-	WorkspaceHost host,
+	WorkspaceCalls calls,
 	DiagnosticsService diagnostics,
-	CodeFixCatalog codeFixes,
-	SharedWorkProgress sharedWork)
+	CodeFixCatalog codeFixes)
 {
 	[McpServerTool(
 		Name = ToolNames.ListCodeFixes,
@@ -25,18 +24,14 @@ public sealed class AnalysisTools(
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.ListCodeFixes)]
-	public async Task<CodeFixList> ListCodeFixesAsync(
+	public Task<CodeFixList> ListCodeFixesAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.SingleFilePathArgument)] string filePath,
-		CancellationToken cancellationToken = default)
-	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-
-		return await CodeFixService.ListAsync(snapshot, codeFixes, filePath, cancellationToken, working);
-	}
+		CancellationToken cancellationToken = default) =>
+		calls.ReadAsync(
+			progress,
+			(snapshot, working) => CodeFixService.ListAsync(snapshot, codeFixes, filePath, cancellationToken, working),
+			cancellationToken);
 
 	[McpServerTool(
 		Name = ToolNames.BuildFreshness,
@@ -46,24 +41,28 @@ public sealed class AnalysisTools(
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.BuildFreshness)]
-	public async Task<BuildFreshnessReport> BuildFreshnessAsync(
+	public Task<BuildFreshnessReport> BuildFreshnessAsync(
 		IProgress<ProgressNotificationValue> progress,
-		[Description(ToolDescriptions.ProjectOrPathFilterArgument)] string? project = null,
-		CancellationToken cancellationToken = default)
-	{
-		// Comparing timestamps is instant. The only wait worth reporting is the workspace itself.
-		using var following = sharedWork.Follow(WorkProgress.For(progress));
+		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
+		CancellationToken cancellationToken = default) =>
+		calls.ReadAsync(
+			progress,
+			snapshot => Task.FromResult(FreshnessOf(snapshot, project, cancellationToken)),
+			cancellationToken);
 
-		var snapshot = await host.ReadAsync(cancellationToken);
+	/// <summary>
+	/// Compares each project's build output with its sources. Instant, which is why the call reports
+	/// nothing but its wait for the workspace.
+	/// </summary>
+	private static BuildFreshnessReport FreshnessOf(
+		WorkspaceSnapshot snapshot,
+		string? project,
+		CancellationToken cancellationToken)
+	{
 		var freshness = BuildFreshness.Of(snapshot.Solution, project, cancellationToken);
 		var stale = freshness.Count(candidate => candidate.Stale);
 
 		var notices = new List<string>(snapshot.Notices);
-
-		if (freshness.Count == 0 && !string.IsNullOrWhiteSpace(project))
-		{
-			notices.Add($"No project matched '{project}'.");
-		}
 
 		// Said out loud rather than left to be read off the list, because a caller asking this is about
 		// to run something and the answer they need is one word.
@@ -99,13 +98,8 @@ public sealed class AnalysisTools(
 		[Description(ToolDescriptions.MaxDiagnosticsArgument)] int maxResults = 200,
 		CancellationToken cancellationToken = default)
 	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
 		// Read before the workspace, so a contradictory call is refused without paying for a load.
 		var wanted = DiagnosticTarget.From(filePath, project, scope);
-
-		var snapshot = await host.ReadAsync(cancellationToken);
 
 		var request = new DiagnosticsRequest
 		{
@@ -116,7 +110,10 @@ public sealed class AnalysisTools(
 			MaxResults = maxResults <= 0 ? 200 : maxResults,
 		};
 
-		return await diagnostics.AnalyseAsync(snapshot, request, cancellationToken, working);
+		return await calls.ReadAsync(
+			progress,
+			(snapshot, working) => diagnostics.AnalyseAsync(snapshot, request, cancellationToken, working),
+			cancellationToken);
 	}
 
 	[McpServerTool(
@@ -127,19 +124,14 @@ public sealed class AnalysisTools(
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.ListGeneratedDocuments)]
-	public async Task<GeneratedDocumentList> ListGeneratedAsync(
+	public Task<GeneratedDocumentList> ListGeneratedAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
-		CancellationToken cancellationToken = default)
-	{
-		var (waiting, working) = WorkProgress.Split(progress);
-		using var following = sharedWork.Follow(waiting);
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-
-		return await GeneratedDocumentService.ListAsync(
-			snapshot, project, cancellationToken, working);
-	}
+		CancellationToken cancellationToken = default) =>
+		calls.ReadAsync(
+			progress,
+			(snapshot, working) => GeneratedDocumentService.ListAsync(snapshot, project, cancellationToken, working),
+			cancellationToken);
 
 	[McpServerTool(
 		Name = ToolNames.ReadGeneratedDocument,
@@ -149,18 +141,15 @@ public sealed class AnalysisTools(
 		OpenWorld = false,
 		UseStructuredContent = true)]
 	[Description(ToolDescriptions.ReadGeneratedDocument)]
-	public async Task<GeneratedDocumentContent> ReadGeneratedAsync(
+	public Task<GeneratedDocumentContent> ReadGeneratedAsync(
 		IProgress<ProgressNotificationValue> progress,
 		[Description(ToolDescriptions.HintNameArgument)] string hintName,
 		[Description(ToolDescriptions.ProjectFilterArgument)] string? project = null,
-		CancellationToken cancellationToken = default)
-	{
-		// Reading one document is cheap; the only wait worth reporting is the workspace itself.
-		using var following = sharedWork.Follow(WorkProgress.For(progress));
-
-		var snapshot = await host.ReadAsync(cancellationToken);
-		return await GeneratedDocumentService.ReadAsync(snapshot, hintName, project, cancellationToken);
-	}
+		CancellationToken cancellationToken = default) =>
+		calls.ReadAsync(
+			progress,
+			snapshot => GeneratedDocumentService.ReadAsync(snapshot, hintName, project, cancellationToken),
+			cancellationToken);
 
 	private static DiagnosticSeverity ParseSeverity(string? severity) => severity?.ToLowerInvariant() switch
 	{

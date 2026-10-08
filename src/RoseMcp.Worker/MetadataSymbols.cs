@@ -15,8 +15,9 @@ namespace RoseMcp.Worker;
 /// What it must not do is choose. A name that resolves to different types in different projects is
 /// reported with both, never picked between, for the same reason rose_resolve_name never returns a
 /// first candidate: the wrong one is a complete, well-formed answer about something else. Source
-/// wins outright, because a caller naming a type this solution declares means that one, and this
-/// runs only after the declaration search has found nothing matching.
+/// wins outright, because a caller naming a type this solution declares means that one: this is the
+/// metadata branch of <see cref="SymbolResolver"/>, which asks it only once source has nothing at the
+/// address under any reading.
 /// </para>
 /// </summary>
 public static class MetadataSymbols
@@ -63,9 +64,9 @@ public static class MetadataSymbols
 	}
 
 	/// <summary>
-	/// What the address could be naming: the whole path as a type, or its last segment as a member of
-	/// the type the rest names. A constructor address already spells its type, so it is only the
-	/// first.
+	/// What the address could be naming, under each of its readings: the whole path as a type, or its
+	/// last segment as a member of the type the rest names. A constructor reading already spells its
+	/// type, so it is only the first.
 	/// </summary>
 	private static async Task<IReadOnlyList<ISymbol>> CandidatesAsync(
 		Project project,
@@ -75,25 +76,28 @@ public static class MetadataSymbols
 	{
 		var candidates = new List<ISymbol>();
 
-		foreach (var type in await TypesNamedAsync(project, compilation, address.Path, cancellationToken))
+		foreach (var reading in address.Readings)
 		{
-			if (address.Constructor != ConstructorKind.None)
+			foreach (var type in await TypesNamedAsync(project, compilation, reading.Path, reading.Anchored, cancellationToken))
 			{
-				candidates.AddRange(type.GetMembers().Where(address.Matches));
-				continue;
+				if (reading.Constructor != ConstructorKind.None)
+				{
+					candidates.AddRange(type.GetMembers().Where(reading.Matches));
+					continue;
+				}
+
+				if (reading.Matches(type)) candidates.Add(type);
 			}
 
-			if (address.Matches(type)) candidates.Add(type);
-		}
+			if (reading.Constructor != ConstructorKind.None || reading.Path.Count < 2) continue;
 
-		if (address.Constructor != ConstructorKind.None || address.Path.Count < 2) return candidates;
+			var containing = await TypesNamedAsync(
+				project, compilation, [.. reading.Path.Take(reading.Path.Count - 1)], reading.Anchored, cancellationToken);
 
-		var containing = await TypesNamedAsync(
-			project, compilation, [.. address.Path.Take(address.Path.Count - 1)], cancellationToken);
-
-		foreach (var type in containing)
-		{
-			candidates.AddRange(type.GetMembers(address.Name).Where(address.Matches));
+			foreach (var type in containing)
+			{
+				candidates.AddRange(type.GetMembers(reading.Name).Where(reading.Matches));
+			}
 		}
 
 		return candidates;
@@ -104,31 +108,35 @@ public static class MetadataSymbols
 	/// a caller writes it: an arity suffix the address has dropped, and a '+' where a nested type is
 	/// written with a '.'.
 	/// <para>
-	/// A lone segment is a name rather than a path, and no metadata name lookup will ever find one --
-	/// the compilation spells StringBuilder as System.Text.StringBuilder and by nothing else. So that
-	/// case goes to the declaration index instead, which is what lets a caller name a library type
-	/// the way the code in front of them writes it rather than having to know its namespace first.
+	/// A path that is not the whole of a metadata name -- a lone segment, or one missing the start of
+	/// its namespace -- is never found by a metadata name lookup: the compilation spells StringBuilder
+	/// as System.Text.StringBuilder and by nothing else. So that case goes to the declaration index
+	/// instead, matched on the end of each type's path, which is what lets a caller name a library
+	/// type the way the code in front of them writes it, or as much of it as they know, the same as
+	/// they may name a type in source.
 	/// </para>
 	/// </summary>
 	private static async Task<IReadOnlyList<INamedTypeSymbol>> TypesNamedAsync(
 		Project project,
 		Compilation compilation,
 		IReadOnlyList<string> path,
+		bool anchored,
 		CancellationToken cancellationToken)
 	{
 		if (path.Count == 0) return [];
 
 		var named = ByMetadataName(compilation, path).ToArray();
 
-		if (path.Count > 1 || named.Length > 0) return named;
+		if (named.Length > 0) return named;
 
 		var declared = await SymbolFinder.FindDeclarationsAsync(
-			project, path[0], ignoreCase: false, SymbolFilter.Type, cancellationToken);
+			project, path[^1], ignoreCase: false, SymbolFilter.Type, cancellationToken);
 
 		return
 		[
 			.. declared
 				.OfType<INamedTypeSymbol>()
+				.Where(type => SymbolAddress.IsAt(type, path, anchored))
 				.Where(type => !type.Locations.Any(location => location.IsInSource))
 
 				// Asked of the compilation rather than of DeclaredAccessibility, so an internal type

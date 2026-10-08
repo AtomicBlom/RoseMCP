@@ -37,28 +37,29 @@ review over roughly 60,000 lines of production code and 31,000 of tests, in 18 p
 | 5 | IPC-01, LIV-07 (the id), LIV-08, IPC-03 | #323 |
 | 7 | WRK-08 | #269 |
 | 9 | WRK-01 | #275, #276, #278 |
+| 9b | WRK-23 | #418 |
+| 10 | WRK-04, WRK-05, WRK-14, AGT-03 | #418 |
 | 8 (part) | AGT-17 (the overreach half) | #333 |
 | 8 (part) | WRK-03, WRK-19 | #361 |
 | 1c, 1d | filed after the review | #366 |
 | — | LIV-01 | #265, #268, #274, #281 |
 
 **Tier 0 is done in full** (#295), so everything after it is guarded and measurable. With it, all
-seven of tier 1's original wrong-answer cards, one of tier 2's three refactors, and nine of the 27 High
-findings -- including **the debugger core and the write pipeline**, which were the two
+seven of tier 1's original wrong-answer cards, two of tier 2's three refactors, and eleven of the 27
+High findings -- including **the debugger core and the write pipeline**, which were the two
 concentrations of duplication the review named, and the only wrong side effect in the corpus.
 
 **Tier 1 is done in full**, including the two wrong answers filed after the review (#366). Next is
-the rest of **card 8**, three slices in (#333, #361, #331), whose next slice is #332. Card 1
+the rest of **card 8**, four slices in (#333, #361, #331, #332). Card 1
 opened the gate on **11b** and **11c**.
 
 Issues filed after the review, up to #362, are triaged into the cards below. The ones no card fits
 are listed after tier 6, so none of them is re-derived from scratch.
 
-Four cards came out of closing others: **9b** (WRK-23 survived card 9, which its own text said it
-would not), the layout half of **21**, **11f** (closing 1b lets a worktree go while its worker runs
-on), and card 0e's finding that three of the phrases the comment convention lists are not history
-clauses at all. Card 9 also found a wrong answer the review missed -- four write tools reporting a
-project clean while the caller's errors sat in it.
+Three cards came out of closing others: the layout half of **21**, **11f** (closing 1b lets a
+worktree go while its worker runs on), and card 0e's finding that three of the phrases the comment
+convention lists are not history clauses at all. Card 9 also found a wrong answer the review missed
+-- four write tools reporting a project clean while the caller's errors sat in it.
 
 Each closed finding is struck in its own file: the pull request, the problem, the state.
 
@@ -93,7 +94,7 @@ reasoning in the "X, because Y" shape the conventions ask for. Three reviewers s
 refactor which loses the comments loses the design.
 
 Against that: three copies of `ToolErrorReporting` (BRK-06, AGT-19), two classes that are the same class twice (UIP-09),
-tool-layer boilerplate beside two helpers that already wrap it (WRK-23), and a comment debt of 43
+and a comment debt of 43
 history clauses and 153 issue tags, 47 of the 49 issues named being closed (UIP-23). That debt was
 reported as growing and is now merely large: a per-file baseline means it can only shrink, and the
 count it grew past was measured with three phrases that turn out not to indicate history at all.
@@ -143,8 +144,8 @@ layout the test stages itself rather than the one the deploy script writes. Thos
 Tier 0, and are built (PR #295). The seven highest-leverage:
 
 1. ~~Six copied write conventions replaced by one pipeline (WRK-01).~~ **#275, #276, #278.**
-2. **One compilation-backed symbol resolver** replacing two-and-a-half resolvers, so an address that
-   resolves for one tool resolves for all (WRK-04, AGT-03).
+2. ~~One compilation-backed symbol resolver, so an address that resolves for one tool resolves for
+   all (WRK-04, AGT-03).~~ **#418.**
 3. ~~A path type that cannot be resolved without a base (BRK-01, AGT-10).~~ **#305.**
 4. ~~Nine fields and five spellings of "is the target stopped" replaced by one state (LIV-02).~~ **#265.**
 5. ~~One framed-message type for every pipe (IPC-01, LIV-07, LIV-08).~~ **#323**, for the tap's pipe
@@ -286,7 +287,7 @@ satisfies them without anyone tracking a graph. One is left:
 
 | Card | Waits on | Why |
 |---|---|---|
-| Tier 6 | 3, and ideally 8-10 | An apply needs an explicit target state, and the emit sits on the write pipeline |
+| Tier 6 | 3, and ideally 8 | An apply needs an explicit target state, and the emit sits on the write pipeline |
 
 ### How the pit-of-success inversions relate to the cards
 
@@ -295,7 +296,7 @@ and most need no separate card, because they relate to the cards in one of two w
 
 - **The card *is* the inversion.** Cards 1, 3, 9 and 10 are the four biggest inversions written as
   work: a path type that cannot be resolved without a base, a target-execution union, one write
-  pipeline, one symbol resolver; only 10 is left. Doing the card badly and doing the inversion are
+  pipeline, one symbol resolver; all four are done. Doing the card badly and doing the inversion are
   the same alternative, so there is nothing extra to schedule -- only a note in the card that the
   mechanism, not the fix, is the deliverable.
 - **The inversion is a guard that must land *before* its cards**, because the cards are exactly the
@@ -329,10 +330,10 @@ Each closes a class of bug rather than a bug, and each is a prerequisite for som
 
 | # | Card | Findings | Issues | Effort |
 |---|---|---|---|---|
-| 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Five open fidelity issues close as a consequence.** A write names the lines it changed that nothing asked for (#333), so each fix is done when its sentence stops appearing. It also decides each file's layout once, from what declares it and then from the file (#361). A rewritten bare LF is said only where it changed a literal's value, naming the literal's line (#331). `OverreachReportTests` pins #217's three shapes and #195's dropped comment. The sentence cannot see #197, whose list the caller writes whole, or damage inside a span the caller asked for (#217's doubled indentation, #199). AGT-17's `rose_format` half is left. **Filed since, in the same territory:** #332 is the next slice, named by #361: `rose_add_file` alone leaves an all-LF payload's literals as they arrived. #336 is #217's doubled indentation again, on a replace that starts mid-line. #338 reflows a collection's `[` outside the find and the sentence does not name it. #360 writes a run of tabs mid-line into an argument list, inside a span the caller asked for. #362 puts a new `<param>` tag last rather than in parameter order. #343 is #197 and #354 is #199, filed again: close each as a duplicate. | WRK-02, AGT-17 | #195 #197 #199 #200 #217 #332 #336 #338 #360 #362 | M-L |
+| 8 | **Draw the text/syntax line once in the writing stack.** Syntax in, syntax out; text only inside the whitespace pass; one trivia pass after the formatter replacing five string re-indenters. **Five open fidelity issues close as a consequence.** A write names the lines it changed that nothing asked for (#333), so each fix is done when its sentence stops appearing. It also decides each file's layout once, from what declares it and then from the file (#361). A rewritten bare LF is said only where it changed a literal's value, naming the literal's line (#331), and `rose_add_file` rewrites an all-LF payload's literals as the member tools do (#332). `OverreachReportTests` pins #217's three shapes and #195's dropped comment. The sentence cannot see #197, whose list the caller writes whole, or damage inside a span the caller asked for (#217's doubled indentation, #199). AGT-17's `rose_format` half is left. **Filed since, in the same territory:** #336 is #217's doubled indentation again, on a replace that starts mid-line. #338 reflows a collection's `[` outside the find and the sentence does not name it. #360 writes a run of tabs mid-line into an argument list, inside a span the caller asked for. #362 puts a new `<param>` tag last rather than in parameter order. #343 is #197 and #354 is #199, filed again: close each as a duplicate. | WRK-02, AGT-17 | #195 #197 #199 #200 #217 #336 #338 #360 #362 | M-L |
 | ~~9~~ | **#275, #276, #278.** Six services each carried their own copy of the write conventions, and four tools on them reported a project clean while the caller's errors sat in it. One pipeline owns the conventions. | WRK-01 | — | — |
-| 9b | **Route every mutation tool through `RunAsync`.** Seven tools inline the same `WorkProgress.Split` / `sharedWork.Follow` / `SessionAsync` / `MutateAsync` preamble that `RunAsync` already wraps; add `ReadAsync` so the `Follow` handle cannot be forgotten on reads either. Was assumed to disappear with card 9 and did not. | WRK-23 | new | S |
-| 10 | **One compilation-backed symbol resolver.** Today two-and-a-half resolvers disagree, so positional record properties are unaddressable when the name is common, and a metadata symbol is unreachable if any source symbol shares its leaf name. Every DTO in `Contracts` is a positional record. Two filed since answer what a name binds to without asking the compilation: `rose_resolve_name` splits a namespace-qualified name at its first dot and answers about the first segment (#261), and the automatic imports satisfy an invocation with a namespace holding a *type* of that name (#337). | WRK-04, WRK-05, WRK-14, AGT-03 | #233 #210 #239 #261 #337 | M |
+| ~~9b~~ | **#418.** Most tools wrote out their own wait for the workspace beside two helpers that did it, so a new tool could copy one that let a cold load go unreported. Every tool reaches the workspace through one helper, and a test refuses a tool given the means to go round it. | WRK-23 | — | — |
+| ~~10~~ | **#418.** Two and a half resolvers disagreed about what a name meant, so a positional record property, a type named for its namespace and a library member sharing a source name's last segment were each unreachable from some tool; the import search answered a call with a type and a namespace-qualified name with its first segment. One resolver asks the compilation for every tool, and the import search asks it how the name is used. | — | — | — |
 
 ### Tier 3 — make Rose win against grep
 
@@ -350,7 +351,7 @@ Highest leverage on adoption. Cheap relative to impact.
 | 11h | **Tool results switch mid-session to `\u`-escaped text**, `+` for every `+`, which makes a C# diff unreadable and several times longer. Nothing restarted; the switch coincided with another session's server starting. Two serialization paths with different encoders, and something choosing between them, would explain it. One encoder for every tool's text, and a test that `+ < > " '` come back unescaped. | new | #358 | S |
 | 12 | **An unknown argument is dropped in silence**, then the error reports the value as missing. Collect undeclared arguments and name them. | AGT-08 | #249 | S |
 | 12b | **Three live-app tools answer with a bare sentence**, which is the defect card 0c fixed on `rose_workspace_close` surviving on the surface 0c's guard exempts. Give each a result record, and narrow the exemption so it excuses a live-app result from *workspace* attribution rather than from being a result. | BRK-21 | new | S |
-| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. The WinUI load diagnostic ("Cannot resolve Assembly or Windows Metadata file") goes with it: it should say its remedy, which is to build the referenced project first. Two refusals filed since give advice that does not work: `rose_change_signature` tells the caller to pass `usings`, which it does not take (#329), and `rose_move_member` refuses an instance member with no call sites that never uses `this`, on the ground that moving it changes what `this` means (#346). | AGT-04, WRK-07, AGT-05 | #210 #329 #346 | M |
+| 13 | **No error should name a CLR or Roslyn concept the caller did not send.** One boundary rewrite; refusals carry advice that would actually work. The instance that made this urgent is gone (#306), so what is left is the class: a filter over every boundary, and a test that no refusal carries `(Parameter '`. The WinUI load diagnostic ("Cannot resolve Assembly or Windows Metadata file") goes with it: it should say its remedy, which is to build the referenced project first. Two refusals filed since give advice that does not work: `rose_change_signature` tells the caller to pass `usings`, which it does not take (#329), and `rose_move_member` refuses an instance member with no call sites that never uses `this`, on the ground that moving it changes what `this` means (#346). | AGT-04, WRK-07, AGT-05 | #329 #346 | M |
 | 14 | **Diagnostics never say the workspace is degraded**, so a clean answer from a broken workspace reads as a clean bill of health. Stamp it where attribution already happens. #303 is the case where nothing is stamped because nothing noticed: after a reload, `rose_find_references` and `rose_symbol_info` failed on an assembly that would not load while status said Loaded with no degraded reasons. The load failure is its own fix; the card's half is that a tool path which is dead makes the workspace degraded. | AGT-12, USE-01 | #303 | S |
 | 15 | **`rose_find_implementations` cannot be restricted to your own solution**, so a common framework interface returns 116 metadata matches truncated at 40. Also: a property's definition is listed three to four times. | IPC dogfooding, USE dogfooding, AGT-07 | new | S |
 
@@ -442,8 +443,8 @@ Filed here so they reach the issue tracker. Several are not in any existing issu
 2. `includeSignatures=false` leaves the declaration text in `preview` (AGT-01).
 3. `rose_outline` on a WinUI code-behind merges the generated partial, marks none of it generated
    despite the description's promise, and ignores `filePath` (05 dogfooding).
-4. A metadata symbol is unreachable whenever any source symbol shares its leaf name (AGT-03).
-5. A positional record property cannot be addressed by name from any tool (WRK-04, beyond #233).
+4. ~~A metadata symbol is unreachable whenever any source symbol shares its leaf name (AGT-03).~~ **#418.**
+5. ~~A positional record property cannot be addressed by name from any tool (WRK-04).~~ **#418.**
 6. `rose_find_implementations` has no way to ask "in my solution" (IPC dogfooding).
 7. `rose_find_references` lists one definition three to four times at different columns (USE dogfooding).
 8. `definitionsOnly=true` reports `truncated: true` over an empty list (AGT-05).
@@ -464,6 +465,6 @@ Filed here so they reach the issue tracker. Several are not in any existing issu
 2. `08-ui-usability.md` sections 1 and 3, and the supervision thesis. It is the strategic decision;
    Tier 5 depends on it and nothing else does.
 3. `07-hot-reload-readiness.md` "What exists today" and the milestone table.
-4. `02-worker-roslyn.md` findings WRK-01, WRK-02, WRK-04. They are Tier 2 entire.
+4. `02-worker-roslyn.md` finding WRK-02, which is what is left of Tier 2.
 5. `05-ui-tests-and-process.md`'s invariant-to-test table. It is the map for Tier 4.
 6. The rest as the cards demand.

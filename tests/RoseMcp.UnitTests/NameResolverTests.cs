@@ -27,6 +27,22 @@ public sealed class NameResolverTests
 		NameResolver.Parse(supplied).Name.ShouldBe(expected);
 
 	/// <summary>
+	/// Every segment is kept for the compilation to be asked which of them are a namespace, split only
+	/// at the dots outside a type argument list.
+	/// </summary>
+	[Test]
+	public void Keeps_every_segment_of_a_dotted_name_for_the_compilation_to_read()
+	{
+		NameResolver.Segments("Microsoft.CodeAnalysis.ShadowCopyAnalyzerPathResolver")
+			.ShouldBe(["Microsoft", "CodeAnalysis", "ShadowCopyAnalyzerPathResolver"]);
+
+		NameResolver.Segments(" System.Collections.Generic.Dictionary<string, Foo.Bar>.Entry ")
+			.ShouldBe(["System", "Collections", "Generic", "Dictionary<string, Foo.Bar>", "Entry"]);
+
+		NameResolver.Segments("Encoding").ShouldBe(["Encoding"]);
+	}
+
+	/// <summary>
 	/// Counted at the top level only, so a type argument that is itself generic does not inflate
 	/// the count and rule out the type that would have resolved.
 	/// </summary>

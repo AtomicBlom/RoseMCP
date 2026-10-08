@@ -344,7 +344,58 @@ public sealed class AddFileTests
 
 		result.Notices.ShouldContain(
 			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal)
-				&& notice.Contains("dotnet format will still ask for them", StringComparison.Ordinal));
+				&& notice.Contains("dotnet format will still ask for them", StringComparison.Ordinal)
+				&& notice.Contains("sent with bare LFs only, its literals take the file's endings", StringComparison.Ordinal));
+
+		result.Notices.ShouldNotContain(
+			notice => notice.StartsWith("Rewrote", StringComparison.Ordinal)
+				&& notice.Contains("inside the multi-line string literal", StringComparison.Ordinal),
+			"code carrying a CR LF is kept as it arrived, so nothing was rewritten");
+	}
+
+	/// <summary>
+	/// Code sent with bare LFs only, which is what composing it for a JSON argument produces, takes the
+	/// file's endings throughout, the inside of its literals included -- as it does through the member
+	/// tools -- and says which literals that changed, by their lines in what was sent rather than in the
+	/// file the namespace and imports were put around. Nothing is left for dotnet format to ask for, so
+	/// the sentence about endings the file does not use has nothing to say.
+	/// </summary>
+	[Test]
+	public async Task Rewrites_the_literals_of_code_sent_with_bare_line_feeds_and_says_where()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var path = fixture.Path("Members", "Library", "Composed.cs");
+
+		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
+
+		var request = new AddFileRequest
+		{
+			FilePath = path,
+			Code = "public static class Composed\n{\n\tpublic const string Text = \"\"\"\n\t\tfirst\n\t\tsecond\n\t\t\"\"\";\n\n\tpublic static string Joined => string.Join(\",\", new[] { Text });\n}\n",
+			Usings = ["System.Globalization"],
+		};
+
+		var result = await session.MutateAsync(
+			(snapshot, token) => AddFileService.AddAsync(
+				snapshot, diagnostics, request, session.NoteSelfWrite, token),
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Applied.ShouldBeTrue();
+
+		var text = await File.ReadAllTextAsync(path, TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldContain("\"\"\"\r\n\t\tfirst\r\n\t\tsecond\r\n\t\t\"\"\";\r\n", Case.Sensitive);
+		text.Replace("\r\n", string.Empty, StringComparison.Ordinal).ShouldNotContain("\n", Case.Sensitive, "Every ending is the file's.");
+
+		result.Notices.ShouldContain(
+			"Rewrote 1 line ending(s) to CRLF, the ending this file uses, inside the multi-line string literal on line 3 "
+				+ "of the code supplied, which changes its value. Write one CR LF anywhere in the code to keep every "
+				+ "ending exactly as it arrived.");
+
+		result.Notices.ShouldNotContain(
+			notice => notice.Contains("line endings the file does not use", StringComparison.Ordinal));
 	}
 
 	/// <summary>A file whose literals agree with it says nothing, so the notice means something.</summary>

@@ -480,6 +480,91 @@ public sealed class ChangeSignatureTests
 		error.Message.ShouldContain("rose_replace_member", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// A documented member that took nothing and now takes an <c>out</c> parameter gets a tag for it,
+	/// so its comment still describes every parameter it has. And the address the change leaves keeps
+	/// the <c>out</c>, which is the only thing telling it from an overload taking the same type by
+	/// value: the next call on the member is answered, and spelled, with it.
+	/// </summary>
+	[Test]
+	public async Task Documents_a_first_parameter_and_keeps_out_in_the_member_it_leaves()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Detacher.Detach", "out string? failure", ["failure=out _"]);
+
+		result.Applied.ShouldBeTrue();
+		result.DocumentationUpdated.ShouldNotBeEmpty();
+
+		var text = await ReadAsync(fixture, "Detacher.cs");
+
+		text.ShouldContain("/// <summary>Lets go.</summary>\r\n\t/// <param name=\"failure\"></param>", Case.Sensitive);
+		text.ShouldContain("public bool Run() => Detach(out _) && Release();", Case.Sensitive);
+
+		var edited = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.ReplaceBody,
+			Symbol = "Library.Detacher.Detach(out string)",
+			Code = "{ failure = null; return true; }",
+		});
+
+		edited.Symbol.ShouldContain("Detach(out string failure)", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A new parameter named like a local in the body is CS0136 the moment it lands, and that is
+	/// knowable before anything is written. Refused with the local's line, so the caller picks another
+	/// name rather than repairing one across every call site this would have rewritten.
+	/// </summary>
+	[Test]
+	public async Task Refuses_a_new_parameter_named_like_a_local_in_the_body()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Detacher.cs");
+
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Detacher.Release", "string failure", ["failure=\"none\""])).OfExactType();
+
+		error.Message.ShouldContain("would clash with the 'failure'", Case.Sensitive);
+		error.Message.ShouldContain("Detacher.cs:12", Case.Sensitive);
+
+		(await ReadAsync(fixture, "Detacher.cs")).ShouldBe(before);
+	}
+
+	/// <summary>
+	/// A lambda's parameter may shadow one of the member around it, so a new parameter named like
+	/// one is a valid change and goes through, compiling clean.
+	/// </summary>
+	[Test]
+	public async Task Adds_a_parameter_named_like_a_lambda_parameter_in_the_body()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(session, "Library.Detacher.Tally", "int[] items, string item = \"\"");
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		(await ReadAsync(fixture, "Detacher.cs")).ShouldContain("public int Tally(int[] items, string item = \"\")", Case.Sensitive);
+	}
+
+	/// <summary>A query's range variable may not, which is CS1931, so that one is still refused.</summary>
+	[Test]
+	public async Task Refuses_a_new_parameter_named_like_a_query_range_variable()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var error = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(session, "Library.Detacher.Queried", "int[] items, string item = \"\"")).OfExactType();
+
+		error.Message.ShouldContain("would clash with the 'item'", Case.Sensitive);
+	}
+
 	private static Task<SignatureChangeResult> ChangeAsync(
 		WorkspaceSession session,
 		string symbol,

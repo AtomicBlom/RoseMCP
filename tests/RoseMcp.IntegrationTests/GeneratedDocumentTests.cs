@@ -36,6 +36,32 @@ public sealed class GeneratedDocumentTests
 		content.Text.ShouldContain("from a source generator", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// A project name nothing carries is refused, naming the projects there are. Searching the whole
+	/// solution instead reports every project's documents as the one asked about, which a caller who
+	/// mistyped the name has no way to tell from the answer they wanted.
+	/// </summary>
+	[Test]
+	public async Task Refuses_a_project_the_solution_does_not_have_rather_than_listing_them_all()
+	{
+		using var fixture = FixtureSolution.Copy("WithGenerator", "WithGenerator.slnx");
+		fixture.Build("WithGenerator", "Gen", "Gen.csproj");
+
+		await using var session = await TestSession.OpenAsync(fixture);
+		var snapshot = await session.ReadAsync(TestContext.Current!.Execution.CancellationToken);
+
+		var refusal = await Should.ThrowAsync<ArgumentException>(() => GeneratedDocumentService.ListAsync(
+			snapshot, "Consumr", TestContext.Current!.Execution.CancellationToken));
+
+		refusal.Message.ShouldContain("No project in this solution is called 'Consumr'", Case.Sensitive);
+		refusal.Message.ShouldContain("Consumer", Case.Sensitive);
+
+		var listed = await GeneratedDocumentService.ListAsync(
+			snapshot, "consumer", TestContext.Current!.Execution.CancellationToken);
+
+		listed.Documents.ShouldContain(document => document.HintName == "Widget.Greeting.g.cs");
+	}
+
 	[Test]
 	public async Task Reflects_a_change_to_generator_input_without_a_reload()
 	{

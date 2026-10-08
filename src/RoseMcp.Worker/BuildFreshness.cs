@@ -26,11 +26,7 @@ public static class BuildFreshness
 		string? project,
 		CancellationToken cancellationToken)
 	{
-		var selected = string.IsNullOrWhiteSpace(project)
-			? solution.Projects
-			: solution.Projects.Where(candidate =>
-				string.Equals(candidate.Name, project, StringComparison.OrdinalIgnoreCase)
-					|| SamePath(candidate.FilePath, project));
+		var selected = ProjectNames.ResolveOrAll(solution, project);
 
 		return [.. selected.Select(candidate => Describe(candidate, cancellationToken))];
 	}
@@ -142,21 +138,5 @@ public static class BuildFreshness
 		}
 
 		if (project.FilePath is { Length: > 0 } file) yield return file;
-	}
-
-	private static bool SamePath(string? candidate, string requested)
-	{
-		if (string.IsNullOrEmpty(candidate)) return false;
-
-		try
-		{
-			return string.Equals(
-				Path.GetFullPath(candidate), Path.GetFullPath(requested), StringComparison.OrdinalIgnoreCase);
-		}
-		catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
-		{
-			// A project name that is not a path at all, which is the ordinary way to name one.
-			return false;
-		}
 	}
 }

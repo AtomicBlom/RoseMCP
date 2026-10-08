@@ -127,7 +127,9 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   with endings the file does not use fails `dotnet format` while no build complains, and the obvious
   fix changes what the program says. Where code a caller supplied had its bare LFs rewritten, only
   the endings inside a literal's value are reported, each literal by its line in what the caller
-  sent: every other ending is layout, and a sentence on every write is one nobody reads. Literals
+  sent: every other ending is layout, and a sentence on every write is one nobody reads. A new
+  file is asked as a whole, before its namespace and imports are put around it, so its literals are
+  rewritten like a member's and named on the caller's lines rather than the file's. Literals
   are looked for in every branch of an `#if`, not only the ones the lexer took as active, because
   the rewrite reaches all of them and the build that defines the symbol compiles what it changed. See
   [the decision](../decisions/line-endings-in-code-a-caller-supplies.md).
@@ -163,7 +165,12 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   things that look like an answer and are not: a nested type reachable only through its container,
   an arity that does not match the use site, a type in a project this one does not reference, and a
   namespace already in scope. Each of those turns adding the obvious using into a second error
-  rather than none. Most of the value is in never being asked -- the write tools run the search
+  rather than none. So does a candidate of the wrong kind, which is why the search is narrowed by
+  how the code uses the name before anything is counted: a name called on its own is answered by no
+  type, one after a dot only by an extension, one in a type's place only by a type. And an import
+  that still leaves its own name failing, bound with the import in place, is taken back out before
+  the write, since "the only namespace anything of that name is in" was true and not the one this
+  code needs. Most of the value is in never being asked -- the write tools run the search
   over the errors they introduced, off the compilation they had just built to find them, so the
   namespace arrives with the error rather than a call later. The IDE's own add-import fix is no
   route to any of it: that lives in `Microsoft.CodeAnalysis.CSharp.Features`, which is not

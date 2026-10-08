@@ -103,11 +103,7 @@ public static class MemberEditService
 
 			await edit.RewriteAsync(resolved, importing, path, scope, cancellationToken);
 
-			// After the second compile, which is the first moment it can be said whether each import
-			// resolved the error it was fetched for rather than only which namespace it named.
-			notices.AddRange(
-				await ResolvedImports.ReportAsync(
-					edit.Solution, imports, edit.Verification.Introduced, path, cancellationToken));
+			notices.AddRange(ResolvedImports.Report(imports));
 
 			notices.AddRange(imports.Ambiguous);
 			notices.AddRange(imports.Unresolved);

@@ -22,5 +22,12 @@ public sealed record ResolveNameRequest
 	/// </summary>
 	public int? Arity { get; init; }
 
+	/// <summary>
+	/// How the code uses the name, where the caller read it off the code: a name called on its own is
+	/// answered by no type, and one after a dot by no type either. A caller with only the name says
+	/// nothing, and every kind of candidate is searched.
+	/// </summary>
+	public NameUse Use { get; init; } = NameUse.Any;
+
 	public int MaxResults { get; init; } = 20;
 }

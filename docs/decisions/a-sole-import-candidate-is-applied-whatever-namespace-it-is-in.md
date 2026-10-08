@@ -29,11 +29,13 @@ Nor does the heuristic remove the failure it is aimed at. A wrong sole candidate
 namespace that does share a segment is applied exactly as before, and in a repository whose own
 namespaces are its product name that is where the collisions are.
 
-**What makes the cost bearable.** The reported failure did not compile, and it was reported in the
-same call: the write tool adds the import, compiles, and returns the errors the edit left. An
-import that does not resolve the name it was fetched for leaves the `CS0103` in place, so the
-result carries both the import it added and the error it did not fix. That is a loud outcome, one
-round trip long, and the caller reads it before doing anything else.
+**What makes the cost bearable.** The reported failure did not compile, and that is decidable before
+anything is written: with the import in place, the name it was fetched for still fails to bind. Such
+an import is taken back out in the same call, and the result says the name resolves to nothing an
+import would fix -- the one error the caller had, rather than that error and an unused using beside
+it. The candidates are narrowed first by how the code uses the name, so a name that is called is
+never answered with a type, one after a dot never with anything but an extension, and one in a
+type's place never with a method.
 
 Compare that with what the existing guard already prevents, which is the failure with no symptom:
 a name that exists in two places, where the reachable one is not the one meant, imported silently
@@ -43,15 +45,10 @@ The remaining exposure is a name that is genuinely unique and genuinely not what
 which cannot compile against the wrong type unless that type happens to have a compatible member at
 the use site -- in which case it is the two-candidate case again, and already refused.
 
-**What it costs.** An occasional import nobody wanted, in a file the caller has just written and is
-already reading the result of, alongside the error that says it did not help. Deleting a using is
-one call.
-
-**What is left open.** The result carries the import it added and the error it did not fix, and
-says nothing about the two being related. Saying it -- an import added for a name whose error is
-still in the introduced list is the wrong import, which is decidable rather than a heuristic --
-needs the name-to-namespace pairing kept beside the prose and read by five write tools, so it is
-filed rather than done here.
+**What it costs.** An occasional import nobody wanted that does compile: a sole candidate of the
+right kind, which binds, and is not what the author meant. That is the two-candidate case's silent
+failure in its rarest form, and the result names the import and the only-namespace basis it was
+picked on.
 
 **What it does not change.** The two-candidate refusal, the unreachable-namespace refusal, and
 `rose_resolve_name`, which reports and never writes.

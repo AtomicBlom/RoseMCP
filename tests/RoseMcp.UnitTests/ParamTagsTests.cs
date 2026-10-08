@@ -159,17 +159,50 @@ public sealed class ParamTagsTests
 	}
 
 	/// <summary>
-	/// A member that documents no parameter is left entirely alone: neither diagnostic fires on one,
-	/// and a summary mentioning a parameter is still not a tag.
+	/// A member that documents none of the parameters it keeps is left alone: a tag for the new one
+	/// alone would raise CS1573 for each of the others, and a summary mentioning a parameter is still
+	/// not a tag.
 	/// </summary>
 	[Test]
-	public void Leaves_a_member_that_documents_no_parameter_alone()
+	public void Leaves_a_member_that_documents_none_of_the_parameters_it_keeps_alone()
 	{
 		ParamTags.Update(
 			SyntaxFactory.ParseLeadingTrivia("""/// <summary>Greets <paramref name="name"/>.</summary>"""),
 			[],
 			["loud"],
+			["name"],
 			[]).ShouldBeNull();
+	}
+
+	/// <summary>
+	/// A documented member that took nothing and now takes something gets a tag for each new
+	/// parameter, after the summary. Its comment then describes every parameter it has, and the
+	/// result says the tag needs a description.
+	/// </summary>
+	[Test]
+	public void Writes_a_tag_for_the_first_parameter_of_a_documented_member()
+	{
+		var notes = new List<string>();
+
+		var updated = ParamTags.Update(
+			SyntaxFactory.ParseLeadingTrivia("\t/// <summary>Lets go of the process.</summary>\r\n\t"),
+			[],
+			["failure"],
+			[],
+			notes);
+
+		updated.ShouldNotBeNull();
+		updated.Value.ToFullString().ShouldContain(
+			"\t/// <summary>Lets go of the process.</summary>\r\n\t/// <param name=\"failure\"></param>",
+			Case.Sensitive);
+		notes.ShouldContain(note => note.Contains("failure", StringComparison.Ordinal));
+	}
+
+	/// <summary>An undocumented member stays undocumented: there is no comment to add a tag to.</summary>
+	[Test]
+	public void Writes_no_tag_into_a_member_with_no_documentation()
+	{
+		ParamTags.Update(SyntaxFactory.ParseLeadingTrivia("\t// A note.\r\n\t"), [], ["failure"], [], []).ShouldBeNull();
 	}
 
 	/// <summary>
@@ -200,6 +233,6 @@ public sealed class ParamTagsTests
 	{
 		var leading = SyntaxFactory.ParseLeadingTrivia(comment);
 
-		return (ParamTags.Update(leading, removed ?? [], added ?? [], []) ?? leading).ToFullString().TrimEnd();
+		return (ParamTags.Update(leading, removed ?? [], added ?? [], ["name"], []) ?? leading).ToFullString().TrimEnd();
 	}
 }

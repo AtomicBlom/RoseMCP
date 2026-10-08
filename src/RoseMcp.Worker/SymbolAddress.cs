@@ -57,13 +57,18 @@ public sealed record SymbolAddress
 	/// hand to the next call, which is the whole reason this format exists. Parameter types are fully
 	/// qualified, which is one of the spellings the match accepts.
 	/// </para>
+	/// <para>
+	/// So is how a parameter is passed. <c>Detach(out string)</c> and <c>Detach(string)</c> may both be
+	/// declared, and an address dropping the <c>out</c> names whichever the match reaches first --
+	/// or, read back, the other one.
+	/// </para>
 	/// </summary>
 	private static readonly SymbolDisplayFormat AddressFormat = new(
 		globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
 		typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
 		genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
 		memberOptions: SymbolDisplayMemberOptions.IncludeParameters | SymbolDisplayMemberOptions.IncludeContainingType,
-		parameterOptions: SymbolDisplayParameterOptions.IncludeType,
+		parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeParamsRefOut,
 		miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
 
 	/// <summary>
@@ -101,6 +106,39 @@ public sealed record SymbolAddress
 	/// </summary>
 	public ConstructorKind Constructor { get; init; }
 
+	/// <summary>
+	/// True for an address written from <c>global::</c>, whose path is the whole of the symbol's rather
+	/// than the end of it.
+	/// <para>
+	/// A type named for a namespace at the root is the one case where the full name still reads two
+	/// ways: <c>Gauge.Gauge</c> is the type, and it is the constructor of a type <c>Gauge</c> wherever
+	/// that type is, this one included. Without an anchor no spelling reaches the type alone, and a
+	/// refusal recommending its full name recommends the call that was just refused.
+	/// </para>
+	/// </summary>
+	public bool Anchored { get; init; }
+
+	/// <summary>
+	/// The same text read as a type rather than as a constructor, where it can be read both ways, or
+	/// null where it cannot.
+	/// <para>
+	/// <c>RoseMcp.XamlDiff.XamlDiff</c> is the type <c>XamlDiff</c> in the namespace
+	/// <c>RoseMcp.XamlDiff</c>, and it is also, as C# spells one, the constructor of a type
+	/// <c>XamlDiff</c> in a namespace <c>RoseMcp</c>. A member may not share the name of the type
+	/// enclosing it, but a type may share the name of its namespace, so a repeated last segment is a
+	/// constructor or a type and only the compilation can say which. Read as a constructor alone,
+	/// every type laid out as <c>Foo.Bar/Bar.cs</c> is unreachable by its qualified name, and the
+	/// refusal recommends adding a constructor to a type nobody asked about.
+	/// </para>
+	/// </summary>
+	public SymbolAddress? AsType { get; private init; }
+
+	/// <summary>
+	/// Every way the text can be read, the type reading first: one address, or two where a repeated
+	/// last segment may be a type or its constructor.
+	/// </summary>
+	public IReadOnlyList<SymbolAddress> Readings => AsType is null ? [this] : [AsType, this];
+
 	public static SymbolAddress Parse(string requested)
 	{
 		var text = (requested ?? string.Empty).Trim();
@@ -110,15 +148,28 @@ public sealed record SymbolAddress
 			throw new ArgumentException("Name the symbol to write, for example Namespace.Type.Member.");
 		}
 
-		if (text.StartsWith(Global, StringComparison.Ordinal)) text = text[Global.Length..];
+		var anchored = text.StartsWith(Global, StringComparison.Ordinal);
+
+		if (anchored) text = text[Global.Length..];
 
 		var (head, parameters) = SplitOffParameters(text);
-		var (typePath, constructor) = SplitOffConstructor(head, requested!);
+		var (typePath, constructor, repeated) = SplitOffConstructor(head, requested!);
 
 		if (typePath.Length == 0)
 		{
 			throw new ArgumentException($"'{requested}' names no symbol. Write it as Namespace.Type.Member.");
 		}
+
+		// A type takes no parameter list, so Type.Type(int) can only be the constructor.
+		var asType = repeated && parameters is null
+			? new SymbolAddress
+			{
+				Requested = requested!.Trim(),
+				Name = typePath[^1],
+				Path = [.. typePath, typePath[^1]],
+				Anchored = anchored,
+			}
+			: null;
 
 		return new SymbolAddress
 		{
@@ -127,6 +178,8 @@ public sealed record SymbolAddress
 			Path = typePath,
 			Parameters = parameters,
 			Constructor = constructor,
+			AsType = asType,
+			Anchored = anchored,
 		};
 	}
 
@@ -174,14 +227,22 @@ public sealed record SymbolAddress
 	private static ISymbol? Containing(ISymbol symbol) =>
 		(ISymbol?)symbol.ContainingType ?? symbol.ContainingNamespace;
 
-	private bool QualificationMatches(ISymbol symbol)
+	private bool QualificationMatches(ISymbol symbol) => IsAt(symbol, Path, Anchored);
+
+	/// <summary>
+	/// Whether <paramref name="symbol"/>'s own path ends with <paramref name="path"/>, which is how much
+	/// of a name a caller has to write: as little as the last segment, or the whole of it. Anchored, the
+	/// path has to be the whole of the symbol's, as <c>global::</c> says.
+	/// </summary>
+	public static bool IsAt(ISymbol symbol, IReadOnlyList<string> path, bool anchored = false)
 	{
 		var actual = PathOf(symbol);
-		if (Path.Count > actual.Count) return false;
+		if (path.Count > actual.Count) return false;
+		if (anchored && path.Count != actual.Count) return false;
 
-		for (var index = 1; index <= Path.Count; index++)
+		for (var index = 1; index <= path.Count; index++)
 		{
-			if (!string.Equals(Path[^index], actual[^index], StringComparison.Ordinal)) return false;
+			if (!string.Equals(path[^index], actual[^index], StringComparison.Ordinal)) return false;
 		}
 
 		return true;
@@ -202,7 +263,69 @@ public sealed record SymbolAddress
 
 		return parameters
 			.Zip(Parameters)
-			.All(pair => TypeMatches(pair.First.Type, pair.Second));
+			.All(pair => ParameterMatches(pair.First, pair.Second));
+	}
+
+	/// <summary>
+	/// Whether a parameter as written names this one: passed the same way, and of the same type.
+	/// <para>
+	/// A parameter written with no <c>ref</c>, <c>out</c> or <c>in</c> is one passed by value, as C#
+	/// reads it, so <c>Detach(string)</c> does not reach <c>Detach(out string)</c> -- if it did, the
+	/// two overloads could not be told apart by any spelling of the first. <c>params</c>,
+	/// <c>scoped</c> and <c>this</c> say nothing about which overload it is, and are passed over.
+	/// </para>
+	/// </summary>
+	private static bool ParameterMatches(IParameterSymbol parameter, string requested)
+	{
+		var (passed, type) = Passing(requested);
+
+		return parameter.RefKind == passed && TypeMatches(parameter.Type, type);
+	}
+
+	/// <summary>How a parameter as written is passed, and the type left once that is taken off.</summary>
+	private static (RefKind Passed, string Type) Passing(string requested)
+	{
+		var rest = requested.Trim();
+		var passed = RefKind.None;
+
+		while (true)
+		{
+			if (TakeWord(ref rest, "ref"))
+			{
+				passed = TakeWord(ref rest, "readonly") ? RefKind.RefReadOnlyParameter : RefKind.Ref;
+				continue;
+			}
+
+			if (TakeWord(ref rest, "out"))
+			{
+				passed = RefKind.Out;
+				continue;
+			}
+
+			if (TakeWord(ref rest, "in"))
+			{
+				passed = RefKind.In;
+				continue;
+			}
+
+			var ignored = TakeWord(ref rest, "params") || TakeWord(ref rest, "scoped") || TakeWord(ref rest, "this");
+
+			if (!ignored) return (passed, rest);
+		}
+	}
+
+	/// <summary>Takes a keyword and the space after it off the front, if that is how the text starts.</summary>
+	private static bool TakeWord(ref string text, string word)
+	{
+		var starts = text.Length > word.Length
+			&& text.StartsWith(word, StringComparison.Ordinal)
+			&& char.IsWhiteSpace(text[word.Length]);
+
+		if (!starts) return false;
+
+		text = text[word.Length..].TrimStart();
+
+		return true;
 	}
 
 	/// <summary>
@@ -235,14 +358,18 @@ public sealed record SymbolAddress
 	/// constructs.
 	/// <para>
 	/// Two spellings, because both are the natural first guess from somewhere. <c>Type..ctor</c> is
-	/// what the CLR calls it and what a stack trace shows; <c>Type.Type</c> is what C# writes, and
-	/// it cannot mean anything else, since a member may not share the name of the type enclosing it.
+	/// what the CLR calls it and what a stack trace shows; <c>Type.Type</c> is what C# writes.
 	/// Accepting neither costs more than it looks: a constructor is where a parameter is added most
 	/// often, and the failure is a refusal saying nothing is declared there, which reads as the name
 	/// being wrong rather than as the spelling being unsupported.
 	/// </para>
+	/// <para>
+	/// <c>Type..ctor</c> cannot mean anything else. <c>Type.Type</c> can: no member shares the name of
+	/// the type enclosing it, but a type may share the name of the namespace enclosing it, so the
+	/// repetition is reported and the type reading kept beside this one -- see <see cref="AsType"/>.
+	/// </para>
 	/// </summary>
-	private static (string[] TypePath, ConstructorKind Constructor) SplitOffConstructor(
+	private static (string[] TypePath, ConstructorKind Constructor, bool Repeated) SplitOffConstructor(
 		string head,
 		string requested)
 	{
@@ -258,19 +385,17 @@ public sealed record SymbolAddress
 					$"'{requested}' names a constructor with no type. Write it as Namespace.Type{suffix}.");
 			}
 
-			return (path, kind);
+			return (path, kind, false);
 		}
 
 		var segments = Segments(head);
 
-		// A member may not share the name of the type enclosing it, so a repeated last segment is a
-		// constructor and cannot be read as anything else.
 		var repeats = segments.Length >= 2
 			&& string.Equals(segments[^1], segments[^2], StringComparison.Ordinal);
 
 		return repeats
-			? (segments[..^1], ConstructorKind.Instance)
-			: (segments, ConstructorKind.None);
+			? (segments[..^1], ConstructorKind.Instance, true)
+			: (segments, ConstructorKind.None, false);
 	}
 
 	/// <summary>

@@ -90,7 +90,11 @@ public static class NavigationService
 		string? project = null,
 		bool includePreviews = true)
 	{
-		GuardProject(snapshot, project);
+		// Resolved before the search, so a name no project carries is refused rather than filtering every
+		// reference out: an empty list reads exactly like a symbol nobody uses, which invites a deletion.
+		var narrowed = project is { Length: > 0 }
+			? ProjectNames.Resolve(snapshot.Solution, project).Select(candidate => candidate.Name).ToHashSet(StringComparer.Ordinal)
+			: null;
 
 		// Metadata included: who calls ILogger.LogInformation in this solution is a question about this
 		// solution's source, and refusing it because nothing here declares the member answers a narrower
@@ -119,7 +123,7 @@ public static class NavigationService
 		}
 
 		var ordered = references
-			.Where(location => InProject(location, project))
+			.Where(location => narrowed is null || (location.Project is { } owner && narrowed.Contains(owner)))
 			.OrderBy(location => location.FilePath, StringComparer.OrdinalIgnoreCase)
 			.ThenBy(location => location.Line)
 			.ToArray();
@@ -139,28 +143,6 @@ public static class NavigationService
 			Truncated = listed.Length < ordered.Length,
 		};
 	}
-
-	/// <summary>
-	/// Refuses a project name the solution does not carry. Filtering silently on a name nothing
-	/// matches returns an empty list, which reads exactly like a symbol nobody uses -- the shape of
-	/// wrong answer worth the most trouble to avoid, since it invites a deletion.
-	/// </summary>
-	private static void GuardProject(WorkspaceSnapshot snapshot, string? project)
-	{
-		if (project is not { Length: > 0 }) return;
-
-		var names = snapshot.Solution.Projects.Select(candidate => candidate.Name).ToArray();
-
-		if (names.Any(name => string.Equals(name, project, StringComparison.OrdinalIgnoreCase))) return;
-
-		throw new ArgumentException(
-			$"No project in this solution is called '{project}'. It has {string.Join(", ", names.Order(StringComparer.Ordinal))}.");
-	}
-
-	/// <summary>Whether a location belongs to the project the caller narrowed to, or to any if none.</summary>
-	private static bool InProject(SourceLocation location, string? project) =>
-		project is not { Length: > 0 }
-			|| string.Equals(location.Project, project, StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>
 	/// The location with or without its line of source. Dropping the preview is most of the size of a

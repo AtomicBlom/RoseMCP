@@ -81,9 +81,8 @@ internal static class EditImports
 	/// one: the code was just written by this tool, and it does not compile.
 	/// </para>
 	/// <para>
-	/// It reports nothing itself, because whether an import resolved the error it was fetched for is
-	/// only answerable once the code has been compiled again with the import in place -- which happens
-	/// after this returns.
+	/// An import that does not resolve the name it was fetched for is taken back out before this
+	/// returns, and what it hands back says so; the caller reports what was kept.
 	/// </para>
 	/// </summary>
 	internal static async Task<(Solution Solution, ResolvedImports.Imports Imports)> ForUnresolvedAsync(
@@ -101,11 +100,8 @@ internal static class EditImports
 			Looked,
 			cancellationToken);
 
-		if (!imports.AnythingToAdd) return (solution, imports);
-
-		var added = await ResolvedImports.ApplyAsync(solution, written.Document.Id, imports.Namespaces, written.Rules, cancellationToken);
-
-		return (added, imports);
+		return await ResolvedImports.ApplyResolvingAsync(
+			solution, written.Document.Id, imports, written.Rules, cancellationToken);
 	}
 
 	/// <summary>

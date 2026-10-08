@@ -228,7 +228,7 @@ public sealed class OutlineTests
 
 		var thrown = Should.Throw<ArgumentException>(() => ProjectGraphService.Describe(snapshot, "Nowhere")).ShouldBeOfType<ArgumentException>();
 
-		thrown.Message.ShouldContain("The solution has App, Core", Case.Sensitive);
+		thrown.Message.ShouldContain("It has App, Core.", Case.Sensitive);
 	}
 
 	/// <summary>

@@ -1,6 +1,5 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.FindSymbols;
 
 using RoseMcp.Contracts;
 
@@ -35,6 +34,7 @@ public static class NameResolver
 		CancellationToken cancellationToken,
 		IWorkProgress? progress = null)
 	{
+		var segments = Segments(request.Name);
 		var (name, arity) = Parse(request.Name, request.Arity);
 
 		if (name.Length == 0) throw new ArgumentException("Name something to resolve.");
@@ -49,37 +49,73 @@ public static class NameResolver
 		IReadOnlyList<Project> projects = document is null ? [.. snapshot.Solution.Projects] : [document.Project];
 
 		var notices = new List<string>(snapshot.Notices);
+		var where = document is null ? "this solution" : document.Project.Name;
 
-		progress?.Report($"Looking for a type called {name}", 20);
+		// What the leading segments bind to, asked of the compilation before anything is split off:
+		// Microsoft.CodeAnalysis.Workspace starts with a namespace, Encoding.UTF8 with a type, and
+		// splitting both at the first dot answers the first about Microsoft -- "not written yet", of a
+		// namespace the solution references everywhere.
+		var depth = segments.Count > 1 ? await NamespaceDepthAsync(projects, segments, cancellationToken) : 0;
 
-		var found = await TypesAsync(projects, name, cancellationToken);
+		// A namespace the file's project cannot see may still be one another project declares, and then
+		// the true answer is that a reference is missing -- not that nothing is written, which is what
+		// asking only the file's project says about Tools.Helpers.Foo from a project that does not
+		// reference the one declaring Tools.
+		var (declaring, declaredDepth) = document is not null && segments.Count > 1 && depth < segments.Count
+			? await DeclaringAsync(snapshot.Solution, document.Project, segments, cancellationToken)
+			: ([], 0);
 
-		// Only once nothing of that name is a type. A member search matches every method of that
-		// name in every referenced assembly -- thousands of them, for a name like Count -- and it
-		// answers a question the type search has already ruled out.
-		if (found.Count == 0)
-		{
-			progress?.Report($"Nothing is called {name}; looking for an extension method", 50);
-
-			found = await ExtensionsAsync(projects, name, cancellationToken);
-
-			if (found.Count > 0)
-			{
-				notices.Add(
-					$"No type is called {name}; these are extension methods. The namespace still has to be "
-						+ "imported for the method to be found, even though the name itself is not in it.");
-			}
-		}
-
-		// Still nothing the file can reach, so the useful answer is which of the two things went
-		// wrong: it is not written yet, or it is written somewhere this project cannot see.
-		var unreferenced = found.Count == 0 && document is not null;
+		var unreferenced = declaredDepth > depth;
 
 		if (unreferenced)
 		{
-			progress?.Report($"Looking for {name} elsewhere in the solution", 70);
+			depth = declaredDepth;
+			projects = declaring;
+		}
 
-			found = await ElsewhereAsync(snapshot.Solution, document!.Project, name, cancellationToken);
+		var space = depth > 0 ? string.Join(".", segments.Take(depth)) : null;
+		var declarers = string.Join(", ", declaring.Select(project => project.Name).Distinct(StringComparer.Ordinal));
+
+		// Who can reach the namespace, as a clause: the file's project, or the projects declaring it
+		// that the file's project does not reference.
+		var reach = unreferenced
+			? $"{space} is a namespace {declarers} declares, which {where} does not reference -- add the project "
+				+ "reference first, or the import will not resolve"
+			: null;
+
+		IReadOnlyList<ISymbol> found = [];
+
+		if (depth == segments.Count)
+		{
+			notices.Add(reach is not null
+				? $"{reach}. It is a namespace rather than a type."
+				: $"{space} is a namespace {where} can reach rather than a type. Import it as it stands, "
+					+ "with usings on the write or with rose_add_using.");
+		}
+		else if (space is not null)
+		{
+			(name, arity) = Parse(segments[depth], request.Arity);
+
+			progress?.Report($"Looking for a type called {name} in {space}", 20);
+
+			found = await InNamespaceAsync(projects, segments.Take(depth).ToArray(), name, cancellationToken);
+
+			if (found.Count > 0)
+			{
+				notices.Add(reach is not null
+					? $"{reach}."
+					: $"{space} is a namespace, so this answers about {name}, the type in it. Written out in full "
+						+ $"the name needs no import; importing {space} is what lets it be written as {name}.");
+			}
+			else if (reach is not null)
+			{
+				notices.Add($"{reach}; and nothing in it is called {name}.");
+			}
+		}
+		else
+		{
+			(found, unreferenced) = await ByNameAsync(
+				snapshot, projects, document, name, request.Use, notices, cancellationToken, progress);
 		}
 
 		progress?.Report("Working out what is in scope already", 85);
@@ -99,18 +135,156 @@ public static class NameResolver
 		var maxResults = request.MaxResults <= 0 ? 20 : request.MaxResults;
 		var truncated = ordered.Count > maxResults;
 
-		notices.AddRange(Notices(name, ordered, spaces, document, unreferenced));
+		var saidAlready = reach is not null && found.Count == 0;
+
+		if (depth < segments.Count && !saidAlready)
+		{
+			notices.AddRange(Notices(name, ordered, spaces, document, unreferenced, space, split: segments.Count > 1 && depth == 0));
+		}
 
 		return new NameResolutionResult
 		{
 			Revision = snapshot.Revision,
-			Name = name,
+			Name = depth == segments.Count ? space! : name,
 			Candidates = truncated ? [.. ordered.Take(maxResults)] : ordered,
 			Import = spaces.Length == 1 ? spaces[0] : null,
 			TotalCount = ordered.Count,
 			Truncated = truncated,
 			Notices = notices,
 		};
+	}
+
+	/// <summary>
+	/// A name with no namespace in front of it, searched as a type, then as an extension method, then
+	/// anywhere in the solution's source the file's project cannot see -- each only where the way the
+	/// code uses the name lets that kind of symbol answer it.
+	/// </summary>
+	private static async Task<(IReadOnlyList<ISymbol> Found, bool Unreferenced)> ByNameAsync(
+		WorkspaceSnapshot snapshot,
+		IReadOnlyList<Project> projects,
+		Document? document,
+		string name,
+		NameUse use,
+		List<string> notices,
+		CancellationToken cancellationToken,
+		IWorkProgress? progress)
+	{
+		IReadOnlyList<ISymbol> found = [];
+
+		if (use.TakesAType())
+		{
+			progress?.Report($"Looking for a type called {name}", 20);
+
+			found = await TypesAsync(projects, name, cancellationToken);
+		}
+
+		// Only once nothing of that name is a type. A member search matches every method of that
+		// name in every referenced assembly -- thousands of them, for a name like Count -- and it
+		// answers a question the type search has already ruled out.
+		if (found.Count == 0 && use.TakesAnExtension())
+		{
+			progress?.Report($"Nothing is called {name}; looking for an extension method", 50);
+
+			found = await ExtensionsAsync(projects, name, cancellationToken);
+
+			if (found.Count > 0 && use.TakesAType())
+			{
+				notices.Add(
+					$"No type is called {name}; these are extension methods. The namespace still has to be "
+						+ "imported for the method to be found, even though the name itself is not in it.");
+			}
+		}
+
+		// Still nothing the file can reach, so the useful answer is which of the two things went
+		// wrong: it is not written yet, or it is written somewhere this project cannot see.
+		var unreferenced = found.Count == 0 && document is not null && use.TakesAType();
+
+		if (unreferenced)
+		{
+			progress?.Report($"Looking for {name} elsewhere in the solution", 70);
+
+			found = await ElsewhereAsync(snapshot.Solution, document!.Project, name, cancellationToken);
+		}
+
+		return (found, unreferenced);
+	}
+
+	/// <summary>
+	/// The most leading segments any of the projects sees as a namespace. The most rather than the
+	/// first project's answer, because a namespace one project's references contribute is still a
+	/// namespace the name was written against.
+	/// </summary>
+	private static async Task<int> NamespaceDepthAsync(
+		IReadOnlyList<Project> projects,
+		IReadOnlyList<string> segments,
+		CancellationToken cancellationToken)
+	{
+		var names = segments.Select(segment => Parse(segment).Name).ToArray();
+		var depth = 0;
+
+		foreach (var project in projects)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			if (await project.GetCompilationAsync(cancellationToken) is not { } compilation) continue;
+
+			depth = Math.Max(depth, SymbolResolver.NamespaceDepth(compilation, names));
+		}
+
+		return depth;
+	}
+
+	/// <summary>
+	/// The other projects whose own source declares the most leading segments as a namespace, and how
+	/// many. Their own source rather than what they can see, so the project named is the one the
+	/// reference has to point at.
+	/// </summary>
+	private static async Task<(IReadOnlyList<Project> Declaring, int Depth)> DeclaringAsync(
+		Solution solution,
+		Project asking,
+		IReadOnlyList<string> segments,
+		CancellationToken cancellationToken)
+	{
+		var names = segments.Select(segment => Parse(segment).Name).ToArray();
+		var declaring = new List<Project>();
+		var depth = 0;
+
+		foreach (var project in solution.Projects)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+
+			if (project.Id == asking.Id) continue;
+			if (await project.GetCompilationAsync(cancellationToken) is not { } compilation) continue;
+
+			var declared = SymbolResolver.DeclaredNamespaceDepth(compilation, names);
+
+			if (declared == 0 || declared < depth) continue;
+
+			if (declared > depth) declaring.Clear();
+
+			depth = declared;
+			declaring.Add(project);
+		}
+
+		return (declaring, depth);
+	}
+
+	/// <summary>Types of that name declared directly in the namespace the leading segments name.</summary>
+	private static async Task<IReadOnlyList<ISymbol>> InNamespaceAsync(
+		IReadOnlyList<Project> projects,
+		IReadOnlyList<string> space,
+		string name,
+		CancellationToken cancellationToken)
+	{
+		var names = space.Select(segment => Parse(segment).Name).ToArray();
+
+		return await GatherAsync(
+			projects,
+			async project => await project.GetCompilationAsync(cancellationToken) is { } compilation
+				? SymbolResolver.TypesIn(compilation, names, name).Cast<ISymbol>()
+				: Enumerable.Empty<ISymbol>(),
+			symbol => symbol is INamedTypeSymbol,
+			cancellationToken);
 	}
 
 	/// <summary>
@@ -124,7 +298,7 @@ public static class NameResolver
 	{
 		return await GatherAsync(
 			projects,
-			project => SymbolFinder.FindDeclarationsAsync(project, name, ignoreCase: false, SymbolFilter.Type, cancellationToken),
+			project => SymbolResolver.TypesCalledAsync(project, name, cancellationToken),
 			symbol => symbol is INamedTypeSymbol,
 			cancellationToken);
 	}
@@ -140,7 +314,7 @@ public static class NameResolver
 	{
 		return await GatherAsync(
 			projects,
-			project => SymbolFinder.FindDeclarationsAsync(project, name, ignoreCase: false, SymbolFilter.Member, cancellationToken),
+			project => SymbolResolver.MembersCalledAsync(project, name, cancellationToken),
 			symbol => symbol is IMethodSymbol { IsExtensionMethod: true },
 			cancellationToken);
 	}
@@ -157,8 +331,7 @@ public static class NameResolver
 		string name,
 		CancellationToken cancellationToken)
 	{
-		var found = await SymbolFinder.FindSourceDeclarationsAsync(
-			solution, name, ignoreCase: false, SymbolFilter.Type, cancellationToken);
+		var found = await SymbolResolver.SourceTypesCalledAsync(solution, name, cancellationToken);
 
 		return [.. found.OfType<INamedTypeSymbol>().Where(symbol => symbol.ContainingAssembly?.Name != asking.AssemblyName)];
 	}
@@ -293,14 +466,30 @@ public static class NameResolver
 		IReadOnlyList<NameCandidate> candidates,
 		IReadOnlyList<string> spaces,
 		Document? document,
-		bool unreferenced)
+		bool unreferenced,
+		string? space,
+		bool split)
 	{
 		var where = document is null ? "this solution" : document.Project.Name;
 
+		if (candidates.Count == 0 && space is not null)
+		{
+			yield return $"{space} is a namespace {where} can reach, and nothing in it is called {name}. The "
+				+ $"namespace is right; check the spelling of {name}, and that the assembly declaring it is referenced.";
+
+			yield break;
+		}
+
 		if (candidates.Count == 0)
 		{
+			// Said only where a dotted name was cut down to its first segment, which is the part that has
+			// to resolve first. Without it the echoed name reads as the one asked about.
+			var searched = split
+				? $" Only {name}, the first part of the name, was searched for: it is not a namespace, so it is what has to resolve before the rest can."
+				: string.Empty;
+
 			yield return $"Nothing called {name} is reachable from {where}, and nothing in the solution's own "
-				+ "source is called that either, so it is not written yet.";
+				+ $"source is called that either, so it is not written yet.{searched}";
 
 			yield break;
 		}
@@ -377,10 +566,11 @@ public static class NameResolver
 	/// <summary>
 	/// The name to search for, taken out of however the code spells it.
 	/// <para>
-	/// The first segment of a dotted name, because that is the part that has to resolve:
-	/// <c>Encoding.UTF8</c> fails on <c>Encoding</c>. Type arguments then come off and are counted,
-	/// because a name used at one arity is not resolved by a type of another, and the use site is
-	/// the only place that number appears.
+	/// The first segment of a dotted name, because where nothing in front of it is a namespace that is
+	/// the part that has to resolve: <c>Encoding.UTF8</c> fails on <c>Encoding</c>. Whether something
+	/// is a namespace is the compilation's to say, so <see cref="Segments"/> keeps the rest for it to
+	/// be asked. Type arguments then come off and are counted, because a name used at one arity is not
+	/// resolved by a type of another, and the use site is the only place that number appears.
 	/// </para>
 	/// <para>
 	/// Public so it can be tested without a solution. Everything else here needs a compilation, and
@@ -403,6 +593,27 @@ public static class NameResolver
 		if (close > angle) arity ??= Counted(name[(angle + 1)..close]);
 
 		return (name[..angle], arity);
+	}
+
+	/// <summary>
+	/// Every dotted segment of the name, split only at the dots outside a type argument list, each
+	/// with its own type arguments still on: <c>System.Collections.Generic.List&lt;Foo.Bar&gt;</c> is
+	/// four segments, the last <c>List&lt;Foo.Bar&gt;</c>.
+	/// </summary>
+	public static IReadOnlyList<string> Segments(string supplied)
+	{
+		var segments = new List<string>();
+		var rest = supplied.Trim();
+
+		for (var dot = TopLevelDot(rest); dot >= 0; dot = TopLevelDot(rest))
+		{
+			segments.Add(rest[..dot].Trim());
+			rest = rest[(dot + 1)..];
+		}
+
+		segments.Add(rest.Trim());
+
+		return [.. segments.Where(segment => segment.Length > 0)];
 	}
 
 	/// <summary>

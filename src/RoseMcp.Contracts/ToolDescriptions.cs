@@ -97,10 +97,8 @@ public static class ToolDescriptions
 		"Imports the code needs, ensured in the same file: System.Text, static System.Math, or Json = "
 			+ "System.Text.Json. One already in scope is reported, not added.";
 
-	public const string ProjectFilterArgument = "Limit to one project by name. Defaults to the whole solution.";
-
-	public const string ProjectOrPathFilterArgument =
-		"Limit to one project by name or path. Defaults to every project.";
+	public const string ProjectFilterArgument =
+		"Limit to one project, by name or by the path to its project file. Defaults to the whole solution.";
 
 	public const string SingleFilePathArgument =
 		"Path to the file: absolute, or relative to where your session is running.";
@@ -126,7 +124,8 @@ public static class ToolDescriptions
 	public const string DefinitionsOnlyArgument =
 		"Return where it is declared and how many uses there are, without listing them.";
 
-	public const string ReferenceProjectArgument = "Only references compiled by this project.";
+	public const string ReferenceProjectArgument =
+		"Only references compiled by this project, named or given as the path to its project file.";
 
 	public const string IncludePreviewsArgument =
 		"Give each location its line of source. On by default; off is much smaller.";
@@ -258,7 +257,7 @@ public static class ToolDescriptions
 		"The file to read. One of this and type; every type it declares is answered for.";
 
 	public const string ResolveNameArgument =
-		"The name as the code spells it: Encoding, List<int>, or Encoding.UTF8.";
+		"The name as the code spells it: Encoding, List<int>, Encoding.UTF8, or System.Text.Encoding.";
 
 	public const string ResolveFilePathArgument =
 		"The file it is used in. Scopes the search to what that project can reach, and is the only way to "
@@ -924,12 +923,13 @@ public static class ToolDescriptions
 
 	public const string ResolveName = """
 		Finds which namespace an unresolved name needs. Give the name as the code spells it --
-		Encoding, List<int>, Encoding.UTF8 -- and it searches this project's source, the projects it
-		references and every referenced assembly. Use it when a write reports CS0246, CS0103 or CS1061
-		and you cannot say what the import is; when you can, pass usings on the write instead. Two
-		candidates are both returned, never a first pick: the wrong import compiles and binds to the
-		wrong type. It also says what an import would not fix -- a nested type, a mismatched arity, a
-		type in a project this one does not reference, or a namespace already in scope. The IDE's own
-		add-import fix is not reachable through rose_apply_code_fix, so this is how to ask.
+		Encoding, List<int>, Encoding.UTF8, System.Text.Encoding -- and it searches this project's
+		source, the projects it references and every referenced assembly. Use it when a write reports
+		CS0246, CS0103 or CS1061 and you cannot say what the import is; when you can, pass usings on the
+		write instead. Two candidates are both returned, never a first pick: the wrong import compiles
+		and binds to the wrong type. It also says what an import would not fix -- a nested type, a
+		mismatched arity, a type in a project this one does not reference, or a namespace already in
+		scope. The IDE's own add-import fix is not reachable through rose_apply_code_fix, so this is how
+		to ask.
 		""";
 }

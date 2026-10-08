@@ -152,6 +152,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   long, and drops the comments that grouped its parameters without a word. A list the caller wrapped
   is a layout they chose and is used, but the comments above existing parameters stay, because a
   comment is not layout.
+- **An argument's indentation belongs to the line it begins, not to the argument.** A call site
+  keeps its own arguments, commas and wrapping. An argument that is new, or that a change moves to
+  another position, is laid out by the token in front of it: at the call's continuation indentation
+  after a token that ends a line, with no whitespace of its own after one that does not, and with
+  any comment the caller wrote in front of it kept. Copying a neighbour's leading whitespace is
+  right only where every argument begins a line. Where several share a continuation line it writes
+  a run of tabs in the middle of that line, which compiles, verifies clean and is exactly the
+  argument list the change asked for, so nothing but `dotnet format` would ever say so.
 - **A change of accessibility moves the override chain, and nothing else in the modifier list.** An
   override that keeps the old accessibility is CS0507, so the base all the way up and every override
   all the way down change with the member named. Interfaces are not part of that group: an implicit

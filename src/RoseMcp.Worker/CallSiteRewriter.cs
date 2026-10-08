@@ -48,6 +48,10 @@ public static class CallSiteRewriter
 		refusal = string.Empty;
 
 		var emitted = new List<ArgumentSyntax>();
+
+		// Where each emitted argument stood in the list as written, or -1 for one that is new. An
+		// argument still in its own position keeps the whitespace in front of it untouched.
+		var origins = new List<int>();
 		var allPositionalSoFar = true;
 
 		foreach (var parameter in plan.Parameters.Skip(binding.Skip))
@@ -89,13 +93,21 @@ public static class CallSiteRewriter
 				// arguments after it, which C# has allowed since 7.2.
 				var named = !positional || argument.NameColon is not null;
 
+				origins.Add(arguments.Arguments.IndexOf(argument));
 				emitted.Add(named ? Named(NameFor(parameter, binding), argument) : argument);
 			}
 
 			if (!positional) allPositionalSoFar = false;
 		}
 
-		return arguments.WithArguments(SyntaxFactory.SeparatedList(emitted, Separators(emitted.Count, arguments)));
+		var separators = Separators(emitted.Count, arguments).ToArray();
+		var indentation = Indentation(arguments);
+
+		var laidOut = emitted.Select((argument, index) => origins[index] == index
+			? argument
+			: InSlot(argument, index == 0 ? arguments.OpenParenToken : separators[index - 1], indentation));
+
+		return arguments.WithArguments(SyntaxFactory.SeparatedList(laidOut, separators));
 	}
 
 	/// <summary>
@@ -125,25 +137,61 @@ public static class CallSiteRewriter
 	}
 
 	/// <summary>
-	/// The whitespace in front of an argument that sits on a line of its own here, or none where the
-	/// call site is written on one line.
+	/// The indentation of an argument that begins a line at this call site, or none where no argument
+	/// does.
 	/// <para>
 	/// Read from the arguments rather than worked out, because it is the only thing at hand that
-	/// knows how deep this particular call is indented -- and the line break belongs to the comma
-	/// before it, so what is left on the argument is the indentation alone.
+	/// knows how deep this particular call is indented -- and the line break belongs to the token
+	/// before it, so what is left on the argument is the indentation, and then whatever comment the
+	/// caller wrote in front of it, which is not layout and is not copied.
 	/// </para>
 	/// </summary>
-	private static SyntaxTriviaList Continuation(ArgumentListSyntax arguments)
+	private static SyntaxTriviaList Indentation(ArgumentListSyntax arguments)
 	{
-		foreach (var argument in arguments.Arguments)
+		for (var index = 0; index < arguments.Arguments.Count; index++)
 		{
-			var leading = argument.GetLeadingTrivia();
+			var before = index == 0 ? arguments.OpenParenToken : arguments.Arguments.GetSeparator(index - 1);
 
-			if (leading.Count > 0) return leading;
+			if (EndsLine(before)) return [.. LeadingWhitespace(arguments.Arguments[index].GetLeadingTrivia())];
 		}
 
 		return default;
 	}
+
+	/// <summary>
+	/// An argument laid out for the position it now takes: at the call site's indentation where the
+	/// token in front of it ends a line, and with no whitespace of its own where it does not.
+	/// <para>
+	/// Indentation belongs to the line an argument begins, not to the argument, so a new argument or
+	/// one that has moved cannot bring it along. Taking the indentation of an argument that begins a
+	/// line is right where every argument begins one, and wrong where several share a continuation
+	/// line: there the new argument lands after a comma and a space, and the indentation becomes a run
+	/// of tabs in the middle of the line -- which compiles, and is exactly the argument list the change
+	/// asked for, so nothing reports it.
+	/// </para>
+	/// <para>
+	/// Only the whitespace in front is replaced. A comment the caller wrote before the argument goes
+	/// where the argument goes.
+	/// </para>
+	/// </summary>
+	private static ArgumentSyntax InSlot(ArgumentSyntax argument, SyntaxToken before, SyntaxTriviaList indentation)
+	{
+		var leading = argument.GetLeadingTrivia();
+		var own = leading.Skip(LeadingWhitespace(leading).Count());
+
+		return argument.WithLeadingTrivia(EndsLine(before) ? indentation.Concat(own) : own);
+	}
+
+	/// <summary>
+	/// Whether the token is the last on its line. Its trailing trivia runs up to and includes the line
+	/// break that ends it, so a break anywhere in it, after a comment or not, is the end of the line.
+	/// </summary>
+	private static bool EndsLine(SyntaxToken token) =>
+		token.TrailingTrivia.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+
+	/// <summary>The whitespace a run of leading trivia starts with, which is the indentation of its line.</summary>
+	private static IEnumerable<SyntaxTrivia> LeadingWhitespace(SyntaxTriviaList trivia) =>
+		trivia.TakeWhile(item => item.IsKind(SyntaxKind.WhitespaceTrivia));
 
 	/// <summary>
 	/// The arguments to write for one parameter: the ones already written for it here, the one the
@@ -170,14 +218,9 @@ public static class CallSiteRewriter
 
 		if (supplied.TryGetValue(parameter.Name, out var expression))
 		{
-			// Given the indentation the arguments already here have, so an argument arriving in the
-			// middle of a call site somebody wrapped by hand lands on a line of its own rather than
-			// at column zero.
-			wanted =
-			[
-				SyntaxFactory.Argument(SyntaxFactory.ParseExpression(expression))
-					.WithLeadingTrivia(Continuation(arguments)),
-			];
+			// Built with no whitespace of its own: where it lands decides that, once the list it
+			// lands in is known.
+			wanted = [SyntaxFactory.Argument(SyntaxFactory.ParseExpression(expression))];
 
 			return true;
 		}

@@ -53,6 +53,18 @@ public sealed class CallSiteShapeMatrixTests
 		+ "\t\tb);\n"
 		+ "}\n";
 
+	/// <summary>
+	/// A call wrapped once after its parenthesis, with its arguments sharing the continuation line --
+	/// the shape a long argument list takes when it is wrapped to fit rather than to stack.
+	/// </summary>
+	private const string SharedLineCall = "public static class Fixture\n"
+		+ "{\n"
+		+ "\tpublic static string Target(string first, string second) => first + second;\n"
+		+ "\n"
+		+ "\tpublic static string Use(string a, string b) => Target(\n"
+		+ "\t\ta, b);\n"
+		+ "}\n";
+
 	/// <summary>The ordinary shape: every argument in its own place, and the new one lands between them.</summary>
 	[Test]
 	public void Puts_a_new_argument_between_two_positional_ones()
@@ -253,6 +265,96 @@ public sealed class CallSiteShapeMatrixTests
 			+ "}\n";
 
 		Rewrite(call, Inserted, Dash).ShouldBe("(\n\t\tfirst: a,\n\t\t\"-\",\n\t\tsecond: b)");
+	}
+
+	/// <summary>
+	/// A call wrapped once after its parenthesis, with both arguments on the continuation line. The
+	/// argument arriving between them goes in after a comma and a space, as they do.
+	/// <para>
+	/// Taking the indentation of the first argument that has any gives it the continuation's own --
+	/// right where every argument begins a line, and here a run of tabs in the middle of one, between
+	/// the comma and the new argument. Nothing reports that: it compiles, and the argument list is
+	/// exactly what the change asked for.
+	/// </para>
+	/// </summary>
+	[Test]
+	public void Puts_a_new_argument_inline_where_the_arguments_share_a_continuation_line()
+	{
+		Rewrite(SharedLineCall, Inserted, Dash).ShouldBe("(\n\t\ta, \"-\", b)");
+	}
+
+	/// <summary>The same line, with the new argument after the last one.</summary>
+	[Test]
+	public void Appends_a_new_argument_inline_where_the_arguments_share_a_continuation_line()
+	{
+		Rewrite(SharedLineCall, "string first, string second, string separator", Dash).ShouldBe("(\n\t\ta, b, \"-\")");
+	}
+
+	/// <summary>
+	/// The same line, with the new argument in front of the first. The new one begins the line, so it
+	/// takes the indentation; the argument it displaces is now mid-line and gives its indentation up,
+	/// or the tabs would sit after the new argument's comma instead.
+	/// </summary>
+	[Test]
+	public void Puts_a_new_first_argument_at_the_start_of_a_shared_continuation_line()
+	{
+		Rewrite(SharedLineCall, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\", a, b)");
+	}
+
+	/// <summary>
+	/// One argument to a line, with the new argument in front of the first: it takes a line of its own,
+	/// and the argument it displaces keeps one.
+	/// </summary>
+	[Test]
+	public void Puts_a_new_first_argument_on_a_line_of_its_own_where_each_argument_has_one()
+	{
+		Rewrite(WrappedCall, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\",\n\t\ta,\n\t\tb)");
+	}
+
+	/// <summary>
+	/// A comment written in front of the argument a new one displaces stays in front of it. Only the
+	/// whitespace before it is layout; the comment is the caller's.
+	/// </summary>
+	[Test]
+	public void Keeps_the_comment_in_front_of_an_argument_a_new_first_argument_displaces()
+	{
+		var call = "public static class Fixture\n"
+			+ "{\n"
+			+ "\tpublic static string Target(string first, string second) => first + second;\n"
+			+ "\n"
+			+ "\tpublic static string Use(string a, string b) => Target(\n"
+			+ "\t\t/* first */ a, b);\n"
+			+ "}\n";
+
+		Rewrite(call, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\", /* first */ a, b)");
+	}
+
+	/// <summary>
+	/// Taking out the parameter whose argument began the continuation line leaves the next argument
+	/// beginning it, at the indentation the line had, rather than at column zero.
+	/// </summary>
+	[Test]
+	public void Moves_the_indentation_onto_the_argument_that_begins_the_line_when_the_first_is_removed()
+	{
+		Rewrite(SharedLineCall, "string second").ShouldBe("(\n\t\tb)");
+	}
+
+	/// <summary>
+	/// Taking out the first argument where the break follows it, rather than the parenthesis, leaves
+	/// the next one directly after the parenthesis instead of on a line of its own behind it.
+	/// </summary>
+	[Test]
+	public void Pulls_the_next_argument_up_to_the_parenthesis_when_the_first_is_removed_before_a_break()
+	{
+		var call = "public static class Fixture\n"
+			+ "{\n"
+			+ "\tpublic static string Target(string first, string second) => first + second;\n"
+			+ "\n"
+			+ "\tpublic static string Use(string a, string b) => Target(a,\n"
+			+ "\t\tb);\n"
+			+ "}\n";
+
+		Rewrite(call, "string second").ShouldBe("(b)");
 	}
 
 	/// <summary>

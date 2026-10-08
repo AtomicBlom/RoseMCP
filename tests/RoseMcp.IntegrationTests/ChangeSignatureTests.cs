@@ -284,6 +284,67 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
+	/// An argument added to a call wrapped once after its parenthesis, where the arguments share the
+	/// continuation line. It goes in after a comma and a space like its neighbours, wherever it lands --
+	/// in front of the first, between two, or after the last -- and only the line's first argument
+	/// carries the continuation's indentation.
+	/// <para>
+	/// Taking the indentation of an argument that begins a line is right where every argument begins
+	/// one, and wrong here: it puts the continuation's tabs in the middle of the line, between the comma
+	/// before the new argument and the argument itself. That compiles, verifies clean and reads as part
+	/// of the change asked for, so only the layout says anything happened.
+	/// </para>
+	/// </summary>
+	[Test]
+	[Arguments("string extra, string first, string second, string third, string last", "\"x\", \"one\", \"two\", \"three\", \"four\"")]
+	[Arguments("string first, string second, string third, string extra, string last", "\"one\", \"two\", \"three\", \"x\", \"four\"")]
+	[Arguments("string first, string second, string third, string last, string extra", "\"one\", \"two\", \"three\", \"four\", \"x\"")]
+	public async Task Adds_an_argument_inline_where_a_wrapped_call_shares_its_continuation_line(
+		string parameters,
+		string arguments)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Continued.Combine(string, string, string, string)", parameters, ["extra=\"x\""]);
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var text = await ReadAsync(fixture, "Continued.cs");
+
+		text.ShouldContain($"\t\treturn Combine(\r\n\t\t\t{arguments});\r\n", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The same additions to a call wrapped one argument to a line. The new argument begins a line of
+	/// its own at its neighbours' indentation, and the argument it displaces keeps a line of its own
+	/// too, rather than following the new one onto the line it lands on.
+	/// </summary>
+	[Test]
+	[Arguments("string extra, string first, string second, string third, string last", "\"x\",\r\n\t\t\t\"one\",\r\n\t\t\t\"two\",\r\n\t\t\t\"three\",\r\n\t\t\t\"four\"")]
+	[Arguments("string first, string second, string third, string extra, string last", "\"one\",\r\n\t\t\t\"two\",\r\n\t\t\t\"three\",\r\n\t\t\t\"x\",\r\n\t\t\t\"four\"")]
+	[Arguments("string first, string second, string third, string last, string extra", "\"one\",\r\n\t\t\t\"two\",\r\n\t\t\t\"three\",\r\n\t\t\t\"four\",\r\n\t\t\t\"x\"")]
+	public async Task Adds_an_argument_on_a_line_of_its_own_where_a_wrapped_call_has_one_per_line(
+		string parameters,
+		string arguments)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Continued.Combine(string, string, string, string)", parameters, ["extra=\"x\""]);
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var text = await ReadAsync(fixture, "Continued.cs");
+
+		text.ShouldContain($"\t\treturn Combine(\r\n\t\t\t{arguments});\r\n", Case.Sensitive);
+	}
+
+	/// <summary>
 	/// Refused before anything is written. A required parameter with nothing to pass would break
 	/// every call site, and which of the two the caller meant is not something to guess at.
 	/// </summary>

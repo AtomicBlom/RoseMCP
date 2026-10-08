@@ -29,9 +29,13 @@ Read before adding a tool, adding a field to a result, or changing an error path
   backtick and `&` as a six-character escape inside the string, where no client decodes it: a diff
   becomes unreadable and several times longer. So every `WithTools` and `WithToolsFromAssembly` passes
   `ToolJson.Readable(McpJsonUtilities.DefaultOptions)`, and anything that rewrites a result's text
-  block afterwards -- the ignored-argument notice is one -- writes it with the same instance. A
-  registration that leaves the options off, or a filter that picks its own, is a second spelling of
-  the same answer that changes from one call to the next with nothing in the call saying why.
+  block afterwards -- the ignored-argument notice is one -- writes it with the same options: the
+  broker keeps one instance for its registrations and its filters. A registration that leaves the
+  options off, or a filter that picks its own, is a second spelling of the same answer that changes
+  from one call to the next with nothing in the call saying why. The broker's and the worker's
+  registrations are each held by a test; the live-app host's is held by review, since its text block
+  is read by nothing but the broker, which reads only structured content, and reaching it directly
+  takes a debugged target.
 - **Advice names an argument only where the tool takes it and it reaches.** A write that leaves a
   name unresolved suggests the import, and a suggestion is followed literally: telling the caller of
   a tool without `usings` to pass it sends an argument the tool never sees, and telling

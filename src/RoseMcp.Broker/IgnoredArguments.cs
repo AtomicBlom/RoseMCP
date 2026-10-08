@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
 
-using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -34,7 +33,7 @@ public static class IgnoredArguments
 	/// The options every broker tool is registered with, so the text block rewritten here is spelled
 	/// exactly as the one the SDK wrote for a call that carried nothing extra.
 	/// </summary>
-	private static readonly JsonSerializerOptions Json = ToolJson.Readable(McpJsonUtilities.DefaultOptions);
+	private static JsonSerializerOptions Json => ServiceCollectionExtensions.ToolSerializerOptions;
 
 	/// <summary>
 	/// Adds a notice to each successful call for every argument it carried that the tool does not

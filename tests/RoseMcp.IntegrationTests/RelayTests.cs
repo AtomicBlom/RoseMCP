@@ -110,13 +110,12 @@ public sealed class RelayTests
 		}
 	}
 
-	/// <summary>The structured half of a tool reply, or the error text when the call failed.</summary>
 	/// <summary>
-	/// A worker's answer, through the broker and the relay in front of it, reads in the text block a
-	/// client hands the model with its plus sign as itself. Every hop it crosses -- the worker's own
-	/// serialization, the broker that reads its structured content and writes its own, and the relay
-	/// that passes the tray's result on -- is one where a default encoder would spell it as an escape
-	/// inside the string, which no client decodes.
+	/// A worker's answer, through the tray's broker and the relay in front of it, reads in the text
+	/// block a client hands the model with its plus sign as itself. The broker writes that text from
+	/// the worker's structured content, and the relay passes the tray's result on; either one using a
+	/// default encoder would spell the plus as an escape inside the string, which no client decodes.
+	/// The worker's own text block never reaches here, so its registration is held by a test of its own.
 	/// </summary>
 	[Test]
 	public async Task A_relayed_worker_answer_spells_its_source_as_written()
@@ -139,6 +138,7 @@ public sealed class RelayTests
 		text.ShouldNotContain("\\" + "u002B", Case.Sensitive);
 	}
 
+	/// <summary>The structured half of a tool reply, or the error text when the call failed.</summary>
 	internal static JsonElement Structured(JsonDocument reply)
 	{
 		var result = reply.RootElement.GetProperty("result");

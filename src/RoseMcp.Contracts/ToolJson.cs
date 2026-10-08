@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 
@@ -24,31 +23,29 @@ namespace RoseMcp.Contracts;
 /// </summary>
 public static class ToolJson
 {
-	private static readonly ConditionalWeakTable<JsonSerializerOptions, JsonSerializerOptions> Derived = new();
-
 	/// <summary>
-	/// The one encoder a tool's text is written with. Relaxed, which leaves every printable
-	/// character as itself and escapes only what JSON requires: quotes, backslashes and control
-	/// characters.
+	/// The one encoder a tool's text is written with. Relaxed, which leaves every character of the
+	/// Basic Multilingual Plane as itself apart from what JSON requires escaped -- quotes,
+	/// backslashes and control characters. A character outside that plane, an emoji for one, is
+	/// still written as an escaped surrogate pair.
 	/// </summary>
 	public static JavaScriptEncoder Encoder => JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
 
 	/// <summary>
-	/// The SDK's own options with <see cref="Encoder"/> in place of its default, and everything else
-	/// -- casing, null handling, the type resolvers -- as the SDK has it, so a result changes
-	/// spelling and nothing else.
+	/// A read-only copy of the SDK's own options with <see cref="Encoder"/> in place of its default,
+	/// and everything else -- casing, null handling, the type resolvers -- as the SDK has it, so a
+	/// result changes spelling and nothing else.
 	/// <para>
-	/// The same instance for the same basis, read-only, so a host can ask for it wherever it needs
-	/// it and a filter that rewrites a result writes it exactly as the tool's own registration did.
+	/// A new instance on every call. A host that registers several tool types, or rewrites a result
+	/// after the SDK wrote it, keeps one in a field of its own and uses it for both.
 	/// </para>
 	/// </summary>
 	/// <param name="basis">The options the SDK would otherwise use: <c>McpJsonUtilities.DefaultOptions</c>.</param>
-	public static JsonSerializerOptions Readable(JsonSerializerOptions basis) =>
-		Derived.GetValue(basis, static basis =>
-		{
-			var options = new JsonSerializerOptions(basis) { Encoder = Encoder };
-			options.MakeReadOnly();
+	public static JsonSerializerOptions Readable(JsonSerializerOptions basis)
+	{
+		var options = new JsonSerializerOptions(basis) { Encoder = Encoder };
+		options.MakeReadOnly();
 
-			return options;
-		});
+		return options;
+	}
 }

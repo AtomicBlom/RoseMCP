@@ -19,8 +19,11 @@ namespace RoseMcp.UnitTests;
 /// </summary>
 public sealed class ToolTextTests
 {
-	/// <summary>Every character the default encoder escapes and JSON does not need escaped, plus a quote.</summary>
-	private const string Awkward = """a + b < c > d " e ' f ` g & h""";
+	/// <summary>
+	/// Characters the default encoder escapes and JSON does not need escaped -- ASCII punctuation, and
+	/// letters past ASCII from the Basic Multilingual Plane -- plus a quote, which JSON does.
+	/// </summary>
+	private const string Awkward = """a + b < c > d " e ' f ` g & h é 中""";
 
 	private const string Notice = "Ignored an argument called `y`; `rose_echo` has no such argument. It takes `said`.";
 
@@ -34,10 +37,10 @@ public sealed class ToolTextTests
 
 	/// <summary>
 	/// Through the SDK's own serialization, registered the way every host registers its tools: what
-	/// the tool said reads back as itself, not as escapes.
+	/// the tool said reads back as itself, not as escapes, the quote aside.
 	/// </summary>
 	[Test]
-	public async Task A_result_text_spells_every_printable_character_as_itself(CancellationToken cancellationToken)
+	public async Task A_result_text_spells_every_Basic_Multilingual_Plane_character_as_itself(CancellationToken cancellationToken)
 	{
 		await using var connection = await OpenAsync(cancellationToken);
 
@@ -47,9 +50,31 @@ public sealed class ToolTextTests
 			cancellationToken: cancellationToken);
 
 		var text = result.Content.OfType<TextContentBlock>().ShouldHaveSingleItem().Text;
-		text.ShouldBe("""{"said":"a + b < c > d \" e ' f ` g & h"}""");
+		text.ShouldBe("""{"said":"a + b < c > d \" e ' f ` g & h é 中"}""");
 		Escapes.ShouldNotContain(escape => text.Contains(escape, StringComparison.Ordinal));
 		JsonDocument.Parse(text).RootElement.GetProperty("said").GetString().ShouldBe(Awkward);
+	}
+
+	/// <summary>
+	/// What the relaxed encoder still escapes: a character outside the Basic Multilingual Plane, an
+	/// emoji here, is written as its surrogate pair. Pinned so the encoder's documentation says what
+	/// it does rather than what would be nice.
+	/// </summary>
+	[Test]
+	public async Task A_result_text_escapes_a_character_outside_the_Basic_Multilingual_Plane(CancellationToken cancellationToken)
+	{
+		await using var connection = await OpenAsync(cancellationToken);
+		var emoji = char.ConvertFromUtf32(0x1F600);
+
+		var result = await connection.Client.CallToolAsync(
+			"rose_echo",
+			new Dictionary<string, object?> { ["said"] = $"a {emoji} b" },
+			cancellationToken: cancellationToken);
+
+		var text = result.Content.OfType<TextContentBlock>().ShouldHaveSingleItem().Text;
+		var surrogates = "\\" + "uD83D" + "\\" + "uDE00";
+		text.ShouldBe("{\"said\":\"a " + surrogates + " b\"}");
+		JsonDocument.Parse(text).RootElement.GetProperty("said").GetString().ShouldBe($"a {emoji} b");
 	}
 
 	/// <summary>
@@ -119,8 +144,8 @@ public sealed class ToolTextTests
 	}
 
 	/// <summary>
-	/// One instance for every host and filter that asks, differing from the SDK's options in the
-	/// encoder and nothing else, so a result changes spelling and never shape.
+	/// Options differing from the SDK's in the encoder and nothing else, so a result changes spelling
+	/// and never shape.
 	/// </summary>
 	[Test]
 	public void The_options_are_the_SDK_s_own_with_one_encoder()
@@ -128,7 +153,6 @@ public sealed class ToolTextTests
 		var basis = McpJsonUtilities.DefaultOptions;
 		var options = ToolJson.Readable(basis);
 
-		ToolJson.Readable(basis).ShouldBeSameAs(options);
 		options.IsReadOnly.ShouldBeTrue();
 		options.Encoder.ShouldBeSameAs(ToolJson.Encoder);
 		options.PropertyNamingPolicy.ShouldBeSameAs(basis.PropertyNamingPolicy);

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -113,6 +114,14 @@ public static class ServiceCollectionExtensions
 		handle or name, involving nobody.
 		""";
 
+	/// <summary>
+	/// The options every broker tool type is registered with, and that anything rewriting a result's
+	/// text block afterwards writes it with. They differ from the SDK's only in the encoder, so the
+	/// text a client reads spells + and &lt; as themselves rather than as escapes, and one instance
+	/// is what keeps a rewritten result spelled as the SDK spelled the plain one.
+	/// </summary>
+	internal static readonly JsonSerializerOptions ToolSerializerOptions = ToolJson.Readable(McpJsonUtilities.DefaultOptions);
+
 	public static IMcpServerBuilder AddRoseMcpBroker(
 		this IServiceCollection services,
 		Action<BrokerOptions>? configure = null)
@@ -154,10 +163,6 @@ public static class ServiceCollectionExtensions
 		// Type[] as a tool instance and registers nothing at all. ArgumentAliases.Scanned is what
 		// keeps this list and that one honest, since a tool registered here but never read for
 		// aliases is a tool whose arguments can silently go missing.
-		//
-		// Every type gets the same options, which differ from the SDK's only in the encoder, so the
-		// text block a client reads spells + and < as themselves rather than as escapes.
-		var json = ToolJson.Readable(McpJsonUtilities.DefaultOptions);
 		var builder = services
 			.AddMcpServer(server =>
 			{
@@ -166,10 +171,10 @@ public static class ServiceCollectionExtensions
 					? Instructions + DebuggingInstructions
 					: Instructions;
 			})
-			.WithTools<BrokerTools>(json)
-			.WithTools<BrokerAnalysisTools>(json);
+			.WithTools<BrokerTools>(ToolSerializerOptions)
+			.WithTools<BrokerAnalysisTools>(ToolSerializerOptions);
 
-		if (OperatingSystem.IsWindows()) builder = builder.WithTools<LiveAppDebugTools>(json);
+		if (OperatingSystem.IsWindows()) builder = builder.WithTools<LiveAppDebugTools>(ToolSerializerOptions);
 
 		return builder
 			.WithArgumentAliases(aliases)

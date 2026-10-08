@@ -169,24 +169,10 @@ workspace. The compiler enforces it now, and the revision is enumerated over the
 worktree Rose had opened could not be removed while the broker lived. Workers stand in an empty folder of
 Rose's own, and every path one is sent is absolute.
 
-### BRK-21 Three live-app tools answer with a bare sentence, and the guard for that is blind to them
-- **Found while closing card 0c, PR #295.** Not in the original review.
-- **Severity:** Low
-- **Effort:** S
-- **Where:** `src/RoseMcp.Broker/Tools/LiveAppDebugTools.cs:222` (`DetachAsync`), `:410`
-  (`ContinueAsync`), `:432` (`StepAsync`); the exemption is `ToolResultShapeTests.ProcessScoped`
-- **What:** All three return `Task<string>` and answer with a sentence -- "That session was not
-  open.", "Continued; the target is running again.", "Nothing was stopped to step." That is the same
-  shape BRK-12 found on `rose_workspace_close` and card 0c fixed there. A caller holding two sessions
-  cannot tell which one answered, and a sentence carries no field an agent can branch on.
-- **Why it matters:** The guard card 0c shipped cannot see these. It exempts the live-app surface by
-  prefix, because a debugged process is not workspace-scoped and has no revision -- which is right
-  for attribution and silently also excuses answering with prose. So the one defect the guard was
-  built to catch survives, on the surface the guard does not cover, and nothing will now notice.
-- **Suggested change:** A result record for each, carrying the session and the outcome as fields.
-  Then narrow the exemption: it should excuse a live-app result from *workspace* attribution, not
-  from being a result at all -- assert that every tool answers with a record, and let the prefix
-  decide only which attribution applies.
+### ~~BRK-21 Three live-app tools answer with a bare sentence, and the guard for that is blind to them~~
+**#380.** Three debug tools answered with a sentence naming no session, and the guard against that
+exempted the whole live-app surface. Every tool answers with a record, and the live-app exemption
+covers workspace attribution only.
 
 ## Pit-of-success inversions
 

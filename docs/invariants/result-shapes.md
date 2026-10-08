@@ -8,6 +8,19 @@ Read before adding a tool, adding a field to a result, or changing an error path
   solution it owns. Convert at the boundary, never at the throw sites: the exception type carries
   meaning further in -- services separate a caller's mistake from an impossible state, the manager
   separates either from a dead worker, and retry decisions turn on that.
+- **Every tool answers with a record, and the live-app prefixes excuse only workspace
+  attribution.** A sentence names nothing a caller can check and gives an agent nothing to branch
+  on but its wording: "closed" says which workspace to nobody holding two, and "detached" which
+  session. A workspace's result derives from `WorkspaceScopedResult`, which the broker fills in one
+  place. A live-app result answers about a debugged process, which belongs to no workspace and has
+  no revision, so the `rose_debug_` and `rose_xaml_` prefixes excuse it from that and from nothing
+  else: it is still a record, and a result that ends or resumes a session names the session, the
+  one the caller passed, since a caller may hold several and one that is no longer open has nothing
+  else to read it from. An outcome that is not a failure -- nothing was open, nothing was stopped --
+  is a field, and an outcome that leaves something at risk, a detach that could not take the
+  debugger off its target, is still an error rather than a field that can be read past.
+  `ToolResultShapeTests` holds the record over the whole surface without consulting the prefixes,
+  so the exemption cannot quietly widen into excusing prose.
 - **An argument name the tool does not declare is said, on every call that carries one.** An
   argument name is part of a tool's vocabulary, so a name the tool does not know is a caller error
   the tool can see -- exactly as a wrong-shaped value is. The binder drops it rather than refusing it

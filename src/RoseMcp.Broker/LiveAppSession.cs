@@ -398,9 +398,11 @@ public sealed class LiveAppSession : IAsyncDisposable
 	/// <summary>
 	/// Resumes a held target and reports the whole outcome, not only whether anything was held.
 	/// <para>
-	/// The bool overloads below drop <see cref="LiveContinueResult.Detail"/>, which is the one thing a
-	/// person reading a stack needs to be told: their hold has just been released by somebody else's
-	/// resume. An agent asking to continue does not care, so both shapes exist.
+	/// The bool overloads below drop <see cref="LiveContinueResult.Detail"/> and the cursor. Detail is the
+	/// one thing a person reading a stack needs to be told -- their hold has just been released by somebody
+	/// else's resume -- and the cursor is what an agent waits past for what the resume caused, so every
+	/// tool answers from this shape; the bool overloads serve a caller that asks only whether anything was
+	/// held.
 	/// </para>
 	/// </summary>
 	public Task<LiveContinueResult> ResumeAsync(CancellationToken cancellationToken)

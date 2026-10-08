@@ -222,23 +222,24 @@ public sealed class LiveAppDebugTools(
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
-		OpenWorld = false)]
+		OpenWorld = false,
+		UseStructuredContent = true)]
 	[Description(
 		"Detach the debugger and end the session, leaving the target process running exactly as before. "
 			+ "Use this to stop watching a process without killing it; a debugger that is simply abandoned "
 			+ "would otherwise risk taking the target down with it, which detaching avoids. It fails rather "
 			+ "than reporting success if the debugger could not be detached, since that is the one outcome "
 			+ "where the target is at risk.")]
-	public async Task<string> DetachAsync(
+	public async Task<LiveSessionDetached> DetachAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		// Held before the close, because closing forgets it, and its answer to "did the detach
-		// actually happen" is the only thing that makes the sentence below true rather than habitual.
+		// actually happen" is the only thing that makes a result saying it did true rather than habitual.
 		var session = sessions.Find(sessionId);
 
 		var closed = await sessions.CloseAsync(sessionId, cancellationToken);
-		if (!closed) return "That session was not open.";
+		if (!closed) return new LiveSessionDetached { SessionId = sessionId, Detached = false };
 
 		if (session?.DetachFailure is { Length: > 0 } failure)
 		{
@@ -250,7 +251,7 @@ public sealed class LiveAppDebugTools(
 					+ "check the process before relying on it.");
 		}
 
-		return "Detached; the target keeps running.";
+		return new LiveSessionDetached { SessionId = sessionId, Detached = true };
 	}
 
 	[McpServerTool(
@@ -400,18 +401,26 @@ public sealed class LiveAppDebugTools(
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = true,
-		OpenWorld = false)]
+		OpenWorld = false,
+		UseStructuredContent = true)]
 	[Description(
 		"Resume a target that is held at a stopping breakpoint, so it keeps running. Call this after you "
 			+ "have read the stop and its stack from rose_debug_events; it is a no-op if nothing is "
 			+ "currently stopped, which is safe to call speculatively.")]
-	public async Task<string> ContinueAsync(
+	public async Task<LiveContinued> ContinueAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		var continued = await session.ContinueAsync(cancellationToken);
-		return continued ? "Continued; the target is running again." : "Nothing was stopped at a breakpoint.";
+		var resumed = await session.ResumeAsync(cancellationToken);
+
+		return new LiveContinued
+		{
+			SessionId = sessionId,
+			Continued = resumed.Continued,
+			Detail = resumed.Detail,
+			Cursor = resumed.Cursor,
+		};
 	}
 
 	[McpServerTool(
@@ -420,21 +429,30 @@ public sealed class LiveAppDebugTools(
 		ReadOnly = false,
 		Destructive = false,
 		Idempotent = false,
-		OpenWorld = false)]
+		OpenWorld = false,
+		UseStructuredContent = true)]
 	[Description(
 		"Step a target that is held at a breakpoint: 'in' steps into calls, 'over' runs them without "
 			+ "descending, 'out' runs to the caller. The step resumes the target briefly and then holds it "
 			+ "again at the new location, which arrives as a StepComplete event in rose_debug_events with a "
 			+ "fresh stack and locals. It is a no-op if nothing is currently stopped. Line granularity "
 			+ "needs a PDB; without one, a step lands at the runtime's own step boundaries.")]
-	public async Task<string> StepAsync(
+	public async Task<LiveStepped> StepAsync(
 		[Description(ToolDescriptions.SessionArgument)] string sessionId,
 		[Description(ToolDescriptions.StepModeArgument)] string mode = "over",
 		CancellationToken cancellationToken = default)
 	{
 		var session = Require(sessionId);
-		var stepped = await session.StepAsync(mode, cancellationToken);
-		return stepped ? $"Stepped {mode}; see the StepComplete event for the new location." : "Nothing was stopped to step.";
+		var stepped = await session.StepDetailedAsync(mode, cancellationToken);
+
+		return new LiveStepped
+		{
+			SessionId = sessionId,
+			Mode = mode,
+			Stepped = stepped.Continued,
+			Detail = stepped.Detail,
+			Cursor = stepped.Cursor,
+		};
 	}
 
 	[McpServerTool(

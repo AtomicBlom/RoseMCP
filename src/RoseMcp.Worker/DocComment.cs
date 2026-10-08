@@ -28,8 +28,10 @@ public static class DocComment
 	/// </summary>
 	/// <param name="leading">The declaration's leading trivia, doc comment, attributes and all.</param>
 	/// <param name="comment">
-	/// XML, or plain text taken as the summary. Plain text is the ordinary case and asking for tags
-	/// around a sentence would make the tool cost more than the editor it replaces.
+	/// XML, or plain text taken as the summary, without the <c>///</c> markers either way: this
+	/// writes them, and <see cref="Guard"/> refuses a comment that carries its own. Plain text is the
+	/// ordinary case and asking for tags around a sentence would make the tool cost more than the
+	/// editor it replaces.
 	/// </param>
 	/// <param name="indent">The declaration's own indentation.</param>
 	/// <param name="lineEnding">The file's line ending.</param>
@@ -58,10 +60,15 @@ public static class DocComment
 			|| trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia));
 
 	/// <summary>
-	/// Checks that XML the caller supplied is well formed, so a malformed tag is refused before the
-	/// file is opened rather than landing as CS1570 with a line number in the file.
+	/// Checks that the comment can be written as it stands, so text that would come out wrong is refused
+	/// before the file is opened rather than landing in it: XML that does not parse is CS1570 with a line
+	/// number in the file, and a comment copied out of a file with its markers still on would be marked a
+	/// second time, every line read as text under a <c>///</c> of its own.
 	/// </summary>
-	/// <exception cref="ArgumentException">The text opens a tag it does not close.</exception>
+	/// <exception cref="ArgumentException">
+	/// The text is empty, carries its own <c>///</c> or <c>/**</c> markers, follows plain text with a
+	/// summary tag, or opens a tag it does not close.
+	/// </exception>
 	public static void Guard(string comment)
 	{
 		if (string.IsNullOrWhiteSpace(comment))
@@ -70,7 +77,26 @@ public static class DocComment
 				"No comment was supplied. Pass the summary as plain text, or the whole comment as XML.");
 		}
 
-		if (!comment.TrimStart().StartsWith('<')) return;
+		if (CarriesMarkers(comment))
+		{
+			throw new ArgumentException(
+				"The comment carries its own /// or /** markers, and every line of it would be written behind a "
+					+ "second ///. Pass the summary as plain text, or the whole comment as XML without the markers.");
+		}
+
+		var isXml = comment.TrimStart().StartsWith('<');
+		var namesSummary = comment.Contains("<summary", StringComparison.Ordinal)
+			|| comment.Contains("</summary", StringComparison.Ordinal);
+
+		if (!isXml && namesSummary)
+		{
+			throw new ArgumentException(
+				"The comment starts as plain text and carries a <summary> tag further on. Plain text is wrapped "
+					+ "in a summary of its own, so the tag would be nested inside one. Pass the whole comment as XML "
+					+ "starting with its first tag, or the summary as plain text without the tags.");
+		}
+
+		if (!isXml) return;
 
 		try
 		{
@@ -85,6 +111,16 @@ public static class DocComment
 					+ "parse is CS1570, which is a build error where the analyzers are turned up.");
 		}
 	}
+
+	/// <summary>
+	/// Whether any line of the comment starts with a documentation comment's own marker, the way it reads
+	/// copied out of a file. Only the start of a line counts, so a path or a URL in the prose does not.
+	/// </summary>
+	private static bool CarriesMarkers(string comment) =>
+		comment.Split('\n')
+			.Select(line => line.TrimStart())
+			.Any(line => line.StartsWith(Marker, StringComparison.Ordinal)
+				|| line.StartsWith("/**", StringComparison.Ordinal));
 
 	/// <summary>
 	/// The comment as source lines: each one indented, prefixed and terminated the way the file

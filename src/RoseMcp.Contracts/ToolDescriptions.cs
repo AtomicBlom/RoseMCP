@@ -900,9 +900,9 @@ public static class ToolDescriptions
 	public const string ReplaceDocComment = """
 		Replaces a declaration's documentation comment, addressed by name, without touching the code
 		under it. Use it rather than rose_replace_member or a text edit when only the prose is
-		changing: composing a whole member to change one sentence is a trade nobody takes, and once the
-		file is open in an editor the code half goes through the editor too. Pass the summary as plain
-		text or the whole comment as XML; it emits /// in the file's own indentation and line endings,
+		changing: composing a whole member to change one sentence is a trade nobody takes. Pass the
+		summary as plain text or the whole comment as XML, without the /// markers; it writes them in
+		the file's own indentation and line endings, and refuses a comment already carrying them. It
 		goes exactly where the old comment was so a blank line above the member and a licence header
 		stay where they are, and refuses XML that does not parse, which would otherwise land as CS1570.
 		It compiles afterwards, because a comment can break a build: a param tag for a parameter that

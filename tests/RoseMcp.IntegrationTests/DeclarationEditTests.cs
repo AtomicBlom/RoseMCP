@@ -163,6 +163,29 @@ public sealed class DeclarationEditTests
 		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
 	}
 
+	/// <summary>
+	/// A comment passed the way it reads in the file, markers and all, is refused before the file is
+	/// opened: taken as plain text it would replace the existing documentation with a summary holding
+	/// the whole comment, every line marked twice.
+	/// </summary>
+	[Test]
+	public async Task Refuses_a_comment_that_carries_its_own_markers()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Greeter.cs");
+
+		var thrown = await Should.ThrowAsync<ArgumentException>(
+			() => CommentAsync(
+				session,
+				"Library.Greeter.Greet(string)",
+				"/// <summary>\r\n/// Greets someone.\r\n/// </summary>")).OfExactType();
+
+		thrown.Message.ShouldContain("carries its own /// or /** markers", Case.Sensitive);
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
+	}
+
 	[Test]
 	public async Task Adds_an_attribute_that_was_not_there()
 	{

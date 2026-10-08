@@ -153,7 +153,9 @@ Read before adding a tool, adding a field to a result, or changing an error path
   its SDK still loads every project and reports nothing else wrong. An SDK project is exactly what the
   SDK's MSBuild exists to evaluate, so its failing here is this process going wrong. A project naming no
   SDK fails here by design -- its targets ship only with Visual Studio's MSBuild -- and calling that
-  degraded would mark every UWP solution degraded.
+  degraded would mark every UWP solution degraded. The reason calls the worker broken only when every SDK
+  project failed here *and* the design-time build loaded each of them; a broken import or a malformed
+  `Directory.Build.props` fails both, and restart advice for that is wrong.
 - **An assembly the worker's own code cannot load is a fact about the worker, and status keeps it.** A
   framework or Roslyn assembly that fails to load once fails on every later call that reaches the same
   code, while the tools that do not reach it answer normally -- so the workspace reads `Loaded` while two

@@ -207,40 +207,48 @@ public static class WorkspaceStatusReporter
 	/// evaluate, or null when every such project evaluated.
 	/// <para>
 	/// Degrading, where the same failure in a legacy project is only a notice, because an SDK project is
-	/// exactly what the SDK's own MSBuild exists to evaluate: when it cannot, MSBuild in this process has
-	/// gone wrong -- an SDK it can no longer resolve, typically -- and nothing that process does afterwards
-	/// can be assumed to work, even while the design-time build, which runs in a build host of its own,
-	/// loaded every project. Grouped by message, because one cause failing every project is one message
+	/// exactly what the SDK's own MSBuild exists to evaluate: when it cannot, either the project is broken or
+	/// MSBuild in this process is. Grouped by message, because one cause failing every project is one message
 	/// carrying a count, and a line per project would bury it.
 	/// </para>
 	/// <para>
-	/// Worded more strongly when every project failed, counted against <paramref name="projectCount"/>
-	/// distinct project files: then it is not the projects, and the only remedy is a fresh worker.
+	/// Said as the worker being broken only on the evidence that tells the two apart: every SDK project failed
+	/// here, and the design-time build -- which runs in a build host of its own -- loaded every one of them. A
+	/// broken import or a malformed <c>Directory.Build.props</c> fails both, and telling someone to restart the
+	/// worker over that is wrong advice; legacy projects fail here by design, so they count toward neither side.
 	/// </para>
 	/// </summary>
-	public static string? EvaluationReason(IReadOnlyList<ProjectEvaluationFailure> failures, int projectCount)
+	/// <param name="failures">Every project the worker's own MSBuild could not evaluate.</param>
+	/// <param name="projectCount">How many distinct project files the solution loaded.</param>
+	/// <param name="loadedProjects">The project files the design-time build loaded successfully.</param>
+	public static string? EvaluationReason(
+		IReadOnlyList<ProjectEvaluationFailure> failures,
+		int projectCount,
+		IReadOnlySet<string> loadedProjects)
 	{
 		var sdk = failures.Where(failure => failure.NamesSdk).ToArray();
 		if (sdk.Length == 0) return null;
 
 		var messages = Grouped(sdk);
-		var everyProject = projectCount > 0 && failures.Count >= projectCount;
+		var sdkProjects = projectCount - (failures.Count - sdk.Length);
+		var everySdkProjectFailed = sdk.Length >= sdkProjects;
+		var buildHostLoadedThem = sdk.All(failure => loadedProjects.Contains(failure.Project));
 
-		if (everyProject)
+		if (everySdkProjectFailed && buildHostLoadedThem)
 		{
-			return $"This worker's own MSBuild could not evaluate any of the solution's {Count(projectCount, "project", "projects")}, "
-				+ $"which says its MSBuild is broken -- usually an SDK it can no longer resolve -- rather than that the projects are: {messages}. "
+			return $"This worker's own MSBuild could not evaluate any of the solution's {Count(sdk.Length, "SDK project", "SDK projects")}, "
+				+ "though the design-time build, in a process of its own, loaded every one of them. That says this worker's "
+				+ $"MSBuild is broken -- usually an SDK it can no longer resolve -- rather than that the projects are: {messages}. "
 				+ "What they import is unknown, so every .props or .targets change reloads the whole solution, and a worker in this "
 				+ "state cannot be relied on for anything that resolves through MSBuild or loads an assembly afterwards. Nothing in "
 				+ "the solution fixes this: rose_workspace_reload starts a fresh worker. evaluationFailures has each project's message.";
 		}
 
 		return $"{Count(sdk.Length, "project that names an SDK", "projects that name an SDK")} could not be evaluated by this "
-			+ $"worker's own MSBuild: {messages}. The design-time build may still have loaded them, but what they import is "
-			+ "unknown here, so every .props or .targets change reloads the whole solution, and an SDK project that the SDK's "
-			+ "MSBuild cannot evaluate is MSBuild in this process going wrong rather than an expected gap. If the message names "
-			+ "something in the project, fix that; otherwise rose_workspace_reload starts a fresh worker. evaluationFailures "
-			+ "has each project's message.";
+			+ $"worker's own MSBuild: {messages}. What they import is unknown here, so every .props or .targets change reloads "
+			+ "the whole solution. If the message names something in the project or a build file it imports, fix that; if the "
+			+ "design-time build loaded the project anyway, MSBuild in this process is going wrong, and rose_workspace_reload "
+			+ "starts a fresh worker. evaluationFailures has each project's message.";
 	}
 
 	/// <summary>
@@ -552,7 +560,12 @@ public static class WorkspaceStatusReporter
 			.Distinct(StringComparer.OrdinalIgnoreCase)
 			.Count();
 
-		if (EvaluationReason(evaluationFailures, projectFiles) is { } evaluation) reasons.Add(evaluation);
+		var loadedProjects = projects
+			.Where(project => project.LoadedSuccessfully && project.FilePath.Length > 0)
+			.Select(project => Path.GetFullPath(project.FilePath))
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+		if (EvaluationReason(evaluationFailures, projectFiles, loadedProjects) is { } evaluation) reasons.Add(evaluation);
 
 		// Counted, but only degrading when something actually came back impaired. MSBuild's Failure
 		// kind covers complaints that have no bearing on whether a project compiled, and a status

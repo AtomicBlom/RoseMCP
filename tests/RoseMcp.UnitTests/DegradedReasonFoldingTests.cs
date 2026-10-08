@@ -160,7 +160,7 @@ public sealed class DegradedReasonFoldingTests
 			.Append(Evaluation("Odd", "The imported project \"Shared.props\" was not found."))
 			.ToArray();
 
-		var reason = EvaluationReason(failures, projectCount: 10);
+		var reason = EvaluationReason(failures, projectCount: 10, NoneLoaded);
 
 		reason.ShouldNotBeNull();
 		reason.ShouldStartWith("6 projects that name an SDK could not be evaluated", Case.Sensitive);
@@ -174,7 +174,7 @@ public sealed class DegradedReasonFoldingTests
 	[Test]
 	public void Evaluation_reason_counts_one_project_in_the_singular()
 	{
-		var reason = EvaluationReason([Evaluation("Core", MissingSdk)], projectCount: 4);
+		var reason = EvaluationReason([Evaluation("Core", MissingSdk)], projectCount: 4, NoneLoaded);
 
 		reason.ShouldNotBeNull();
 		reason.ShouldStartWith("1 project that names an SDK could not be evaluated", Case.Sensitive);
@@ -190,10 +190,10 @@ public sealed class DegradedReasonFoldingTests
 	{
 		var failures = new[] { Evaluation("A", MissingSdk), Evaluation("B", MissingSdk), Evaluation("C", MissingSdk) };
 
-		var reason = EvaluationReason(failures, projectCount: 3);
+		var reason = EvaluationReason(failures, projectCount: 3, LoadedByTheBuildHost(failures));
 
 		reason.ShouldNotBeNull();
-		reason.ShouldStartWith("This worker's own MSBuild could not evaluate any of the solution's 3 projects", Case.Sensitive);
+		reason.ShouldStartWith("This worker's own MSBuild could not evaluate any of the solution's 3 SDK projects, though the design-time build", Case.Sensitive);
 		reason.ShouldContain("Nothing in the solution fixes this: rose_workspace_reload starts a fresh worker", Case.Sensitive);
 		reason.ShouldNotContain("fix that", Case.Sensitive);
 	}
@@ -211,7 +211,7 @@ public sealed class DegradedReasonFoldingTests
 			Evaluation("Tiles", "The imported project \"Microsoft.Windows.UI.Xaml.CSharp.targets\" was not found.", namesSdk: false),
 		};
 
-		EvaluationReason(failures, projectCount: 2).ShouldBeNull();
+		EvaluationReason(failures, projectCount: 2, LoadedByTheBuildHost(failures)).ShouldBeNull();
 
 		var notice = EvaluationNotice(failures);
 		notice.ShouldNotBeNull();
@@ -226,7 +226,7 @@ public sealed class DegradedReasonFoldingTests
 	{
 		var failures = new[] { Evaluation("Core", MissingSdk), Evaluation("Shell", "legacy", namesSdk: false) };
 
-		var reason = EvaluationReason(failures, projectCount: 5);
+		var reason = EvaluationReason(failures, projectCount: 5, NoneLoaded);
 		reason.ShouldNotBeNull();
 		reason.ShouldContain("Core", Case.Sensitive);
 		reason.ShouldNotContain("Shell", Case.Sensitive);
@@ -240,9 +240,68 @@ public sealed class DegradedReasonFoldingTests
 	[Test]
 	public void Evaluation_reason_and_notice_are_absent_when_every_project_evaluated()
 	{
-		EvaluationReason([], projectCount: 3).ShouldBeNull();
+		EvaluationReason([], projectCount: 3, NoneLoaded).ShouldBeNull();
 		EvaluationNotice([]).ShouldBeNull();
 	}
+
+	/// <summary>
+	/// One SDK project with a broken import of its own, beside two legacy projects that fail here by design:
+	/// the design-time build fails that project too, so it is the project and not the worker, and the legacy
+	/// failures do not make "every project" true.
+	/// </summary>
+	[Test]
+	public void A_broken_sdk_project_beside_legacy_ones_is_not_called_a_broken_worker()
+	{
+		var failures = new[]
+		{
+			Evaluation("Core", "The imported project \"Shared.props\" was not found."),
+			Evaluation("Shell", "legacy", namesSdk: false),
+			Evaluation("Tiles", "legacy", namesSdk: false),
+		};
+
+		var reason = EvaluationReason(failures, projectCount: 3, NoneLoaded);
+
+		reason.ShouldNotBeNull();
+		reason.ShouldStartWith("1 project that names an SDK could not be evaluated", Case.Sensitive);
+		reason.ShouldNotContain("Nothing in the solution fixes this", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// A one-project solution whose Directory.Build.props will not parse fails here and in the design-time
+	/// build alike. Every project failed, and it is still the solution's to fix.
+	/// </summary>
+	[Test]
+	public void A_project_the_design_time_build_also_failed_is_not_called_a_broken_worker()
+	{
+		var failures = new[] { Evaluation("App", "Data at the root level is invalid. Line 1, position 1.") };
+
+		var reason = EvaluationReason(failures, projectCount: 1, NoneLoaded);
+
+		reason.ShouldNotBeNull();
+		reason.ShouldNotContain("Nothing in the solution fixes this", Case.Sensitive);
+		reason.ShouldContain("fix that", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The legacy projects count toward neither side: every SDK project failing here while the build host loaded
+	/// it is the worker, whatever the legacy ones did.
+	/// </summary>
+	[Test]
+	public void Every_sdk_project_failing_beside_legacy_ones_is_still_a_broken_worker()
+	{
+		var sdk = new[] { Evaluation("Core", MissingSdk), Evaluation("App", MissingSdk) };
+		var failures = sdk.Append(Evaluation("Shell", "legacy", namesSdk: false)).ToArray();
+
+		var reason = EvaluationReason(failures, projectCount: 3, LoadedByTheBuildHost(sdk));
+
+		reason.ShouldNotBeNull();
+		reason.ShouldStartWith("This worker's own MSBuild could not evaluate any of the solution's 2 SDK projects", Case.Sensitive);
+	}
+
+	private static readonly IReadOnlySet<string> NoneLoaded = new HashSet<string>();
+
+	private static IReadOnlySet<string> LoadedByTheBuildHost(IEnumerable<ProjectEvaluationFailure> failures) =>
+		failures.Select(failure => failure.Project).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
 	private const string MissingSdk = "The SDK 'Microsoft.NET.Sdk' specified could not be found.";
 

@@ -18,8 +18,9 @@ namespace RoseMcp.Worker;
 /// </para>
 /// <para>
 /// Checked twice. Before the move, against the member as written: what kind of member it is,
-/// whether anything refers to it, whether it names <c>this</c> or <c>base</c>, and which members of
-/// its own type it reaches through an implicit <c>this</c>. After the move and before anything is
+/// whether anything refers to it, implicitly included, whether its name already answers calls on the
+/// target, whether it names <c>this</c> or <c>base</c>, and which members of its own type it reaches
+/// through an implicit <c>this</c>. After the move and before anything is
 /// written, by binding the member where it landed and comparing every name in it with what that name
 /// meant before. Only the second sees a call that quietly resolves to a same-named member of the new
 /// type, an overload the new type adds, or an extension method the new file imports -- each of which
@@ -46,7 +47,8 @@ internal static class InstanceMove
 
 	/// <summary>
 	/// The refusals that need nothing but the two declarations: a member that is not the kind that can
-	/// move as an instance member at all, and a type that cannot take one.
+	/// move as an instance member at all, a type that cannot take one, and state whose move changes
+	/// what a record's or a struct's equality compares.
 	/// </summary>
 	public static void GuardShape(DeclarationTarget source, TypeTarget target)
 	{
@@ -115,6 +117,29 @@ internal static class InstanceMove
 				$"{signature} is declared in one statement with others ({names}), and moving the statement moves "
 					+ "them all. Split the declaration first, with rose_replace_member.");
 		}
+
+		var stored = symbol switch
+		{
+			IFieldSymbol => true,
+			IPropertySymbol or IEventSymbol => symbol.ContainingType.GetMembers()
+				.OfType<IFieldSymbol>()
+				.Any(field => SymbolEqualityComparer.Default.Equals(field.AssociatedSymbol, symbol)),
+			_ => false,
+		};
+
+		INamedTypeSymbol[] ends = [symbol.ContainingType, target.Symbol];
+		var valued = ends.FirstOrDefault(type => type.IsRecord || type.TypeKind == TypeKind.Struct);
+
+		if (stored && valued is not null)
+		{
+			var equality = valued.IsRecord
+				? "a record, whose generated Equals, GetHashCode and ToString take in every field it holds"
+				: "a struct, whose equality and layout take in every field it holds";
+
+			throw new ArgumentException(
+				$"{signature} is stored in each instance, and {valued.Name} is {equality} -- moving it changes which "
+					+ $"{valued.Name}s are equal, with nothing at any call site to show it. Move it by hand.");
+		}
 	}
 
 	/// <summary>
@@ -129,8 +154,8 @@ internal static class InstanceMove
 
 	/// <summary>
 	/// The refusals that need the solution: a member something refers to, one called through an
-	/// interface its own type or a derived type implements, and one that reads the instance it is
-	/// leaving in a way the type it goes to cannot answer.
+	/// interface its own type or a derived type implements, one whose name already means something on
+	/// the target, and one that reads the instance it is leaving in a way the target cannot answer.
 	/// </summary>
 	public static async Task GuardAsync(
 		Solution solution,
@@ -157,6 +182,22 @@ internal static class InstanceMove
 			throw new ArgumentException(
 				$"{signature} implements {called}, so it is called through the interface, which a search for its "
 					+ "references does not count. Moving it would leave that type without it. Move it by hand.");
+		}
+
+		if (PatternNames.Contains(source.Symbol.Name))
+		{
+			throw new ArgumentException(
+				$"{signature} is called {source.Symbol.Name}, a name the compiler looks up by pattern: foreach, using, "
+					+ $"await, deconstruction and fixed reach it on a {target.Symbol.Name} without naming it, so moving it "
+					+ "there can change what they reach. Move it by hand.");
+		}
+
+		if (await NameTakenAsync(solution, source.Symbol, target, cancellationToken) is { } taken)
+		{
+			throw new ArgumentException(
+				$"{target.Symbol.Name} already answers to {source.Symbol.Name}, with {taken}, so a call to "
+					+ $"{source.Symbol.Name} on a {target.Symbol.Name} could bind to the moved member instead and still "
+					+ "compile. Rename it first, with rose_rename_symbol, or move it by hand.");
 		}
 
 		var model = await source.Document.GetSemanticModelAsync(cancellationToken)
@@ -333,9 +374,79 @@ internal static class InstanceMove
 	}
 
 	/// <summary>
-	/// Whether the moved member, where it now is, hides a member the target inherits or becomes the
-	/// implementation of one of its interfaces' members -- either of which changes what an existing
-	/// call reaches, with nothing at the member to show it.
+	/// Names the compiler binds by pattern, where a statement reaches the member without naming it:
+	/// foreach, await foreach, using, await using, await, deconstruction and fixed. On the target, an
+	/// interface implementation or an extension method may answer one of these today, and an instance
+	/// member of the name would take over from it -- through syntax no reference search reports.
+	/// </summary>
+	private static readonly HashSet<string> PatternNames = new(StringComparer.Ordinal)
+	{
+		"GetEnumerator",
+		"GetAsyncEnumerator",
+		"Dispose",
+		"DisposeAsync",
+		"GetAwaiter",
+		"Deconstruct",
+		"GetPinnableReference",
+	};
+
+	/// <summary>
+	/// What already answers to the member's name on the target, or null where nothing does: a member of
+	/// the target or one it inherits, or an extension method that applies to it. Any of them means an
+	/// existing call of that name on the target is resolved again once the member arrives, and may pick
+	/// the newcomer -- a better overload, or an instance method preferred to an extension -- and still
+	/// compile.
+	/// <para>
+	/// Extension methods are looked for wherever a caller could reach one: in every project that can
+	/// see the target, among its own source and every assembly it references. Whether a given call site
+	/// imports the namespace is not asked, which refuses some moves that were safe; asking it would
+	/// mean binding every file.
+	/// </para>
+	/// </summary>
+	private static async Task<string?> NameTakenAsync(
+		Solution solution,
+		ISymbol member,
+		TypeTarget target,
+		CancellationToken cancellationToken)
+	{
+		var name = member.Name;
+
+		for (INamedTypeSymbol? type = target.Symbol; type is not null; type = type.BaseType)
+		{
+			var owned = SymbolEqualityComparer.Default.Equals(type, target.Symbol);
+
+			var existing = type.GetMembers(name).FirstOrDefault(candidate =>
+				(owned || candidate.DeclaredAccessibility != Accessibility.Private) && !SameDeclaration(candidate, member));
+
+			if (existing is null) continue;
+
+			return owned ? existing.ToDisplayString() : $"{existing.ToDisplayString()}, which it inherits";
+		}
+
+		foreach (var project in solution.Projects)
+		{
+			if (await project.GetCompilationAsync(cancellationToken) is not { } compilation) continue;
+
+			var receiver = SymbolFinder.FindSimilarSymbols(target.Symbol, compilation, cancellationToken).FirstOrDefault();
+			if (receiver is null) continue;
+
+			var extension = (await SymbolResolver.MembersCalledAsync(project, name, cancellationToken))
+				.OfType<IMethodSymbol>()
+				.FirstOrDefault(method => method.IsExtensionMethod
+					&& compilation.IsSymbolAccessibleWithin(method, compilation.Assembly)
+					&& method.ReduceExtensionMethod(receiver) is not null);
+
+			if (extension is not null) return $"the extension method {extension.ToDisplayString()}";
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Whether the moved member, where it now is, becomes the implementation of one of the target's
+	/// interface members -- which changes what a call through the interface reaches, with nothing at
+	/// the member to show it. A member of the same name on the target or its bases is refused before
+	/// the move, by <see cref="NameTakenAsync"/>, so hiding one cannot get this far.
 	/// </summary>
 	private static string? Collision(INamedTypeSymbol home, ISymbol moved)
 	{
@@ -343,33 +454,7 @@ internal static class InstanceMove
 			.SelectMany(@interface => @interface.GetMembers(moved.Name))
 			.FirstOrDefault(candidate => home.FindImplementationForInterfaceMember(candidate) is { } found && Same(found, moved));
 
-		if (implemented is not null) return $"become the implementation of {implemented.ToDisplayString()}";
-
-		for (var type = home.BaseType; type is not null; type = type.BaseType)
-		{
-			var hidden = type.GetMembers(moved.Name).FirstOrDefault(inherited =>
-				!inherited.IsImplicitlyDeclared
-					&& inherited.DeclaredAccessibility != Accessibility.Private
-					&& SameParameters(inherited, moved));
-
-			if (hidden is not null) return $"hide {hidden.ToDisplayString()}, which it inherits";
-		}
-
-		return null;
-	}
-
-	/// <summary>
-	/// Whether two members of one name would clash: any two that are not both methods, and two methods
-	/// only when they take the same parameters, passed the same way.
-	/// </summary>
-	private static bool SameParameters(ISymbol left, ISymbol right)
-	{
-		if (left is not IMethodSymbol first || right is not IMethodSymbol second) return true;
-		if (first.Parameters.Length != second.Parameters.Length) return false;
-
-		return first.Parameters.Zip(second.Parameters).All(pair =>
-			pair.First.RefKind == pair.Second.RefKind
-				&& SymbolEqualityComparer.Default.Equals(pair.First.Type, pair.Second.Type));
+		return implemented is null ? null : $"become the implementation of {implemented.ToDisplayString()}";
 	}
 
 	/// <summary>

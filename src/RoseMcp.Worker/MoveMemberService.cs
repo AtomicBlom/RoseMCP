@@ -56,20 +56,24 @@ public static class MoveMemberService
 
 		var references = await SymbolFinder.FindReferencesAsync(source.Symbol, snapshot.Solution, cancellationToken);
 
-		IReadOnlyList<Location> sites =
-		[
-			.. references
-				.SelectMany(reference => reference.Locations)
-				.Where(location => !location.IsImplicit && location.Location.IsInSource)
-				.Select(location => location.Location),
-		];
+		var located = references
+			.SelectMany(reference => reference.Locations)
+			.Where(location => location.Location.IsInSource)
+			.ToArray();
+
+		IReadOnlyList<Location> sites = [.. located.Where(location => !location.IsImplicit).Select(location => location.Location)];
 
 		var instance = !source.Symbol.IsStatic;
 
 		if (instance)
 		{
-			sites = InstanceMove.Outside(sites, source);
-			await InstanceMove.GuardAsync(snapshot.Solution, source, target, sites, cancellationToken);
+			// Implicit references count here: a foreach, a deconstruction or an await that reaches the
+			// member by pattern is a use as real as a call, and one with no syntax to rewrite.
+			var outside = InstanceMove.Outside([.. located.Select(location => location.Location)], source);
+			await InstanceMove.GuardAsync(snapshot.Solution, source, target, outside, cancellationToken);
+
+			// What is left is the member calling itself, which moves with it.
+			sites = [];
 		}
 
 		progress?.Report("Moving it", 45);

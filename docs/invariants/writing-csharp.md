@@ -123,6 +123,11 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   write says nothing. So `InstanceMove.ConfirmAsync` binds the moved declaration in the moved
   solution, compares every name with what it bound to before, and refuses on a difference; a name
   that binds to nothing is let through, because that is a compile error the verification reports.
+  The other direction is checked before the move, because rebinding every existing call on the
+  target would mean binding every file: a name the target already answers to -- its own member, an
+  inherited one, an applicable extension method -- or one the compiler binds by pattern is refused,
+  since calls that reach something else today could reach the moved member tomorrow and compile.
+  Implicit references count as references, for the same reason.
 - **Written code is indented for where it goes, because the formatter only does half of it.** Roslyn
   reindents statements and moves braces -- rules it has -- so a line wrapped by hand *inside a body*
   comes out right. A wrapped parameter list is layout it has no rule about, so it keeps whatever

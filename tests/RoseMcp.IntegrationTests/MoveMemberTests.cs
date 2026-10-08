@@ -312,8 +312,11 @@ public sealed class MoveMemberTests
 	/// Every other instance member is refused, with what decided it, and nothing is written. Each row is
 	/// one way a move would change what the member means: state of its own type, an explicit or captured
 	/// <c>this</c>, a base the target does not share, a primary constructor parameter, a type parameter,
-	/// a name that would bind to something else in the target, a member the target would hide, dispatch
-	/// a reference search cannot see, a type that cannot take it, and a call site.
+	/// a name that would bind to something else in the target, a name the target already answers to --
+	/// its own, inherited, or an extension's, any of which existing calls could leave for the moved
+	/// member -- a name the compiler binds by pattern, state a record's or a struct's equality covers,
+	/// dispatch a reference search cannot see, a type that cannot take it, and a call site, implicit
+	/// ones included.
 	/// </summary>
 	[Test]
 	[Arguments("Library.Misplaced.Reads_the_seed", "Library.Placed", "reads Misplaced._seed at line")]
@@ -325,7 +328,16 @@ public sealed class MoveMemberTests
 	[Arguments("Library.Boxed.Make", "Library.Placed", "a type parameter of Boxed")]
 	[Arguments("Library.Misplaced.Uses_the_shared_base", "Library.Shadowing", "would mean Library.Shadowing.Shared()")]
 	[Arguments("Library.Misplaced.Logs_a_note", "Library.Noting", "would mean Library.Noting.Note(object)")]
-	[Arguments("Library.Misplaced.Close", "Library.Closing", "would hide Library.Closer.Close()")]
+	[Arguments("Library.Misplaced.Close", "Library.Closing", "Closing already answers to Close, with Library.Closer.Close(), which it inherits")]
+	[Arguments("Library.Misplaced.Log", "Library.Logger", "Logger already answers to Log, with Library.Logger.Log(object)")]
+	[Arguments("Library.Misplaced.Trace", "Library.Logger", "Logger already answers to Trace, with the extension method Library.LoggerExtensions.Trace(")]
+	[Arguments("Library.Misplaced.Deconstruct", "Library.Placed", "a name the compiler looks up by pattern")]
+	[Arguments("Library.Bag.GetEnumerator", "Library.Placed", "with 1 reference(s), the first in BagUse.cs")]
+	[Arguments("Library.Misplaced._spare", "Library.Ledger", "Ledger is a record, whose generated Equals, GetHashCode and ToString")]
+	[Arguments("Library.Point.Spare", "Library.Placed", "Point is a struct, whose equality and layout")]
+	[Arguments("Library.Misplaced.Names_base", "Library.Placed", "names 'base' at line")]
+	[Arguments("Library.Misplaced.Adds_two_numbers", "Library.IRunnable", "IRunnable is an interface")]
+	[Arguments("Library.Misplaced._left", "Library.Placed", "declared in one statement with others (_left, _right)")]
 	[Arguments("Library.Misplaced.ToString", "Library.Placed", "is an override")]
 	[Arguments("Library.Runner.Run", "Library.Placed", "implements Library.IRunnable.Run() for Running")]
 	[Arguments("Library.Misplaced.Adds_two_numbers", "Library.Resettled", "Resettled is static")]
@@ -352,8 +364,30 @@ public sealed class MoveMemberTests
 	/// that use it rather than kept in the fixture, so no other test of the Members solution sees types
 	/// it never asked for.
 	/// </summary>
-	private static Task WriteFixturesAsync(FixtureSolution fixture) =>
-		File.WriteAllTextAsync(
+	private static async Task WriteFixturesAsync(FixtureSolution fixture)
+	{
+		await File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "BagUse.cs"),
+			"""
+			namespace Library;
+
+			/// <summary>Reaches Bag.GetEnumerator only through a foreach, which names it nowhere.</summary>
+			public static class Emptying
+			{
+				public static int Sum(Bag bag)
+				{
+					var total = 0;
+
+					foreach (var item in bag) total += item;
+
+					return total;
+				}
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
+		await File.WriteAllTextAsync(
 			fixture.Path("Members", "Library", "Fixtures.cs"),
 			"""
 			namespace Library;
@@ -412,6 +446,18 @@ public sealed class MoveMemberTests
 				public int Is_called() => 3;
 
 				public int Calls_it() => Is_called();
+
+				public int Names_base() => base.GetHashCode();
+
+				public void Log(string text) => Console.WriteLine(text);
+
+				public void Trace(string text) => Console.WriteLine(text);
+
+				public void Deconstruct(out int first, out int second) => (first, second) = (1, 2);
+
+				private int _spare;
+
+				private int _left = 1, _right = 2;
 
 				public override string ToString() => "misplaced";
 
@@ -490,8 +536,49 @@ public sealed class MoveMemberTests
 				public T? Make() => default;
 			}
 
+			/// <summary>Logs anything, which a call passing a string reaches today.</summary>
+			public sealed class Logger
+			{
+				public void Log(object value) => Console.WriteLine(value);
+			}
+
+			/// <summary>Traces through a Logger, for a call an instance Trace would take over.</summary>
+			public static class LoggerExtensions
+			{
+				public static void Trace(this Logger logger, string text) => logger.Log(text);
+			}
+
+			/// <summary>Calls on a Logger that a moved Log or Trace would quietly take over.</summary>
+			public static class Logging
+			{
+				public static void Run()
+				{
+					new Logger().Log("x");
+					new Logger().Trace("y");
+				}
+			}
+
+			/// <summary>Enumerable by pattern, which a foreach elsewhere reaches without naming.</summary>
+			public sealed class Bag
+			{
+				public IEnumerator<int> GetEnumerator()
+				{
+					yield return 1;
+				}
+			}
+
+			/// <summary>A record, whose equality takes in every field it holds.</summary>
+			public sealed record Ledger(int Total);
+
+			/// <summary>A struct, whose equality takes in every field it holds.</summary>
+			public struct Point
+			{
+				public int Spare { get; set; }
+			}
+
 			""".ReplaceLineEndings("\r\n"),
 			TestContext.Current!.Execution.CancellationToken);
+	}
 
 	private static Task<MemberEditResult> MoveAsync(
 		WorkspaceSession session,

@@ -60,6 +60,7 @@ public static class AddUsingService
 		await edit.VerifyAsync(
 			document.FilePath!,
 			EditVerification.ProjectsHolding(solution, document.FilePath!),
+			[],
 			cancellationToken);
 
 		var notices = edit.Notices;

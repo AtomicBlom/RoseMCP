@@ -22,6 +22,13 @@ Read before adding a tool, adding a field to a result, or changing an error path
   sees what the caller sent, and a spelling it accepts in place of a declared name is not unknown.
   Named, never refused, and never answered with a further alias -- clients attach extras of their
   own, and an alias teaches nobody the real name.
+- **Advice names an argument only where the tool takes it and it reaches.** A write that leaves a
+  name unresolved suggests the import, and a suggestion is followed literally: telling the caller of
+  a tool without `usings` to pass it sends an argument the tool never sees, and telling
+  `rose_change_signature`'s caller to pass it for a name left at a call site sends them round to the
+  same error, since its `usings` go only where a declaration changes. So `EditPipeline.VerifyAsync`
+  takes the files the tool's own `usings` reaches, with no default for a new tool to inherit, and
+  `MissingImports` names `usings` only for those. Anywhere else it names `rose_add_using` and the file.
 - **A name matching two symbols is refused, and the address a result hands back resolves.** These
   are the two halves of addressing code by name, and each fails by producing a well-formed answer
   about something else. A resolver keyed on a candidate's name, containing type and assembly

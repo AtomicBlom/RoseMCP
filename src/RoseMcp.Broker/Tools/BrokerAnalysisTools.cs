@@ -558,6 +558,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 		[Description(ToolDescriptions.ParametersArgument)] string? parameters = null,
 		[Description(ToolDescriptions.AccessibilityArgument)] string? accessibility = null,
 		[Description(ToolDescriptions.ArgumentsArgument)] string[]? arguments = null,
+		[Description(ToolDescriptions.SignatureUsingsArgument)] string[]? usings = null,
 		[Description(ToolDescriptions.PartialFilePathArgument), ArgumentAlias("file"), ArgumentAlias("path")]
 		string? filePath = null,
 		[Description(ToolDescriptions.ApplyArgument)] bool apply = true,
@@ -571,6 +572,7 @@ public sealed class BrokerAnalysisTools(WorkspaceManager workspaces, CallerPaths
 			["parameters"] = parameters,
 			["accessibility"] = accessibility,
 			["arguments"] = arguments,
+			["usings"] = usings,
 			["filePath"] = filePath,
 			["apply"] = apply,
 			["verify"] = verify,

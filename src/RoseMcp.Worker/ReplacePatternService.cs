@@ -159,7 +159,11 @@ public static class ReplacePatternService
 
 		progress?.Report("Compiling what changed", 90);
 
-		await edit.VerifyAsync(firstChanged, EditVerification.WithDependents(solution, [.. changedProjects]), cancellationToken);
+		await edit.VerifyAsync(
+			firstChanged,
+			EditVerification.WithDependents(solution, [.. changedProjects]),
+			edit.Outcome.ChangedFiles,
+			cancellationToken);
 
 		var summary = PatternReport.Build(
 			catalog.Rules.Count,

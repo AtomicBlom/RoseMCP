@@ -97,6 +97,9 @@ public static class ToolDescriptions
 		"Imports the code needs, ensured in the same file: System.Text, static System.Math, or Json = "
 			+ "System.Text.Json. One already in scope is reported, not added.";
 
+	public const string SignatureUsingsArgument =
+		"Imports the parameter types need, as System.Text, ensured in each file whose declaration changes.";
+
 	public const string ProjectFilterArgument =
 		"Limit to one project, by name or by the path to its project file. Defaults to the whole solution.";
 
@@ -800,14 +803,15 @@ public static class ToolDescriptions
 	public const string ChangeSignature = """
 		Changes a member's parameters, its accessibility, or both, and everything that must change with
 		them: the declaration you named, what it overrides or implements, every override and
-		implementation of that, the arguments at every call site, and the param tags in its documentation
-		comment. Use it rather than grep and an edit per layer -- a missed forwarder compiles at some layers
-		and not others. Give the full parameter list as it should read between the parentheses; what
-		changed is worked out from it. Existing parameters cannot be reordered, and a new one needs a
-		default or an arguments entry. Every use left alone is listed with the reason, including the ones
-		that still compile because a new parameter has a default -- a forwarder passing the old default is
-		the bug that hides. Accessibility works on any member or type: overrides move with it, and an
-		interface implementation that would stop being one is refused. Verified against the whole solution.
+		implementation of that, the arguments at every call site, and its param tags. Use it rather than
+		grep and an edit per layer -- a missed forwarder compiles at some layers and not others. Give the
+		full parameter list as it should read; what changed is worked out from it. Existing parameters
+		cannot be reordered, a new one needs a default or an arguments entry, and a type its files do
+		not import goes in usings. Every use left alone is listed with
+		the reason, including the ones that still compile because a new parameter has a default -- a
+		forwarder passing the old default is the bug that hides. Accessibility works on any member or
+		type: overrides move with it, and an interface implementation that would stop being one is
+		refused. Verified against the whole solution.
 		""";
 
 	public const string BuildFreshness = """
@@ -829,8 +833,7 @@ public static class ToolDescriptions
 		Both of those are build errors where the analyzers are turned up, which is where this matters.
 		An argument that is not exactly one import is refused before the file is touched. Reports what
 		was added, what was already covered and why, and how many errors the import resolved. Prefer
-		the usings argument on rose_replace_member, rose_replace_body and rose_add_member when you are
-		writing the code; this is for code that arrived some other way.
+		the usings argument of the tool writing the code; this is for code that arrived some other way.
 		""";
 
 	public const string MoveMember = """

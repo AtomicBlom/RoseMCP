@@ -113,7 +113,7 @@ public static class AddFileService
 		if (request.Verify) progress?.Report("Compiling to see what the file did", 80);
 
 		await edit.VerifyAsync(
-			path, EditVerification.ScopeFor(solution, path, reaches: null, request.VerifyScope), cancellationToken);
+			path, EditVerification.ScopeFor(solution, path, reaches: null, request.VerifyScope), [path], cancellationToken);
 
 		// In the build when the project globs its directory or names the file itself: a project that
 		// lists its files compiles the ones it lists, whether or not they were on disk when it loaded.
@@ -453,7 +453,7 @@ public static class AddFileService
 		if (project is null) return (after, ResolvedImports.Imports.None);
 
 		var verification = await EditVerification.RunAsync(
-			diagnostics, before, after, [project], path, cancellationToken);
+			diagnostics, before, after, [project], path, [], cancellationToken);
 
 		var imports = await ResolvedImports.ForAsync(
 			new WorkspaceSnapshot { Solution = after, Revision = 0 },

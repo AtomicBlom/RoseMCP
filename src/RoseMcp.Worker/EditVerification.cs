@@ -42,6 +42,10 @@ public static class EditVerification
 	/// The file the edit was aimed at, so its own errors are reported first. An error there is
 	/// usually the cause and an error elsewhere usually the consequence.
 	/// </param>
+	/// <param name="usingsReach">
+	/// The files the tool's own <c>usings</c> argument imports into, empty for a tool without one, so a
+	/// suggested import names only something its caller can pass.
+	/// </param>
 	/// <param name="cancellationToken">Cancels the compilations, which are the expensive part.</param>
 	public static async Task<Verification> RunAsync(
 		DiagnosticsService diagnostics,
@@ -49,6 +53,7 @@ public static class EditVerification
 		Solution after,
 		IReadOnlyList<string> projects,
 		string? nearest,
+		IReadOnlyCollection<string> usingsReach,
 		CancellationToken cancellationToken)
 	{
 		if (projects.Count == 0) return Verification.NotRun;
@@ -77,7 +82,7 @@ public static class EditVerification
 			// Asked here rather than by each write tool, so the one thing a caller wants next after
 			// "this name does not resolve" arrives with the error rather than a call later.
 			Suggestions = await MissingImports.SuggestAsync(
-				new WorkspaceSnapshot { Solution = after, Revision = 0 }, ordered, cancellationToken),
+				new WorkspaceSnapshot { Solution = after, Revision = 0 }, ordered, usingsReach, cancellationToken),
 		};
 	}
 

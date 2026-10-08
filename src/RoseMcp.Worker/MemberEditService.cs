@@ -84,7 +84,7 @@ public static class MemberEditService
 
 		progress?.Report("Compiling to see what the edit did", 70);
 
-		await edit.VerifyAsync(path, scope, cancellationToken);
+		await edit.VerifyAsync(path, scope, [path], cancellationToken);
 
 		// Only where something did not bind, so an edit whose imports were right or unneeded pays
 		// nothing for this and the one that needed it pays the compile it would have paid at the
@@ -101,7 +101,7 @@ public static class MemberEditService
 
 			var importing = asked.And(written.Document, await EditImports.RegionAsync(written.Document, cancellationToken));
 
-			await edit.RewriteAsync(resolved, importing, path, scope, cancellationToken);
+			await edit.RewriteAsync(resolved, importing, path, scope, [path], cancellationToken);
 
 			notices.AddRange(ResolvedImports.Report(imports));
 

@@ -116,13 +116,23 @@ internal sealed class EditPipeline
 	/// <para>
 	/// A preview is verified too: what an edit would break is the question a preview is asking.
 	/// </para>
+	/// <para>
+	/// <paramref name="usingsReach"/> is the files the tool's own <c>usings</c> argument imports into,
+	/// and empty for a tool that has none. Required rather than defaulted, because the import a
+	/// verification suggests names that argument only for a file it reaches, and a tool that left it
+	/// out would go back to advising an argument it does not take.
+	/// </para>
 	/// </summary>
-	internal async Task VerifyAsync(string path, IReadOnlyList<string> scope, CancellationToken cancellationToken)
+	internal async Task VerifyAsync(
+		string path,
+		IReadOnlyList<string> scope,
+		IReadOnlyCollection<string> usingsReach,
+		CancellationToken cancellationToken)
 	{
 		if (!_verify || !Changed) return;
 
 		Verification = await EditVerification.RunAsync(
-			_diagnostics, _snapshot.Solution, Solution, scope, path, cancellationToken);
+			_diagnostics, _snapshot.Solution, Solution, scope, path, usingsReach, cancellationToken);
 	}
 
 	/// <summary>
@@ -136,6 +146,7 @@ internal sealed class EditPipeline
 		Asked asked,
 		string path,
 		IReadOnlyList<string> scope,
+		IReadOnlyCollection<string> usingsReach,
 		CancellationToken cancellationToken)
 	{
 		if (ReferenceEquals(rewritten, Solution)) return;
@@ -144,7 +155,7 @@ internal sealed class EditPipeline
 		Outcome = await WrittenAsync(rewritten, asked, cancellationToken);
 
 		Verification = await EditVerification.RunAsync(
-			_diagnostics, _snapshot.Solution, rewritten, scope, path, cancellationToken);
+			_diagnostics, _snapshot.Solution, rewritten, scope, path, usingsReach, cancellationToken);
 	}
 
 	/// <summary>

@@ -64,7 +64,7 @@ public static class ServiceCollectionExtensions
 		- rename: rose_rename_symbol; add, remove or retype a parameter across every override,
 		  implementation and call site: rose_change_signature; move a member between types:
 		  rose_move_member; split a file: rose_move_type_to_file
-		- imports: pass usings on any write, or rose_add_using for code that arrived another way;
+		- imports: pass usings on the write, or rose_add_using for code that arrived another way;
 		  which namespace a name needs: rose_resolve_name
 		- one mechanical change at every call a pattern matches: rose_replace_pattern
 		- analyzer fixes: rose_list_code_fixes then rose_apply_code_fix; formatting: rose_format

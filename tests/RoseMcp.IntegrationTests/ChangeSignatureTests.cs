@@ -921,7 +921,9 @@ public sealed class ChangeSignatureTests
 		string symbol,
 		string? parameters,
 		string[]? arguments = null,
-		string? accessibility = null)
+		string? accessibility = null,
+		string[]? usings = null,
+		bool apply = true)
 	{
 		var diagnostics = new DiagnosticsService(NullLogger<DiagnosticsService>.Instance);
 
@@ -931,6 +933,8 @@ public sealed class ChangeSignatureTests
 			Parameters = parameters,
 			Accessibility = accessibility,
 			Arguments = arguments ?? [],
+			Usings = usings ?? [],
+			Apply = apply,
 		};
 
 		return session.MutateAsync(
@@ -1182,4 +1186,220 @@ public sealed class ChangeSignatureTests
 		result.Notices.ShouldNotContain(
 			notice => notice.Contains("defect in rose_change_signature", StringComparison.Ordinal));
 	}
+
+	/// <summary>
+	/// A new parameter whose type the declaring file does not import takes the import in the same call,
+	/// and the preview carries it as the write does. Without it the one missing directive is the whole of
+	/// what the change broke: every call site that fails afterwards fails because the declaration did.
+	/// </summary>
+	[Test]
+	public async Task Imports_what_a_new_parameter_names_into_the_file_that_declares_it()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Greeter.cs");
+
+		var preview = await ChangeAsync(
+			session,
+			"Library.Greeter.Greet(string)",
+			"string name, StringBuilder? into = null",
+			usings: ["System.Text"],
+			apply: false);
+
+		preview.Applied.ShouldBeFalse("a preview writes nothing");
+		preview.Diff.ShouldContain("+using System.Text;", Case.Sensitive);
+		preview.IntroducedDiagnostics.ShouldBeEmpty();
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
+
+		var result = await ChangeAsync(
+			session, "Library.Greeter.Greet(string)", "string name, StringBuilder? into = null", usings: ["System.Text"]);
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.TotalErrorCount.ShouldBe(0);
+		result.Notices.ShouldContain("Imported System.Text into Greeter.cs.");
+		result.Notices.ShouldNotContain(notice => notice.Contains(Overreach, StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Greeter.cs");
+
+		text.ShouldStartWith("using System.Text;\r\n\r\nnamespace Library;\r\n", Case.Sensitive);
+		text.ShouldContain("public string Greet(string name, StringBuilder? into = null)", Case.Sensitive);
+
+		// The call site names no parameter type, and an import there would be one nothing uses.
+		(await ReadAsync(fixture, "Caller.cs")).ShouldNotContain("using System.Text", Case.Sensitive);
+	}
+
+	/// <summary>
+	/// The parameter is written into every declaration that moves with the member, so the import goes
+	/// into each of their files: an interface, the class implementing it and an override, each in a file
+	/// of its own. One that already imports the namespace is named rather than written to twice, and the
+	/// file that only calls the member is left alone.
+	/// </summary>
+	[Test]
+	public async Task Imports_into_every_file_whose_declaration_changes_and_no_other()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+
+		await WriteAsync(fixture, "IRenderer.cs", """
+			namespace Library;
+
+			public interface IRenderer
+			{
+				string Render(string text);
+			}
+
+			""");
+
+		await WriteAsync(fixture, "Renderer.cs", """
+			namespace Library;
+
+			public abstract class Renderer : IRenderer
+			{
+				public abstract string Render(string text);
+			}
+
+			""");
+
+		await WriteAsync(fixture, "Painter.cs", """
+			using System.Text;
+
+			namespace Library;
+
+			public sealed class Painter : Renderer
+			{
+				private readonly StringBuilder _log = new();
+
+				public override string Render(string text) => _log.Append(text).ToString();
+			}
+
+			""");
+
+		await WriteAsync(fixture, "RenderCaller.cs", """
+			namespace Library;
+
+			public static class RenderCaller
+			{
+				public static string Run(IRenderer renderer) => renderer.Render("x");
+			}
+
+			""");
+
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.IRenderer.Render(string)", "string text, StringBuilder? into = null", usings: ["System.Text"]);
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.UpdatedDeclarations.Count.ShouldBe(3);
+
+		foreach (var file in new[] { "IRenderer.cs", "Renderer.cs", "Painter.cs" })
+		{
+			(await ReadAsync(fixture, file)).ShouldStartWith("using System.Text;\r\n\r\nnamespace Library;\r\n", Case.Sensitive);
+		}
+
+		(await ReadAsync(fixture, "RenderCaller.cs")).ShouldNotContain("using System.Text", Case.Sensitive);
+
+		result.Notices.ShouldContain("Imported System.Text into IRenderer.cs.");
+		result.Notices.ShouldContain("Imported System.Text into Renderer.cs.");
+		result.Notices.ShouldContain("In Painter.cs, did not import System.Text: already imported here.");
+		result.Notices.ShouldNotContain(notice => notice.Contains(Overreach, StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// Left out, the import is suggested through the argument this tool has, since the declaration's file
+	/// is one that argument reaches.
+	/// </summary>
+	[Test]
+	public async Task Suggests_its_own_usings_argument_for_a_type_the_declaration_does_not_import()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session, "Library.Greeter.Greet(string)", "string name, StringBuilder? into = null", apply: false);
+
+		result.IntroducedDiagnostics.ShouldContain(
+			diagnostic => diagnostic.Id == "CS0246"
+				&& diagnostic.FilePath!.EndsWith("Greeter.cs", StringComparison.OrdinalIgnoreCase));
+
+		result.Notices.ShouldContain(
+			notice => notice.StartsWith("StringBuilder is", StringComparison.Ordinal)
+				&& notice.Contains("pass usings: [\"System.Text\"]", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// An argument written at a call site is in a file the usings argument does not reach, so the name it
+	/// leaves unresolved there is answered with rose_add_using on that file. Advising usings again would
+	/// send the caller round to make the same call and get the same error.
+	/// </summary>
+	[Test]
+	public async Task Suggests_rose_add_using_for_a_name_unresolved_at_a_call_site()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await ChangeAsync(
+			session,
+			"Library.Greeter.Greet(string)",
+			"string name, StringBuilder into",
+			["into=new StringBuilder()"],
+			usings: ["System.Text"],
+			apply: false);
+
+		result.IntroducedDiagnostics.ShouldContain(diagnostic => diagnostic.Id == "CS0246");
+		result.IntroducedDiagnostics.ShouldAllBe(
+			diagnostic => diagnostic.FilePath!.EndsWith("Caller.cs", StringComparison.OrdinalIgnoreCase));
+
+		result.Notices.ShouldContain(
+			notice => notice.StartsWith("StringBuilder is", StringComparison.Ordinal)
+				&& notice.Contains("call rose_add_using on Caller.cs with namespaces: [\"System.Text\"]", StringComparison.Ordinal));
+
+		result.Notices.ShouldNotContain(notice => notice.Contains("pass usings:", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// The imports go where the parameters change, so a change of accessibility alone has nowhere to put
+	/// them; and an entry that is not an import is refused by name. Both before anything is written.
+	/// </summary>
+	[Test]
+	public async Task Refuses_usings_it_has_nowhere_to_put_and_entries_that_are_not_imports()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Greeter.cs");
+
+		var nowhere = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(
+				session,
+				"Library.Greeter.Greet(string)",
+				parameters: null,
+				accessibility: "internal",
+				usings: ["System.Text"])).OfExactType();
+
+		nowhere.Message.ShouldContain("no parameters were given", Case.Sensitive);
+		nowhere.Message.ShouldContain("rose_add_using", Case.Sensitive);
+
+		var malformed = await Should.ThrowAsync<ArgumentException>(
+			() => ChangeAsync(
+				session,
+				"Library.Greeter.Greet(string)",
+				"string name, bool loud = false",
+				usings: ["System.Text; System.IO"])).OfExactType();
+
+		malformed.Message.ShouldContain("is not an import", Case.Sensitive);
+
+		(await ReadAsync(fixture, "Greeter.cs")).ShouldBe(before);
+	}
+
+	/// <summary>What the write says about a line it changed that nothing it was asked to do reaches.</summary>
+	private const string Overreach = "Nothing this was asked to do reaches them";
+
+	private static Task WriteAsync(FixtureSolution fixture, string file, string text) =>
+		File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", file),
+			text.ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
 }

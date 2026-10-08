@@ -179,6 +179,38 @@ public sealed class BrokerForwardingTests
 		text.ShouldContain("notifier.Notify(message, false)", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// The imports a new parameter needs, over the wire: an argument the worker does not bind by this
+	/// name is one a caller passes and the tool never sees.
+	/// </summary>
+	[Test]
+	public async Task Imports_what_a_changed_signature_needs_through_the_broker()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await using var manager = CreateManager();
+
+		var result = await manager.CallAsync<SignatureChangeResult>(
+			WorkspaceHints.From(RootedPath.Absolute(fixture.SolutionPath)),
+			ToolNames.ChangeSignature,
+			new Dictionary<string, object?>
+			{
+				["symbol"] = "Library.Greeter.Greet(string)",
+				["parameters"] = "string name, StringBuilder? into = null",
+				["usings"] = new[] { "System.Text" },
+			},
+			retryIfWorkerDied: true,
+			TestContext.Current!.Execution.CancellationToken);
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+		result.Notices.ShouldContain("Imported System.Text into Greeter.cs.");
+
+		var text = await File.ReadAllTextAsync(
+			fixture.Path("Members", "Library", "Greeter.cs"), TestContext.Current!.Execution.CancellationToken);
+
+		text.ShouldStartWith("using System.Text;", Case.Sensitive);
+	}
+
 	/// <summary>Build freshness over the wire, so its one argument cannot drift either.</summary>
 	[Test]
 	public async Task Reports_build_freshness_through_the_broker()

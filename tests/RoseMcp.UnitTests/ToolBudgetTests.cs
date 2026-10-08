@@ -46,10 +46,12 @@ public sealed class ToolBudgetTests
 	/// <para>
 	/// Raised from 74,000 while the surface is one server: rose_replace_pattern costs 2,841 on its own,
 	/// and the surface is to be split into per-surface servers with budgets of their own (#339), which
-	/// retires this single ceiling rather than paying for one tool by cutting another's refusals.
+	/// retires this single ceiling rather than paying for one tool by cutting another's refusals. The
+	/// usings argument on rose_change_signature is about 200 of it, since the import a new parameter's
+	/// type needs is otherwise a second call to a second tool.
 	/// </para>
 	/// </summary>
-	private const int ModelFacing = 76500;
+	private const int ModelFacing = 76700;
 
 	[Test]
 	public void No_description_is_longer_than_its_ceiling()

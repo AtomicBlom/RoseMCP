@@ -51,14 +51,22 @@ public static class MissingImports
 	/// </summary>
 	/// <param name="snapshot">The solution as the edit leaves it.</param>
 	/// <param name="introduced">The errors the edit brought into being.</param>
+	/// <param name="usingsReach">
+	/// The files the writing tool's own <c>usings</c> argument imports into. A name unresolved in one of
+	/// them is answered with that argument; anywhere else, and for a tool with no such argument, with
+	/// rose_add_using alone, since an argument the tool does not take is one its caller passes for
+	/// nothing.
+	/// </param>
 	/// <param name="cancellationToken">Cancels the lookups.</param>
 	public static async Task<IReadOnlyList<string>> SuggestAsync(
 		WorkspaceSnapshot snapshot,
 		IReadOnlyList<DiagnosticEntry> introduced,
+		IReadOnlyCollection<string> usingsReach,
 		CancellationToken cancellationToken)
 	{
 		var suggestions = new List<string>();
 		var asked = new HashSet<string>(StringComparer.Ordinal);
+		var reached = usingsReach.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
 		foreach (var entry in introduced)
 		{
@@ -69,7 +77,9 @@ public static class MissingImports
 			var unresolved = await UnresolvedAtAsync(snapshot.Solution, path, entry.Line, entry.Column, cancellationToken);
 			if (unresolved is not { } found || !asked.Add(found.Name)) continue;
 
-			if (await DescribeAsync(snapshot, found.Name, found.Use, path, cancellationToken) is { } suggestion)
+			var importable = reached.Contains(path);
+
+			if (await DescribeAsync(snapshot, found.Name, found.Use, path, importable, cancellationToken) is { } suggestion)
 			{
 				suggestions.Add(suggestion);
 			}
@@ -83,12 +93,18 @@ public static class MissingImports
 	/// there are several, and nothing at all where the name is simply not written yet -- silence
 	/// being the honest report there, since a name that resolves to nothing is not an import
 	/// problem and saying it might be would send the caller looking in the wrong place.
+	/// <para>
+	/// The single answer names the <c>usings</c> argument only where <paramref name="importable"/>
+	/// says the tool's own argument reaches <paramref name="filePath"/>. Otherwise it names
+	/// rose_add_using and the file, which is the one way to the import that every caller has.
+	/// </para>
 	/// </summary>
 	private static async Task<string?> DescribeAsync(
 		WorkspaceSnapshot snapshot,
 		string name,
 		NameUse use,
 		string filePath,
+		bool importable,
 		CancellationToken cancellationToken)
 	{
 		var resolution = await NameResolver.ResolveAsync(
@@ -107,7 +123,9 @@ public static class MissingImports
 			// read as a choice the caller has to make when there is none.
 			var what = usable is [{ } only] ? only.Symbol : $"in {single}";
 
-			return $"{name} is {what}: pass usings: [\"{single}\"], or call rose_add_using.";
+			return importable
+				? $"{name} is {what}: pass usings: [\"{single}\"], or call rose_add_using."
+				: $"{name} is {what}: call rose_add_using on {Path.GetFileName(filePath)} with namespaces: [\"{single}\"].";
 		}
 
 		var spaces = usable

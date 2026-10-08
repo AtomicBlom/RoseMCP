@@ -184,7 +184,7 @@ public static class DeclarationEditService
 		if (request.Verify && edit.Changed) progress?.Report("Compiling to see what the edit did", 75);
 
 		await edit.VerifyAsync(
-			path, EditVerification.ScopeFor(finished, path, reaches, request.VerifyScope), cancellationToken);
+			path, EditVerification.ScopeFor(finished, path, reaches, request.VerifyScope), [], cancellationToken);
 
 		notices.AddRange(edit.Report());
 

@@ -115,6 +115,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   `MoveMemberService` annotates the declaration and the type it goes into before anything is
   rewritten, finds both by annotation afterwards, and treats a mark it cannot find as an error rather
   than returning the solution unchanged.
+- **A moved instance member is bound where it landed before anything is written.** An instance
+  member moves only when nothing refers to it and it reads nothing of its type the target lacks, but
+  a check on the member as written cannot see what its names will mean in the new type: an
+  unqualified call that the target answers with a same-named member of its own, an overload the
+  target adds, a base member the target hides. Each of those compiles, so verification after the
+  write says nothing. So `InstanceMove.ConfirmAsync` binds the moved declaration in the moved
+  solution, compares every name with what it bound to before, and refuses on a difference; a name
+  that binds to nothing is let through, because that is a compile error the verification reports.
 - **Written code is indented for where it goes, because the formatter only does half of it.** Roslyn
   reindents statements and moves braces -- rules it has -- so a line wrapped by hand *inside a body*
   comes out right. A wrapped parameter list is layout it has no rule about, so it keeps whatever

@@ -196,9 +196,9 @@ public static class ToolDescriptions
 
 	public const string MembersCodeArgument = "One or more whole declarations.";
 
-	public const string AfterArgument = "Put them after this member, by name.";
+	public const string AfterArgument = "Put them after this member, by name; Greet(string, int) picks an overload.";
 
-	public const string BeforeArgument = "Put them before this member, by name.";
+	public const string BeforeArgument = "Put them before this member, by name; Greet(string, int) picks an overload.";
 
 	public const string ParametersArgument =
 		"The parameters it should have, written as they would go between the parentheses. Leave it off to keep them.";
@@ -842,15 +842,14 @@ public static class ToolDescriptions
 		""";
 
 	public const string MoveMember = """
-		Moves a static member from one type to another and takes its call sites with it, in one
-		change. Use this rather than adding it to the new type and deleting it from the old: those
-		are two writes, and a failure between them leaves the member declared twice. The call sites
-		are the part that gets forgotten -- callSites=qualify writes the new type in front of each
-		one, callSites=usingStatic adds a using static to each calling file and leaves the calls as
-		they are, and the choice is made once here rather than once per file. The declaration moves
-		exactly as written, documentation comment and attributes included, reindented for where it
-		lands. Instance members are refused: moving one changes what 'this' means inside it and every
-		call site would need a receiver it has no reason to have to hand.
+		Moves a member from one type to another and takes its call sites with it, in one change. Use
+		this rather than adding it to the new type and deleting it from the old: those are two writes,
+		and a failure between them leaves the member declared twice. callSites=qualify writes the new
+		type in front of each call, callSites=usingStatic imports it statically in each calling file,
+		chosen once rather than per file. The declaration moves as written, documentation comment and
+		attributes included. An instance member moves only when nothing calls it and it reads nothing
+		of its type that the target lacks, such as a test method between fixtures; anything else is
+		refused with what was found.
 		""";
 
 	public const string Outline = """

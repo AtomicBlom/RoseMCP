@@ -197,6 +197,111 @@ public sealed class MemberEditTests
 		text.ShouldEndWith("\r\n\tprivate const int Limit = 10;\r\n}\r\n", Case.Sensitive);
 	}
 
+	/// <summary>
+	/// Beside an overloaded member, a name alone cannot say which overload, so after and before take a
+	/// parameter list the way a symbol address does. The types are matched by what they are rather than
+	/// how the declaration spells them, so a fully qualified type names the same overload as the short
+	/// one, and how a parameter is passed tells two overloads apart.
+	/// </summary>
+	[Test]
+	[Arguments("Bind(string, Library.Colour[])", "Bind(string text, Colour[] colours)", "Bind(out int count)")]
+	[Arguments("Bind(string,Colour[])", "Bind(string text, Colour[] colours)", "Bind(out int count)")]
+	[Arguments("Bind(out int)", "Bind(out int count)", "Unbind()")]
+	[Arguments("Bind(System.String)", "Bind(string text)", "Bind(string text, Colour[] colours)")]
+	public async Task Adds_a_member_beside_the_overload_its_parameter_list_names(string after, string above, string below)
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await WriteBinderAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var result = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Binder",
+			Code = "public void Added() => Console.WriteLine();",
+			After = after,
+		});
+
+		result.Applied.ShouldBeTrue();
+		result.IntroducedDiagnostics.ShouldBeEmpty();
+
+		var text = await ReadAsync(fixture, "Binder.cs");
+		var added = text.IndexOf("public void Added()", StringComparison.Ordinal);
+
+		added.ShouldBeGreaterThan(text.IndexOf(above, StringComparison.Ordinal));
+		added.ShouldBeLessThan(text.IndexOf(below, StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// A name alone beside overloads still places the member, beside the first, and says so with the
+	/// spelling that would have named another. A parameter list that names none of them is refused
+	/// with every member listed as an anchor would name it -- the overloads with their parameters, since
+	/// that is what the caller has to pass next.
+	/// </summary>
+	[Test]
+	public async Task Says_which_overload_a_name_alone_reached_and_lists_them_when_none_matches()
+	{
+		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
+		await WriteBinderAsync(fixture);
+		await using var session = await TestSession.OpenAsync(fixture);
+
+		var before = await ReadAsync(fixture, "Binder.cs");
+
+		var refused = await Should.ThrowAsync<ArgumentException>(() => EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Binder",
+			Code = "public void Added() => Console.WriteLine();",
+			Before = "Bind(int)",
+		})).OfExactType();
+
+		refused.Message.ShouldContain("Binder declares no member 'Bind(int)' to put this next to.", Case.Sensitive);
+		refused.Message.ShouldContain(
+			"It declares: Bind(string), Bind(string, Colour[]), Bind(out int), Unbind.", Case.Sensitive);
+		(await ReadAsync(fixture, "Binder.cs")).ShouldBe(before);
+
+		var placed = await EditAsync(session, new MemberEditRequest
+		{
+			Kind = MemberEditKind.Add,
+			Symbol = "Library.Binder",
+			Code = "public void Added() => Console.WriteLine();",
+			After = "Bind",
+		});
+
+		placed.Applied.ShouldBeTrue();
+		placed.Notices.ShouldContain(notice => notice.Contains(
+			"Binder declares 3 members called Bind; this went beside the first, Bind(string) at line",
+			StringComparison.Ordinal));
+
+		var text = await ReadAsync(fixture, "Binder.cs");
+		var added = text.IndexOf("public void Added()", StringComparison.Ordinal);
+
+		added.ShouldBeGreaterThan(text.IndexOf("Bind(string text)", StringComparison.Ordinal));
+		added.ShouldBeLessThan(text.IndexOf("Bind(string text, Colour[] colours)", StringComparison.Ordinal));
+	}
+
+	/// <summary>A type with three overloads of one method, for placing a member beside one of them.</summary>
+	private static Task WriteBinderAsync(FixtureSolution fixture) =>
+		File.WriteAllTextAsync(
+			fixture.Path("Members", "Library", "Binder.cs"),
+			"""
+			namespace Library;
+
+			/// <summary>Binds text, three ways.</summary>
+			public sealed class Binder
+			{
+				public void Bind(string text) => Console.WriteLine(text);
+
+				public void Bind(string text, Colour[] colours) => Console.WriteLine(text + colours.Length);
+
+				public void Bind(out int count) => count = 0;
+
+				public void Unbind() => Console.WriteLine();
+			}
+
+			""".ReplaceLineEndings("\r\n"),
+			TestContext.Current!.Execution.CancellationToken);
+
 	/// <summary>A type with no members at all is its own case, and the one most likely to land flush against a brace.</summary>
 	[Test]
 	public async Task Adds_the_first_member_of_an_empty_type()

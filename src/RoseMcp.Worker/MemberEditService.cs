@@ -686,7 +686,7 @@ public static class MemberEditService
 
 		GuardDuplicates(type, parsed);
 
-		var index = PlacementIndex(type, request);
+		var index = await PlacementIndexAsync(document, type, request, notices, cancellationToken);
 
 		var marker = new SyntaxAnnotation();
 		var prepared = new List<MemberDeclarationSyntax>(parsed.Count);
@@ -954,12 +954,162 @@ public static class MemberEditService
 		}
 	}
 
-	private static int PlacementIndex(TypeDeclarationSyntax type, MemberEditRequest request)
+	/// <summary>Where the new members go: beside the member after or before names, or at the end of the type.</summary>
+	private static async Task<int> PlacementIndexAsync(
+		Document document,
+		TypeDeclarationSyntax type,
+		MemberEditRequest request,
+		List<string> notices,
+		CancellationToken cancellationToken)
 	{
-		if (request.After is { Length: > 0 } after) return AnchorIndex(type, after) + 1;
-		if (request.Before is { Length: > 0 } before) return AnchorIndex(type, before);
+		if (request.After is { Length: > 0 } after) return await AnchorIndexAsync(document, type, after, notices, cancellationToken) + 1;
+		if (request.Before is { Length: > 0 } before) return await AnchorIndexAsync(document, type, before, notices, cancellationToken);
 
 		return type.Members.Count;
+	}
+
+	/// <summary>
+	/// The member an <c>after</c> or <c>before</c> names. A name alone is the first member carrying it,
+	/// with a notice where there are overloads to choose between. A name with a parameter list,
+	/// <c>Bind(string, bool, RuleText[])</c>, is the one overload taking those parameters, read by the
+	/// grammar a symbol address uses -- so a parameter type is matched by the compiler's answer rather
+	/// than by how the declaration happens to spell it, and the fully qualified
+	/// <c>RoseMcp.Patterns.RuleText[]</c> names the same overload.
+	/// </summary>
+	private static async Task<int> AnchorIndexAsync(
+		Document document,
+		TypeDeclarationSyntax type,
+		string anchor,
+		List<string> notices,
+		CancellationToken cancellationToken)
+	{
+		var model = await document.GetSemanticModelAsync(cancellationToken)
+			?? throw new InvalidOperationException($"{Path.GetFileName(document.FilePath)} has no semantic model to place a member by.");
+
+		var written = anchor.Trim();
+		var address = written.EndsWith(')') ? SymbolAddress.Parse(written) : null;
+		var name = address?.Name ?? written;
+
+		int[] named =
+		[
+			.. Enumerable.Range(0, type.Members.Count)
+				.Where(index => NamesOf(type.Members[index]).Contains(name, StringComparer.Ordinal)),
+		];
+
+		if (address is null && named.Length > 0)
+		{
+			if (named.Length > 1)
+			{
+				notices.Add($"{type.Identifier.Text} declares {named.Length} members called {name}; this went beside the "
+					+ $"first, {AnchorSpelling(model, type.Members[named[0]], cancellationToken)} at line "
+					+ $"{LineOf(type.Members[named[0]])}. Add its parameter list to name another.");
+			}
+
+			return named[0];
+		}
+
+		int[] matching = address is null
+			? []
+			:
+			[
+				.. named.Where(index => DeclaredSymbols(model, type.Members[index], cancellationToken)
+					.Any(address.ParametersMatch)),
+			];
+
+		if (matching.Length == 1) return matching[0];
+
+		if (matching.Length > 1)
+		{
+			throw new ArgumentException(
+				$"'{written}' matches {matching.Length} members of {type.Identifier.Text}, at lines "
+					+ $"{string.Join(", ", matching.Select(index => LineOf(type.Members[index])))}, so which one to "
+					+ "put this next to cannot be told.");
+		}
+
+		var candidates = AnchorCandidates(model, type, cancellationToken);
+
+		throw new ArgumentException(
+			$"{type.Identifier.Text} declares no member {(address is null ? "called " : string.Empty)}'{written}' to put "
+				+ "this next to."
+				+ (candidates.Count == 0
+					? " It declares no members at all, so leave after and before out."
+					: $" It declares: {string.Join(", ", candidates)}."));
+	}
+
+	/// <summary>
+	/// What a type's members are called, as an <c>after</c> or <c>before</c> would name each: a name
+	/// alone where only one member carries it, and with its parameter list where several do, so the
+	/// listing in a refusal is what to pass rather than the name that was ambiguous.
+	/// </summary>
+	private static IReadOnlyList<string> AnchorCandidates(
+		SemanticModel model,
+		TypeDeclarationSyntax type,
+		CancellationToken cancellationToken)
+	{
+		var overloaded = type.Members
+			.SelectMany(NamesOf)
+			.GroupBy(name => name, StringComparer.Ordinal)
+			.Where(group => group.Count() > 1)
+			.Select(group => group.Key)
+			.ToHashSet(StringComparer.Ordinal);
+
+		return
+		[
+			.. type.Members
+				.SelectMany(member => NamesOf(member).Select(name => overloaded.Contains(name)
+					? AnchorSpelling(model, member, cancellationToken)
+					: name))
+				.Distinct(StringComparer.Ordinal),
+		];
+	}
+
+	/// <summary>
+	/// A member as an anchor names one overload of it: its name and its parameter types as the
+	/// declaration's own file would write them, <c>Greet(string, string)</c>.
+	/// </summary>
+	private static string AnchorSpelling(SemanticModel model, MemberDeclarationSyntax member, CancellationToken cancellationToken)
+	{
+		var name = NamesOf(member).FirstOrDefault() ?? member.Kind().ToString();
+
+		var parameters = DeclaredSymbols(model, member, cancellationToken).FirstOrDefault() switch
+		{
+			IMethodSymbol method => method.Parameters,
+			IPropertySymbol { IsIndexer: true } indexer => indexer.Parameters,
+			_ => default,
+		};
+
+		if (parameters.IsDefault) return name;
+
+		var spelled = parameters.Select(parameter => Passed(parameter.RefKind)
+			+ parameter.Type.ToMinimalDisplayString(model, member.SpanStart));
+
+		return $"{name}({string.Join(", ", spelled)})";
+	}
+
+	/// <summary>How a parameter is passed, as the keyword written before its type.</summary>
+	private static string Passed(RefKind kind) => kind switch
+	{
+		RefKind.Ref => "ref ",
+		RefKind.Out => "out ",
+		RefKind.In => "in ",
+		RefKind.RefReadOnlyParameter => "ref readonly ",
+		_ => string.Empty,
+	};
+
+	/// <summary>The symbols a member declaration declares: one, or each variable of a field.</summary>
+	private static IEnumerable<ISymbol> DeclaredSymbols(
+		SemanticModel model,
+		MemberDeclarationSyntax member,
+		CancellationToken cancellationToken)
+	{
+		IEnumerable<SyntaxNode> declarators = member is BaseFieldDeclarationSyntax field
+			? field.Declaration.Variables
+			: [member];
+
+		foreach (var declarator in declarators)
+		{
+			if (model.GetDeclaredSymbol(declarator, cancellationToken) is { } symbol) yield return symbol;
+		}
 	}
 
 	/// <summary>
@@ -971,22 +1121,6 @@ public static class MemberEditService
 		index < type.Members.Count ? type.Members[index].FullSpan.Start
 			: type.Members.Count > 0 ? type.Members[^1].FullSpan.End
 			: type.OpenBraceToken.FullSpan.End;
-
-	private static int AnchorIndex(TypeDeclarationSyntax type, string name)
-	{
-		for (var index = 0; index < type.Members.Count; index++)
-		{
-			if (NamesOf(type.Members[index]).Contains(name, StringComparer.Ordinal)) return index;
-		}
-
-		var declared = type.Members.SelectMany(NamesOf).Distinct(StringComparer.Ordinal).ToArray();
-
-		throw new ArgumentException(
-			$"{type.Identifier.Text} declares no member called '{name}' to put this next to."
-				+ (declared.Length == 0
-					? " It declares no members at all, so leave after and before out."
-					: $" It declares: {string.Join(", ", declared)}."));
-	}
 
 	/// <summary>
 	/// What this tool has to say beyond what every writing tool says. Runs after

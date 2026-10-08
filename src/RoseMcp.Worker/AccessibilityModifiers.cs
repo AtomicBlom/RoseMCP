@@ -246,7 +246,7 @@ public static class AccessibilityModifiers
 			.WithAdditionalAnnotations(marker));
 
 	/// <summary>The interface member a member implements explicitly, or null where it implements none that way.</summary>
-	private static ISymbol? ExplicitlyImplemented(ISymbol symbol) => symbol switch
+	public static ISymbol? ExplicitlyImplemented(ISymbol symbol) => symbol switch
 	{
 		IMethodSymbol method => method.ExplicitInterfaceImplementations.FirstOrDefault(),
 		IPropertySymbol property => property.ExplicitInterfaceImplementations.FirstOrDefault(),

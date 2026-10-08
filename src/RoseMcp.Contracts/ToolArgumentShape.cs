@@ -138,7 +138,7 @@ public static class ToolArgumentShape
 	/// without them.
 	/// <para>
 	/// This is the expensive half of the mistake. A refusal at least stops, but a call that binds
-	/// without its misspelled argument runs anyway -- a reference search meant for one file searches
+	/// without its misspelled argument runs anyway -- a reference search meant for one project searches
 	/// the solution -- and returns a well-formed answer to a different question, with nothing in it
 	/// saying an argument was set aside.
 	/// </para>

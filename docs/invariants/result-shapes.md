@@ -12,16 +12,16 @@ Read before adding a tool, adding a field to a result, or changing an error path
   argument name is part of a tool's vocabulary, so a name the tool does not know is a caller error
   the tool can see -- exactly as a wrong-shaped value is. The binder drops it rather than refusing it
   and binds the declared argument at its default, so nothing past the binder can tell it was sent:
-  `rose_outline(file: ...)` was refused for want of the file path it had been given, and
-  `rose_find_references(symbol: ..., path: ...)` searched the whole solution and answered a question
+  without this, `rose_outline(type: ...)` is refused for want of a type it was given, and
+  `rose_find_references(symbol: ..., projet: ...)` searches every project and answers a question
   nobody asked. `ToolArgumentShape` reads the schema once for both halves: a refusal gains a
   sentence naming the argument and the nearest declared name, at every MCP boundary; a call that
   succeeds gains a notice saying the same, in its `notices` -- added to a result type that has none,
   since the listing carries no output schema and one name for one kind of remark is less surprising
   than two. The notice is the broker's alone, after the alias filter: it is the only process that
   sees what the caller sent, and a spelling it accepts in place of a declared name is not unknown.
-  Named, never refused -- clients attach extras of their own, and aliasing a name teaches nobody the
-  real one.
+  Named, never refused, and never answered with a further alias -- clients attach extras of their
+  own, and an alias teaches nobody the real name.
 - **A name matching two symbols is refused, and the address a result hands back resolves.** These
   are the two halves of addressing code by name, and each fails by producing a well-formed answer
   about something else. A resolver keyed on a candidate's name, containing type and assembly

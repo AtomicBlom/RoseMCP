@@ -217,6 +217,8 @@ read asks metadata whenever source has nothing at the address, and says when it 
 as missing a value the caller had sent and a call that succeeded answered a different question.
 Both now name the argument and the declared name it most likely meant; the further aliases this
 suggested were declined, because an alias teaches nobody the real name.
+**Still open, awaiting a decision:** making one word mean imports everywhere. `rose_add_using` takes
+`namespaces` where every other writer takes `usings`, and no open card carries the rename.
 
 ### AGT-09 Two conventions for an enum-like argument, and the better one is used on three tools
 - **Severity:** Medium

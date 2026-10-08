@@ -88,9 +88,10 @@ public sealed class ToolArgumentShapeTests
 	}
 
 	/// <summary>
-	/// The reported case: <c>file</c> for <c>filePath</c>. The binder dropped it, the tool reported
-	/// the absence of a value the caller had supplied, and nothing in the refusal said why. Four edits
-	/// away, far more than a typo, and still plainly what was meant, because it is part of the name.
+	/// <c>file</c> for <c>filePath</c>, read against the schema alone, as a boundary with no alias
+	/// filter in front of it reads it: the binder drops the argument and the tool reports the absence
+	/// of a value the caller supplied. Four edits away, far more than a typo, and still plainly what
+	/// was meant, because it is part of the name.
 	/// </summary>
 	[Test]
 	public void A_refusal_names_the_argument_it_never_saw_and_the_one_it_meant()
@@ -117,10 +118,10 @@ public sealed class ToolArgumentShapeTests
 		var notices = ToolArgumentShape.Ignored(
 			"rose_find_references",
 			Schema("""{"symbol":{"type":["string","null"]},"filePath":{"type":["string","null"]},"project":{"type":["string","null"]}}"""),
-			Arguments("""{"symbol":"X","path":"src/A.cs"}"""));
+			Arguments("""{"symbol":"X","projet":"A"}"""));
 
 		notices.ShouldBe([
-			"Ignored an argument called `path`; `rose_find_references` has no such argument. Did you mean `filePath`?",
+			"Ignored an argument called `projet`; `rose_find_references` has no such argument. Did you mean `project`?",
 		]);
 	}
 

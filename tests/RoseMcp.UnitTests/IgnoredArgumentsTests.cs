@@ -13,9 +13,9 @@ using RoseMcp.Broker;
 namespace RoseMcp.UnitTests;
 
 /// <summary>
-/// A call that succeeds while the binder drops one of its arguments. <c>rose_find_references(symbol:
-/// "X", path: "A.cs")</c> searched the whole solution and answered a question nobody asked, with
-/// nothing in the answer saying the file had been set aside.
+/// A call that succeeds while the binder drops one of its arguments. Without a notice,
+/// <c>rose_find_references(symbol: "X", projet: "A")</c> searches every project and answers a
+/// question nobody asked, with nothing in the answer saying the project was set aside.
 /// </summary>
 public sealed class IgnoredArgumentsTests
 {
@@ -157,6 +157,85 @@ public sealed class IgnoredArgumentsTests
 			Case.Sensitive);
 	}
 
+	/// <summary>
+	/// The broker's own chain, as <c>AddRoseMcpBroker</c> registers it. <c>solution</c> is a spelling
+	/// the alias filter accepts for <c>workspace</c>, and is rewritten before anything reads the
+	/// arguments, so it is never called ignored; <c>worksapce</c> is accepted by nothing, so it is.
+	/// <c>rose_workspace_close</c> because it answers without a worker: no worker is open for the
+	/// solution, so closing it is a well-formed "nothing was open".
+	/// </summary>
+	[Test]
+	public async Task The_broker_notices_a_misspelling_and_not_a_spelling_it_accepts(CancellationToken cancellationToken)
+	{
+		var directory = Directory.CreateTempSubdirectory("rose-ignored-");
+		try
+		{
+			var solution = Path.Combine(directory.FullName, "A.slnx");
+			await File.WriteAllTextAsync(solution, "<Solution />", cancellationToken);
+
+			await using var connection = await Connection.OpenAsync(services => services.AddRoseMcpBroker(), cancellationToken);
+
+			var aliased = await connection.Client.CallToolAsync(
+				"rose_workspace_close",
+				new Dictionary<string, object?> { ["solution"] = solution },
+				cancellationToken: cancellationToken);
+
+			aliased.IsError.ShouldNotBe(true);
+			aliased.StructuredContent!.Value.TryGetProperty("notices", out _).ShouldBeFalse();
+
+			var misspelled = await connection.Client.CallToolAsync(
+				"rose_workspace_close",
+				new Dictionary<string, object?> { ["workspace"] = solution, ["worksapce"] = solution },
+				cancellationToken: cancellationToken);
+
+			misspelled.IsError.ShouldNotBe(true);
+			Notices(misspelled.StructuredContent!.Value).ShouldBe([
+				"Ignored an argument called `worksapce`; `rose_workspace_close` has no such argument. Did you mean `workspace`?",
+			]);
+		}
+		finally
+		{
+			directory.Delete(recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// The refusal half of the same chain: a call the broker refuses names <c>projet</c>, which
+	/// nothing accepts, and says nothing about <c>path</c>, which the alias filter took as
+	/// <c>filePath</c> before the error boundary read the arguments.
+	/// </summary>
+	[Test]
+	public async Task The_broker_names_a_misspelling_in_a_refusal_and_not_a_spelling_it_accepts(CancellationToken cancellationToken)
+	{
+		var directory = Directory.CreateTempSubdirectory("rose-ignored-");
+		try
+		{
+			var missing = Path.Combine(directory.FullName, "Missing.slnx");
+
+			await using var connection = await Connection.OpenAsync(services => services.AddRoseMcpBroker(), cancellationToken);
+
+			var refused = await connection.Client.CallToolAsync(
+				"rose_find_references",
+				new Dictionary<string, object?>
+				{
+					["symbol"] = "A.B",
+					["path"] = Path.Combine(directory.FullName, "A.cs"),
+					["projet"] = "A",
+					["workspace"] = missing,
+				},
+				cancellationToken: cancellationToken);
+
+			refused.IsError.ShouldBe(true);
+			var text = string.Join(" ", refused.Content.OfType<TextContentBlock>().Select(block => block.Text));
+			text.ShouldContain("`projet` is not an argument of `rose_find_references`. Did you mean `project`?", Case.Sensitive);
+			text.ShouldNotContain("`path`", Case.Sensitive);
+		}
+		finally
+		{
+			directory.Delete(recursive: true);
+		}
+	}
+
 	private static CallToolResult Structured(string json)
 	{
 		var element = JsonDocument.Parse(json).RootElement;
@@ -209,18 +288,26 @@ public sealed class IgnoredArgumentsTests
 
 		public McpClient Client { get; }
 
-		public static async Task<Connection> OpenAsync(CancellationToken cancellationToken)
+		/// <summary>The test tool, behind the broker's two boundary filters in the order the broker registers them.</summary>
+		public static Task<Connection> OpenAsync(CancellationToken cancellationToken) =>
+			OpenAsync(
+				services => services.AddMcpServer()
+					.WithTools<Tools>()
+					.WithIgnoredArgumentNotices()
+					.WithToolErrorMessages(),
+				cancellationToken);
+
+		/// <summary>Whatever server the caller registers, reached over pipes.</summary>
+		public static async Task<Connection> OpenAsync(
+			Func<IServiceCollection, IMcpServerBuilder> server,
+			CancellationToken cancellationToken)
 		{
 			var toServer = new Pipe();
 			var toClient = new Pipe();
 
 			var services = new ServiceCollection();
 			services.AddLogging();
-			services.AddMcpServer()
-				.WithStreamServerTransport(toServer.Reader.AsStream(), toClient.Writer.AsStream())
-				.WithTools<Tools>()
-				.WithIgnoredArgumentNotices()
-				.WithToolErrorMessages();
+			server(services).WithStreamServerTransport(toServer.Reader.AsStream(), toClient.Writer.AsStream());
 
 			var provider = services.BuildServiceProvider();
 			var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

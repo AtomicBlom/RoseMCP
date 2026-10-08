@@ -143,7 +143,7 @@ public static class ToolDescriptions
 
 	public const string IsTestProjectArgument = "true: only references in test projects; false: only the rest.";
 
-	public const string IsGeneratedArgument = "true: only references in generated code; false: only written files.";
+	public const string IsGeneratedArgument = "true: only references in generated code; false: only the rest.";
 
 	public const string IncludePreviewsArgument =
 		"Give each location its line of source. On by default; off is much smaller.";

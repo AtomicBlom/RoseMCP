@@ -503,6 +503,16 @@ public static class ChangeSignatureService
 	/// parameters something else, and replacing its list wholesale would rename them without saying
 	/// so.
 	/// </para>
+	/// <para>
+	/// The layout is the file's unless the caller wrote one. A list written on one line says what the
+	/// parameters are and nothing about where they go, so every parameter that was there keeps its own
+	/// line, indentation and comments, a new one takes the line of the parameter before it, and the
+	/// commas between them are the file's -- the way a call site keeps its arguments. Rebuilt from the
+	/// caller's text instead, a constructor wrapped one parameter to a line collapses into one line of
+	/// two hundred characters, and the comments grouping its parameters go without trace. A list the
+	/// caller wrapped is a layout they chose, and is used; the comments above its parameters are still
+	/// the file's, since a comment is not layout.
+	/// </para>
 	/// </summary>
 	private static DeclarationChange ChangeFor(
 		SyntaxNode declaration,
@@ -515,19 +525,32 @@ public static class ChangeSignatureService
 		var own = list.Parameters;
 		var built = new List<ParameterSyntax>(plan.Parameters.Count);
 
+		var callerWraps = primary
+			&& wanted.GetWithSeparators().Any(item => item.ToFullString().Contains('\n', StringComparison.Ordinal));
+
 		foreach (var parameter in plan.Parameters)
 		{
-			if (!primary && parameter.WasAt is { } at && at < own.Count)
+			if (parameter.WasAt is { } at && at < own.Count)
 			{
 				var mine = own[at];
-				var retyped = plan.Retyped.Contains(parameter.Name, StringComparer.Ordinal)
-					&& parameter.Declaration.Type is { } type;
 
-				built.Add(retyped ? mine.WithType(parameter.Declaration.Type!) : mine);
+				if (!primary)
+				{
+					var retyped = plan.Retyped.Contains(parameter.Name, StringComparer.Ordinal)
+						&& parameter.Declaration.Type is { } type;
+
+					built.Add(retyped ? mine.WithType(parameter.Declaration.Type!) : mine);
+					continue;
+				}
+
+				built.Add(callerWraps
+					? WithComments(parameter.Declaration, mine)
+					: parameter.Declaration.WithLeadingTrivia(mine.GetLeadingTrivia()).WithTrailingTrivia(mine.GetTrailingTrivia()));
+
 				continue;
 			}
 
-			built.Add(parameter.Declaration);
+			built.Add(callerWraps ? parameter.Declaration : Beside(parameter.Declaration, built, own));
 		}
 
 		var kept = plan.Parameters
@@ -548,22 +571,24 @@ public static class ChangeSignatureService
 			.ToArray();
 
 		var documentation = ParamTags.Update(declaration.GetLeadingTrivia(), removedHere, addedHere, keptHere, notices);
-		var parameters = list.WithParameters(Separated(built, primary ? wanted : own));
+		var parameters = list.WithParameters(Separated(built, callerWraps ? wanted : own, ExtraSeparator(list)));
 
 		return new DeclarationChange
 		{
-			Parameters = primary ? parameters.WithOpenParenToken(Unbroken(parameters.OpenParenToken)) : parameters,
+			Parameters = callerWraps ? parameters.WithOpenParenToken(Unbroken(parameters.OpenParenToken)) : parameters,
 			Documentation = documentation,
 		};
 	}
 
 	/// <summary>
 	/// Rebuilds the separated list, keeping the commas that are already there so a parameter list
-	/// somebody wrapped across lines stays wrapped.
+	/// somebody wrapped across lines stays wrapped, and giving any comma past them
+	/// <paramref name="extra"/>.
 	/// </summary>
 	private static SeparatedSyntaxList<ParameterSyntax> Separated(
 		IReadOnlyList<ParameterSyntax> parameters,
-		SeparatedSyntaxList<ParameterSyntax> pattern)
+		SeparatedSyntaxList<ParameterSyntax> pattern,
+		SyntaxToken extra)
 	{
 		if (parameters.Count <= 1) return SyntaxFactory.SeparatedList(parameters);
 
@@ -572,12 +597,88 @@ public static class ChangeSignatureService
 
 		for (var index = 0; index < parameters.Count - 1; index++)
 		{
-			separators.Add(index < existing.Length
-				? existing[index]
-				: SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(SyntaxFactory.Space));
+			separators.Add(index < existing.Length ? existing[index] : extra);
 		}
 
 		return SyntaxFactory.SeparatedList(parameters, separators);
+	}
+
+	/// <summary>
+	/// The comma to put between parameters where the list has none to copy: its last one, or one ending
+	/// the line where the list puts each parameter on a line of its own, or a comma and a space.
+	/// <para>
+	/// Whether the list wraps is read from the opening parenthesis and the parameters, never from the
+	/// closing one: the line break after it is the signature ending, which every block-bodied member has.
+	/// </para>
+	/// </summary>
+	private static SyntaxToken ExtraSeparator(ParameterListSyntax list)
+	{
+		var separators = list.Parameters.GetSeparators().ToArray();
+
+		if (separators.Length > 0) return separators[^1];
+
+		var lineEnding = list.OpenParenToken.TrailingTrivia
+			.Concat(list.Parameters.SelectMany(parameter => parameter.GetLeadingTrivia()))
+			.FirstOrDefault(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+
+		return lineEnding.IsKind(SyntaxKind.EndOfLineTrivia)
+			? SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(lineEnding)
+			: SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(SyntaxFactory.Space);
+	}
+
+	/// <summary>
+	/// A new parameter laid out as the one before it is: at that indentation where the list wraps,
+	/// inline where it does not. The first parameter of a list takes the indentation of the one it is
+	/// going in front of.
+	/// <para>
+	/// The indentation alone, from after the neighbour's last line break. Its comment lines are its own,
+	/// and copying the whitespace around them leaves a blank line where the comment was.
+	/// </para>
+	/// </summary>
+	private static ParameterSyntax Beside(
+		ParameterSyntax parameter,
+		IReadOnlyList<ParameterSyntax> built,
+		SeparatedSyntaxList<ParameterSyntax> own)
+	{
+		var neighbour = built.Count > 0 ? built[^1] : own.FirstOrDefault();
+
+		var layout = neighbour is null
+			? []
+			: AfterLastBreak(neighbour.GetLeadingTrivia()).Where(trivia => trivia.IsKind(SyntaxKind.WhitespaceTrivia));
+
+		return parameter.WithLeadingTrivia(layout).WithTrailingTrivia();
+	}
+
+	/// <summary>
+	/// The caller's parameter with the comment lines the file had above it, where there were any.
+	/// Whatever layout the caller chose, a comment grouping parameters is not part of it, and a list
+	/// rebuilt without it loses it without trace. The comment lines go between the caller's own line
+	/// break and the caller's own indentation, so the layout around them is still the caller's.
+	/// </summary>
+	private static ParameterSyntax WithComments(ParameterSyntax written, ParameterSyntax existing)
+	{
+		var theirs = existing.GetLeadingTrivia();
+
+		if (!theirs.Any(MemberSyntax.IsComment)) return written;
+
+		var mine = written.GetLeadingTrivia();
+		var indentation = AfterLastBreak(mine).ToArray();
+		var commentLines = theirs.Take(theirs.Count - AfterLastBreak(theirs).Count());
+
+		return written.WithLeadingTrivia(mine.Take(mine.Count - indentation.Length).Concat(commentLines).Concat(indentation));
+	}
+
+	/// <summary>The trivia after the last line break in a list, which is the indentation of the line it ends on.</summary>
+	private static IEnumerable<SyntaxTrivia> AfterLastBreak(SyntaxTriviaList trivia)
+	{
+		var last = -1;
+
+		for (var index = 0; index < trivia.Count; index++)
+		{
+			if (trivia[index].IsKind(SyntaxKind.EndOfLineTrivia)) last = index;
+		}
+
+		return trivia.Skip(last + 1);
 	}
 
 	/// <summary>

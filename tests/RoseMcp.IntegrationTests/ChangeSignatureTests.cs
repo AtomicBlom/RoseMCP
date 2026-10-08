@@ -85,13 +85,14 @@ public sealed class ChangeSignatureTests
 	}
 
 	/// <summary>
-	/// The other half of the same rule: a list the caller wrote on one line goes on the signature
-	/// line, even where the declaration it replaces was wrapped and its parenthesis still carries the
-	/// break. Left there, that break puts the first parameter alone on a line of its own at whatever
-	/// column the caller's text happened to begin at.
+	/// The other half of the same rule: a list written on one line says what the parameters are and
+	/// nothing about where they go, so a declaration wrapped one parameter to a line stays wrapped. The
+	/// parameter that went takes its line with it and the ones that stayed keep theirs. Collapsing it
+	/// instead puts a hand-wrapped signature onto one line nobody asked for, and a caller who wants the
+	/// list unwrapped writes the declaration with rose_replace_member.
 	/// </summary>
 	[Test]
-	public async Task Unwraps_a_parameter_list_the_caller_wrote_on_one_line()
+	public async Task Keeps_a_wrapped_parameter_list_wrapped_when_the_caller_writes_it_on_one_line()
 	{
 		using var fixture = FixtureSolution.Copy("Members", "Members.slnx");
 		await using var session = await TestSession.OpenAsync(fixture);
@@ -103,7 +104,7 @@ public sealed class ChangeSignatureTests
 
 		var text = await ReadAsync(fixture, "Wrapped.cs");
 
-		text.ShouldContain("\tpublic static string Join(string first, string second)\r\n", Case.Sensitive);
+		text.ShouldContain("\tpublic static string Join(\r\n\t\tstring first,\r\n\t\tstring second)\r\n", Case.Sensitive);
 	}
 
 	/// <summary>

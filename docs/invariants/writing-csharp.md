@@ -144,6 +144,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   meaning at a call site is not always recoverable from its position. And the call sites that still
   compile are reported, because a forwarder that goes on passing the old default is the bug that
   hides -- "compiles" and "correct" part company exactly there.
+- **A parameter list keeps the file's layout unless the caller wrote one.** A list written on one
+  line says what the parameters are, not where they go, so each parameter that stays keeps its own
+  line, indentation and comments, a new one takes the line of the parameter before it, and the
+  commas are the file's -- the way a call site keeps its arguments. Rebuilding from the caller's text
+  collapses a constructor wrapped one parameter to a line into a single line hundreds of characters
+  long, and drops the comments that grouped its parameters without a word. A list the caller wrapped
+  is a layout they chose and is used, but the comments above existing parameters stay, because a
+  comment is not layout.
 - **A change of accessibility moves the override chain, and nothing else in the modifier list.** An
   override that keeps the old accessibility is CS0507, so the base all the way up and every override
   all the way down change with the member named. Interfaces are not part of that group: an implicit

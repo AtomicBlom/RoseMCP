@@ -14,7 +14,7 @@ namespace RoseMcp.UnitTests;
 
 /// <summary>
 /// A call that succeeds while the binder drops one of its arguments. Without a notice,
-/// <c>rose_find_references(symbol: "X", projet: "A")</c> searches every project and answers a
+/// <c>rose_find_references(symbols: ["X"], projet: "A")</c> searches every project and answers a
 /// question nobody asked, with nothing in the answer saying the project was set aside.
 /// </summary>
 public sealed class IgnoredArgumentsTests

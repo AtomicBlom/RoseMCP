@@ -26,7 +26,7 @@ Read before adding a tool, adding a field to a result, or changing an error path
   the tool can see -- exactly as a wrong-shaped value is. The binder drops it rather than refusing it
   and binds the declared argument at its default, so nothing past the binder can tell it was sent:
   without this, `rose_outline(type: ...)` is refused for want of a type it was given, and
-  `rose_find_references(symbol: ..., projet: ...)` searches every project and answers a question
+  `rose_find_references(symbols: [...], projet: ...)` searches every project and answers a question
   nobody asked. `ToolArgumentShape` reads the schema once for both halves: a refusal gains a
   sentence naming the argument and the nearest declared name, at every MCP boundary; a call that
   succeeds gains a notice saying the same, in its `notices` -- added to a result type that has none,

@@ -14,7 +14,7 @@ namespace RoseMcp.Broker;
 /// Tells a caller whose call succeeded which of its arguments the tool never saw.
 /// <para>
 /// An argument the schema does not declare is dropped by the binder, and the call runs with the
-/// declared argument it was meant for left at its default. <c>rose_find_references(symbol: "X",
+/// declared argument it was meant for left at its default. <c>rose_find_references(symbols: ["X"],
 /// projet: "A")</c> searches every project and returns a correct-looking answer to a question the
 /// caller did not ask, with nothing in it saying the project was set aside. The refusal path names
 /// such an argument at the error boundary; this is the same schema read, for the calls that do not

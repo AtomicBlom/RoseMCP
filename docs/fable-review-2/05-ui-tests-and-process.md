@@ -778,8 +778,8 @@ Used, worked, and beat the alternative:
 - **`rose_symbol_info` on `RoseMcp.Tray.MainWindow.DescribeHeadline`** -- to confirm accessibility and
   the declaration span for UIP-06. Answered with `"accessibility": "Public"`, `isStatic` implied by
   the signature, and `declarationSpans` giving 352-372 so I could cite the range without reading.
-  Worked. Note: with `includeSource` omitted it returns `"source": []` rather than omitting the key,
-  which costs a couple of tokens and reads as "no source" rather than "not asked for".
+  Worked. ~~Note: with `includeSource` omitted it returns `"source": []`, which reads as "no source".~~
+  **#374.** It is left out unless asked for.
 - **`rose_symbol_info` on `RoseMcp.Ui.Core.Inspector.InspectorOptions.InstanceKey`** with
   `includeSource: true` -- to check `Program.cs`'s "one inspector per machine" claim against the key
   it actually computes. Returned the full XML doc and the three-line body. **Exactly the tool for
@@ -789,24 +789,10 @@ Used, worked, and beat the alternative:
 Used and lost:
 
 - **`rose_outline` on `src/RoseMcp.Tray/MainWindow.xaml.cs`** -- to survey the tray's code-behind
-  before reading it. It returned roughly 10,000 tokens for a 651-line file, because it merged in
-  every member of the XAML-generated `MainWindow.g.i.cs` partial (23 control fields,
-  `InitializeComponent`, `UnloadObject`, two generated binding interfaces, `_contentLoaded`) and gave
-  each member a full `location` object with an absolute path, a preview and a `containingMember`,
-  even with `includeDocumentation: false`. Reading the file with `sed -n` cost a fifth of that and
-  told me more. **Two defects worth filing:**
-  1. *`isGenerated` is `false` for every member declared in `obj/.../MainWindow.g.i.cs`.* The tool's
-     own description says "Members a generator wrote are marked, since there is no file to edit for
-     those" -- these are exactly that case and they are not marked. For a XAML code-behind, which is
-     the single most common partial-class shape in a WinUI project, the outline cannot be trusted to
-     say which half of the type is editable.
-  2. *A code-behind outline is unusable for its stated purpose* ("use it instead of reading the file
-     to find out what is in it"). The generated half is two-thirds of the output and none of it is
-     what the reader asked about. A `includeGenerated: false` default, or simply honouring the
-     existing `filePath` argument as a filter on *declarations* rather than only as a way to pick a
-     partial, would fix it -- I passed `filePath` and still got the other file's members.
-  This overlaps the review's existing note that "compact `rose_outline` is not compact (every member
-  carries a full location)"; the code-behind case makes it four times worse.
+  before reading it. ~~Lost to `sed`: it merged in the generated partial, marked none of it generated,
+  ignored `filePath` and gave every member a full location.~~ **#374.** A file outline lists what the
+  file declares and counts what the type's other files do; generated members are marked, and a member
+  is its name, kind, accessibility and line.
 
 Not reached for, and why:
 

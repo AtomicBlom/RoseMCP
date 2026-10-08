@@ -154,22 +154,14 @@ revision 1). Sizes are the raw JSON as it arrived.
 
 ## Findings
 
-### AGT-01 `rose_outline`'s compact mode is not compact, so the tool loses to `Read` on exactly the files it exists for
-- **Severity:** High
-- **Measured, #295**, at 512 bytes per member with both size controls off. The card lowers it.
-- **Effort:** S
-- **Where:** transcript T1a/T1b/T1c; `src/RoseMcp.Worker/OutlineService.cs:192`; `src/RoseMcp.Contracts/ToolDescriptions.cs:143-145`
-- **What:** With `includeSignatures=false` and `includeDocumentation=false` -- the tool's two documented size controls, both off -- a 441-line class with 24 members costs ~10.1 KB. Full mode costs ~22.3 KB. `grep -n "public\|internal"` on the same file costs 748 bytes and answered the question I actually had. The reason is `OutlinedMember.Location`, emitted unconditionally, carrying the 95-character absolute file path, the whole source line as `preview`, `containingMember` (which for a declaration is always the member's own name), `project` and `isTestProject` -- roughly 350 bytes per member of which about 12 are the answer. Worse, `preview` *is* the signature for most members, so `includeSignatures=false` removes a duplicate rather than the content. Two other reviewers hit this independently; on `CorDebugSession` it produced 70,649 characters, blew the client's token cap, and the reviewer read the file instead (issue #234).
-- **Why it matters:** This is the tool whose own description says "Use it instead of reading the file to find out what is in it, which is the read that comes before most edits". An agent that pays 22 KB once and learns nothing it could not have grepped will not pay it twice, and the dogfooding rule says a tool nobody reaches for is a bug of the same severity as one returning wrong answers. It is also self-defeating: the bigger the type, the more the outline is worth and the less usable it is.
-- **Suggested change:** Make the location cost proportional to what was asked for. Emit `line` alone when `includeSignatures=false` (the file is already named once on the enclosing `OutlinedType.declarations`); drop `preview`, `containingMember`, `project` and `isTestProject` from member locations entirely, since all four are constant across the answer or derivable from it. Add the two narrowings #234 asks for -- a `members` name filter and `maxResults`/`offset` with a total -- so a 110-member type can be asked a question rather than dumped. Target: a 24-member compact outline under 1.5 KB.
+### ~~AGT-01 `rose_outline`'s compact mode is not compact, so the tool loses to `Read` on exactly the files it exists for~~
+**#374.** Every outlined member carried a whole declaration record, so a compact outline cost more than
+a grep of the file and a large type overran what a client accepts. A member is its name, kind,
+accessibility and line, and what a type's members share is said once.
 
-### AGT-02 `includeDocumentation` returns the whole summary, where the schema promises "the first line"
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Worker/OutlineService.cs:240-260`; `src/RoseMcp.Contracts/ToolDescriptions.cs:140-141`; `src/RoseMcp.Contracts/OutlineResult.cs:39` and `:75`
-- **What:** Three statements of one contract, all different. The argument help says "the first line of its documentation"; the DTO says "The first sentence of its documentation"; `OutlineService.Summary` returns the entire `<summary>` element, every `<para>` included, flattened to one line. In T1b that made `WorkspaceManager.WorkspaceFor`'s entry ~1,500 characters -- one member costing twice the whole grep -- and the primary constructor's entry repeated the class summary verbatim a second time in the same payload.
-- **Why it matters:** An agent budgets from the schema. It is told documentation costs one line per member, it costs a paragraph, and `includeDocumentation=true` is the **default** -- so the setting most likely to overflow a context window is the one chosen by a caller who was told it was cheap. It is unbounded on a third-party type.
-- **Suggested change:** Return the first sentence, as the DTO says -- cut at the first `. ` outside a tag -- and add a `summaryLength` cap. Then make `IncludeDocumentationArgument`, `OutlinedType.Summary` and `OutlinedMember.Summary` quote one sentence of the same text, and assert in `ToolDescriptionTests` that a member's summary in an outline is shorter than the same member's in `rose_symbol_info`.
+### ~~AGT-02 `includeDocumentation` returns the whole summary, where the schema promises "the first line"~~
+**#374.** An outline's documentation was the whole summary where its help promised one line. It is the
+summary's first sentence, rendered, and the help says so.
 
 ### ~~AGT-03 A metadata symbol is unreachable whenever any source symbol anywhere shares its *leaf* name~~
 **#418.** Whether a read could reach a referenced assembly turned on the last segment of the name. A
@@ -192,14 +184,9 @@ read asks metadata whenever source has nothing at the address, and says when it 
 **#378.** Asking for the count alone reported the list as truncated, which no retry could change.
 Truncation means only that raising the cap lists more.
 
-### AGT-06 `rose_find_references` promises grouping and returns a flat list with the absolute path repeated per hit
-- **Partly done, #378.** References are listed by file, so a path is said once per file rather than per hit, and an answer past its cap or asked for with `definitionsOnly` counts its references per member. What is left is the path itself, absolute rather than relative to the workspace, which card 11 carries.
-- **Severity:** Medium
-- **Effort:** M
-- **Where:** `src/RoseMcp.Contracts/SourceLocation.cs:18-22`; `src/RoseMcp.Contracts/ToolDescriptions.cs:577-578`; transcript T5
-- **What:** Each file's path is absolute, so every one repeats the workspace root, under a `workspace` field that already names it once.
-- **Why it matters:** On an answer spanning many files the root is most of each path, and it is the one part of the path the caller already has.
-- **Suggested change:** Emit paths relative to the `workspace` root already in the result (absolute only when outside it).
+### ~~AGT-06 `rose_find_references` promises grouping and returns a flat list with the absolute path repeated per hit~~
+**#378, #374.** References were a flat list with the absolute path on every hit. They are listed by
+file, each path relative to the caller's directory, which is named once.
 
 ### ~~AGT-07 `rose_find_implementations` has no `project` filter, so the question it advertises is the one it cannot answer~~
 **#383.** A framework interface was answered with its implementations across every dependency, and
@@ -230,13 +217,12 @@ server process's own directory, so on a machine holding several checkouts of one
 landed in the wrong one and reported success. It is measured from the calling session's directory,
 the argument help says so, and the hop on from there carries absolute paths only.
 
-### AGT-11 `rose_symbol_info` returns raw, unbounded XML documentation
-- **Severity:** Medium
-- **Effort:** S
-- **Where:** `src/RoseMcp.Contracts/SymbolInfoResult.cs:27-28`; transcript T3c
-- **What:** `Documentation` is `GetDocumentationCommentXml()` verbatim: the `<member name="T:...">` wrapper, every `<see cref="T:Fully.Qualified.Name"/>`, `<list type="table">` markup, and the SDK's own indentation. Asking what `ModelContextProtocol.Server.McpServerTool` is cost 9.2 KB, of which the answer is about 200 characters and the rest is `cref` attributes. There is no `includeDocumentation=false` and no cap.
-- **Why it matters:** `rose_symbol_info` is where the server instructions route "what a symbol is", and the first thing an agent does with an unfamiliar dependency. A well-documented third-party type is where it is most wanted and costs most. Note the asymmetry: `rose_outline` at least parses the XML (AGT-02 says it over-includes); `rose_symbol_info` does not parse at all.
-- **Suggested change:** Return parsed sections (`summary`, `remarks`, `returns`, `params`) with `cref`s rendered as short names; add `includeDocumentation` (default true) and `maxDocumentationLength` (default ~800) and report `documentationTruncated` when cut. Share the parse with `OutlineService.Summary` so the two cannot disagree about what a summary is.
+### ~~AGT-11 `rose_symbol_info` returns raw, unbounded XML documentation~~
+**#374.** Documentation came back as the raw, unbounded XML of the comment. It is the summary as
+prose, cut at a sentence past a ceiling with a notice saying so.
+**Declined:** parsed `remarks`, `returns` and `params`. A symbol in source has its whole comment one
+switch away in `includeSource`, and for a library symbol they would cost an argument on a surface
+held to a single ceiling with no room under it.
 
 ### AGT-12 `rose_diagnostics` never says the workspace is degraded, so a clean answer from a broken workspace reads as a clean bill of health
 - **Severity:** Medium
@@ -361,7 +347,7 @@ that a file is formatted.
      so it says "Only X was compiled ... which this did not check" while `dependentsNotChecked: []`
      in the same object says there was nothing to check. The comment above it reads "Said only where
      it can happen", which is true of the kind and not of the instance.
-- **Why it matters:** This is finding AGT-01's problem on the *write* surface, where it is worse.
+- **Why it matters:** This is the read surface's old problem of size on the *write* surface, where it is worse.
   The agent pays a thousand tokens per edit, and an edit loop is many edits. What it actually needed
   from this response is four facts: it applied, it landed at line 174, 34 endings were normalised,
   and one error was introduced with its message and the advice for fixing it. Everything else is
@@ -372,7 +358,7 @@ that a file is formatted.
 - **Suggested change:** Four rules, applied in one place.
   1. **Never echo the caller's input.** Drop `diff` from the default response; report `at: "174-200"`
      and `normalised: "34 line endings to CRLF"`. Put the diff behind `includeDiff`, default off, and
-     make the flag genuinely remove it (cf. AGT-01, where `includeSignatures=false` does not).
+     make the flag genuinely remove it.
   2. **A constant is not a notice.** Emit the line-ending and analyzer notices only when the outcome
      was not the usual one. Move their standing explanation into `ToolDescriptions`.
   3. **Say a fact once, at its most actionable.** Where a notice restates a diagnostic, keep the
@@ -401,10 +387,8 @@ that a file is formatted.
 - **Blast radius, and the root cause.** `WorkspaceMutationResult` is the base of eight result records
   (`AddFileResult`, `CodeFixResult`, `FormatResult`, `MemberEditResult`, `MoveTypeResult`,
   `RenameResult`, `SignatureChangeResult`, `UsingResult`), so `ChangedFiles` and `Notices` are on
-  every one of the thirteen writing tools. The same shapes recur on the read surface: a path per
-  member in `rose_outline` (AGT-01), a path per hit in `rose_find_references` (AGT-06), unbounded raw XML in `rose_symbol_info` (AGT-11), and a
-  `helpLink` plus an absolute path on every entry of `rose_diagnostics`, which at solution scope is
-  the worst case in the product.
+  every one of the thirteen writing tools. The same shape is left on the read surface in one
+  place: a `helpLink` plus an absolute path on every entry of `rose_diagnostics`.
 
   The root is **WRK-01**. Eight files under `src/RoseMcp.Worker/` declare their own
   `IEnumerable<string> Notices` iterator, so there is no single place where "is this worth saying,
@@ -413,10 +397,10 @@ that a file is formatted.
   same argument `WorkspaceManager.Attribute<T>` already won for attribution.
 
 - **The anchor is accepted as input (#376).** A result's workspace key was written on every result
-  and read nowhere; it is accepted back wherever a workspace is named. What is left is the paths: a
-  relative path is ambiguous only when it arrives with no anchor, so return paths relative to the
-  workspace and measure one that arrives with a key from that key's workspace, and the round trip is
-  unambiguous by construction -- the agent quotes back the pair it was handed.
+  and read nowhere; it is accepted back wherever a workspace is named. What is left is the paths.
+  `rose_find_references` returns them relative to the calling session's directory (#374), which is
+  what a relative path sent back is measured from, so the round trip needs no anchor beside the path
+  and no change to how one is measured; the write results can take the same step.
 - **The gate this card had is open (#305).** Returning relative paths makes an agent send relative
   paths -- results are where agents get their arguments -- so the size fix could not land before the
   resolution fix, on pain of turning a latent hazard into a routine one. A relative path is measured
@@ -450,10 +434,9 @@ with every facet a filter and nothing spilled to a file.
 From the 18-issue corpus, the three other reviewers' dogfooding notes, and my own ~30 calls. Ranked
 by how often it decides a call, not by severity.
 
-1. **The answer is too big to use** (AGT-01, AGT-02, AGT-06, AGT-11, #234). The commonest loss, and
-   the only one where the tool *worked*. `rose_outline` at 22 KB, `rose_symbol_info` at 9 KB of
-   XML. An agent that cannot afford the answer greps,
-   and it does not come back.
+1. ~~**The answer is too big to use** (AGT-01, AGT-02, AGT-06, AGT-11, #234).~~ **#374.** The
+   reads answer cheaply by default and say what a cap left out; the write results are still large
+   (AGT-21).
 2. ~~**The name the caller wrote cannot be addressed** (AGT-03, #210, #233, #239).~~ **#418.** The
    four instances named here resolve by name.
 3. **The error does not say what to do** (AGT-04, #121, #212, #210). A leaked
@@ -475,9 +458,8 @@ answer. Every loss is about cost, reach or explanation.
 
 ## Pit-of-success inversions
 
-**1. ~~Compact has to be measured, not intended.~~** **Half done, #295.** The three shapes tier 3
-shrinks are held to a ceiling, so the cards that shrink them have a number to move. Splitting the
-location record into the two shapes it is used as is the other half, and is card 11's.
+**1. ~~Compact has to be measured, not intended.~~** **#295, #374.** The read and write shapes are
+held to a ceiling per item, and the location record is split into the two shapes it is used as.
 
 **2. No CLR vocabulary reaches a caller.**
 *Rule today:* "convert at the MCP boundary, never at the throw site" (`CLAUDE.md`), which converts
@@ -550,14 +532,14 @@ already loaded (revision 1) and reported `Degraded` for the reasons the brief's 
 
 | Tool | For | Outcome |
 |---|---|---|
-| `rose_outline` `WorkspaceManager`, compact | "What does this class contain", cheaply | **Lost.** 10.1 KB against 748 bytes of grep for the same question (AGT-01). The grep answered; the outline answered and cost thirteen times as much. |
-| `rose_outline` `WorkspaceManager`, full | The same, with signatures and docs | Worked, 22.3 KB. Genuinely more informative than grep -- base types, `isGenerated`, accessibility -- but I would not spend that twice in a session, and the documentation half was supposed to be one line per member (AGT-02). |
+| `rose_outline` `WorkspaceManager`, compact | "What does this class contain", cheaply | ~~**Lost** to a grep of the same question, at many times its size (AGT-01).~~ **#374.** A member is its name, kind, accessibility and line. |
+| `rose_outline` `WorkspaceManager`, full | The same, with signatures and docs | Worked. Genuinely more informative than grep -- base types, `isGenerated`, accessibility -- ~~but not worth its size twice in a session (AGT-02).~~ **#374.** Documentation is a sentence per member. |
 | `rose_symbol_info` `Microsoft.CodeAnalysis.Workspace.CurrentSolution` | Reproduce the metadata failure another reviewer hit | **Worked**, which is the interesting part: it disproved "metadata is broken" and led to the real rule (AGT-03). |
 | `rose_symbol_info` `ModelContextProtocol.Server.McpServer.SessionId` | The reviewer's actual case | **Failed**, with five unrelated source symbols offered as candidates. |
 | `rose_symbol_info` `System.Collections.Generic.List` | Wrong arity on a metadata type | **Failed**, offering four methods named `List` in Rose's own source. No mention of arity, none of metadata. |
-| `rose_symbol_info` `ModelContextProtocol.Server.McpServerTool` | What the SDK says about tool errors | Worked, and was the authority for the `isError`-versus-thrown question in this review -- but 9.2 KB of raw XML (AGT-11). Rose answered a question about its own dependency that I had no other way to ask, which is a real win despite the size. |
+| `rose_symbol_info` `ModelContextProtocol.Server.McpServerTool` | What the SDK says about tool errors | Worked, and was the authority for the `isError`-versus-thrown question in this review -- ~~but as raw XML (AGT-11).~~ **#374.** The summary is prose. Rose answered a question about its own dependency that I had no other way to ask, which is a real win despite the size. |
 | `rose_symbol_info` `RoseMcp.Broker.WorkspaceManagr.CallAsync` (typo) | Grade the near-miss error | **Excellent.** The fix was in the message. |
-| `rose_find_references` `ToolNames.WorkspaceStatus` | 16 call sites by containing member | Worked. Beat grep on precision: grep for `WorkspaceStatus` also matches `WorkspaceStatusReport`, `WorkspaceStatusReporter` and the tool name in strings. Lost on shape: a flat list with the absolute path 17 times (AGT-06). |
+| `rose_find_references` `ToolNames.WorkspaceStatus` | 16 call sites by containing member | Worked. Beat grep on precision: grep for `WorkspaceStatus` also matches `WorkspaceStatusReport`, `WorkspaceStatusReporter` and the tool name in strings. ~~Lost on shape (AGT-06).~~ **#378, #374.** Listed by file, each path relative to the caller. |
 | `rose_find_references` same, `definitionsOnly=true` | Just the count | Worked, but `truncated: true` over an empty list (AGT-05). |
 | `rose_search_symbols` `ToolErrorReporting` | Find the three copies | **Excellent, and beat grep outright.** Three addresses ready to paste into the next call; `find -name` would have given me paths and no addresses. |
 | `rose_resolve_name` `ToolErrorReporting` (no filePath) | Ambiguous short name | **Failed** with a leaked Roslyn parameter name (AGT-04). |

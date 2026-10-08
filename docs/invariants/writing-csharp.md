@@ -159,7 +159,14 @@ Read before changing anything that emits or rewrites source under `src/RoseMcp.W
   any comment the caller wrote in front of it kept. Copying a neighbour's leading whitespace is
   right only where every argument begins a line. Where several share a continuation line it writes
   a run of tabs in the middle of that line, which compiles, verifies clean and is exactly the
-  argument list the change asked for, so nothing but `dotnet format` would ever say so.
+  argument list the change asked for, so nothing but `dotnet format` would ever say so. A blank
+  line above an argument that still begins a line stays, and stays empty. Comments go with the
+  argument they are about, not with a position: one ending the line after a comma belongs to the
+  argument before it, and one between a comma and the next argument on the same line belongs to
+  that argument. A comma the list gains copies the last one's layout but not its comment, and an
+  argument that ends up last keeps the comment its comma carried, with the line break a line
+  comment needs. Copying the comma whole writes the comment twice; dropping it with the comma
+  deletes it, and neither is reported.
 - **A change of accessibility moves the override chain, and nothing else in the modifier list.** An
   override that keeps the old accessibility is CS0507, so the base all the way up and every override
   all the way down change with the member named. Interfaces are not part of that group: an implicit

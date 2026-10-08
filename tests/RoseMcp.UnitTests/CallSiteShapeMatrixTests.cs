@@ -65,6 +65,20 @@ public sealed class CallSiteShapeMatrixTests
 		+ "\t\ta, b);\n"
 		+ "}\n";
 
+	/// <summary>
+	/// A call wrapped one argument to a line, with a comment ending the first argument's line. The
+	/// comment sits in the comma's trailing trivia, which is what makes it easy to copy or lose with
+	/// the comma.
+	/// </summary>
+	private const string CommentedCall = "public static class Fixture\n"
+		+ "{\n"
+		+ "\tpublic static string Target(string first, string second) => first + second;\n"
+		+ "\n"
+		+ "\tpublic static string Use(string a, string b) => Target(\n"
+		+ "\t\ta, // the a\n"
+		+ "\t\tb);\n"
+		+ "}\n";
+
 	/// <summary>The ordinary shape: every argument in its own place, and the new one lands between them.</summary>
 	[Test]
 	public void Puts_a_new_argument_between_two_positional_ones()
@@ -356,6 +370,98 @@ public sealed class CallSiteShapeMatrixTests
 
 		Rewrite(call, "string second").ShouldBe("(b)");
 	}
+
+	/// <summary>
+	/// A blank line above an argument that a new first argument pushes along stays a blank line, with
+	/// nothing on it. Indentation put in front of the argument's own break would leave a line holding
+	/// nothing but tabs.
+	/// </summary>
+	[Test]
+	public void Keeps_a_blank_line_above_a_displaced_argument_empty()
+	{
+		var call = Calling("Target(\n\t\ta,\n\n\t\tb)");
+
+		Rewrite(call, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\",\n\t\ta,\n\n\t\tb)");
+	}
+
+	/// <summary>
+	/// A blank line between the parenthesis and the first argument, which a new first argument then
+	/// follows on the same line. The indentation is the one after the blank line, so the new argument
+	/// is not at column zero, and the displaced one gives up its breaks rather than leaving a trailing
+	/// space after the comma in front of it.
+	/// </summary>
+	[Test]
+	public void Indents_a_new_first_argument_from_below_a_blank_line()
+	{
+		var call = Calling("Target(\n\n\t\ta, b)");
+
+		Rewrite(call, "string separator, string first, string second", Dash).ShouldBe("(\n\t\t\"-\", a, b)");
+	}
+
+	/// <summary>
+	/// A comment ending the line after an argument's comma stays after that argument when another is
+	/// added at the end. The comma the list gains is the shape of the last one without its comment;
+	/// copied whole, it writes the comment a second time.
+	/// </summary>
+	[Test]
+	public void Keeps_a_line_end_comment_once_when_an_argument_is_appended()
+	{
+		var text = Rewrite(CommentedCall, "string first, string second, string separator", Dash);
+
+		text.ShouldBe("(\n\t\ta, // the a\n\t\tb,\n\t\t\"-\")");
+		CountOf(text, "// the a").ShouldBe(1);
+	}
+
+	/// <summary>
+	/// The same comment, with a new argument in front. The comment stays beside the argument it was
+	/// written about rather than with the comma at its position, which would put it beside the new one.
+	/// </summary>
+	[Test]
+	public void Keeps_a_line_end_comment_with_its_argument_when_one_is_inserted_in_front()
+	{
+		var text = Rewrite(CommentedCall, "string separator, string first, string second", Dash);
+
+		text.ShouldBe("(\n\t\t\"-\",\n\t\ta, // the a\n\t\tb)");
+		CountOf(text, "// the a").ShouldBe(1);
+	}
+
+	/// <summary>The same comment, with a new argument between the commented one and the next.</summary>
+	[Test]
+	public void Keeps_a_line_end_comment_with_its_argument_when_one_is_inserted_after_it()
+	{
+		var text = Rewrite(CommentedCall, Inserted, Dash);
+
+		text.ShouldBe("(\n\t\ta, // the a\n\t\t\"-\",\n\t\tb)");
+		CountOf(text, "// the a").ShouldBe(1);
+	}
+
+	/// <summary>
+	/// The same comment, with the parameter after it removed, which takes away the comma that carried
+	/// it. It is kept after its argument, and the break that ends it stays too, so the parenthesis is
+	/// not commented out.
+	/// </summary>
+	[Test]
+	public void Keeps_a_line_end_comment_when_the_comma_carrying_it_is_removed()
+	{
+		var text = Rewrite(CommentedCall, "string first");
+
+		text.ShouldBe("(\n\t\ta // the a\n\t\t)");
+		CountOf(text, "// the a").ShouldBe(1);
+	}
+
+	/// <summary>
+	/// A comment between a comma and the argument after it, on one line, labels that argument, and
+	/// goes with it when a new argument is put in front of it.
+	/// </summary>
+	[Test]
+	public void Keeps_an_inline_comment_in_front_of_the_argument_it_labels()
+	{
+		Rewrite(Calling("Target(a, /* the b */ b)"), Inserted, Dash).ShouldBe("""(a, "-", /* the b */ b)""");
+	}
+
+	/// <summary>How many times a piece of text occurs, so a duplicated comment is caught by name.</summary>
+	private static int CountOf(string? text, string piece) =>
+		text is null ? 0 : (text.Length - text.Replace(piece, string.Empty, StringComparison.Ordinal).Length) / piece.Length;
 
 	/// <summary>
 	/// Where the call sits does not change what its arguments mean, so an expression-bodied member

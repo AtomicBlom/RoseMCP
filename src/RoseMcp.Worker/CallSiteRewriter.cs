@@ -46,6 +46,7 @@ public static class CallSiteRewriter
 		out string refusal)
 	{
 		refusal = string.Empty;
+		arguments = WithInlineCommentsOnTheirArgument(arguments);
 
 		var emitted = new List<ArgumentSyntax>();
 
@@ -100,12 +101,16 @@ public static class CallSiteRewriter
 			if (!positional) allPositionalSoFar = false;
 		}
 
-		var separators = Separators(emitted.Count, arguments).ToArray();
+		var separators = Separators(origins, arguments).ToArray();
 		var indentation = Indentation(arguments);
 
-		var laidOut = emitted.Select((argument, index) => origins[index] == index
-			? argument
-			: InSlot(argument, index == 0 ? arguments.OpenParenToken : separators[index - 1], indentation));
+		var laidOut = emitted
+			.Select((argument, index) => origins[index] == index
+				? argument
+				: InSlot(argument, index == 0 ? arguments.OpenParenToken : separators[index - 1], indentation))
+			.ToList();
+
+		if (laidOut.Count > 0) laidOut[^1] = WithStrandedComment(laidOut[^1], origins[^1], arguments, indentation);
 
 		return arguments.WithArguments(SyntaxFactory.SeparatedList(laidOut, separators));
 	}
@@ -121,18 +126,28 @@ public static class CallSiteRewriter
 	/// above, behind a trailing space, which nothing reports because a continuation line is not a
 	/// statement.
 	/// </para>
+	/// <para>
+	/// A comma's position decides its layout, and the argument in front of it decides its comment. A
+	/// comment ending the line after a comma is about the argument before it, so it goes wherever that
+	/// argument goes: a comma copied whole would write it a second time beside an argument it does not
+	/// describe, and one dropped with the position would delete it without a word.
+	/// </para>
 	/// </summary>
-	private static IEnumerable<SyntaxToken> Separators(int count, ArgumentListSyntax existing)
+	/// <param name="origins">Where each emitted argument stood in the list as written, or -1 for one that is new.</param>
+	/// <param name="existing">The list as written.</param>
+	private static IEnumerable<SyntaxToken> Separators(IReadOnlyList<int> origins, ArgumentListSyntax existing)
 	{
 		var already = existing.Arguments.GetSeparators().ToArray();
 
 		var gained = already.Length > 0
-			? already[^1]
+			? already[^1].WithTrailingTrivia(Layout(already[^1]))
 			: SyntaxFactory.Token(SyntaxKind.CommaToken).WithTrailingTrivia(SyntaxFactory.Space);
 
-		for (var index = 0; index < count - 1; index++)
+		for (var index = 0; index < origins.Count - 1; index++)
 		{
-			yield return index < already.Length ? already[index] : gained;
+			var comma = index < already.Length ? already[index].WithTrailingTrivia(Layout(already[index])) : gained;
+
+			yield return comma.WithTrailingTrivia(ClosingComment(origins[index], already).Concat(comma.TrailingTrivia));
 		}
 	}
 
@@ -141,9 +156,10 @@ public static class CallSiteRewriter
 	/// does.
 	/// <para>
 	/// Read from the arguments rather than worked out, because it is the only thing at hand that
-	/// knows how deep this particular call is indented -- and the line break belongs to the token
-	/// before it, so what is left on the argument is the indentation, and then whatever comment the
-	/// caller wrote in front of it, which is not layout and is not copied.
+	/// knows how deep this particular call is indented. The line break belongs to the token before
+	/// the argument, so what is left on the argument is any blank lines and comment lines the caller
+	/// put above it, and then the indentation of its own line -- which is the whitespace after the last
+	/// break, up to whatever comment the caller wrote in front of it on that line.
 	/// </para>
 	/// </summary>
 	private static SyntaxTriviaList Indentation(ArgumentListSyntax arguments)
@@ -152,7 +168,10 @@ public static class CallSiteRewriter
 		{
 			var before = index == 0 ? arguments.OpenParenToken : arguments.Arguments.GetSeparator(index - 1);
 
-			if (EndsLine(before)) return [.. LeadingWhitespace(arguments.Arguments[index].GetLeadingTrivia())];
+			if (EndsLine(before))
+			{
+				return [.. AfterLastBreak(arguments.Arguments[index].GetLeadingTrivia()).TakeWhile(IsWhitespace)];
+			}
 		}
 
 		return default;
@@ -170,16 +189,22 @@ public static class CallSiteRewriter
 	/// asked for, so nothing reports it.
 	/// </para>
 	/// <para>
-	/// Only the whitespace in front is replaced. A comment the caller wrote before the argument goes
-	/// where the argument goes.
+	/// Only layout is replaced. A comment the caller wrote before the argument goes where the argument
+	/// goes, and so does a blank line above one that still begins a line, with the indentation after it
+	/// that is already its own. Mid-line, the whitespace and breaks in front of it are dropped, since a
+	/// break there would strand a trailing space after the comma.
 	/// </para>
 	/// </summary>
 	private static ArgumentSyntax InSlot(ArgumentSyntax argument, SyntaxToken before, SyntaxTriviaList indentation)
 	{
 		var leading = argument.GetLeadingTrivia();
-		var own = leading.Skip(LeadingWhitespace(leading).Count());
 
-		return argument.WithLeadingTrivia(EndsLine(before) ? indentation.Concat(own) : own);
+		if (!EndsLine(before)) return argument.WithLeadingTrivia(leading.SkipWhile(IsLayout));
+
+		var own = leading.SkipWhile(IsWhitespace).ToArray();
+		var opensWithBlankLine = own.Length > 0 && own[0].IsKind(SyntaxKind.EndOfLineTrivia);
+
+		return argument.WithLeadingTrivia(opensWithBlankLine ? own : indentation.Concat(own));
 	}
 
 	/// <summary>
@@ -189,9 +214,119 @@ public static class CallSiteRewriter
 	private static bool EndsLine(SyntaxToken token) =>
 		token.TrailingTrivia.Any(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
 
-	/// <summary>The whitespace a run of leading trivia starts with, which is the indentation of its line.</summary>
-	private static IEnumerable<SyntaxTrivia> LeadingWhitespace(SyntaxTriviaList trivia) =>
-		trivia.TakeWhile(item => item.IsKind(SyntaxKind.WhitespaceTrivia));
+	/// <summary>Whitespace within a line, which is indentation or the space between tokens, never a line break.</summary>
+	private static bool IsWhitespace(SyntaxTrivia trivia) => trivia.IsKind(SyntaxKind.WhitespaceTrivia);
+
+	/// <summary>Whitespace or a line break: trivia that is layout rather than anything the caller wrote.</summary>
+	private static bool IsLayout(SyntaxTrivia trivia) =>
+		trivia.IsKind(SyntaxKind.WhitespaceTrivia) || trivia.IsKind(SyntaxKind.EndOfLineTrivia);
+
+	/// <summary>The trivia after the last line break in a list, which is what is on the line it ends on.</summary>
+	private static IEnumerable<SyntaxTrivia> AfterLastBreak(SyntaxTriviaList trivia)
+	{
+		var last = -1;
+
+		for (var index = 0; index < trivia.Count; index++)
+		{
+			if (trivia[index].IsKind(SyntaxKind.EndOfLineTrivia)) last = index;
+		}
+
+		return trivia.Skip(last + 1);
+	}
+
+	/// <summary>
+	/// The comment ending the line a comma ends, with the whitespace in front of it, or nothing where
+	/// the comma does not end its line or has no comment after it.
+	/// </summary>
+	private static SyntaxTriviaList LineEndComment(SyntaxToken separator)
+	{
+		if (!EndsLine(separator)) return default;
+
+		var trailing = separator.TrailingTrivia;
+		var last = -1;
+
+		for (var index = 0; index < trailing.Count; index++)
+		{
+			if (!IsLayout(trailing[index])) last = index;
+		}
+
+		return [.. trailing.Take(last + 1)];
+	}
+
+	/// <summary>A comma's trailing trivia without the comment ending its line: the position's layout alone.</summary>
+	private static IEnumerable<SyntaxTrivia> Layout(SyntaxToken separator) =>
+		separator.TrailingTrivia.Skip(LineEndComment(separator).Count);
+
+	/// <summary>
+	/// The comment that ended the line after an argument as it was written, or nothing for an argument
+	/// that is new or was written last.
+	/// </summary>
+	private static SyntaxTriviaList ClosingComment(int origin, SyntaxToken[] separators) =>
+		origin >= 0 && origin < separators.Length ? LineEndComment(separators[origin]) : default;
+
+	/// <summary>
+	/// The last argument with the comment that ended its line kept after it, where the comma that
+	/// carried that comment is gone -- which is what taking out the parameters after it does. Dropping
+	/// the comma's trivia with the comma deletes the caller's comment, and nothing says so.
+	/// <para>
+	/// A line comment runs to the end of its line, so one kept there needs the break after it, or it
+	/// would swallow the closing parenthesis. The parenthesis goes on the next line at the call's
+	/// continuation indentation, the line the argument after the comment was on.
+	/// </para>
+	/// </summary>
+	private static ArgumentSyntax WithStrandedComment(
+		ArgumentSyntax argument,
+		int origin,
+		ArgumentListSyntax arguments,
+		SyntaxTriviaList indentation)
+	{
+		var separators = arguments.Arguments.GetSeparators().ToArray();
+		var comment = ClosingComment(origin, separators);
+
+		if (comment.Count == 0) return argument;
+
+		var trailing = argument.GetTrailingTrivia().Concat(comment);
+		var isLineComment = comment.Any(trivia => trivia.IsKind(SyntaxKind.SingleLineCommentTrivia));
+
+		if (isLineComment)
+		{
+			var lineBreak = separators[origin].TrailingTrivia.First(trivia => trivia.IsKind(SyntaxKind.EndOfLineTrivia));
+
+			trailing = trailing.Append(lineBreak).Concat(indentation);
+		}
+
+		return argument.WithTrailingTrivia(trailing);
+	}
+
+	/// <summary>
+	/// The list with any comment written between a comma and the argument after it, on the same line,
+	/// moved onto that argument. It labels the argument it sits in front of, so it has to move with it
+	/// rather than stay with a comma that a change gives to a different argument. The text comes out
+	/// identical; only which token owns the comment changes.
+	/// </summary>
+	private static ArgumentListSyntax WithInlineCommentsOnTheirArgument(ArgumentListSyntax arguments)
+	{
+		var nodes = arguments.Arguments.ToList();
+		var separators = arguments.Arguments.GetSeparators().ToList();
+		var moved = false;
+
+		for (var index = 0; index < separators.Count && index + 1 < nodes.Count; index++)
+		{
+			var separator = separators[index];
+			var isInline = !EndsLine(separator) && separator.TrailingTrivia.Any(MemberSyntax.IsComment);
+
+			if (!isInline) continue;
+
+			var space = separator.TrailingTrivia.TakeWhile(IsWhitespace).ToArray();
+			var comment = separator.TrailingTrivia.Skip(space.Length);
+
+			separators[index] = separator.WithTrailingTrivia(space);
+			nodes[index + 1] = nodes[index + 1].WithLeadingTrivia(comment.Concat(nodes[index + 1].GetLeadingTrivia()));
+			moved = true;
+		}
+
+		return moved ? arguments.WithArguments(SyntaxFactory.SeparatedList(nodes, separators)) : arguments;
+	}
 
 	/// <summary>
 	/// The arguments to write for one parameter: the ones already written for it here, the one the
